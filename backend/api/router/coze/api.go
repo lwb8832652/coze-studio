@@ -415,6 +415,28 @@ func Register(r *server.Hertz) {
 			}
 		}
 		{
+			_workbench := _api.Group("/workbench", _workbenchMw()...)
+			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)
+			_workbench.GET("/skills", append(_listskillsMw(), coze.ListSkills)...)
+			_skills := _workbench.Group("/skills", _skillsMw()...)
+			_skills.GET("/:skill_id", append(_getskillMw(), coze.GetSkill)...)
+			_skill_id := _skills.Group("/:skill_id", _skill_idMw()...)
+			_skill_id.GET("/export", append(_exportskillMw(), coze.ExportSkill)...)
+			_skill_id.POST("/test_run", append(_testrunskillMw(), coze.TestRunSkill)...)
+			_workbench.POST("/skills", append(_createskillMw(), coze.CreateSkill)...)
+			_skills0 := _workbench.Group("/skills", _skills0Mw()...)
+			_skills0.PUT("/:id", append(_updateskillMw(), coze.UpdateSkill)...)
+			_skills0.POST("/import", append(_importskillMw(), coze.ImportSkill)...)
+			_workbench.GET("/tasks", append(_listtasksMw(), coze.ListTasks)...)
+			_tasks := _workbench.Group("/tasks", _tasksMw()...)
+			_tasks.GET("/:task_id", append(_gettaskMw(), coze.GetTask)...)
+			_task_id := _tasks.Group("/:task_id", _task_idMw()...)
+			_task_id.POST("/cancel", append(_canceltaskMw(), coze.CancelTask)...)
+			_task_id.GET("/events", append(_listtaskeventsMw(), coze.ListTaskEvents)...)
+			_task_id.POST("/retry", append(_retrytaskMw(), coze.RetryTask)...)
+			_workbench.POST("/tasks", append(_createtaskMw(), coze.CreateTask)...)
+		}
+		{
 			_workflow_api := _api.Group("/workflow_api", _workflow_apiMw()...)
 			_workflow_api.GET("/apiDetail", append(_getapidetailMw(), coze.GetApiDetail)...)
 			_workflow_api.POST("/batch_delete", append(_batchdeleteworkflowMw(), coze.BatchDeleteWorkflow)...)

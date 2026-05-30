@@ -1,6 +1,8 @@
 include "./plugin/plugin_develop.thrift"
 include "./marketplace/public_api.thrift"
 include "./data/knowledge/knowledge_svc.thrift"
+include "./workbench/workbench.thrift"
+include "./workbench/skill.thrift"
 include "./app/intelligence.thrift"
 include "./app/developer_api.thrift"
 include "./playground/playground.thrift"
@@ -39,3 +41,6 @@ service KnowledgeService extends knowledge_svc.DatasetService {}
 service BotOpenApiService extends bot_open_api.BotOpenApiService {}
 service UploadService extends upload.UploadService {}
 service ConfigService extends config.ConfigService {}
+service WorkbenchChatService extends workbench.WorkbenchChatService {}
+service WorkbenchSkillService extends skill.WorkbenchSkillService {}
+service WorkbenchTaskService extends workbench.WorkbenchTaskService {}

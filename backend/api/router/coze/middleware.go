@@ -1759,3 +1759,103 @@ func _pluginoauthauthorizationcodeMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
+
+func _workbenchMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _workbenchchatMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skillsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listskillsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skill_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _testrunskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skills0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _importskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _tasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _task_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _canceltaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _retrytaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
