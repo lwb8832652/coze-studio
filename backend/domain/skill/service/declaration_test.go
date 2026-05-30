@@ -186,7 +186,7 @@ func TestValidateDeclarationScriptLanguageAndEntry(t *testing.T) {
 					Language: "python",
 				},
 			},
-			wantErr: "executor.entry is required",
+			wantErr: "executor.entry or executor.code is required",
 		},
 	}
 
@@ -200,6 +200,23 @@ func TestValidateDeclarationScriptLanguageAndEntry(t *testing.T) {
 	}
 }
 
+func TestParseDeclarationScriptAllowsInlineCodeWithoutEntry(t *testing.T) {
+	content := []byte(`
+id: weekly_report
+name: Weekly Report
+type: script
+executor:
+  language: python
+  code: "print('hello')"
+`)
+
+	decl, err := ParseDeclaration("weekly_report.yaml", content)
+
+	require.NoError(t, err)
+	assert.Equal(t, "print('hello')", decl.Executor.Code)
+	assert.Empty(t, decl.Executor.Entry)
+}
+
 func TestValidateDeclarationNormalizesWhitespace(t *testing.T) {
 	decl := &Declaration{
 		ID:   " weekly_report ",
@@ -208,6 +225,7 @@ func TestValidateDeclarationNormalizesWhitespace(t *testing.T) {
 		Executor: ExecutorDeclaration{
 			Language:   " python ",
 			Entry:      " main.py ",
+			Code:       " print('hello') ",
 			WorkflowID: " workflow-123 ",
 		},
 	}
@@ -220,5 +238,6 @@ func TestValidateDeclarationNormalizesWhitespace(t *testing.T) {
 	assert.Equal(t, "script", decl.Type)
 	assert.Equal(t, "python", decl.Executor.Language)
 	assert.Equal(t, "main.py", decl.Executor.Entry)
+	assert.Equal(t, "print('hello')", decl.Executor.Code)
 	assert.Equal(t, "workflow-123", decl.Executor.WorkflowID)
 }

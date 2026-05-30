@@ -103,8 +103,8 @@ func ValidateDeclaration(decl *Declaration) error {
 		if decl.Executor.Language != "python" {
 			return fmt.Errorf("executor.language must be python")
 		}
-		if decl.Executor.Entry == "" {
-			return fmt.Errorf("executor.entry is required")
+		if decl.Executor.Entry == "" && decl.Executor.Code == "" {
+			return fmt.Errorf("executor.entry or executor.code is required")
 		}
 	case "workflow":
 		if decl.Executor.WorkflowID == "" {
