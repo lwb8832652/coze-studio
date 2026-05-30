@@ -18,6 +18,9 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/datatypes"
@@ -76,12 +79,34 @@ func (r *skillRepository) Create(ctx context.Context, skill *entity.Skill) error
 		skill.UpdatedAt = skill.CreatedAt
 	}
 
-	return r.db.WithContext(ctx).Create(skillToPO(skill)).Error
+	po, err := skillToPO(skill)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
 }
 
 func (r *skillRepository) Update(ctx context.Context, skill *entity.Skill) error {
 	if skill.UpdatedAt == 0 {
 		skill.UpdatedAt = time.Now().UnixMilli()
+	}
+
+	inputSchema, err := requiredJSON("input_schema", skill.InputSchema)
+	if err != nil {
+		return err
+	}
+	outputSchema, err := requiredJSON("output_schema", skill.OutputSchema)
+	if err != nil {
+		return err
+	}
+	executor, err := requiredJSON("executor", skill.Executor)
+	if err != nil {
+		return err
+	}
+	permissions, err := requiredJSON("permissions", skill.Permissions)
+	if err != nil {
+		return err
 	}
 
 	updates := map[string]any{
@@ -90,17 +115,25 @@ func (r *skillRepository) Update(ctx context.Context, skill *entity.Skill) error
 		"type":          string(skill.Type),
 		"version":       skill.Version,
 		"enabled":       skill.Enabled,
-		"input_schema":  jsonStringToJSON(skill.InputSchema),
-		"output_schema": jsonStringToJSON(skill.OutputSchema),
-		"executor":      jsonStringToJSON(skill.Executor),
-		"permissions":   jsonStringToJSON(skill.Permissions),
+		"input_schema":  inputSchema,
+		"output_schema": outputSchema,
+		"executor":      executor,
+		"permissions":   permissions,
 		"updated_at":    skill.UpdatedAt,
 	}
 
-	return r.db.WithContext(ctx).
+	db := r.db.WithContext(ctx).
 		Model(&skillPO{}).
 		Where("id = ?", skill.ID).
-		Updates(updates).Error
+		Updates(updates)
+	if db.Error != nil {
+		return db.Error
+	}
+	if db.RowsAffected == 0 {
+		return fmt.Errorf("update skill failed: skill %d not found", skill.ID)
+	}
+
+	return nil
 }
 
 func (r *skillRepository) Get(ctx context.Context, id int64) (*entity.Skill, error) {
@@ -122,7 +155,7 @@ func (r *skillRepository) List(ctx context.Context, spaceID int64, typ *entity.T
 	}
 
 	pos := make([]*skillPO, 0)
-	if err := query.Order("updated_at DESC").Find(&pos).Error; err != nil {
+	if err := query.Order("updated_at DESC, id DESC").Find(&pos).Error; err != nil {
 		return nil, err
 	}
 
@@ -134,7 +167,24 @@ func (r *skillRepository) List(ctx context.Context, spaceID int64, typ *entity.T
 	return skills, nil
 }
 
-func skillToPO(skill *entity.Skill) *skillPO {
+func skillToPO(skill *entity.Skill) (*skillPO, error) {
+	inputSchema, err := requiredJSON("input_schema", skill.InputSchema)
+	if err != nil {
+		return nil, err
+	}
+	outputSchema, err := requiredJSON("output_schema", skill.OutputSchema)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := requiredJSON("executor", skill.Executor)
+	if err != nil {
+		return nil, err
+	}
+	permissions, err := requiredJSON("permissions", skill.Permissions)
+	if err != nil {
+		return nil, err
+	}
+
 	return &skillPO{
 		ID:           skill.ID,
 		SpaceID:      skill.SpaceID,
@@ -143,13 +193,13 @@ func skillToPO(skill *entity.Skill) *skillPO {
 		Type:         string(skill.Type),
 		Version:      skill.Version,
 		Enabled:      skill.Enabled,
-		InputSchema:  jsonStringToJSON(skill.InputSchema),
-		OutputSchema: jsonStringToJSON(skill.OutputSchema),
-		Executor:     jsonStringToJSON(skill.Executor),
-		Permissions:  jsonStringToJSON(skill.Permissions),
+		InputSchema:  inputSchema,
+		OutputSchema: outputSchema,
+		Executor:     executor,
+		Permissions:  permissions,
 		CreatedAt:    skill.CreatedAt,
 		UpdatedAt:    skill.UpdatedAt,
-	}
+	}, nil
 }
 
 func (po *skillPO) toEntity() *entity.Skill {
@@ -170,12 +220,16 @@ func (po *skillPO) toEntity() *entity.Skill {
 	}
 }
 
-func jsonStringToJSON(value string) datatypes.JSON {
-	if value == "" {
-		return nil
+func requiredJSON(field, value string) (datatypes.JSON, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		trimmed = "{}"
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return nil, fmt.Errorf("%s must be valid JSON", field)
 	}
 
-	return datatypes.JSON([]byte(value))
+	return datatypes.JSON([]byte(trimmed)), nil
 }
 
 func jsonToString(value datatypes.JSON) string {

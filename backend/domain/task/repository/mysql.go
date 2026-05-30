@@ -18,7 +18,9 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/datatypes"
@@ -105,7 +107,12 @@ func (r *taskRepository) Create(ctx context.Context, task *entity.Task) error {
 		task.UpdatedAt = task.CreatedAt
 	}
 
-	return r.db.WithContext(ctx).Create(taskToPO(task)).Error
+	po, err := taskToPO(task)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
 }
 
 func (r *taskRepository) Get(ctx context.Context, id int64) (*entity.Task, error) {
@@ -137,7 +144,7 @@ func (r *taskRepository) List(ctx context.Context, spaceID int64, status *entity
 
 	pos := make([]*taskPO, 0)
 	if err := query.
-		Order("updated_at DESC").
+		Order("updated_at DESC, id DESC").
 		Limit(int(pageSize)).
 		Offset(int((page - 1) * pageSize)).
 		Find(&pos).Error; err != nil {
@@ -153,10 +160,15 @@ func (r *taskRepository) List(ctx context.Context, spaceID int64, status *entity
 }
 
 func (r *taskRepository) UpdateStatus(ctx context.Context, id int64, from, to entity.Status, progress int32, result, errMsg string) error {
+	resultJSON, err := optionalJSON("result", result)
+	if err != nil {
+		return err
+	}
+
 	updates := map[string]any{
 		"status":     string(to),
 		"progress":   progress,
-		"result":     jsonStringToJSON(result),
+		"result":     resultJSON,
 		"error":      errMsg,
 		"updated_at": time.Now().UnixMilli(),
 	}
@@ -187,14 +199,19 @@ func (r *taskRepository) CreateEvent(ctx context.Context, event *entity.Event) e
 		event.CreatedAt = time.Now().UnixMilli()
 	}
 
-	return r.db.WithContext(ctx).Create(eventToPO(event)).Error
+	po, err := eventToPO(event)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
 }
 
 func (r *taskRepository) ListEvents(ctx context.Context, taskID int64) ([]*entity.Event, error) {
 	pos := make([]*taskEventPO, 0)
 	if err := r.db.WithContext(ctx).
 		Where("task_id = ?", taskID).
-		Order("created_at ASC").
+		Order("created_at ASC, id ASC").
 		Find(&pos).Error; err != nil {
 		return nil, err
 	}
@@ -207,7 +224,16 @@ func (r *taskRepository) ListEvents(ctx context.Context, taskID int64) ([]*entit
 	return events, nil
 }
 
-func taskToPO(task *entity.Task) *taskPO {
+func taskToPO(task *entity.Task) (*taskPO, error) {
+	input, err := optionalJSON("input", task.Input)
+	if err != nil {
+		return nil, err
+	}
+	result, err := optionalJSON("result", task.Result)
+	if err != nil {
+		return nil, err
+	}
+
 	return &taskPO{
 		ID:             task.ID,
 		SpaceID:        task.SpaceID,
@@ -218,12 +244,12 @@ func taskToPO(task *entity.Task) *taskPO {
 		Title:          task.Title,
 		Status:         string(task.Status),
 		Progress:       task.Progress,
-		Input:          jsonStringToJSON(task.Input),
-		Result:         jsonStringToJSON(task.Result),
+		Input:          input,
+		Result:         result,
 		Error:          task.Error,
 		CreatedAt:      task.CreatedAt,
 		UpdatedAt:      task.UpdatedAt,
-	}
+	}, nil
 }
 
 func (po *taskPO) toEntity() *entity.Task {
@@ -245,14 +271,19 @@ func (po *taskPO) toEntity() *entity.Task {
 	}
 }
 
-func eventToPO(event *entity.Event) *taskEventPO {
+func eventToPO(event *entity.Event) (*taskEventPO, error) {
+	payload, err := optionalJSON("payload", event.Payload)
+	if err != nil {
+		return nil, err
+	}
+
 	return &taskEventPO{
 		ID:        event.ID,
 		TaskID:    event.TaskID,
 		EventType: event.EventType,
-		Payload:   jsonStringToJSON(event.Payload),
+		Payload:   payload,
 		CreatedAt: event.CreatedAt,
-	}
+	}, nil
 }
 
 func (po *taskEventPO) toEntity() *entity.Event {
@@ -265,12 +296,16 @@ func (po *taskEventPO) toEntity() *entity.Event {
 	}
 }
 
-func jsonStringToJSON(value string) datatypes.JSON {
-	if value == "" {
-		return nil
+func optionalJSON(field, value string) (datatypes.JSON, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return nil, fmt.Errorf("%s must be valid JSON", field)
 	}
 
-	return datatypes.JSON([]byte(value))
+	return datatypes.JSON([]byte(trimmed)), nil
 }
 
 func jsonToString(value datatypes.JSON) string {

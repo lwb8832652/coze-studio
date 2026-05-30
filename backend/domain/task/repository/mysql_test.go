@@ -96,6 +96,46 @@ func TestTaskRepositoryListUpdateStatusAndEvents(t *testing.T) {
 	require.Equal(t, `{"progress":50}`, events[0].Payload)
 }
 
+func TestTaskRepositoryRejectsInvalidJSON(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&taskPO{}, &taskAttemptPO{}, &taskEventPO{}))
+
+	repo := NewTaskRepository(db, fixedIDGen{})
+	err = repo.Create(context.Background(), &entity.Task{
+		ID:        1,
+		SpaceID:   10,
+		CreatorID: 20,
+		Title:     "bad json",
+		Status:    entity.StatusCreated,
+		Input:     "{",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "input")
+}
+
+func TestTaskRepositoryUsesStablePaginationOrder(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&taskPO{}, &taskAttemptPO{}, &taskEventPO{}))
+
+	repo := NewTaskRepository(db, fixedIDGen{})
+	for _, task := range []*entity.Task{
+		{ID: 1, SpaceID: 10, CreatorID: 20, Title: "first", Status: entity.StatusCreated, UpdatedAt: 1},
+		{ID: 2, SpaceID: 10, CreatorID: 20, Title: "second", Status: entity.StatusCreated, UpdatedAt: 1},
+	} {
+		require.NoError(t, repo.Create(context.Background(), task))
+	}
+
+	got, total, err := repo.List(context.Background(), 10, nil, 1, 2)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(2), got[0].ID)
+	require.Equal(t, int64(1), got[1].ID)
+}
+
 type fixedIDGen struct{}
 
 func (fixedIDGen) GenID(ctx context.Context) (int64, error) { return 1, nil }
