@@ -36,6 +36,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/shortcutcmd"
 	"github.com/coze-dev/coze-studio/backend/application/singleagent"
 	"github.com/coze-dev/coze-studio/backend/application/skill"
+	"github.com/coze-dev/coze-studio/backend/application/task"
 	"github.com/coze-dev/coze-studio/backend/application/template"
 	"github.com/coze-dev/coze-studio/backend/application/upload"
 	"github.com/coze-dev/coze-studio/backend/application/user"
@@ -111,6 +112,7 @@ type primaryServices struct {
 	workflowSVC  *workflow.ApplicationService
 	shortcutSVC  *shortcutcmd.ShortcutCmdApplicationService
 	skillSVC     *skill.ApplicationService
+	taskSVC      *task.ApplicationService
 	appSVC       *app.APPApplicationService
 }
 
@@ -143,6 +145,7 @@ func Init(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
+	task.NewWorker(primaryServices.taskSVC).Start(ctx)
 
 	complexServices, err := initComplexServices(ctx, primaryServices)
 	if err != nil {
@@ -240,6 +243,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		IDGen:      basicServices.infra.IDGenSVC,
 		CodeRunner: basicServices.infra.CodeRunner,
 	})
+	taskSVC := task.InitService(&task.ServiceComponents{
+		DB:    basicServices.infra.DB,
+		IDGen: basicServices.infra.IDGenSVC,
+	})
 
 	return &primaryServices{
 		basicServices: basicServices,
@@ -249,6 +256,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		workflowSVC:   workflowDomainSVC,
 		shortcutSVC:   shortcutSVC,
 		skillSVC:      skillSVC,
+		taskSVC:       taskSVC,
 		infra:         basicServices.infra,
 	}, nil
 }

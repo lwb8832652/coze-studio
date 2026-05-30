@@ -25,10 +25,12 @@ import (
 var allowedTransitions = map[entity.Status]map[entity.Status]bool{
 	entity.StatusCreated: {
 		entity.StatusQueued:   true,
+		entity.StatusFailed:   true,
 		entity.StatusCanceled: true,
 	},
 	entity.StatusQueued: {
 		entity.StatusRunning:  true,
+		entity.StatusFailed:   true,
 		entity.StatusCanceled: true,
 	},
 	entity.StatusRunning: {

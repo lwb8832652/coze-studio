@@ -29,6 +29,8 @@ func TestCanTransitionAllowsHappyPath(t *testing.T) {
 	assert.True(t, CanTransition(entity.StatusCreated, entity.StatusQueued))
 	assert.True(t, CanTransition(entity.StatusQueued, entity.StatusRunning))
 	assert.True(t, CanTransition(entity.StatusRunning, entity.StatusSucceeded))
+	assert.True(t, CanTransition(entity.StatusCreated, entity.StatusFailed))
+	assert.True(t, CanTransition(entity.StatusQueued, entity.StatusFailed))
 }
 
 func TestCanTransitionBlocksTerminalToRunning(t *testing.T) {

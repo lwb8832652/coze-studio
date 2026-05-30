@@ -23,21 +23,27 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
-	task2 "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+
+	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	apptask "github.com/coze-dev/coze-studio/backend/application/task"
 )
 
 // CreateTask .
 // @router /api/workbench/tasks [POST]
 func CreateTask(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.CreateTaskRequest
+	var req taskapi.CreateTaskRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.CreateTaskResponse)
+	resp, err := apptask.SVC.CreateTask(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -46,14 +52,18 @@ func CreateTask(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/tasks [GET]
 func ListTasks(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.ListTasksRequest
+	var req taskapi.ListTasksRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.ListTasksResponse)
+	resp, err := apptask.SVC.ListTasks(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -62,14 +72,18 @@ func ListTasks(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/tasks/:task_id [GET]
 func GetTask(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.GetTaskRequest
+	var req taskapi.GetTaskRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.GetTaskResponse)
+	resp, err := apptask.SVC.GetTask(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -78,14 +92,18 @@ func GetTask(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/tasks/:task_id/cancel [POST]
 func CancelTask(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.GetTaskRequest
+	var req taskapi.GetTaskRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.GetTaskResponse)
+	resp, err := apptask.SVC.CancelTask(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -94,14 +112,18 @@ func CancelTask(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/tasks/:task_id/retry [POST]
 func RetryTask(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.GetTaskRequest
+	var req taskapi.GetTaskRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.GetTaskResponse)
+	resp, err := apptask.SVC.RetryTask(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -110,14 +132,18 @@ func RetryTask(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/tasks/:task_id/events [GET]
 func ListTaskEvents(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req task2.GetTaskRequest
+	var req taskapi.GetTaskRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(task2.TaskEventsResponse)
+	resp, err := apptask.SVC.ListTaskEvents(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
