@@ -79,28 +79,33 @@ func ValidateDeclaration(decl *Declaration) error {
 		return fmt.Errorf("declaration is required")
 	}
 
-	if strings.TrimSpace(decl.ID) == "" {
+	decl.ID = strings.TrimSpace(decl.ID)
+	decl.Name = strings.TrimSpace(decl.Name)
+	decl.Type = strings.TrimSpace(decl.Type)
+	decl.Executor.Language = strings.TrimSpace(decl.Executor.Language)
+	decl.Executor.Entry = strings.TrimSpace(decl.Executor.Entry)
+	decl.Executor.WorkflowID = strings.TrimSpace(decl.Executor.WorkflowID)
+
+	if decl.ID == "" {
 		return fmt.Errorf("id is required")
 	}
-	if strings.TrimSpace(decl.Name) == "" {
+	if decl.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-
-	declType := strings.TrimSpace(decl.Type)
-	if declType == "" {
+	if decl.Type == "" {
 		return fmt.Errorf("type is required")
 	}
 
-	switch declType {
+	switch decl.Type {
 	case "script":
-		if strings.TrimSpace(decl.Executor.Language) != "python" {
+		if decl.Executor.Language != "python" {
 			return fmt.Errorf("executor.language must be python")
 		}
-		if strings.TrimSpace(decl.Executor.Entry) == "" {
+		if decl.Executor.Entry == "" {
 			return fmt.Errorf("executor.entry is required")
 		}
 	case "workflow":
-		if strings.TrimSpace(decl.Executor.WorkflowID) == "" {
+		if decl.Executor.WorkflowID == "" {
 			return fmt.Errorf("workflow_id is required")
 		}
 	default:

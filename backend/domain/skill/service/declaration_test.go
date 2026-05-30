@@ -68,3 +68,157 @@ func TestValidateDeclarationRequiresWorkflowID(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "workflow_id is required")
 }
+
+func TestParseDeclarationJSON(t *testing.T) {
+	content := []byte(`{
+		"id": "customer_workflow",
+		"name": "Customer Workflow",
+		"description": "Run a customer workflow.",
+		"type": "workflow",
+		"version": "v1.0.0",
+		"enabled": true,
+		"input_schema": {"type": "object"},
+		"output_schema": {"type": "object"},
+		"executor": {
+			"workflow_id": "workflow-123",
+			"version": "v2"
+		},
+		"permissions": {
+			"network": true
+		}
+	}`)
+
+	decl, err := ParseDeclaration("customer_workflow.json", content)
+
+	require.NoError(t, err)
+	assert.Equal(t, "customer_workflow", decl.ID)
+	assert.Equal(t, "workflow", decl.Type)
+	assert.Equal(t, "workflow-123", decl.Executor.WorkflowID)
+	assert.True(t, decl.Permissions.Network)
+}
+
+func TestParseDeclarationUnsupportedExtension(t *testing.T) {
+	decl, err := ParseDeclaration("weekly_report.toml", []byte("id = weekly_report"))
+
+	require.Error(t, err)
+	assert.Nil(t, decl)
+	assert.Contains(t, err.Error(), "unsupported declaration file extension")
+}
+
+func TestParseDeclarationDecodeError(t *testing.T) {
+	tests := []struct {
+		name     string
+		fileName string
+		content  []byte
+		wantErr  string
+	}{
+		{
+			name:     "yaml",
+			fileName: "weekly_report.yaml",
+			content:  []byte("id: ["),
+			wantErr:  "unmarshal yaml declaration",
+		},
+		{
+			name:     "json",
+			fileName: "weekly_report.json",
+			content:  []byte(`{"id":`),
+			wantErr:  "unmarshal json declaration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decl, err := ParseDeclaration(tt.fileName, tt.content)
+
+			require.Error(t, err)
+			assert.Nil(t, decl)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateDeclarationNil(t *testing.T) {
+	err := ValidateDeclaration(nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "declaration is required")
+}
+
+func TestValidateDeclarationUnsupportedType(t *testing.T) {
+	decl := &Declaration{
+		ID:   "weekly_report",
+		Name: "Weekly Report",
+		Type: "chat",
+	}
+
+	err := ValidateDeclaration(decl)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported declaration type")
+}
+
+func TestValidateDeclarationScriptLanguageAndEntry(t *testing.T) {
+	tests := []struct {
+		name    string
+		decl    *Declaration
+		wantErr string
+	}{
+		{
+			name: "language",
+			decl: &Declaration{
+				ID:   "weekly_report",
+				Name: "Weekly Report",
+				Type: "script",
+				Executor: ExecutorDeclaration{
+					Language: "node",
+					Entry:    "main.py",
+				},
+			},
+			wantErr: "executor.language must be python",
+		},
+		{
+			name: "entry",
+			decl: &Declaration{
+				ID:   "weekly_report",
+				Name: "Weekly Report",
+				Type: "script",
+				Executor: ExecutorDeclaration{
+					Language: "python",
+				},
+			},
+			wantErr: "executor.entry is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDeclaration(tt.decl)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateDeclarationNormalizesWhitespace(t *testing.T) {
+	decl := &Declaration{
+		ID:   " weekly_report ",
+		Name: " Weekly Report ",
+		Type: " script ",
+		Executor: ExecutorDeclaration{
+			Language:   " python ",
+			Entry:      " main.py ",
+			WorkflowID: " workflow-123 ",
+		},
+	}
+
+	err := ValidateDeclaration(decl)
+
+	require.NoError(t, err)
+	assert.Equal(t, "weekly_report", decl.ID)
+	assert.Equal(t, "Weekly Report", decl.Name)
+	assert.Equal(t, "script", decl.Type)
+	assert.Equal(t, "python", decl.Executor.Language)
+	assert.Equal(t, "main.py", decl.Executor.Entry)
+	assert.Equal(t, "workflow-123", decl.Executor.WorkflowID)
+}
