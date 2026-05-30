@@ -75,7 +75,7 @@ struct ListTasksResponse {
 }
 
 struct GetTaskRequest {
-    1: required i64 task_id (agw.js_conv="str", api.js_conv="true")
+    1: required i64 task_id (api.path="task_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 

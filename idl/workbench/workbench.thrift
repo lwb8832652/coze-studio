@@ -47,4 +47,5 @@ service WorkbenchChatService {
     )
 }
 
+// Re-export through workbench to avoid the task include alias collision in idl/api.thrift.
 service WorkbenchTaskService extends task.WorkbenchTaskService {}

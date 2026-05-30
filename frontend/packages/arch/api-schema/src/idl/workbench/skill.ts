@@ -49,6 +49,19 @@ export interface UpsertSkillRequest {
   executor: string,
   permissions: string,
 }
+export interface UpdateSkillRequest {
+  id: string,
+  space_id: string,
+  name: string,
+  description: string,
+  type: SkillType,
+  version: string,
+  enabled: boolean,
+  input_schema: string,
+  output_schema: string,
+  executor: string,
+  permissions: string,
+}
 export interface ImportSkillRequest {
   space_id: string,
   file_name: string,
@@ -109,15 +122,14 @@ export const CreateSkill = /*#__PURE__*/createAPI<UpsertSkillRequest, SkillRespo
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });
-export const UpdateSkill = /*#__PURE__*/createAPI<UpsertSkillRequest, SkillResponse, {
-  id: string | number;
-}>({
+export const UpdateSkill = /*#__PURE__*/createAPI<UpdateSkillRequest, SkillResponse>({
   "url": "/api/workbench/skills/:id",
   "method": "PUT",
   "name": "UpdateSkill",
-  "reqType": "UpsertSkillRequest",
+  "reqType": "UpdateSkillRequest",
   "reqMapping": {
-    "body": ["id", "space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions"]
+    "path": ["id"],
+    "body": ["space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
@@ -147,43 +159,38 @@ export const ListSkills = /*#__PURE__*/createAPI<ListSkillsRequest, ListSkillsRe
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });
-export const GetSkill = /*#__PURE__*/createAPI<GetSkillRequest, SkillResponse, {
-  skill_id: string | number;
-}>({
+export const GetSkill = /*#__PURE__*/createAPI<GetSkillRequest, SkillResponse>({
   "url": "/api/workbench/skills/:skill_id",
   "method": "GET",
   "name": "GetSkill",
   "reqType": "GetSkillRequest",
   "reqMapping": {
-    "query": ["skill_id"]
+    "path": ["skill_id"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });
-export const ExportSkill = /*#__PURE__*/createAPI<GetSkillRequest, ExportSkillResponse, {
-  skill_id: string | number;
-}>({
+export const ExportSkill = /*#__PURE__*/createAPI<GetSkillRequest, ExportSkillResponse>({
   "url": "/api/workbench/skills/:skill_id/export",
   "method": "GET",
   "name": "ExportSkill",
   "reqType": "GetSkillRequest",
   "reqMapping": {
-    "query": ["skill_id"]
+    "path": ["skill_id"]
   },
   "resType": "ExportSkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });
-export const TestRunSkill = /*#__PURE__*/createAPI<TestRunSkillRequest, TestRunSkillResponse, {
-  skill_id: string | number;
-}>({
+export const TestRunSkill = /*#__PURE__*/createAPI<TestRunSkillRequest, TestRunSkillResponse>({
   "url": "/api/workbench/skills/:skill_id/test_run",
   "method": "POST",
   "name": "TestRunSkill",
   "reqType": "TestRunSkillRequest",
   "reqMapping": {
-    "body": ["skill_id", "input"]
+    "path": ["skill_id"],
+    "body": ["input"]
   },
   "resType": "TestRunSkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",

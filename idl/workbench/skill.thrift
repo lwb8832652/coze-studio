@@ -38,6 +38,21 @@ struct UpsertSkillRequest {
     255: optional base.Base Base (api.none="true")
 }
 
+struct UpdateSkillRequest {
+    1: required i64 id (api.path="id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    3: required string name
+    4: required string description
+    5: required SkillType type
+    6: required string version
+    7: required bool enabled
+    8: required string input_schema
+    9: required string output_schema
+    10: required string executor
+    11: required string permissions
+    255: optional base.Base Base (api.none="true")
+}
+
 struct ImportSkillRequest {
     1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
     2: required string file_name
@@ -71,12 +86,12 @@ struct ListSkillsResponse {
 }
 
 struct GetSkillRequest {
-    1: required i64 skill_id (agw.js_conv="str", api.js_conv="true")
+    1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
 struct TestRunSkillRequest {
-    1: required i64 skill_id (agw.js_conv="str", api.js_conv="true")
+    1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     2: required string input
     255: optional base.Base Base (api.none="true")
 }
@@ -110,7 +125,7 @@ service WorkbenchSkillService {
         api.post="/api/workbench/skills",
         api.category="workbench"
     )
-    SkillResponse UpdateSkill(1: UpsertSkillRequest request)(
+    SkillResponse UpdateSkill(1: UpdateSkillRequest request)(
         api.put="/api/workbench/skills/:id",
         api.category="workbench"
     )

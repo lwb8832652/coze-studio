@@ -117,57 +117,49 @@ export const ListTasks = /*#__PURE__*/createAPI<ListTasksRequest, ListTasksRespo
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });
-export const GetTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse, {
-  task_id: string | number;
-}>({
+export const GetTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse>({
   "url": "/api/workbench/tasks/:task_id",
   "method": "GET",
   "name": "GetTask",
   "reqType": "GetTaskRequest",
   "reqMapping": {
-    "query": ["task_id"]
+    "path": ["task_id"]
   },
   "resType": "GetTaskResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });
-export const CancelTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse, {
-  task_id: string | number;
-}>({
+export const CancelTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse>({
   "url": "/api/workbench/tasks/:task_id/cancel",
   "method": "POST",
   "name": "CancelTask",
   "reqType": "GetTaskRequest",
   "reqMapping": {
-    "body": ["task_id"]
+    "path": ["task_id"]
   },
   "resType": "GetTaskResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });
-export const RetryTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse, {
-  task_id: string | number;
-}>({
+export const RetryTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse>({
   "url": "/api/workbench/tasks/:task_id/retry",
   "method": "POST",
   "name": "RetryTask",
   "reqType": "GetTaskRequest",
   "reqMapping": {
-    "body": ["task_id"]
+    "path": ["task_id"]
   },
   "resType": "GetTaskResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });
-export const ListTaskEvents = /*#__PURE__*/createAPI<GetTaskRequest, TaskEventsResponse, {
-  task_id: string | number;
-}>({
+export const ListTaskEvents = /*#__PURE__*/createAPI<GetTaskRequest, TaskEventsResponse>({
   "url": "/api/workbench/tasks/:task_id/events",
   "method": "GET",
   "name": "ListTaskEvents",
   "reqType": "GetTaskRequest",
   "reqMapping": {
-    "query": ["task_id"]
+    "path": ["task_id"]
   },
   "resType": "TaskEventsResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",

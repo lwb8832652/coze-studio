@@ -46,7 +46,7 @@ func CreateSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/:id [PUT]
 func UpdateSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.UpsertSkillRequest
+	var req skill.UpdateSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
 		c.String(consts.StatusBadRequest, err.Error())

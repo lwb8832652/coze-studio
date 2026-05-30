@@ -3016,7 +3016,7 @@ func (p *ListTasksResponse) String() string {
 }
 
 type GetTaskRequest struct {
-	TaskID int64      `thrift:"task_id,1,required" form:"task_id,required" json:"task_id,string,required" query:"task_id,required"`
+	TaskID int64      `thrift:"task_id,1,required" json:"task_id,string,required" path:"task_id,required"`
 	Base   *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
