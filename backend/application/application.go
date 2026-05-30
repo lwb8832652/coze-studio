@@ -35,6 +35,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/search"
 	"github.com/coze-dev/coze-studio/backend/application/shortcutcmd"
 	"github.com/coze-dev/coze-studio/backend/application/singleagent"
+	"github.com/coze-dev/coze-studio/backend/application/skill"
 	"github.com/coze-dev/coze-studio/backend/application/template"
 	"github.com/coze-dev/coze-studio/backend/application/upload"
 	"github.com/coze-dev/coze-studio/backend/application/user"
@@ -109,6 +110,7 @@ type primaryServices struct {
 	knowledgeSVC *knowledge.KnowledgeApplicationService
 	workflowSVC  *workflow.ApplicationService
 	shortcutSVC  *shortcutcmd.ShortcutCmdApplicationService
+	skillSVC     *skill.ApplicationService
 	appSVC       *app.APPApplicationService
 }
 
@@ -233,6 +235,11 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 	}
 
 	shortcutSVC := shortcutcmd.InitService(basicServices.infra.DB, basicServices.infra.IDGenSVC)
+	skillSVC := skill.InitService(&skill.ServiceComponents{
+		DB:         basicServices.infra.DB,
+		IDGen:      basicServices.infra.IDGenSVC,
+		CodeRunner: basicServices.infra.CodeRunner,
+	})
 
 	return &primaryServices{
 		basicServices: basicServices,
@@ -241,6 +248,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		knowledgeSVC:  knowledgeSVC,
 		workflowSVC:   workflowDomainSVC,
 		shortcutSVC:   shortcutSVC,
+		skillSVC:      skillSVC,
 		infra:         basicServices.infra,
 	}, nil
 }

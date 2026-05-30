@@ -23,21 +23,27 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
-	skill "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
+
+	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
+	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 )
 
 // CreateSkill .
 // @router /api/workbench/skills [POST]
 func CreateSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.UpsertSkillRequest
+	var req skillapi.UpsertSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.SkillResponse)
+	resp, err := appskill.SVC.CreateSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -46,14 +52,18 @@ func CreateSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/:id [PUT]
 func UpdateSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.UpdateSkillRequest
+	var req skillapi.UpdateSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.SkillResponse)
+	resp, err := appskill.SVC.UpdateSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -62,14 +72,18 @@ func UpdateSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/import [POST]
 func ImportSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.ImportSkillRequest
+	var req skillapi.ImportSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.SkillResponse)
+	resp, err := appskill.SVC.ImportSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -78,14 +92,18 @@ func ImportSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills [GET]
 func ListSkills(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.ListSkillsRequest
+	var req skillapi.ListSkillsRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.ListSkillsResponse)
+	resp, err := appskill.SVC.ListSkills(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -94,14 +112,18 @@ func ListSkills(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/:skill_id [GET]
 func GetSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.GetSkillRequest
+	var req skillapi.GetSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.SkillResponse)
+	resp, err := appskill.SVC.GetSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -110,14 +132,18 @@ func GetSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/:skill_id/export [GET]
 func ExportSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.GetSkillRequest
+	var req skillapi.GetSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.ExportSkillResponse)
+	resp, err := appskill.SVC.ExportSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
@@ -126,14 +152,18 @@ func ExportSkill(ctx context.Context, c *app.RequestContext) {
 // @router /api/workbench/skills/:skill_id/test_run [POST]
 func TestRunSkill(ctx context.Context, c *app.RequestContext) {
 	var err error
-	var req skill.TestRunSkillRequest
+	var req skillapi.TestRunSkillRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(skill.TestRunSkillResponse)
+	resp, err := appskill.SVC.TestRunSkill(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
 }
