@@ -157,6 +157,10 @@ func (s *ApplicationService) requireDomainSVC() error {
 	return nil
 }
 
+func IsClientError(err error) bool {
+	return domain.IsClientError(err)
+}
+
 func upsertRequestToEntity(req *skillapi.UpsertSkillRequest) (*entity.Skill, error) {
 	typ, err := apiTypeToEntity(req.Type)
 	if err != nil {
@@ -240,7 +244,7 @@ func apiTypeToEntity(typ skillapi.SkillType) (entity.Type, error) {
 	case skillapi.SkillType_Workflow:
 		return entity.TypeWorkflow, nil
 	default:
-		return "", fmt.Errorf("unsupported skill type: %d", typ)
+		return "", domain.InvalidArgumentErrorf("unsupported skill type: %d", typ)
 	}
 }
 
@@ -251,7 +255,7 @@ func entityTypeToAPI(typ entity.Type) (skillapi.SkillType, error) {
 	case entity.TypeWorkflow:
 		return skillapi.SkillType_Workflow, nil
 	default:
-		return 0, fmt.Errorf("unsupported skill type: %s", typ)
+		return 0, domain.InvalidArgumentErrorf("unsupported skill type: %s", typ)
 	}
 }
 
@@ -286,7 +290,7 @@ func exportContent(skill *entity.Skill) (string, error) {
 func setJSONField(target map[string]any, key string, value string) error {
 	var field any
 	if err := json.Unmarshal([]byte(value), &field); err != nil {
-		return fmt.Errorf("unmarshal %s: %w", key, err)
+		return domain.InvalidArgumentErrorf("unmarshal %s: %v", key, err)
 	}
 	target[key] = field
 	return nil

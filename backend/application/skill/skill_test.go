@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-package service
+package skill
 
-import "context"
+import (
+	"testing"
 
-type Executor interface {
-	Run(ctx context.Context, skill *Declaration, input map[string]any) (map[string]any, error)
-}
+	"github.com/stretchr/testify/require"
 
-type UnsupportedExecutor struct{}
+	domain "github.com/coze-dev/coze-studio/backend/domain/skill/service"
+)
 
-func (UnsupportedExecutor) Run(ctx context.Context, skill *Declaration, input map[string]any) (map[string]any, error) {
-	return nil, NotImplementedErrorf("workflow skill test run is not implemented")
+func TestIsClientErrorWrapsDomainClassification(t *testing.T) {
+	require.True(t, IsClientError(domain.InvalidArgumentErrorf("bad request")))
+	require.False(t, IsClientError(nil))
 }

@@ -41,7 +41,7 @@ func CreateSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.CreateSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -61,7 +61,7 @@ func UpdateSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.UpdateSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -81,7 +81,7 @@ func ImportSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.ImportSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -101,7 +101,7 @@ func ListSkills(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.ListSkills(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -121,7 +121,7 @@ func GetSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.GetSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -141,7 +141,7 @@ func ExportSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.ExportSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -161,9 +161,17 @@ func TestRunSkill(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appskill.SVC.TestRunSkill(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchSkillErrorResponse(ctx, c, err)
 		return
 	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+func workbenchSkillErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if appskill.IsClientError(err) {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	internalServerErrorResponse(ctx, c, err)
 }

@@ -19,11 +19,14 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
+	"gorm.io/gorm"
 )
 
 type skillService struct {
@@ -44,7 +47,7 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 
 	decl, err := ParseDeclaration(fileName, content)
 	if err != nil {
-		return nil, err
+		return nil, InvalidArgumentErrorf("%v", err)
 	}
 
 	id, err := s.components.IDGen.GenID(ctx)
@@ -71,7 +74,7 @@ func (s *skillService) Create(ctx context.Context, skill *entity.Skill) (*entity
 		return nil, err
 	}
 	if skill == nil {
-		return nil, fmt.Errorf("skill is required")
+		return nil, InvalidArgumentErrorf("skill is required")
 	}
 	if skill.ID == 0 {
 		if err := s.requireIDGen(); err != nil {
@@ -101,7 +104,7 @@ func (s *skillService) Update(ctx context.Context, skill *entity.Skill) (*entity
 		return nil, err
 	}
 	if skill == nil {
-		return nil, fmt.Errorf("skill is required")
+		return nil, InvalidArgumentErrorf("skill is required")
 	}
 	skill.UpdatedAt = time.Now().UnixMilli()
 	if err := s.components.Repo.Update(ctx, skill); err != nil {
@@ -116,10 +119,13 @@ func (s *skillService) Get(ctx context.Context, id int64) (*entity.Skill, error)
 	}
 	skill, err := s.components.Repo.Get(ctx, id)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFoundErrorf("skill %d not found", id)
+		}
 		return nil, err
 	}
 	if skill == nil {
-		return nil, fmt.Errorf("skill %d not found", id)
+		return nil, NotFoundErrorf("skill %d not found", id)
 	}
 	return skill, nil
 }
@@ -140,7 +146,7 @@ func (s *skillService) TestRun(ctx context.Context, id int64, input string) (str
 	params := map[string]any{}
 	if strings.TrimSpace(input) != "" {
 		if err := json.Unmarshal([]byte(input), &params); err != nil {
-			return "", fmt.Errorf("invalid test input json: %w", err)
+			return "", InvalidArgumentErrorf("invalid test input json: %v", err)
 		}
 	}
 
@@ -193,11 +199,11 @@ func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {
 		return s.components.ScriptRunner, nil
 	case entity.TypeWorkflow:
 		if s.components.WorkflowRunner == nil {
-			return nil, fmt.Errorf("workflow runner is required")
+			return UnsupportedExecutor{}, nil
 		}
 		return s.components.WorkflowRunner, nil
 	default:
-		return nil, fmt.Errorf("unsupported skill type: %s", typ)
+		return nil, InvalidArgumentErrorf("unsupported skill type: %s", typ)
 	}
 }
 
@@ -244,6 +250,8 @@ func skillToDeclaration(skill *entity.Skill) (*Declaration, error) {
 	}
 
 	decl := &Declaration{
+		// Original declaration IDs are not persisted yet; use the stable numeric skill ID for runtime callers.
+		ID:          strconv.FormatInt(skill.ID, 10),
 		Name:        skill.Name,
 		Description: skill.Description,
 		Type:        string(skill.Type),
@@ -273,7 +281,7 @@ func declarationTypeToEntity(typ string) (entity.Type, error) {
 	case string(entity.TypeWorkflow):
 		return entity.TypeWorkflow, nil
 	default:
-		return "", fmt.Errorf("unsupported declaration type: %s", typ)
+		return "", InvalidArgumentErrorf("unsupported declaration type: %s", typ)
 	}
 }
 
@@ -290,7 +298,7 @@ func unmarshalString(name, value string, target any) error {
 		value = "{}"
 	}
 	if err := json.Unmarshal([]byte(value), target); err != nil {
-		return fmt.Errorf("unmarshal %s: %w", name, err)
+		return InvalidArgumentErrorf("unmarshal %s: %v", name, err)
 	}
 	return nil
 }

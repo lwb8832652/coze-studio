@@ -69,7 +69,30 @@ func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"ok":true}`, output)
 	require.Equal(t, "sales", runner.input["topic"])
+	require.Equal(t, "101", runner.skill.ID)
 	require.Equal(t, "python", runner.skill.Executor.Language)
+}
+
+func TestServiceTestRunWorkflowReturnsNotImplementedClientError(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[202] = &entity.Skill{
+		ID:           202,
+		SpaceID:      1,
+		Name:         "Workflow Skill",
+		Type:         entity.TypeWorkflow,
+		Enabled:      true,
+		InputSchema:  `{"type":"object"}`,
+		OutputSchema: `{"type":"object"}`,
+		Executor:     `{"workflow_id":"wf_1"}`,
+		Permissions:  `{"network":false}`,
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 203}, WorkflowRunner: UnsupportedExecutor{}})
+
+	_, err := svc.TestRun(context.Background(), 202, `{}`)
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "not implemented")
 }
 
 type memoryRepo struct {

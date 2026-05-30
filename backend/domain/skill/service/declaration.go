@@ -40,6 +40,7 @@ type Declaration struct {
 type ExecutorDeclaration struct {
 	Language   string `json:"language" yaml:"language"`
 	Entry      string `json:"entry" yaml:"entry"`
+	Code       string `json:"code,omitempty" yaml:"code,omitempty"`
 	WorkflowID string `json:"workflow_id" yaml:"workflow_id"`
 	Version    string `json:"version" yaml:"version"`
 }
@@ -84,6 +85,7 @@ func ValidateDeclaration(decl *Declaration) error {
 	decl.Type = strings.TrimSpace(decl.Type)
 	decl.Executor.Language = strings.TrimSpace(decl.Executor.Language)
 	decl.Executor.Entry = strings.TrimSpace(decl.Executor.Entry)
+	decl.Executor.Code = strings.TrimSpace(decl.Executor.Code)
 	decl.Executor.WorkflowID = strings.TrimSpace(decl.Executor.WorkflowID)
 
 	if decl.ID == "" {

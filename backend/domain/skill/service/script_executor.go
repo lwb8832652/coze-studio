@@ -19,6 +19,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 )
@@ -29,10 +31,20 @@ type ScriptExecutor struct {
 }
 
 func (e *ScriptExecutor) Run(ctx context.Context, skill *Declaration, input map[string]any) (map[string]any, error) {
+	if e == nil {
+		return nil, fmt.Errorf("script executor is required")
+	}
 	if e.Runner == nil {
 		return nil, fmt.Errorf("script runner is required")
 	}
-	resp, err := e.Runner.Run(ctx, &coderunner.RunRequest{Code: e.Code, Params: input, Language: coderunner.Python})
+	if skill == nil {
+		return nil, InvalidArgumentErrorf("skill declaration is required")
+	}
+	code, err := e.resolveCode(skill)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := e.Runner.Run(ctx, &coderunner.RunRequest{Code: code, Params: input, Language: coderunner.Python})
 	if err != nil {
 		return nil, err
 	}
@@ -40,4 +52,26 @@ func (e *ScriptExecutor) Run(ctx context.Context, skill *Declaration, input map[
 		return nil, fmt.Errorf("script runner returned nil response")
 	}
 	return resp.Result, nil
+}
+
+func (e *ScriptExecutor) resolveCode(skill *Declaration) (string, error) {
+	if code := strings.TrimSpace(skill.Executor.Code); code != "" {
+		return code, nil
+	}
+	if code := strings.TrimSpace(e.Code); code != "" {
+		return code, nil
+	}
+
+	entry := strings.TrimSpace(skill.Executor.Entry)
+	if entry == "" {
+		return "", InvalidArgumentErrorf("script code is required")
+	}
+	content, err := os.ReadFile(entry)
+	if err != nil {
+		return "", InvalidArgumentErrorf("read script entry %q: %v", entry, err)
+	}
+	if code := strings.TrimSpace(string(content)); code != "" {
+		return code, nil
+	}
+	return "", InvalidArgumentErrorf("script code is required")
 }
