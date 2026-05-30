@@ -114,6 +114,21 @@ func TestRetryOnlySupportsFailedTask(t *testing.T) {
 	require.Contains(t, err.Error(), "cannot transition")
 }
 
+func TestValidationAndTransitionErrorsAreClientErrors(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 207}})
+
+	_, err := svc.Create(context.Background(), &CreateRequest{SpaceID: 1, CreatorID: 2, Title: "  "})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	task, err := svc.Create(context.Background(), &CreateRequest{SpaceID: 1, CreatorID: 2, Title: "x"})
+	require.NoError(t, err)
+	err = svc.Complete(context.Background(), task.ID, `{"ok":true}`)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+}
+
 type memoryRepo struct {
 	mu     sync.Mutex
 	tasks  map[int64]*entity.Task

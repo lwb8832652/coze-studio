@@ -41,7 +41,7 @@ func CreateTask(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.CreateTask(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -61,7 +61,7 @@ func ListTasks(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.ListTasks(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -81,7 +81,7 @@ func GetTask(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.GetTask(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -101,7 +101,7 @@ func CancelTask(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.CancelTask(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -121,7 +121,7 @@ func RetryTask(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.RetryTask(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -141,9 +141,17 @@ func ListTaskEvents(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := apptask.SVC.ListTaskEvents(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		workbenchTaskErrorResponse(ctx, c, err)
 		return
 	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+func workbenchTaskErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if apptask.IsClientError(err) {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	internalServerErrorResponse(ctx, c, err)
 }

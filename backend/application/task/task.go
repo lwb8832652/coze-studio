@@ -136,6 +136,10 @@ func (s *ApplicationService) requireDomainSVC() error {
 	return nil
 }
 
+func IsClientError(err error) bool {
+	return domain.IsClientError(err)
+}
+
 func entityToAPI(task *entity.Task) *taskapi.ChatTask {
 	if task == nil {
 		return nil
@@ -225,6 +229,6 @@ func apiStatusToEntity(status taskapi.TaskStatus) (entity.Status, error) {
 	case taskapi.TaskStatus_Canceled:
 		return entity.StatusCanceled, nil
 	default:
-		return "", fmt.Errorf("unsupported task status: %d", status)
+		return "", domain.InvalidArgumentErrorf("unsupported task status: %d", status)
 	}
 }

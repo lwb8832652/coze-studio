@@ -47,10 +47,10 @@ func (s *taskService) Create(ctx context.Context, req *CreateRequest) (*entity.T
 		return nil, err
 	}
 	if req == nil {
-		return nil, fmt.Errorf("create task request is required")
+		return nil, InvalidArgumentErrorf("create task request is required")
 	}
 	if strings.TrimSpace(req.Title) == "" {
-		return nil, fmt.Errorf("task title is required")
+		return nil, InvalidArgumentErrorf("task title is required")
 	}
 	id, err := s.idGen.GenID(ctx)
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *taskService) Retry(ctx context.Context, id int64) (*entity.Task, error)
 		return nil, err
 	}
 	if task.Status != entity.StatusFailed {
-		return nil, fmt.Errorf("cannot transition task from %s to %s", task.Status, entity.StatusQueued)
+		return nil, InvalidArgumentErrorf("cannot transition task from %s to %s", task.Status, entity.StatusQueued)
 	}
 	return s.transitionFrom(ctx, task, entity.StatusQueued, 0, "", "")
 }
@@ -151,7 +151,7 @@ func (s *taskService) transitionFrom(ctx context.Context, task *entity.Task, to 
 		return nil, err
 	}
 	if task == nil {
-		return nil, fmt.Errorf("task is required")
+		return nil, InvalidArgumentErrorf("task is required")
 	}
 	if err := EnsureTransition(task.Status, to); err != nil {
 		return nil, err

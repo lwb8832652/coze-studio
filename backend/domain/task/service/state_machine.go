@@ -16,11 +16,7 @@
 
 package service
 
-import (
-	"fmt"
-
-	"github.com/coze-dev/coze-studio/backend/domain/task/entity"
-)
+import "github.com/coze-dev/coze-studio/backend/domain/task/entity"
 
 var allowedTransitions = map[entity.Status]map[entity.Status]bool{
 	entity.StatusCreated: {
@@ -55,5 +51,5 @@ func EnsureTransition(from, to entity.Status) error {
 	if CanTransition(from, to) {
 		return nil
 	}
-	return fmt.Errorf("cannot transition task from %s to %s", from, to)
+	return InvalidArgumentErrorf("cannot transition task from %s to %s", from, to)
 }
