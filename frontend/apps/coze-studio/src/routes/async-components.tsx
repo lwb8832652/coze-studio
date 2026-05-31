@@ -53,6 +53,18 @@ export const Develop = lazy(() => import('../pages/develop'));
 // resource library page
 export const Library = lazy(() => import('../pages/library'));
 
+// chat workbench page
+export const Workbench = lazy(() => import('../pages/workbench'));
+
+// skill configuration page
+export const SkillPage = lazy(() => import('../pages/skill'));
+
+// task trigger page
+export const TaskTriggerPage = lazy(() => import('../pages/task-trigger'));
+
+// tasks page
+export const TasksPage = lazy(() => import('../pages/tasks'));
+
 // Agent IDE Layout Component
 export const AgentIDELayout = lazy(
   () => import('@coze-agent-ide/layout-adapter'),

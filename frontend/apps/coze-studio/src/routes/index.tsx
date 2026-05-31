@@ -46,6 +46,10 @@ import {
   ExplorePluginPage,
   ExploreTemplatePage,
   OAuthConsentConfirmPage,
+  Workbench,
+  SkillPage,
+  TaskTriggerPage,
+  TasksPage,
 } from './async-components';
 
 export const router: ReturnType<typeof createBrowserRouter> =
@@ -124,7 +128,16 @@ export const router: ReturnType<typeof createBrowserRouter> =
               children: [
                 {
                   index: true,
-                  element: <Navigate to="develop" replace />,
+                  element: <Navigate to="workbench" replace />,
+                },
+
+                // Chat Workbench
+                {
+                  path: 'workbench',
+                  Component: Workbench,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.WORKBENCH,
+                  }),
                 },
 
                 // Project Development
@@ -190,6 +203,33 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   Component: Library,
                   loader: () => ({
                     subMenuKey: SpaceSubModuleEnum.LIBRARY,
+                  }),
+                },
+
+                // Skill Configuration
+                {
+                  path: 'skill',
+                  Component: SkillPage,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.SKILL,
+                  }),
+                },
+
+                // Task Trigger
+                {
+                  path: 'task-trigger',
+                  Component: TaskTriggerPage,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.TASK_TRIGGER,
+                  }),
+                },
+
+                // Tasks
+                {
+                  path: 'tasks',
+                  Component: TasksPage,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.TASKS,
                   }),
                 },
 

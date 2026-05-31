@@ -17,14 +17,21 @@
 import { WorkspaceSubMenu as BaseWorkspaceSubMenu } from '@coze-foundation/space-ui-base';
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { I18n } from '@coze-arch/i18n';
-import { useRouteConfig } from '@coze-arch/bot-hooks';
 import {
+  IconCozAsynchronousTask,
+  IconCozAsynchronousTaskFill,
   IconCozBot,
   IconCozBotFill,
+  IconCozCode,
+  IconCozCodeFill,
   IconCozKnowledge,
   IconCozKnowledgeFill,
+  IconCozSetting,
+  IconCozSettingFill,
+  IconCozTrigger,
 } from '@coze-arch/coze-design/icons';
 import { Space, Avatar, Typography } from '@coze-arch/coze-design';
+import { useRouteConfig } from '@coze-arch/bot-hooks';
 
 import { SpaceSubModuleEnum } from '@/const';
 
@@ -37,16 +44,45 @@ export const WorkspaceSubMenu = () => {
     {
       icon: <IconCozBot />,
       activeIcon: <IconCozBotFill />,
-      title: () => I18n.t('navigation_workspace_develop', {}, 'Develop'),
-      path: SpaceSubModuleEnum.DEVELOP,
-      dataTestId: 'navigation_workspace_develop',
+      title: () => I18n.t('navigation_workspace_workbench', {}, 'Chat 工作台'),
+      path: SpaceSubModuleEnum.WORKBENCH,
+      dataTestId: 'navigation_workspace_workbench',
     },
     {
       icon: <IconCozKnowledge />,
       activeIcon: <IconCozKnowledgeFill />,
-      title: () => I18n.t('navigation_workspace_library', {}, 'Library'),
+      title: () => I18n.t('navigation_workspace_library', {}, '资源库'),
       path: SpaceSubModuleEnum.LIBRARY,
       dataTestId: 'navigation_workspace_library',
+    },
+    {
+      icon: <IconCozSetting />,
+      activeIcon: <IconCozSettingFill />,
+      title: () => I18n.t('navigation_workspace_skill', {}, '技能配置'),
+      path: SpaceSubModuleEnum.SKILL,
+      dataTestId: 'navigation_workspace_skill',
+    },
+    {
+      icon: <IconCozCode />,
+      activeIcon: <IconCozCodeFill />,
+      title: () => I18n.t('navigation_workspace_develop', {}, '项目开发'),
+      path: SpaceSubModuleEnum.DEVELOP,
+      dataTestId: 'navigation_workspace_develop',
+    },
+    {
+      icon: <IconCozTrigger />,
+      activeIcon: <IconCozTrigger />,
+      title: () =>
+        I18n.t('navigation_workspace_task_trigger', {}, '任务触发器'),
+      path: SpaceSubModuleEnum.TASK_TRIGGER,
+      dataTestId: 'navigation_workspace_task_trigger',
+    },
+    {
+      icon: <IconCozAsynchronousTask />,
+      activeIcon: <IconCozAsynchronousTaskFill />,
+      title: () => I18n.t('navigation_workspace_tasks', {}, '全部任务'),
+      path: SpaceSubModuleEnum.TASKS,
+      dataTestId: 'navigation_workspace_tasks',
     },
   ];
 

@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-export enum SpaceSubModuleEnum {
-  WORKBENCH = 'workbench',
-  LIBRARY = 'library',
-  SKILL = 'skill',
-  DEVELOP = 'develop',
-  TASK_TRIGGER = 'task-trigger',
-  TASKS = 'tasks',
-}
+const TasksPage = () => (
+  <main className="h-full px-[24px] py-[24px] coz-bg-primary">
+    <section className="h-full rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[24px] py-[20px]">
+      <h1 className="m-0 text-[20px] leading-[28px] font-[600] coz-fg-primary">
+        全部任务
+      </h1>
+    </section>
+  </main>
+);
+
+export default TasksPage;
