@@ -36,12 +36,21 @@ vi.mock('@coze-arch/coze-design', () => ({
     </button>
   ),
   TextArea: ({
+    'aria-label': ariaLabel,
     placeholder,
     value,
   }: {
+    'aria-label'?: string;
     placeholder?: string;
     value?: string;
-  }) => <textarea placeholder={placeholder} value={value} readOnly />,
+  }) => (
+    <textarea
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      value={value}
+      readOnly
+    />
+  ),
 }));
 
 vi.mock('@coze-arch/coze-design/icons', () => ({
@@ -60,9 +69,12 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain(
       'Hi，我会根据你的任务特性，自动匹配最佳处理方式。',
     );
+    expect(markup).toContain('aria-label="任务描述"');
     expect(markup).toContain('Auto');
     expect(markup).toContain('Ask');
     expect(markup).toContain('Agent');
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('aria-pressed="false"');
     expect(markup).toContain('工作总结');
     expect(markup).toContain('数据分析');
     expect(markup).toContain('代码分析');

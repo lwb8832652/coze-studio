@@ -48,6 +48,7 @@ const WorkbenchPage = () => {
 
         <section className="chat-workbench-composer" aria-label="任务输入">
           <TextArea
+            aria-label="任务描述"
             autosize={false}
             rows={5}
             value={value}
@@ -64,6 +65,7 @@ const WorkbenchPage = () => {
                   type="button"
                   className="chat-workbench-mode-button"
                   data-active={mode === item}
+                  aria-pressed={mode === item}
                   onClick={() => setMode(item)}
                 >
                   {item}
