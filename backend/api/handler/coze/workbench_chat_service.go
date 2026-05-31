@@ -24,6 +24,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	chat "github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
+	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
 )
 
 // WorkbenchChat .
@@ -33,11 +34,23 @@ func WorkbenchChat(ctx context.Context, c *app.RequestContext) {
 	var req chat.WorkbenchChatRequest
 	err = c.BindAndValidate(&req)
 	if err != nil {
-		c.String(consts.StatusBadRequest, err.Error())
+		invalidParamRequestResponse(c, err.Error())
 		return
 	}
 
-	resp := new(chat.WorkbenchChatResponse)
+	resp, err := appworkbench.SVC.HandleMessage(ctx, &req)
+	if err != nil {
+		workbenchChatErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+func workbenchChatErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if appworkbench.IsClientError(err) {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	internalServerErrorResponse(ctx, c, err)
 }

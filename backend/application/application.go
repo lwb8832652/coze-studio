@@ -40,6 +40,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/template"
 	"github.com/coze-dev/coze-studio/backend/application/upload"
 	"github.com/coze-dev/coze-studio/backend/application/user"
+	"github.com/coze-dev/coze-studio/backend/application/workbench"
 	"github.com/coze-dev/coze-studio/backend/application/workflow"
 	crossagent "github.com/coze-dev/coze-studio/backend/crossdomain/agent"
 	singleagentImpl "github.com/coze-dev/coze-studio/backend/crossdomain/agent/impl"
@@ -113,6 +114,7 @@ type primaryServices struct {
 	shortcutSVC  *shortcutcmd.ShortcutCmdApplicationService
 	skillSVC     *skill.ApplicationService
 	taskSVC      *task.ApplicationService
+	workbenchSVC *workbench.ApplicationService
 	appSVC       *app.APPApplicationService
 }
 
@@ -247,6 +249,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		DB:    basicServices.infra.DB,
 		IDGen: basicServices.infra.IDGenSVC,
 	})
+	workbenchSVC := workbench.InitService(&workbench.ServiceComponents{
+		SkillSVC: skillSVC,
+		TaskSVC:  taskSVC,
+	})
 
 	return &primaryServices{
 		basicServices: basicServices,
@@ -257,6 +263,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		shortcutSVC:   shortcutSVC,
 		skillSVC:      skillSVC,
 		taskSVC:       taskSVC,
+		workbenchSVC:  workbenchSVC,
 		infra:         basicServices.infra,
 	}, nil
 }
