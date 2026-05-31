@@ -47,8 +47,14 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 	if req == nil {
 		return nil, InvalidArgumentErrorf("workbench chat request is required")
 	}
+	if strings.TrimSpace(req.Message) == "" {
+		return nil, InvalidArgumentErrorf("message is required")
+	}
 
-	mode := chatModeFromAPI(req.Mode)
+	mode, err := chatModeFromAPI(req.Mode)
+	if err != nil {
+		return nil, err
+	}
 	intent := ResolveIntent(req)
 	decision := DecideRoute(mode, intent)
 
@@ -173,16 +179,16 @@ func isInvalidArgument(err error) bool {
 	return errors.As(err, &target)
 }
 
-func chatModeFromAPI(mode chatapi.ChatMode) ChatMode {
+func chatModeFromAPI(mode chatapi.ChatMode) (ChatMode, error) {
 	switch mode {
 	case chatapi.ChatMode_Ask:
-		return ChatModeAsk
+		return ChatModeAsk, nil
 	case chatapi.ChatMode_Agent:
-		return ChatModeAgent
+		return ChatModeAgent, nil
 	case chatapi.ChatMode_Auto:
-		return ChatModeAuto
+		return ChatModeAuto, nil
 	default:
-		return ChatModeAuto
+		return 0, InvalidArgumentErrorf("unsupported chat mode: %d", mode)
 	}
 }
 
