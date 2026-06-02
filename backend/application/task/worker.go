@@ -24,11 +24,12 @@ import (
 )
 
 type Worker struct {
-	app *ApplicationService
+	app       *ApplicationService
+	batchSize int32
 }
 
 func NewWorker(app *ApplicationService) *Worker {
-	return &Worker{app: app}
+	return &Worker{app: app, batchSize: 10}
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -41,7 +42,17 @@ func (w *Worker) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				logs.CtxDebugf(ctx, "[task-worker] tick")
+				w.RunOnce(ctx)
 			}
 		}
 	}()
+}
+
+func (w *Worker) RunOnce(ctx context.Context) {
+	if w == nil || w.app == nil {
+		return
+	}
+	if err := w.app.ProcessQueuedTasks(ctx, w.batchSize); err != nil {
+		logs.CtxErrorf(ctx, "[task-worker] process queued tasks failed, err=%v", err)
+	}
 }

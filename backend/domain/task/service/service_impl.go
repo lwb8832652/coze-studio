@@ -98,6 +98,27 @@ func (s *taskService) List(ctx context.Context, spaceID int64, status *entity.St
 	return s.repo.List(ctx, spaceID, status, page, pageSize)
 }
 
+func (s *taskService) ClaimQueued(ctx context.Context, limit int32) ([]*entity.Task, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	tasks, err := s.repo.ListQueued(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	claimed := make([]*entity.Task, 0, len(tasks))
+	for _, task := range tasks {
+		running, err := s.transitionFrom(ctx, task, entity.StatusRunning, 10, task.Result, task.Error)
+		if err != nil {
+			return nil, err
+		}
+		claimed = append(claimed, running)
+	}
+
+	return claimed, nil
+}
+
 func (s *taskService) Cancel(ctx context.Context, id int64) (*entity.Task, error) {
 	task, err := s.Get(ctx, id)
 	if err != nil {

@@ -26,6 +26,7 @@ type TaskRepository interface {
 	Create(ctx context.Context, task *entity.Task) error
 	Get(ctx context.Context, id int64) (*entity.Task, error)
 	List(ctx context.Context, spaceID int64, status *entity.Status, page, pageSize int32) ([]*entity.Task, int64, error)
+	ListQueued(ctx context.Context, limit int32) ([]*entity.Task, error)
 	UpdateStatus(ctx context.Context, id int64, from, to entity.Status, progress int32, result, errMsg string) error
 	CreateEvent(ctx context.Context, event *entity.Event) error
 	ListEvents(ctx context.Context, taskID int64) ([]*entity.Event, error)

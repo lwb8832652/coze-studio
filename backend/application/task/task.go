@@ -18,7 +18,9 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
 	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
@@ -129,11 +131,49 @@ func (s *ApplicationService) ListTaskEvents(ctx context.Context, req *taskapi.Ge
 	return &taskapi.TaskEventsResponse{Code: 0, Msg: "success", Data: data}, nil
 }
 
+func (s *ApplicationService) ProcessQueuedTasks(ctx context.Context, batchSize int32) error {
+	if err := s.requireDomainSVC(); err != nil {
+		return err
+	}
+	tasks, err := s.DomainSVC.ClaimQueued(ctx, batchSize)
+	if err != nil {
+		return err
+	}
+
+	for _, task := range tasks {
+		result, err := taskResultJSON(task)
+		if err != nil {
+			return err
+		}
+		if err := s.DomainSVC.Complete(ctx, task.ID, result); err != nil {
+			if failErr := s.DomainSVC.Fail(ctx, task.ID, err.Error()); failErr != nil {
+				return fmt.Errorf("complete task %d failed: %w; mark failed: %v", task.ID, err, failErr)
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (s *ApplicationService) requireDomainSVC() error {
 	if s == nil || s.DomainSVC == nil {
 		return fmt.Errorf("task service is not initialized")
 	}
 	return nil
+}
+
+func taskResultJSON(task *entity.Task) (string, error) {
+	payload := map[string]string{
+		"task_id": strconv.FormatInt(task.ID, 10),
+		"title":   task.Title,
+		"message": "任务已完成，当前为本地占位执行结果。",
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
 }
 
 func IsClientError(err error) bool {

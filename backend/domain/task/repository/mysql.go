@@ -159,6 +159,28 @@ func (r *taskRepository) List(ctx context.Context, spaceID int64, status *entity
 	return tasks, total, nil
 }
 
+func (r *taskRepository) ListQueued(ctx context.Context, limit int32) ([]*entity.Task, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	pos := make([]*taskPO, 0)
+	if err := r.db.WithContext(ctx).
+		Where("status = ?", string(entity.StatusQueued)).
+		Order("updated_at ASC, id ASC").
+		Limit(int(limit)).
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	tasks := make([]*entity.Task, 0, len(pos))
+	for _, po := range pos {
+		tasks = append(tasks, po.toEntity())
+	}
+
+	return tasks, nil
+}
+
 func (r *taskRepository) UpdateStatus(ctx context.Context, id int64, from, to entity.Status, progress int32, result, errMsg string) error {
 	resultJSON, err := optionalJSON("result", result)
 	if err != nil {

@@ -37,6 +37,23 @@ func TestListTasksInvalidStatusIsClientError(t *testing.T) {
 	require.True(t, IsClientError(err))
 }
 
+func TestProcessQueuedTasksCompletesClaimedTasks(t *testing.T) {
+	domainSVC := &recordingDomainService{
+		claimed: []*entity.Task{
+			{ID: 100, Title: "generate report", Status: entity.StatusRunning},
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	err := app.ProcessQueuedTasks(context.Background(), 10)
+
+	require.NoError(t, err)
+	require.Equal(t, int32(10), domainSVC.claimLimit)
+	require.Equal(t, int64(100), domainSVC.completedID)
+	require.Contains(t, domainSVC.completedResult, `"task_id":"100"`)
+	require.Contains(t, domainSVC.completedResult, "本地占位执行结果")
+}
+
 type noopDomainService struct{}
 
 func (noopDomainService) Create(ctx context.Context, req *domain.CreateRequest) (*entity.Task, error) {
@@ -53,6 +70,10 @@ func (noopDomainService) Get(ctx context.Context, id int64) (*entity.Task, error
 
 func (noopDomainService) List(ctx context.Context, spaceID int64, status *entity.Status, page, pageSize int32) ([]*entity.Task, int64, error) {
 	return nil, 0, nil
+}
+
+func (noopDomainService) ClaimQueued(ctx context.Context, limit int32) ([]*entity.Task, error) {
+	return nil, nil
 }
 
 func (noopDomainService) Cancel(ctx context.Context, id int64) (*entity.Task, error) {
@@ -73,4 +94,24 @@ func (noopDomainService) Complete(ctx context.Context, id int64, result string) 
 
 func (noopDomainService) ListEvents(ctx context.Context, taskID int64) ([]*entity.Event, error) {
 	return nil, nil
+}
+
+type recordingDomainService struct {
+	noopDomainService
+
+	claimed         []*entity.Task
+	claimLimit      int32
+	completedID     int64
+	completedResult string
+}
+
+func (s *recordingDomainService) ClaimQueued(ctx context.Context, limit int32) ([]*entity.Task, error) {
+	s.claimLimit = limit
+	return s.claimed, nil
+}
+
+func (s *recordingDomainService) Complete(ctx context.Context, id int64, result string) error {
+	s.completedID = id
+	s.completedResult = result
+	return nil
 }

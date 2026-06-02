@@ -39,6 +39,7 @@ type TaskService interface {
 	Enqueue(ctx context.Context, id int64) (*entity.Task, error)
 	Get(ctx context.Context, id int64) (*entity.Task, error)
 	List(ctx context.Context, spaceID int64, status *entity.Status, page, pageSize int32) ([]*entity.Task, int64, error)
+	ClaimQueued(ctx context.Context, limit int32) ([]*entity.Task, error)
 	Cancel(ctx context.Context, id int64) (*entity.Task, error)
 	Retry(ctx context.Context, id int64) (*entity.Task, error)
 	Fail(ctx context.Context, id int64, errMsg string) error

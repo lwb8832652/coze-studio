@@ -136,6 +136,27 @@ func TestTaskRepositoryUsesStablePaginationOrder(t *testing.T) {
 	require.Equal(t, int64(1), got[1].ID)
 }
 
+func TestTaskRepositoryListQueuedOrdersOldestFirst(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&taskPO{}, &taskAttemptPO{}, &taskEventPO{}))
+
+	repo := NewTaskRepository(db, fixedIDGen{})
+	for _, task := range []*entity.Task{
+		{ID: 1, SpaceID: 10, CreatorID: 20, Title: "created", Status: entity.StatusCreated, UpdatedAt: 1},
+		{ID: 2, SpaceID: 10, CreatorID: 20, Title: "new queued", Status: entity.StatusQueued, UpdatedAt: 3},
+		{ID: 3, SpaceID: 10, CreatorID: 20, Title: "old queued", Status: entity.StatusQueued, UpdatedAt: 2},
+	} {
+		require.NoError(t, repo.Create(context.Background(), task))
+	}
+
+	got, err := repo.ListQueued(context.Background(), 1)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, int64(3), got[0].ID)
+}
+
 type fixedIDGen struct{}
 
 func (fixedIDGen) GenID(ctx context.Context) (int64, error) { return 1, nil }
