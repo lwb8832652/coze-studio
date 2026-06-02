@@ -37,19 +37,20 @@ const getTaskStatusText = (status: workbenchTask.TaskStatus) => {
   return statusMap[status] ?? '未知';
 };
 
-const canCancelTask = (status: workbenchTask.TaskStatus) =>
+export const canCancelTask = (status: workbenchTask.TaskStatus) =>
+  status === workbenchTask.TaskStatus.Created ||
   status === workbenchTask.TaskStatus.Queued ||
   status === workbenchTask.TaskStatus.Running;
 
 const canRetryTask = (status: workbenchTask.TaskStatus) =>
   status === workbenchTask.TaskStatus.Failed;
 
-const formatUpdatedTime = (timestamp: number) => {
+export const formatUpdatedTime = (timestamp: number) => {
   if (!timestamp) {
     return '-';
   }
 
-  return new Date(timestamp * 1000).toLocaleString();
+  return new Date(timestamp).toLocaleString();
 };
 
 const TasksPage = () => {

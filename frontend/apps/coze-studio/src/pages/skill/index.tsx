@@ -234,6 +234,11 @@ const SkillPage = () => {
 
     setRunningSkillId(skill.id);
     setError('');
+    setTestResults(current => {
+      const { [skill.id]: _staleResult, ...rest } = current;
+
+      return rest;
+    });
 
     try {
       const response = await testRunSkill({
