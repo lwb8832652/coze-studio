@@ -17,7 +17,9 @@
 package domain
 
 import (
+	"net"
 	"net/url"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 )
@@ -32,14 +34,41 @@ func GetOriginHost(c *app.RequestContext) string {
 	if origin != "" {
 		u, err := url.Parse(origin)
 		if err == nil {
-			return u.Hostname()
+			return CookieDomainFromHost(u.Hostname())
 		}
 	}
 
 	host := c.Request.Header.Get(HeaderKeyOfHost)
 	if host != "" {
-		return host
+		return CookieDomainFromHost(host)
 	}
 
-	return string(c.Request.URI().Host())
+	return CookieDomainFromHost(string(c.Request.URI().Host()))
+}
+
+func CookieDomainFromHost(host string) string {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return ""
+	}
+	hostname := trimmed
+	if hostname, _, err := net.SplitHostPort(trimmed); err == nil {
+		return cookieDomainFromHostname(hostname)
+	}
+	if strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]") {
+		if end := strings.Index(trimmed, "]"); end > 0 {
+			hostname = trimmed[1:end]
+		}
+	}
+
+	return cookieDomainFromHostname(hostname)
+}
+
+func cookieDomainFromHostname(hostname string) string {
+	domain := strings.Trim(strings.TrimSpace(hostname), "[]")
+	if domain == "" || strings.EqualFold(domain, "localhost") || net.ParseIP(domain) != nil {
+		return ""
+	}
+
+	return domain
 }
