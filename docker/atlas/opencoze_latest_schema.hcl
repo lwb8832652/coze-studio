@@ -4739,6 +4739,252 @@ table "workflow_version" {
     columns = [column.workflow_id, column.version]
   }
 }
+table "skills" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "name" {
+    null = false
+    type = varchar(255)
+  }
+  column "description" {
+    null = false
+    type = text
+  }
+  column "type" {
+    null = false
+    type = varchar(32)
+  }
+  column "version" {
+    null = false
+    type = varchar(64)
+  }
+  column "enabled" {
+    null    = false
+    type    = bool
+    default = 1
+  }
+  column "input_schema" {
+    null = false
+    type = json
+  }
+  column "output_schema" {
+    null = false
+    type = json
+  }
+  column "executor" {
+    null = false
+    type = json
+  }
+  column "permissions" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_skills_space_enabled" {
+    columns = [column.space_id, column.enabled]
+  }
+  index "idx_skills_space_type" {
+    columns = [column.space_id, column.type]
+  }
+}
+table "skill_versions" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "skill_id" {
+    null = false
+    type = bigint
+  }
+  column "version" {
+    null = false
+    type = varchar(64)
+  }
+  column "declaration" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "uk_skill_versions_skill_version" {
+    unique  = true
+    columns = [column.skill_id, column.version]
+  }
+}
+table "chat_tasks" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "creator_id" {
+    null = false
+    type = bigint
+  }
+  column "conversation_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "message_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "skill_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "title" {
+    null = false
+    type = varchar(255)
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "progress" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "input" {
+    null = true
+    type = json
+  }
+  column "result" {
+    null = true
+    type = json
+  }
+  column "error" {
+    null = false
+    type = text
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_chat_tasks_creator_updated" {
+    columns = [column.creator_id, column.updated_at]
+  }
+  index "idx_chat_tasks_space_status" {
+    columns = [column.space_id, column.status]
+  }
+}
+table "chat_task_attempts" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "task_id" {
+    null = false
+    type = bigint
+  }
+  column "attempt_no" {
+    null = false
+    type = int
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "started_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "ended_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "runtime" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "error" {
+    null = false
+    type = text
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "uk_chat_task_attempts_task_attempt" {
+    unique  = true
+    columns = [column.task_id, column.attempt_no]
+  }
+}
+table "chat_task_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "task_id" {
+    null = false
+    type = bigint
+  }
+  column "event_type" {
+    null = false
+    type = varchar(64)
+  }
+  column "payload" {
+    null = true
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_chat_task_events_task_created" {
+    columns = [column.task_id, column.created_at]
+  }
+}
 schema "opencoze" {
   charset = "utf8mb4"
   collate = "utf8mb4_unicode_ci"
