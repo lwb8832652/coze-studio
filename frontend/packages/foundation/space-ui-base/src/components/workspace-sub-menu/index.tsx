@@ -18,7 +18,7 @@ import { type ReactNode } from 'react';
 
 import { useShallow } from 'zustand/react/shallow';
 import { useSpaceStore } from '@coze-foundation/space-store';
-import { Space, Skeleton } from '@coze-arch/coze-design';
+import { Skeleton } from '@coze-arch/coze-design';
 
 import { type IWorkspaceListItem } from './components/workspace-list-item';
 import { WorkspaceList } from './components/workspace-list';
@@ -31,6 +31,7 @@ interface IWorkspaceSubMenuProps {
   menus: Array<IWorkspaceListItem>;
   currentSubMenu?: string;
   bottomPanel?: ReactNode;
+  footer?: ReactNode;
 }
 
 export const WorkspaceSubMenu = ({
@@ -38,6 +39,7 @@ export const WorkspaceSubMenu = ({
   menus,
   currentSubMenu,
   bottomPanel,
+  footer,
 }: IWorkspaceSubMenuProps) => {
   const { spaceList, loading } = useSpaceStore(
     useShallow(state => ({
@@ -52,19 +54,20 @@ export const WorkspaceSubMenu = ({
 
   return (
     <Skeleton loading={loading} active placeholder={<Skeleton.Paragraph />}>
-      <Space spacing={4} vertical className="w-full h-full">
+      <div className="flex h-full w-full flex-col">
         <div className="flex-none w-full">{header}</div>
         {hasSpace ? (
           <>
             <div className="flex-none w-full">
               <WorkspaceList menus={menus} currentSubMenu={currentSubMenu} />
             </div>
-            <div className="flex-grow max-h-full overflow-y-auto w-full mt-[24px]">
+            <div className="mt-[24px] min-h-0 w-full flex-1 overflow-y-auto">
               {lowerPanel}
             </div>
+            {footer ? <div className="w-full flex-none">{footer}</div> : null}
           </>
         ) : null}
-      </Space>
+      </div>
     </Skeleton>
   );
 };

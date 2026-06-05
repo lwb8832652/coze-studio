@@ -56,6 +56,8 @@ export interface LayoutOverrides {
 
 export interface LayoutProps {
   hasSider: boolean;
+  hidePrimarySider?: boolean;
+  subMenuDefaultWidth?: number;
   actions?: LayoutButtonItem[];
   menus?: LayoutMenuItem[];
   extras?: LayoutButtonItem[];

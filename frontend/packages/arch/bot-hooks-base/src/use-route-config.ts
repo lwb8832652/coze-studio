@@ -51,6 +51,16 @@ export interface TRouteConfigGlobal {
    */
   hasSider?: boolean;
   /**
+   * Hide the primary app navigation while keeping the secondary route menu.
+   * @default false
+   */
+  hidePrimarySider?: boolean;
+  /**
+   * Default width for the secondary route menu.
+   * @default 200
+   */
+  subMenuDefaultWidth?: number;
+  /**
    * Display mobile end does not fit prompt copy
    * @default false
    */

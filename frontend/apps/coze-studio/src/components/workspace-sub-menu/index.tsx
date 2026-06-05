@@ -16,7 +16,9 @@
 
 import { WorkspaceSubMenu as BaseWorkspaceSubMenu } from '@coze-foundation/space-ui-base';
 import { useSpaceStore } from '@coze-foundation/space-store';
+import { AccountDropdown } from '@coze-foundation/global-adapter';
 import { useRouteConfig } from '@coze-arch/bot-hooks';
+import { useUserInfo } from '@coze-arch/foundation-sdk';
 import { Avatar, Space, Typography } from '@coze-arch/coze-design';
 import {
   IconCozAsynchronousTask,
@@ -70,6 +72,7 @@ const MENU_ICONS = {
 export const WorkspaceSubMenu = () => {
   const { subMenuKey } = useRouteConfig();
   const currentSpace = useSpaceStore(state => state.space);
+  const userInfo = useUserInfo();
 
   const menus = WORKSPACE_MENU_META.map(item => ({
     ...item,
@@ -105,12 +108,27 @@ export const WorkspaceSubMenu = () => {
     </div>
   );
 
+  const footerNode = userInfo ? (
+    <div className="border-0 border-t border-solid coz-stroke-primary px-[8px] py-[10px]">
+      <div className="flex min-w-0 items-center gap-[8px]">
+        <AccountDropdown />
+        <Typography.Text
+          ellipsis={{ showTooltip: true, rows: 1 }}
+          className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500] coz-fg-primary"
+        >
+          {userInfo.name || userInfo.screen_name}
+        </Typography.Text>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <BaseWorkspaceSubMenu
       header={headerNode}
       menus={menus}
       currentSubMenu={subMenuKey}
       bottomPanel={<WorkspaceTaskList />}
+      footer={footerNode}
     />
   );
 };

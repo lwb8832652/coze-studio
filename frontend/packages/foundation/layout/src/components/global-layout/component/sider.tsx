@@ -39,52 +39,77 @@ const mainMenuStyle = classNames(
   'flex flex-col h-full items-center',
 );
 
+const SECONDARY_ONLY_DEFAULT_WIDTH = 300;
+
 export const GlobalLayoutSider: FC<Omit<LayoutProps, 'hasSider'>> = ({
   actions,
   menus,
   extras,
   onClickLogo,
   footer = null,
+  hidePrimarySider = false,
+  subMenuDefaultWidth,
 }) => {
   const config = useRouteConfig();
   const { subMenu: SubMenuComponent } = config;
   const hasSubNav = Boolean(SubMenuComponent);
+  const useSecondaryOnlySider = hidePrimarySider && hasSubNav;
+  const showPrimarySider = !useSecondaryOnlySider;
 
   return (
-    <div className="pl-8px py-8px h-full">
-      <div className={siderStyle}>
+    <div
+      className={classNames(
+        useSecondaryOnlySider ? 'h-full' : 'pl-8px py-8px h-full',
+      )}
+    >
+      <div
+        className={classNames(
+          siderStyle,
+          useSecondaryOnlySider &&
+            '!rounded-none !border-0 border-r-[1px] border-solid coz-stroke-primary',
+        )}
+      >
         {/* main navigation */}
-        <div
-          className={classNames(
-            mainMenuStyle,
-            hasSubNav &&
-              'border-0 border-r-[1px] border-solid coz-stroke-primary',
-          )}
-        >
-          <IconMenuLogo
-            onClick={onClickLogo}
-            className="cursor-pointer w-[40px] h-[40px]"
-          />
-          <div className="mt-[16px]">
-            {actions?.map((action, index) => (
-              <GlobalLayoutActionBtn {...action} key={index} />
-            ))}
+        {showPrimarySider ? (
+          <div
+            className={classNames(
+              mainMenuStyle,
+              hasSubNav &&
+                'border-0 border-r-[1px] border-solid coz-stroke-primary',
+            )}
+          >
+            <IconMenuLogo
+              onClick={onClickLogo}
+              className="cursor-pointer w-[40px] h-[40px]"
+            />
+            <div className="mt-[16px]">
+              {actions?.map((action, index) => (
+                <GlobalLayoutActionBtn {...action} key={index} />
+              ))}
+            </div>
+            <Divider className="my-12px w-[24px]" />
+            <Space spacing={4} vertical className="flex-1 overflow-auto">
+              {menus?.map((menu, index) => (
+                <GLobalLayoutMenuItem {...menu} key={index} />
+              ))}
+            </Space>
+            <Space spacing={4} vertical className="mt-[12px]">
+              {extras?.map((extra, index) => (
+                <GlobalLayoutActionBtn {...extra} key={index} />
+              ))}
+              {footer}
+            </Space>
           </div>
-          <Divider className="my-12px w-[24px]" />
-          <Space spacing={4} vertical className="flex-1 overflow-auto">
-            {menus?.map((menu, index) => (
-              <GLobalLayoutMenuItem {...menu} key={index} />
-            ))}
-          </Space>
-          <Space spacing={4} vertical className="mt-[12px]">
-            {extras?.map((extra, index) => (
-              <GlobalLayoutActionBtn {...extra} key={index} />
-            ))}
-            {footer}
-          </Space>
-        </div>
+        ) : null}
         {/* secondary navigation */}
-        <SubMenu />
+        <SubMenu
+          defaultWidth={
+            subMenuDefaultWidth ??
+            (useSecondaryOnlySider ? SECONDARY_ONLY_DEFAULT_WIDTH : undefined)
+          }
+          resizable={showPrimarySider}
+          storageKey={showPrimarySider ? undefined : 'workspace-submenu-width'}
+        />
       </div>
     </div>
   );

@@ -118,6 +118,8 @@ export const router: ReturnType<typeof createBrowserRouter> =
           Component: SpaceLayout,
           loader: () => ({
             hasSider: true,
+            hidePrimarySider: true,
+            subMenuDefaultWidth: 300,
             requireAuth: true,
             subMenu: spaceSubMenu,
             menuKey: BaseEnum.Space,

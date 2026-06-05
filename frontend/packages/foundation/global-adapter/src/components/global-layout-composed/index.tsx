@@ -21,7 +21,6 @@ import { GlobalLayout } from '@coze-foundation/layout';
 import { useCreateBotAction } from '@coze-foundation/global';
 import { RequireAuthContainer } from '@coze-foundation/account-ui-adapter';
 import { I18n } from '@coze-arch/i18n';
-import { useRouteConfig } from '@coze-arch/bot-hooks';
 import {
   IconCozPlusCircle,
   IconCozWorkspace,
@@ -30,9 +29,10 @@ import {
   IconCozCompassFill,
   IconCozDocument,
 } from '@coze-arch/coze-design/icons';
+import { useRouteConfig } from '@coze-arch/bot-hooks';
 
-import { AccountDropdown } from '../account-dropdown';
 import { useHasSider } from './hooks/use-has-sider';
+import { AccountDropdown } from '../account-dropdown';
 
 export const GlobalLayoutComposed: FC<PropsWithChildren> = ({ children }) => {
   const config = useRouteConfig();
@@ -50,6 +50,8 @@ export const GlobalLayoutComposed: FC<PropsWithChildren> = ({ children }) => {
     >
       <GlobalLayout
         hasSider={hasSider}
+        hidePrimarySider={!!config.hidePrimarySider}
+        subMenuDefaultWidth={config.subMenuDefaultWidth}
         banner={null}
         actions={[
           {

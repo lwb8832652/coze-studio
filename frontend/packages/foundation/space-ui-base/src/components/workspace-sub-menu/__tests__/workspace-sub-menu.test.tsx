@@ -53,10 +53,12 @@ describe('WorkspaceSubMenu', () => {
         header={<div>Header</div>}
         menus={[]}
         bottomPanel={<div>我的任务</div>}
+        footer={<div>刘文波</div>}
       />,
     );
 
     expect(markup).toContain('我的任务');
+    expect(markup).toContain('刘文波');
     expect(markup).not.toContain('Favourites fallback');
   });
 });

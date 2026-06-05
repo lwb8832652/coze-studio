@@ -23,19 +23,38 @@ import styles from '../side-sheet.module.less';
 const STORAGE_KEY = 'submenu-width';
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 380;
+const DEFAULT_WIDTH = MIN_WIDTH;
 
-export const SubMenu: FC = () => {
+interface SubMenuProps {
+  defaultWidth?: number;
+  resizable?: boolean;
+  storageKey?: string;
+}
+
+export const SubMenu: FC<SubMenuProps> = ({
+  defaultWidth = DEFAULT_WIDTH,
+  resizable = true,
+  storageKey = STORAGE_KEY,
+}) => {
   const config = useRouteConfig();
   const { subMenu: SubMenuComponent } = config;
   const [width, setWidth] = useState(() => {
-    const savedWidth = localStorage.getItem(STORAGE_KEY);
+    if (!resizable) {
+      return defaultWidth;
+    }
+
+    const savedWidth = localStorage.getItem(storageKey);
     return savedWidth
       ? Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Number(savedWidth)))
-      : MIN_WIDTH;
+      : defaultWidth;
   });
 
   const handleMouseDown = useCallback(
     (event: React.MouseEvent) => {
+      if (!resizable) {
+        return;
+      }
+
       event.preventDefault();
       const startX = event.pageX;
       const startWidth = width;
@@ -46,7 +65,7 @@ export const SubMenu: FC = () => {
           Math.max(MIN_WIDTH, startWidth + e.pageX - startX),
         );
         setWidth(newWidth);
-        localStorage.setItem(STORAGE_KEY, String(newWidth));
+        localStorage.setItem(storageKey, String(newWidth));
       };
 
       const handleMouseUp = () => {
@@ -57,7 +76,7 @@ export const SubMenu: FC = () => {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
     },
-    [width],
+    [resizable, storageKey, width],
   );
 
   if (!SubMenuComponent) {
@@ -65,18 +84,23 @@ export const SubMenu: FC = () => {
   }
 
   return (
-    <div className="relative flex flex-row">
+    <div className="relative flex h-full shrink-0 flex-row">
       <div
-        className="overflow-auto flex flex-col box-border px-[6px] py-[12px]"
+        className="box-border flex h-full flex-col overflow-auto px-[6px] py-[12px]"
         style={{ width: `${width}px` }}
       >
         <Suspense>
           <SubMenuComponent />
         </Suspense>
       </div>
-      <div className={styles['sub-menu-resize']} onMouseDown={handleMouseDown}>
-        <div className={styles['sub-menu-resize-line']}></div>
-      </div>
+      {resizable ? (
+        <div
+          className={styles['sub-menu-resize']}
+          onMouseDown={handleMouseDown}
+        >
+          <div className={styles['sub-menu-resize-line']}></div>
+        </div>
+      ) : null}
     </div>
   );
 };
