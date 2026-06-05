@@ -25,13 +25,25 @@ import './index.less';
 
 import { sendWorkbenchChat } from './service';
 
-const TEMPLATE_TAGS = [
-  '工作总结',
-  '数据分析',
-  '代码分析',
-  '异常排查',
-  '飞书文档撰写',
+const TEMPLATE_CARDS = [
+  {
+    title: '研究分析',
+    description: '汇总资料、拆解问题并给出结构化结论',
+    prompt: '帮我研究这个主题，并输出关键结论和下一步建议',
+  },
+  {
+    title: '生成报告',
+    description: '根据目标和材料生成清晰的任务报告',
+    prompt: '帮我生成一份项目进展报告',
+  },
+  {
+    title: '整理知识库',
+    description: '归纳文档、沉淀流程并补齐遗漏信息',
+    prompt: '帮我整理这些资料，形成可复用知识库',
+  },
 ];
+
+const EXTENSIONS = ['默认扩展', '资源库', '技能库'] as const;
 
 const MODES = ['Auto', 'Ask', 'Agent'] as const;
 
@@ -81,6 +93,9 @@ const WorkbenchPage = () => {
   const { space_id } = useParams();
   const [value, setValue] = useState('');
   const [mode, setMode] = useState<WorkbenchMode>('Auto');
+  const [extension, setExtension] = useState<(typeof EXTENSIONS)[number]>(
+    '默认扩展',
+  );
   const [chatData, setChatData] = useState<WorkbenchChatData | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -117,7 +132,7 @@ const WorkbenchPage = () => {
       <section className="chat-workbench-shell" aria-label="Chat 工作台">
         <header className="chat-workbench-header">
           <h1>欢迎来到 刘文波 的工作空间</h1>
-          <p>让我们一起高效完成工作吧</p>
+          <p>让我们一起高效完成工作吧，从一个任务开始组织资源、技能和执行流程</p>
         </header>
 
         <section className="chat-workbench-composer" aria-label="任务输入">
@@ -132,22 +147,44 @@ const WorkbenchPage = () => {
           />
 
           <div className="chat-workbench-toolbar">
-            <div className="chat-workbench-mode" aria-label="模式选择">
-              {MODES.map(item => (
-                <button
-                  key={item}
-                  type="button"
-                  className="chat-workbench-mode-button"
-                  data-active={mode === item}
-                  aria-pressed={mode === item}
-                  onClick={() => setMode(item)}
+            <div className="chat-workbench-toolbar-left">
+              <div className="chat-workbench-mode" aria-label="模式选择">
+                {MODES.map(item => (
+                  <button
+                    key={item}
+                    type="button"
+                    className="chat-workbench-mode-button"
+                    data-active={mode === item}
+                    aria-pressed={mode === item}
+                    onClick={() => setMode(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+
+              <label className="chat-workbench-extension">
+                <span>选择扩展</span>
+                <select
+                  aria-label="选择扩展"
+                  value={extension}
+                  onChange={event =>
+                    setExtension(
+                      event.target.value as (typeof EXTENSIONS)[number],
+                    )
+                  }
                 >
-                  {item}
-                </button>
-              ))}
+                  {EXTENSIONS.map(item => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <Button
+              aria-label="发送任务"
               color="primary"
               disabled={!canSend}
               icon={<IconCozSendFill />}
@@ -178,14 +215,19 @@ const WorkbenchPage = () => {
         ) : null}
 
         <div className="chat-workbench-templates" aria-label="任务模板">
-          {TEMPLATE_TAGS.map(tag => (
+          {TEMPLATE_CARDS.map(card => (
             <button
-              key={tag}
+              key={card.title}
               type="button"
-              className="chat-workbench-tag"
-              onClick={() => setValue(tag)}
+              className="chat-workbench-template-card"
+              onClick={() => setValue(card.prompt)}
             >
-              {tag}
+              <span className="chat-workbench-template-title">
+                {card.title}
+              </span>
+              <span className="chat-workbench-template-desc">
+                {card.description}
+              </span>
             </button>
           ))}
         </div>

@@ -39,19 +39,27 @@ vi.mock('../service', () => ({
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
 vi.mock('@coze-arch/coze-design', () => ({
   Button: ({
+    'aria-label': ariaLabel,
     children,
     disabled,
     icon,
     loading,
     onClick,
   }: {
+    'aria-label'?: string;
     children: ReactNode;
     disabled?: boolean;
     icon?: ReactNode;
     loading?: boolean;
     onClick?: () => void;
   }) => (
-    <button type="button" disabled={disabled} data-loading={loading} onClick={onClick}>
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      data-loading={loading}
+      onClick={onClick}
+    >
       {icon}
       {children}
     </button>
@@ -107,13 +115,13 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('Auto');
     expect(markup).toContain('Ask');
     expect(markup).toContain('Agent');
+    expect(markup).toContain('选择扩展');
+    expect(markup).toContain('研究分析');
+    expect(markup).toContain('生成报告');
+    expect(markup).toContain('整理知识库');
+    expect(markup).toContain('aria-label="发送任务"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('aria-pressed="false"');
-    expect(markup).toContain('工作总结');
-    expect(markup).toContain('数据分析');
-    expect(markup).toContain('代码分析');
-    expect(markup).toContain('异常排查');
-    expect(markup).toContain('飞书文档撰写');
   });
 
   it('maps local mode names to generated chat modes', () => {

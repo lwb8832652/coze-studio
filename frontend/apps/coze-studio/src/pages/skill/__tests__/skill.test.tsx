@@ -65,6 +65,30 @@ describe('SkillPage', () => {
     mockTestRunSkill.mockReset();
   });
 
+  it('renders the redesigned skill configuration structure', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillPage />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('技能配置');
+    expect(container.textContent).toContain(
+      '管理任务执行时可调用的工具、脚本和流程',
+    );
+    expect(container.textContent).toContain('创建技能');
+    expect(container.querySelector('input[aria-label="搜索技能"]')).toBeTruthy();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('clears stale test output when a later test run fails', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

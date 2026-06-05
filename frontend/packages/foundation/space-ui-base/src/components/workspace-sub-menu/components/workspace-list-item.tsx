@@ -29,6 +29,7 @@ export interface IWorkspaceListItem {
   title?: () => string;
   path?: string;
   dataTestId?: string;
+  variant?: 'default' | 'primary';
 }
 
 interface IWorkspaceListItemProps extends IWorkspaceListItem {
@@ -42,6 +43,7 @@ export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
   path,
   currentSubMenu,
   dataTestId,
+  variant = 'default',
 }) => {
   const navigate = useNavigate();
   const { spaceId } = useSpaceStore(
@@ -69,11 +71,12 @@ export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
         'px-[8px]',
         'cursor-pointer',
         'group',
-        'hover:coz-mg-secondary-hovered',
         {
-          'coz-bg-primary': path === currentSubMenu,
-          'coz-fg-plus': path === currentSubMenu,
-          'coz-fg-primary': path !== currentSubMenu,
+          'bg-[#1f1f26] text-white hover:bg-[#34343d]': variant === 'primary',
+          'hover:coz-mg-secondary-hovered': variant !== 'primary',
+          'coz-bg-primary': path === currentSubMenu && variant !== 'primary',
+          'coz-fg-plus': path === currentSubMenu && variant !== 'primary',
+          'coz-fg-primary': path !== currentSubMenu && variant !== 'primary',
         },
       )}
       id={`workspace-submenu-${path}`}

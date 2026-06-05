@@ -17,8 +17,8 @@
 import { type ReactNode } from 'react';
 
 import { useShallow } from 'zustand/react/shallow';
-import { Space, Skeleton } from '@coze-arch/coze-design';
 import { useSpaceStore } from '@coze-foundation/space-store';
+import { Space, Skeleton } from '@coze-arch/coze-design';
 
 import { type IWorkspaceListItem } from './components/workspace-list-item';
 import { WorkspaceList } from './components/workspace-list';
@@ -30,12 +30,14 @@ interface IWorkspaceSubMenuProps {
   header: ReactNode;
   menus: Array<IWorkspaceListItem>;
   currentSubMenu?: string;
+  bottomPanel?: ReactNode;
 }
 
 export const WorkspaceSubMenu = ({
   header,
   menus,
   currentSubMenu,
+  bottomPanel,
 }: IWorkspaceSubMenuProps) => {
   const { spaceList, loading } = useSpaceStore(
     useShallow(state => ({
@@ -46,6 +48,7 @@ export const WorkspaceSubMenu = ({
   );
 
   const hasSpace = spaceList.length > 0;
+  const lowerPanel = bottomPanel ?? <FavoritesList />;
 
   return (
     <Skeleton loading={loading} active placeholder={<Skeleton.Paragraph />}>
@@ -57,7 +60,7 @@ export const WorkspaceSubMenu = ({
               <WorkspaceList menus={menus} currentSubMenu={currentSubMenu} />
             </div>
             <div className="flex-grow max-h-full overflow-y-auto w-full mt-[24px]">
-              <FavoritesList />
+              {lowerPanel}
             </div>
           </>
         ) : null}

@@ -61,6 +61,9 @@
       "path": "../../packages/arch/bot-flags/tsconfig.build.json"
     },
     {
+      "path": "../../packages/arch/bot-hooks/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/arch/bot-md-box-adapter/tsconfig.build.json"
     },
     {
@@ -104,6 +107,9 @@
     },
     {
       "path": "../../packages/foundation/layout/tsconfig.build.json"
+    },
+    {
+      "path": "../../packages/foundation/space-store/tsconfig.build.json"
     },
     {
       "path": "../../packages/foundation/space-ui-adapter/tsconfig.build.json"

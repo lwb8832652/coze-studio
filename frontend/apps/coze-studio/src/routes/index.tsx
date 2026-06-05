@@ -49,6 +49,7 @@ import {
   Workbench,
   SkillPage,
   TaskTriggerPage,
+  TaskDetailPage,
   TasksPage,
 } from './async-components';
 
@@ -225,6 +226,13 @@ export const router: ReturnType<typeof createBrowserRouter> =
                 },
 
                 // Tasks
+                {
+                  path: 'tasks/:task_id',
+                  Component: TaskDetailPage,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.TASKS,
+                  }),
+                },
                 {
                   path: 'tasks',
                   Component: TasksPage,

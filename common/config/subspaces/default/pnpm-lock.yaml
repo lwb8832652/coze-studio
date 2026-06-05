@@ -57,6 +57,9 @@ importers:
       '@coze-arch/bot-flags':
         specifier: workspace:*
         version: link:../../packages/arch/bot-flags
+      '@coze-arch/bot-hooks':
+        specifier: workspace:*
+        version: link:../../packages/arch/bot-hooks
       '@coze-arch/bot-md-box-adapter':
         specifier: workspace:*
         version: link:../../packages/arch/bot-md-box-adapter
@@ -93,6 +96,9 @@ importers:
       '@coze-foundation/layout':
         specifier: workspace:*
         version: link:../../packages/foundation/layout
+      '@coze-foundation/space-store':
+        specifier: workspace:*
+        version: link:../../packages/foundation/space-store
       '@coze-foundation/space-ui-adapter':
         specifier: workspace:*
         version: link:../../packages/foundation/space-ui-adapter

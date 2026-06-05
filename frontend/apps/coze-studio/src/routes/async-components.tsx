@@ -27,11 +27,7 @@ export const LoginPage = lazy(() =>
 export const Redirect = lazy(() => import('../pages/redirect'));
 
 // Workspace Sidebar Component
-export const spaceSubMenu = lazy(() =>
-  import('@coze-foundation/space-ui-adapter').then(exps => ({
-    default: exps.WorkspaceSubMenu,
-  })),
-);
+export const spaceSubMenu = lazy(() => import('../components/workspace-sub-menu'));
 
 // Workspace Layout Component
 export const SpaceLayout = lazy(() =>
@@ -64,6 +60,9 @@ export const TaskTriggerPage = lazy(() => import('../pages/task-trigger'));
 
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));
+
+// task detail page
+export const TaskDetailPage = lazy(() => import('../pages/tasks/detail'));
 
 // Agent IDE Layout Component
 export const AgentIDELayout = lazy(
