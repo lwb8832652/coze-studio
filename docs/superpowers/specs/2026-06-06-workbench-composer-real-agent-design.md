@@ -10,7 +10,7 @@
 1. 首页 `WorkbenchComposer` 只存在于 `workbench/index.tsx` 内部，任务详情页还有独立的 `FollowUpComposer`。
 2. 后端 task 执行会写固定的模拟步骤，并生成“本地占位执行结果”，这会让 Agent 与报告能力看起来像真实执行，实际并未进入真实 AgentRun 或真实模型链路。
 
-本轮目标是在不一次性做完复杂 Skills、KB、MCP 配置面板的前提下，先把统一输入组件、真实 Ark 模型回答、Ask 检索增强问答、最小真实 AgentRun 闭环落地。
+本轮目标是在不一次性做完复杂 Skills、KB、MCP、数据库配置面板的前提下，先把统一输入组件、真实 Ark 模型回答、Ask 检索增强问答、最小真实 AgentRun 闭环落地。
 
 ## 目标
 
@@ -26,7 +26,7 @@
 
 ## 非目标
 
-1. 不在本轮完成完整 Skills、知识库、MCP 勾选 UI。
+1. 不在本轮完成完整 Skills、知识库、MCP、数据库勾选 UI。
 2. 不在本轮实现多智能体选择器或 `agent_id` 下拉。
 3. 不在本轮重构完整 conversation/message 存储模型。
 4. 不在本轮实现复杂资源权限过滤；AgentRun 先使用系统默认资源配置。
@@ -55,6 +55,9 @@
 - `backend/application/conversation/conversation.go`
 - `backend/domain/conversation/agentrun/service/agent_run.go`
 - `backend/bizpkg/llm/modelbuilder/builtin.go`
+- `backend/crossdomain/database/contract.go`
+- `backend/domain/agent/singleagent/internal/agentflow/node_tool_database.go`
+- `backend/domain/workflow/entity/node_meta.go`
 
 ## 接口设计
 
@@ -71,11 +74,12 @@ struct WorkbenchChatRequest {
     7: optional list<string> enable_skills
     8: optional list<string> enable_mcp
     9: optional list<string> enable_kbs
+    10: optional list<string> enable_databases
     255: optional base.Base Base
 }
 ```
 
-`enable_skills`、`enable_mcp`、`enable_kbs` 是一期预留字段。前端在用户没有改动拓展配置时不强制传值，后端按默认全量资源处理。
+`enable_skills`、`enable_mcp`、`enable_kbs`、`enable_databases` 是一期预留字段。前端在用户没有改动拓展配置时不强制传值，后端按默认全量资源处理。
 
 `WorkbenchChatData` 保持返回 `task`，并增加结果元信息：
 
@@ -101,7 +105,7 @@ struct WorkbenchChatData {
 
 1. 管理输入框、模式切换、`@` 资源唤起、附件按钮、拓展面板、发送按钮。
 2. 接收 `taskId?: string`，但不直接决定业务跳转；跳转和刷新由页面容器处理。
-3. 接收 `onSubmit(payload)`，payload 包含 `message`、`mode`、`enableSkills`、`enableMcp`、`enableKbs`。
+3. 接收 `onSubmit(payload)`，payload 包含 `message`、`mode`、`enableSkills`、`enableMcp`、`enableKbs`、`enableDatabases`。
 4. 统一 loading、disabled、error 展示。
 5. 详情页复用同一组件，样式可以通过 `variant="home" | "detail"` 做轻量差异。
 
@@ -163,9 +167,9 @@ Ask 的边界：
 `Agent` 是真实智能执行模式。本轮先做最小闭环：
 
 1. 不要求前端选择 `agent_id`。
-2. 不要求本轮完成 Skills、KB、MCP 勾选控件。
+2. 不要求本轮完成 Skills、KB、MCP、数据库勾选控件。
 3. 后端调用 `ConversationSVC.AgentRunDomainSVC.AgentRun`。
-4. `enable_skills`、`enable_mcp`、`enable_kbs` 为空时使用系统默认全量配置。
+4. `enable_skills`、`enable_mcp`、`enable_kbs`、`enable_databases` 为空时使用系统默认全量配置。
 5. 将 AgentRun 流式事件转换为 task events。
 6. 最终结果写入 task result，标记为 `agent_trace`。
 
@@ -187,11 +191,29 @@ Ask 的边界：
 - `agent.tool_call`：工具调用。
 - `agent.tool_result`：工具结果。
 - `agent.knowledge_retrieval`：知识库检索。
+- `agent.database_query`：数据库查询或 SQL 执行。
 - `agent.answer_delta`：流式回答片段。
 - `agent.run_completed`：最终结果。
 - `agent.run_failed`：失败原因。
 
 如果 AgentRun 事件暂时无法完整映射，先保留原始 payload 中的可展示字段，并保证前端可以用 `title`、`detail`、`thought`、`status` 渲染。
+
+### 数据库查询
+
+数据库查询是 Agent、Workflow 和后续资源勾选能力的重要资源类型。仓库已有可复用基础：
+
+1. 资源配置已有数据库资源概念，后续数据库配置仍归资源配置页维护。
+2. `backend/crossdomain/database/contract.go` 提供 `ExecuteSQL`、`Execute`、`Query`、`Insert`、`Update`、`Delete` 等能力。
+3. `backend/domain/agent/singleagent/internal/agentflow/node_tool_database.go` 已有 AgentFlow 数据库工具，负责校验表名、调用 `crossdatabase.DefaultSVC().ExecuteSQL` 并格式化结果。
+4. `backend/domain/workflow/entity/node_meta.go` 已有 `DatabaseCustomSQL`、`DatabaseQuery`、`DatabaseInsert`、`DatabaseUpdate`、`DatabaseDelete` 等工作流节点类型，标记 `UseDatabase`。
+
+本轮先预留 `enable_databases` 并保证 AgentRun 默认资源路径不被阻断。后续做指定数据库查询时：
+
+1. 拓展面板增加数据库勾选区。
+2. 前端把选中的数据库 ID 通过 `enable_databases` 透传。
+3. 后端把数据库白名单注入 AgentRun 或 Workflow 运行环境。
+4. Agent trace 中用 `agent.database_query` 展示 SQL、目标数据库、返回行数、错误信息和格式化结果。
+5. 对 Ask 模式保持只读检索增强边界；需要 SQL 执行或指定数据库查询时应进入 Agent 或 Workflow 执行路径。
 
 ## 任务追加提问
 
@@ -238,21 +260,23 @@ Ask 的边界：
 后端测试：
 
 1. `Auto` 创建或更新任务时写入 `result_type: answer`、`execution_type: Ark`。
-2. `Ask` 写入 `result_type: answer`，可检索知识库，但不走 Skills、MCP、SQL 等执行型工具。
+2. `Ask` 写入 `result_type: answer`，可检索知识库，但不走 Skills、MCP、SQL 或数据库查询等执行型工具。
 3. `Agent` 调用 `AgentRunDomainSVC.AgentRun`，并把流式事件 append 到 task events。
-4. 带 `task_id` 的请求 append `user.message`，不创建新任务。
-5. 空消息、非法 mode、缺失 task/domain service 返回 client error 或明确服务错误。
+4. `enable_databases` 为空时使用默认数据库资源配置；非空时后续按白名单注入。
+5. 带 `task_id` 的请求 append `user.message`，不创建新任务。
+6. 空消息、非法 mode、缺失 task/domain service 返回 client error 或明确服务错误。
 
 ## 后续扩展
 
 二期在本设计之上补齐：
 
-1. 拓展面板 Skills、KB、MCP 勾选控件。
+1. 拓展面板 Skills、KB、MCP、数据库勾选控件。
 2. 勾选资源完整透传后端，并注入 AgentRun 运行环境。
-3. SQL 查询、MCP 第三方接口调用、知识库检索的完整 trace 展示。
-4. Ask 模式接入联网搜索，并把搜索来源、引用片段和失败降级策略纳入普通问答渲染。
-5. 多智能体选择器，新增 `agent_id` 字段和对应校验逻辑。
-6. 更完整的多轮会话表或 conversation/message 接入。
+3. 复用现有 AgentFlow 数据库工具和 Workflow 数据库节点，打通指定数据库查询。
+4. SQL 查询、MCP 第三方接口调用、知识库检索、数据库查询的完整 trace 展示。
+5. Ask 模式接入联网搜索，并把搜索来源、引用片段和失败降级策略纳入普通问答渲染。
+6. 多智能体选择器，新增 `agent_id` 字段和对应校验逻辑。
+7. 更完整的多轮会话表或 conversation/message 接入。
 
 ## 自检
 
@@ -260,7 +284,8 @@ Ask 的边界：
 2. 设计覆盖了 `task_id` 新建与追加两种路径。
 3. 设计覆盖了 Auto、Ask、Agent 三种模式。
 4. 设计明确 Ask 可检索知识库，并为后续联网搜索预留普通问答路径。
-5. 设计明确真实 AgentRun 先做最小闭环，复杂资源配置后续补齐。
-6. 设计明确了 `answer`、`agent_trace`、`report` 的渲染边界。
-7. 设计没有要求本轮重构完整 conversation 存储模型。
-8. 设计明确停止首页绕过 `sendWorkbenchChat` 的兜底创建逻辑。
+5. 设计明确数据库资源和指定数据库查询通过 `enable_databases` 后续接入。
+6. 设计明确真实 AgentRun 先做最小闭环，复杂资源配置后续补齐。
+7. 设计明确了 `answer`、`agent_trace`、`report` 的渲染边界。
+8. 设计没有要求本轮重构完整 conversation 存储模型。
+9. 设计明确停止首页绕过 `sendWorkbenchChat` 的兜底创建逻辑。
