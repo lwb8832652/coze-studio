@@ -28,6 +28,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
+const mockCreateWorkbenchTask = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -35,6 +36,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../service', () => ({
+  createWorkbenchTask: mockCreateWorkbenchTask,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
 
@@ -110,6 +112,7 @@ describe('WorkbenchPage', () => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
+    mockCreateWorkbenchTask.mockReset();
   });
 
   it('renders the static chat workbench first screen', () => {
@@ -270,6 +273,172 @@ describe('WorkbenchPage', () => {
       mode: workbench.ChatMode.Auto,
     });
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/task-1');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('creates a task and navigates when chat returns a direct answer without a task', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        answer: '这是直接回答，不应该留在首页展示。',
+        route_target: workbench.RouteTarget.ChatDirect,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateWorkbenchTask.mockResolvedValue({
+      data: {
+        id: 'task-fallback',
+      },
+      code: 0,
+      msg: '',
+    });
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '帮我写一份报告' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      title: '帮我写一份报告',
+      input: JSON.stringify({ message: '帮我写一份报告' }),
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/tasks/task-fallback',
+    );
+    expect(container.textContent).not.toContain('这是直接回答，不应该留在首页展示。');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('creates a task and navigates when chat request fails', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockRejectedValue(new Error('chat failed'));
+    mockCreateWorkbenchTask.mockResolvedValue({
+      data: {
+        id: 'task-after-chat-error',
+      },
+      code: 0,
+      msg: '',
+    });
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '即使 chat 失败也创建任务' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      title: '即使 chat 失败也创建任务',
+      input: JSON.stringify({ message: '即使 chat 失败也创建任务' }),
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/tasks/task-after-chat-error',
+    );
+    expect(container.textContent).not.toContain('chat failed');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('does not retry task creation twice when direct-answer fallback creation fails', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        answer: '已进入 Chat 直接问答模式。',
+        route_target: workbench.RouteTarget.ChatDirect,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateWorkbenchTask.mockRejectedValue(new Error('input must be valid JSON'));
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '请生成一份本地联调验证报告' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateWorkbenchTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      title: '请生成一份本地联调验证报告',
+      input: JSON.stringify({ message: '请生成一份本地联调验证报告' }),
+    });
+    expect(container.textContent).not.toContain('已进入 Chat 直接问答模式。');
+    expect(container.textContent).toContain('input must be valid JSON');
 
     act(() => {
       root?.unmount();

@@ -16,6 +16,8 @@
 
 import { IconCozBell } from '@coze-arch/coze-design/icons';
 
+import './workspace-prototype.less';
+
 export const WorkspacePageTopBar = () => (
   <header className="flex h-[52px] shrink-0 items-center justify-end gap-[12px] px-[24px]">
     <div className="flex items-center gap-[6px] text-[12px] leading-[18px] text-[#444c5c]">
@@ -30,13 +32,11 @@ export const WorkspacePageTopBar = () => (
     </button>
     <button
       type="button"
-      className="flex h-[28px] w-[28px] items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white text-[14px] leading-[18px] text-[#444c5c]"
+      className="coze-prototype-icon-button"
       aria-label="通知"
     >
       <IconCozBell className="text-[14px]" />
     </button>
-    <div className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-gradient-to-br from-orange-300 to-pink-400 text-[12px] leading-[16px] text-white">
-      wb
-    </div>
+    <div className="coze-prototype-avatar">wb</div>
   </header>
 );

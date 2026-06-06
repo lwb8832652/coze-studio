@@ -26,6 +26,7 @@ import { EVENT_NAMES, sendTeaEvent } from '@coze-arch/bot-tea';
 export interface IWorkspaceListItem {
   icon?: ReactNode;
   activeIcon?: ReactNode;
+  suffix?: ReactNode;
   title?: () => string;
   path?: string;
   dataTestId?: string;
@@ -39,6 +40,7 @@ interface IWorkspaceListItemProps extends IWorkspaceListItem {
 export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
   icon,
   activeIcon,
+  suffix,
   title,
   path,
   currentSubMenu,
@@ -63,39 +65,27 @@ export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
         localStorageService.setValue('workspace-subMenu', path);
         navigate(`/space/${spaceId}/${path}`);
       }}
-      className={classNames(
-        'flex items-center gap-[8px]',
-        'transition-colors',
-        'rounded-[8px]',
-        'h-[32px] w-full',
-        'px-[8px]',
-        'cursor-pointer',
-        'group',
-        {
-          'justify-center': variant === 'primary',
-          'bg-[#1f1f26] text-white hover:bg-[#34343d]': variant === 'primary',
-          'hover:coz-mg-secondary-hovered': variant !== 'primary',
-          'coz-bg-primary': path === currentSubMenu && variant !== 'primary',
-          'coz-fg-plus': path === currentSubMenu && variant !== 'primary',
-          'coz-fg-primary': path !== currentSubMenu && variant !== 'primary',
-        },
-      )}
+      className={classNames('coze-prototype-nav-item', {
+        'coze-prototype-nav-item-primary': variant === 'primary',
+        'coze-prototype-nav-item-active':
+          path === currentSubMenu && variant !== 'primary',
+      })}
       id={`workspace-submenu-${path}`}
       data-testid={dataTestId}
     >
-      <div className="text-[14px]">
-        <div className="w-[16px] h-[16px]">
-          {path === currentSubMenu ? activeIcon : icon}
-        </div>
+      <div className="coze-prototype-nav-icon">
+        {path === currentSubMenu ? activeIcon : icon}
       </div>
       <div
-        className={classNames('text-[14px]', 'leading-[20px]', 'font-[500]', {
-          'flex-none': variant === 'primary',
-          'flex-1': variant !== 'primary',
+        className={classNames('coze-prototype-nav-title', {
+          'coze-prototype-nav-title-primary': variant === 'primary',
         })}
       >
         {title?.()}
       </div>
+      {suffix && variant !== 'primary' ? (
+        <div className="coze-prototype-nav-suffix">{suffix}</div>
+      ) : null}
     </div>
   ) : null;
 };

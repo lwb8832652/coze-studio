@@ -41,6 +41,7 @@ import {
   canCancelTask,
   filterTasks,
   formatUpdatedTime,
+  getTaskInputText,
   getTaskStatusText,
 } from '../helpers';
 import TasksPage from '../index';
@@ -59,7 +60,7 @@ describe('TasksPage helpers', () => {
             title: '生成周报',
             status: workbenchTask.TaskStatus.Running,
             progress: 40,
-            input: '整理项目进展',
+            input: JSON.stringify({ message: '整理项目进展' }),
             created_at: 1717000000000,
             updated_at: 1717000300000,
           },
@@ -92,7 +93,9 @@ describe('TasksPage helpers', () => {
     expect(container.textContent).toContain('已收藏');
     expect(container.textContent).toContain('批量操作');
     expect(container.textContent).toContain('生成周报');
+    expect(container.textContent).toContain('整理项目进展');
     expect(container.textContent).toContain('运行中');
+    expect(container.textContent).not.toContain('{"message":"整理项目进展"}');
 
     act(() => {
       root?.unmount();
@@ -143,5 +146,12 @@ describe('TasksPage helpers', () => {
     expect(getTaskStatusText(workbenchTask.TaskStatus.Succeeded)).toBe(
       '已完成',
     );
+  });
+
+  it('formats JSON task input as readable text', () => {
+    expect(getTaskInputText(JSON.stringify({ message: '请生成报告' }))).toBe(
+      '请生成报告',
+    );
+    expect(getTaskInputText('普通输入')).toBe('普通输入');
   });
 });

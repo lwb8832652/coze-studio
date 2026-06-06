@@ -50,8 +50,8 @@ describe('TaskDetailPage', () => {
         title: '生成周报',
         status: workbenchTask.TaskStatus.Running,
         progress: 65,
-        input: '请总结本周项目进展',
-        result: '本周完成了 UI 改造方案。',
+        input: JSON.stringify({ message: '请总结本周项目进展' }),
+        result: JSON.stringify({ message: '本周完成了 UI 改造方案。' }),
         created_at: 1717000000000,
         updated_at: 1717000300000,
       },
@@ -64,8 +64,8 @@ describe('TaskDetailPage', () => {
           {
             id: 'event-1',
             task_id: 'task-1',
-            event_type: 'agent_started',
-            payload: '专属助理已开始执行',
+            event_type: 'created',
+            payload: JSON.stringify({ status: 'created' }),
             created_at: 1717000100000,
           },
         ],
@@ -92,8 +92,9 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('Aime · 已为你启动 Agent 工作流');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
-    expect(container.textContent).toContain('专属助理已开始执行');
+    expect(container.textContent).toContain('任务已创建');
     expect(container.textContent).toContain('执行流程');
+    expect(container.textContent).not.toContain('{"message":"请总结本周项目进展"}');
     expect(
       container.querySelector('input[placeholder="继续追问..."]'),
     ).toBeTruthy();

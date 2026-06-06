@@ -57,19 +57,19 @@ describe('Coze Studio WorkspaceSubMenu', () => {
 
     expect(completedMeta).toMatchObject({
       tone: 'success',
-      dotClassName: 'bg-[#2a9e06]',
+      color: '#2a9e06',
       ariaLabel: '已完成状态',
     });
     expect(runningMeta).toMatchObject({
       tone: 'running',
-      dotClassName: 'bg-[#2a6df4]',
+      color: '#2a6df4',
       ariaLabel: '运行中状态',
     });
     expect(failedMeta).toMatchObject({
       tone: 'danger',
-      dotClassName: 'bg-[#f54a45]',
+      color: '#f54a45',
       ariaLabel: '异常状态',
     });
-    expect(runningMeta.dotClassName).not.toBe(completedMeta.dotClassName);
+    expect(runningMeta.color).not.toBe(completedMeta.color);
   });
 });

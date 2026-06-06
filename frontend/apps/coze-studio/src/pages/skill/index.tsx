@@ -17,10 +17,15 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
-import { IconCozSetting } from '@coze-arch/coze-design/icons';
+import {
+  IconCozMore,
+  IconCozPlus,
+  IconCozSetting,
+} from '@coze-arch/coze-design/icons';
 import { workbenchSkill } from '@coze-studio/api-schema';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
+import '../../components/workspace-prototype.less';
 import { importSkill, listSkills, testRunSkill } from './service';
 
 type Skill = workbenchSkill.Skill;
@@ -93,28 +98,28 @@ const ImportPanel = ({
   onFileNameChange,
   onImport,
 }: ImportPanelProps) => (
-  <section className="mt-[20px] rounded-[8px] border border-solid coz-stroke-primary px-[16px] py-[16px]">
-    <h2 className="m-0 text-[16px] leading-[24px] font-[600] coz-fg-primary">
+  <section className="coze-prototype-import-panel">
+    <h2>
       导入技能
     </h2>
     <input
       aria-label="技能文件名"
-      className="mt-[12px] h-[36px] w-full rounded-[6px] border border-solid coz-stroke-primary px-[10px] text-[14px] coz-fg-primary"
+      className="coze-prototype-form-field"
       value={fileName}
       onChange={event => onFileNameChange(event.target.value)}
       placeholder="skill.json"
     />
     <textarea
       aria-label="技能内容"
-      className="mt-[10px] min-h-[112px] w-full resize-y rounded-[6px] border border-solid coz-stroke-primary px-[10px] py-[8px] text-[14px] leading-[22px] coz-fg-primary"
+      className="coze-prototype-form-textarea"
       value={content}
       onChange={event => onContentChange(event.target.value)}
       placeholder="粘贴技能 JSON 内容"
     />
-    <div className="mt-[10px] flex justify-end">
+    <div className="coze-prototype-form-actions">
       <button
         type="button"
-        className="min-h-[36px] rounded-[6px] border-0 bg-[#4d53e8] px-[14px] text-[14px] text-white disabled:opacity-50"
+        className="coze-prototype-primary-button disabled:opacity-50"
         disabled={disabled}
         onClick={onImport}
       >
@@ -139,46 +144,43 @@ const SkillCard = ({
   skill,
   onTestRun,
 }: SkillCardProps) => (
-  <article className="border-0 border-b border-solid border-[rgba(77,101,148,0.08)] px-[16px] py-[12px] last:border-b-0 hover:bg-[rgba(91,100,117,0.04)]">
-    <div className="flex items-start gap-[12px]">
-      <div className="mt-[2px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.15)] bg-[rgba(91,100,117,0.06)] text-[#444c5c]">
-        <IconCozSetting className="text-[14px]" />
+  <article className="coze-prototype-row">
+    <div className="coze-prototype-skill-icon">
+      <IconCozSetting className="text-[14px]" />
+    </div>
+    <div className="coze-prototype-row-main">
+      <div className="flex min-w-0 items-center gap-[8px]">
+        <h2 className="m-0 truncate text-[14px] leading-[20px] font-[400] text-[#232938]">
+          {skill.name}
+        </h2>
+        <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[#2a9e06]" />
+        <span className="coze-prototype-tag">{getSkillTypeText(skill.type)}</span>
+        <span className="coze-prototype-tag">v{skill.version}</span>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-[8px]">
-          <h2 className="m-0 truncate text-[14px] leading-[20px] font-[500] text-[#232938]">
-            {skill.name}
-          </h2>
-          <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[#2a9e06]" />
-          <span className="inline-flex h-[16px] items-center rounded-[4px] bg-[rgba(91,100,117,0.08)] px-[6px] text-[11px] leading-[14px] text-[#444c5c]">
-            {getSkillTypeText(skill.type)}
-          </span>
-          <span className="inline-flex h-[16px] items-center rounded-[4px] bg-[rgba(91,100,117,0.08)] px-[6px] text-[11px] leading-[14px] text-[#444c5c]">
-            v{skill.version}
-          </span>
-        </div>
-        <div className="mt-[4px] truncate text-[12px] leading-[18px] text-[#747b8a]">
-          {skill.description || '暂无技能描述'}
-        </div>
+      <div className="coze-prototype-row-desc mt-[4px]">
+        {skill.description || '暂无技能描述'}
       </div>
-      <div className="mt-[2px] flex shrink-0 items-center gap-[12px]">
-        <span className="inline-flex h-[20px] items-center gap-[4px] rounded-full bg-[rgba(42,158,6,0.1)] px-[8px] text-[11px] leading-[16px] text-[#2a9e06]">
-          <span className="h-[6px] w-[6px] rounded-full bg-[#2a9e06]" />
-          {skill.enabled ? '已发布' : '已停用'}
-        </span>
-        <span className="text-[12px] leading-[18px] text-[#747b8a]">
-          上架于 {getSkillUpdatedText(skill.updated_at)}
-        </span>
-        <button
-          type="button"
-          className="h-[28px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[10px] text-[12px] leading-[18px] text-[#444c5c] disabled:opacity-50"
-          disabled={disabled}
-          onClick={() => onTestRun(skill)}
-        >
-          {running ? '运行中' : '试运行'}
-        </button>
-        <span className="text-[16px] leading-[20px] text-[#747b8a]">...</span>
-      </div>
+    </div>
+    <div className="coze-prototype-row-actions mt-[4px]">
+      <span className="coze-prototype-status-pill" data-tone="success">
+        <span
+          className="coze-prototype-status-dot"
+          style={{ backgroundColor: '#2a9e06' }}
+        />
+        {skill.enabled ? '已发布' : '已停用'}
+      </span>
+      <span className="coze-prototype-muted">
+        上架于 {getSkillUpdatedText(skill.updated_at)}
+      </span>
+      <button
+        type="button"
+        className="coze-prototype-secondary-button h-[28px] px-[10px] text-[12px] disabled:opacity-50"
+        disabled={disabled}
+        onClick={() => onTestRun(skill)}
+      >
+        {running ? '运行中' : '试运行'}
+      </button>
+      <IconCozMore className="text-[16px] text-[#747b8a]" />
     </div>
     {result ? (
       <pre className="mt-[10px] max-w-full overflow-auto rounded-[6px] bg-[#f7f7fa] px-[10px] py-[8px] text-[13px] leading-[20px] coz-fg-primary">
@@ -205,18 +207,18 @@ const SkillList = ({
 }: SkillListProps) => (
   <section className="mt-[20px]" aria-label="技能列表">
     {loading ? (
-      <div className="rounded-[12px] border border-solid border-[rgba(77,101,148,0.15)] bg-white py-[32px] text-center text-[14px] text-[#747b8a]">
+      <div className="coze-prototype-empty">
         加载中...
       </div>
     ) : null}
 
     {!loading && skills.length === 0 ? (
-      <div className="rounded-[12px] border border-dashed border-[rgba(77,101,148,0.2)] bg-white px-[16px] py-[32px] text-center text-[14px] text-[#747b8a]">
+      <div className="coze-prototype-empty">
         暂无技能
       </div>
     ) : null}
 
-    <div className="overflow-hidden rounded-[12px] border border-solid border-[rgba(77,101,148,0.15)] bg-white">
+    <div className="coze-prototype-list">
       {skills.map(skill => (
         <SkillCard
           key={skill.id}
@@ -243,14 +245,12 @@ const SkillPageHeader = ({
   onRefresh,
 }: SkillPageHeaderProps) => (
   <div className="text-center">
-    <h1 className="m-0 text-[26px] leading-[36px] font-[600] text-[#1d2129]">
-      技能配置
-    </h1>
-    <p className="mt-[4px] mb-0 text-[13px] leading-[20px] text-[#747b8a]">
+    <h1 className="coze-prototype-page-title">技能配置</h1>
+    <p className="coze-prototype-page-subtitle">
       集中管理工作空间内的全部技能,支持发布、订阅、调用与版本管理。
       <button
         type="button"
-        className="ml-[8px] border-0 bg-transparent p-0 text-[13px] leading-[20px] text-[#2a6df4] cursor-pointer"
+        className="coze-prototype-link-button"
       >
         查看文档
       </button>
@@ -281,13 +281,12 @@ const SkillToolbar = ({
   onCreate,
   onKeywordChange,
 }: SkillToolbarProps) => (
-  <section className="mt-[24px] flex flex-wrap items-center gap-[12px]">
-    <div className="grid h-[32px] grid-cols-3 rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white p-[2px]">
+  <section className="coze-prototype-toolbar">
+    <div className="coze-prototype-segment" data-size="small">
       {SKILL_TYPE_FILTERS.map(item => (
         <button
           key={item.value}
           type="button"
-          className="rounded-[4px] border-0 bg-transparent px-[12px] text-[13px] leading-[18px] text-[#444c5c] data-[active=true]:bg-[rgba(91,100,117,0.1)] data-[active=true]:text-[#1d2129]"
           data-active={activeType === item.value}
           onClick={() => onActiveTypeChange(item.value)}
         >
@@ -298,13 +297,12 @@ const SkillToolbar = ({
 
     <div className="flex-1" />
 
-    <label className="flex h-[32px] w-[220px] items-center gap-[6px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[8px] text-[#747b8a]">
-      <span className="shrink-0 text-[13px]" aria-hidden="true">
+    <label className="coze-prototype-search" data-width="compact">
+      <span aria-hidden="true">
         ⌕
       </span>
       <input
         aria-label="搜索技能"
-        className="min-w-0 flex-1 border-0 bg-transparent text-[13px] leading-[20px] text-[#232938] outline-none"
         value={keyword}
         onChange={event => onKeywordChange(event.target.value)}
         placeholder="搜索技能"
@@ -313,10 +311,11 @@ const SkillToolbar = ({
 
     <button
       type="button"
-      className="flex h-[32px] items-center gap-[6px] rounded-[6px] border-0 bg-[#060e1f] px-[12px] text-[13px] leading-[20px] text-white"
+      className="coze-prototype-primary-button"
       onClick={onCreate}
     >
-      + 创建技能
+      <IconCozPlus className="text-[14px]" />
+      创建技能
     </button>
   </section>
 );
@@ -418,9 +417,9 @@ const SkillPage = () => {
   };
 
   return (
-    <main className="flex h-full flex-col overflow-auto bg-white">
+    <main className="coze-prototype-page">
       <WorkspacePageTopBar />
-      <section className="mx-auto w-[calc(100%_-_64px)] max-w-[1016px] pt-[24px] pb-[28px]">
+      <section className="coze-prototype-page-inner">
         <SkillPageHeader
           loading={loading}
           spaceId={space_id}
@@ -435,9 +434,7 @@ const SkillPage = () => {
         />
 
         {error ? (
-          <div className="mt-[16px] rounded-[8px] border border-solid border-[#ffd4cc] bg-[#fff1ee] px-[12px] py-[10px] text-[14px] leading-[20px] text-[#c02a1d] break-words">
-            {error}
-          </div>
+          <div className="coze-prototype-error">{error}</div>
         ) : null}
 
         {showImportPanel ? (

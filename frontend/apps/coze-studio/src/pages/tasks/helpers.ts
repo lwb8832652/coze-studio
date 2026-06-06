@@ -20,6 +20,72 @@ type ChatTask = workbenchTask.ChatTask;
 
 export type TaskStatusFilter = 'all' | 'running' | 'succeeded' | 'failed';
 
+const STATUS_TEXT_BY_KEY: Record<string, string> = {
+  created: '任务已创建',
+  queued: '任务已进入队列',
+  running: '任务运行中',
+  succeeded: '任务已完成',
+  failed: '任务失败',
+  canceling: '任务取消中',
+  canceled: '任务已取消',
+};
+
+const parseJSONObject = (value?: string): Record<string, unknown> | undefined => {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+};
+
+const getPayloadText = (value?: string) => {
+  const parsed = parseJSONObject(value);
+
+  if (typeof parsed?.message === 'string') {
+    return parsed.message;
+  }
+
+  if (typeof parsed?.text === 'string') {
+    return parsed.text;
+  }
+
+  return value?.trim() ?? '';
+};
+
+export const getTaskInputText = (input?: string) => getPayloadText(input);
+
+export const getTaskResultText = (result?: string) => getPayloadText(result);
+
+export const getTaskEventText = (eventType?: string, payload?: string) => {
+  const parsed = parseJSONObject(payload);
+
+  if (typeof parsed?.message === 'string') {
+    return parsed.message;
+  }
+
+  if (typeof parsed?.status === 'string') {
+    return STATUS_TEXT_BY_KEY[parsed.status] ?? parsed.status;
+  }
+
+  if (typeof parsed?.to === 'string') {
+    return STATUS_TEXT_BY_KEY[parsed.to] ?? `状态更新为 ${parsed.to}`;
+  }
+
+  return payload?.trim() || eventType || '任务事件';
+};
+
 export const getTaskStatusText = (status: workbenchTask.TaskStatus) => {
   const statusMap: Record<workbenchTask.TaskStatus, string> = {
     [workbenchTask.TaskStatus.Created]: '已创建',
@@ -80,9 +146,10 @@ export const filterTasks = (
   const normalizedKeyword = keyword.trim().toLowerCase();
 
   return tasks.filter(task => {
+    const readableInput = getTaskInputText(task.input).toLowerCase();
     const matchesKeyword = normalizedKeyword
       ? task.title.toLowerCase().includes(normalizedKeyword) ||
-        task.input?.toLowerCase().includes(normalizedKeyword)
+        readableInput.includes(normalizedKeyword)
       : true;
     const matchesStatus =
       statusFilter === 'all' ||

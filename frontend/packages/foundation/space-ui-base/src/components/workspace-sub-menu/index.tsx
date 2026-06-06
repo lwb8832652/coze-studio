@@ -54,14 +54,14 @@ export const WorkspaceSubMenu = ({
 
   return (
     <Skeleton loading={loading} active placeholder={<Skeleton.Paragraph />}>
-      <div className="flex h-full w-full flex-col">
-        <div className="flex-none w-full">{header}</div>
+      <div className="coze-prototype-sidebar">
+        <div className="w-full flex-none">{header}</div>
         {hasSpace ? (
           <>
-            <div className="flex-none w-full">
+            <div className="w-full flex-none">
               <WorkspaceList menus={menus} currentSubMenu={currentSubMenu} />
             </div>
-            <div className="mt-[24px] min-h-0 w-full flex-1 overflow-y-auto">
+            <div className="mt-[16px] min-h-0 w-full flex-1 overflow-y-auto">
               {lowerPanel}
             </div>
             {footer ? <div className="w-full flex-none">{footer}</div> : null}

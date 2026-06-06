@@ -25,7 +25,7 @@ export type WorkspaceTaskStatusTone =
 
 export interface WorkspaceTaskStatusMeta {
   tone: WorkspaceTaskStatusTone;
-  dotClassName: string;
+  color: string;
   ariaLabel: string;
 }
 
@@ -38,7 +38,7 @@ export const getWorkspaceTaskStatusMeta = (
   ) {
     return {
       tone: 'waiting',
-      dotClassName: 'bg-[#f5a623]',
+      color: '#f5a623',
       ariaLabel: '等待状态',
     };
   }
@@ -49,7 +49,7 @@ export const getWorkspaceTaskStatusMeta = (
   ) {
     return {
       tone: 'running',
-      dotClassName: 'bg-[#2a6df4]',
+      color: '#2a6df4',
       ariaLabel: '运行中状态',
     };
   }
@@ -57,7 +57,7 @@ export const getWorkspaceTaskStatusMeta = (
   if (status === workbenchTask.TaskStatus.Succeeded) {
     return {
       tone: 'success',
-      dotClassName: 'bg-[#2a9e06]',
+      color: '#2a9e06',
       ariaLabel: '已完成状态',
     };
   }
@@ -65,14 +65,14 @@ export const getWorkspaceTaskStatusMeta = (
   if (status === workbenchTask.TaskStatus.Failed) {
     return {
       tone: 'danger',
-      dotClassName: 'bg-[#f54a45]',
+      color: '#f54a45',
       ariaLabel: '异常状态',
     };
   }
 
   return {
     tone: 'neutral',
-    dotClassName: 'bg-[#a7adb8]',
+    color: '#a7adb8',
     ariaLabel: '已取消状态',
   };
 };

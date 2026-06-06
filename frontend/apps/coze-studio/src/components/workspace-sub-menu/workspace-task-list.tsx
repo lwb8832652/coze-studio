@@ -68,10 +68,8 @@ export const WorkspaceTaskList = () => {
   }, [spaceId]);
 
   return (
-    <section className="w-full h-full flex flex-col" aria-label="我的任务">
-      <h2 className="m-0 px-[16px] text-[12px] leading-[18px] font-[400] text-[#747b8a]">
-        我的任务
-      </h2>
+    <section className="flex h-full w-full flex-col" aria-label="我的任务">
+      <h2 className="coze-prototype-sidebar-task-title">我的任务</h2>
 
       {loading ? (
         <div className="flex h-[120px] items-center justify-center">
@@ -85,7 +83,7 @@ export const WorkspaceTaskList = () => {
         </div>
       ) : null}
 
-      <div className="mt-[8px] grid gap-[2px] px-[8px]">
+      <div className="coze-prototype-sidebar-task-list">
         {tasks.map(task => {
           const statusMeta = getWorkspaceTaskStatusMeta(task.status);
 
@@ -93,22 +91,23 @@ export const WorkspaceTaskList = () => {
             <button
               key={task.id}
               type="button"
-              className="flex h-[34px] min-w-0 items-center gap-[8px] rounded-[6px] border-0 bg-transparent px-[8px] text-left cursor-pointer hover:coz-mg-secondary-hovered"
+              className="coze-prototype-sidebar-task-row"
               onClick={() =>
                 spaceId && navigate(`/space/${spaceId}/tasks/${task.id}`)
               }
             >
-              <span className="relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.15)] bg-white coz-fg-secondary">
+              <span className="coze-prototype-task-icon">
                 <IconCozAsynchronousTask className="text-[13px]" />
-                <span className="absolute bottom-[-2px] right-[-2px] flex h-[12px] w-[12px] items-center justify-center rounded-full bg-[#f3f3f5]">
+                <span className="coze-prototype-status-dot-wrap">
                   <span
-                    className={`h-[6px] w-[6px] rounded-full ${statusMeta.dotClassName}`}
+                    className="coze-prototype-status-dot"
+                    style={{ backgroundColor: statusMeta.color }}
                     aria-label={statusMeta.ariaLabel}
                     data-status-tone={statusMeta.tone}
                   />
                 </span>
               </span>
-              <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px] font-[600] text-[#232938]">
+              <span className="coze-prototype-sidebar-task-name">
                 {task.title}
               </span>
             </button>

@@ -16,8 +16,6 @@
 
 import { type FC } from 'react';
 
-import { Space } from '@coze-arch/coze-design';
-
 import {
   WorkspaceListItem,
   type IWorkspaceListItem,
@@ -32,15 +30,13 @@ export const WorkspaceList: FC<WorkspaceListProps> = ({
   menus,
   currentSubMenu,
 }: WorkspaceListProps) => (
-  <div className="w-full mt-[16px]">
-    <Space vertical spacing={4} className="w-full">
-      {menus.map((item, index) => (
-        <WorkspaceListItem
-          {...item}
-          key={index}
-          currentSubMenu={currentSubMenu}
-        />
-      ))}
-    </Space>
+  <div className="coze-prototype-nav-list">
+    {menus.map((item, index) => (
+      <WorkspaceListItem
+        {...item}
+        key={index}
+        currentSubMenu={currentSubMenu}
+      />
+    ))}
   </div>
 );
