@@ -88,7 +88,16 @@ vi.mock('@coze-arch/coze-design', () => ({
 }));
 
 vi.mock('@coze-arch/coze-design/icons', () => ({
+  IconCozArrowDown: () => <span />,
+  IconCozAt: () => <span />,
+  IconCozBell: () => <span />,
+  IconCozImage: () => <span />,
+  IconCozLink: () => <span />,
+  IconCozPlus: () => <span />,
+  IconCozSearch: () => <span />,
   IconCozSendFill: () => <span />,
+  IconCozStar: () => <span />,
+  IconCozUpload: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
@@ -107,18 +116,27 @@ describe('WorkbenchPage', () => {
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
     expect(markup).toContain('欢迎来到 刘文波 的工作空间');
-    expect(markup).toContain('让我们一起高效完成工作吧');
+    expect(markup).toContain('Aime 专属助理准备好,先聊聊吧~');
+    expect(markup).toContain('去聊天专属助理');
     expect(markup).toContain(
-      'Hi，我会根据你的任务特性，自动匹配最佳处理方式。',
+      'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
     );
     expect(markup).toContain('aria-label="任务描述"');
     expect(markup).toContain('Auto');
     expect(markup).toContain('Ask');
     expect(markup).toContain('Agent');
-    expect(markup).toContain('选择扩展');
-    expect(markup).toContain('研究分析');
-    expect(markup).toContain('生成报告');
-    expect(markup).toContain('整理知识库');
+    expect(markup).toContain('拓展 47');
+    expect(markup).toContain('公开模板 6268');
+    expect(markup).toContain('我收藏的');
+    expect(markup).toContain('我创建的');
+    expect(markup).toContain('搜索模板');
+    expect(markup).toContain('推荐排序');
+    expect(markup).toContain('创建模板');
+    expect(markup).toContain('年度工作总结报告(简洁版)');
+    expect(markup).toContain('通过代码生成研发年度报告');
+    expect(markup).toContain('通用自动化产品 Meego Bug 根因分析与修复');
+    expect(markup).toContain('后端架构整体方案设计');
+    expect(markup).toContain('Go 专家为你 CodeReview');
     expect(markup).toContain('aria-label="发送任务"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('aria-pressed="false"');
