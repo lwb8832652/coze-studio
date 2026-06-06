@@ -22,6 +22,11 @@ struct WorkbenchChatRequest {
     3: required string message
     4: required ChatMode mode
     5: optional i64 selected_skill_id (agw.js_conv="str", api.js_conv="true")
+    6: optional i64 task_id (agw.js_conv="str", api.js_conv="true")
+    7: optional list<string> enable_skills
+    8: optional list<string> enable_mcp
+    9: optional list<string> enable_kbs
+    10: optional list<string> enable_databases
     255: optional base.Base Base (api.none="true")
 }
 
@@ -31,6 +36,8 @@ struct WorkbenchChatData {
     3: optional task.ChatTask task
     4: optional i64 conversation_id (agw.js_conv="str", api.js_conv="true")
     5: optional string reason
+    6: optional string result_type
+    7: optional string execution_type
 }
 
 struct WorkbenchChatResponse {

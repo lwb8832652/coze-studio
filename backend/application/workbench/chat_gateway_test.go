@@ -46,3 +46,43 @@ func TestHandleMessageRejectsInvalidModeAsClientError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, IsClientError(err))
 }
+
+func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
+	taskID := int64(100)
+	req := &chatapi.WorkbenchChatRequest{
+		SpaceID:         1,
+		Message:         "hello",
+		Mode:            chatapi.ChatMode_Ask,
+		TaskID:          &taskID,
+		EnableSkills:    []string{"skill-a"},
+		EnableMcp:       []string{"mcp-a"},
+		EnableKbs:       []string{"kb-a"},
+		EnableDatabases: []string{"db-a"},
+	}
+
+	require.True(t, req.IsSetTaskID())
+	require.True(t, req.IsSetEnableSkills())
+	require.True(t, req.IsSetEnableMcp())
+	require.True(t, req.IsSetEnableKbs())
+	require.True(t, req.IsSetEnableDatabases())
+	require.Equal(t, int64(100), req.GetTaskID())
+	require.Equal(t, []string{"skill-a"}, req.GetEnableSkills())
+	require.Equal(t, []string{"mcp-a"}, req.GetEnableMcp())
+	require.Equal(t, []string{"kb-a"}, req.GetEnableKbs())
+	require.Equal(t, []string{"db-a"}, req.GetEnableDatabases())
+
+	emptyReq := &chatapi.WorkbenchChatRequest{}
+	require.False(t, emptyReq.IsSetEnableSkills())
+	require.Nil(t, emptyReq.GetEnableSkills())
+
+	resultType := "answer"
+	executionType := "Ark"
+	data := &chatapi.WorkbenchChatData{
+		RouteTarget:   chatapi.RouteTarget_TaskEngine,
+		ResultType:    &resultType,
+		ExecutionType: &executionType,
+	}
+
+	require.Equal(t, "answer", data.GetResultType())
+	require.Equal(t, "Ark", data.GetExecutionType())
+}

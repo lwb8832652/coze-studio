@@ -36,6 +36,11 @@ export interface WorkbenchChatRequest {
   message: string,
   mode: ChatMode,
   selected_skill_id?: string,
+  task_id?: string,
+  enable_skills?: string[],
+  enable_mcp?: string[],
+  enable_kbs?: string[],
+  enable_databases?: string[],
 }
 export interface WorkbenchChatData {
   route_target: RouteTarget,
@@ -43,6 +48,8 @@ export interface WorkbenchChatData {
   task?: task.ChatTask,
   conversation_id?: string,
   reason?: string,
+  result_type?: string,
+  execution_type?: string,
 }
 export interface WorkbenchChatResponse {
   data?: WorkbenchChatData,
@@ -55,7 +62,18 @@ export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, Workbe
   "name": "WorkbenchChat",
   "reqType": "WorkbenchChatRequest",
   "reqMapping": {
-    "body": ["space_id", "conversation_id", "message", "mode", "selected_skill_id"]
+    "body": [
+      "space_id",
+      "conversation_id",
+      "message",
+      "mode",
+      "selected_skill_id",
+      "task_id",
+      "enable_skills",
+      "enable_mcp",
+      "enable_kbs",
+      "enable_databases"
+    ]
   },
   "resType": "WorkbenchChatResponse",
   "schemaRoot": "api://schemas/idl_workbench_workbench",
