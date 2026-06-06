@@ -34,11 +34,27 @@ import { sendWorkbenchChat } from './service';
 
 const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as const;
 
+const MODES = ['Auto', 'Ask', 'Agent'] as const;
+
+type WorkbenchMode = (typeof MODES)[number];
+
+const MODE_PROMPTS: Record<WorkbenchMode, string> = {
+  Auto: 'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
+  Ask: 'Hi,我会以最快的方式自动响应,为你提供高效且清晰的专业答案~',
+  Agent: 'Hi,我会充分思考并灵活使用多种工具,帮你搞定复杂问题~',
+};
+
+const MODE_SYMBOLS: Record<WorkbenchMode, string> = {
+  Auto: '✦',
+  Ask: '?',
+  Agent: 'A',
+};
+
 const TEMPLATE_CARDS = [
   {
     title: '年度工作总结报告(简洁版)',
     description: '从用户角度切入年度工作内容,生成结构清晰、详略得当的年终汇报材料。',
-    tags: ['文档投递', '教育', '公开'],
+    tags: ['文档撰写', '通用', '公开'],
     prompt: '帮我生成一份年度工作总结报告，要求结构清晰、简洁专业。',
     stats: {
       stars: 371,
@@ -48,7 +64,7 @@ const TEMPLATE_CARDS = [
   {
     title: '通过代码生成研发年度报告',
     description: '汇总 MR、OKR 与飞书任务,生成结构化的研发年度总结报告。',
-    tags: ['飞书文档', '研发', '公开'],
+    tags: ['文档撰写', '通用', '公开'],
     prompt: '根据代码提交、OKR 和任务记录，生成研发年度报告。',
     stats: {
       stars: 127,
@@ -57,8 +73,9 @@ const TEMPLATE_CARDS = [
   },
   {
     title: '通用自动化产品 Meego Bug 根因分析与修复',
-    description: '结合联系 Main App 打作 Meego Ticket,自动定位与修复模型。',
-    tags: ['自动化', 'Bug', '公开'],
+    description:
+      '该模版聚焦TikTok Main App的产品bug根因分析和修复，根据Meego Ticket,技术分析文档，风神监控等信息输出修复方案。',
+    tags: ['代码开发', '服务端', '官方'],
     prompt: '帮我分析 Meego Bug 根因，并给出可执行修复方案。',
     stats: {
       stars: 33,
@@ -67,8 +84,8 @@ const TEMPLATE_CARDS = [
   },
   {
     title: '后端架构整体方案设计',
-    description: '设计高可用、可扩展的后端架构方案,涵盖通信、模块、链路全要素。',
-    tags: ['架构', '后端', '公开'],
+    description: '设计完整的后端技术方案，涵盖架构、模块、接口、稳定性、监控及代码改动。',
+    tags: ['文档撰写', '服务端', '公开'],
     prompt: '请帮我设计一个后端架构整体方案，覆盖模块、链路和扩展性。',
     stats: {
       stars: 859,
@@ -77,8 +94,8 @@ const TEMPLATE_CARDS = [
   },
   {
     title: 'Go 专家为你 CodeReview',
-    description: '扮演资深 Go 专家,系统化对代码进行结构、可读性、性能等维度的审查。',
-    tags: ['Go', '代码', '公开'],
+    description: '作为顶级 Go 专家，系统化执行代码审查，确保代码质量、性能和安全，符合 Go 最佳实践。',
+    tags: ['质量检测', '服务端', '公开'],
     prompt: '请作为 Go 专家帮我做一次 CodeReview，并给出修改建议。',
     stats: {
       stars: 874,
@@ -87,12 +104,20 @@ const TEMPLATE_CARDS = [
   },
 ];
 
-const MODES = ['Auto', 'Ask', 'Agent'] as const;
-
-type WorkbenchMode = (typeof MODES)[number];
-
 type WorkbenchChatData = workbench.WorkbenchChatData;
 type ChatTask = workbenchTask.ChatTask;
+
+const AT_RESOURCES = [
+  '技能',
+  '代码仓库',
+  '仓库分支',
+  '代码文件夹',
+  '代码文件',
+  '用户',
+  '风神数据',
+  'Meego 工作项',
+  '空间文档库',
+];
 
 export const mapModeToChatMode = (mode: WorkbenchMode): workbench.ChatMode => {
   const modeMap: Record<WorkbenchMode, workbench.ChatMode> = {
@@ -177,6 +202,35 @@ const WorkbenchTitle = () => (
   </header>
 );
 
+const AtMenu = ({ onClose }: { onClose: () => void }) => (
+  <div
+    className="chat-workbench-at-menu"
+    role="menu"
+    aria-label="@ 选择资源类型"
+  >
+    <div className="chat-workbench-at-menu-title">
+      <span>@</span>
+      选择资源类型
+    </div>
+    <div className="chat-workbench-at-menu-list">
+      {AT_RESOURCES.map((item, index) => (
+        <button key={item} type="button" role="menuitem" onClick={onClose}>
+          <span className="chat-workbench-at-menu-icon">
+            {String(index + 1).padStart(2, '0')}
+          </span>
+          <span>{item}</span>
+          <span aria-hidden="true">›</span>
+        </button>
+      ))}
+    </div>
+    <div className="chat-workbench-at-menu-footer">
+      <span>↑↓ 移动光标</span>
+      <span>↵ 选择条目</span>
+      <span>Esc 退出</span>
+    </div>
+  </div>
+);
+
 const WorkbenchComposer = ({
   value,
   mode,
@@ -185,69 +239,96 @@ const WorkbenchComposer = ({
   onValueChange,
   onModeChange,
   onSend,
-}: ComposerProps) => (
-  <section className="chat-workbench-composer" aria-label="任务输入">
-    <div className="chat-workbench-composer-prompt">
-      <span aria-hidden="true">✣</span>
-      <span>Hi,我会根据你的任务特性,自动匹配最佳的处理方式~</span>
-    </div>
-    <TextArea
-      aria-label="任务描述"
-      autosize={false}
-      rows={4}
-      value={value}
-      onChange={onValueChange}
-      placeholder=""
-      className="chat-workbench-input"
-    />
+}: ComposerProps) => {
+  const [atMenuOpen, setAtMenuOpen] = useState(false);
 
-    <div className="chat-workbench-toolbar">
-      <div className="chat-workbench-toolbar-left">
-        <div className="chat-workbench-mode" aria-label="模式选择">
-          {MODES.map(item => (
-            <button
-              key={item}
-              type="button"
-              className="chat-workbench-mode-button"
-              data-active={mode === item}
-              aria-pressed={mode === item}
-              onClick={() => onModeChange(item)}
-            >
-              {item}
-            </button>
-          ))}
+  const handleValueChange = (nextValue: string) => {
+    onValueChange(nextValue);
+    setAtMenuOpen(nextValue.endsWith('@'));
+  };
+
+  return (
+    <section className="chat-workbench-composer" aria-label="任务输入">
+      {atMenuOpen ? <AtMenu onClose={() => setAtMenuOpen(false)} /> : null}
+      <div className="chat-workbench-composer-body">
+        <TextArea
+          aria-label="任务描述"
+          autosize={false}
+          rows={3}
+          value={value}
+          onChange={handleValueChange}
+          placeholder=""
+          className="chat-workbench-input"
+        />
+        {!value ? (
+          <div
+            className="chat-workbench-composer-prompt"
+            aria-label="当前模式提示"
+          >
+            <span aria-hidden="true">{MODE_SYMBOLS[mode]}</span>
+            <span>{MODE_PROMPTS[mode]}</span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="chat-workbench-toolbar">
+        <div className="chat-workbench-toolbar-left">
+          <div className="chat-workbench-mode" aria-label="模式选择">
+            {MODES.map(item => (
+              <button
+                key={item}
+                type="button"
+                className="chat-workbench-mode-button"
+                data-active={mode === item}
+                aria-pressed={mode === item}
+                onClick={() => onModeChange(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            className="chat-workbench-extension"
+            aria-label="拓展 47"
+          >
+            <span>拓展</span>
+            <span>47</span>
+            <IconCozArrowDown />
+          </button>
         </div>
 
-        <button type="button" className="chat-workbench-extension">
-          <span>拓展 47</span>
-          <IconCozArrowDown />
-        </button>
+        <div className="chat-workbench-toolbar-actions">
+          <button
+            type="button"
+            aria-label="添加上下文"
+            aria-expanded={atMenuOpen}
+            onClick={() => setAtMenuOpen(open => !open)}
+          >
+            @
+          </button>
+          <button type="button" aria-label="添加附件">
+            <IconCozLink />
+          </button>
+        </div>
+        <Button
+          aria-label="发送任务"
+          color="primary"
+          disabled={!canSend}
+          icon={<IconCozSendFill />}
+          loading={loading}
+          onClick={onSend}
+          className="chat-workbench-send"
+        >
+          <span className="chat-workbench-send-label">
+            {loading ? '发送中' : '发送'}
+          </span>
+        </Button>
       </div>
-
-      <div className="chat-workbench-toolbar-actions">
-        <button type="button" aria-label="添加上下文">
-          @
-        </button>
-        <button type="button" aria-label="添加附件">
-          <IconCozLink />
-        </button>
-      </div>
-      <Button
-        aria-label="发送任务"
-        color="primary"
-        disabled={!canSend}
-        icon={<IconCozSendFill />}
-        loading={loading}
-        onClick={onSend}
-        className="chat-workbench-send"
-      >
-        <span className="chat-workbench-send-label">
-          {loading ? '发送中' : '发送'}
-        </span>
-      </Button>
-    </div>
-  </section>
-);
+    </section>
+  );
+};
 
 const WorkbenchTemplateSection = ({
   onTemplateSelect,
@@ -287,7 +368,7 @@ const WorkbenchTemplateSection = ({
         <h2>创建模板</h2>
         <p>沉淀可复用的指令与配置</p>
         <div className="chat-workbench-create-preview">
-          <span />
+          <span>Template</span>
         </div>
         <div className="chat-workbench-create-actions">
           <button
@@ -309,6 +390,7 @@ const WorkbenchTemplateSection = ({
           key={card.title}
           type="button"
           className="chat-workbench-template-card"
+          aria-label={`${card.title} 模板`}
           onClick={() => onTemplateSelect(card.prompt)}
         >
           <span className="chat-workbench-template-title">{card.title}</span>
@@ -328,6 +410,9 @@ const WorkbenchTemplateSection = ({
                 <IconCozImage />
                 {card.stats.uses}
               </span>
+            </span>
+            <span className="chat-workbench-card-action" aria-hidden="true">
+              →
             </span>
           </span>
         </button>

@@ -137,9 +137,58 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('通用自动化产品 Meego Bug 根因分析与修复');
     expect(markup).toContain('后端架构整体方案设计');
     expect(markup).toContain('Go 专家为你 CodeReview');
+    expect(markup).toContain('文档撰写');
+    expect(markup).toContain('代码开发');
+    expect(markup).toContain('质量检测');
+    expect(markup).toContain('服务端');
+    expect(markup).toContain('官方');
     expect(markup).toContain('aria-label="发送任务"');
     expect(markup).toContain('aria-pressed="true"');
     expect(markup).toContain('aria-pressed="false"');
+  });
+
+  it('switches mode prompt and opens the resource menu from the prototype', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    expect(container.textContent).toContain(
+      'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
+    );
+
+    const askButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === 'Ask',
+    ) as HTMLButtonElement;
+    act(() => {
+      askButton.click();
+    });
+
+    expect(container.textContent).toContain(
+      'Hi,我会以最快的方式自动响应,为你提供高效且清晰的专业答案~',
+    );
+
+    const resourceButton = container.querySelector(
+      'button[aria-label="添加上下文"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      resourceButton.click();
+    });
+
+    expect(container.textContent).toContain('选择资源类型');
+    expect(container.textContent).toContain('技能');
+    expect(container.textContent).toContain('代码仓库');
+    expect(container.textContent).toContain('空间文档库');
+    expect(container.textContent).toContain('Esc 退出');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 
   it('maps local mode names to generated chat modes', () => {
