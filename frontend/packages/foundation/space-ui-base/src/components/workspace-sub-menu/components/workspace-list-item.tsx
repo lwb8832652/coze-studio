@@ -72,6 +72,7 @@ export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
         'cursor-pointer',
         'group',
         {
+          'justify-center': variant === 'primary',
           'bg-[#1f1f26] text-white hover:bg-[#34343d]': variant === 'primary',
           'hover:coz-mg-secondary-hovered': variant !== 'primary',
           'coz-bg-primary': path === currentSubMenu && variant !== 'primary',
@@ -88,12 +89,10 @@ export const WorkspaceListItem: FC<IWorkspaceListItemProps> = ({
         </div>
       </div>
       <div
-        className={classNames(
-          'flex-1',
-          'text-[14px]',
-          'leading-[20px]',
-          'font-[500]',
-        )}
+        className={classNames('text-[14px]', 'leading-[20px]', 'font-[500]', {
+          'flex-none': variant === 'primary',
+          'flex-1': variant !== 'primary',
+        })}
       >
         {title?.()}
       </div>

@@ -89,9 +89,14 @@ describe('TaskDetailPage', () => {
     expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(container.textContent).toContain('生成周报');
+    expect(container.textContent).toContain('Aime · 已为你启动 Agent 工作流');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
     expect(container.textContent).toContain('专属助理已开始执行');
+    expect(container.textContent).toContain('执行流程');
+    expect(
+      container.querySelector('input[placeholder="继续追问..."]'),
+    ).toBeTruthy();
     expect(container.textContent).toContain('65%');
 
     act(() => {

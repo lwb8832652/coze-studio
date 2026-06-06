@@ -15,10 +15,11 @@
  */
 
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import {
   IconCozArrowDown,
+  IconCozBell,
   IconCozImage,
   IconCozLink,
   IconCozPlus,
@@ -30,6 +31,7 @@ import { workbench, workbenchTask } from '@coze-studio/api-schema';
 
 import './index.less';
 
+import { ExtensionsPopover } from './extensions-popover';
 import { sendWorkbenchChat } from './service';
 
 const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as const;
@@ -186,7 +188,7 @@ const WorkbenchTopbar = () => (
       className="chat-workbench-icon-button"
       aria-label="通知"
     >
-      ♡
+      <IconCozBell />
     </button>
     <div className="chat-workbench-avatar" aria-label="当前用户">
       wb
@@ -288,15 +290,7 @@ const WorkbenchComposer = ({
             ))}
           </div>
 
-          <button
-            type="button"
-            className="chat-workbench-extension"
-            aria-label="拓展 47"
-          >
-            <span>拓展</span>
-            <span>47</span>
-            <IconCozArrowDown />
-          </button>
+          <ExtensionsPopover />
         </div>
 
         <div className="chat-workbench-toolbar-actions">
@@ -423,6 +417,7 @@ const WorkbenchTemplateSection = ({
 
 const WorkbenchPage = () => {
   const { space_id } = useParams();
+  const navigate = useNavigate();
   const [value, setValue] = useState('');
   const [mode, setMode] = useState<WorkbenchMode>('Auto');
   const [chatData, setChatData] = useState<WorkbenchChatData | undefined>();
@@ -449,6 +444,10 @@ const WorkbenchPage = () => {
 
       setChatData(response.data);
       setValue('');
+
+      if (response.data?.task?.id) {
+        navigate(`/space/${space_id}/tasks/${response.data.task.id}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '发送失败，请稍后重试');
     } finally {

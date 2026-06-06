@@ -83,10 +83,16 @@ describe('TasksPage helpers', () => {
     });
 
     expect(container.textContent).toContain('全部任务');
-    expect(container.textContent).toContain('跨任务追踪执行状态、产物和历史记录');
-    expect(container.textContent).toContain('搜索任务');
+    expect(container.textContent).toContain('Aime 专属助理准备好');
+    expect(container.textContent).toContain('去聊天专属助理');
+    expect(container.textContent).toContain(
+      '这里收纳您当前工作空间内的全部任务',
+    );
+    expect(container.querySelector('input[placeholder="搜索会话"]')).toBeTruthy();
     expect(container.textContent).toContain('已收藏');
+    expect(container.textContent).toContain('批量操作');
     expect(container.textContent).toContain('生成周报');
+    expect(container.textContent).toContain('运行中');
 
     act(() => {
       root?.unmount();

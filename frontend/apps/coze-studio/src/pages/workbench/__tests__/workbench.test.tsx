@@ -26,9 +26,11 @@ import { workbench, workbenchTask } from '@coze-studio/api-schema';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
+const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
   useParams: mockUseParams,
 }));
 
@@ -101,14 +103,12 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
-import WorkbenchPage, {
-  getTaskStatusText,
-  mapModeToChatMode,
-} from '../index';
+import WorkbenchPage, { mapModeToChatMode } from '../index';
 
 describe('WorkbenchPage', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
+    mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
   });
 
@@ -147,7 +147,7 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('aria-pressed="false"');
   });
 
-  it('switches mode prompt and opens the resource menu from the prototype', () => {
+  it('switches mode prompt and opens the resource and extension menus from the prototype', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -185,6 +185,27 @@ describe('WorkbenchPage', () => {
     expect(container.textContent).toContain('空间文档库');
     expect(container.textContent).toContain('Esc 退出');
 
+    const extensionButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('拓展'),
+    ) as HTMLButtonElement;
+    act(() => {
+      extensionButton.click();
+    });
+
+    expect(container.textContent).toContain('技能 27');
+    expect(container.textContent).toContain('MCP 20');
+    expect(container.textContent).toContain('已选择:');
+    expect(container.textContent).toContain('meego-guidelines');
+
+    const skillConfigButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('技能配置')) as HTMLButtonElement;
+    act(() => {
+      skillConfigButton.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/skill');
+
     act(() => {
       root?.unmount();
     });
@@ -197,7 +218,7 @@ describe('WorkbenchPage', () => {
     expect(mapModeToChatMode('Agent')).toBe(workbench.ChatMode.Agent);
   });
 
-  it('renders returned answer and task after send', async () => {
+  it('navigates to the task execution page after send returns a task', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -248,12 +269,7 @@ describe('WorkbenchPage', () => {
       message: '帮我生成周报',
       mode: workbench.ChatMode.Auto,
     });
-    expect(container.textContent).toContain('可以，我会处理这项任务。');
-    expect(container.textContent).toContain('生成周报');
-    expect(container.textContent).toContain(
-      getTaskStatusText(workbenchTask.TaskStatus.Running),
-    );
-    expect(container.textContent).toContain('35%');
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/task-1');
 
     act(() => {
       root?.unmount();

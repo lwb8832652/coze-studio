@@ -77,11 +77,18 @@ describe('SkillPage', () => {
     });
 
     expect(container.textContent).toContain('技能配置');
+    expect(container.textContent).toContain('Aime 专属助理准备好');
+    expect(container.textContent).toContain('去聊天专属助理');
     expect(container.textContent).toContain(
-      '管理任务执行时可调用的工具、脚本和流程',
+      '集中管理工作空间内的全部技能,支持发布、订阅、调用与版本管理。',
     );
+    expect(container.textContent).toContain('查看文档');
+    expect(container.textContent).toContain('个人配置');
+    expect(container.textContent).toContain('我的收藏');
+    expect(container.textContent).toContain('市场发现');
     expect(container.textContent).toContain('创建技能');
     expect(container.querySelector('input[aria-label="搜索技能"]')).toBeTruthy();
+    expect(container.textContent).toContain('已发布');
 
     act(() => {
       root?.unmount();

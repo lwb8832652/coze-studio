@@ -17,14 +17,14 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import {
+  IconCozAsynchronousTask,
+  IconCozBell,
+} from '@coze-arch/coze-design/icons';
 import type { workbenchTask } from '@coze-studio/api-schema';
 
 import { getTask, listTaskEvents } from './service';
-import {
-  formatUpdatedTime,
-  getTaskStatusText,
-  getTaskStatusTone,
-} from './helpers';
+import { formatUpdatedTime, getTaskStatusText } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
@@ -32,84 +32,167 @@ type TaskEvent = workbenchTask.TaskEvent;
 const getEventText = (event: TaskEvent) =>
   event.payload || event.event_type || '任务事件';
 
-const TaskStatusCard = ({ task }: { task: ChatTask }) => (
-  <section className="rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[20px] py-[16px]">
-    <div className="flex flex-wrap items-start justify-between gap-[12px]">
-      <div className="min-w-0">
-        <h1 className="m-0 break-words text-[20px] leading-[28px] font-[600] coz-fg-primary">
-          {task.title}
-        </h1>
-        <div className="mt-[8px] flex flex-wrap gap-[10px] text-[13px] leading-[20px] coz-fg-secondary">
-          <span data-status-tone={getTaskStatusTone(task.status)}>
-            {getTaskStatusText(task.status)}
-          </span>
-          <span>更新于 {formatUpdatedTime(task.updated_at)}</span>
-        </div>
-      </div>
-      <div className="text-[20px] leading-[28px] font-[600] text-[#0a8f5a]">
-        {task.progress}%
-      </div>
-    </div>
-    <div className="mt-[14px] grid grid-cols-[minmax(0,1fr)_auto] items-center gap-[10px] text-[13px] leading-[20px] coz-fg-secondary">
-      <progress className="h-[8px] w-full" value={task.progress} max={100} />
-      <span>{task.progress}%</span>
-    </div>
-  </section>
+const AssistantMark = () => (
+  <span
+    className="flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[6px] bg-gradient-to-br from-lime-300 to-green-500 text-white"
+    aria-hidden="true"
+  >
+    △
+  </span>
 );
 
-const TaskTextSection = ({
-  children,
-  title,
+const TaskTopBar = ({ task }: { task: ChatTask }) => (
+  <header className="flex h-[52px] items-center gap-[12px] border-0 border-b border-solid border-[rgba(77,101,148,0.1)] px-[24px]">
+    <span className="text-[16px] leading-[20px] text-[#444c5c]" aria-hidden="true">
+      <IconCozAsynchronousTask className="text-[16px]" />
+    </span>
+    <h1 className="m-0 min-w-0 truncate text-[14px] leading-[20px] font-[500] text-[#232938]">
+      {task.title}
+    </h1>
+    <span className="text-[13px] leading-[18px] text-[#747b8a]">›</span>
+    <span className="text-[13px] leading-[18px] text-[#747b8a]">
+      {getTaskStatusText(task.status)}
+    </span>
+    <span className="text-[13px] leading-[18px] text-[#747b8a]">
+      {task.progress}%
+    </span>
+    <div className="flex-1" />
+    <button
+      type="button"
+      className="h-[28px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[10px] text-[13px] text-[#444c5c]"
+    >
+      ☆ 收藏
+    </button>
+    <button
+      type="button"
+      className="h-[28px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[10px] text-[13px] text-[#444c5c]"
+    >
+      分享
+    </button>
+    <button
+      type="button"
+      className="flex h-[28px] w-[28px] items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white text-[#444c5c]"
+      aria-label="通知"
+    >
+      <IconCozBell className="text-[14px]" />
+    </button>
+    <div className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-gradient-to-br from-orange-300 to-pink-400 text-[12px] leading-[16px] text-white">
+      wb
+    </div>
+  </header>
+);
+
+const TaskConversation = ({ task }: { task: ChatTask }) => (
+  <>
+    <div className="flex justify-end">
+      <div className="max-w-[80%] rounded-[16px] rounded-tr-[4px] bg-[rgba(91,100,117,0.06)] px-[16px] py-[12px] text-[14px] leading-[22px] text-[#232938]">
+        {task.input || task.title}
+      </div>
+    </div>
+
+    <div className="flex items-center gap-[8px] text-[13px] leading-[20px] text-[#444c5c]">
+      <AssistantMark />
+      <span>Aime · 已为你启动 Agent 工作流</span>
+    </div>
+  </>
+);
+
+const TaskEventsSection = ({
+  events,
+  task,
 }: {
-  children: string;
-  title: string;
-}) => (
-  <section className="rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[20px] py-[16px]">
-    <h2 className="m-0 text-[15px] leading-[22px] font-[600] coz-fg-primary">
-      {title}
-    </h2>
-    <p className="mt-[10px] mb-0 whitespace-pre-wrap break-words text-[14px] leading-[22px] coz-fg-primary">
-      {children}
-    </p>
-  </section>
-);
+  events: TaskEvent[];
+  task: ChatTask;
+}) => {
+  const doneCount = events.length;
+  const totalCount = Math.max(doneCount + (task.progress < 100 ? 1 : 0), 1);
 
-const TaskEventsSection = ({ events }: { events: TaskEvent[] }) => (
-  <section className="rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[20px] py-[16px]">
-    <h2 className="m-0 text-[15px] leading-[22px] font-[600] coz-fg-primary">
-      执行流程
-    </h2>
-    <div className="mt-[12px] grid gap-[10px]">
-      {events.length > 0 ? (
-        events.map(event => (
-          <article
-            key={event.id}
-            className="rounded-[8px] bg-[#f7f7fa] px-[12px] py-[10px]"
-          >
-            <div className="text-[14px] leading-[22px] coz-fg-primary break-words">
+  return (
+    <section className="overflow-hidden rounded-[12px] border border-solid border-[rgba(77,101,148,0.15)] bg-[#fafbfc]">
+      <div className="flex items-center gap-[8px] border-0 border-b border-solid border-[rgba(77,101,148,0.1)] px-[16px] py-[12px]">
+        <span className="text-[14px] leading-[18px] text-[#747b8a]">⌄</span>
+        <h2 className="m-0 text-[13px] leading-[20px] font-[500] text-[#232938]">
+          执行流程
+        </h2>
+        <span className="ml-auto text-[12px] leading-[18px] text-[#747b8a]">
+          {doneCount}/{totalCount} 已完成 · {task.progress}%
+        </span>
+      </div>
+      <ol className="m-0 grid list-none gap-[10px] px-[16px] py-[14px]">
+        {events.map(event => (
+          <li key={event.id} className="flex items-center gap-[8px] text-[13px]">
+            <span className="flex h-[16px] w-[16px] shrink-0 items-center justify-center rounded-full bg-[#2a9e06] text-[11px] leading-[16px] text-white">
+              ✓
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[#444c5c]">
               {getEventText(event)}
-            </div>
-            <div className="mt-[4px] text-[12px] leading-[18px] coz-fg-secondary">
+            </span>
+            <span className="shrink-0 text-[12px] text-[#747b8a]">
               {formatUpdatedTime(event.created_at)}
-            </div>
-          </article>
-        ))
-      ) : (
-        <div className="text-[14px] leading-[22px] coz-fg-secondary">
-          暂无执行事件
-        </div>
-      )}
-    </div>
-  </section>
+            </span>
+          </li>
+        ))}
+        {task.progress < 100 ? (
+          <li className="flex items-center gap-[8px] text-[13px]">
+            <span className="h-[16px] w-[16px] shrink-0 rounded-full border-2 border-solid border-[#2a9e06]" />
+            <span className="text-[#232938]">汇总分析结果,生成结构化报告</span>
+            <span className="ml-[4px] text-[11px] text-[#2a9e06]">
+              进行中...
+            </span>
+          </li>
+        ) : null}
+      </ol>
+    </section>
+  );
+};
+
+const TaskReport = ({ task }: { task: ChatTask }) => (
+  <article className="text-[14px] leading-[28px] text-[#232938]">
+    <h2 className="m-0 text-[20px] leading-[28px] font-[600] text-[#1d2129]">
+      {task.title}报告
+    </h2>
+    <p className="mt-[10px] mb-0 whitespace-pre-wrap text-[#444c5c]">
+      {task.result || task.error || '结果生成中'}
+    </p>
+
+    <h3 className="mt-[28px] mb-[8px] text-[16px] leading-[24px] font-[600] text-[#1d2129]">
+      一、任务输入
+    </h3>
+    <p className="m-0 whitespace-pre-wrap text-[#232938]">
+      {task.input || task.title}
+    </p>
+  </article>
 );
 
 const FollowUpComposer = () => (
-  <section className="sticky bottom-[16px] rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[12px] py-[10px] shadow-[0_8px_24px_rgb(29_28_35_/_8%)]">
-    <input
-      aria-label="继续追问"
-      className="h-[36px] w-full rounded-[6px] border border-solid coz-stroke-primary px-[10px] text-[14px] coz-fg-primary"
-      placeholder="继续追问这个任务"
-    />
+  <section className="sticky bottom-0 bg-gradient-to-t from-white via-white to-transparent pt-[24px] pb-[16px]">
+    <div className="rounded-[16px] border border-solid border-[rgba(77,101,148,0.2)] bg-white p-[12px] shadow-[0_4px_24px_rgba(15,23,42,0.1)]">
+      <div className="flex items-center gap-[8px]">
+        <input
+          aria-label="继续追问"
+          className="h-[32px] min-w-0 flex-1 border-0 bg-transparent px-[8px] text-[14px] text-[#232938] outline-none"
+          placeholder="继续追问..."
+        />
+        <button
+          type="button"
+          className="h-[28px] w-[28px] rounded-[6px] border-0 bg-transparent text-[#444c5c]"
+        >
+          🔗
+        </button>
+        <button
+          type="button"
+          className="h-[28px] w-[28px] rounded-[6px] border-0 bg-transparent text-[#444c5c]"
+        >
+          🎙
+        </button>
+        <button
+          type="button"
+          className="h-[32px] w-[32px] rounded-[8px] border-0 bg-gradient-to-br from-[#7dff84] to-[#3dbd3d] text-white"
+        >
+          ↑
+        </button>
+      </div>
+    </div>
   </section>
 );
 
@@ -160,8 +243,9 @@ const TaskDetailPage = () => {
   }, [task_id]);
 
   return (
-    <main className="h-full overflow-auto coz-bg-primary px-[24px] py-[24px]">
-      <section className="mx-auto flex w-full max-w-[860px] flex-col gap-[16px]">
+    <main className="h-full overflow-auto bg-white">
+      {task ? <TaskTopBar task={task} /> : null}
+      <section className="mx-auto flex w-full max-w-[860px] flex-col gap-[24px] px-[24px] pt-[32px] pb-[120px]">
         {loading ? (
           <div className="rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[20px] py-[28px] text-center text-[14px] coz-fg-secondary">
             加载中...
@@ -182,14 +266,9 @@ const TaskDetailPage = () => {
 
         {task ? (
           <>
-            <TaskStatusCard task={task} />
-            <TaskTextSection title="任务描述">
-              {task.input || task.title}
-            </TaskTextSection>
-            <TaskEventsSection events={events} />
-            <TaskTextSection title="执行结果">
-              {task.result || task.error || '结果生成中'}
-            </TaskTextSection>
+            <TaskConversation task={task} />
+            <TaskEventsSection events={events} task={task} />
+            <TaskReport task={task} />
             <FollowUpComposer />
           </>
         ) : null}

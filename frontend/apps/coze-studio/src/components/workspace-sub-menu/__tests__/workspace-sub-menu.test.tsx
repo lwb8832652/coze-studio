@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
+import { workbenchTask } from '@coze-studio/api-schema';
+
 import {
   ASSISTANT_BADGE,
   ASSISTANT_LABEL,
   WORKSPACE_MENU_META,
 } from '../menu';
+import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
   it('defines the Figma workspace navigation structure', () => {
@@ -39,5 +42,34 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       path: 'workbench',
       variant: 'primary',
     });
+  });
+
+  it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {
+    const completedMeta = getWorkspaceTaskStatusMeta(
+      workbenchTask.TaskStatus.Succeeded,
+    );
+    const runningMeta = getWorkspaceTaskStatusMeta(
+      workbenchTask.TaskStatus.Running,
+    );
+    const failedMeta = getWorkspaceTaskStatusMeta(
+      workbenchTask.TaskStatus.Failed,
+    );
+
+    expect(completedMeta).toMatchObject({
+      tone: 'success',
+      dotClassName: 'bg-[#2a9e06]',
+      ariaLabel: '已完成状态',
+    });
+    expect(runningMeta).toMatchObject({
+      tone: 'running',
+      dotClassName: 'bg-[#2a6df4]',
+      ariaLabel: '运行中状态',
+    });
+    expect(failedMeta).toMatchObject({
+      tone: 'danger',
+      dotClassName: 'bg-[#f54a45]',
+      ariaLabel: '异常状态',
+    });
+    expect(runningMeta.dotClassName).not.toBe(completedMeta.dotClassName);
   });
 });

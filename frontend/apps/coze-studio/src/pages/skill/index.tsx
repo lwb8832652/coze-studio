@@ -17,8 +17,10 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { IconCozSetting } from '@coze-arch/coze-design/icons';
 import { workbenchSkill } from '@coze-studio/api-schema';
 
+import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import { importSkill, listSkills, testRunSkill } from './service';
 
 type Skill = workbenchSkill.Skill;
@@ -27,9 +29,9 @@ const TEST_INPUT = JSON.stringify({ message: 'ping' });
 type SkillTypeFilter = 'all' | 'script' | 'workflow';
 
 const SKILL_TYPE_FILTERS: Array<{ label: string; value: SkillTypeFilter }> = [
-  { label: '全部', value: 'all' },
-  { label: '脚本', value: 'script' },
-  { label: '工作流', value: 'workflow' },
+  { label: '个人配置', value: 'all' },
+  { label: '我的收藏', value: 'script' },
+  { label: '市场发现', value: 'workflow' },
 ];
 
 const getVisibleSkills = (
@@ -62,6 +64,14 @@ const getSkillTypeText = (type: workbenchSkill.SkillType) => {
   };
 
   return typeMap[type] ?? '未知';
+};
+
+const getSkillUpdatedText = (timestamp: number) => {
+  if (!timestamp) {
+    return '-';
+  }
+
+  return new Date(timestamp).toLocaleDateString();
 };
 
 interface ImportPanelProps {
@@ -129,26 +139,46 @@ const SkillCard = ({
   skill,
   onTestRun,
 }: SkillCardProps) => (
-  <article className="rounded-[8px] border border-solid coz-stroke-primary px-[16px] py-[14px]">
-    <div className="flex flex-wrap items-start justify-between gap-[12px]">
-      <div className="min-w-0">
-        <h2 className="m-0 break-words text-[16px] leading-[24px] font-[600] coz-fg-primary">
-          {skill.name}
-        </h2>
-        <div className="mt-[6px] flex flex-wrap gap-[8px] text-[13px] leading-[20px] coz-fg-secondary">
-          <span>{getSkillTypeText(skill.type)}</span>
-          <span>v{skill.version}</span>
-          <span>{skill.enabled ? '已启用' : '已停用'}</span>
+  <article className="border-0 border-b border-solid border-[rgba(77,101,148,0.08)] px-[16px] py-[12px] last:border-b-0 hover:bg-[rgba(91,100,117,0.04)]">
+    <div className="flex items-start gap-[12px]">
+      <div className="mt-[2px] flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.15)] bg-[rgba(91,100,117,0.06)] text-[#444c5c]">
+        <IconCozSetting className="text-[14px]" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-[8px]">
+          <h2 className="m-0 truncate text-[14px] leading-[20px] font-[500] text-[#232938]">
+            {skill.name}
+          </h2>
+          <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[#2a9e06]" />
+          <span className="inline-flex h-[16px] items-center rounded-[4px] bg-[rgba(91,100,117,0.08)] px-[6px] text-[11px] leading-[14px] text-[#444c5c]">
+            {getSkillTypeText(skill.type)}
+          </span>
+          <span className="inline-flex h-[16px] items-center rounded-[4px] bg-[rgba(91,100,117,0.08)] px-[6px] text-[11px] leading-[14px] text-[#444c5c]">
+            v{skill.version}
+          </span>
+        </div>
+        <div className="mt-[4px] truncate text-[12px] leading-[18px] text-[#747b8a]">
+          {skill.description || '暂无技能描述'}
         </div>
       </div>
-      <button
-        type="button"
-        className="min-h-[32px] rounded-[6px] border border-solid coz-stroke-primary px-[12px] text-[14px] coz-fg-primary coz-bg-plus disabled:opacity-50"
-        disabled={disabled}
-        onClick={() => onTestRun(skill)}
-      >
-        {running ? '运行中' : '试运行'}
-      </button>
+      <div className="mt-[2px] flex shrink-0 items-center gap-[12px]">
+        <span className="inline-flex h-[20px] items-center gap-[4px] rounded-full bg-[rgba(42,158,6,0.1)] px-[8px] text-[11px] leading-[16px] text-[#2a9e06]">
+          <span className="h-[6px] w-[6px] rounded-full bg-[#2a9e06]" />
+          {skill.enabled ? '已发布' : '已停用'}
+        </span>
+        <span className="text-[12px] leading-[18px] text-[#747b8a]">
+          上架于 {getSkillUpdatedText(skill.updated_at)}
+        </span>
+        <button
+          type="button"
+          className="h-[28px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[10px] text-[12px] leading-[18px] text-[#444c5c] disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => onTestRun(skill)}
+        >
+          {running ? '运行中' : '试运行'}
+        </button>
+        <span className="text-[16px] leading-[20px] text-[#747b8a]">...</span>
+      </div>
     </div>
     {result ? (
       <pre className="mt-[10px] max-w-full overflow-auto rounded-[6px] bg-[#f7f7fa] px-[10px] py-[8px] text-[13px] leading-[20px] coz-fg-primary">
@@ -175,18 +205,18 @@ const SkillList = ({
 }: SkillListProps) => (
   <section className="mt-[20px]" aria-label="技能列表">
     {loading ? (
-      <div className="py-[32px] text-center text-[14px] coz-fg-secondary">
+      <div className="rounded-[12px] border border-solid border-[rgba(77,101,148,0.15)] bg-white py-[32px] text-center text-[14px] text-[#747b8a]">
         加载中...
       </div>
     ) : null}
 
     {!loading && skills.length === 0 ? (
-      <div className="rounded-[8px] border border-dashed coz-stroke-primary px-[16px] py-[32px] text-center text-[14px] coz-fg-secondary">
+      <div className="rounded-[12px] border border-dashed border-[rgba(77,101,148,0.2)] bg-white px-[16px] py-[32px] text-center text-[14px] text-[#747b8a]">
         暂无技能
       </div>
     ) : null}
 
-    <div className="grid gap-[12px]">
+    <div className="overflow-hidden rounded-[12px] border border-solid border-[rgba(77,101,148,0.15)] bg-white">
       {skills.map(skill => (
         <SkillCard
           key={skill.id}
@@ -204,42 +234,35 @@ const SkillList = ({
 interface SkillPageHeaderProps {
   loading: boolean;
   spaceId?: string;
-  onCreate: () => void;
   onRefresh: () => void;
 }
 
 const SkillPageHeader = ({
   loading,
   spaceId,
-  onCreate,
   onRefresh,
 }: SkillPageHeaderProps) => (
-  <div className="flex flex-wrap items-start justify-between gap-[16px]">
-    <div className="min-w-0">
-      <h1 className="m-0 text-[24px] leading-[32px] font-[600] coz-fg-primary">
-        技能配置
-      </h1>
-      <p className="mt-[6px] mb-0 text-[14px] leading-[22px] coz-fg-secondary">
-        管理任务执行时可调用的工具、脚本和流程
-      </p>
-    </div>
-    <div className="flex flex-wrap gap-[8px]">
+  <div className="text-center">
+    <h1 className="m-0 text-[26px] leading-[36px] font-[600] text-[#1d2129]">
+      技能配置
+    </h1>
+    <p className="mt-[4px] mb-0 text-[13px] leading-[20px] text-[#747b8a]">
+      集中管理工作空间内的全部技能,支持发布、订阅、调用与版本管理。
       <button
         type="button"
-        className="h-[34px] rounded-[6px] border border-solid coz-stroke-primary px-[12px] text-[14px] coz-fg-primary coz-bg-plus"
-        disabled={loading || !spaceId}
-        onClick={onRefresh}
+        className="ml-[8px] border-0 bg-transparent p-0 text-[13px] leading-[20px] text-[#2a6df4] cursor-pointer"
       >
-        刷新
+        查看文档
       </button>
-      <button
-        type="button"
-        className="h-[34px] rounded-[6px] border-0 bg-[#1f1f26] px-[12px] text-[14px] text-white"
-        onClick={onCreate}
-      >
-        创建技能
-      </button>
-    </div>
+    </p>
+    <button
+      type="button"
+      className="sr-only"
+      disabled={loading || !spaceId}
+      onClick={onRefresh}
+    >
+      刷新
+    </button>
   </div>
 );
 
@@ -247,6 +270,7 @@ interface SkillToolbarProps {
   activeType: SkillTypeFilter;
   keyword: string;
   onActiveTypeChange: (value: SkillTypeFilter) => void;
+  onCreate: () => void;
   onKeywordChange: (value: string) => void;
 }
 
@@ -254,37 +278,46 @@ const SkillToolbar = ({
   activeType,
   keyword,
   onActiveTypeChange,
+  onCreate,
   onKeywordChange,
 }: SkillToolbarProps) => (
-  <section className="mt-[20px] rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[16px] py-[14px]">
-    <div className="flex flex-wrap items-center gap-[12px]">
-      <div className="grid h-[36px] grid-cols-3 rounded-[6px] border border-solid coz-stroke-primary bg-[#f7f7fa] p-[2px]">
-        {SKILL_TYPE_FILTERS.map(item => (
-          <button
-            key={item.value}
-            type="button"
-            className="rounded-[4px] border-0 bg-transparent px-[12px] text-[14px] coz-fg-secondary data-[active=true]:coz-bg-plus data-[active=true]:coz-fg-primary"
-            data-active={activeType === item.value}
-            onClick={() => onActiveTypeChange(item.value)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-
-      <label className="flex min-w-[240px] flex-1 items-center gap-[8px] rounded-[6px] border border-solid coz-stroke-primary px-[10px] py-[7px]">
-        <span className="shrink-0 text-[13px] leading-[20px] coz-fg-secondary">
-          搜索技能
-        </span>
-        <input
-          aria-label="搜索技能"
-          className="min-w-0 flex-1 border-0 bg-transparent text-[14px] leading-[20px] outline-none coz-fg-primary"
-          value={keyword}
-          onChange={event => onKeywordChange(event.target.value)}
-          placeholder="输入技能名称或描述"
-        />
-      </label>
+  <section className="mt-[24px] flex flex-wrap items-center gap-[12px]">
+    <div className="grid h-[32px] grid-cols-3 rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white p-[2px]">
+      {SKILL_TYPE_FILTERS.map(item => (
+        <button
+          key={item.value}
+          type="button"
+          className="rounded-[4px] border-0 bg-transparent px-[12px] text-[13px] leading-[18px] text-[#444c5c] data-[active=true]:bg-[rgba(91,100,117,0.1)] data-[active=true]:text-[#1d2129]"
+          data-active={activeType === item.value}
+          onClick={() => onActiveTypeChange(item.value)}
+        >
+          {item.label}
+        </button>
+      ))}
     </div>
+
+    <div className="flex-1" />
+
+    <label className="flex h-[32px] w-[220px] items-center gap-[6px] rounded-[6px] border border-solid border-[rgba(77,101,148,0.2)] bg-white px-[8px] text-[#747b8a]">
+      <span className="shrink-0 text-[13px]" aria-hidden="true">
+        ⌕
+      </span>
+      <input
+        aria-label="搜索技能"
+        className="min-w-0 flex-1 border-0 bg-transparent text-[13px] leading-[20px] text-[#232938] outline-none"
+        value={keyword}
+        onChange={event => onKeywordChange(event.target.value)}
+        placeholder="搜索技能"
+      />
+    </label>
+
+    <button
+      type="button"
+      className="flex h-[32px] items-center gap-[6px] rounded-[6px] border-0 bg-[#060e1f] px-[12px] text-[13px] leading-[20px] text-white"
+      onClick={onCreate}
+    >
+      + 创建技能
+    </button>
   </section>
 );
 
@@ -385,18 +418,19 @@ const SkillPage = () => {
   };
 
   return (
-    <main className="h-full px-[24px] py-[28px] coz-bg-primary overflow-auto">
-      <section className="mx-auto w-full max-w-[1080px]">
+    <main className="flex h-full flex-col overflow-auto bg-white">
+      <WorkspacePageTopBar />
+      <section className="mx-auto w-[calc(100%_-_64px)] max-w-[1016px] pt-[24px] pb-[28px]">
         <SkillPageHeader
           loading={loading}
           spaceId={space_id}
-          onCreate={() => setShowImportPanel(current => !current)}
           onRefresh={loadSkills}
         />
         <SkillToolbar
           activeType={activeType}
           keyword={keyword}
           onActiveTypeChange={setActiveType}
+          onCreate={() => setShowImportPanel(current => !current)}
           onKeywordChange={setKeyword}
         />
 

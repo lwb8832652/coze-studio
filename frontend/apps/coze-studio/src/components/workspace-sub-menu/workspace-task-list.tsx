@@ -19,10 +19,11 @@ import { useNavigate } from 'react-router-dom';
 
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { Loading } from '@coze-arch/coze-design';
+import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import type { workbenchTask } from '@coze-studio/api-schema';
 
-import { formatUpdatedTime, getTaskStatusText } from '../../pages/tasks/helpers';
 import { listTasks } from '../../pages/tasks/service';
+import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
 type ChatTask = workbenchTask.ChatTask;
 
@@ -68,18 +69,9 @@ export const WorkspaceTaskList = () => {
 
   return (
     <section className="w-full h-full flex flex-col" aria-label="我的任务">
-      <div className="flex h-[24px] items-center justify-between pl-[8px] pr-[4px] mb-[4px]">
-        <h2 className="m-0 text-[14px] leading-[20px] font-[600] coz-fg-secondary">
-          我的任务
-        </h2>
-        <button
-          type="button"
-          className="border-0 bg-transparent text-[12px] leading-[18px] coz-fg-secondary cursor-pointer"
-          onClick={() => spaceId && navigate(`/space/${spaceId}/tasks`)}
-        >
-          查看全部
-        </button>
-      </div>
+      <h2 className="m-0 px-[16px] text-[12px] leading-[18px] font-[400] text-[#747b8a]">
+        我的任务
+      </h2>
 
       {loading ? (
         <div className="flex h-[120px] items-center justify-center">
@@ -93,27 +85,35 @@ export const WorkspaceTaskList = () => {
         </div>
       ) : null}
 
-      <div className="grid gap-[4px]">
-        {tasks.map(task => (
-          <button
-            key={task.id}
-            type="button"
-            className="min-w-0 rounded-[8px] border-0 bg-transparent px-[8px] py-[8px] text-left cursor-pointer hover:coz-mg-secondary-hovered"
-            onClick={() =>
-              spaceId && navigate(`/space/${spaceId}/tasks/${task.id}`)
-            }
-          >
-            <div className="truncate text-[13px] leading-[20px] font-[500] coz-fg-primary">
-              {task.title}
-            </div>
-            <div className="mt-[2px] flex items-center justify-between gap-[8px] text-[12px] leading-[18px] coz-fg-secondary">
-              <span>{getTaskStatusText(task.status)}</span>
-              <span className="truncate">
-                {formatUpdatedTime(task.updated_at)}
+      <div className="mt-[8px] grid gap-[2px] px-[8px]">
+        {tasks.map(task => {
+          const statusMeta = getWorkspaceTaskStatusMeta(task.status);
+
+          return (
+            <button
+              key={task.id}
+              type="button"
+              className="flex h-[34px] min-w-0 items-center gap-[8px] rounded-[6px] border-0 bg-transparent px-[8px] text-left cursor-pointer hover:coz-mg-secondary-hovered"
+              onClick={() =>
+                spaceId && navigate(`/space/${spaceId}/tasks/${task.id}`)
+              }
+            >
+              <span className="relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] border border-solid border-[rgba(77,101,148,0.15)] bg-white coz-fg-secondary">
+                <IconCozAsynchronousTask className="text-[13px]" />
+                <span className="absolute bottom-[-2px] right-[-2px] flex h-[12px] w-[12px] items-center justify-center rounded-full bg-[#f3f3f5]">
+                  <span
+                    className={`h-[6px] w-[6px] rounded-full ${statusMeta.dotClassName}`}
+                    aria-label={statusMeta.ariaLabel}
+                    data-status-tone={statusMeta.tone}
+                  />
+                </span>
               </span>
-            </div>
-          </button>
-        ))}
+              <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px] font-[600] text-[#232938]">
+                {task.title}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
