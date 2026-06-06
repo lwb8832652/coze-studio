@@ -29,6 +29,8 @@ import (
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
+	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
+	agentrun "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/service"
 )
 
 const (
@@ -39,8 +41,11 @@ const (
 )
 
 type ApplicationService struct {
-	skillSVC *appskill.ApplicationService
-	taskSVC  *apptask.ApplicationService
+	skillSVC          *appskill.ApplicationService
+	taskSVC           *apptask.ApplicationService
+	knowledgeSVC      crossknowledge.Knowledge
+	agentRunSVC       agentrun.Run
+	chatModelProvider chatModelProvider
 }
 
 func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.WorkbenchChatRequest) (*chatapi.WorkbenchChatResponse, error) {
