@@ -84,6 +84,20 @@ func (s *taskService) Enqueue(ctx context.Context, id int64) (*entity.Task, erro
 	return s.transition(ctx, id, entity.StatusQueued, 0, "", "")
 }
 
+func (s *taskService) Start(ctx context.Context, id int64) (*entity.Task, error) {
+	return s.transition(ctx, id, entity.StatusRunning, 10, "", "")
+}
+
+func (s *taskService) AppendEvent(ctx context.Context, taskID int64, eventType, payload string) error {
+	if strings.TrimSpace(eventType) == "" {
+		return InvalidArgumentErrorf("task event type is required")
+	}
+	if strings.TrimSpace(payload) == "" {
+		payload = "{}"
+	}
+	return s.createEvent(ctx, taskID, eventType, payload)
+}
+
 func (s *taskService) Get(ctx context.Context, id int64) (*entity.Task, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err

@@ -37,6 +37,8 @@ type CreateRequest struct {
 type TaskService interface {
 	Create(ctx context.Context, req *CreateRequest) (*entity.Task, error)
 	Enqueue(ctx context.Context, id int64) (*entity.Task, error)
+	Start(ctx context.Context, id int64) (*entity.Task, error)
+	AppendEvent(ctx context.Context, taskID int64, eventType, payload string) error
 	Get(ctx context.Context, id int64) (*entity.Task, error)
 	List(ctx context.Context, spaceID int64, status *entity.Status, page, pageSize int32) ([]*entity.Task, int64, error)
 	ClaimQueued(ctx context.Context, limit int32) ([]*entity.Task, error)

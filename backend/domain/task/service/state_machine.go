@@ -21,6 +21,7 @@ import "github.com/coze-dev/coze-studio/backend/domain/task/entity"
 var allowedTransitions = map[entity.Status]map[entity.Status]bool{
 	entity.StatusCreated: {
 		entity.StatusQueued:   true,
+		entity.StatusRunning:  true,
 		entity.StatusFailed:   true,
 		entity.StatusCanceled: true,
 	},

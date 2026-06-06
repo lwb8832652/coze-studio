@@ -54,6 +54,49 @@ func (s *ApplicationService) CreateTask(ctx context.Context, req *taskapi.Create
 	if err != nil {
 		return nil, err
 	}
+	if task == nil {
+		return nil, fmt.Errorf("task service returned empty task")
+	}
+	queued, err := s.DomainSVC.Enqueue(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if queued != nil {
+		task = queued
+	}
+	return &taskapi.CreateTaskResponse{Code: 0, Msg: "success", Data: entityToAPI(task)}, nil
+}
+
+func (s *ApplicationService) CreateRunningTask(ctx context.Context, req *taskapi.CreateTaskRequest) (*taskapi.CreateTaskResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	creatorID := int64(0)
+	if uid := ctxutil.GetUIDFromCtx(ctx); uid != nil {
+		creatorID = *uid
+	}
+	task, err := s.DomainSVC.Create(ctx, &domain.CreateRequest{
+		SpaceID:        req.SpaceID,
+		CreatorID:      creatorID,
+		ConversationID: req.GetConversationID(),
+		MessageID:      req.GetMessageID(),
+		SkillID:        req.GetSkillID(),
+		Title:          req.Title,
+		Input:          req.GetInput(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, fmt.Errorf("task service returned empty task")
+	}
+	running, err := s.DomainSVC.Start(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	if running != nil {
+		task = running
+	}
 	return &taskapi.CreateTaskResponse{Code: 0, Msg: "success", Data: entityToAPI(task)}, nil
 }
 
@@ -131,6 +174,27 @@ func (s *ApplicationService) ListTaskEvents(ctx context.Context, req *taskapi.Ge
 	return &taskapi.TaskEventsResponse{Code: 0, Msg: "success", Data: data}, nil
 }
 
+func (s *ApplicationService) AppendTaskEvent(ctx context.Context, taskID int64, eventType, payload string) error {
+	if err := s.requireDomainSVC(); err != nil {
+		return err
+	}
+	return s.DomainSVC.AppendEvent(ctx, taskID, eventType, payload)
+}
+
+func (s *ApplicationService) CompleteTask(ctx context.Context, taskID int64, result string) error {
+	if err := s.requireDomainSVC(); err != nil {
+		return err
+	}
+	return s.DomainSVC.Complete(ctx, taskID, result)
+}
+
+func (s *ApplicationService) FailTask(ctx context.Context, taskID int64, errMsg string) error {
+	if err := s.requireDomainSVC(); err != nil {
+		return err
+	}
+	return s.DomainSVC.Fail(ctx, taskID, errMsg)
+}
+
 func (s *ApplicationService) ProcessQueuedTasks(ctx context.Context, batchSize int32) error {
 	if err := s.requireDomainSVC(); err != nil {
 		return err
@@ -165,9 +229,10 @@ func (s *ApplicationService) requireDomainSVC() error {
 
 func taskResultJSON(task *entity.Task) (string, error) {
 	payload := map[string]string{
-		"task_id": strconv.FormatInt(task.ID, 10),
-		"title":   task.Title,
-		"message": "任务已完成，当前为本地占位执行结果。",
+		"task_id":     strconv.FormatInt(task.ID, 10),
+		"title":       task.Title,
+		"result_type": "answer",
+		"message":     "任务已完成。",
 	}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
