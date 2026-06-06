@@ -10,7 +10,7 @@
 1. 首页 `WorkbenchComposer` 只存在于 `workbench/index.tsx` 内部，任务详情页还有独立的 `FollowUpComposer`。
 2. 后端 task 执行会写固定的模拟步骤，并生成“本地占位执行结果”，这会让 Agent 与报告能力看起来像真实执行，实际并未进入真实 AgentRun 或真实模型链路。
 
-本轮目标是在不一次性做完复杂 Skills、KB、MCP 配置面板的前提下，先把统一输入组件、真实 Ark/Ask 模型回答、最小真实 AgentRun 闭环落地。
+本轮目标是在不一次性做完复杂 Skills、KB、MCP 配置面板的前提下，先把统一输入组件、真实 Ark 模型回答、Ask 检索增强问答、最小真实 AgentRun 闭环落地。
 
 ## 目标
 
@@ -19,7 +19,7 @@
 3. `task_id` 为空时创建新任务，完成后跳转任务详情页。
 4. `task_id` 存在时在当前任务追加本轮提问，页面原地刷新。
 5. `Auto` 走真实 builtin chat model，结果标记为 `answer` 和 `Ark`。
-6. `Ask` 走真实 builtin chat model，结果标记为 `answer`。
+6. `Ask` 走真实 builtin chat model，可检索默认知识库，结果标记为 `answer`。
 7. `Agent` 先接真实 `AgentRunDomainSVC.AgentRun` 最小闭环，结果标记为 `agent_trace`。
 8. 清理或停用固定模拟 Agent 步骤、固定占位结果、默认报告模板拼接。
 9. 前端按 `answer`、`agent_trace`、`report` 三类结果做差异化渲染。
@@ -137,14 +137,22 @@ struct WorkbenchChatData {
 
 ### Ask
 
-`Ask` 是普通问答模式。后端同样使用 builtin chat model 裸模型回答，不主动调用工具，不检索知识库。
+`Ask` 是普通问答模式。后端使用 builtin chat model 生成回答，可先检索默认知识库并把相关片段作为参考上下文注入模型提示。
+
+Ask 的边界：
+
+1. 可以检索知识库。
+2. 后续可以接入联网搜索，把搜索结果作为参考上下文。
+3. 不主动执行 Skills、MCP、SQL 或其他有副作用工具。
+4. 即使使用知识库或联网搜索，结果仍按普通问答渲染，不展示 Agent 全流程执行面板。
 
 落库约定：
 
 ```json
 {
   "message": "模型回答内容",
-  "result_type": "answer"
+  "result_type": "answer",
+  "retrieval_sources": ["knowledge"]
 }
 ```
 
@@ -230,7 +238,7 @@ struct WorkbenchChatData {
 后端测试：
 
 1. `Auto` 创建或更新任务时写入 `result_type: answer`、`execution_type: Ark`。
-2. `Ask` 写入 `result_type: answer`，不走工具或知识库。
+2. `Ask` 写入 `result_type: answer`，可检索知识库，但不走 Skills、MCP、SQL 等执行型工具。
 3. `Agent` 调用 `AgentRunDomainSVC.AgentRun`，并把流式事件 append 到 task events。
 4. 带 `task_id` 的请求 append `user.message`，不创建新任务。
 5. 空消息、非法 mode、缺失 task/domain service 返回 client error 或明确服务错误。
@@ -242,15 +250,17 @@ struct WorkbenchChatData {
 1. 拓展面板 Skills、KB、MCP 勾选控件。
 2. 勾选资源完整透传后端，并注入 AgentRun 运行环境。
 3. SQL 查询、MCP 第三方接口调用、知识库检索的完整 trace 展示。
-4. 多智能体选择器，新增 `agent_id` 字段和对应校验逻辑。
-5. 更完整的多轮会话表或 conversation/message 接入。
+4. Ask 模式接入联网搜索，并把搜索来源、引用片段和失败降级策略纳入普通问答渲染。
+5. 多智能体选择器，新增 `agent_id` 字段和对应校验逻辑。
+6. 更完整的多轮会话表或 conversation/message 接入。
 
 ## 自检
 
 1. 设计覆盖了首页和详情页统一输入组件。
 2. 设计覆盖了 `task_id` 新建与追加两种路径。
 3. 设计覆盖了 Auto、Ask、Agent 三种模式。
-4. 设计明确真实 AgentRun 先做最小闭环，复杂资源配置后续补齐。
-5. 设计明确了 `answer`、`agent_trace`、`report` 的渲染边界。
-6. 设计没有要求本轮重构完整 conversation 存储模型。
-7. 设计明确停止首页绕过 `sendWorkbenchChat` 的兜底创建逻辑。
+4. 设计明确 Ask 可检索知识库，并为后续联网搜索预留普通问答路径。
+5. 设计明确真实 AgentRun 先做最小闭环，复杂资源配置后续补齐。
+6. 设计明确了 `answer`、`agent_trace`、`report` 的渲染边界。
+7. 设计没有要求本轮重构完整 conversation 存储模型。
+8. 设计明确停止首页绕过 `sendWorkbenchChat` 的兜底创建逻辑。
