@@ -81,11 +81,22 @@ func (s *taskService) Create(ctx context.Context, req *CreateRequest) (*entity.T
 }
 
 func (s *taskService) Enqueue(ctx context.Context, id int64) (*entity.Task, error) {
-	return s.transition(ctx, id, entity.StatusQueued, 0, "", "")
+	task, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if task.Status == entity.StatusQueued {
+		return task, nil
+	}
+	return s.transitionFrom(ctx, task, entity.StatusQueued, 0, "", "")
 }
 
 func (s *taskService) Start(ctx context.Context, id int64) (*entity.Task, error) {
-	return s.transition(ctx, id, entity.StatusRunning, 10, "", "")
+	task, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.transitionFrom(ctx, task, entity.StatusRunning, 10, task.Result, task.Error)
 }
 
 func (s *taskService) AppendEvent(ctx context.Context, taskID int64, eventType, payload string) error {

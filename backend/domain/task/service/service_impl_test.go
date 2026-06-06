@@ -54,6 +54,51 @@ func TestRetryFailedTaskQueuesIt(t *testing.T) {
 	require.Equal(t, entity.StatusQueued, retried.Status)
 }
 
+func TestEnqueueAlreadyQueuedTaskIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 209}})
+	require.NoError(t, repo.Create(ctx, &entity.Task{
+		ID:        1,
+		SpaceID:   1,
+		CreatorID: 2,
+		Title:     "queued",
+		Status:    entity.StatusQueued,
+		Result:    `{"existing":true}`,
+		Error:     "previous warning",
+	}))
+
+	queued, err := svc.Enqueue(ctx, 1)
+
+	require.NoError(t, err)
+	require.Equal(t, entity.StatusQueued, queued.Status)
+	require.Equal(t, `{"existing":true}`, queued.Result)
+	require.Equal(t, "previous warning", queued.Error)
+}
+
+func TestStartPreservesResultAndError(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 210}})
+	require.NoError(t, repo.Create(ctx, &entity.Task{
+		ID:        1,
+		SpaceID:   1,
+		CreatorID: 2,
+		Title:     "queued",
+		Status:    entity.StatusQueued,
+		Result:    `{"draft":true}`,
+		Error:     "previous warning",
+	}))
+
+	running, err := svc.Start(ctx, 1)
+
+	require.NoError(t, err)
+	require.Equal(t, entity.StatusRunning, running.Status)
+	require.Equal(t, int32(10), running.Progress)
+	require.Equal(t, `{"draft":true}`, running.Result)
+	require.Equal(t, "previous warning", running.Error)
+}
+
 func TestCancelCreatedTaskMarksCanceled(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 203}})
