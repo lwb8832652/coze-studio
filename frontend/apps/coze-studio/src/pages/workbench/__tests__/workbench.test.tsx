@@ -28,7 +28,6 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
-const mockCreateWorkbenchTask = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -36,7 +35,6 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../service', () => ({
-  createWorkbenchTask: mockCreateWorkbenchTask,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
 
@@ -112,7 +110,6 @@ describe('WorkbenchPage', () => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
-    mockCreateWorkbenchTask.mockReset();
   });
 
   it('renders the static chat workbench first screen', () => {
@@ -276,7 +273,6 @@ describe('WorkbenchPage', () => {
       enable_kbs: [],
       enable_databases: [],
     });
-    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/task-1');
 
     act(() => {
@@ -322,7 +318,6 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks');
     expect(container.textContent).not.toContain('这是直接回答，不应该留在首页展示。');
 
@@ -338,13 +333,6 @@ describe('WorkbenchPage', () => {
     let root: Root | undefined;
 
     mockSendWorkbenchChat.mockRejectedValue(new Error('chat failed'));
-    mockCreateWorkbenchTask.mockResolvedValue({
-      data: {
-        id: 'task-after-chat-error',
-      },
-      code: 0,
-      msg: '',
-    });
 
     act(() => {
       root = createRoot(container);
@@ -369,7 +357,6 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalledWith(
       '/space/space-1/tasks/task-after-chat-error',
     );
@@ -449,7 +436,6 @@ describe('WorkbenchPage', () => {
       enable_kbs: [],
       enable_databases: [],
     });
-    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
 
     act(() => {
       root?.unmount();

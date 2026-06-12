@@ -16,23 +16,10 @@
 
 package workbench
 
-import (
-	"testing"
+type ChatMode int64
 
-	"github.com/stretchr/testify/assert"
+const (
+	ChatModeAuto  ChatMode = 1
+	ChatModeAsk   ChatMode = 2
+	ChatModeAgent ChatMode = 3
 )
-
-func TestAskModeRoutesToChatDirect(t *testing.T) {
-	decision := DecideRoute(ChatModeAsk, Intent{Kind: IntentSkill})
-	assert.Equal(t, RouteChatDirect, decision.Target)
-}
-
-func TestAgentModeRoutesToAgent(t *testing.T) {
-	decision := DecideRoute(ChatModeAgent, Intent{Kind: IntentChat})
-	assert.Equal(t, RouteAgentEngine, decision.Target)
-}
-
-func TestAutoRoutesLongSkillToTask(t *testing.T) {
-	decision := DecideRoute(ChatModeAuto, Intent{Kind: IntentSkill, RequiresAsync: true})
-	assert.Equal(t, RouteTaskEngine, decision.Target)
-}
