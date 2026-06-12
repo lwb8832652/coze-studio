@@ -43,6 +43,7 @@ const (
 type ApplicationService struct {
 	skillSVC          *appskill.ApplicationService
 	taskSVC           *apptask.ApplicationService
+	taskApp           workbenchTaskApplication
 	knowledgeSVC      crossknowledge.Knowledge
 	agentRunSVC       agentrun.Run
 	chatModelProvider chatModelProvider
