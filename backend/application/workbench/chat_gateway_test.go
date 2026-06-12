@@ -164,6 +164,26 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	require.Contains(t, taskApp.completedResult, `"message":"follow answer"`)
 }
 
+func TestHandleMessageWithTaskIDRejectsTaskFromDifferentSpace(t *testing.T) {
+	taskID := int64(20)
+	taskApp := &recordingWorkbenchTaskApp{
+		got: &taskapi.ChatTask{ID: 20, SpaceID: 2, Title: "existing", Status: taskapi.TaskStatus_Running},
+	}
+	app := &ApplicationService{taskApp: taskApp}
+
+	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		TaskID:  &taskID,
+		Message: "follow up",
+		Mode:    chatapi.ChatMode_Ask,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Nil(t, resp)
+	require.Empty(t, taskApp.events)
+}
+
 func TestHandleMessageAgentFailsTaskWhenRuntimeContextMissing(t *testing.T) {
 	taskApp := &recordingWorkbenchTaskApp{
 		created: &taskapi.ChatTask{ID: 30, SpaceID: 1, Title: "do work", Status: taskapi.TaskStatus_Running},

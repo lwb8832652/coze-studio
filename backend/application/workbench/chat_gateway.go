@@ -100,6 +100,9 @@ func (s *ApplicationService) prepareTask(ctx context.Context, req *chatapi.Workb
 		if task == nil {
 			return nil, fmt.Errorf("task service returned empty task")
 		}
+		if task.SpaceID != 0 && task.SpaceID != req.SpaceID {
+			return nil, InvalidArgumentErrorf("task %d does not belong to space %d", task.ID, req.SpaceID)
+		}
 		if err := s.appendTaskEvent(ctx, task.ID, "user.message", mustJSON(map[string]string{
 			"message": message,
 			"status":  "completed",
