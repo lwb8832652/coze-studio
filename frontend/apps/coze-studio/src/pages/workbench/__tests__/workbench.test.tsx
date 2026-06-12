@@ -271,7 +271,12 @@ describe('WorkbenchPage', () => {
       space_id: 'space-1',
       message: '帮我生成周报',
       mode: workbench.ChatMode.Auto,
+      enable_skills: expect.arrayContaining(['meego-guidelines']),
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
     });
+    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/task-1');
 
     act(() => {
@@ -280,7 +285,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('creates a task and navigates when chat returns a direct answer without a task', async () => {
+  it('navigates to the task list without legacy task creation when chat returns no task', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -289,13 +294,6 @@ describe('WorkbenchPage', () => {
       data: {
         answer: '这是直接回答，不应该留在首页展示。',
         route_target: workbench.RouteTarget.ChatDirect,
-      },
-      code: 0,
-      msg: '',
-    });
-    mockCreateWorkbenchTask.mockResolvedValue({
-      data: {
-        id: 'task-fallback',
       },
       code: 0,
       msg: '',
@@ -324,14 +322,8 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      title: '帮我写一份报告',
-      input: JSON.stringify({ message: '帮我写一份报告' }),
-    });
-    expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/tasks/task-fallback',
-    );
+    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks');
     expect(container.textContent).not.toContain('这是直接回答，不应该留在首页展示。');
 
     act(() => {
@@ -340,7 +332,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('creates a task and navigates when chat request fails', async () => {
+  it('shows the chat error without falling back to legacy task creation', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -377,15 +369,11 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      title: '即使 chat 失败也创建任务',
-      input: JSON.stringify({ message: '即使 chat 失败也创建任务' }),
-    });
-    expect(mockNavigate).toHaveBeenCalledWith(
+    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalledWith(
       '/space/space-1/tasks/task-after-chat-error',
     );
-    expect(container.textContent).not.toContain('chat failed');
+    expect(container.textContent).toContain('chat failed');
 
     act(() => {
       root?.unmount();
@@ -393,24 +381,45 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('does not retry task creation twice when direct-answer fallback creation fails', async () => {
+  it('passes updated skill selections in the chat request', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockSendWorkbenchChat.mockResolvedValue({
       data: {
-        answer: '已进入 Chat 直接问答模式。',
-        route_target: workbench.RouteTarget.ChatDirect,
+        task: {
+          id: 'task-with-skill-selection',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '执行选中的技能',
+          status: workbenchTask.TaskStatus.Running,
+          progress: 0,
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
       },
       code: 0,
       msg: '',
     });
-    mockCreateWorkbenchTask.mockRejectedValue(new Error('input must be valid JSON'));
 
     act(() => {
       root = createRoot(container);
       root.render(<WorkbenchPage />);
+    });
+
+    const extensionButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('拓展'),
+    ) as HTMLButtonElement;
+    act(() => {
+      extensionButton.click();
+    });
+
+    const skillButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('meego-guidelines'),
+    ) as HTMLButtonElement;
+    act(() => {
+      skillButton.click();
     });
 
     const textarea = container.querySelector(
@@ -418,7 +427,7 @@ describe('WorkbenchPage', () => {
     ) as HTMLTextAreaElement;
     act(() => {
       Simulate.change(textarea, {
-        target: { value: '请生成一份本地联调验证报告' },
+        target: { value: '执行选中的技能' },
       } as unknown as Event);
     });
 
@@ -431,14 +440,16 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockCreateWorkbenchTask).toHaveBeenCalledTimes(1);
-    expect(mockCreateWorkbenchTask).toHaveBeenCalledWith({
+    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
       space_id: 'space-1',
-      title: '请生成一份本地联调验证报告',
-      input: JSON.stringify({ message: '请生成一份本地联调验证报告' }),
+      message: '执行选中的技能',
+      mode: workbench.ChatMode.Auto,
+      enable_skills: expect.not.arrayContaining(['meego-guidelines']),
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
     });
-    expect(container.textContent).not.toContain('已进入 Chat 直接问答模式。');
-    expect(container.textContent).toContain('input must be valid JSON');
+    expect(mockCreateWorkbenchTask).not.toHaveBeenCalled();
 
     act(() => {
       root?.unmount();

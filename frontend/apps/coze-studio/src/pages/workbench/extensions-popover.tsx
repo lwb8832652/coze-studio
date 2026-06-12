@@ -19,27 +19,61 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { IconCozArrowDown } from '@coze-arch/coze-design/icons';
 
-const EXTENSION_SKILLS = [
-  'meego-guidelines',
-  'aeolus-platform-analysis',
-  'coral-hive-metric-explorer',
-  'deepwiki',
-  'code-review',
-  'aime-toolkit',
-  'lark-wiki',
-  'lark-shared',
-  'lark-drive',
-];
+import {
+  WORKBENCH_PRESET_SKILL_IDS,
+  createDefaultWorkbenchResourceSelection,
+  type WorkbenchResourceSelection,
+} from './components/types';
 
-export const ExtensionsPopover = () => {
+interface ExtensionsPopoverProps {
+  value?: WorkbenchResourceSelection;
+  onChange?: (value: WorkbenchResourceSelection) => void;
+}
+
+const defaultSelection = createDefaultWorkbenchResourceSelection();
+
+const getResourceIds = (
+  selection: WorkbenchResourceSelection,
+  tab: 'skills' | 'mcp',
+) => (tab === 'skills' ? selection.enable_skills : selection.enable_mcp);
+
+const getNextResourceSelection = (
+  selection: WorkbenchResourceSelection,
+  tab: 'skills' | 'mcp',
+  resourceId: string,
+): WorkbenchResourceSelection => {
+  const key = tab === 'skills' ? 'enable_skills' : 'enable_mcp';
+  const currentIds = selection[key];
+  const nextIds = currentIds.includes(resourceId)
+    ? currentIds.filter(id => id !== resourceId)
+    : [...currentIds, resourceId];
+
+  return {
+    ...selection,
+    [key]: nextIds,
+  };
+};
+
+export const ExtensionsPopover = ({
+  value = defaultSelection,
+  onChange,
+}: ExtensionsPopoverProps) => {
   const navigate = useNavigate();
   const { space_id } = useParams();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'skills' | 'mcp'>('skills');
-  const [selected, setSelected] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(EXTENSION_SKILLS.map(skill => [skill, true])),
-  );
-  const selectedCount = Object.values(selected).filter(Boolean).length;
+  const resources = tab === 'skills' ? WORKBENCH_PRESET_SKILL_IDS : [];
+  const selectedIds = getResourceIds(value, tab);
+  const selectedCount = [
+    ...value.enable_skills,
+    ...value.enable_mcp,
+    ...value.enable_kbs,
+    ...value.enable_databases,
+  ].length;
+  const searchLabel = tab === 'skills' ? '搜索技能' : '搜索 MCP';
+
+  const handleResourceToggle = (resourceId: string) =>
+    onChange?.(getNextResourceSelection(value, tab, resourceId));
 
   return (
     <div className="chat-workbench-extensions">
@@ -84,36 +118,30 @@ export const ExtensionsPopover = () => {
 
             <label className="chat-workbench-extension-search">
               <span aria-hidden="true">⌕</span>
-              <input
-                aria-label={tab === 'skills' ? '搜索技能' : '搜索 MCP'}
-                placeholder={tab === 'skills' ? '搜索技能' : '搜索 MCP'}
-              />
+              <input aria-label={searchLabel} placeholder={searchLabel} />
             </label>
 
             <div className="chat-workbench-extension-list">
-              {EXTENSION_SKILLS.map(skill => (
+              {resources.map(resourceId => (
                 <button
-                  key={skill}
+                  key={resourceId}
                   type="button"
-                  onClick={() =>
-                    setSelected(current => ({
-                      ...current,
-                      [skill]: !current[skill],
-                    }))
-                  }
+                  onClick={() => handleResourceToggle(resourceId)}
                 >
                   <span className="chat-workbench-extension-icon">📕</span>
-                  <span className="chat-workbench-extension-name">{skill}</span>
+                  <span className="chat-workbench-extension-name">
+                    {resourceId}
+                  </span>
                   <span className="chat-workbench-extension-tag">
                     <span />
                     官方
                   </span>
                   <span
                     className="chat-workbench-extension-check"
-                    data-selected={selected[skill]}
+                    data-selected={selectedIds.includes(resourceId)}
                     aria-hidden="true"
                   >
-                    {selected[skill] ? '✓' : ''}
+                    {selectedIds.includes(resourceId) ? '✓' : ''}
                   </span>
                 </button>
               ))}
