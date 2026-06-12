@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	agentrunmodel "github.com/coze-dev/coze-studio/backend/crossdomain/agentrun/model"
+	crossmessage "github.com/coze-dev/coze-studio/backend/crossdomain/message/model"
 	agentrunentity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 )
 
@@ -101,6 +102,63 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal([]byte(taskSVC.events[len(taskSVC.events)-1].payload), &payload))
 	require.Equal(t, "hello world", payload["message"])
+}
+
+func TestRunAgentKeepsAnswerWhenVerboseFinishArrivesLater(t *testing.T) {
+	stream := newAgentRunStream([]*agentrunentity.AgentRunResponse{
+		{
+			Event: agentrunentity.RunEventMessageCompleted,
+			ChunkMessageItem: &agentrunentity.ChunkMessageItem{
+				MessageType: crossmessage.MessageTypeAnswer,
+				Content:     "real answer",
+				IsFinish:    true,
+			},
+		},
+		{
+			Event: agentrunentity.RunEventMessageCompleted,
+			ChunkMessageItem: &agentrunentity.ChunkMessageItem{
+				MessageType: crossmessage.MessageTypeVerbose,
+				Content:     `{"msg_type":"generate_answer_finish"}`,
+				IsFinish:    true,
+			},
+		},
+		{
+			Event: agentrunentity.RunEventMessageCompleted,
+			ChunkMessageItem: &agentrunentity.ChunkMessageItem{
+				MessageType: crossmessage.MessageTypeFlowUp,
+				Content:     "follow up suggestion",
+				IsFinish:    true,
+			},
+		},
+		{Event: agentrunentity.RunEventCompleted},
+		{Event: agentrunentity.RunEventStreamDone},
+	})
+	taskSVC := &recordingWorkbenchTaskApp{}
+	app := &ApplicationService{
+		taskApp:     taskSVC,
+		agentRunSVC: &fakeAgentRun{stream: stream},
+	}
+
+	result, err := app.runAgent(context.Background(), agentRequest{
+		taskID:         10,
+		spaceID:        1,
+		conversationID: 20,
+		sectionID:      30,
+		agentID:        40,
+		userID:         "50",
+		cozeUID:        50,
+		message:        "do work",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "real answer", result.Message)
+	require.Len(t, taskSVC.events, 1)
+	require.Equal(t, "agent.run_completed", taskSVC.events[0].eventType)
+
+	var payload map[string]string
+	require.NoError(t, json.Unmarshal([]byte(taskSVC.events[0].payload), &payload))
+	require.Equal(t, "real answer", payload["message"])
+	require.Equal(t, "answer", payload["message_type"])
 }
 
 func TestRunAgentReturnsErrorOnStreamErrorEvent(t *testing.T) {

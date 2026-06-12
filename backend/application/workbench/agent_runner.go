@@ -126,8 +126,7 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 			return resultPayload{}, fmt.Errorf("workbench agent run failed")
 		}
 
-		if chunk != nil && chunk.ChunkMessageItem != nil &&
-			(chunk.Event == agentrunentity.RunEventMessageCompleted || chunk.ChunkMessageItem.IsFinish) {
+		if isFinalAnswerChunk(chunk) {
 			finalAnswer = strings.TrimSpace(chunk.ChunkMessageItem.Content)
 		}
 	}
@@ -160,11 +159,13 @@ func agentChunkToTaskEvent(chunk *agentrunentity.AgentRunResponse) (string, stri
 		}
 		return "agent.answer_delta", mustJSON(payload)
 	case agentrunentity.RunEventMessageCompleted:
-		if chunk.ChunkMessageItem != nil {
-			payload["title"] = "Agent 最终结果"
-			payload["message"] = chunk.ChunkMessageItem.Content
-			payload["status"] = "completed"
+		if !isFinalAnswerChunk(chunk) {
+			return "", ""
 		}
+		payload["title"] = "Agent 最终结果"
+		payload["message"] = chunk.ChunkMessageItem.Content
+		payload["message_type"] = string(chunk.ChunkMessageItem.MessageType)
+		payload["status"] = "completed"
 		return "agent.run_completed", mustJSON(payload)
 	case agentrunentity.RunEventError:
 		payload["title"] = "Agent 执行失败"
@@ -175,6 +176,21 @@ func agentChunkToTaskEvent(chunk *agentrunentity.AgentRunResponse) (string, stri
 		return "agent.run_failed", mustJSON(payload)
 	default:
 		return "", ""
+	}
+}
+
+func isFinalAnswerChunk(chunk *agentrunentity.AgentRunResponse) bool {
+	if chunk == nil || chunk.ChunkMessageItem == nil {
+		return false
+	}
+	if chunk.Event != agentrunentity.RunEventMessageCompleted && !chunk.ChunkMessageItem.IsFinish {
+		return false
+	}
+	switch chunk.ChunkMessageItem.MessageType {
+	case crossmessage.MessageTypeAnswer, crossmessage.MessageTypeToolAsAnswer:
+		return true
+	default:
+		return false
 	}
 }
 
