@@ -24,6 +24,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
 
+	agentrunmodel "github.com/coze-dev/coze-studio/backend/crossdomain/agentrun/model"
 	agentrunentity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 )
 
@@ -60,9 +61,23 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 	}
 
 	result, err := app.runAgent(context.Background(), agentRequest{
-		taskID:          10,
-		spaceID:         1,
-		message:         "do work",
+		taskID:         10,
+		spaceID:        1,
+		conversationID: 20,
+		sectionID:      30,
+		agentID:        40,
+		userID:         "50",
+		cozeUID:        50,
+		message:        "do work",
+		preRetrieveTools: []*agentrunmodel.Tool{
+			{
+				PluginID: 100,
+				ToolID:   200,
+				ToolName: "search",
+				Type:     agentrunmodel.ToolTypePlugin,
+			},
+		},
+		customVariables: map[string]string{"city": "Shanghai"},
 		enableDatabases: []string{"db-a"},
 	})
 
@@ -71,6 +86,14 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 	require.Equal(t, executionTypeAgent, result.ExecutionType)
 	require.Equal(t, "hello world", result.Message)
 	require.NotNil(t, agentRun.req)
+	require.Equal(t, int64(20), agentRun.req.ConversationID)
+	require.Equal(t, int64(30), agentRun.req.SectionID)
+	require.Equal(t, int64(40), agentRun.req.AgentID)
+	require.Equal(t, "50", agentRun.req.UserID)
+	require.Equal(t, int64(50), agentRun.req.CozeUID)
+	require.Len(t, agentRun.req.PreRetrieveTools, 1)
+	require.Equal(t, int64(100), agentRun.req.PreRetrieveTools[0].PluginID)
+	require.Equal(t, "Shanghai", agentRun.req.CustomVariables["city"])
 	require.Equal(t, "db-a", agentRun.req.Ext["enable_databases"])
 	require.GreaterOrEqual(t, len(taskSVC.events), 3)
 	require.Equal(t, "agent.run_started", taskSVC.events[0].eventType)
@@ -78,6 +101,52 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 	var payload map[string]string
 	require.NoError(t, json.Unmarshal([]byte(taskSVC.events[len(taskSVC.events)-1].payload), &payload))
 	require.Equal(t, "hello world", payload["message"])
+}
+
+func TestRunAgentReturnsErrorOnStreamErrorEvent(t *testing.T) {
+	stream := newAgentRunStream([]*agentrunentity.AgentRunResponse{
+		{
+			Event: agentrunentity.RunEventError,
+			Error: &agentrunentity.RunError{
+				Code: 500,
+				Msg:  "agent failed",
+			},
+		},
+		{Event: agentrunentity.RunEventStreamDone},
+	})
+	taskSVC := &recordingWorkbenchTaskApp{}
+	app := &ApplicationService{
+		taskApp:     taskSVC,
+		agentRunSVC: &fakeAgentRun{stream: stream},
+	}
+
+	_, err := app.runAgent(context.Background(), agentRequest{
+		taskID:         10,
+		spaceID:        1,
+		conversationID: 20,
+		sectionID:      30,
+		agentID:        40,
+		userID:         "50",
+		cozeUID:        50,
+		message:        "do work",
+	})
+
+	require.ErrorContains(t, err, "agent failed")
+	require.Len(t, taskSVC.events, 1)
+	require.Equal(t, "agent.run_failed", taskSVC.events[0].eventType)
+}
+
+func TestRunAgentRequiresRunnableAgentContext(t *testing.T) {
+	app := &ApplicationService{agentRunSVC: &fakeAgentRun{}}
+
+	_, err := app.runAgent(context.Background(), agentRequest{
+		taskID:         10,
+		spaceID:        1,
+		conversationID: 20,
+		message:        "do work",
+	})
+
+	require.ErrorContains(t, err, "agent_id is required")
 }
 
 func newAgentRunStream(chunks []*agentrunentity.AgentRunResponse) *schema.StreamReader[*agentrunentity.AgentRunResponse] {

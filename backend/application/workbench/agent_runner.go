@@ -25,25 +25,46 @@ import (
 	"strings"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/conversation/common"
+	agentrunmodel "github.com/coze-dev/coze-studio/backend/crossdomain/agentrun/model"
 	crossmessage "github.com/coze-dev/coze-studio/backend/crossdomain/message/model"
 	agentrunentity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 type agentRequest struct {
-	taskID          int64
-	spaceID         int64
-	conversationID  int64
-	message         string
-	enableSkills    []string
-	enableMcp       []string
-	enableKbs       []string
-	enableDatabases []string
+	taskID           int64
+	spaceID          int64
+	conversationID   int64
+	sectionID        int64
+	agentID          int64
+	userID           string
+	cozeUID          int64
+	isDraft          bool
+	version          string
+	message          string
+	preRetrieveTools []*agentrunmodel.Tool
+	customVariables  map[string]string
+	enableSkills     []string
+	enableMcp        []string
+	enableKbs        []string
+	enableDatabases  []string
 }
 
 func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (resultPayload, error) {
 	if s == nil || s.agentRunSVC == nil {
 		return resultPayload{}, fmt.Errorf("workbench agent run service is not initialized")
+	}
+	if req.agentID == 0 {
+		return resultPayload{}, fmt.Errorf("workbench agent_id is required")
+	}
+	if strings.TrimSpace(req.userID) == "" {
+		return resultPayload{}, fmt.Errorf("workbench agent user_id is required")
+	}
+	if req.conversationID == 0 {
+		return resultPayload{}, fmt.Errorf("workbench agent conversation_id is required")
+	}
+	if req.sectionID == 0 {
+		return resultPayload{}, fmt.Errorf("workbench agent section_id is required")
 	}
 
 	stream, err := s.agentRunSVC.AgentRun(ctx, &agentrunentity.AgentRunMeta{
@@ -51,11 +72,19 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 		ConnectorID:    consts.CozeConnectorID,
 		SpaceID:        req.spaceID,
 		Scene:          common.Scene_AgentAPP,
+		SectionID:      req.sectionID,
+		AgentID:        req.agentID,
+		UserID:         req.userID,
+		CozeUID:        req.cozeUID,
+		IsDraft:        req.isDraft,
+		Version:        req.version,
 		ContentType:    crossmessage.ContentTypeText,
 		Content: []*crossmessage.InputMetaData{
 			{Type: crossmessage.InputTypeText, Text: req.message},
 		},
-		DisplayContent: req.message,
+		DisplayContent:   req.message,
+		PreRetrieveTools: req.preRetrieveTools,
+		CustomVariables:  req.customVariables,
 		Ext: map[string]string{
 			"workbench_task_id": fmt.Sprintf("%d", req.taskID),
 			"enable_skills":     strings.Join(req.enableSkills, ","),
@@ -89,6 +118,12 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 			if err := s.appendTaskEvent(ctx, req.taskID, eventType, payload); err != nil {
 				return resultPayload{}, err
 			}
+		}
+		if chunk != nil && chunk.Event == agentrunentity.RunEventError {
+			if chunk.Error != nil && strings.TrimSpace(chunk.Error.Msg) != "" {
+				return resultPayload{}, fmt.Errorf("workbench agent run failed: %s", chunk.Error.Msg)
+			}
+			return resultPayload{}, fmt.Errorf("workbench agent run failed")
 		}
 
 		if chunk != nil && chunk.ChunkMessageItem != nil &&
