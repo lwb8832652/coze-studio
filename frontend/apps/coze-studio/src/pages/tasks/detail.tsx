@@ -20,27 +20,43 @@ import { useParams } from 'react-router-dom';
 import {
   IconCozAsynchronousTask,
   IconCozBell,
-  IconCozLink,
-  IconCozMicrophone,
-  IconCozSendFill,
 } from '@coze-arch/coze-design/icons';
 import type { workbenchTask } from '@coze-studio/api-schema';
 
 import '../../components/workspace-prototype.less';
-import { getTask, listTaskEvents } from './service';
+import '../workbench/index.less';
+import { WorkbenchComposer } from '../workbench/components/workbench-composer';
+import {
+  mapModeToChatMode,
+  type WorkbenchComposerSubmitPayload,
+  type WorkbenchMode,
+} from '../workbench/components/types';
+import { getTask, listTaskEvents, sendWorkbenchChat } from './service';
 import {
   formatUpdatedTime,
-  getTaskEventText,
+  getTaskEventDisplay,
+  getTaskExecutionType,
   getTaskInputText,
-  getTaskResultText,
+  parseTaskResultPayload,
+  type TaskResultPayload,
   getTaskStatusText,
+  isTaskTerminalStatus,
 } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 
-const getEventText = (event: TaskEvent) =>
-  getTaskEventText(event.event_type, event.payload);
+const fetchTaskDetail = async (taskId: string) => {
+  const [taskResponse, eventsResponse] = await Promise.all([
+    getTask({ task_id: taskId }),
+    listTaskEvents({ task_id: taskId }),
+  ]);
+
+  return {
+    task: taskResponse.data,
+    events: eventsResponse.data?.events ?? [],
+  };
+};
 
 const AssistantMark = () => (
   <span className="coze-prototype-assistant-mark" aria-hidden="true">
@@ -78,20 +94,24 @@ const TaskTopBar = ({ task }: { task: ChatTask }) => (
   </header>
 );
 
-const TaskConversation = ({ task }: { task: ChatTask }) => (
-  <>
-    <div className="flex justify-end">
-      <div className="coze-prototype-user-bubble">
-        {getTaskInputText(task.input) || task.title}
-      </div>
-    </div>
+const TaskConversation = ({ task }: { task: ChatTask }) => {
+  const executionType = getTaskExecutionType(task.input);
 
-    <div className="coze-prototype-assistant-line">
-      <AssistantMark />
-      <span>Aime · 已为你启动 Agent 工作流</span>
-    </div>
-  </>
-);
+  return (
+    <>
+      <div className="flex justify-end">
+        <div className="coze-prototype-user-bubble">
+          {getTaskInputText(task.input) || task.title}
+        </div>
+      </div>
+
+      <div className="coze-prototype-assistant-line">
+        <AssistantMark />
+        <span>Aime · {executionType} 已为你启动工作流</span>
+      </div>
+    </>
+  );
+};
 
 const TaskEventsSection = ({
   events,
@@ -100,8 +120,26 @@ const TaskEventsSection = ({
   events: TaskEvent[];
   task: ChatTask;
 }) => {
-  const doneCount = events.length;
-  const totalCount = Math.max(doneCount + (task.progress < 100 ? 1 : 0), 1);
+  const eventItems = events.map(event => ({
+    event,
+    display: getTaskEventDisplay(event.event_type, event.payload),
+  }));
+  const hasStructuredItems = eventItems.some(item => item.display.structured);
+  const visibleItems = hasStructuredItems
+    ? eventItems.filter(item => item.display.structured)
+    : eventItems;
+  const hasRunningItem = visibleItems.some(
+    item => item.display.status === 'running',
+  );
+  const shouldShowPendingStep =
+    !isTaskTerminalStatus(task.status) && !hasRunningItem;
+  const doneCount = visibleItems.filter(
+    item => item.display.status === 'completed',
+  ).length;
+  const totalCount = Math.max(
+    visibleItems.length + (shouldShowPendingStep ? 1 : 0),
+    1,
+  );
 
   return (
     <section className="coze-prototype-execution-panel">
@@ -113,23 +151,54 @@ const TaskEventsSection = ({
         </span>
       </div>
       <ol className="coze-prototype-execution-list">
-        {events.map(event => (
-          <li key={event.id} className="coze-prototype-step">
-            <span className="coze-prototype-step-check">
-              ✓
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[#444c5c]">
-              {getEventText(event)}
+        {visibleItems.map(({ event, display }) => (
+          <li
+            key={event.id}
+            className="coze-prototype-step"
+            data-kind={display.kind}
+            data-status={display.status}
+          >
+            {display.status === 'running' ? (
+              <span className="coze-prototype-step-running" />
+            ) : (
+              <span className="coze-prototype-step-check">
+                {display.status === 'failed' ? '!' : '✓'}
+              </span>
+            )}
+            <span className="coze-prototype-step-content">
+              <span className="coze-prototype-step-title-row">
+                <span className="coze-prototype-step-title">{display.title}</span>
+                {display.runtime ? (
+                  <span className="coze-prototype-step-runtime">
+                    {display.runtime}
+                  </span>
+                ) : null}
+              </span>
+              {display.detail ? (
+                <span className="coze-prototype-step-detail">
+                  {display.detail}
+                </span>
+              ) : null}
+              {display.thought ? (
+                <span className="coze-prototype-step-thought">
+                  {display.thought}
+                </span>
+              ) : null}
             </span>
             <span className="coze-prototype-muted shrink-0">
               {formatUpdatedTime(event.created_at)}
             </span>
           </li>
         ))}
-        {task.progress < 100 ? (
-          <li className="coze-prototype-step">
+        {shouldShowPendingStep ? (
+          <li className="coze-prototype-step" data-status="running">
             <span className="coze-prototype-step-running" />
-            <span className="text-[#232938]">汇总分析结果,生成结构化报告</span>
+            <span className="coze-prototype-step-content">
+              <span className="coze-prototype-step-title">等待任务执行结果</span>
+              <span className="coze-prototype-step-detail">
+                后端执行器正在写入流程事件
+              </span>
+            </span>
             <span className="ml-[4px] text-[11px] text-[#2a9e06]">
               进行中...
             </span>
@@ -140,57 +209,115 @@ const TaskEventsSection = ({
   );
 };
 
-const TaskReport = ({ task }: { task: ChatTask }) => (
-  <article className="coze-prototype-report">
-    <h2>
-      {task.title}报告
-    </h2>
-    <p>
-      {getTaskResultText(task.result) || task.error || '结果生成中'}
-    </p>
-
-    <h3>一、任务输入</h3>
-    <p>
-      {getTaskInputText(task.input) || task.title}
-    </p>
+const TaskAnswer = ({
+  task,
+  result,
+}: {
+  task: ChatTask;
+  result: TaskResultPayload;
+}) => (
+  <article className="coze-prototype-answer" data-result-type="answer">
+    <div className="coze-prototype-result-eyebrow">
+      普通回答{result.executionType ? ` · ${result.executionType}` : ''}
+    </div>
+    <p>{result.message || task.error || '结果生成中'}</p>
+    {result.retrievalSources.length ? (
+      <div className="coze-prototype-result-sources">
+        {result.retrievalSources.map(source => (
+          <span key={source}>{source}</span>
+        ))}
+      </div>
+    ) : null}
   </article>
 );
 
-const FollowUpComposer = () => (
+const TaskAgentResult = ({
+  task,
+  result,
+}: {
+  task: ChatTask;
+  result: TaskResultPayload;
+}) => (
+  <article className="coze-prototype-agent-result" data-result-type="agent_trace">
+    <h2>Agent 最终结果</h2>
+    <p>{result.message || task.error || '结果生成中'}</p>
+  </article>
+);
+
+const TaskReport = ({
+  task,
+  result,
+}: {
+  task: ChatTask;
+  result: TaskResultPayload;
+}) => (
+  <article className="coze-prototype-report">
+    <h2>{task.title}报告</h2>
+    <p>{result.message || task.error || '结果生成中'}</p>
+
+    <h3>一、任务输入</h3>
+    <p>{getTaskInputText(task.input) || task.title}</p>
+  </article>
+);
+
+const TaskResultSection = ({ task }: { task: ChatTask }) => {
+  const result = parseTaskResultPayload(task.result);
+
+  if (result.resultType === 'report') {
+    return <TaskReport task={task} result={result} />;
+  }
+
+  if (result.resultType === 'agent_trace') {
+    return <TaskAgentResult task={task} result={result} />;
+  }
+
+  return <TaskAnswer task={task} result={result} />;
+};
+
+const FollowUpComposer = ({
+  value,
+  mode,
+  loading,
+  error,
+  taskId,
+  onValueChange,
+  onModeChange,
+  onSubmit,
+}: {
+  value: string;
+  mode: WorkbenchMode;
+  loading: boolean;
+  error?: string;
+  taskId?: string;
+  onValueChange: (value: string) => void;
+  onModeChange: (mode: WorkbenchMode) => void;
+  onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
+}) => (
   <section className="coze-prototype-followup">
-    <div className="coze-prototype-followup-box">
-        <input
-          aria-label="继续追问"
-          placeholder="继续追问..."
-        />
-        <button
-          type="button"
-          className="coze-prototype-followup-icon"
-        >
-          <IconCozLink className="text-[16px]" />
-        </button>
-        <button
-          type="button"
-          className="coze-prototype-followup-icon"
-        >
-          <IconCozMicrophone className="text-[16px]" />
-        </button>
-        <button
-          type="button"
-          className="coze-prototype-followup-send"
-        >
-          <IconCozSendFill className="text-[16px]" />
-        </button>
-    </div>
+    <WorkbenchComposer
+      value={value}
+      mode={mode}
+      loading={loading}
+      error={error}
+      variant="detail"
+      taskId={taskId}
+      onValueChange={onValueChange}
+      onModeChange={onModeChange}
+      onSubmit={onSubmit}
+    />
   </section>
 );
 
 const TaskDetailPage = () => {
-  const { task_id } = useParams();
+  const { space_id, task_id } = useParams();
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [followUpValue, setFollowUpValue] = useState('');
+  const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>('Auto');
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpError, setFollowUpError] = useState('');
 
   useEffect(() => {
     if (!task_id) {
@@ -198,20 +325,26 @@ const TaskDetailPage = () => {
     }
 
     let canceled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const loadTaskDetail = async () => {
-      setLoading(true);
+    const loadTaskDetail = async (showLoading = false) => {
+      if (showLoading) {
+        setLoading(true);
+      }
       setError('');
 
       try {
-        const [taskResponse, eventsResponse] = await Promise.all([
-          getTask({ task_id }),
-          listTaskEvents({ task_id }),
-        ]);
+        const detail = await fetchTaskDetail(task_id);
 
         if (!canceled) {
-          setTask(taskResponse.data);
-          setEvents(eventsResponse.data?.events ?? []);
+          setTask(detail.task);
+          setEvents(detail.events);
+
+          if (detail.task && !isTaskTerminalStatus(detail.task.status)) {
+            timer = setTimeout(() => {
+              void loadTaskDetail();
+            }, 2000);
+          }
         }
       } catch (err) {
         if (!canceled) {
@@ -224,12 +357,57 @@ const TaskDetailPage = () => {
       }
     };
 
-    void loadTaskDetail();
+    void loadTaskDetail(true);
 
     return () => {
       canceled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
   }, [task_id]);
+
+  const handleFollowUpSubmit = async (
+    payload: WorkbenchComposerSubmitPayload,
+  ) => {
+    if (!payload.message || followUpLoading) {
+      return;
+    }
+
+    if (!space_id || !task_id) {
+      setFollowUpError('缺少任务上下文，无法继续追问');
+
+      return;
+    }
+
+    setFollowUpLoading(true);
+    setFollowUpError('');
+
+    try {
+      await sendWorkbenchChat({
+        space_id,
+        task_id,
+        message: payload.message,
+        mode: mapModeToChatMode(payload.mode),
+        enable_skills: payload.enable_skills,
+        enable_mcp: payload.enable_mcp,
+        enable_kbs: payload.enable_kbs,
+        enable_databases: payload.enable_databases,
+      });
+
+      setFollowUpValue('');
+
+      const detail = await fetchTaskDetail(task_id);
+      setTask(detail.task);
+      setEvents(detail.events);
+    } catch (err) {
+      setFollowUpError(
+        err instanceof Error ? err.message : '继续追问失败，请稍后重试',
+      );
+    } finally {
+      setFollowUpLoading(false);
+    }
+  };
 
   return (
     <main className="coze-prototype-page">
@@ -254,9 +432,21 @@ const TaskDetailPage = () => {
         {task ? (
           <>
             <TaskConversation task={task} />
-            <TaskEventsSection events={events} task={task} />
-            <TaskReport task={task} />
-            <FollowUpComposer />
+            {parseTaskResultPayload(task.result).resultType ===
+            'agent_trace' ? (
+              <TaskEventsSection events={events} task={task} />
+            ) : null}
+            <TaskResultSection task={task} />
+            <FollowUpComposer
+              value={followUpValue}
+              mode={followUpMode}
+              loading={followUpLoading}
+              error={followUpError}
+              taskId={task_id}
+              onValueChange={setFollowUpValue}
+              onModeChange={setFollowUpMode}
+              onSubmit={handleFollowUpSubmit}
+            />
           </>
         ) : null}
       </section>

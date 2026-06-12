@@ -901,10 +901,69 @@
 .coze-prototype-step {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
 
   font-size: 13px;
   line-height: 20px;
+}
+
+.coze-prototype-step-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+
+  min-width: 0;
+}
+
+.coze-prototype-step-title-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.coze-prototype-step-title {
+  overflow: hidden;
+
+  min-width: 0;
+
+  font-weight: 500;
+  color: #232938;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coze-prototype-step-runtime {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+
+  height: 18px;
+  padding: 0 6px;
+
+  font-size: 11px;
+  line-height: 16px;
+  color: #4e5969;
+
+  background: rgb(91 100 117 / 8%);
+  border-radius: 999px;
+}
+
+.coze-prototype-step-detail,
+.coze-prototype-step-thought {
+  color: #747b8a;
+  overflow-wrap: anywhere;
+}
+
+.coze-prototype-step-thought {
+  padding: 6px 8px;
+
+  color: #444c5c;
+
+  background: #fff;
+  border: 1px solid rgb(77 101 148 / 12%);
+  border-radius: 6px;
 }
 
 .coze-prototype-step-check {
@@ -921,6 +980,21 @@
 
   background: #2a9e06;
   border-radius: 50%;
+}
+
+.coze-prototype-step[data-status='failed'] .coze-prototype-step-check {
+  background: #d91f11;
+}
+
+.coze-prototype-step[data-status='pending'] .coze-prototype-step-check,
+.coze-prototype-step[data-status='neutral'] .coze-prototype-step-check {
+  color: #747b8a;
+  background: rgb(91 100 117 / 16%);
+}
+
+.coze-prototype-step[data-kind='thought'] .coze-prototype-step-check {
+  color: #444c5c;
+  background: rgb(91 100 117 / 12%);
 }
 
 .coze-prototype-step-running {
@@ -946,6 +1020,53 @@
   font-size: 14px;
   line-height: 28px;
   color: #232938;
+}
+
+.coze-prototype-answer,
+.coze-prototype-agent-result {
+  font-size: 14px;
+  line-height: 26px;
+  color: #232938;
+}
+
+.coze-prototype-answer p,
+.coze-prototype-agent-result p {
+  margin: 8px 0 0;
+  color: #444c5c;
+  white-space: pre-wrap;
+}
+
+.coze-prototype-agent-result h2 {
+  margin: 0;
+
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 28px;
+  color: #1d2129;
+}
+
+.coze-prototype-result-eyebrow {
+  font-size: 12px;
+  line-height: 18px;
+  color: #747b8a;
+}
+
+.coze-prototype-result-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.coze-prototype-result-sources span {
+  padding: 2px 8px;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: #2a9e06;
+
+  background: rgb(42 158 6 / 10%);
+  border-radius: 6px;
 }
 
 .coze-prototype-report h2 {
@@ -977,6 +1098,17 @@
   bottom: 0;
   padding: 24px 0 16px;
   background: linear-gradient(to top, #fff, #fff, transparent);
+}
+
+.coze-prototype-followup .chat-workbench-composer {
+  width: 100%;
+  margin: 0;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgb(15 23 42 / 6%);
+}
+
+.coze-prototype-followup .chat-workbench-toolbar {
+  margin-top: 12px;
 }
 
 .coze-prototype-followup-box {

@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
+import { workbench, workbenchTask } from '@coze-studio/api-schema';
 
 export const listTasks = workbenchTask.ListTasks;
 export const getTask = workbenchTask.GetTask;
 export const cancelTask = workbenchTask.CancelTask;
 export const retryTask = workbenchTask.RetryTask;
 export const listTaskEvents = workbenchTask.ListTaskEvents;
+export const sendWorkbenchChat = workbench.WorkbenchChat;
