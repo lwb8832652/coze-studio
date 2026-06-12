@@ -20,7 +20,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	chatapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
+	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
+	apptask "github.com/coze-dev/coze-studio/backend/application/task"
+	"github.com/coze-dev/coze-studio/backend/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,4 +91,125 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 
 	require.Equal(t, "answer", data.GetResultType())
 	require.Equal(t, "Ark", data.GetExecutionType())
+}
+
+func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
+	taskApp := &recordingWorkbenchTaskApp{
+		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "hello", Status: taskapi.TaskStatus_Running},
+	}
+	app := &ApplicationService{
+		taskApp: taskApp,
+		chatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+			return &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+					require.Len(t, in, 1)
+					require.Equal(t, "hello", in[0].Content)
+					return schema.AssistantMessage("auto answer", nil), nil
+				},
+			}, true, nil
+		},
+	}
+
+	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		Message: "hello",
+		Mode:    chatapi.ChatMode_Auto,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Data)
+	require.NotNil(t, resp.Data.Task)
+	require.Equal(t, int64(10), resp.Data.Task.ID)
+	require.Equal(t, chatapi.RouteTarget_TaskEngine, resp.Data.RouteTarget)
+	require.Equal(t, "answer", resp.Data.GetResultType())
+	require.Equal(t, "Ark", resp.Data.GetExecutionType())
+	require.Equal(t, "auto answer", resp.Data.GetAnswer())
+	require.Contains(t, taskApp.completedResult, `"message":"auto answer"`)
+	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
+}
+
+func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing.T) {
+	taskID := int64(20)
+	taskApp := &recordingWorkbenchTaskApp{
+		got: &taskapi.ChatTask{ID: 20, SpaceID: 1, Title: "existing", Status: taskapi.TaskStatus_Running},
+	}
+	app := &ApplicationService{
+		taskApp: taskApp,
+		chatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+			return &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+					require.Len(t, in, 1)
+					require.Equal(t, "follow up", in[0].Content)
+					return schema.AssistantMessage("follow answer", nil), nil
+				},
+			}, true, nil
+		},
+	}
+
+	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		TaskID:  &taskID,
+		Message: "follow up",
+		Mode:    chatapi.ChatMode_Ask,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Data)
+	require.NotNil(t, resp.Data.Task)
+	require.Equal(t, int64(20), resp.Data.Task.ID)
+	require.Equal(t, 0, taskApp.createCalls)
+	require.GreaterOrEqual(t, len(taskApp.events), 2)
+	require.Equal(t, "user.message", taskApp.events[0].eventType)
+	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
+	require.Contains(t, taskApp.completedResult, `"message":"follow answer"`)
+}
+
+func TestHandleMessageAgentFailsTaskWhenRuntimeContextMissing(t *testing.T) {
+	taskApp := &recordingWorkbenchTaskApp{
+		created: &taskapi.ChatTask{ID: 30, SpaceID: 1, Title: "do work", Status: taskapi.TaskStatus_Running},
+	}
+	app := &ApplicationService{
+		taskApp:     taskApp,
+		agentRunSVC: &fakeAgentRun{},
+	}
+
+	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		Message: "do work",
+		Mode:    chatapi.ChatMode_Agent,
+	})
+
+	require.ErrorContains(t, err, "agent_id is required")
+	require.Nil(t, resp)
+	require.Equal(t, int64(30), taskApp.failedID)
+	require.Contains(t, taskApp.failError, "agent_id is required")
+	require.Equal(t, "turn.failed", taskApp.events[len(taskApp.events)-1].eventType)
+}
+
+func TestInitServiceMergesRuntimeComponents(t *testing.T) {
+	prevSkillSVC := SVC.skillSVC
+	prevTaskSVC := SVC.taskSVC
+	prevKnowledgeSVC := SVC.knowledgeSVC
+	prevAgentRunSVC := SVC.agentRunSVC
+	prevChatModelProvider := SVC.chatModelProvider
+	prevTaskApp := SVC.taskApp
+	t.Cleanup(func() {
+		SVC.skillSVC = prevSkillSVC
+		SVC.taskSVC = prevTaskSVC
+		SVC.knowledgeSVC = prevKnowledgeSVC
+		SVC.agentRunSVC = prevAgentRunSVC
+		SVC.chatModelProvider = prevChatModelProvider
+		SVC.taskApp = prevTaskApp
+	})
+
+	skillSVC := &appskill.ApplicationService{}
+	taskSVC := &apptask.ApplicationService{}
+	InitService(&ServiceComponents{SkillSVC: skillSVC, TaskSVC: taskSVC})
+	InitService(&ServiceComponents{ChatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		return nil, false, nil
+	}})
+
+	require.Same(t, skillSVC, SVC.skillSVC)
+	require.Same(t, taskSVC, SVC.taskSVC)
+	require.NotNil(t, SVC.chatModelProvider)
 }

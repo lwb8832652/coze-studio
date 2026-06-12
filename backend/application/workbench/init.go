@@ -37,10 +37,20 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	if c == nil {
 		return SVC
 	}
-	SVC.skillSVC = c.SkillSVC
-	SVC.taskSVC = c.TaskSVC
-	SVC.knowledgeSVC = c.KnowledgeSVC
-	SVC.agentRunSVC = c.AgentRunSVC
-	SVC.chatModelProvider = c.ChatModelProvider
+	if c.SkillSVC != nil {
+		SVC.skillSVC = c.SkillSVC
+	}
+	if c.TaskSVC != nil {
+		SVC.taskSVC = c.TaskSVC
+	}
+	if c.KnowledgeSVC != nil {
+		SVC.knowledgeSVC = c.KnowledgeSVC
+	}
+	if c.AgentRunSVC != nil {
+		SVC.agentRunSVC = c.AgentRunSVC
+	}
+	if c.ChatModelProvider != nil {
+		SVC.chatModelProvider = c.ChatModelProvider
+	}
 	return SVC
 }

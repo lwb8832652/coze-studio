@@ -21,23 +21,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	chatapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
-	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
 	agentrun "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/service"
-)
-
-const (
-	answerAskDirect     = "已进入 Ask 快速问答模式。"
-	answerAgentDirect   = "已进入 Agent 智能体模式。"
-	answerChatDirect    = "已进入 Chat 直接问答模式。"
-	answerSkillFallback = "未选择技能，已回退到 Chat 直接问答模式。"
 )
 
 type ApplicationService struct {
@@ -53,7 +47,8 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 	if req == nil {
 		return nil, InvalidArgumentErrorf("workbench chat request is required")
 	}
-	if strings.TrimSpace(req.Message) == "" {
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
 		return nil, InvalidArgumentErrorf("message is required")
 	}
 
@@ -61,107 +56,138 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 	if err != nil {
 		return nil, err
 	}
-	intent := ResolveIntent(req)
-	decision := DecideRoute(mode, intent)
 
-	data := &chatapi.WorkbenchChatData{
-		RouteTarget: routeTargetToAPI(decision.Target),
-		Reason:      stringPtr(decision.Reason),
-	}
-	if req.IsSetConversationID() {
-		conversationID := req.GetConversationID()
-		data.ConversationID = &conversationID
+	task, err := s.prepareTask(ctx, req, message)
+	if err != nil {
+		return nil, err
 	}
 
-	switch decision.Target {
-	case RouteChatDirect:
-		data.Answer = stringPtr(chatDirectAnswer(mode))
-	case RouteAgentEngine:
-		data.Answer = stringPtr(answerAgentDirect)
-	case RouteSkillEngine:
-		answer, err := s.runSkill(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		data.Answer = stringPtr(answer)
-		if !req.IsSetSelectedSkillID() {
-			data.RouteTarget = chatapi.RouteTarget_ChatDirect
-		}
-	case RouteTaskEngine:
-		created, err := s.createTask(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		data.Task = created
-		data.Answer = stringPtr(fmt.Sprintf("已创建异步任务：%s", created.Title))
+	result, err := s.executeTurn(ctx, task.ID, req, mode, message)
+	if err != nil {
+		_ = s.failTurn(ctx, task.ID, err.Error())
+		return nil, err
 	}
+	resultJSON, err := marshalResultPayload(result)
+	if err != nil {
+		_ = s.failTurn(ctx, task.ID, err.Error())
+		return nil, err
+	}
+	if err := s.completeTask(ctx, task.ID, resultJSON); err != nil {
+		return nil, err
+	}
+	task.Result = &resultJSON
 
 	return &chatapi.WorkbenchChatResponse{
 		Code: 0,
 		Msg:  "success",
-		Data: data,
+		Data: &chatapi.WorkbenchChatData{
+			RouteTarget:    chatapi.RouteTarget_TaskEngine,
+			Answer:         stringPtr(result.Message),
+			Task:           task,
+			ConversationID: task.ConversationID,
+			ResultType:     stringPtr(result.ResultType),
+			ExecutionType:  optionalStringPtr(result.ExecutionType),
+		},
 	}, nil
 }
 
-func (s *ApplicationService) runSkill(ctx context.Context, req *chatapi.WorkbenchChatRequest) (string, error) {
-	if !req.IsSetSelectedSkillID() {
-		return answerSkillFallback, nil
+func (s *ApplicationService) prepareTask(ctx context.Context, req *chatapi.WorkbenchChatRequest, message string) (*taskapi.ChatTask, error) {
+	if req.IsSetTaskID() {
+		task, err := s.getTask(ctx, req.GetTaskID())
+		if err != nil {
+			return nil, err
+		}
+		if task == nil {
+			return nil, fmt.Errorf("task service returned empty task")
+		}
+		if err := s.appendTaskEvent(ctx, task.ID, "user.message", mustJSON(map[string]string{
+			"message": message,
+			"status":  "completed",
+			"title":   "用户追问",
+		})); err != nil {
+			return nil, err
+		}
+		return task, nil
 	}
-	if s == nil || s.skillSVC == nil {
-		return "", fmt.Errorf("workbench skill service is not initialized")
-	}
-	input, err := messageInputJSON(req.Message)
-	if err != nil {
-		return "", err
-	}
-	resp, err := s.skillSVC.TestRunSkill(ctx, &skillapi.TestRunSkillRequest{
-		SkillID: req.GetSelectedSkillID(),
-		Input:   input,
-	})
-	if err != nil {
-		return "", err
-	}
-	if resp != nil && resp.Data != nil && resp.Data.Output != nil && *resp.Data.Output != "" {
-		return *resp.Data.Output, nil
-	}
-	return "技能执行完成，暂无输出。", nil
-}
 
-func (s *ApplicationService) createTask(ctx context.Context, req *chatapi.WorkbenchChatRequest) (*taskapi.ChatTask, error) {
-	if s == nil || s.taskSVC == nil {
-		return nil, fmt.Errorf("workbench task service is not initialized")
-	}
-	input, err := messageInputJSON(req.Message)
+	input, err := taskInputJSON(message, executionTypeFromMode(req.Mode), resultTypeFromMode(req.Mode))
 	if err != nil {
 		return nil, err
 	}
-	createReq := &taskapi.CreateTaskRequest{
+	task, err := s.createRunningTask(ctx, &taskapi.CreateTaskRequest{
 		SpaceID:        req.SpaceID,
-		Title:          taskTitle(req.Message),
+		Title:          taskTitle(message),
 		ConversationID: req.ConversationID,
 		SkillID:        req.SelectedSkillID,
 		Input:          &input,
-	}
-	resp, err := s.taskSVC.CreateTask(ctx, createReq)
+	})
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.Data == nil {
-		return nil, fmt.Errorf("task service returned empty response")
+	if task == nil {
+		return nil, fmt.Errorf("task service returned empty task")
 	}
-	if s.taskSVC.DomainSVC == nil {
-		return nil, fmt.Errorf("task domain service is not initialized")
+	return task, nil
+}
+
+func (s *ApplicationService) executeTurn(ctx context.Context, taskID int64, req *chatapi.WorkbenchChatRequest, mode ChatMode, message string) (resultPayload, error) {
+	if mode == ChatModeAgent {
+		return s.runAgent(ctx, s.agentRequestFromWorkbench(ctx, taskID, req, message))
 	}
-	queued, err := s.taskSVC.DomainSVC.Enqueue(ctx, resp.Data.ID)
+
+	result, err := s.runAnswer(ctx, answerRequest{
+		mode:      mode,
+		spaceID:   req.SpaceID,
+		message:   message,
+		enableKbs: req.GetEnableKbs(),
+	})
 	if err != nil {
-		return nil, err
+		return resultPayload{}, err
 	}
-	if queued != nil {
-		resp.Data.Status = taskapi.TaskStatus_Queued
-		resp.Data.Progress = queued.Progress
-		resp.Data.UpdatedAt = queued.UpdatedAt
+	if err := s.appendTaskEvent(ctx, taskID, "answer.completed", mustJSON(map[string]string{
+		"title":   "生成回答",
+		"message": result.Message,
+		"status":  "completed",
+		"runtime": result.ExecutionType,
+	})); err != nil {
+		return resultPayload{}, err
 	}
-	return resp.Data, nil
+	return result, nil
+}
+
+func (s *ApplicationService) agentRequestFromWorkbench(ctx context.Context, taskID int64, req *chatapi.WorkbenchChatRequest, message string) agentRequest {
+	userID := ""
+	cozeUID := int64(0)
+	if uid := ctxutil.GetUIDFromCtx(ctx); uid != nil {
+		cozeUID = *uid
+		userID = strconv.FormatInt(*uid, 10)
+	}
+
+	return agentRequest{
+		taskID:          taskID,
+		spaceID:         req.SpaceID,
+		conversationID:  req.GetConversationID(),
+		userID:          userID,
+		cozeUID:         cozeUID,
+		message:         message,
+		enableSkills:    req.GetEnableSkills(),
+		enableMcp:       req.GetEnableMcp(),
+		enableKbs:       req.GetEnableKbs(),
+		enableDatabases: req.GetEnableDatabases(),
+	}
+}
+
+func (s *ApplicationService) failTurn(ctx context.Context, taskID int64, errMsg string) error {
+	appendErr := s.appendTaskEvent(ctx, taskID, "turn.failed", mustJSON(map[string]string{
+		"title":  "执行失败",
+		"status": "failed",
+		"error":  errMsg,
+	}))
+	failErr := s.failTask(ctx, taskID, errMsg)
+	if appendErr != nil {
+		return appendErr
+	}
+	return failErr
 }
 
 func IsClientError(err error) bool {
@@ -198,33 +224,31 @@ func chatModeFromAPI(mode chatapi.ChatMode) (ChatMode, error) {
 	}
 }
 
-func routeTargetToAPI(target RouteTarget) chatapi.RouteTarget {
-	switch target {
-	case RouteAgentEngine:
-		return chatapi.RouteTarget_AgentEngine
-	case RouteSkillEngine:
-		return chatapi.RouteTarget_SkillEngine
-	case RouteTaskEngine:
-		return chatapi.RouteTarget_TaskEngine
-	default:
-		return chatapi.RouteTarget_ChatDirect
+func taskInputJSON(message, executionType, resultType string) (string, error) {
+	payload := map[string]string{
+		"message":        message,
+		"execution_type": executionType,
+		"result_type":    resultType,
 	}
-}
-
-func chatDirectAnswer(mode ChatMode) string {
-	if mode == ChatModeAsk {
-		return answerAskDirect
-	}
-	return answerChatDirect
-}
-
-func messageInputJSON(message string) (string, error) {
-	payload := map[string]string{"message": message}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
 	return string(bytes), nil
+}
+
+func executionTypeFromMode(mode chatapi.ChatMode) string {
+	if mode == chatapi.ChatMode_Agent {
+		return "Agent"
+	}
+	return "Ark"
+}
+
+func resultTypeFromMode(mode chatapi.ChatMode) string {
+	if mode == chatapi.ChatMode_Agent {
+		return resultTypeAgentTrace
+	}
+	return resultTypeAnswer
 }
 
 func taskTitle(message string) string {
@@ -241,5 +265,12 @@ func taskTitle(message string) string {
 }
 
 func stringPtr(v string) *string {
+	return &v
+}
+
+func optionalStringPtr(v string) *string {
+	if v == "" {
+		return nil
+	}
 	return &v
 }

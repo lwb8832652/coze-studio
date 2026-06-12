@@ -165,6 +165,11 @@ func withTestWorkbenchApp(t *testing.T, components *ServiceComponents) *Applicat
 	prevAgentRunSVC := SVC.agentRunSVC
 	prevChatModelProvider := SVC.chatModelProvider
 	app := InitService(components)
+	app.skillSVC = components.SkillSVC
+	app.taskSVC = components.TaskSVC
+	app.knowledgeSVC = components.KnowledgeSVC
+	app.agentRunSVC = components.AgentRunSVC
+	app.chatModelProvider = components.ChatModelProvider
 	t.Cleanup(func() {
 		SVC.skillSVC = prevSkillSVC
 		SVC.taskSVC = prevTaskSVC

@@ -173,6 +173,10 @@ func Init(ctx context.Context) (err error) {
 	crossupload.SetDefaultSVC(uploadImpl.InitDomainService(basicServices.uploadSVC.UploadSVC))
 
 	crossapp.SetDefaultSVC(appImpl.InitDomainService(complexServices.appSVC.DomainSVC))
+	workbench.InitService(&workbench.ServiceComponents{
+		KnowledgeSVC: crossknowledge.DefaultSVC(),
+		AgentRunSVC:  complexServices.conversationSVC.AgentRunDomainSVC,
+	})
 
 	return nil
 }
