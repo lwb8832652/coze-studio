@@ -67,6 +67,7 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 		conversationID: 20,
 		sectionID:      30,
 		agentID:        40,
+		modelID:        100002,
 		userID:         "50",
 		cozeUID:        50,
 		message:        "do work",
@@ -90,6 +91,10 @@ func TestRunAgentAppendsStreamEventsAndFinalResult(t *testing.T) {
 	require.Equal(t, int64(20), agentRun.req.ConversationID)
 	require.Equal(t, int64(30), agentRun.req.SectionID)
 	require.Equal(t, int64(40), agentRun.req.AgentID)
+	require.NotNil(t, agentRun.req.CustomerConfig)
+	require.NotNil(t, agentRun.req.CustomerConfig.ModelConfig)
+	require.NotNil(t, agentRun.req.CustomerConfig.ModelConfig.ModelId)
+	require.Equal(t, int64(100002), *agentRun.req.CustomerConfig.ModelConfig.ModelId)
 	require.Equal(t, "50", agentRun.req.UserID)
 	require.Equal(t, int64(50), agentRun.req.CozeUID)
 	require.Len(t, agentRun.req.PreRetrieveTools, 1)

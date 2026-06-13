@@ -172,6 +172,7 @@ func (s *ApplicationService) agentRequestFromWorkbench(ctx context.Context, task
 		taskID:          taskID,
 		spaceID:         req.SpaceID,
 		conversationID:  req.GetConversationID(),
+		modelID:         req.GetModelType(),
 		userID:          userID,
 		cozeUID:         cozeUID,
 		message:         message,

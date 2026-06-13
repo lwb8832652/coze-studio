@@ -37,6 +37,7 @@ type agentRequest struct {
 	conversationID   int64
 	sectionID        int64
 	agentID          int64
+	modelID          int64
 	userID           string
 	cozeUID          int64
 	isDraft          bool
@@ -78,6 +79,7 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 		CozeUID:        req.cozeUID,
 		IsDraft:        req.isDraft,
 		Version:        req.version,
+		CustomerConfig: agentCustomerConfig(req.modelID),
 		ContentType:    crossmessage.ContentTypeText,
 		Content: []*crossmessage.InputMetaData{
 			{Type: crossmessage.InputTypeText, Text: req.message},
@@ -136,6 +138,18 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 		ResultType:    resultTypeAgentTrace,
 		ExecutionType: executionTypeAgent,
 	}, nil
+}
+
+func agentCustomerConfig(modelID int64) *agentrunentity.CustomerConfig {
+	if modelID <= 0 {
+		return nil
+	}
+
+	return &agentrunentity.CustomerConfig{
+		ModelConfig: &agentrunentity.ModelConfig{
+			ModelId: &modelID,
+		},
+	}
 }
 
 func agentChunkToTaskEvent(chunk *agentrunentity.AgentRunResponse) (string, string) {
