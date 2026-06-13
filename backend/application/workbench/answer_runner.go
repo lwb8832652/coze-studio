@@ -31,16 +31,26 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
-type chatModelProvider func(ctx context.Context) (model.BaseChatModel, bool, error)
+type chatModelProvider func(ctx context.Context, modelType int64) (model.BaseChatModel, bool, error)
 
 type answerRequest struct {
 	mode      ChatMode
 	spaceID   int64
 	message   string
+	modelType int64
+	modelName string
 	enableKbs []string
 }
 
-func defaultChatModelProvider(ctx context.Context) (model.BaseChatModel, bool, error) {
+func defaultChatModelProvider(ctx context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+	if modelType > 0 {
+		chatModel, _, err := modelbuilder.BuildModelByID(ctx, modelType, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		return chatModel, true, nil
+	}
+
 	return modelbuilder.GetBuiltinChatModel(ctx, "WKB_")
 }
 
@@ -53,7 +63,7 @@ func (s *ApplicationService) runAnswer(ctx context.Context, req answerRequest) (
 		provider = defaultChatModelProvider
 	}
 
-	cm, configured, err := provider(ctx)
+	cm, configured, err := provider(ctx, req.modelType)
 	if err != nil {
 		return resultPayload{}, err
 	}

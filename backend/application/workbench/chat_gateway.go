@@ -142,6 +142,8 @@ func (s *ApplicationService) executeTurn(ctx context.Context, taskID int64, req 
 		mode:      mode,
 		spaceID:   req.SpaceID,
 		message:   message,
+		modelType: req.GetModelType(),
+		modelName: strings.TrimSpace(req.GetModelName()),
 		enableKbs: req.GetEnableKbs(),
 	})
 	if err != nil {

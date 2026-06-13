@@ -29,11 +29,20 @@ export interface WorkbenchResourceSelection {
   enable_databases: string[];
 }
 
+export interface WorkbenchLLMModel {
+  name?: string;
+  model_type?: number | string;
+  model_class_name?: string;
+  endpoint_name?: string;
+}
+
 export interface WorkbenchComposerSubmitPayload
   extends WorkbenchResourceSelection {
   message: string;
   mode: WorkbenchMode;
   taskId?: string;
+  modelType?: number;
+  modelName?: string;
 }
 
 export const WORKBENCH_MODE_PROMPTS: Record<WorkbenchMode, string> = {

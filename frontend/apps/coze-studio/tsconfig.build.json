@@ -55,6 +55,9 @@
       "path": "../../packages/arch/api-schema/tsconfig.build.json"
     },
     {
+      "path": "../../packages/arch/bot-api/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/arch/bot-env/tsconfig.build.json"
     },
     {

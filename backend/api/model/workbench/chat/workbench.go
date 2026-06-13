@@ -138,6 +138,8 @@ type WorkbenchChatRequest struct {
 	EnableMcp       []string   `thrift:"enable_mcp,8,optional" form:"enable_mcp" json:"enable_mcp,omitempty" query:"enable_mcp"`
 	EnableKbs       []string   `thrift:"enable_kbs,9,optional" form:"enable_kbs" json:"enable_kbs,omitempty" query:"enable_kbs"`
 	EnableDatabases []string   `thrift:"enable_databases,10,optional" form:"enable_databases" json:"enable_databases,omitempty" query:"enable_databases"`
+	ModelType       *int64     `thrift:"model_type,11,optional" form:"model_type" json:"model_type,string,omitempty" query:"model_type"`
+	ModelName       *string    `thrift:"model_name,12,optional" form:"model_name" json:"model_name,omitempty" query:"model_name"`
 	Base            *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -223,6 +225,24 @@ func (p *WorkbenchChatRequest) GetEnableDatabases() (v []string) {
 	return p.EnableDatabases
 }
 
+var WorkbenchChatRequest_ModelType_DEFAULT int64
+
+func (p *WorkbenchChatRequest) GetModelType() (v int64) {
+	if !p.IsSetModelType() {
+		return WorkbenchChatRequest_ModelType_DEFAULT
+	}
+	return *p.ModelType
+}
+
+var WorkbenchChatRequest_ModelName_DEFAULT string
+
+func (p *WorkbenchChatRequest) GetModelName() (v string) {
+	if !p.IsSetModelName() {
+		return WorkbenchChatRequest_ModelName_DEFAULT
+	}
+	return *p.ModelName
+}
+
 var WorkbenchChatRequest_Base_DEFAULT *base.Base
 
 func (p *WorkbenchChatRequest) GetBase() (v *base.Base) {
@@ -243,6 +263,8 @@ var fieldIDToName_WorkbenchChatRequest = map[int16]string{
 	8:   "enable_mcp",
 	9:   "enable_kbs",
 	10:  "enable_databases",
+	11:  "model_type",
+	12:  "model_name",
 	255: "Base",
 }
 
@@ -272,6 +294,14 @@ func (p *WorkbenchChatRequest) IsSetEnableKbs() bool {
 
 func (p *WorkbenchChatRequest) IsSetEnableDatabases() bool {
 	return p.EnableDatabases != nil
+}
+
+func (p *WorkbenchChatRequest) IsSetModelType() bool {
+	return p.ModelType != nil
+}
+
+func (p *WorkbenchChatRequest) IsSetModelName() bool {
+	return p.ModelName != nil
 }
 
 func (p *WorkbenchChatRequest) IsSetBase() bool {
@@ -378,6 +408,22 @@ func (p *WorkbenchChatRequest) Read(iprot thrift.TProtocol) (err error) {
 		case 10:
 			if fieldTypeId == thrift.LIST {
 				if err = p.ReadField10(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 11:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField12(iprot); err != nil {
 					goto ReadFieldError
 				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
@@ -594,6 +640,28 @@ func (p *WorkbenchChatRequest) ReadField10(iprot thrift.TProtocol) error {
 	p.EnableDatabases = _field
 	return nil
 }
+func (p *WorkbenchChatRequest) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field *int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ModelType = _field
+	return nil
+}
+func (p *WorkbenchChatRequest) ReadField12(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.ModelName = _field
+	return nil
+}
 func (p *WorkbenchChatRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -647,6 +715,14 @@ func (p *WorkbenchChatRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField10(oprot); err != nil {
 			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -885,6 +961,44 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 10 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
+}
+
+func (p *WorkbenchChatRequest) writeField11(oprot thrift.TProtocol) (err error) {
+	if p.IsSetModelType() {
+		if err = oprot.WriteFieldBegin("model_type", thrift.I64, 11); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteI64(*p.ModelType); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *WorkbenchChatRequest) writeField12(oprot thrift.TProtocol) (err error) {
+	if p.IsSetModelName() {
+		if err = oprot.WriteFieldBegin("model_name", thrift.STRING, 12); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.ModelName); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 12 end error: ", p), err)
 }
 
 func (p *WorkbenchChatRequest) writeField255(oprot thrift.TProtocol) (err error) {

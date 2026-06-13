@@ -55,6 +55,8 @@ func TestHandleMessageRejectsInvalidModeAsClientError(t *testing.T) {
 
 func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 	taskID := int64(100)
+	modelType := int64(100002)
+	modelName := "deepseek-v4-pro"
 	req := &chatapi.WorkbenchChatRequest{
 		SpaceID:         1,
 		Message:         "hello",
@@ -64,6 +66,8 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 		EnableMcp:       []string{"mcp-a"},
 		EnableKbs:       []string{"kb-a"},
 		EnableDatabases: []string{"db-a"},
+		ModelType:       &modelType,
+		ModelName:       &modelName,
 	}
 
 	require.True(t, req.IsSetTaskID())
@@ -71,11 +75,15 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 	require.True(t, req.IsSetEnableMcp())
 	require.True(t, req.IsSetEnableKbs())
 	require.True(t, req.IsSetEnableDatabases())
+	require.True(t, req.IsSetModelType())
+	require.True(t, req.IsSetModelName())
 	require.Equal(t, int64(100), req.GetTaskID())
 	require.Equal(t, []string{"skill-a"}, req.GetEnableSkills())
 	require.Equal(t, []string{"mcp-a"}, req.GetEnableMcp())
 	require.Equal(t, []string{"kb-a"}, req.GetEnableKbs())
 	require.Equal(t, []string{"db-a"}, req.GetEnableDatabases())
+	require.Equal(t, int64(100002), req.GetModelType())
+	require.Equal(t, "deepseek-v4-pro", req.GetModelName())
 
 	emptyReq := &chatapi.WorkbenchChatRequest{}
 	require.False(t, emptyReq.IsSetEnableSkills())
@@ -99,7 +107,7 @@ func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
 	}
 	app := &ApplicationService{
 		taskApp: taskApp,
-		chatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		chatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
 					require.Len(t, in, 1)
@@ -135,7 +143,7 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	}
 	app := &ApplicationService{
 		taskApp: taskApp,
-		chatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		chatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
 					require.Len(t, in, 1)
@@ -225,7 +233,7 @@ func TestInitServiceMergesRuntimeComponents(t *testing.T) {
 	skillSVC := &appskill.ApplicationService{}
 	taskSVC := &apptask.ApplicationService{}
 	InitService(&ServiceComponents{SkillSVC: skillSVC, TaskSVC: taskSVC})
-	InitService(&ServiceComponents{ChatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+	InitService(&ServiceComponents{ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 		return nil, false, nil
 	}})
 

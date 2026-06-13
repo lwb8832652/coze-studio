@@ -15,5 +15,24 @@
  */
 
 import { workbench } from '@coze-studio/api-schema';
+import { DeveloperApi } from '@coze-arch/bot-api';
+
+import { type WorkbenchLLMModel } from './components/types';
 
 export const sendWorkbenchChat = workbench.WorkbenchChat;
+
+export const getWorkbenchLLMModels = async (
+  spaceId: string,
+): Promise<WorkbenchLLMModel[]> => {
+  if (!spaceId) {
+    return [];
+  }
+
+  const response = await DeveloperApi.GetTypeList({
+    space_id: spaceId,
+    model: true,
+    cur_model_ids: [],
+  });
+
+  return response?.data?.model_list ?? [];
+};

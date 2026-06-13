@@ -41,6 +41,8 @@ export interface WorkbenchChatRequest {
   enable_mcp?: string[],
   enable_kbs?: string[],
   enable_databases?: string[],
+  model_type?: string,
+  model_name?: string,
 }
 export interface WorkbenchChatData {
   route_target: RouteTarget,
@@ -72,7 +74,9 @@ export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, Workbe
       "enable_skills",
       "enable_mcp",
       "enable_kbs",
-      "enable_databases"
+      "enable_databases",
+      "model_type",
+      "model_name"
     ]
   },
   "resType": "WorkbenchChatResponse",

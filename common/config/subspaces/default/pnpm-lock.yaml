@@ -54,6 +54,9 @@ importers:
       '@coze-agent-ide/layout-adapter':
         specifier: workspace:*
         version: link:../../packages/agent-ide/layout-adapter
+      '@coze-arch/bot-api':
+        specifier: workspace:*
+        version: link:../../packages/arch/bot-api
       '@coze-arch/bot-flags':
         specifier: workspace:*
         version: link:../../packages/arch/bot-flags

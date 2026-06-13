@@ -14,9 +14,13 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { IconCozLink, IconCozSendFill } from '@coze-arch/coze-design/icons';
+import {
+  IconCozArrowDown,
+  IconCozLink,
+  IconCozSendFill,
+} from '@coze-arch/coze-design/icons';
 import { Button, TextArea } from '@coze-arch/coze-design';
 
 import { ExtensionsPopover } from '../extensions-popover';
@@ -26,9 +30,11 @@ import {
   WORKBENCH_MODE_PROMPTS,
   WORKBENCH_MODE_SYMBOLS,
   WORKBENCH_MODES,
+  type WorkbenchLLMModel,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchComposerVariant,
   type WorkbenchMode,
+  type WorkbenchResourceSelection,
 } from './types';
 
 const AT_RESOURCES = [
@@ -49,7 +55,9 @@ export interface WorkbenchComposerProps {
   loading: boolean;
   error?: string;
   variant?: WorkbenchComposerVariant;
+  spaceId?: string;
   taskId?: string;
+  modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
   onValueChange: (value: string) => void;
   onModeChange: (mode: WorkbenchMode) => void;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
@@ -84,13 +92,204 @@ const AtMenu = ({ onClose }: { onClose: () => void }) => (
   </div>
 );
 
+const modelTypeToNumber = (model: WorkbenchLLMModel) =>
+  Number(model.model_type);
+
+const groupModelsByClass = (models: WorkbenchLLMModel[]) => {
+  const groups: Array<{ name: string; models: WorkbenchLLMModel[] }> = [];
+  const groupIndexes = new Map<string, number>();
+
+  models.forEach(model => {
+    const groupName = model.model_class_name || '其他模型';
+    const existingIndex = groupIndexes.get(groupName);
+
+    if (existingIndex === undefined) {
+      groupIndexes.set(groupName, groups.length);
+      groups.push({ name: groupName, models: [model] });
+
+      return;
+    }
+
+    groups[existingIndex].models.push(model);
+  });
+
+  return groups;
+};
+
+const WorkbenchModelSelector = ({
+  loading,
+  models,
+  value,
+  open,
+  onOpenChange,
+  onChange,
+}: {
+  loading: boolean;
+  models: WorkbenchLLMModel[];
+  value?: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (model: WorkbenchLLMModel) => void;
+}) => {
+  const selectedModel = models.find(model => modelTypeToNumber(model) === value);
+  const modelGroups = useMemo(() => groupModelsByClass(models), [models]);
+  const label = loading ? '模型加载中' : selectedModel?.name || '默认模型';
+
+  return (
+    <div className="chat-workbench-model">
+      <button
+        type="button"
+        className="chat-workbench-model-trigger"
+        aria-label="选择模型"
+        aria-expanded={open}
+        disabled={loading || models.length === 0}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span>{label}</span>
+        <IconCozArrowDown />
+      </button>
+
+      {open && models.length ? (
+        <div className="chat-workbench-model-menu" role="listbox">
+          {modelGroups.map(group => (
+            <div key={group.name} className="chat-workbench-model-group">
+              <div className="chat-workbench-model-group-title">
+                {group.name}
+              </div>
+              {group.models.map(model => {
+                const modelType = modelTypeToNumber(model);
+
+                return (
+                  <button
+                    key={`${modelType}-${model.name || 'model'}`}
+                    type="button"
+                    role="option"
+                    aria-selected={modelType === value}
+                    className="chat-workbench-model-option"
+                    data-active={modelType === value}
+                    onClick={() => {
+                      onChange(model);
+                      onOpenChange(false);
+                    }}
+                  >
+                    <span>{model.name || `模型 ${modelType}`}</span>
+                    {model.endpoint_name ? (
+                      <span>{model.endpoint_name}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const useWorkbenchModelSelection = ({
+  spaceId,
+  modelLoader,
+}: {
+  spaceId?: string;
+  modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
+}) => {
+  const [models, setModels] = useState<WorkbenchLLMModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [selectedModelType, setSelectedModelType] = useState<
+    number | undefined
+  >();
+  const selectedModel = models.find(
+    model => modelTypeToNumber(model) === selectedModelType,
+  );
+
+  useEffect(() => {
+    if (!spaceId || !modelLoader) {
+      setModels([]);
+      setSelectedModelType(undefined);
+      return;
+    }
+
+    let canceled = false;
+    setModelsLoading(true);
+
+    void modelLoader(spaceId)
+      .then(nextModels => {
+        if (canceled) {
+          return;
+        }
+
+        setModels(nextModels);
+        setSelectedModelType(prevModelType => {
+          if (
+            prevModelType &&
+            nextModels.some(model => modelTypeToNumber(model) === prevModelType)
+          ) {
+            return prevModelType;
+          }
+
+          return nextModels[0] ? modelTypeToNumber(nextModels[0]) : undefined;
+        });
+      })
+      .catch(() => {
+        if (!canceled) {
+          setModels([]);
+          setSelectedModelType(undefined);
+        }
+      })
+      .finally(() => {
+        if (!canceled) {
+          setModelsLoading(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [modelLoader, spaceId]);
+
+  return {
+    models,
+    modelsLoading,
+    selectedModel,
+    selectedModelType,
+    setSelectedModelType,
+  };
+};
+
+const createSubmitPayload = ({
+  message,
+  mode,
+  taskId,
+  selectedModel,
+  resourceSelection,
+}: {
+  message: string;
+  mode: WorkbenchMode;
+  taskId?: string;
+  selectedModel?: WorkbenchLLMModel;
+  resourceSelection: WorkbenchResourceSelection;
+}): WorkbenchComposerSubmitPayload => ({
+  message,
+  mode,
+  taskId,
+  modelType: selectedModel ? modelTypeToNumber(selectedModel) : undefined,
+  modelName: selectedModel?.name,
+  enable_skills: [...resourceSelection.enable_skills],
+  enable_mcp: [...resourceSelection.enable_mcp],
+  enable_kbs: [...resourceSelection.enable_kbs],
+  enable_databases: [...resourceSelection.enable_databases],
+});
+
 export const WorkbenchComposer = ({
   value,
   mode,
   loading,
   error,
   variant = 'home',
+  spaceId,
   taskId,
+  modelLoader,
   onValueChange,
   onModeChange,
   onSubmit,
@@ -99,7 +298,15 @@ export const WorkbenchComposer = ({
   const [resourceSelection, setResourceSelection] = useState(
     createDefaultWorkbenchResourceSelection,
   );
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const canSend = Boolean(value.trim()) && !loading;
+  const {
+    models,
+    modelsLoading,
+    selectedModel,
+    selectedModelType,
+    setSelectedModelType,
+  } = useWorkbenchModelSelection({ spaceId, modelLoader });
 
   const handleValueChange = (nextValue: string) => {
     onValueChange(nextValue);
@@ -113,15 +320,13 @@ export const WorkbenchComposer = ({
       return;
     }
 
-    onSubmit({
+    onSubmit(createSubmitPayload({
       message,
       mode,
       taskId,
-      enable_skills: [...resourceSelection.enable_skills],
-      enable_mcp: [...resourceSelection.enable_mcp],
-      enable_kbs: [...resourceSelection.enable_kbs],
-      enable_databases: [...resourceSelection.enable_databases],
-    });
+      selectedModel,
+      resourceSelection,
+    }));
   };
 
   return (
@@ -174,6 +379,19 @@ export const WorkbenchComposer = ({
               value={resourceSelection}
               onChange={setResourceSelection}
             />
+
+            {spaceId && modelLoader ? (
+              <WorkbenchModelSelector
+                loading={modelsLoading}
+                models={models}
+                value={selectedModelType}
+                open={modelMenuOpen}
+                onOpenChange={setModelMenuOpen}
+                onChange={model =>
+                  setSelectedModelType(modelTypeToNumber(model))
+                }
+              />
+            ) : null}
           </div>
 
           <div className="chat-workbench-toolbar-actions">

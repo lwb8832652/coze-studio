@@ -33,7 +33,7 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from './components/types';
-import { sendWorkbenchChat } from './service';
+import { getWorkbenchLLMModels, sendWorkbenchChat } from './service';
 
 export { mapModeToChatMode } from './components/types';
 
@@ -247,6 +247,12 @@ const WorkbenchPage = () => {
         space_id,
         message: payload.message,
         mode: mapModeToChatMode(payload.mode),
+        ...(payload.modelType
+          ? {
+              model_type: String(payload.modelType),
+              model_name: payload.modelName,
+            }
+          : {}),
         enable_skills: payload.enable_skills,
         enable_mcp: payload.enable_mcp,
         enable_kbs: payload.enable_kbs,
@@ -281,6 +287,8 @@ const WorkbenchPage = () => {
           mode={mode}
           loading={loading}
           error={error}
+          spaceId={space_id}
+          modelLoader={getWorkbenchLLMModels}
           onValueChange={setValue}
           onModeChange={setMode}
           onSubmit={handleSend}

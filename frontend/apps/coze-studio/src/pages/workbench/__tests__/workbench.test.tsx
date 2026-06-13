@@ -28,6 +28,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
+const mockGetTypeList = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -36,6 +37,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../service', () => ({
   sendWorkbenchChat: mockSendWorkbenchChat,
+  getWorkbenchLLMModels: mockGetTypeList,
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -110,6 +112,19 @@ describe('WorkbenchPage', () => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
+    mockGetTypeList.mockReset();
+    mockGetTypeList.mockResolvedValue([
+      {
+        name: 'deepseek-v4-pro',
+        model_type: 100002,
+        model_class_name: 'DeepSeek',
+      },
+      {
+        name: 'gpt-4.1',
+        model_type: 100003,
+        model_class_name: 'OpenAI',
+      },
+    ]);
   });
 
   it('renders the static chat workbench first screen', () => {
@@ -432,6 +447,87 @@ describe('WorkbenchPage', () => {
       message: '执行选中的技能',
       mode: workbench.ChatMode.Auto,
       enable_skills: expect.not.arrayContaining(['meego-guidelines']),
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('loads workflow llm models and sends the selected model with a new task', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        task: {
+          id: 'task-with-model-selection',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '指定模型回答',
+          status: workbenchTask.TaskStatus.Running,
+          progress: 0,
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTypeList).toHaveBeenCalledWith('space-1');
+    expect(container.textContent).toContain('deepseek-v4-pro');
+
+    const selectorButton = container.querySelector(
+      'button[aria-label="选择模型"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      selectorButton.click();
+    });
+
+    const modelButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('gpt-4.1'),
+    ) as HTMLButtonElement;
+    act(() => {
+      modelButton.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '指定模型回答' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '指定模型回答',
+      mode: workbench.ChatMode.Auto,
+      model_type: '100003',
+      model_name: 'gpt-4.1',
+      enable_skills: expect.arrayContaining(['meego-guidelines']),
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],

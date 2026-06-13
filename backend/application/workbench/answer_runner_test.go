@@ -33,7 +33,8 @@ import (
 func TestRunAutoAnswerUsesBuiltinModelAndMarksArk(t *testing.T) {
 	ctx := context.Background()
 	app := withTestWorkbenchApp(t, &ServiceComponents{
-		ChatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		ChatModelProvider: func(_ context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+			require.Zero(t, modelType)
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
 					require.Len(t, in, 1)
@@ -52,6 +53,33 @@ func TestRunAutoAnswerUsesBuiltinModelAndMarksArk(t *testing.T) {
 	assert.Equal(t, executionTypeArk, payload.ExecutionType)
 	assert.Equal(t, "auto answer", payload.Message)
 	assert.Empty(t, payload.RetrievalSources)
+}
+
+func TestRunAnswerUsesSelectedModelType(t *testing.T) {
+	ctx := context.Background()
+	var gotModelType int64
+	app := withTestWorkbenchApp(t, &ServiceComponents{
+		ChatModelProvider: func(_ context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+			gotModelType = modelType
+			return &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+					require.Len(t, in, 1)
+					require.Equal(t, "hello selected model", in[0].Content)
+					return schema.AssistantMessage("selected model answer", nil), nil
+				},
+			}, true, nil
+		},
+	})
+
+	payload, err := app.runAnswer(ctx, answerRequest{
+		mode:      ChatModeAsk,
+		message:   "hello selected model",
+		modelType: 100002,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(100002), gotModelType)
+	assert.Equal(t, "selected model answer", payload.Message)
 }
 
 func TestRunAskRetrievesKnowledgeContext(t *testing.T) {
@@ -77,7 +105,7 @@ func TestRunAskRetrievesKnowledgeContext(t *testing.T) {
 	}
 	app := withTestWorkbenchApp(t, &ServiceComponents{
 		KnowledgeSVC: knowledge,
-		ChatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
 					require.Len(t, in, 2)
@@ -133,7 +161,7 @@ func TestRunAskUsesDefaultEnabledKnowledgeWhenNoSelection(t *testing.T) {
 	}
 	app := withTestWorkbenchApp(t, &ServiceComponents{
 		KnowledgeSVC: knowledge,
-		ChatModelProvider: func(context.Context) (model.BaseChatModel, bool, error) {
+		ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
 					require.Len(t, in, 2)

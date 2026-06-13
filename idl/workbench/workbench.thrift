@@ -27,6 +27,8 @@ struct WorkbenchChatRequest {
     8: optional list<string> enable_mcp
     9: optional list<string> enable_kbs
     10: optional list<string> enable_databases
+    11: optional i64 model_type (agw.js_conv="str", api.js_conv="true")
+    12: optional string model_name
     255: optional base.Base Base (api.none="true")
 }
 
