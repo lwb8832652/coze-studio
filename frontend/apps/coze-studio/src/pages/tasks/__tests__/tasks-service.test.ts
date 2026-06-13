@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import { describe, expect, it } from 'vitest';
 
-export const listTasks = workbenchTask.ListTasks;
-export const getTask = workbenchTask.GetTask;
-export const listTaskThreads = workbenchTask.ListTaskThreads;
-export const getTaskThread = workbenchTask.GetTaskThread;
-export const cancelTask = workbenchTask.CancelTask;
-export const retryTask = workbenchTask.RetryTask;
-export const listTaskEvents = workbenchTask.ListTaskEvents;
-export const sendWorkbenchChat = workbench.WorkbenchChat;
+import { getTaskThread, listTaskThreads } from '../service';
+
+describe('task thread service', () => {
+  it('exports task-thread API clients for the new task source', () => {
+    expect(typeof listTaskThreads).toBe('function');
+    expect(typeof getTaskThread).toBe('function');
+  });
+});

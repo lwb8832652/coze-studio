@@ -49,6 +49,20 @@ export interface ChatTask {
   created_at: number,
   updated_at: number,
 }
+export interface TaskThread {
+  thread_id: string,
+  legacy_task_id: string,
+  space_id: string,
+  creator_id: string,
+  title: string,
+  status: string,
+  source: string,
+  progress: number,
+  last_user_message: string,
+  last_agent_message: string,
+  created_at: number,
+  updated_at: number,
+}
 export interface CreateTaskRequest {
   space_id: string,
   title: string,
@@ -82,6 +96,29 @@ export interface GetTaskRequest {
 }
 export interface GetTaskResponse {
   data?: ChatTask,
+  code: number,
+  msg: string,
+}
+export interface ListTaskThreadsRequest {
+  space_id: string,
+  status?: string,
+  page?: number,
+  page_size?: number,
+}
+export interface ListTaskThreadsData {
+  threads: TaskThread[],
+  total: number,
+}
+export interface ListTaskThreadsResponse {
+  data?: ListTaskThreadsData,
+  code: number,
+  msg: string,
+}
+export interface GetTaskThreadRequest {
+  thread_id: string
+}
+export interface GetTaskThreadResponse {
+  data?: TaskThread,
   code: number,
   msg: string,
 }
@@ -126,6 +163,30 @@ export const GetTask = /*#__PURE__*/createAPI<GetTaskRequest, GetTaskResponse>({
     "path": ["task_id"]
   },
   "resType": "GetTaskResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const ListTaskThreads = /*#__PURE__*/createAPI<ListTaskThreadsRequest, ListTaskThreadsResponse>({
+  "url": "/api/workbench/task_threads",
+  "method": "GET",
+  "name": "ListTaskThreads",
+  "reqType": "ListTaskThreadsRequest",
+  "reqMapping": {
+    "query": ["space_id", "status", "page", "page_size"]
+  },
+  "resType": "ListTaskThreadsResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const GetTaskThread = /*#__PURE__*/createAPI<GetTaskThreadRequest, GetTaskThreadResponse>({
+  "url": "/api/workbench/task_threads/:thread_id",
+  "method": "GET",
+  "name": "GetTaskThread",
+  "reqType": "GetTaskThreadRequest",
+  "reqMapping": {
+    "path": ["thread_id"]
+  },
+  "resType": "GetTaskThreadResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });
