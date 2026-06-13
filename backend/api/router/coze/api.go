@@ -431,6 +431,8 @@ func Register(r *server.Hertz) {
 			_workbench.GET("/task_threads", coze.ListTaskThreads)
 			_task_threads := _workbench.Group("/task_threads")
 			_task_threads.GET("/:thread_id", coze.GetTaskThread)
+			_task_threads.GET("/:thread_id/messages", coze.ListTaskThreadMessages)
+			_task_threads.POST("/:thread_id/messages", coze.AppendTaskThreadMessage)
 			_tasks := _workbench.Group("/tasks", _tasksMw()...)
 			_tasks.GET("/:task_id", append(_gettaskMw(), coze.GetTask)...)
 			_task_id := _tasks.Group("/:task_id", _task_idMw()...)

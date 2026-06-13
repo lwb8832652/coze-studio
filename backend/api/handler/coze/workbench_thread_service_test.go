@@ -17,8 +17,11 @@
 package coze
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -60,6 +63,74 @@ func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
 	require.Contains(t, body, `"title":"任务列表"`)
 }
 
+func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/messages", ListTaskThreadMessages)
+	installAgentThreadTestService(t)
+
+	_, err := appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		Role:     appagentthread.MessageRoleUser,
+		Content:  "请分析客户反馈",
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "客户反馈集中在响应速度。",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/messages?page=1&page_size=10", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":2`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"role":"user"`)
+	require.Contains(t, body, `"content":"请分析客户反馈"`)
+	require.Contains(t, body, `"role":"assistant"`)
+	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
+}
+
+func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/messages", AppendTaskThreadMessage)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"role":     "user",
+		"content":  "请生成行动计划",
+		"metadata": `{"source":"test"}`,
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/messages",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"role":"user"`)
+	require.Contains(t, body, `"content":"请生成行动计划"`)
+
+	resp, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), resp.Total)
+	require.Equal(t, "请生成行动计划", resp.Messages[0].Content)
+	require.Equal(t, `{"source":"test"}`, resp.Messages[0].Metadata)
+}
+
 func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
@@ -80,7 +151,7 @@ func installAgentThreadTestService(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, migrateAgentThreadHandlerTableForTest(db))
-	appagentthread.InitService(&appagentthread.ServiceComponents{DB: db, IDGen: sequentialIDGen{}})
+	appagentthread.InitService(&appagentthread.ServiceComponents{DB: db, IDGen: &sequentialIDGen{next: 1}})
 	_, err = appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
 		SpaceID:      1,
 		UserID:       2,
@@ -107,26 +178,45 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			created_at integer,
 			updated_at integer,
 			last_message_at integer
+		);
+		CREATE TABLE agent_thread_messages (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			role text,
+			content text,
+			metadata json,
+			created_at integer
 		)
 	`).Error
 }
 
 type sequentialIDGen struct {
+	mu   sync.Mutex
 	next int64
 }
 
-func (g sequentialIDGen) GenID(ctx context.Context) (int64, error) {
-	if g.next == 0 {
+func (g *sequentialIDGen) GenID(ctx context.Context) (int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.next <= 0 {
+		g.next = 2
 		return 1, nil
 	}
 
-	return g.next, nil
+	id := g.next
+	g.next++
+	return id, nil
 }
 
-func (g sequentialIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64, error) {
+func (g *sequentialIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64, error) {
 	ids := make([]int64, counts)
 	for i := range ids {
-		ids[i] = int64(i + 1)
+		id, err := g.GenID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids[i] = id
 	}
 
 	return ids, nil

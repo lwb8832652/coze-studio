@@ -31,6 +31,16 @@ type TaskThread struct {
 	UpdatedAt        int64  `json:"updated_at"`
 }
 
+type TaskThreadMessage struct {
+	MessageID int64  `json:"message_id,string"`
+	ThreadID  int64  `json:"thread_id,string"`
+	RunID     int64  `json:"run_id,string"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Metadata  string `json:"metadata"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 type ListTaskThreadsRequest struct {
 	SpaceID  int64  `query:"space_id,required"`
 	Status   string `query:"status"`
@@ -42,9 +52,28 @@ type GetTaskThreadRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 }
 
+type ListTaskThreadMessagesRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	Page     int32 `query:"page"`
+	PageSize int32 `query:"page_size"`
+}
+
+type AppendTaskThreadMessageRequest struct {
+	ThreadID int64  `path:"thread_id,required" json:"-"`
+	RunID    int64  `json:"run_id,string,omitempty"`
+	Role     string `json:"role,required"`
+	Content  string `json:"content,required"`
+	Metadata string `json:"metadata,omitempty"`
+}
+
 type ListTaskThreadsData struct {
 	Threads []*TaskThread `json:"threads"`
 	Total   int64         `json:"total"`
+}
+
+type ListTaskThreadMessagesData struct {
+	Messages []*TaskThreadMessage `json:"messages"`
+	Total    int64                `json:"total"`
 }
 
 type ListTaskThreadsResponse struct {
@@ -57,4 +86,16 @@ type GetTaskThreadResponse struct {
 	Data *TaskThread `json:"data,omitempty"`
 	Code int64       `json:"code"`
 	Msg  string      `json:"msg"`
+}
+
+type ListTaskThreadMessagesResponse struct {
+	Data *ListTaskThreadMessagesData `json:"data,omitempty"`
+	Code int64                       `json:"code"`
+	Msg  string                      `json:"msg"`
+}
+
+type AppendTaskThreadMessageResponse struct {
+	Data *TaskThreadMessage `json:"data,omitempty"`
+	Code int64              `json:"code"`
+	Msg  string             `json:"msg"`
 }
