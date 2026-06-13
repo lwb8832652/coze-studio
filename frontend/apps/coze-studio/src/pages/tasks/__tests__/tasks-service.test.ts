@@ -16,11 +16,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { getTaskThread, listTaskThreads } from '../service';
+import {
+  appendTaskThreadMessage,
+  getTaskThread,
+  listTaskThreadMessages,
+  listTaskThreads,
+} from '../service';
 
 describe('task thread service', () => {
   it('exports task-thread API clients for the new task source', () => {
     expect(typeof listTaskThreads).toBe('function');
     expect(typeof getTaskThread).toBe('function');
+    expect(typeof listTaskThreadMessages).toBe('function');
+    expect(typeof appendTaskThreadMessage).toBe('function');
   });
 });

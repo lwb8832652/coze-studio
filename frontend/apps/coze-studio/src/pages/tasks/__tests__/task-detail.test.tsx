@@ -29,6 +29,7 @@ const mockUseParams = vi.hoisted(() =>
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
+const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 
@@ -40,6 +41,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../service', () => ({
   getTask: mockGetTask,
   getTaskThread: mockGetTaskThread,
+  listTaskThreadMessages: mockListTaskThreadMessages,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
@@ -115,6 +117,7 @@ describe('TaskDetailPage', () => {
     mockUseParams.mockReturnValue({ space_id: 'space-1', task_id: 'task-1' });
     mockGetTask.mockReset();
     mockGetTaskThread.mockReset();
+    mockListTaskThreadMessages.mockReset();
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
@@ -155,6 +158,14 @@ describe('TaskDetailPage', () => {
         last_agent_message: '本周完成了 UI 改造方案。',
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [],
+        total: 0,
       },
       code: 0,
       msg: '',
@@ -276,10 +287,37 @@ describe('TaskDetailPage', () => {
         status: 'completed',
         source: 'agent',
         progress: 100,
-        last_user_message: '请分析客户反馈',
-        last_agent_message: '客户反馈集中在响应速度和知识覆盖。',
+        last_user_message: '摘要里的旧用户消息',
+        last_agent_message: '摘要里的旧助手消息',
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-1',
+            thread_id: 'thread-only-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请基于真实消息分析客户反馈',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-2',
+            thread_id: 'thread-only-1',
+            run_id: 'run-1',
+            role: 'assistant',
+            content: '真实消息显示响应速度最重要',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -294,11 +332,18 @@ describe('TaskDetailPage', () => {
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
     });
+    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      page: 1,
+      page_size: 50,
+    });
     expect(mockGetTask).not.toHaveBeenCalled();
     expect(mockListTaskEvents).not.toHaveBeenCalled();
     expect(container.textContent).toContain('独立智能体任务');
-    expect(container.textContent).toContain('请分析客户反馈');
-    expect(container.textContent).toContain('客户反馈集中在响应速度和知识覆盖。');
+    expect(container.textContent).toContain('请基于真实消息分析客户反馈');
+    expect(container.textContent).toContain('真实消息显示响应速度最重要');
+    expect(container.textContent).not.toContain('摘要里的旧用户消息');
+    expect(container.textContent).not.toContain('摘要里的旧助手消息');
     expect(container.textContent).not.toContain('未找到任务');
 
     act(() => {

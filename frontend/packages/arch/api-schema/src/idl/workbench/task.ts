@@ -63,6 +63,15 @@ export interface TaskThread {
   created_at: number,
   updated_at: number,
 }
+export interface TaskThreadMessage {
+  message_id: string,
+  thread_id: string,
+  run_id: string,
+  role: string,
+  content: string,
+  metadata: string,
+  created_at: number,
+}
 export interface CreateTaskRequest {
   space_id: string,
   title: string,
@@ -119,6 +128,32 @@ export interface GetTaskThreadRequest {
 }
 export interface GetTaskThreadResponse {
   data?: TaskThread,
+  code: number,
+  msg: string,
+}
+export interface ListTaskThreadMessagesRequest {
+  thread_id: string,
+  page?: number,
+  page_size?: number,
+}
+export interface AppendTaskThreadMessageRequest {
+  thread_id: string,
+  run_id?: string,
+  role: string,
+  content: string,
+  metadata?: string,
+}
+export interface ListTaskThreadMessagesData {
+  messages: TaskThreadMessage[],
+  total: number,
+}
+export interface ListTaskThreadMessagesResponse {
+  data?: ListTaskThreadMessagesData,
+  code: number,
+  msg: string,
+}
+export interface AppendTaskThreadMessageResponse {
+  data?: TaskThreadMessage,
   code: number,
   msg: string,
 }
@@ -187,6 +222,32 @@ export const GetTaskThread = /*#__PURE__*/createAPI<GetTaskThreadRequest, GetTas
     "path": ["thread_id"]
   },
   "resType": "GetTaskThreadResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const ListTaskThreadMessages = /*#__PURE__*/createAPI<ListTaskThreadMessagesRequest, ListTaskThreadMessagesResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/messages",
+  "method": "GET",
+  "name": "ListTaskThreadMessages",
+  "reqType": "ListTaskThreadMessagesRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "query": ["page", "page_size"]
+  },
+  "resType": "ListTaskThreadMessagesResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const AppendTaskThreadMessage = /*#__PURE__*/createAPI<AppendTaskThreadMessageRequest, AppendTaskThreadMessageResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/messages",
+  "method": "POST",
+  "name": "AppendTaskThreadMessage",
+  "reqType": "AppendTaskThreadMessageRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "body": ["run_id", "role", "content", "metadata"]
+  },
+  "resType": "AppendTaskThreadMessageResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });

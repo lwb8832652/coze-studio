@@ -16,11 +16,17 @@
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
-import { getTask, getTaskThread, listTaskEvents } from './service';
+import {
+  getTask,
+  getTaskThread,
+  listTaskEvents,
+  listTaskThreadMessages,
+} from './service';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
+type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 
 export type TaskDetailSource = 'task' | 'thread';
 
@@ -54,8 +60,39 @@ const mapTaskThreadStatus = (status: string) => {
   }
 };
 
-const mapTaskThreadToTask = (thread: TaskThread): ChatTask => {
+const getLatestThreadMessageContent = (
+  messages: TaskThreadMessage[],
+  role: string,
+) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message?.role !== role) {
+      continue;
+    }
+
+    const content = message.content.trim();
+
+    if (content) {
+      return content;
+    }
+  }
+
+  return '';
+};
+
+const mapTaskThreadToTask = (
+  thread: TaskThread,
+  messages: TaskThreadMessage[] = [],
+): ChatTask => {
   const executionType = getTaskThreadExecutionType(thread);
+  const userMessage =
+    getLatestThreadMessageContent(messages, 'user') ||
+    thread.last_user_message ||
+    thread.title;
+  const assistantMessage =
+    getLatestThreadMessageContent(messages, 'assistant') ||
+    thread.last_agent_message;
 
   return {
     id: thread.legacy_task_id || thread.thread_id,
@@ -65,11 +102,11 @@ const mapTaskThreadToTask = (thread: TaskThread): ChatTask => {
     status: mapTaskThreadStatus(thread.status),
     progress: thread.progress,
     input: JSON.stringify({
-      message: thread.last_user_message || thread.title,
+      message: userMessage,
       execution_type: executionType,
     }),
     result: JSON.stringify({
-      message: thread.last_agent_message,
+      message: assistantMessage,
       result_type: 'answer',
       execution_type: executionType,
     }),
@@ -115,8 +152,14 @@ export const fetchTaskDetail = async ({
     return fetchLegacyTaskDetail(thread.legacy_task_id);
   }
 
+  const messagesResponse = await listTaskThreadMessages({
+    thread_id: id,
+    page: 1,
+    page_size: 50,
+  });
+
   return {
-    task: mapTaskThreadToTask(thread),
+    task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
     events: [],
   };
 };
