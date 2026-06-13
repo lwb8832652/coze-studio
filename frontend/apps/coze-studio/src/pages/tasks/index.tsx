@@ -26,21 +26,82 @@ import {
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import { buildTaskThreadDetailPath } from '../chats/task-thread-routes';
-import { listTasks } from './service';
+import { listTaskThreads } from './service';
 import {
-  filterTasks,
   formatUpdatedTime,
-  getTaskInputText,
-  getTaskResultText,
-  getTaskStatusTone,
-  getTaskStatusText,
   type TaskStatusFilter,
 } from './helpers';
 
-type ChatTask = workbenchTask.ChatTask;
+type TaskThread = workbenchTask.TaskThread;
 
-const getStatusPillClassName = (status: workbenchTask.TaskStatus) => {
-  const tone = getTaskStatusTone(status);
+const getTaskThreadDescription = (task: TaskThread) =>
+  task.last_user_message || task.last_agent_message || task.title;
+
+const getTaskThreadStatusText = (status: string) => {
+  const statusMap: Record<string, string> = {
+    created: '已创建',
+    queued: '排队中',
+    idle: '待处理',
+    running: '运行中',
+    succeeded: '已完成',
+    completed: '已完成',
+    failed: '失败',
+    canceling: '取消中',
+    canceled: '已取消',
+  };
+
+  return statusMap[status] ?? '未知';
+};
+
+const getTaskThreadStatusTone = (status: string) => {
+  if (status === 'running' || status === 'queued' || status === 'canceling') {
+    return 'running';
+  }
+
+  if (status === 'completed' || status === 'succeeded') {
+    return 'success';
+  }
+
+  if (status === 'failed' || status === 'canceled') {
+    return 'danger';
+  }
+
+  return 'neutral';
+};
+
+const filterTaskThreads = (
+  tasks: TaskThread[],
+  keyword: string,
+  statusFilter: TaskStatusFilter,
+) => {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+
+  return tasks.filter(task => {
+    const readableMessage = getTaskThreadDescription(task).toLowerCase();
+    const matchesKeyword = normalizedKeyword
+      ? task.title.toLowerCase().includes(normalizedKeyword) ||
+        readableMessage.includes(normalizedKeyword)
+      : true;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'running' &&
+        ['created', 'queued', 'idle', 'running', 'canceling'].includes(
+          task.status,
+        )) ||
+      (statusFilter === 'succeeded' &&
+        ['succeeded', 'completed'].includes(task.status)) ||
+      (statusFilter === 'failed' &&
+        ['failed', 'canceled'].includes(task.status));
+
+    return matchesKeyword && matchesStatus;
+  });
+};
+
+const getTaskThreadDetailId = (task: TaskThread) =>
+  task.legacy_task_id || task.thread_id;
+
+const getStatusPillClassName = (status: string) => {
+  const tone = getTaskThreadStatusTone(status);
 
   if (tone === 'danger') {
     return {
@@ -151,8 +212,8 @@ const TasksToolbar = ({
 interface TaskRowProps {
   favorite: boolean;
   spaceId?: string;
-  task: ChatTask;
-  onNavigate: (task: ChatTask) => void;
+  task: TaskThread;
+  onNavigate: (task: TaskThread) => void;
   onToggleFavorite: (taskId: string) => void;
 }
 
@@ -163,11 +224,7 @@ const TaskRow = ({
   onToggleFavorite,
 }: TaskRowProps) => {
   const statusPill = getStatusPillClassName(task.status);
-  const description =
-    getTaskInputText(task.input) ||
-    getTaskResultText(task.result) ||
-    task.error ||
-    task.title;
+  const description = getTaskThreadDescription(task);
 
   return (
     <article className="coze-prototype-row">
@@ -200,13 +257,13 @@ const TaskRow = ({
         <span
           className="coze-prototype-status-pill"
           data-tone={statusPill.tone}
-          data-status-tone={getTaskStatusTone(task.status)}
+          data-status-tone={getTaskThreadStatusTone(task.status)}
         >
           <span
             className="coze-prototype-status-dot"
             style={{ backgroundColor: statusPill.color }}
           />
-          {getTaskStatusText(task.status)}
+          {getTaskThreadStatusText(task.status)}
         </span>
         <span className="coze-prototype-muted w-[60px] text-right">
           {formatUpdatedTime(task.updated_at)}
@@ -216,7 +273,7 @@ const TaskRow = ({
           className="coze-prototype-more-button"
           aria-pressed={favorite}
           aria-label={favorite ? '取消收藏' : '收藏任务'}
-          onClick={() => onToggleFavorite(task.id)}
+          onClick={() => onToggleFavorite(task.thread_id)}
         >
           ...
         </button>
@@ -229,9 +286,9 @@ interface TaskListProps {
   favoriteTaskIds: string[];
   loading: boolean;
   spaceId?: string;
-  tasks: ChatTask[];
+  tasks: TaskThread[];
   totalTasks: number;
-  onNavigate: (task: ChatTask) => void;
+  onNavigate: (task: TaskThread) => void;
   onToggleFavorite: (taskId: string) => void;
 }
 
@@ -256,8 +313,8 @@ const TaskList = ({
     <div className="coze-prototype-list">
       {tasks.map(task => (
         <TaskRow
-          key={task.id}
-          favorite={favoriteTaskIds.includes(task.id)}
+          key={task.thread_id}
+          favorite={favoriteTaskIds.includes(task.thread_id)}
           spaceId={spaceId}
           task={task}
           onNavigate={onNavigate}
@@ -271,7 +328,7 @@ const TaskList = ({
 const TasksPage = () => {
   const { space_id } = useParams();
   const navigate = useNavigate();
-  const [tasks, setTasks] = useState<ChatTask[]>([]);
+  const [tasks, setTasks] = useState<TaskThread[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -279,10 +336,10 @@ const TasksPage = () => {
   const [view, setView] = useState<'all' | 'favorite'>('all');
   const [favoriteTaskIds, setFavoriteTaskIds] = useState<string[]>([]);
 
-  const filteredTasks = filterTasks(tasks, keyword, statusFilter);
+  const filteredTasks = filterTaskThreads(tasks, keyword, statusFilter);
   const visibleTasks =
     view === 'favorite'
-      ? filteredTasks.filter(task => favoriteTaskIds.includes(task.id))
+      ? filteredTasks.filter(task => favoriteTaskIds.includes(task.thread_id))
       : filteredTasks;
 
   const loadTasks = async () => {
@@ -294,8 +351,8 @@ const TasksPage = () => {
     setError('');
 
     try {
-      const response = await listTasks({ space_id });
-      setTasks(response.data?.tasks ?? []);
+      const response = await listTaskThreads({ space_id });
+      setTasks(response.data?.threads ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载任务失败');
     } finally {
@@ -315,9 +372,9 @@ const TasksPage = () => {
     );
   };
 
-  const handleNavigate = (task: ChatTask) => {
+  const handleNavigate = (task: TaskThread) => {
     if (space_id) {
-      navigate(buildTaskThreadDetailPath(space_id, task.id));
+      navigate(buildTaskThreadDetailPath(space_id, getTaskThreadDetailId(task)));
     }
   };
 

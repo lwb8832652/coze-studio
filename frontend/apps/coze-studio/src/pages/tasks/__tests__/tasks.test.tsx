@@ -24,6 +24,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListTasks = vi.hoisted(() => vi.fn());
+const mockListTaskThreads = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -33,6 +34,7 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../service', () => ({
   cancelTask: vi.fn(),
   listTasks: mockListTasks,
+  listTaskThreads: mockListTaskThreads,
   retryTask: vi.fn(),
 }));
 
@@ -69,9 +71,32 @@ describe('TasksPage helpers', () => {
       code: 0,
       msg: '',
     });
+    mockListTaskThreads.mockReset();
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-1',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: '生成周报',
+            status: 'running',
+            last_user_message: '整理项目进展',
+            last_agent_message: '',
+            legacy_task_id: 'task-legacy-1',
+            metadata: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
   });
 
-  it('renders the redesigned all tasks structure', async () => {
+  it('renders task threads as the all tasks source', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -97,6 +122,7 @@ describe('TasksPage helpers', () => {
     expect(container.textContent).toContain('整理项目进展');
     expect(container.textContent).toContain('运行中');
     expect(container.textContent).not.toContain('{"message":"整理项目进展"}');
+    expect(mockListTaskThreads).toHaveBeenCalledWith({ space_id: 'space-1' });
 
     const openButton = container.querySelector(
       'button[aria-label="打开任务 生成周报"]',
@@ -104,7 +130,9 @@ describe('TasksPage helpers', () => {
     act(() => {
       openButton.click();
     });
-    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/task-1');
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/task-legacy-1',
+    );
 
     act(() => {
       root?.unmount();

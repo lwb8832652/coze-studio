@@ -30,11 +30,14 @@ export interface WorkspaceTaskStatusMeta {
 }
 
 export const getWorkspaceTaskStatusMeta = (
-  status: workbenchTask.TaskStatus,
+  status: workbenchTask.TaskStatus | string,
 ): WorkspaceTaskStatusMeta => {
   if (
     status === workbenchTask.TaskStatus.Created ||
-    status === workbenchTask.TaskStatus.Queued
+    status === workbenchTask.TaskStatus.Queued ||
+    status === 'created' ||
+    status === 'queued' ||
+    status === 'idle'
   ) {
     return {
       tone: 'waiting',
@@ -45,7 +48,9 @@ export const getWorkspaceTaskStatusMeta = (
 
   if (
     status === workbenchTask.TaskStatus.Running ||
-    status === workbenchTask.TaskStatus.Canceling
+    status === workbenchTask.TaskStatus.Canceling ||
+    status === 'running' ||
+    status === 'canceling'
   ) {
     return {
       tone: 'running',
@@ -54,7 +59,11 @@ export const getWorkspaceTaskStatusMeta = (
     };
   }
 
-  if (status === workbenchTask.TaskStatus.Succeeded) {
+  if (
+    status === workbenchTask.TaskStatus.Succeeded ||
+    status === 'succeeded' ||
+    status === 'completed'
+  ) {
     return {
       tone: 'success',
       color: '#2a9e06',
@@ -62,7 +71,7 @@ export const getWorkspaceTaskStatusMeta = (
     };
   }
 
-  if (status === workbenchTask.TaskStatus.Failed) {
+  if (status === workbenchTask.TaskStatus.Failed || status === 'failed') {
     return {
       tone: 'danger',
       color: '#f54a45',

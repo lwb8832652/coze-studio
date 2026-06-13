@@ -14,10 +14,53 @@
  * limitations under the License.
  */
 
+import { vi } from 'vitest';
+import { act } from 'react-dom/test-utils';
+import { createRoot, type Root } from 'react-dom/client';
 import { workbenchTask } from '@coze-studio/api-schema';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const mockNavigate = vi.hoisted(() => vi.fn());
+const mockListTaskThreads = vi.hoisted(() => vi.fn());
+const mockUseSpaceStore = vi.hoisted(() =>
+  vi.fn((selector: (state: { space: { id: string } }) => unknown) =>
+    selector({ space: { id: 'space-1' } }),
+  ),
+);
+
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
+}));
+
+vi.mock('@coze-foundation/space-store', () => ({
+  useSpaceStore: mockUseSpaceStore,
+}));
+
+vi.mock('../../../pages/tasks/service', () => ({
+  listTaskThreads: mockListTaskThreads,
+}));
+
+vi.mock('@coze-arch/coze-design', () => {
+  const loadingComponent = ({ loading }: { loading: boolean }) =>
+    loading ? <span data-testid="loading" /> : null;
+
+  return {
+    ['Loading']: loadingComponent,
+  };
+});
+
+vi.mock('@coze-arch/coze-design/icons', () => {
+  const taskIcon = () => <span data-testid="task-icon" />;
+
+  return {
+    ['IconCozAsynchronousTask']: taskIcon,
+  };
+});
 
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
 import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
+import { WorkspaceTaskList } from '../workspace-task-list';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
   it('defines the Figma workspace navigation structure', () => {
@@ -71,5 +114,82 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       ariaLabel: '异常状态',
     });
     expect(runningMeta.color).not.toBe(completedMeta.color);
+  });
+
+  it('maps canonical task thread statuses to sidebar status indicators', () => {
+    expect(getWorkspaceTaskStatusMeta('idle')).toMatchObject({
+      tone: 'waiting',
+      ariaLabel: '等待状态',
+    });
+    expect(getWorkspaceTaskStatusMeta('completed')).toMatchObject({
+      tone: 'success',
+      color: '#2a9e06',
+      ariaLabel: '已完成状态',
+    });
+    expect(getWorkspaceTaskStatusMeta('failed')).toMatchObject({
+      tone: 'danger',
+      color: '#f54a45',
+      ariaLabel: '异常状态',
+    });
+  });
+
+  it('renders recent task threads from the canonical task thread source', async () => {
+    mockNavigate.mockReset();
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-1',
+            legacy_task_id: 'task-legacy-1',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: '整理周报',
+            status: 'completed',
+            source: 'task',
+            progress: 100,
+            last_user_message: '汇总本周项目进展',
+            last_agent_message: '已生成周报',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    expect(mockListTaskThreads).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      page_size: 8,
+    });
+    expect(container.textContent).toContain('整理周报');
+
+    const taskButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('整理周报'),
+    ) as HTMLButtonElement;
+
+    act(() => {
+      taskButton.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/task-legacy-1',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 });

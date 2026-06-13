@@ -22,16 +22,19 @@ import { useSpaceStore } from '@coze-foundation/space-store';
 import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import { Loading } from '@coze-arch/coze-design';
 
-import { listTasks } from '../../pages/tasks/service';
+import { listTaskThreads } from '../../pages/tasks/service';
 import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
-type ChatTask = workbenchTask.ChatTask;
+type TaskThread = workbenchTask.TaskThread;
+
+const getTaskThreadDetailId = (task: TaskThread) =>
+  task.legacy_task_id || task.thread_id;
 
 export const WorkspaceTaskList = () => {
   const navigate = useNavigate();
   const spaceId = useSpaceStore(state => state.space.id);
-  const [tasks, setTasks] = useState<ChatTask[]>([]);
+  const [tasks, setTasks] = useState<TaskThread[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -45,10 +48,13 @@ export const WorkspaceTaskList = () => {
       setLoading(true);
 
       try {
-        const response = await listTasks({ space_id: spaceId, page_size: 8 });
+        const response = await listTaskThreads({
+          space_id: spaceId,
+          page_size: 8,
+        });
 
         if (!canceled) {
-          setTasks(response.data?.tasks ?? []);
+          setTasks(response.data?.threads ?? []);
         }
       } catch {
         if (!canceled) {
@@ -90,11 +96,17 @@ export const WorkspaceTaskList = () => {
 
           return (
             <button
-              key={task.id}
+              key={task.thread_id}
               type="button"
               className="coze-prototype-sidebar-task-row"
               onClick={() =>
-                spaceId && navigate(buildTaskThreadDetailPath(spaceId, task.id))
+                spaceId &&
+                navigate(
+                  buildTaskThreadDetailPath(
+                    spaceId,
+                    getTaskThreadDetailId(task),
+                  ),
+                )
               }
             >
               <span className="coze-prototype-task-icon">
