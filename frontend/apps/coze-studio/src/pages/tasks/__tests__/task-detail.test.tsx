@@ -260,6 +260,72 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('renders streaming answer events before the final result is persisted', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockGetTask.mockResolvedValue({
+      data: {
+        id: 'task-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '解释流式输出',
+        status: workbenchTask.TaskStatus.Running,
+        progress: 45,
+        input: JSON.stringify({
+          message: '为什么要流式输出',
+          execution_type: 'Ark',
+        }),
+        result: JSON.stringify({
+          message: '',
+          result_type: 'answer',
+          execution_type: 'Ark',
+        }),
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            id: 'event-answer-1',
+            task_id: 'task-1',
+            event_type: 'answer.delta',
+            payload: JSON.stringify({
+              title: '生成回答',
+              message: '任务创建后立即进入详情页，回答内容持续写入。',
+              status: 'running',
+              runtime: 'Ark',
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain(
+      '任务创建后立即进入详情页，回答内容持续写入。',
+    );
+    expect(container.textContent).not.toContain('结果生成中');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('renders report results with the report template branch', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

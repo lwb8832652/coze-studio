@@ -82,6 +82,45 @@ func TestRunAnswerUsesSelectedModelType(t *testing.T) {
 	assert.Equal(t, "selected model answer", payload.Message)
 }
 
+func TestRunAnswerStreamsAnswerDeltasToTaskEvents(t *testing.T) {
+	ctx := context.Background()
+	taskApp := &recordingWorkbenchTaskApp{}
+	app := &ApplicationService{
+		taskApp: taskApp,
+		chatModelProvider: func(_ context.Context, _ int64) (model.BaseChatModel, bool, error) {
+			return &testutil.UTChatModel{
+				StreamResultProvider: func(_ int, in []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+					require.Len(t, in, 1)
+					require.Equal(t, "hello", in[0].Content)
+					return schema.StreamReaderFromArray([]*schema.Message{
+						schema.AssistantMessage("hello ", nil),
+						schema.AssistantMessage("world", nil),
+					}), nil
+				},
+			}, true, nil
+		},
+	}
+
+	payload, err := app.runAnswer(ctx, answerRequest{
+		taskID:  10,
+		mode:    ChatModeAuto,
+		message: "hello",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, resultTypeAnswer, payload.ResultType)
+	assert.Equal(t, executionTypeArk, payload.ExecutionType)
+	assert.Equal(t, "hello world", payload.Message)
+	require.Len(t, taskApp.events, 2)
+	assert.Equal(t, "answer.delta", taskApp.events[0].eventType)
+	assert.Equal(t, int64(10), taskApp.events[0].taskID)
+	assert.Contains(t, taskApp.events[0].payload, `"message":"hello "`)
+	assert.Contains(t, taskApp.events[0].payload, `"delta":"hello "`)
+	assert.Equal(t, "answer.delta", taskApp.events[1].eventType)
+	assert.Contains(t, taskApp.events[1].payload, `"message":"hello world"`)
+	assert.Contains(t, taskApp.events[1].payload, `"delta":"world"`)
+}
+
 func TestRunAskRetrievesKnowledgeContext(t *testing.T) {
 	ctx := context.Background()
 	knowledge := &fakeKnowledgeService{

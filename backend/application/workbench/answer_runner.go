@@ -18,7 +18,9 @@ package workbench
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -34,6 +36,7 @@ import (
 type chatModelProvider func(ctx context.Context, modelType int64) (model.BaseChatModel, bool, error)
 
 type answerRequest struct {
+	taskID    int64
 	mode      ChatMode
 	spaceID   int64
 	message   string
@@ -81,6 +84,12 @@ func (s *ApplicationService) runAnswer(ctx context.Context, req answerRequest) (
 	}
 	messages = append(messages, schema.UserMessage(req.message))
 
+	if respStream, err := cm.Stream(ctx, messages); err == nil && respStream != nil {
+		return s.consumeAnswerStream(ctx, req, respStream, retrievalSources)
+	} else if err != nil {
+		logs.CtxWarnf(ctx, "workbench chat model stream unavailable, fallback to generate: %v", err)
+	}
+
 	resp, err := cm.Generate(ctx, messages)
 	if err != nil {
 		return resultPayload{}, err
@@ -89,15 +98,64 @@ func (s *ApplicationService) runAnswer(ctx context.Context, req answerRequest) (
 		return resultPayload{}, fmt.Errorf("workbench chat model returned empty response")
 	}
 
+	return buildAnswerPayload(req.mode, strings.TrimSpace(resp.Content), retrievalSources), nil
+}
+
+func (s *ApplicationService) consumeAnswerStream(ctx context.Context, req answerRequest, respStream *schema.StreamReader[*schema.Message], retrievalSources []string) (resultPayload, error) {
+	defer respStream.Close()
+
+	var answer strings.Builder
+	for {
+		chunk, err := respStream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return resultPayload{}, err
+		}
+		if chunk == nil || chunk.Content == "" {
+			continue
+		}
+
+		answer.WriteString(chunk.Content)
+		message := answer.String()
+		if req.taskID > 0 {
+			if err := s.appendTaskEvent(ctx, req.taskID, "answer.delta", mustJSON(map[string]string{
+				"title":   "生成回答",
+				"message": message,
+				"delta":   chunk.Content,
+				"status":  "running",
+				"runtime": answerExecutionType(req.mode),
+			})); err != nil {
+				return resultPayload{}, err
+			}
+		}
+	}
+
+	message := strings.TrimSpace(answer.String())
+	if message == "" {
+		return resultPayload{}, fmt.Errorf("workbench chat model returned empty response")
+	}
+	return buildAnswerPayload(req.mode, message, retrievalSources), nil
+}
+
+func buildAnswerPayload(mode ChatMode, message string, retrievalSources []string) resultPayload {
 	payload := resultPayload{
-		Message:          strings.TrimSpace(resp.Content),
+		Message:          message,
 		ResultType:       resultTypeAnswer,
 		RetrievalSources: retrievalSources,
 	}
-	if req.mode == ChatModeAuto {
+	if mode == ChatModeAuto {
 		payload.ExecutionType = executionTypeArk
 	}
-	return payload, nil
+	return payload
+}
+
+func answerExecutionType(mode ChatMode) string {
+	if mode == ChatModeAuto {
+		return executionTypeArk
+	}
+	return ""
 }
 
 func (s *ApplicationService) retrieveAskKnowledge(ctx context.Context, req answerRequest) (string, []string, bool) {

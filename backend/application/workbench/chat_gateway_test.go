@@ -105,8 +105,12 @@ func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
 	taskApp := &recordingWorkbenchTaskApp{
 		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "hello", Status: taskapi.TaskStatus_Running},
 	}
+	var scheduled []func()
 	app := &ApplicationService{
 		taskApp: taskApp,
+		runAsync: func(fn func()) {
+			scheduled = append(scheduled, fn)
+		},
 		chatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
@@ -131,7 +135,13 @@ func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
 	require.Equal(t, chatapi.RouteTarget_TaskEngine, resp.Data.RouteTarget)
 	require.Equal(t, "answer", resp.Data.GetResultType())
 	require.Equal(t, "Ark", resp.Data.GetExecutionType())
-	require.Equal(t, "auto answer", resp.Data.GetAnswer())
+	require.Nil(t, resp.Data.Answer)
+	require.Empty(t, taskApp.completedResult)
+	require.Empty(t, taskApp.events)
+	require.Len(t, scheduled, 1)
+
+	scheduled[0]()
+
 	require.Contains(t, taskApp.completedResult, `"message":"auto answer"`)
 	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
 }
@@ -141,8 +151,12 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	taskApp := &recordingWorkbenchTaskApp{
 		got: &taskapi.ChatTask{ID: 20, SpaceID: 1, Title: "existing", Status: taskapi.TaskStatus_Running},
 	}
+	var scheduled []func()
 	app := &ApplicationService{
 		taskApp: taskApp,
+		runAsync: func(fn func()) {
+			scheduled = append(scheduled, fn)
+		},
 		chatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
@@ -166,8 +180,14 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	require.NotNil(t, resp.Data.Task)
 	require.Equal(t, int64(20), resp.Data.Task.ID)
 	require.Equal(t, 0, taskApp.createCalls)
-	require.GreaterOrEqual(t, len(taskApp.events), 2)
+	require.Len(t, taskApp.events, 1)
 	require.Equal(t, "user.message", taskApp.events[0].eventType)
+	require.Empty(t, taskApp.completedResult)
+	require.Len(t, scheduled, 1)
+
+	scheduled[0]()
+
+	require.GreaterOrEqual(t, len(taskApp.events), 2)
 	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
 	require.Contains(t, taskApp.completedResult, `"message":"follow answer"`)
 }
@@ -196,9 +216,13 @@ func TestHandleMessageAgentFailsTaskWhenRuntimeContextMissing(t *testing.T) {
 	taskApp := &recordingWorkbenchTaskApp{
 		created: &taskapi.ChatTask{ID: 30, SpaceID: 1, Title: "do work", Status: taskapi.TaskStatus_Running},
 	}
+	var scheduled []func()
 	app := &ApplicationService{
 		taskApp:     taskApp,
 		agentRunSVC: &fakeAgentRun{},
+		runAsync: func(fn func()) {
+			scheduled = append(scheduled, fn)
+		},
 	}
 
 	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
@@ -207,8 +231,14 @@ func TestHandleMessageAgentFailsTaskWhenRuntimeContextMissing(t *testing.T) {
 		Mode:    chatapi.ChatMode_Agent,
 	})
 
-	require.ErrorContains(t, err, "agent_id is required")
-	require.Nil(t, resp)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int64(30), resp.Data.Task.ID)
+	require.Zero(t, taskApp.failedID)
+	require.Len(t, scheduled, 1)
+
+	scheduled[0]()
+
 	require.Equal(t, int64(30), taskApp.failedID)
 	require.Contains(t, taskApp.failError, "agent_id is required")
 	require.Equal(t, "turn.failed", taskApp.events[len(taskApp.events)-1].eventType)

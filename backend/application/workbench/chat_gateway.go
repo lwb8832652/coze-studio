@@ -32,6 +32,7 @@ import (
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
 	agentrun "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/service"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 type ApplicationService struct {
@@ -41,6 +42,7 @@ type ApplicationService struct {
 	knowledgeSVC      crossknowledge.Knowledge
 	agentRunSVC       agentrun.Run
 	chatModelProvider chatModelProvider
+	runAsync          func(func())
 }
 
 func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.WorkbenchChatRequest) (*chatapi.WorkbenchChatResponse, error) {
@@ -62,33 +64,53 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 		return nil, err
 	}
 
-	result, err := s.executeTurn(ctx, task.ID, req, mode, message)
-	if err != nil {
-		_ = s.failTurn(ctx, task.ID, err.Error())
-		return nil, err
-	}
-	resultJSON, err := marshalResultPayload(result)
-	if err != nil {
-		_ = s.failTurn(ctx, task.ID, err.Error())
-		return nil, err
-	}
-	if err := s.completeTask(ctx, task.ID, resultJSON); err != nil {
-		return nil, err
-	}
-	task.Result = &resultJSON
+	turnReq := cloneWorkbenchChatRequest(req)
+	runCtx := context.WithoutCancel(ctx)
+	s.scheduleTurn(func() {
+		s.executeAndCompleteTurn(runCtx, task.ID, turnReq, mode, message)
+	})
+	resultType := resultTypeFromMode(req.Mode)
+	executionType := executionTypeFromMode(req.Mode)
 
 	return &chatapi.WorkbenchChatResponse{
 		Code: 0,
 		Msg:  "success",
 		Data: &chatapi.WorkbenchChatData{
 			RouteTarget:    chatapi.RouteTarget_TaskEngine,
-			Answer:         stringPtr(result.Message),
 			Task:           task,
 			ConversationID: task.ConversationID,
-			ResultType:     stringPtr(result.ResultType),
-			ExecutionType:  optionalStringPtr(result.ExecutionType),
+			ResultType:     stringPtr(resultType),
+			ExecutionType:  optionalStringPtr(executionType),
 		},
 	}, nil
+}
+
+func (s *ApplicationService) scheduleTurn(fn func()) {
+	if s != nil && s.runAsync != nil {
+		s.runAsync(fn)
+		return
+	}
+	go fn()
+}
+
+func (s *ApplicationService) executeAndCompleteTurn(ctx context.Context, taskID int64, req *chatapi.WorkbenchChatRequest, mode ChatMode, message string) {
+	result, err := s.executeTurn(ctx, taskID, req, mode, message)
+	if err != nil {
+		if failErr := s.failTurn(ctx, taskID, err.Error()); failErr != nil {
+			logs.CtxErrorf(ctx, "workbench fail task %d failed after turn error %v: %v", taskID, err, failErr)
+		}
+		return
+	}
+	resultJSON, err := marshalResultPayload(result)
+	if err != nil {
+		if failErr := s.failTurn(ctx, taskID, err.Error()); failErr != nil {
+			logs.CtxErrorf(ctx, "workbench fail task %d failed after marshal error %v: %v", taskID, err, failErr)
+		}
+		return
+	}
+	if err := s.completeTask(ctx, taskID, resultJSON); err != nil {
+		logs.CtxErrorf(ctx, "workbench complete task %d failed: %v", taskID, err)
+	}
 }
 
 func (s *ApplicationService) prepareTask(ctx context.Context, req *chatapi.WorkbenchChatRequest, message string) (*taskapi.ChatTask, error) {
@@ -139,6 +161,7 @@ func (s *ApplicationService) executeTurn(ctx context.Context, taskID int64, req 
 	}
 
 	result, err := s.runAnswer(ctx, answerRequest{
+		taskID:    taskID,
 		mode:      mode,
 		spaceID:   req.SpaceID,
 		message:   message,
@@ -181,6 +204,38 @@ func (s *ApplicationService) agentRequestFromWorkbench(ctx context.Context, task
 		enableKbs:       req.GetEnableKbs(),
 		enableDatabases: req.GetEnableDatabases(),
 	}
+}
+
+func cloneWorkbenchChatRequest(req *chatapi.WorkbenchChatRequest) *chatapi.WorkbenchChatRequest {
+	if req == nil {
+		return nil
+	}
+	clone := *req
+	if req.ConversationID != nil {
+		v := *req.ConversationID
+		clone.ConversationID = &v
+	}
+	if req.SelectedSkillID != nil {
+		v := *req.SelectedSkillID
+		clone.SelectedSkillID = &v
+	}
+	if req.TaskID != nil {
+		v := *req.TaskID
+		clone.TaskID = &v
+	}
+	if req.ModelType != nil {
+		v := *req.ModelType
+		clone.ModelType = &v
+	}
+	if req.ModelName != nil {
+		v := *req.ModelName
+		clone.ModelName = &v
+	}
+	clone.EnableSkills = append([]string(nil), req.EnableSkills...)
+	clone.EnableMcp = append([]string(nil), req.EnableMcp...)
+	clone.EnableKbs = append([]string(nil), req.EnableKbs...)
+	clone.EnableDatabases = append([]string(nil), req.EnableDatabases...)
+	return &clone
 }
 
 func (s *ApplicationService) failTurn(ctx context.Context, taskID int64, errMsg string) error {

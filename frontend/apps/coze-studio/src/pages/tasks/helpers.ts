@@ -17,6 +17,7 @@
 import { workbenchTask } from '@coze-studio/api-schema';
 
 type ChatTask = workbenchTask.ChatTask;
+type TaskEvent = workbenchTask.TaskEvent;
 
 export type TaskStatusFilter = 'all' | 'running' | 'succeeded' | 'failed';
 export type TaskExecutionType = 'Ark' | 'Agent';
@@ -203,6 +204,27 @@ export const getTaskEventText = (eventType?: string, payload?: string) => {
   }
 
   return payload?.trim() || eventType || '任务事件';
+};
+
+export const getLatestAnswerEventMessage = (events: TaskEvent[]) => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+
+    if (
+      event.event_type !== 'answer.delta' &&
+      event.event_type !== 'answer.completed'
+    ) {
+      continue;
+    }
+
+    const message = getString(parseJSONObject(event.payload), 'message');
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return '';
 };
 
 export const getTaskEventDisplay = (

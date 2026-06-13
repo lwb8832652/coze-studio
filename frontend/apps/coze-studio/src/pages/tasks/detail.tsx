@@ -34,6 +34,7 @@ import {
 import { getTask, listTaskEvents, sendWorkbenchChat } from './service';
 import {
   formatUpdatedTime,
+  getLatestAnswerEventMessage,
   getTaskEventDisplay,
   getTaskExecutionType,
   getTaskInputText,
@@ -212,15 +213,17 @@ const TaskEventsSection = ({
 const TaskAnswer = ({
   task,
   result,
+  streamingMessage,
 }: {
   task: ChatTask;
   result: TaskResultPayload;
+  streamingMessage?: string;
 }) => (
   <article className="coze-prototype-answer" data-result-type="answer">
     <div className="coze-prototype-result-eyebrow">
       普通回答{result.executionType ? ` · ${result.executionType}` : ''}
     </div>
-    <p>{result.message || task.error || '结果生成中'}</p>
+    <p>{result.message || streamingMessage || task.error || '结果生成中'}</p>
     {result.retrievalSources.length ? (
       <div className="coze-prototype-result-sources">
         {result.retrievalSources.map(source => (
@@ -260,7 +263,13 @@ const TaskReport = ({
   </article>
 );
 
-const TaskResultSection = ({ task }: { task: ChatTask }) => {
+const TaskResultSection = ({
+  task,
+  events,
+}: {
+  task: ChatTask;
+  events: TaskEvent[];
+}) => {
   const result = parseTaskResultPayload(task.result);
 
   if (result.resultType === 'report') {
@@ -271,7 +280,13 @@ const TaskResultSection = ({ task }: { task: ChatTask }) => {
     return <TaskAgentResult task={task} result={result} />;
   }
 
-  return <TaskAnswer task={task} result={result} />;
+  return (
+    <TaskAnswer
+      task={task}
+      result={result}
+      streamingMessage={getLatestAnswerEventMessage(events)}
+    />
+  );
 };
 
 const FollowUpComposer = ({
@@ -436,7 +451,7 @@ const TaskDetailPage = () => {
             'agent_trace' ? (
               <TaskEventsSection events={events} task={task} />
             ) : null}
-            <TaskResultSection task={task} />
+            <TaskResultSection task={task} events={events} />
             <FollowUpComposer
               value={followUpValue}
               mode={followUpMode}
