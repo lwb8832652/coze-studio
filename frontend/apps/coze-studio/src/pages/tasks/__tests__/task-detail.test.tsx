@@ -28,6 +28,7 @@ const mockUseParams = vi.hoisted(() =>
 );
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockGetTask = vi.hoisted(() => vi.fn());
+const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 
@@ -38,6 +39,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../service', () => ({
   getTask: mockGetTask,
+  getTaskThread: mockGetTaskThread,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
@@ -112,6 +114,7 @@ describe('TaskDetailPage', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1', task_id: 'task-1' });
     mockGetTask.mockReset();
+    mockGetTaskThread.mockReset();
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
@@ -132,6 +135,24 @@ describe('TaskDetailPage', () => {
           result_type: 'agent_trace',
           execution_type: 'Agent',
         }),
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-1',
+        legacy_task_id: 'task-legacy-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '生成周报',
+        status: 'running',
+        source: 'task',
+        progress: 65,
+        last_user_message: '请总结本周项目进展',
+        last_agent_message: '本周完成了 UI 改造方案。',
         created_at: 1717000000000,
         updated_at: 1717000300000,
       },
@@ -208,14 +229,14 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('loads task detail from canonical thread route params during compatibility', async () => {
+  it('resolves canonical thread route params through legacy task detail during compatibility', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
-      thread_id: 'task-1',
+      thread_id: 'thread-1',
     });
 
     await act(async () => {
@@ -224,8 +245,61 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
-    expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-legacy-1' });
+    expect(mockListTaskEvents).toHaveBeenCalledWith({
+      task_id: 'task-legacy-1',
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders canonical thread summary when no legacy task exists', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-only-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-only-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '独立智能体任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请分析客户反馈',
+        last_agent_message: '客户反馈集中在响应速度和知识覆盖。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+    });
+    expect(mockGetTask).not.toHaveBeenCalled();
+    expect(mockListTaskEvents).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('独立智能体任务');
+    expect(container.textContent).toContain('请分析客户反馈');
+    expect(container.textContent).toContain('客户反馈集中在响应速度和知识覆盖。');
+    expect(container.textContent).not.toContain('未找到任务');
 
     act(() => {
       root?.unmount();

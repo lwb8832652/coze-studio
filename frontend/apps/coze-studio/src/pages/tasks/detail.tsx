@@ -31,7 +31,8 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
-import { getTask, listTaskEvents, sendWorkbenchChat } from './service';
+import { sendWorkbenchChat } from './service';
+import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
 import {
   formatUpdatedTime,
   getLatestAnswerEventMessage,
@@ -46,18 +47,6 @@ import {
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
-
-const fetchTaskDetail = async (taskId: string) => {
-  const [taskResponse, eventsResponse] = await Promise.all([
-    getTask({ task_id: taskId }),
-    listTaskEvents({ task_id: taskId }),
-  ]);
-
-  return {
-    task: taskResponse.data,
-    events: eventsResponse.data?.events ?? [],
-  };
-};
 
 const AssistantMark = () => (
   <span className="coze-prototype-assistant-mark" aria-hidden="true">
@@ -334,7 +323,8 @@ const FollowUpComposer = ({
 
 const TaskDetailPage = () => {
   const { space_id, task_id, thread_id } = useParams();
-  const taskThreadId = thread_id ?? task_id;
+  const taskDetailId = thread_id ?? task_id;
+  const taskDetailSource: TaskDetailSource = thread_id ? 'thread' : 'task';
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -345,7 +335,7 @@ const TaskDetailPage = () => {
   const [followUpError, setFollowUpError] = useState('');
 
   useEffect(() => {
-    if (!taskThreadId) {
+    if (!taskDetailId) {
       return;
     }
 
@@ -359,7 +349,10 @@ const TaskDetailPage = () => {
       setError('');
 
       try {
-        const detail = await fetchTaskDetail(taskThreadId);
+        const detail = await fetchTaskDetail({
+          id: taskDetailId,
+          source: taskDetailSource,
+        });
 
         if (!canceled) {
           setTask(detail.task);
@@ -390,7 +383,7 @@ const TaskDetailPage = () => {
         clearTimeout(timer);
       }
     };
-  }, [taskThreadId]);
+  }, [taskDetailId, taskDetailSource]);
 
   const handleFollowUpSubmit = async (
     payload: WorkbenchComposerSubmitPayload,
@@ -399,11 +392,13 @@ const TaskDetailPage = () => {
       return;
     }
 
-    if (!space_id || !taskThreadId) {
+    if (!space_id || !taskDetailId) {
       setFollowUpError('缺少任务上下文，无法继续追问');
 
       return;
     }
+
+    const activeTaskId = task?.id ?? taskDetailId;
 
     setFollowUpLoading(true);
     setFollowUpError('');
@@ -411,7 +406,7 @@ const TaskDetailPage = () => {
     try {
       await sendWorkbenchChat({
         space_id,
-        task_id: taskThreadId,
+        task_id: activeTaskId,
         message: payload.message,
         mode: mapModeToChatMode(payload.mode),
         enable_skills: payload.enable_skills,
@@ -422,7 +417,10 @@ const TaskDetailPage = () => {
 
       setFollowUpValue('');
 
-      const detail = await fetchTaskDetail(taskThreadId);
+      const detail = await fetchTaskDetail({
+        id: taskDetailId,
+        source: taskDetailSource,
+      });
       setTask(detail.task);
       setEvents(detail.events);
     } catch (err) {
@@ -459,7 +457,7 @@ const TaskDetailPage = () => {
               mode={followUpMode}
               loading={followUpLoading}
               error={followUpError}
-              taskId={taskThreadId}
+              taskId={task?.id ?? taskDetailId}
               onValueChange={setFollowUpValue}
               onModeChange={setFollowUpMode}
               onSubmit={handleFollowUpSubmit}
