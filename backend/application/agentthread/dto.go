@@ -34,6 +34,15 @@ const (
 	ThreadSourceAPI ThreadSource = "api"
 )
 
+type MessageRole string
+
+const (
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleTool      MessageRole = "tool"
+	MessageRoleSystem    MessageRole = "system"
+)
+
 type ThreadSummary struct {
 	ThreadID         int64
 	LegacyTaskID     int64
@@ -47,6 +56,16 @@ type ThreadSummary struct {
 	LastAgentMessage string
 	CreatedAt        int64
 	UpdatedAt        int64
+}
+
+type MessageSummary struct {
+	MessageID int64
+	ThreadID  int64
+	RunID     int64
+	Role      MessageRole
+	Content   string
+	Metadata  string
+	CreatedAt int64
 }
 
 type CreateThreadRequest struct {
@@ -82,4 +101,27 @@ type ListThreadsRequest struct {
 type ListThreadsResponse struct {
 	Threads []*ThreadSummary
 	Total   int64
+}
+
+type AppendMessageRequest struct {
+	ThreadID int64
+	RunID    int64
+	Role     MessageRole
+	Content  string
+	Metadata string
+}
+
+type AppendMessageResponse struct {
+	Message *MessageSummary
+}
+
+type ListMessagesRequest struct {
+	ThreadID int64
+	Page     int32
+	PageSize int32
+}
+
+type ListMessagesResponse struct {
+	Messages []*MessageSummary
+	Total    int64
 }

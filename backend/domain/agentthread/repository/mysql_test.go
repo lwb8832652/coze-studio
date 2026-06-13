@@ -143,3 +143,58 @@ func TestThreadRepositoryRejectsInvalidMetadataJSON(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "metadata")
 }
+
+func TestThreadRepositoryCreateAndListMessages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	for _, message := range []*entity.Message{
+		{
+			ID:        2,
+			ThreadID:  10,
+			RunID:     20,
+			Role:      entity.MessageRoleAssistant,
+			Content:   "第二条",
+			Metadata:  `{"source":"agent"}`,
+			CreatedAt: 200,
+		},
+		{
+			ID:        1,
+			ThreadID:  10,
+			RunID:     20,
+			Role:      entity.MessageRoleUser,
+			Content:   "第一条",
+			Metadata:  `{"source":"user"}`,
+			CreatedAt: 100,
+		},
+		{
+			ID:        3,
+			ThreadID:  11,
+			Role:      entity.MessageRoleUser,
+			Content:   "其他线程",
+			CreatedAt: 50,
+		},
+	} {
+		require.NoError(t, repo.CreateMessage(context.Background(), message))
+	}
+
+	got, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(1), got[0].ID)
+	require.Equal(t, entity.MessageRoleUser, got[0].Role)
+	require.Equal(t, "第一条", got[0].Content)
+	require.Equal(t, `{"source":"user"}`, got[0].Metadata)
+	require.Equal(t, int64(2), got[1].ID)
+	require.Equal(t, entity.MessageRoleAssistant, got[1].Role)
+	require.Equal(t, "第二条", got[1].Content)
+	require.Equal(t, int64(20), got[1].RunID)
+}

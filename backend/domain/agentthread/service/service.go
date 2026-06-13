@@ -42,10 +42,26 @@ type ListThreadsRequest struct {
 	PageSize int32
 }
 
+type AppendMessageRequest struct {
+	ThreadID int64
+	RunID    int64
+	Role     entity.MessageRole
+	Content  string
+	Metadata string
+}
+
+type ListMessagesRequest struct {
+	ThreadID int64
+	Page     int32
+	PageSize int32
+}
+
 type ThreadService interface {
 	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
 	ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error)
+	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
+	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
 }
 
 type Components struct {

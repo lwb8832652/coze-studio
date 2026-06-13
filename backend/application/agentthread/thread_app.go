@@ -63,6 +63,22 @@ func DomainThreadToSummary(thread *entity.Thread) *ThreadSummary {
 	}
 }
 
+func DomainMessageToSummary(message *entity.Message) *MessageSummary {
+	if message == nil {
+		return nil
+	}
+
+	return &MessageSummary{
+		MessageID: message.ID,
+		ThreadID:  message.ThreadID,
+		RunID:     message.RunID,
+		Role:      MessageRole(message.Role),
+		Content:   message.Content,
+		Metadata:  message.Metadata,
+		CreatedAt: message.CreatedAt,
+	}
+}
+
 func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
 	switch status {
 	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:

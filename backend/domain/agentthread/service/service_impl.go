@@ -121,6 +121,86 @@ func (s *threadService) ListThreads(ctx context.Context, req *ListThreadsRequest
 	})
 }
 
+func (s *threadService) AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("append message request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+	if !isValidMessageRole(req.Role) {
+		return nil, InvalidArgumentErrorf("message role is invalid")
+	}
+
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		return nil, InvalidArgumentErrorf("message content is required")
+	}
+
+	if _, err := s.repo.GetThread(ctx, req.ThreadID); err != nil {
+		return nil, err
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	message := &entity.Message{
+		ID:        id,
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		Role:      req.Role,
+		Content:   content,
+		Metadata:  req.Metadata,
+		CreatedAt: time.Now().UnixMilli(),
+	}
+	if err := s.repo.CreateMessage(ctx, message); err != nil {
+		return nil, err
+	}
+
+	return message, nil
+}
+
+func (s *threadService) ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, err
+	}
+	if req == nil {
+		return nil, 0, InvalidArgumentErrorf("list messages request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, 0, InvalidArgumentErrorf("thread id is required")
+	}
+
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
+	return s.repo.ListMessages(ctx, repository.ListMessagesRequest{
+		ThreadID: req.ThreadID,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
+func isValidMessageRole(role entity.MessageRole) bool {
+	switch role {
+	case entity.MessageRoleUser, entity.MessageRoleAssistant, entity.MessageRoleTool, entity.MessageRoleSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *threadService) requireComponents() error {
 	if err := s.requireRepo(); err != nil {
 		return err

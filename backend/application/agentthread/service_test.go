@@ -138,6 +138,79 @@ func TestApplicationGetThreadRejectsNilRequestAndEmptyDomainThread(t *testing.T)
 	require.Contains(t, err.Error(), "empty thread")
 }
 
+func TestApplicationAppendMessageMapsDomainMessage(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		appended: &entity.Message{
+			ID:        100,
+			ThreadID:  10,
+			RunID:     20,
+			Role:      entity.MessageRoleUser,
+			Content:   "请分析客户反馈",
+			Metadata:  `{"source":"web"}`,
+			CreatedAt: 300,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.AppendMessage(context.Background(), &AppendMessageRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Role:     MessageRoleUser,
+		Content:  "请分析客户反馈",
+		Metadata: `{"source":"web"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.appendReq.ThreadID)
+	require.Equal(t, int64(20), domainSVC.appendReq.RunID)
+	require.Equal(t, entity.MessageRoleUser, domainSVC.appendReq.Role)
+	require.Equal(t, "请分析客户反馈", domainSVC.appendReq.Content)
+	require.Equal(t, int64(100), resp.Message.MessageID)
+	require.Equal(t, MessageRoleUser, resp.Message.Role)
+	require.Equal(t, "请分析客户反馈", resp.Message.Content)
+	require.Equal(t, `{"source":"web"}`, resp.Message.Metadata)
+	require.Equal(t, int64(300), resp.Message.CreatedAt)
+}
+
+func TestApplicationListMessagesMapsDomainMessages(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{
+				ID:       100,
+				ThreadID: 10,
+				Role:     entity.MessageRoleUser,
+				Content:  "第一条",
+			},
+			{
+				ID:       101,
+				ThreadID: 10,
+				RunID:    20,
+				Role:     entity.MessageRoleAssistant,
+				Content:  "第二条",
+			},
+		},
+		messageTotal: 2,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ListMessages(context.Background(), &ListMessagesRequest{
+		ThreadID: 10,
+		Page:     2,
+		PageSize: 5,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.listMessagesReq.ThreadID)
+	require.Equal(t, int32(2), domainSVC.listMessagesReq.Page)
+	require.Equal(t, int32(5), domainSVC.listMessagesReq.PageSize)
+	require.Equal(t, int64(2), resp.Total)
+	require.Len(t, resp.Messages, 2)
+	require.Equal(t, int64(100), resp.Messages[0].MessageID)
+	require.Equal(t, MessageRoleUser, resp.Messages[0].Role)
+	require.Equal(t, int64(101), resp.Messages[1].MessageID)
+	require.Equal(t, MessageRoleAssistant, resp.Messages[1].Role)
+}
+
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	_, err := (*ApplicationService)(nil).CreateThread(context.Background(), &CreateThreadRequest{Title: "x"})
 	require.Error(t, err)
@@ -194,13 +267,18 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 }
 
 type recordingThreadService struct {
-	created   *entity.Thread
-	listed    []*entity.Thread
-	got       *entity.Thread
-	total     int64
-	createReq *domainservice.CreateThreadRequest
-	listReq   *domainservice.ListThreadsRequest
-	getID     int64
+	created         *entity.Thread
+	listed          []*entity.Thread
+	got             *entity.Thread
+	appended        *entity.Message
+	messages        []*entity.Message
+	total           int64
+	messageTotal    int64
+	createReq       *domainservice.CreateThreadRequest
+	listReq         *domainservice.ListThreadsRequest
+	appendReq       *domainservice.AppendMessageRequest
+	listMessagesReq *domainservice.ListMessagesRequest
+	getID           int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -235,6 +313,16 @@ func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*enti
 func (s *recordingThreadService) ListThreads(ctx context.Context, req *domainservice.ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	s.listReq = req
 	return s.listed, s.total, nil
+}
+
+func (s *recordingThreadService) AppendMessage(ctx context.Context, req *domainservice.AppendMessageRequest) (*entity.Message, error) {
+	s.appendReq = req
+	return s.appended, nil
+}
+
+func (s *recordingThreadService) ListMessages(ctx context.Context, req *domainservice.ListMessagesRequest) ([]*entity.Message, int64, error) {
+	s.listMessagesReq = req
+	return s.messages, s.messageTotal, nil
 }
 
 type fixedIDGen struct{}

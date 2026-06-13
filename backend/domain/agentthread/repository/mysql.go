@@ -52,8 +52,22 @@ type threadPO struct {
 	LastMessageAt int64          `gorm:"column:last_message_at"`
 }
 
+type messagePO struct {
+	ID        int64          `gorm:"column:id;primaryKey"`
+	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_messages_thread_created"`
+	RunID     int64          `gorm:"column:run_id;index:idx_agent_thread_messages_run_created"`
+	Role      string         `gorm:"column:role"`
+	Content   string         `gorm:"column:content"`
+	Metadata  datatypes.JSON `gorm:"column:metadata;type:json"`
+	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_thread_messages_thread_created;index:idx_agent_thread_messages_run_created"`
+}
+
 func (threadPO) TableName() string {
 	return "agent_threads"
+}
+
+func (messagePO) TableName() string {
+	return "agent_thread_messages"
 }
 
 func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thread) error {
@@ -129,6 +143,57 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 	return threads, total, nil
 }
 
+func (r *threadRepository) CreateMessage(ctx context.Context, message *entity.Message) error {
+	if message == nil {
+		return fmt.Errorf("message is required")
+	}
+
+	if message.CreatedAt == 0 {
+		message.CreatedAt = time.Now().UnixMilli()
+	}
+
+	po, err := messageToPO(message)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) ListMessages(ctx context.Context, req ListMessagesRequest) ([]*entity.Message, int64, error) {
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
+	query := r.db.WithContext(ctx).Model(&messagePO{}).Where("thread_id = ?", req.ThreadID)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*messagePO, 0)
+	if err := query.
+		Order("created_at ASC, id ASC").
+		Limit(int(pageSize)).
+		Offset(int((page - 1) * pageSize)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	messages := make([]*entity.Message, 0, len(pos))
+	for _, po := range pos {
+		messages = append(messages, po.toEntity())
+	}
+
+	return messages, total, nil
+}
+
 func threadToPO(thread *entity.Thread) (*threadPO, error) {
 	metadata, err := optionalJSON("metadata", thread.Metadata)
 	if err != nil {
@@ -165,6 +230,35 @@ func (po *threadPO) toEntity() *entity.Thread {
 		CreatedAt:     po.CreatedAt,
 		UpdatedAt:     po.UpdatedAt,
 		LastMessageAt: po.LastMessageAt,
+	}
+}
+
+func messageToPO(message *entity.Message) (*messagePO, error) {
+	metadata, err := optionalJSON("metadata", message.Metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &messagePO{
+		ID:        message.ID,
+		ThreadID:  message.ThreadID,
+		RunID:     message.RunID,
+		Role:      string(message.Role),
+		Content:   message.Content,
+		Metadata:  metadata,
+		CreatedAt: message.CreatedAt,
+	}, nil
+}
+
+func (po *messagePO) toEntity() *entity.Message {
+	return &entity.Message{
+		ID:        po.ID,
+		ThreadID:  po.ThreadID,
+		RunID:     po.RunID,
+		Role:      entity.MessageRole(po.Role),
+		Content:   po.Content,
+		Metadata:  jsonToString(po.Metadata),
+		CreatedAt: po.CreatedAt,
 	}
 }
 

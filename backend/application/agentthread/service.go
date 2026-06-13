@@ -112,6 +112,59 @@ func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRe
 	return resp, nil
 }
 
+func (s *ApplicationService) AppendMessage(ctx context.Context, req *AppendMessageRequest) (*AppendMessageResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("append message request is required")
+	}
+
+	message, err := s.ThreadSVC.AppendMessage(ctx, &domainservice.AppendMessageRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Role:     domainentity.MessageRole(req.Role),
+		Content:  req.Content,
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if message == nil {
+		return nil, fmt.Errorf("agent thread service returned empty message")
+	}
+
+	return &AppendMessageResponse{Message: DomainMessageToSummary(message)}, nil
+}
+
+func (s *ApplicationService) ListMessages(ctx context.Context, req *ListMessagesRequest) (*ListMessagesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list messages request is required")
+	}
+
+	messages, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
+		ThreadID: req.ThreadID,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListMessagesResponse{
+		Messages: make([]*MessageSummary, 0, len(messages)),
+		Total:    total,
+	}
+	for _, message := range messages {
+		resp.Messages = append(resp.Messages, DomainMessageToSummary(message))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) requireThreadSVC() error {
 	if s == nil || s.ThreadSVC == nil {
 		return fmt.Errorf("agent thread service is not initialized")

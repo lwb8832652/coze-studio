@@ -124,15 +124,97 @@ func TestListThreadsRequiresRequest(t *testing.T) {
 	require.True(t, IsClientError(err))
 }
 
+func TestAppendMessageRequiresContentAndValidRole(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
+
+	_, err := svc.AppendMessage(context.Background(), &AppendMessageRequest{
+		ThreadID: 1,
+		Role:     entity.MessageRoleUser,
+		Content:  "  ",
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	_, err = svc.AppendMessage(context.Background(), &AppendMessageRequest{
+		ThreadID: 1,
+		Role:     entity.MessageRole("bad"),
+		Content:  "hello",
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+}
+
+func TestAppendMessageCreatesMessageWithGeneratedID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
+
+	message, err := svc.AppendMessage(context.Background(), &AppendMessageRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Role:     entity.MessageRoleUser,
+		Content:  "  请分析客户反馈  ",
+		Metadata: `{"source":"web"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1001), message.ID)
+	require.Equal(t, int64(10), message.ThreadID)
+	require.Equal(t, int64(20), message.RunID)
+	require.Equal(t, entity.MessageRoleUser, message.Role)
+	require.Equal(t, "请分析客户反馈", message.Content)
+	require.Equal(t, `{"source":"web"}`, message.Metadata)
+	require.NotZero(t, message.CreatedAt)
+	require.Len(t, repo.messages[10], 1)
+}
+
+func TestAppendMessageRequiresExistingThread(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
+
+	_, err := svc.AppendMessage(context.Background(), &AppendMessageRequest{
+		ThreadID: 10,
+		Role:     entity.MessageRoleUser,
+		Content:  "hello",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "thread")
+	require.Empty(t, repo.messages[10])
+}
+
+func TestListMessagesNormalizesPaging(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.messages[10] = []*entity.Message{
+		{ID: 1, ThreadID: 10, Role: entity.MessageRoleUser, Content: "第一条", CreatedAt: 1},
+		{ID: 2, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "第二条", CreatedAt: 2},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
+
+	messages, total, err := svc.ListMessages(context.Background(), &ListMessagesRequest{
+		ThreadID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, messages, 2)
+	require.Equal(t, int32(1), repo.lastMessageListReq.Page)
+	require.Equal(t, int32(50), repo.lastMessageListReq.PageSize)
+}
+
 type memoryRepo struct {
-	mu          sync.Mutex
-	threads     map[int64]*entity.Thread
-	lastListReq repository.ListThreadsRequest
+	mu                 sync.Mutex
+	threads            map[int64]*entity.Thread
+	messages           map[int64][]*entity.Message
+	lastListReq        repository.ListThreadsRequest
+	lastMessageListReq repository.ListMessagesRequest
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		threads: make(map[int64]*entity.Thread),
+		threads:  make(map[int64]*entity.Thread),
+		messages: make(map[int64][]*entity.Message),
 	}
 }
 
@@ -194,11 +276,54 @@ func (r *memoryRepo) ListThreads(ctx context.Context, req repository.ListThreads
 	return threads[start:end], total, nil
 }
 
+func (r *memoryRepo) CreateMessage(ctx context.Context, message *entity.Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages[message.ThreadID] = append(r.messages[message.ThreadID], cloneMessage(message))
+	return nil
+}
+
+func (r *memoryRepo) ListMessages(ctx context.Context, req repository.ListMessagesRequest) ([]*entity.Message, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastMessageListReq = req
+
+	messages := make([]*entity.Message, 0, len(r.messages[req.ThreadID]))
+	for _, message := range r.messages[req.ThreadID] {
+		messages = append(messages, cloneMessage(message))
+	}
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].CreatedAt == messages[j].CreatedAt {
+			return messages[i].ID < messages[j].ID
+		}
+		return messages[i].CreatedAt < messages[j].CreatedAt
+	})
+
+	total := int64(len(messages))
+	start := int((req.Page - 1) * req.PageSize)
+	if start >= len(messages) {
+		return []*entity.Message{}, total, nil
+	}
+	end := start + int(req.PageSize)
+	if end > len(messages) {
+		end = len(messages)
+	}
+	return messages[start:end], total, nil
+}
+
 func cloneThread(thread *entity.Thread) *entity.Thread {
 	if thread == nil {
 		return nil
 	}
 	cloned := *thread
+	return &cloned
+}
+
+func cloneMessage(message *entity.Message) *entity.Message {
+	if message == nil {
+		return nil
+	}
+	cloned := *message
 	return &cloned
 }
 
