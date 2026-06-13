@@ -203,18 +203,97 @@ func TestListMessagesNormalizesPaging(t *testing.T) {
 	require.Equal(t, int32(50), repo.lastMessageListReq.PageSize)
 }
 
+func TestCreateRunRequiresExistingThreadAndInput(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 0,
+		Input:    `{}`,
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	_, err = svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    "  ",
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	_, err = svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{}`,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "thread")
+}
+
+func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[{"role":"user","content":"hello"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2001), run.ID)
+	require.Equal(t, int64(10), run.ThreadID)
+	require.Equal(t, int64(1), run.SpaceID)
+	require.Equal(t, int64(2), run.CreatorID)
+	require.Equal(t, "default", run.AssistantID)
+	require.Equal(t, entity.RunStatusPending, run.Status)
+	require.Equal(t, `{}`, run.Command)
+	require.Equal(t, `{"messages":[{"role":"user","content":"hello"}]}`, run.Input)
+	require.Equal(t, `{}`, run.Config)
+	require.Equal(t, `{}`, run.Context)
+	require.Equal(t, `{}`, run.Metadata)
+	require.Equal(t, `["messages","updates"]`, run.StreamMode)
+	require.Equal(t, "enqueue", run.MultitaskStrategy)
+	require.Equal(t, "continue", run.OnDisconnect)
+	require.Equal(t, "async", run.Durability)
+	require.NotZero(t, run.CreatedAt)
+	require.Equal(t, run.CreatedAt, run.UpdatedAt)
+	require.Len(t, repo.runs[10], 1)
+}
+
+func TestListRunsNormalizesPaging(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusPending, CreatedAt: 1},
+		{ID: 2, ThreadID: 10, Status: entity.RunStatusRunning, CreatedAt: 2},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	runs, total, err := svc.ListRuns(context.Background(), &ListRunsRequest{
+		ThreadID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, runs, 2)
+	require.Equal(t, int32(1), repo.lastRunListReq.Page)
+	require.Equal(t, int32(20), repo.lastRunListReq.PageSize)
+}
+
 type memoryRepo struct {
 	mu                 sync.Mutex
 	threads            map[int64]*entity.Thread
 	messages           map[int64][]*entity.Message
+	runs               map[int64][]*entity.Run
 	lastListReq        repository.ListThreadsRequest
 	lastMessageListReq repository.ListMessagesRequest
+	lastRunListReq     repository.ListRunsRequest
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
 		threads:  make(map[int64]*entity.Thread),
 		messages: make(map[int64][]*entity.Message),
+		runs:     make(map[int64][]*entity.Run),
 	}
 }
 
@@ -311,6 +390,58 @@ func (r *memoryRepo) ListMessages(ctx context.Context, req repository.ListMessag
 	return messages[start:end], total, nil
 }
 
+func (r *memoryRepo) CreateRun(ctx context.Context, run *entity.Run) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runs[run.ThreadID] = append(r.runs[run.ThreadID], cloneRun(run))
+	return nil
+}
+
+func (r *memoryRepo) GetRun(ctx context.Context, id int64) (*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID == id {
+				return cloneRun(run), nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("run %d not found", id)
+}
+
+func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsRequest) ([]*entity.Run, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRunListReq = req
+
+	runs := make([]*entity.Run, 0, len(r.runs[req.ThreadID]))
+	for _, run := range r.runs[req.ThreadID] {
+		if req.Status != nil && run.Status != *req.Status {
+			continue
+		}
+		runs = append(runs, cloneRun(run))
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].CreatedAt == runs[j].CreatedAt {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].CreatedAt > runs[j].CreatedAt
+	})
+
+	total := int64(len(runs))
+	start := int((req.Page - 1) * req.PageSize)
+	if start >= len(runs) {
+		return []*entity.Run{}, total, nil
+	}
+	end := start + int(req.PageSize)
+	if end > len(runs) {
+		end = len(runs)
+	}
+	return runs[start:end], total, nil
+}
+
 func cloneThread(thread *entity.Thread) *entity.Thread {
 	if thread == nil {
 		return nil
@@ -324,6 +455,14 @@ func cloneMessage(message *entity.Message) *entity.Message {
 		return nil
 	}
 	cloned := *message
+	return &cloned
+}
+
+func cloneRun(run *entity.Run) *entity.Run {
+	if run == nil {
+		return nil
+	}
+	cloned := *run
 	return &cloned
 }
 

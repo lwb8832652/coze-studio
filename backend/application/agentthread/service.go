@@ -165,6 +165,92 @@ func (s *ApplicationService) ListMessages(ctx context.Context, req *ListMessages
 	return resp, nil
 }
 
+func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest) (*CreateRunResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("create run request is required")
+	}
+
+	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
+		ThreadID:          req.ThreadID,
+		AssistantID:       req.AssistantID,
+		Command:           req.Command,
+		Input:             req.Input,
+		Config:            req.Config,
+		Context:           req.Context,
+		Metadata:          req.Metadata,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+		IdempotencyKey:    req.IdempotencyKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty run")
+	}
+
+	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get run request is required")
+	}
+
+	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty run")
+	}
+
+	return &GetRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest) (*ListRunsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list runs request is required")
+	}
+
+	var status *domainentity.RunStatus
+	if req.Status != nil {
+		mapped := domainentity.RunStatus(*req.Status)
+		status = &mapped
+	}
+
+	runs, total, err := s.ThreadSVC.ListRuns(ctx, &domainservice.ListRunsRequest{
+		ThreadID: req.ThreadID,
+		Status:   status,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListRunsResponse{
+		Runs:  make([]*RunSummary, 0, len(runs)),
+		Total: total,
+	}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) requireThreadSVC() error {
 	if s == nil || s.ThreadSVC == nil {
 		return fmt.Errorf("agent thread service is not initialized")

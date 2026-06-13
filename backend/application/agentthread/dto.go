@@ -43,6 +43,17 @@ const (
 	MessageRoleSystem    MessageRole = "system"
 )
 
+type RunStatus string
+
+const (
+	RunStatusPending   RunStatus = "pending"
+	RunStatusQueued    RunStatus = "queued"
+	RunStatusRunning   RunStatus = "running"
+	RunStatusSucceeded RunStatus = "succeeded"
+	RunStatusFailed    RunStatus = "failed"
+	RunStatusCanceled  RunStatus = "canceled"
+)
+
 type ThreadSummary struct {
 	ThreadID         int64
 	LegacyTaskID     int64
@@ -66,6 +77,32 @@ type MessageSummary struct {
 	Content   string
 	Metadata  string
 	CreatedAt int64
+}
+
+type RunSummary struct {
+	RunID             int64
+	ThreadID          int64
+	SpaceID           int64
+	CreatorID         int64
+	AssistantID       string
+	Status            RunStatus
+	Command           string
+	Input             string
+	Config            string
+	Context           string
+	Metadata          string
+	StreamMode        string
+	MultitaskStrategy string
+	OnDisconnect      string
+	Durability        string
+	IdempotencyKey    string
+	WorkerID          string
+	ErrorCode         string
+	ErrorMessage      string
+	StartedAt         int64
+	EndedAt           int64
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type CreateThreadRequest struct {
@@ -124,4 +161,43 @@ type ListMessagesRequest struct {
 type ListMessagesResponse struct {
 	Messages []*MessageSummary
 	Total    int64
+}
+
+type CreateRunRequest struct {
+	ThreadID          int64
+	AssistantID       string
+	Command           string
+	Input             string
+	Config            string
+	Context           string
+	Metadata          string
+	StreamMode        string
+	MultitaskStrategy string
+	OnDisconnect      string
+	Durability        string
+	IdempotencyKey    string
+}
+
+type CreateRunResponse struct {
+	Run *RunSummary
+}
+
+type GetRunRequest struct {
+	RunID int64
+}
+
+type GetRunResponse struct {
+	Run *RunSummary
+}
+
+type ListRunsRequest struct {
+	ThreadID int64
+	Status   *RunStatus
+	Page     int32
+	PageSize int32
+}
+
+type ListRunsResponse struct {
+	Runs  []*RunSummary
+	Total int64
 }

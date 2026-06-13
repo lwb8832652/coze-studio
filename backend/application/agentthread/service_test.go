@@ -211,6 +211,98 @@ func TestApplicationListMessagesMapsDomainMessages(t *testing.T) {
 	require.Equal(t, MessageRoleAssistant, resp.Messages[1].Role)
 }
 
+func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRun: &entity.Run{
+			ID:                200,
+			ThreadID:          10,
+			SpaceID:           1,
+			CreatorID:         2,
+			AssistantID:       "default",
+			Status:            entity.RunStatusPending,
+			Command:           `{}`,
+			Input:             `{"messages":[]}`,
+			Config:            `{"mode":"Auto"}`,
+			Context:           `{"source":"web"}`,
+			Metadata:          `{"trace":"abc"}`,
+			StreamMode:        `["messages","updates"]`,
+			MultitaskStrategy: "enqueue",
+			OnDisconnect:      "continue",
+			Durability:        "async",
+			IdempotencyKey:    "idem-1",
+			CreatedAt:         300,
+			UpdatedAt:         301,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		AssistantID:    "default",
+		Input:          `{"messages":[]}`,
+		Config:         `{"mode":"Auto"}`,
+		Context:        `{"source":"web"}`,
+		Metadata:       `{"trace":"abc"}`,
+		IdempotencyKey: "idem-1",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.createRunReq.ThreadID)
+	require.Equal(t, "default", domainSVC.createRunReq.AssistantID)
+	require.Equal(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
+	require.Equal(t, `{"mode":"Auto"}`, domainSVC.createRunReq.Config)
+	require.Equal(t, `{"source":"web"}`, domainSVC.createRunReq.Context)
+	require.Equal(t, `{"trace":"abc"}`, domainSVC.createRunReq.Metadata)
+	require.Equal(t, "idem-1", domainSVC.createRunReq.IdempotencyKey)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.Equal(t, int64(10), resp.Run.ThreadID)
+	require.Equal(t, RunStatusPending, resp.Run.Status)
+	require.Equal(t, `{"messages":[]}`, resp.Run.Input)
+	require.Equal(t, `["messages","updates"]`, resp.Run.StreamMode)
+}
+
+func TestApplicationListRunsMapsDomainRuns(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		runs: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusPending,
+				Input:    `{}`,
+			},
+			{
+				ID:       201,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{}`,
+			},
+		},
+		runTotal: 2,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	status := RunStatusPending
+
+	resp, err := app.ListRuns(context.Background(), &ListRunsRequest{
+		ThreadID: 10,
+		Status:   &status,
+		Page:     2,
+		PageSize: 5,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.listRunsReq.ThreadID)
+	require.NotNil(t, domainSVC.listRunsReq.Status)
+	require.Equal(t, entity.RunStatusPending, *domainSVC.listRunsReq.Status)
+	require.Equal(t, int32(2), domainSVC.listRunsReq.Page)
+	require.Equal(t, int32(5), domainSVC.listRunsReq.PageSize)
+	require.Equal(t, int64(2), resp.Total)
+	require.Len(t, resp.Runs, 2)
+	require.Equal(t, int64(200), resp.Runs[0].RunID)
+	require.Equal(t, RunStatusPending, resp.Runs[0].Status)
+	require.Equal(t, int64(201), resp.Runs[1].RunID)
+	require.Equal(t, RunStatusRunning, resp.Runs[1].Status)
+}
+
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	_, err := (*ApplicationService)(nil).CreateThread(context.Background(), &CreateThreadRequest{Title: "x"})
 	require.Error(t, err)
@@ -268,17 +360,23 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 
 type recordingThreadService struct {
 	created         *entity.Thread
+	createdRun      *entity.Run
 	listed          []*entity.Thread
 	got             *entity.Thread
 	appended        *entity.Message
 	messages        []*entity.Message
+	runs            []*entity.Run
 	total           int64
 	messageTotal    int64
+	runTotal        int64
 	createReq       *domainservice.CreateThreadRequest
+	createRunReq    *domainservice.CreateRunRequest
 	listReq         *domainservice.ListThreadsRequest
+	listRunsReq     *domainservice.ListRunsRequest
 	appendReq       *domainservice.AppendMessageRequest
 	listMessagesReq *domainservice.ListMessagesRequest
 	getID           int64
+	getRunID        int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -296,6 +394,31 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			created_at integer,
 			updated_at integer,
 			last_message_at integer
+		);
+		CREATE TABLE agent_runs (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			space_id integer,
+			creator_id integer,
+			assistant_id text,
+			status text,
+			command json,
+			input json,
+			config json,
+			context json,
+			metadata json,
+			stream_mode json,
+			multitask_strategy text,
+			on_disconnect text,
+			durability text,
+			idempotency_key text,
+			worker_id text,
+			error_code text,
+			error_message text,
+			started_at integer,
+			ended_at integer,
+			created_at integer,
+			updated_at integer
 		)
 	`).Error
 }
@@ -323,6 +446,23 @@ func (s *recordingThreadService) AppendMessage(ctx context.Context, req *domains
 func (s *recordingThreadService) ListMessages(ctx context.Context, req *domainservice.ListMessagesRequest) ([]*entity.Message, int64, error) {
 	s.listMessagesReq = req
 	return s.messages, s.messageTotal, nil
+}
+
+func (s *recordingThreadService) CreateRun(ctx context.Context, req *domainservice.CreateRunRequest) (*entity.Run, error) {
+	s.createRunReq = req
+	return s.createdRun, nil
+}
+
+func (s *recordingThreadService) GetRun(ctx context.Context, req *domainservice.GetRunRequest) (*entity.Run, error) {
+	if req != nil {
+		s.getRunID = req.RunID
+	}
+	return nil, nil
+}
+
+func (s *recordingThreadService) ListRuns(ctx context.Context, req *domainservice.ListRunsRequest) ([]*entity.Run, int64, error) {
+	s.listRunsReq = req
+	return s.runs, s.runTotal, nil
 }
 
 type fixedIDGen struct{}

@@ -37,6 +37,7 @@ const (
 type RunStatus string
 
 const (
+	RunStatusPending   RunStatus = "pending"
 	RunStatusQueued    RunStatus = "queued"
 	RunStatusRunning   RunStatus = "running"
 	RunStatusSucceeded RunStatus = "succeeded"
@@ -69,14 +70,29 @@ type Thread struct {
 }
 
 type Run struct {
-	ID        int64
-	ThreadID  int64
-	Status    RunStatus
-	Input     string
-	Output    string
-	Error     string
-	CreatedAt int64
-	UpdatedAt int64
+	ID                int64
+	ThreadID          int64
+	SpaceID           int64
+	CreatorID         int64
+	AssistantID       string
+	Status            RunStatus
+	Command           string
+	Input             string
+	Config            string
+	Context           string
+	Metadata          string
+	StreamMode        string
+	MultitaskStrategy string
+	OnDisconnect      string
+	Durability        string
+	IdempotencyKey    string
+	WorkerID          string
+	ErrorCode         string
+	ErrorMessage      string
+	StartedAt         int64
+	EndedAt           int64
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type Message struct {

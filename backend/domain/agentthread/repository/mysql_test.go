@@ -198,3 +198,115 @@ func TestThreadRepositoryCreateAndListMessages(t *testing.T) {
 	require.Equal(t, "第二条", got[1].Content)
 	require.Equal(t, int64(20), got[1].RunID)
 }
+
+func TestThreadRepositoryCreateAndGetRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	run := &entity.Run{
+		ID:                100,
+		ThreadID:          10,
+		SpaceID:           1,
+		CreatorID:         2,
+		AssistantID:       "default",
+		Status:            entity.RunStatusPending,
+		Command:           `{"resume":false}`,
+		Input:             `{"messages":[{"role":"user","content":"hello"}]}`,
+		Config:            `{"mode":"Auto"}`,
+		Context:           `{"source":"web"}`,
+		Metadata:          `{"trace":"abc"}`,
+		StreamMode:        `["messages","updates"]`,
+		MultitaskStrategy: "enqueue",
+		OnDisconnect:      "continue",
+		Durability:        "async",
+		IdempotencyKey:    "idem-1",
+		WorkerID:          "worker-1",
+		ErrorCode:         "tool_failed",
+		ErrorMessage:      "tool error",
+		StartedAt:         11,
+		EndedAt:           22,
+		CreatedAt:         33,
+		UpdatedAt:         44,
+	}
+
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+	got, err := repo.GetRun(context.Background(), 100)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), got.ThreadID)
+	require.Equal(t, int64(1), got.SpaceID)
+	require.Equal(t, int64(2), got.CreatorID)
+	require.Equal(t, "default", got.AssistantID)
+	require.Equal(t, entity.RunStatusPending, got.Status)
+	require.Equal(t, `{"resume":false}`, got.Command)
+	require.Equal(t, `{"messages":[{"role":"user","content":"hello"}]}`, got.Input)
+	require.Equal(t, `{"mode":"Auto"}`, got.Config)
+	require.Equal(t, `{"source":"web"}`, got.Context)
+	require.Equal(t, `{"trace":"abc"}`, got.Metadata)
+	require.Equal(t, `["messages","updates"]`, got.StreamMode)
+	require.Equal(t, "enqueue", got.MultitaskStrategy)
+	require.Equal(t, "continue", got.OnDisconnect)
+	require.Equal(t, "async", got.Durability)
+	require.Equal(t, "idem-1", got.IdempotencyKey)
+	require.Equal(t, "worker-1", got.WorkerID)
+	require.Equal(t, "tool_failed", got.ErrorCode)
+	require.Equal(t, "tool error", got.ErrorMessage)
+	require.Equal(t, int64(11), got.StartedAt)
+	require.Equal(t, int64(22), got.EndedAt)
+	require.Equal(t, int64(33), got.CreatedAt)
+	require.Equal(t, int64(44), got.UpdatedAt)
+}
+
+func TestThreadRepositoryListRunsFiltersByThreadAndOrdersNewestFirst(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	status := entity.RunStatusPending
+	for _, run := range []*entity.Run{
+		newRepositoryTestRun(1, 10, status, 1),
+		newRepositoryTestRun(2, 10, status, 2),
+		newRepositoryTestRun(3, 11, status, 3),
+		newRepositoryTestRun(4, 10, entity.RunStatusRunning, 4),
+	} {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	got, total, err := repo.ListRuns(context.Background(), ListRunsRequest{
+		ThreadID: 10,
+		Status:   &status,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(2), got[0].ID)
+	require.Equal(t, int64(1), got[1].ID)
+}
+
+func newRepositoryTestRun(id, threadID int64, status entity.RunStatus, createdAt int64) *entity.Run {
+	return &entity.Run{
+		ID:                id,
+		ThreadID:          threadID,
+		SpaceID:           1,
+		CreatorID:         2,
+		AssistantID:       "default",
+		Status:            status,
+		Command:           `{}`,
+		Input:             `{}`,
+		Config:            `{}`,
+		Context:           `{}`,
+		Metadata:          `{}`,
+		StreamMode:        `["messages","updates"]`,
+		MultitaskStrategy: "enqueue",
+		OnDisconnect:      "continue",
+		Durability:        "async",
+		CreatedAt:         createdAt,
+		UpdatedAt:         createdAt,
+	}
+}

@@ -192,6 +192,102 @@ func (s *threadService) ListMessages(ctx context.Context, req *ListMessagesReque
 	})
 }
 
+func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("create run request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+
+	input := strings.TrimSpace(req.Input)
+	if input == "" {
+		return nil, InvalidArgumentErrorf("run input is required")
+	}
+
+	thread, err := s.repo.GetThread(ctx, req.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	run := &entity.Run{
+		ID:                id,
+		ThreadID:          req.ThreadID,
+		SpaceID:           thread.SpaceID,
+		CreatorID:         thread.CreatorID,
+		AssistantID:       defaultString(req.AssistantID, "default"),
+		Status:            entity.RunStatusPending,
+		Command:           defaultJSON(req.Command, "{}"),
+		Input:             input,
+		Config:            defaultJSON(req.Config, "{}"),
+		Context:           defaultJSON(req.Context, "{}"),
+		Metadata:          defaultJSON(req.Metadata, "{}"),
+		StreamMode:        defaultJSON(req.StreamMode, `["messages","updates"]`),
+		MultitaskStrategy: defaultString(req.MultitaskStrategy, "enqueue"),
+		OnDisconnect:      defaultString(req.OnDisconnect, "continue"),
+		Durability:        defaultString(req.Durability, "async"),
+		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := s.repo.CreateRun(ctx, run); err != nil {
+		return nil, err
+	}
+
+	return run, nil
+}
+
+func (s *threadService) GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("get run request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+
+	return s.repo.GetRun(ctx, req.RunID)
+}
+
+func (s *threadService) ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, err
+	}
+	if req == nil {
+		return nil, 0, InvalidArgumentErrorf("list runs request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, 0, InvalidArgumentErrorf("thread id is required")
+	}
+
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+
+	return s.repo.ListRuns(ctx, repository.ListRunsRequest{
+		ThreadID: req.ThreadID,
+		Status:   req.Status,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
 func isValidMessageRole(role entity.MessageRole) bool {
 	switch role {
 	case entity.MessageRoleUser, entity.MessageRoleAssistant, entity.MessageRoleTool, entity.MessageRoleSystem:
@@ -199,6 +295,24 @@ func isValidMessageRole(role entity.MessageRole) bool {
 	default:
 		return false
 	}
+}
+
+func defaultJSON(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+
+	return trimmed
+}
+
+func defaultString(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+
+	return trimmed
 }
 
 func (s *threadService) requireComponents() error {

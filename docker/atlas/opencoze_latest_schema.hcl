@@ -5020,6 +5020,123 @@ table "agent_thread_messages" {
     columns = [column.thread_id, column.created_at]
   }
 }
+table "agent_runs" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "creator_id" {
+    null = false
+    type = bigint
+  }
+  column "assistant_id" {
+    null    = false
+    type    = varchar(128)
+    default = "default"
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "command" {
+    null = false
+    type = json
+  }
+  column "input" {
+    null = false
+    type = json
+  }
+  column "config" {
+    null = false
+    type = json
+  }
+  column "context" {
+    null = false
+    type = json
+  }
+  column "metadata" {
+    null = false
+    type = json
+  }
+  column "stream_mode" {
+    null = false
+    type = json
+  }
+  column "multitask_strategy" {
+    null    = false
+    type    = varchar(32)
+    default = "enqueue"
+  }
+  column "on_disconnect" {
+    null    = false
+    type    = varchar(32)
+    default = "continue"
+  }
+  column "durability" {
+    null    = false
+    type    = varchar(32)
+    default = "async"
+  }
+  column "idempotency_key" {
+    null = true
+    type = varchar(128)
+  }
+  column "worker_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "error_code" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "error_message" {
+    null = true
+    type = text
+  }
+  column "started_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "ended_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_runs_space_status" {
+    columns = [column.space_id, column.status]
+  }
+  index "idx_agent_runs_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "uk_agent_runs_space_idempotency" {
+    unique  = true
+    columns = [column.space_id, column.idempotency_key]
+  }
+}
 table "chat_task_attempts" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"

@@ -50,6 +50,32 @@ type AppendMessageRequest struct {
 	Metadata string
 }
 
+type CreateRunRequest struct {
+	ThreadID          int64
+	AssistantID       string
+	Command           string
+	Input             string
+	Config            string
+	Context           string
+	Metadata          string
+	StreamMode        string
+	MultitaskStrategy string
+	OnDisconnect      string
+	Durability        string
+	IdempotencyKey    string
+}
+
+type GetRunRequest struct {
+	RunID int64
+}
+
+type ListRunsRequest struct {
+	ThreadID int64
+	Status   *entity.RunStatus
+	Page     int32
+	PageSize int32
+}
+
 type ListMessagesRequest struct {
 	ThreadID int64
 	Page     int32
@@ -62,6 +88,9 @@ type ThreadService interface {
 	ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error)
 	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
+	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
+	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)
+	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
 }
 
 type Components struct {

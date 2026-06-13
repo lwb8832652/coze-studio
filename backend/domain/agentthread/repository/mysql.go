@@ -62,12 +62,42 @@ type messagePO struct {
 	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_thread_messages_thread_created;index:idx_agent_thread_messages_run_created"`
 }
 
+type runPO struct {
+	ID                int64          `gorm:"column:id;primaryKey"`
+	ThreadID          int64          `gorm:"column:thread_id;index:idx_agent_runs_thread_created"`
+	SpaceID           int64          `gorm:"column:space_id;index:idx_agent_runs_space_status;uniqueIndex:uk_agent_runs_space_idempotency"`
+	CreatorID         int64          `gorm:"column:creator_id"`
+	AssistantID       string         `gorm:"column:assistant_id"`
+	Status            string         `gorm:"column:status;index:idx_agent_runs_space_status"`
+	Command           datatypes.JSON `gorm:"column:command;type:json"`
+	Input             datatypes.JSON `gorm:"column:input;type:json"`
+	Config            datatypes.JSON `gorm:"column:config;type:json"`
+	Context           datatypes.JSON `gorm:"column:context;type:json"`
+	Metadata          datatypes.JSON `gorm:"column:metadata;type:json"`
+	StreamMode        datatypes.JSON `gorm:"column:stream_mode;type:json"`
+	MultitaskStrategy string         `gorm:"column:multitask_strategy"`
+	OnDisconnect      string         `gorm:"column:on_disconnect"`
+	Durability        string         `gorm:"column:durability"`
+	IdempotencyKey    *string        `gorm:"column:idempotency_key;uniqueIndex:uk_agent_runs_space_idempotency"`
+	WorkerID          string         `gorm:"column:worker_id"`
+	ErrorCode         string         `gorm:"column:error_code"`
+	ErrorMessage      string         `gorm:"column:error_message"`
+	StartedAt         int64          `gorm:"column:started_at"`
+	EndedAt           int64          `gorm:"column:ended_at"`
+	CreatedAt         int64          `gorm:"column:created_at;index:idx_agent_runs_thread_created"`
+	UpdatedAt         int64          `gorm:"column:updated_at"`
+}
+
 func (threadPO) TableName() string {
 	return "agent_threads"
 }
 
 func (messagePO) TableName() string {
 	return "agent_thread_messages"
+}
+
+func (runPO) TableName() string {
+	return "agent_runs"
 }
 
 func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thread) error {
@@ -194,6 +224,73 @@ func (r *threadRepository) ListMessages(ctx context.Context, req ListMessagesReq
 	return messages, total, nil
 }
 
+func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error {
+	if run == nil {
+		return fmt.Errorf("run is required")
+	}
+
+	now := time.Now().UnixMilli()
+	if run.CreatedAt == 0 {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+
+	po, err := runToPO(run)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) GetRun(ctx context.Context, id int64) (*entity.Run, error) {
+	var po runPO
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&po).Error; err != nil {
+		return nil, err
+	}
+
+	return po.toEntity(), nil
+}
+
+func (r *threadRepository) ListRuns(ctx context.Context, req ListRunsRequest) ([]*entity.Run, int64, error) {
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+
+	query := r.db.WithContext(ctx).Model(&runPO{}).Where("thread_id = ?", req.ThreadID)
+	if req.Status != nil {
+		query = query.Where("status = ?", string(*req.Status))
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*runPO, 0)
+	if err := query.
+		Order("created_at DESC, id DESC").
+		Limit(int(pageSize)).
+		Offset(int((page - 1) * pageSize)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	runs := make([]*entity.Run, 0, len(pos))
+	for _, po := range pos {
+		runs = append(runs, po.toEntity())
+	}
+
+	return runs, total, nil
+}
+
 func threadToPO(thread *entity.Thread) (*threadPO, error) {
 	metadata, err := optionalJSON("metadata", thread.Metadata)
 	if err != nil {
@@ -262,10 +359,103 @@ func (po *messagePO) toEntity() *entity.Message {
 	}
 }
 
+func runToPO(run *entity.Run) (*runPO, error) {
+	command, err := requiredJSON("command", run.Command)
+	if err != nil {
+		return nil, err
+	}
+	input, err := requiredJSON("input", run.Input)
+	if err != nil {
+		return nil, err
+	}
+	config, err := requiredJSON("config", run.Config)
+	if err != nil {
+		return nil, err
+	}
+	runContext, err := requiredJSON("context", run.Context)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := requiredJSON("metadata", run.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	streamMode, err := requiredJSON("stream_mode", run.StreamMode)
+	if err != nil {
+		return nil, err
+	}
+
+	return &runPO{
+		ID:                run.ID,
+		ThreadID:          run.ThreadID,
+		SpaceID:           run.SpaceID,
+		CreatorID:         run.CreatorID,
+		AssistantID:       run.AssistantID,
+		Status:            string(run.Status),
+		Command:           command,
+		Input:             input,
+		Config:            config,
+		Context:           runContext,
+		Metadata:          metadata,
+		StreamMode:        streamMode,
+		MultitaskStrategy: run.MultitaskStrategy,
+		OnDisconnect:      run.OnDisconnect,
+		Durability:        run.Durability,
+		IdempotencyKey:    stringPtrOrNil(run.IdempotencyKey),
+		WorkerID:          run.WorkerID,
+		ErrorCode:         run.ErrorCode,
+		ErrorMessage:      run.ErrorMessage,
+		StartedAt:         run.StartedAt,
+		EndedAt:           run.EndedAt,
+		CreatedAt:         run.CreatedAt,
+		UpdatedAt:         run.UpdatedAt,
+	}, nil
+}
+
+func (po *runPO) toEntity() *entity.Run {
+	return &entity.Run{
+		ID:                po.ID,
+		ThreadID:          po.ThreadID,
+		SpaceID:           po.SpaceID,
+		CreatorID:         po.CreatorID,
+		AssistantID:       po.AssistantID,
+		Status:            entity.RunStatus(po.Status),
+		Command:           jsonToString(po.Command),
+		Input:             jsonToString(po.Input),
+		Config:            jsonToString(po.Config),
+		Context:           jsonToString(po.Context),
+		Metadata:          jsonToString(po.Metadata),
+		StreamMode:        jsonToString(po.StreamMode),
+		MultitaskStrategy: po.MultitaskStrategy,
+		OnDisconnect:      po.OnDisconnect,
+		Durability:        po.Durability,
+		IdempotencyKey:    stringFromPtr(po.IdempotencyKey),
+		WorkerID:          po.WorkerID,
+		ErrorCode:         po.ErrorCode,
+		ErrorMessage:      po.ErrorMessage,
+		StartedAt:         po.StartedAt,
+		EndedAt:           po.EndedAt,
+		CreatedAt:         po.CreatedAt,
+		UpdatedAt:         po.UpdatedAt,
+	}
+}
+
 func optionalJSON(field, value string) (datatypes.JSON, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return nil, nil
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return nil, fmt.Errorf("%s must be valid JSON", field)
+	}
+
+	return datatypes.JSON([]byte(trimmed)), nil
+}
+
+func requiredJSON(field, value string) (datatypes.JSON, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%s is required", field)
 	}
 	if !json.Valid([]byte(trimmed)) {
 		return nil, fmt.Errorf("%s must be valid JSON", field)
@@ -280,4 +470,21 @@ func jsonToString(value datatypes.JSON) string {
 	}
 
 	return string(value)
+}
+
+func stringPtrOrNil(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
+}
+
+func stringFromPtr(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
 }

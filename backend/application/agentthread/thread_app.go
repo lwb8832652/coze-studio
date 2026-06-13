@@ -79,6 +79,38 @@ func DomainMessageToSummary(message *entity.Message) *MessageSummary {
 	}
 }
 
+func DomainRunToSummary(run *entity.Run) *RunSummary {
+	if run == nil {
+		return nil
+	}
+
+	return &RunSummary{
+		RunID:             run.ID,
+		ThreadID:          run.ThreadID,
+		SpaceID:           run.SpaceID,
+		CreatorID:         run.CreatorID,
+		AssistantID:       run.AssistantID,
+		Status:            RunStatus(run.Status),
+		Command:           run.Command,
+		Input:             run.Input,
+		Config:            run.Config,
+		Context:           run.Context,
+		Metadata:          run.Metadata,
+		StreamMode:        run.StreamMode,
+		MultitaskStrategy: run.MultitaskStrategy,
+		OnDisconnect:      run.OnDisconnect,
+		Durability:        run.Durability,
+		IdempotencyKey:    run.IdempotencyKey,
+		WorkerID:          run.WorkerID,
+		ErrorCode:         run.ErrorCode,
+		ErrorMessage:      run.ErrorMessage,
+		StartedAt:         run.StartedAt,
+		EndedAt:           run.EndedAt,
+		CreatedAt:         run.CreatedAt,
+		UpdatedAt:         run.UpdatedAt,
+	}
+}
+
 func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
 	switch status {
 	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:
