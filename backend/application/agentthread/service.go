@@ -57,6 +57,25 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	return &CreateThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
 }
 
+func (s *ApplicationService) GetThread(ctx context.Context, req *GetThreadRequest) (*GetThreadResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get thread request is required")
+	}
+
+	thread, err := s.ThreadSVC.GetThread(ctx, req.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	if thread == nil {
+		return nil, fmt.Errorf("agent thread service returned empty thread")
+	}
+
+	return &GetThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
+}
+
 func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRequest) (*ListThreadsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

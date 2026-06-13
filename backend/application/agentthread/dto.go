@@ -63,6 +63,14 @@ type CreateThreadResponse struct {
 	Thread *ThreadSummary
 }
 
+type GetThreadRequest struct {
+	ThreadID int64
+}
+
+type GetThreadResponse struct {
+	Thread *ThreadSummary
+}
+
 type ListThreadsRequest struct {
 	SpaceID  int64
 	UserID   int64

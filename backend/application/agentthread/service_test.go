@@ -103,12 +103,51 @@ func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
 	require.Equal(t, int32(5), domainSVC.listReq.PageSize)
 }
 
+func TestApplicationGetThreadMapsDomainThread(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:        10,
+			SpaceID:   1,
+			CreatorID: 2,
+			Title:     "任务详情",
+			Status:    entity.ThreadStatusCompleted,
+			Source:    entity.ThreadSourceWeb,
+			UpdatedAt: 200,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.GetThread(context.Background(), &GetThreadRequest{ThreadID: 10})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.getID)
+	require.Equal(t, int64(10), resp.Thread.ThreadID)
+	require.Equal(t, "任务详情", resp.Thread.Title)
+	require.Equal(t, ThreadStatusCompleted, resp.Thread.Status)
+}
+
+func TestApplicationGetThreadRejectsNilRequestAndEmptyDomainThread(t *testing.T) {
+	app := &ApplicationService{ThreadSVC: &recordingThreadService{}}
+
+	_, err := app.GetThread(context.Background(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "get thread request")
+
+	_, err = app.GetThread(context.Background(), &GetThreadRequest{ThreadID: 10})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty thread")
+}
+
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	_, err := (*ApplicationService)(nil).CreateThread(context.Background(), &CreateThreadRequest{Title: "x"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent thread service")
 
 	_, err = (&ApplicationService{}).ListThreads(context.Background(), &ListThreadsRequest{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent thread service")
+
+	_, err = (&ApplicationService{}).GetThread(context.Background(), &GetThreadRequest{ThreadID: 1})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent thread service")
 }
@@ -157,9 +196,11 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 type recordingThreadService struct {
 	created   *entity.Thread
 	listed    []*entity.Thread
+	got       *entity.Thread
 	total     int64
 	createReq *domainservice.CreateThreadRequest
 	listReq   *domainservice.ListThreadsRequest
+	getID     int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -187,7 +228,8 @@ func (s *recordingThreadService) CreateThread(ctx context.Context, req *domainse
 }
 
 func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
-	return nil, nil
+	s.getID = id
+	return s.got, nil
 }
 
 func (s *recordingThreadService) ListThreads(ctx context.Context, req *domainservice.ListThreadsRequest) ([]*entity.Thread, int64, error) {
