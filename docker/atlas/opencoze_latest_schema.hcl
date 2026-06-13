@@ -4909,6 +4909,75 @@ table "chat_tasks" {
     columns = [column.space_id, column.status]
   }
 }
+table "agent_threads" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "creator_id" {
+    null = false
+    type = bigint
+  }
+  column "agent_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "title" {
+    null = false
+    type = varchar(255)
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "source" {
+    null = false
+    type = varchar(32)
+  }
+  column "legacy_task_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "metadata" {
+    null = true
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  column "last_message_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_threads_creator_updated" {
+    columns = [column.creator_id, column.updated_at]
+  }
+  index "idx_agent_threads_legacy_task" {
+    columns = [column.legacy_task_id]
+  }
+  index "idx_agent_threads_space_status" {
+    columns = [column.space_id, column.status]
+  }
+  index "idx_agent_threads_space_updated" {
+    columns = [column.space_id, column.updated_at]
+  }
+}
 table "chat_task_attempts" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"
