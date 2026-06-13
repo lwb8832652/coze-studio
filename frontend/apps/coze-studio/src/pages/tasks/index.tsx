@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
+import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozAsynchronousTask,
   IconCozFilter,
 } from '@coze-arch/coze-design/icons';
-import type { workbenchTask } from '@coze-studio/api-schema';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
+import { buildTaskThreadDetailPath } from '../chats/task-thread-routes';
 import { listTasks } from './service';
 import {
   filterTasks,
@@ -70,7 +71,9 @@ interface TasksHeaderProps {
 const TasksHeader = ({ loading, spaceId, onRefresh }: TasksHeaderProps) => (
   <div className="text-center">
     <h1 className="coze-prototype-page-title">全部任务</h1>
-    <p className="coze-prototype-page-subtitle">这里收纳您当前工作空间内的全部任务</p>
+    <p className="coze-prototype-page-subtitle">
+      这里收纳您当前工作空间内的全部任务
+    </p>
     <button
       type="button"
       className="sr-only"
@@ -101,9 +104,7 @@ const TasksToolbar = ({
 }: TasksToolbarProps) => (
   <section className="coze-prototype-toolbar">
     <label className="coze-prototype-search" data-width="wide">
-      <span aria-hidden="true">
-        ⌕
-      </span>
+      <span aria-hidden="true">⌕</span>
       <input
         aria-label="搜索任务"
         value={keyword}
@@ -141,10 +142,7 @@ const TasksToolbar = ({
 
     <div className="flex-1" />
 
-    <button
-      type="button"
-      className="coze-prototype-secondary-button"
-    >
+    <button type="button" className="coze-prototype-secondary-button">
       批量操作
     </button>
   </section>
@@ -247,11 +245,7 @@ const TaskList = ({
   onToggleFavorite,
 }: TaskListProps) => (
   <section className="mt-[16px]" aria-label="任务列表">
-    {loading ? (
-      <div className="coze-prototype-empty">
-        加载中...
-      </div>
-    ) : null}
+    {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
 
     {!loading && tasks.length === 0 ? (
       <div className="coze-prototype-empty">
@@ -323,7 +317,7 @@ const TasksPage = () => {
 
   const handleNavigate = (task: ChatTask) => {
     if (space_id) {
-      navigate(`/space/${space_id}/tasks/${task.id}`);
+      navigate(buildTaskThreadDetailPath(space_id, task.id));
     }
   };
 
@@ -345,9 +339,7 @@ const TasksPage = () => {
           onViewChange={setView}
         />
 
-        {error ? (
-          <div className="coze-prototype-error">{error}</div>
-        ) : null}
+        {error ? <div className="coze-prototype-error">{error}</div> : null}
 
         <TaskList
           favoriteTaskIds={favoriteTaskIds}

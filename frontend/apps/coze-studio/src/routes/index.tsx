@@ -21,6 +21,7 @@ import { GlobalError } from '@coze-foundation/layout';
 import { BaseEnum } from '@coze-arch/web-context';
 
 import { Layout } from '../layout';
+import { SPACE_SUB_MODULE } from '../components/workspace-sub-menu/menu';
 import {
   LoginPage,
   SpaceLayout,
@@ -131,15 +132,21 @@ export const router: ReturnType<typeof createBrowserRouter> =
               children: [
                 {
                   index: true,
-                  element: <Navigate to="workbench" replace />,
+                  element: <Navigate to="chats/new" replace />,
                 },
 
                 // Chat Workbench
                 {
                   path: 'workbench',
+                  element: (
+                    <Navigate to="../chats/new" replace relative="path" />
+                  ),
+                },
+                {
+                  path: 'chats/new',
                   Component: Workbench,
                   loader: () => ({
-                    subMenuKey: SpaceSubModuleEnum.WORKBENCH,
+                    subMenuKey: SPACE_SUB_MODULE.WORKBENCH,
                   }),
                 },
 
@@ -232,14 +239,25 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   path: 'tasks/:task_id',
                   Component: TaskDetailPage,
                   loader: () => ({
-                    subMenuKey: SpaceSubModuleEnum.TASKS,
+                    subMenuKey: SPACE_SUB_MODULE.TASKS,
                   }),
                 },
                 {
                   path: 'tasks',
+                  element: <Navigate to="../chats" replace relative="path" />,
+                },
+                {
+                  path: 'chats/:thread_id',
+                  Component: TaskDetailPage,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.TASKS,
+                  }),
+                },
+                {
+                  path: 'chats',
                   Component: TasksPage,
                   loader: () => ({
-                    subMenuKey: SpaceSubModuleEnum.TASKS,
+                    subMenuKey: SPACE_SUB_MODULE.TASKS,
                   }),
                 },
 

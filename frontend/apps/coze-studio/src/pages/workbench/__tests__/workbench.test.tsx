@@ -17,10 +17,9 @@
 import type { ReactNode } from 'react';
 
 import { vi } from 'vitest';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { act, Simulate } from 'react-dom/test-utils';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
-
 import { workbench, workbenchTask } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -133,9 +132,7 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('欢迎来到 刘文波 的工作空间');
     expect(markup).toContain('Aime 专属助理准备好,先聊聊吧~');
     expect(markup).toContain('去聊天专属助理');
-    expect(markup).toContain(
-      'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
-    );
+    expect(markup).toContain('Hi,我会根据你的任务特性,自动匹配最佳的处理方式~');
     expect(markup).toContain('aria-label="任务描述"');
     expect(markup).toContain('Auto');
     expect(markup).toContain('Ask');
@@ -200,9 +197,9 @@ describe('WorkbenchPage', () => {
     expect(container.textContent).toContain('空间文档库');
     expect(container.textContent).toContain('Esc 退出');
 
-    const extensionButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('拓展'),
-    ) as HTMLButtonElement;
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
     act(() => {
       extensionButton.click();
     });
@@ -214,7 +211,9 @@ describe('WorkbenchPage', () => {
 
     const skillConfigButton = Array.from(
       container.querySelectorAll('button'),
-    ).find(button => button.textContent?.includes('技能配置')) as HTMLButtonElement;
+    ).find(button =>
+      button.textContent?.includes('技能配置'),
+    ) as HTMLButtonElement;
     act(() => {
       skillConfigButton.click();
     });
@@ -288,7 +287,7 @@ describe('WorkbenchPage', () => {
       enable_kbs: [],
       enable_databases: [],
     });
-    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/task-1');
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/task-1');
 
     act(() => {
       root?.unmount();
@@ -333,8 +332,10 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks');
-    expect(container.textContent).not.toContain('这是直接回答，不应该留在首页展示。');
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats');
+    expect(container.textContent).not.toContain(
+      '这是直接回答，不应该留在首页展示。',
+    );
 
     act(() => {
       root?.unmount();
@@ -410,9 +411,9 @@ describe('WorkbenchPage', () => {
       root.render(<WorkbenchPage />);
     });
 
-    const extensionButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('拓展'),
-    ) as HTMLButtonElement;
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
     act(() => {
       extensionButton.click();
     });

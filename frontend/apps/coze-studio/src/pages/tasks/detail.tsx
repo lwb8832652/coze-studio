@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
+import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozAsynchronousTask,
   IconCozBell,
 } from '@coze-arch/coze-design/icons';
-import type { workbenchTask } from '@coze-studio/api-schema';
 
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
@@ -146,7 +146,9 @@ const TaskEventsSection = ({
     <section className="coze-prototype-execution-panel">
       <div className="coze-prototype-execution-header">
         <span className="text-[14px] leading-[18px] text-[#747b8a]">⌄</span>
-        <h2 className="m-0 text-[13px] leading-[20px] font-[500] text-[#232938]">执行流程</h2>
+        <h2 className="m-0 text-[13px] leading-[20px] font-[500] text-[#232938]">
+          执行流程
+        </h2>
         <span className="coze-prototype-muted ml-auto">
           {doneCount}/{totalCount} 已完成 · {task.progress}%
         </span>
@@ -168,7 +170,9 @@ const TaskEventsSection = ({
             )}
             <span className="coze-prototype-step-content">
               <span className="coze-prototype-step-title-row">
-                <span className="coze-prototype-step-title">{display.title}</span>
+                <span className="coze-prototype-step-title">
+                  {display.title}
+                </span>
                 {display.runtime ? (
                   <span className="coze-prototype-step-runtime">
                     {display.runtime}
@@ -195,7 +199,9 @@ const TaskEventsSection = ({
           <li className="coze-prototype-step" data-status="running">
             <span className="coze-prototype-step-running" />
             <span className="coze-prototype-step-content">
-              <span className="coze-prototype-step-title">等待任务执行结果</span>
+              <span className="coze-prototype-step-title">
+                等待任务执行结果
+              </span>
               <span className="coze-prototype-step-detail">
                 后端执行器正在写入流程事件
               </span>
@@ -241,7 +247,10 @@ const TaskAgentResult = ({
   task: ChatTask;
   result: TaskResultPayload;
 }) => (
-  <article className="coze-prototype-agent-result" data-result-type="agent_trace">
+  <article
+    className="coze-prototype-agent-result"
+    data-result-type="agent_trace"
+  >
     <h2>Agent 最终结果</h2>
     <p>{result.message || task.error || '结果生成中'}</p>
   </article>
@@ -324,7 +333,8 @@ const FollowUpComposer = ({
 );
 
 const TaskDetailPage = () => {
-  const { space_id, task_id } = useParams();
+  const { space_id, task_id, thread_id } = useParams();
+  const taskThreadId = thread_id ?? task_id;
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -335,7 +345,7 @@ const TaskDetailPage = () => {
   const [followUpError, setFollowUpError] = useState('');
 
   useEffect(() => {
-    if (!task_id) {
+    if (!taskThreadId) {
       return;
     }
 
@@ -349,7 +359,7 @@ const TaskDetailPage = () => {
       setError('');
 
       try {
-        const detail = await fetchTaskDetail(task_id);
+        const detail = await fetchTaskDetail(taskThreadId);
 
         if (!canceled) {
           setTask(detail.task);
@@ -380,7 +390,7 @@ const TaskDetailPage = () => {
         clearTimeout(timer);
       }
     };
-  }, [task_id]);
+  }, [taskThreadId]);
 
   const handleFollowUpSubmit = async (
     payload: WorkbenchComposerSubmitPayload,
@@ -389,7 +399,7 @@ const TaskDetailPage = () => {
       return;
     }
 
-    if (!space_id || !task_id) {
+    if (!space_id || !taskThreadId) {
       setFollowUpError('缺少任务上下文，无法继续追问');
 
       return;
@@ -401,7 +411,7 @@ const TaskDetailPage = () => {
     try {
       await sendWorkbenchChat({
         space_id,
-        task_id,
+        task_id: taskThreadId,
         message: payload.message,
         mode: mapModeToChatMode(payload.mode),
         enable_skills: payload.enable_skills,
@@ -412,7 +422,7 @@ const TaskDetailPage = () => {
 
       setFollowUpValue('');
 
-      const detail = await fetchTaskDetail(task_id);
+      const detail = await fetchTaskDetail(taskThreadId);
       setTask(detail.task);
       setEvents(detail.events);
     } catch (err) {
@@ -428,20 +438,12 @@ const TaskDetailPage = () => {
     <main className="coze-prototype-page">
       {task ? <TaskTopBar task={task} /> : null}
       <section className="coze-prototype-detail-inner">
-        {loading ? (
-          <div className="coze-prototype-empty">
-            加载中...
-          </div>
-        ) : null}
+        {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
 
-        {error ? (
-          <div className="coze-prototype-error">{error}</div>
-        ) : null}
+        {error ? <div className="coze-prototype-error">{error}</div> : null}
 
         {!loading && !error && !task ? (
-          <div className="coze-prototype-empty">
-            未找到任务
-          </div>
+          <div className="coze-prototype-empty">未找到任务</div>
         ) : null}
 
         {task ? (
@@ -457,7 +459,7 @@ const TaskDetailPage = () => {
               mode={followUpMode}
               loading={followUpLoading}
               error={followUpError}
-              taskId={task_id}
+              taskId={taskThreadId}
               onValueChange={setFollowUpValue}
               onModeChange={setFollowUpMode}
               onSubmit={handleFollowUpSubmit}

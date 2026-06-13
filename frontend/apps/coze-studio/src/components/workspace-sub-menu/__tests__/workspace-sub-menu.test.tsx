@@ -16,12 +16,8 @@
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
-import {
-  ASSISTANT_BADGE,
-  ASSISTANT_LABEL,
-  WORKSPACE_MENU_META,
-} from '../menu';
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
+import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
   it('defines the Figma workspace navigation structure', () => {
@@ -39,8 +35,12 @@ describe('Coze Studio WorkspaceSubMenu', () => {
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
       label: '新建任务',
-      path: 'workbench',
+      path: 'chats/new',
       variant: 'primary',
+    });
+    expect(WORKSPACE_MENU_META.at(-1)).toMatchObject({
+      label: '全部任务',
+      path: 'chats',
     });
   });
 

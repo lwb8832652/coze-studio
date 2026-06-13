@@ -18,12 +18,12 @@ export const ASSISTANT_LABEL = '专属助理';
 export const ASSISTANT_BADGE = 'Beta';
 
 export const SPACE_SUB_MODULE = {
-  WORKBENCH: 'workbench',
+  WORKBENCH: 'chats/new',
   LIBRARY: 'library',
   SKILL: 'skill',
   DEVELOP: 'develop',
   TASK_TRIGGER: 'task-trigger',
-  TASKS: 'tasks',
+  TASKS: 'chats',
 } as const;
 
 export const WORKSPACE_MENU_META = [

@@ -17,7 +17,6 @@
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-
 import { workbenchTask } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,6 +36,7 @@ vi.mock('../service', () => ({
   retryTask: vi.fn(),
 }));
 
+import TasksPage from '../index';
 import {
   canCancelTask,
   filterTasks,
@@ -44,7 +44,6 @@ import {
   getTaskInputText,
   getTaskStatusText,
 } from '../helpers';
-import TasksPage from '../index';
 
 describe('TasksPage helpers', () => {
   beforeEach(() => {
@@ -89,13 +88,23 @@ describe('TasksPage helpers', () => {
     expect(container.textContent).toContain(
       '这里收纳您当前工作空间内的全部任务',
     );
-    expect(container.querySelector('input[placeholder="搜索会话"]')).toBeTruthy();
+    expect(
+      container.querySelector('input[placeholder="搜索会话"]'),
+    ).toBeTruthy();
     expect(container.textContent).toContain('已收藏');
     expect(container.textContent).toContain('批量操作');
     expect(container.textContent).toContain('生成周报');
     expect(container.textContent).toContain('整理项目进展');
     expect(container.textContent).toContain('运行中');
     expect(container.textContent).not.toContain('{"message":"整理项目进展"}');
+
+    const openButton = container.querySelector(
+      'button[aria-label="打开任务 生成周报"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      openButton.click();
+    });
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/task-1');
 
     act(() => {
       root?.unmount();

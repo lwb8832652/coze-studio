@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
-import { useSpaceStore } from '@coze-foundation/space-store';
-import { Loading } from '@coze-arch/coze-design';
-import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import type { workbenchTask } from '@coze-studio/api-schema';
+import { useSpaceStore } from '@coze-foundation/space-store';
+import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
+import { Loading } from '@coze-arch/coze-design';
 
 import { listTasks } from '../../pages/tasks/service';
+import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
 type ChatTask = workbenchTask.ChatTask;
@@ -93,7 +94,7 @@ export const WorkspaceTaskList = () => {
               type="button"
               className="coze-prototype-sidebar-task-row"
               onClick={() =>
-                spaceId && navigate(`/space/${spaceId}/tasks/${task.id}`)
+                spaceId && navigate(buildTaskThreadDetailPath(spaceId, task.id))
               }
             >
               <span className="coze-prototype-task-icon">

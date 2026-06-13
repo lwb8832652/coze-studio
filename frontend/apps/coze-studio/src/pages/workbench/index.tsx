@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useState } from 'react';
 
 import {
   IconCozArrowDown,
@@ -27,13 +27,17 @@ import {
 
 import './index.less';
 
+import {
+  buildTaskThreadDetailPath,
+  buildTaskThreadListPath,
+} from '../chats/task-thread-routes';
+import { getWorkbenchLLMModels, sendWorkbenchChat } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
   mapModeToChatMode,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from './components/types';
-import { getWorkbenchLLMModels, sendWorkbenchChat } from './service';
 
 export { mapModeToChatMode } from './components/types';
 
@@ -42,7 +46,8 @@ const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as c
 const TEMPLATE_CARDS = [
   {
     title: '年度工作总结报告(简洁版)',
-    description: '从用户角度切入年度工作内容,生成结构清晰、详略得当的年终汇报材料。',
+    description:
+      '从用户角度切入年度工作内容,生成结构清晰、详略得当的年终汇报材料。',
     tags: ['文档撰写', '通用', '公开'],
     prompt: '帮我生成一份年度工作总结报告，要求结构清晰、简洁专业。',
     stats: {
@@ -73,7 +78,8 @@ const TEMPLATE_CARDS = [
   },
   {
     title: '后端架构整体方案设计',
-    description: '设计完整的后端技术方案，涵盖架构、模块、接口、稳定性、监控及代码改动。',
+    description:
+      '设计完整的后端技术方案，涵盖架构、模块、接口、稳定性、监控及代码改动。',
     tags: ['文档撰写', '服务端', '公开'],
     prompt: '请帮我设计一个后端架构整体方案，覆盖模块、链路和扩展性。',
     stats: {
@@ -83,7 +89,8 @@ const TEMPLATE_CARDS = [
   },
   {
     title: 'Go 专家为你 CodeReview',
-    description: '作为顶级 Go 专家，系统化执行代码审查，确保代码质量、性能和安全，符合 Go 最佳实践。',
+    description:
+      '作为顶级 Go 专家，系统化执行代码审查，确保代码质量、性能和安全，符合 Go 最佳实践。',
     tags: ['质量检测', '服务端', '公开'],
     prompt: '请作为 Go 专家帮我做一次 CodeReview，并给出修改建议。',
     stats: {
@@ -262,12 +269,12 @@ const WorkbenchPage = () => {
       setValue('');
 
       if (response?.data?.task?.id) {
-        navigate(`/space/${space_id}/tasks/${response.data.task.id}`);
+        navigate(buildTaskThreadDetailPath(space_id, response.data.task.id));
 
         return;
       }
 
-      navigate(`/space/${space_id}/tasks`);
+      navigate(buildTaskThreadListPath(space_id));
     } catch (err) {
       setError(err instanceof Error ? err.message : '发送失败，请稍后重试');
     } finally {

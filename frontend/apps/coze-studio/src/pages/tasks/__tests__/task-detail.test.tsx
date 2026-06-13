@@ -19,7 +19,6 @@ import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-
 import { workbench, workbenchTask } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -195,11 +194,38 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('解析用户输入并确定执行路径');
     expect(container.textContent).toContain('我会先拆解目标，再组织报告结构。');
     expect(container.textContent).toContain('执行流程');
-    expect(container.textContent).not.toContain('{"message":"请总结本周项目进展"}');
+    expect(container.textContent).not.toContain(
+      '{"message":"请总结本周项目进展"}',
+    );
     expect(
       container.querySelector('textarea[aria-label="任务描述"]'),
     ).toBeTruthy();
     expect(container.textContent).toContain('65%');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('loads task detail from canonical thread route params during compatibility', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'task-1',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
+    expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
 
     act(() => {
       root?.unmount();
@@ -249,7 +275,9 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('Ark 模式会直接使用模型生成普通回答。');
+    expect(container.textContent).toContain(
+      'Ark 模式会直接使用模型生成普通回答。',
+    );
     expect(container.textContent).toContain('普通回答');
     expect(container.textContent).not.toContain('一、任务输入');
     expect(container.textContent).not.toContain('解释 Ark 模式报告');
