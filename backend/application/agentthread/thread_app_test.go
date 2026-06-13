@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 func TestTaskToThreadSummaryKeepsTaskWordingAndThreadID(t *testing.T) {
@@ -87,6 +88,37 @@ func TestTaskToThreadSummaryMapsTerminalStatuses(t *testing.T) {
 
 func TestTaskToThreadSummaryReturnsNilForNilTask(t *testing.T) {
 	require.Nil(t, TaskToThreadSummary(nil))
+}
+
+func TestDomainThreadToSummaryKeepsTaskWording(t *testing.T) {
+	thread := &entity.Thread{
+		ID:           200,
+		LegacyTaskID: 100,
+		SpaceID:      1,
+		CreatorID:    2,
+		Title:        "生成方案",
+		Status:       entity.ThreadStatusRunning,
+		Source:       entity.ThreadSourceIM,
+		CreatedAt:    1717000000000,
+		UpdatedAt:    1717000300000,
+	}
+
+	summary := DomainThreadToSummary(thread)
+
+	require.NotNil(t, summary)
+	require.Equal(t, int64(200), summary.ThreadID)
+	require.Equal(t, int64(100), summary.LegacyTaskID)
+	require.Equal(t, int64(1), summary.SpaceID)
+	require.Equal(t, int64(2), summary.CreatorID)
+	require.Equal(t, "生成方案", summary.Title)
+	require.Equal(t, ThreadStatusRunning, summary.Status)
+	require.Equal(t, ThreadSourceIM, summary.Source)
+	require.Equal(t, int64(1717000000000), summary.CreatedAt)
+	require.Equal(t, int64(1717000300000), summary.UpdatedAt)
+}
+
+func TestDomainThreadToSummaryReturnsNilForNilThread(t *testing.T) {
+	require.Nil(t, DomainThreadToSummary(nil))
 }
 
 func TestExtractTaskMessageFallsBackToPlainText(t *testing.T) {

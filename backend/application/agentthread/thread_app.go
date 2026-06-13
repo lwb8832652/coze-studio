@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
 func TaskToThreadSummary(task *taskapi.ChatTask) *ThreadSummary {
@@ -41,6 +42,24 @@ func TaskToThreadSummary(task *taskapi.ChatTask) *ThreadSummary {
 		LastAgentMessage: extractTaskMessage(task.GetResult()),
 		CreatedAt:        task.CreatedAt,
 		UpdatedAt:        task.UpdatedAt,
+	}
+}
+
+func DomainThreadToSummary(thread *entity.Thread) *ThreadSummary {
+	if thread == nil {
+		return nil
+	}
+
+	return &ThreadSummary{
+		ThreadID:     thread.ID,
+		LegacyTaskID: thread.LegacyTaskID,
+		SpaceID:      thread.SpaceID,
+		CreatorID:    thread.CreatorID,
+		Title:        thread.Title,
+		Status:       ThreadStatus(thread.Status),
+		Source:       ThreadSource(thread.Source),
+		CreatedAt:    thread.CreatedAt,
+		UpdatedAt:    thread.UpdatedAt,
 	}
 }
 

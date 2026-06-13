@@ -48,3 +48,30 @@ type ThreadSummary struct {
 	CreatedAt        int64
 	UpdatedAt        int64
 }
+
+type CreateThreadRequest struct {
+	SpaceID      int64
+	UserID       int64
+	AgentID      int64
+	Title        string
+	Source       ThreadSource
+	LegacyTaskID int64
+	Metadata     string
+}
+
+type CreateThreadResponse struct {
+	Thread *ThreadSummary
+}
+
+type ListThreadsRequest struct {
+	SpaceID  int64
+	UserID   int64
+	Status   *ThreadStatus
+	Page     int32
+	PageSize int32
+}
+
+type ListThreadsResponse struct {
+	Threads []*ThreadSummary
+	Total   int64
+}
