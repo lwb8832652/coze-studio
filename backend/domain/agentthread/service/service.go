@@ -1,0 +1,54 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package service
+
+import (
+	"context"
+
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	"github.com/coze-dev/coze-studio/backend/infra/idgen"
+)
+
+type CreateThreadRequest struct {
+	SpaceID      int64
+	UserID       int64
+	AgentID      int64
+	Title        string
+	Source       entity.ThreadSource
+	LegacyTaskID int64
+	Metadata     string
+}
+
+type ListThreadsRequest struct {
+	SpaceID  int64
+	UserID   int64
+	Status   *entity.ThreadStatus
+	Page     int32
+	PageSize int32
+}
+
+type ThreadService interface {
+	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
+	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
+	ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error)
+}
+
+type Components struct {
+	Repo  repository.ThreadRepository
+	IDGen idgen.IDGenerator
+}
