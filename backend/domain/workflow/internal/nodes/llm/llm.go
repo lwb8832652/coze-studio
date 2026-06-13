@@ -226,8 +226,6 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 		return nil, fmt.Errorf("unsupported response format: %d", convertedLLMParam.ResponseFormat)
 	}
 
-	c.OutputFormat = resFormat
-
 	if err = convert.SetInputsForNodeSchema(n, ns); err != nil {
 		return nil, err
 	}
@@ -236,25 +234,9 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 		return nil, err
 	}
 
-	if resFormat == FormatJSON {
-		if len(ns.OutputTypes) == 1 {
-			for _, v := range ns.OutputTypes {
-				if v.Type == vo.DataTypeString {
-					resFormat = FormatText
-					break
-				}
-			}
-		} else if len(ns.OutputTypes) == 2 {
-			if _, ok := ns.OutputTypes[ReasoningOutputKey]; ok {
-				for k, v := range ns.OutputTypes {
-					if k != ReasoningOutputKey && v.Type == vo.DataTypeString {
-						resFormat = FormatText
-						break
-					}
-				}
-			}
-		}
-	}
+	resFormat = effectiveOutputFormat(resFormat, ns.OutputTypes)
+	c.OutputFormat = resFormat
+	syncLLMParamResponseFormat(c.LLMParams, resFormat)
 
 	if resFormat == FormatJSON {
 		ns.StreamConfigs = &schema2.StreamConfig{
@@ -282,6 +264,7 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 				return nil, err
 			}
 			c.BackupLLMParams = backupModel
+			syncLLMParamResponseFormat(c.BackupLLMParams, c.OutputFormat)
 		}
 	}
 
@@ -295,6 +278,45 @@ func (c *Config) Adapt(_ context.Context, n *vo.Node, _ ...nodes.AdaptOption) (*
 	}
 
 	return ns, nil
+}
+
+func effectiveOutputFormat(format Format, outputTypes map[string]*vo.TypeInfo) Format {
+	if format != FormatJSON {
+		return format
+	}
+
+	if len(outputTypes) == 1 {
+		for _, v := range outputTypes {
+			if v.Type == vo.DataTypeString {
+				return FormatText
+			}
+		}
+	} else if len(outputTypes) == 2 {
+		if _, ok := outputTypes[ReasoningOutputKey]; ok {
+			for k, v := range outputTypes {
+				if k != ReasoningOutputKey && v.Type == vo.DataTypeString {
+					return FormatText
+				}
+			}
+		}
+	}
+
+	return FormatJSON
+}
+
+func syncLLMParamResponseFormat(params *vo.LLMParams, format Format) {
+	if params == nil {
+		return
+	}
+
+	switch format {
+	case FormatText:
+		params.ResponseFormat = vo.ResponseFormatText
+	case FormatMarkdown:
+		params.ResponseFormat = vo.ResponseFormatMarkdown
+	case FormatJSON:
+		params.ResponseFormat = vo.ResponseFormatJSON
+	}
 }
 
 func llmParamsToLLMParam(params vo.LLMParam) (*vo.LLMParams, error) {
@@ -573,26 +595,7 @@ func (c *Config) Build(ctx context.Context, ns *schema2.NodeSchema, _ ...schema2
 
 	var hasReasoning bool
 
-	format := c.OutputFormat
-	if format == FormatJSON {
-		if len(ns.OutputTypes) == 1 {
-			for _, v := range ns.OutputTypes {
-				if v.Type == vo.DataTypeString {
-					format = FormatText
-					break
-				}
-			}
-		} else if len(ns.OutputTypes) == 2 {
-			if _, ok := ns.OutputTypes[ReasoningOutputKey]; ok {
-				for k, v := range ns.OutputTypes {
-					if k != ReasoningOutputKey && v.Type == vo.DataTypeString {
-						format = FormatText
-						break
-					}
-				}
-			}
-		}
-	}
+	format := effectiveOutputFormat(c.OutputFormat, ns.OutputTypes)
 
 	userPrompt := c.UserPrompt
 	switch format {

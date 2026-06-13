@@ -17,16 +17,75 @@
 package llm
 
 import (
+	"context"
 	"testing"
 
 	"github.com/bytedance/mockey"
 	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
 	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
+	"github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/pkg/urltobase64url"
 )
+
+func TestAdaptDowngradesJSONModelParamsForSingleStringOutput(t *testing.T) {
+	cfg := &Config{}
+	node := &vo.Node{
+		ID: "162256",
+		Data: &vo.Data{
+			Meta: &vo.NodeMetaFE{Title: "大模型"},
+			Inputs: &vo.Inputs{
+				InputParameters: []*vo.Param{},
+				LLMParam: []*vo.Param{
+					literalLLMParam("temperature", "0.85"),
+					literalLLMParam("maxTokens", "2000"),
+					literalLLMParam("responseFormat", "2"),
+					literalLLMParam("modleName", "deepseek-v4-pro"),
+					literalLLMParam("modelType", "100002"),
+					literalLLMParam("prompt", "你是什么大模型"),
+					literalLLMParam("systemPrompt", ""),
+					literalLLMParam("generationDiversity", "balance"),
+				},
+			},
+			Outputs: []any{
+				&vo.Variable{
+					Name: "output",
+					Type: vo.VariableTypeString,
+				},
+			},
+		},
+	}
+
+	ns, err := cfg.Adapt(context.Background(), node)
+
+	require.NoError(t, err)
+	require.NotNil(t, ns.StreamConfigs)
+	assert.True(t, ns.StreamConfigs.CanGeneratesStream)
+	assert.Equal(t, FormatText, cfg.OutputFormat)
+	assert.Equal(t, vo.ResponseFormatText, cfg.LLMParams.ResponseFormat)
+	assert.Equal(
+		t,
+		bot_common.ModelResponseFormat_Text,
+		cfg.LLMParams.ToModelBuilderLLMParams().ResponseFormat,
+	)
+}
+
+func literalLLMParam(name string, content any) *vo.Param {
+	return &vo.Param{
+		Name: name,
+		Input: &vo.BlockInput{
+			Type: vo.VariableTypeString,
+			Value: &vo.BlockInputValue{
+				Type:    vo.BlockInputValueTypeLiteral,
+				Content: content,
+			},
+		},
+	}
+}
 
 func TestTransformMessagePart(t *testing.T) {
 	mockey.PatchConvey("TestTransformMessagePart", t, func() {
