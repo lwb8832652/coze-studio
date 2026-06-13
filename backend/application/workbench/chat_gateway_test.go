@@ -18,15 +18,20 @@ package workbench
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	chatapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
+	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
+	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -146,14 +151,52 @@ func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
 	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
 }
 
+func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
+	taskApp := &recordingWorkbenchTaskApp{
+		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "生成周报", Status: taskapi.TaskStatus_Running},
+	}
+	agentThreadDomain := &recordingAgentThreadService{}
+	app := &ApplicationService{
+		taskApp:        taskApp,
+		agentThreadSVC: &appagentthread.ApplicationService{ThreadSVC: agentThreadDomain},
+		runAsync:       func(func()) {},
+	}
+	ctx := ctxcache.Init(context.Background())
+	ctxcache.Store(ctx, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 99})
+	conversationID := int64(30)
+	skillID := int64(40)
+
+	resp, err := app.HandleMessage(ctx, &chatapi.WorkbenchChatRequest{
+		SpaceID:         1,
+		ConversationID:  &conversationID,
+		SelectedSkillID: &skillID,
+		Message:         "请生成周报",
+		Mode:            chatapi.ChatMode_Auto,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), resp.Data.Task.ID)
+	require.Equal(t, 1, agentThreadDomain.createCalls)
+	require.NotNil(t, agentThreadDomain.createReq)
+	require.Equal(t, int64(1), agentThreadDomain.createReq.SpaceID)
+	require.Equal(t, int64(99), agentThreadDomain.createReq.UserID)
+	require.Equal(t, "生成周报", agentThreadDomain.createReq.Title)
+	require.Equal(t, int64(10), agentThreadDomain.createReq.LegacyTaskID)
+	require.Contains(t, agentThreadDomain.createReq.Metadata, `"message":"请生成周报"`)
+	require.Contains(t, agentThreadDomain.createReq.Metadata, `"conversation_id":"30"`)
+	require.Contains(t, agentThreadDomain.createReq.Metadata, `"skill_id":"40"`)
+}
+
 func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing.T) {
 	taskID := int64(20)
 	taskApp := &recordingWorkbenchTaskApp{
 		got: &taskapi.ChatTask{ID: 20, SpaceID: 1, Title: "existing", Status: taskapi.TaskStatus_Running},
 	}
+	agentThreadDomain := &recordingAgentThreadService{}
 	var scheduled []func()
 	app := &ApplicationService{
-		taskApp: taskApp,
+		taskApp:        taskApp,
+		agentThreadSVC: &appagentthread.ApplicationService{ThreadSVC: agentThreadDomain},
 		runAsync: func(fn func()) {
 			scheduled = append(scheduled, fn)
 		},
@@ -180,6 +223,7 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	require.NotNil(t, resp.Data.Task)
 	require.Equal(t, int64(20), resp.Data.Task.ID)
 	require.Equal(t, 0, taskApp.createCalls)
+	require.Zero(t, agentThreadDomain.createCalls)
 	require.Len(t, taskApp.events, 1)
 	require.Equal(t, "user.message", taskApp.events[0].eventType)
 	require.Empty(t, taskApp.completedResult)
@@ -190,6 +234,32 @@ func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing
 	require.GreaterOrEqual(t, len(taskApp.events), 2)
 	require.Equal(t, "answer.completed", taskApp.events[len(taskApp.events)-1].eventType)
 	require.Contains(t, taskApp.completedResult, `"message":"follow answer"`)
+}
+
+func TestHandleMessageStopsWhenAgentThreadCreateFails(t *testing.T) {
+	taskApp := &recordingWorkbenchTaskApp{
+		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "生成周报", Status: taskapi.TaskStatus_Running},
+	}
+	agentThreadDomain := &recordingAgentThreadService{createErr: errors.New("agent thread unavailable")}
+	var scheduled []func()
+	app := &ApplicationService{
+		taskApp:        taskApp,
+		agentThreadSVC: &appagentthread.ApplicationService{ThreadSVC: agentThreadDomain},
+		runAsync: func(fn func()) {
+			scheduled = append(scheduled, fn)
+		},
+	}
+
+	resp, err := app.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		Message: "请生成周报",
+		Mode:    chatapi.ChatMode_Auto,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent thread unavailable")
+	require.Nil(t, resp)
+	require.Empty(t, scheduled)
 }
 
 func TestHandleMessageWithTaskIDRejectsTaskFromDifferentSpace(t *testing.T) {
@@ -251,6 +321,7 @@ func TestInitServiceMergesRuntimeComponents(t *testing.T) {
 	prevAgentRunSVC := SVC.agentRunSVC
 	prevChatModelProvider := SVC.chatModelProvider
 	prevTaskApp := SVC.taskApp
+	prevAgentThreadSVC := SVC.agentThreadSVC
 	t.Cleanup(func() {
 		SVC.skillSVC = prevSkillSVC
 		SVC.taskSVC = prevTaskSVC
@@ -258,16 +329,19 @@ func TestInitServiceMergesRuntimeComponents(t *testing.T) {
 		SVC.agentRunSVC = prevAgentRunSVC
 		SVC.chatModelProvider = prevChatModelProvider
 		SVC.taskApp = prevTaskApp
+		SVC.agentThreadSVC = prevAgentThreadSVC
 	})
 
 	skillSVC := &appskill.ApplicationService{}
 	taskSVC := &apptask.ApplicationService{}
-	InitService(&ServiceComponents{SkillSVC: skillSVC, TaskSVC: taskSVC})
+	agentThreadSVC := &appagentthread.ApplicationService{}
+	InitService(&ServiceComponents{SkillSVC: skillSVC, TaskSVC: taskSVC, AgentThreadSVC: agentThreadSVC})
 	InitService(&ServiceComponents{ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 		return nil, false, nil
 	}})
 
 	require.Same(t, skillSVC, SVC.skillSVC)
 	require.Same(t, taskSVC, SVC.taskSVC)
+	require.Same(t, agentThreadSVC, SVC.agentThreadSVC)
 	require.NotNil(t, SVC.chatModelProvider)
 }

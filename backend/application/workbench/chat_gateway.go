@@ -27,6 +27,7 @@ import (
 
 	chatapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
@@ -38,6 +39,7 @@ import (
 type ApplicationService struct {
 	skillSVC          *appskill.ApplicationService
 	taskSVC           *apptask.ApplicationService
+	agentThreadSVC    *appagentthread.ApplicationService
 	taskApp           workbenchTaskApplication
 	knowledgeSVC      crossknowledge.Knowledge
 	agentRunSVC       agentrun.Run
@@ -151,6 +153,9 @@ func (s *ApplicationService) prepareTask(ctx context.Context, req *chatapi.Workb
 	}
 	if task == nil {
 		return nil, fmt.Errorf("task service returned empty task")
+	}
+	if err := s.createAgentThreadForTask(ctx, req, task, message); err != nil {
+		return nil, err
 	}
 	return task, nil
 }

@@ -22,6 +22,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	agentthreadentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	agentthreadsvc "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	agentrunentity "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/entity"
 )
 
@@ -82,6 +84,39 @@ func (r *recordingWorkbenchTaskApp) FailTask(_ context.Context, taskID int64, er
 	r.failedID = taskID
 	r.failError = errMsg
 	return nil
+}
+
+type recordingAgentThreadService struct {
+	createReq   *agentthreadsvc.CreateThreadRequest
+	createCalls int
+	createErr   error
+}
+
+func (r *recordingAgentThreadService) CreateThread(_ context.Context, req *agentthreadsvc.CreateThreadRequest) (*agentthreadentity.Thread, error) {
+	r.createCalls++
+	r.createReq = req
+	if r.createErr != nil {
+		return nil, r.createErr
+	}
+
+	return &agentthreadentity.Thread{
+		ID:           200,
+		SpaceID:      req.SpaceID,
+		CreatorID:    req.UserID,
+		Title:        req.Title,
+		Status:       agentthreadentity.ThreadStatusIdle,
+		Source:       req.Source,
+		LegacyTaskID: req.LegacyTaskID,
+		Metadata:     req.Metadata,
+	}, nil
+}
+
+func (r *recordingAgentThreadService) GetThread(context.Context, int64) (*agentthreadentity.Thread, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListThreads(context.Context, *agentthreadsvc.ListThreadsRequest) ([]*agentthreadentity.Thread, int64, error) {
+	return nil, 0, nil
 }
 
 type fakeAgentRun struct {

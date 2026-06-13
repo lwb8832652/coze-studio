@@ -22,6 +22,7 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/application/permission"
 
+	"github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/app"
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
 	"github.com/coze-dev/coze-studio/backend/application/connector"
@@ -107,15 +108,16 @@ type primaryServices struct {
 	basicServices *basicServices
 	infra         *appinfra.AppDependencies
 
-	pluginSVC    *plugin.PluginApplicationService
-	memorySVC    *memory.MemoryApplicationServices
-	knowledgeSVC *knowledge.KnowledgeApplicationService
-	workflowSVC  *workflow.ApplicationService
-	shortcutSVC  *shortcutcmd.ShortcutCmdApplicationService
-	skillSVC     *skill.ApplicationService
-	taskSVC      *task.ApplicationService
-	workbenchSVC *workbench.ApplicationService
-	appSVC       *app.APPApplicationService
+	pluginSVC      *plugin.PluginApplicationService
+	memorySVC      *memory.MemoryApplicationServices
+	knowledgeSVC   *knowledge.KnowledgeApplicationService
+	workflowSVC    *workflow.ApplicationService
+	shortcutSVC    *shortcutcmd.ShortcutCmdApplicationService
+	agentThreadSVC *agentthread.ApplicationService
+	skillSVC       *skill.ApplicationService
+	taskSVC        *task.ApplicationService
+	workbenchSVC   *workbench.ApplicationService
+	appSVC         *app.APPApplicationService
 }
 
 type complexServices struct {
@@ -244,6 +246,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 	}
 
 	shortcutSVC := shortcutcmd.InitService(basicServices.infra.DB, basicServices.infra.IDGenSVC)
+	agentThreadSVC := agentthread.InitService(&agentthread.ServiceComponents{
+		DB:    basicServices.infra.DB,
+		IDGen: basicServices.infra.IDGenSVC,
+	})
 	skillSVC := skill.InitService(&skill.ServiceComponents{
 		DB:         basicServices.infra.DB,
 		IDGen:      basicServices.infra.IDGenSVC,
@@ -254,21 +260,23 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		IDGen: basicServices.infra.IDGenSVC,
 	})
 	workbenchSVC := workbench.InitService(&workbench.ServiceComponents{
-		SkillSVC: skillSVC,
-		TaskSVC:  taskSVC,
+		SkillSVC:       skillSVC,
+		TaskSVC:        taskSVC,
+		AgentThreadSVC: agentThreadSVC,
 	})
 
 	return &primaryServices{
-		basicServices: basicServices,
-		pluginSVC:     pluginSVC,
-		memorySVC:     memorySVC,
-		knowledgeSVC:  knowledgeSVC,
-		workflowSVC:   workflowDomainSVC,
-		shortcutSVC:   shortcutSVC,
-		skillSVC:      skillSVC,
-		taskSVC:       taskSVC,
-		workbenchSVC:  workbenchSVC,
-		infra:         basicServices.infra,
+		basicServices:  basicServices,
+		pluginSVC:      pluginSVC,
+		memorySVC:      memorySVC,
+		knowledgeSVC:   knowledgeSVC,
+		workflowSVC:    workflowDomainSVC,
+		shortcutSVC:    shortcutSVC,
+		agentThreadSVC: agentThreadSVC,
+		skillSVC:       skillSVC,
+		taskSVC:        taskSVC,
+		workbenchSVC:   workbenchSVC,
+		infra:          basicServices.infra,
 	}, nil
 }
 
