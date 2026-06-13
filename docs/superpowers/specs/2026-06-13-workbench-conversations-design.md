@@ -1,4 +1,4 @@
-# 工作台菜单、对话列表与对话详情设计
+# 工作台菜单、任务列表与任务详情设计
 
 日期：2026-06-13
 状态：已获方向确认，等待用户审阅
@@ -21,24 +21,24 @@
 5. 侧边栏底部 `我的任务` 拉取最近任务。
 6. 后端 `workbench/chat` 会创建 task，异步执行，并把流程写入 `task_events`。
 
-目标是完全复刻 Deer-flow 对话工作台能力：新建对话、全部对话、最近对话、对话详情、运行流、artifact、token usage、memory、IM channel 来源、settings 入口。这里的核心变化是从 `Task-first` 转为 `Thread-first`。
+目标是完整复刻 Deer-flow 的 thread/chat runtime 能力，但用户可见菜单保留当前原型里的“任务”表达：新建任务、全部任务、我的任务、任务详情、执行流程、artifact、token usage、memory、IM channel 来源、settings 入口。这里的核心变化是内部事实源从旧 `ChatTask` 转为 `Thread-first`，不是把产品文案改成聊天工具。
 
 ## 目标
 
-1. 将 `新建任务` 改造为 Deer-flow 风格 `新建对话`。
-2. 将 `全部任务` 改造为 Deer-flow 风格 `全部对话`。
-3. 将 `我的任务` 改造为 Deer-flow 风格 `最近对话`。
-4. 将 `任务详情` 改造为 Deer-flow 风格 `对话详情页`。
+1. 保留 `新建任务` 作为用户可见入口，底层创建 Deer-flow 风格 thread/run。
+2. 保留 `全部任务` 作为用户可见列表，底层展示 thread 聚合结果。
+3. 保留 `我的任务` 作为 sidebar 最近任务区，底层使用 recent threads。
+4. 保留 `任务详情` 作为用户可见详情页，底层复刻 Deer-flow chat detail。
 5. 保留 `资源配置` 和 `开发配置` 功能不变，只定义未来风格统一边界。
 6. `技能配置` 接第二份 Skills spec；本设计只定义菜单、路由和页面挂载。
 7. `任务触发器` 改为 `工具`，接第二份 Tools/MCP spec；本设计定义兼容跳转。
 8. 后端事实源切到 `agent_threads`、`agent_runs`、`agent_messages`、`agent_events`，旧 `task` 作为兼容视图。
-9. 前端复刻 Deer-flow 的 sidebar、recent chats、chat detail、message list、input box、artifact drawer、token indicator、settings entry。
+9. 前端复刻 Deer-flow 的 sidebar、recent threads、chat detail、message list、input box、artifact drawer、token indicator、settings entry，但外层文案保持任务心智。
 10. 支持生产级路由兼容、数据迁移、权限、分页、搜索、空态、错误态和测试。
 
 ## 非目标
 
-1. 不在本设计中实现 Skills、Tools/MCP、Memory、Artifacts、IM Channels 的内部逻辑；只接入它们的页面入口和对话详情展示位。
+1. 不在本设计中实现 Skills、Tools/MCP、Memory、Artifacts、IM Channels 的内部逻辑；只接入它们的页面入口和任务详情展示位。
 2. 不删除旧 task 表和旧 API，避免历史链接和已有数据中断。
 3. 不改变资源配置和开发配置的业务逻辑。
 4. 不把新的 Agent Harness 继续建立在 `ChatTask` 表上。
@@ -81,12 +81,19 @@
 
 ## 菜单映射
 
+命名策略：
+
+1. 用户可见菜单和页面标题保留“任务”语言。
+2. 技术模型、API、代码域可以继续使用 `thread`、`run`、`message`。
+3. 文档中提到的“对话/thread”指 Deer-flow 运行时能力，不代表最终菜单文案。
+4. 需要展示更细语义时使用“任务会话”或“任务上下文”，避免直接把菜单改成“对话”。
+
 | 当前 Coze 菜单 | 目标 Deer-flow 能力 | 目标显示名 | 目标路由 | 处理策略 |
 | --- | --- | --- | --- | --- |
-| 新建任务 | 新建对话 | 新建对话 | `/space/:space_id/chats/new` | 旧 `/workbench` 兼容跳转 |
-| 全部任务 | 对话列表 | 全部对话 | `/space/:space_id/chats` | 旧 `/tasks` 兼容跳转或复用列表 |
-| 我的任务 | 最近对话 | 最近对话 | sidebar section | 由 `threads/search` 驱动 |
-| 任务详情 | 对话详情 | 对话详情 | `/space/:space_id/chats/:thread_id` | 旧 `/tasks/:task_id` 解析 legacy task 后跳转 |
+| 新建任务 | 新建 thread/run | 新建任务 | `/space/:space_id/chats/new` | 旧 `/workbench` 兼容跳转 |
+| 全部任务 | thread 列表 | 全部任务 | `/space/:space_id/chats` | 旧 `/tasks` 兼容跳转或复用列表 |
+| 我的任务 | recent threads | 我的任务 | sidebar section | 由 `threads/search` 驱动 |
+| 任务详情 | thread detail | 任务详情 | `/space/:space_id/chats/:thread_id` | 旧 `/tasks/:task_id` 解析 legacy task 后跳转 |
 | 资源配置 | 资源配置 | 资源配置 | `/space/:space_id/library` | 保留 |
 | 技能配置 | Skills | 技能 | `/space/:space_id/skills` | 旧 `/skill` 兼容跳转 |
 | 开发配置 | 开发配置 | 开发配置 | `/space/:space_id/develop` | 保留 |
@@ -94,8 +101,8 @@
 
 菜单分组建议：
 
-1. 主操作：`新建对话`。
-2. 工作：`全部对话`、`最近对话`。
+1. 主操作：`新建任务`。
+2. 工作：`全部任务`、`我的任务`。
 3. 配置：`技能`、`工具`、`资源配置`、`开发配置`。
 4. 设置：放到底部 settings menu，接 Memory、Token、Channels、About。
 
@@ -203,7 +210,7 @@ frontend/apps/coze-studio/src/components/workspace-sub-menu/
 
 ## 页面设计
 
-### 新建对话
+### 新建任务
 
 第一屏：
 
@@ -221,13 +228,13 @@ frontend/apps/coze-studio/src/components/workspace-sub-menu/
 3. 立即切换到详情布局。
 4. 调用 `/runs/stream`。
 5. 收到正式 `thread_id` 后 `history.replaceState` 到 `/chats/:thread_id`。
-6. sidebar recent chats optimistic 插入。
+6. sidebar `我的任务` optimistic 插入。
 
-### 全部对话
+### 全部任务
 
 功能：
 
-1. 对话搜索。
+1. 任务搜索。
 2. 状态过滤：全部、运行中、已中断、失败、已归档。
 3. 来源过滤：Web、IM channel、API。
 4. Agent 过滤。
@@ -248,9 +255,9 @@ frontend/apps/coze-studio/src/components/workspace-sub-menu/
 8. artifact count。
 9. updated_at。
 
-### 最近对话
+### 我的任务
 
-sidebar 最近对话：
+sidebar 我的任务：
 
 1. 默认展示 8 到 20 条。
 2. 无限滚动加载更多。
@@ -258,9 +265,9 @@ sidebar 最近对话：
 4. 支持重命名、分享、导出、删除。
 5. 支持 channel badge。
 6. 支持 running 状态点。
-7. 没有最近对话时隐藏或显示轻量空态。
+7. 没有最近任务时隐藏或显示轻量空态。
 
-### 对话详情
+### 任务详情
 
 布局：
 
@@ -344,7 +351,7 @@ CREATE TABLE agent_thread_preferences (
 
 用途：
 
-1. 最近对话按用户维度排序。
+1. 我的任务按用户维度排序。
 2. 收藏/置顶不污染 thread 全局 metadata。
 3. 用户归档只影响自己的列表。
 
@@ -379,7 +386,7 @@ CREATE TABLE legacy_task_thread_refs (
 | --- | --- | --- |
 | POST | `/api/agent/threads` | 创建 thread |
 | GET | `/api/agent/threads` | 列出 thread，支持 search/filter/page |
-| GET | `/api/agent/threads/recent` | 当前用户最近对话 |
+| GET | `/api/agent/threads/recent` | 当前用户最近任务 |
 | GET | `/api/agent/threads/{thread_id}` | thread 详情 |
 | PATCH | `/api/agent/threads/{thread_id}` | 重命名、metadata patch |
 | DELETE | `/api/agent/threads/{thread_id}` | 删除或归档 thread |
@@ -452,7 +459,7 @@ struct ChatTask {
 
 ## 数据流
 
-### 新建对话发送
+### 新建任务发送
 
 ```mermaid
 sequenceDiagram
@@ -569,8 +576,8 @@ Legacy TaskStatus 映射：
 
 推荐使用 React Query 或现有项目数据请求模式：
 
-1. `useThreads(params)`：全部对话。
-2. `useRecentThreads(spaceId)`：最近对话。
+1. `useThreads(params)`：全部任务。
+2. `useRecentThreads(spaceId)`：我的任务。
 3. `useThread(threadId)`：详情。
 4. `useThreadMessages(threadId)`：历史分页。
 5. `useThreadStream(threadId)`：运行流。
@@ -590,12 +597,12 @@ Legacy TaskStatus 映射：
 
 1. 使用 Coze Design/Semi 组件。
 2. 左侧菜单保持 300px 默认宽度，但支持折叠。
-3. 最近对话标题必须 ellipsis + tooltip。
+3. 我的任务标题必须 ellipsis + tooltip。
 4. 图标按钮使用现有 icon 库，不用文字按钮替代常见图标。
-5. 对话详情不使用卡片套卡片。
+5. 任务详情不使用卡片套卡片。
 6. Artifact panel 使用可伸缩布局，不在浮层卡片里塞完整详情。
 7. 移动端至少支持 list/detail 单列切换。
-8. 空态直接引导新建对话，不展示营销内容。
+8. 空态直接引导新建任务，不展示营销内容。
 9. loading、error、empty、permission denied、offline 都要有稳定状态。
 10. 文本不能溢出按钮、菜单项和列表行。
 
@@ -658,8 +665,8 @@ Settings 菜单接入：
 
 ### 集成测试
 
-1. 新建对话 -> stream -> 完成 -> 最近对话出现。
-2. 全部对话打开详情。
+1. 新建任务 -> stream -> 完成 -> 我的任务出现。
+2. 全部任务打开详情。
 3. 旧 `/workbench` 跳到 `/chats/new`。
 4. 旧 `/tasks/:task_id` linked 跳到 `/chats/:thread_id`。
 5. 未迁移旧 task 展示 read-only legacy detail。
@@ -684,7 +691,7 @@ Settings 菜单接入：
 1. 新 canonical routes。
 2. legacy redirects。
 3. sidebar menu label 更新。
-4. 最近对话组件骨架。
+4. 我的任务组件骨架。
 5. settings 入口骨架。
 
 验收：
@@ -704,10 +711,10 @@ Settings 菜单接入：
 
 验收：
 
-1. 新对话列表由 thread 驱动。
+1. 新任务列表由 thread 驱动。
 2. 旧 task 链接能稳定处理。
 
-### Phase 3：对话详情
+### Phase 3：任务详情
 
 交付：
 
@@ -720,7 +727,7 @@ Settings 菜单接入：
 
 验收：
 
-1. 新建对话能实时流式展示。
+1. 新建任务能实时流式展示。
 2. 运行失败、停止、忙碌状态正确。
 
 ### Phase 4：Artifacts、Token、Memory、Channel 展示接入
@@ -778,13 +785,13 @@ Settings 菜单接入：
 | Task-first 到 Thread-first 迁移过大 | 页面和 API 同时变化，容易回归 | 双写、兼容包装、legacy resolver、分阶段切读 |
 | 历史 task 无法映射 thread | 旧链接断掉 | read-only fallback 和后台迁移 |
 | SSE stream 与 React Router 生命周期冲突 | 切换页面丢消息或重复 run | 使用稳定 thread_id、onStart 后 replace、run id 幂等 |
-| 最近对话列表频繁刷新 | UI 抖动和接口压力 | optimistic update + 精准 invalidate |
+| 我的任务列表频繁刷新 | UI 抖动和接口压力 | optimistic update + 精准 invalidate |
 | Artifact panel 影响主聊天布局 | 小屏拥挤 | 可收起、resize、移动端抽屉 |
 | 新旧 API 并存导致权限漏洞 | 越权读取旧 task/thread | resolver 和兼容 API 统一走 thread 权限校验 |
-| 菜单命名变化影响用户习惯 | 找不到旧功能 | 旧路由保留，菜单过渡期可显示 tooltip 或搜索别名 |
+| 内部模型叫 thread 但菜单叫任务 | 研发和产品沟通容易混淆 | 文档和代码注释明确“用户文案=任务，技术事实源=thread/run” |
 
 ## 设计结论
 
-工作台应从 `Task-first` 调整为 `Thread-first`。`新建任务`、`全部任务`、`我的任务`、`任务详情` 分别映射为 `新建对话`、`全部对话`、`最近对话`、`对话详情`，并通过 legacy route 和 task compatibility layer 保留旧链接。
+工作台应从旧 `ChatTask-first` 调整为 `Thread-first`，但用户可见菜单继续保留原型中的任务方式。`新建任务`、`全部任务`、`我的任务`、`任务详情` 分别对应内部的 create thread、thread list、recent threads、thread detail，并通过 legacy route 和 task compatibility layer 保留旧链接。
 
-这样改造后，前四份 spec 中的 runtime、skills/tools、memory、token usage、artifacts、IM channels 都能自然挂在同一个 thread detail 体验上，避免未来继续围绕旧 task 模型补丁式扩展。
+这样改造后，前四份 spec 中的 runtime、skills/tools、memory、token usage、artifacts、IM channels 都能自然挂在同一个 thread detail 能力上，同时产品侧仍保持“任务工作台”的表达，避免未来继续围绕旧 task 模型补丁式扩展。
