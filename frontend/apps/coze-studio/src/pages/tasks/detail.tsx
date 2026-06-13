@@ -31,7 +31,7 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
-import { sendWorkbenchChat } from './service';
+import { appendTaskThreadMessage, sendWorkbenchChat } from './service';
 import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
 import {
   formatUpdatedTime,
@@ -321,6 +321,55 @@ const FollowUpComposer = ({
   </section>
 );
 
+const getThreadFollowUpMetadata = (
+  payload: WorkbenchComposerSubmitPayload,
+) =>
+  JSON.stringify({
+    mode: payload.mode,
+    model_type: payload.modelType,
+    model_name: payload.modelName,
+    enable_skills: payload.enable_skills,
+    enable_mcp: payload.enable_mcp,
+    enable_kbs: payload.enable_kbs,
+    enable_databases: payload.enable_databases,
+  });
+
+const sendFollowUpMessage = async ({
+  activeTaskId,
+  isCanonicalThreadDetail,
+  payload,
+  spaceId,
+  threadId,
+}: {
+  activeTaskId: string;
+  isCanonicalThreadDetail: boolean;
+  payload: WorkbenchComposerSubmitPayload;
+  spaceId: string;
+  threadId: string;
+}) => {
+  if (isCanonicalThreadDetail) {
+    await appendTaskThreadMessage({
+      thread_id: threadId,
+      role: 'user',
+      content: payload.message,
+      metadata: getThreadFollowUpMetadata(payload),
+    });
+
+    return;
+  }
+
+  await sendWorkbenchChat({
+    space_id: spaceId,
+    task_id: activeTaskId,
+    message: payload.message,
+    mode: mapModeToChatMode(payload.mode),
+    enable_skills: payload.enable_skills,
+    enable_mcp: payload.enable_mcp,
+    enable_kbs: payload.enable_kbs,
+    enable_databases: payload.enable_databases,
+  });
+};
+
 const TaskDetailPage = () => {
   const { space_id, task_id, thread_id } = useParams();
   const taskDetailId = thread_id ?? task_id;
@@ -398,21 +447,20 @@ const TaskDetailPage = () => {
       return;
     }
 
+    const isCanonicalThreadDetail =
+      taskDetailSource === 'thread' && task?.id === taskDetailId;
     const activeTaskId = task?.id ?? taskDetailId;
 
     setFollowUpLoading(true);
     setFollowUpError('');
 
     try {
-      await sendWorkbenchChat({
-        space_id,
-        task_id: activeTaskId,
-        message: payload.message,
-        mode: mapModeToChatMode(payload.mode),
-        enable_skills: payload.enable_skills,
-        enable_mcp: payload.enable_mcp,
-        enable_kbs: payload.enable_kbs,
-        enable_databases: payload.enable_databases,
+      await sendFollowUpMessage({
+        activeTaskId,
+        isCanonicalThreadDetail,
+        payload,
+        spaceId: space_id,
+        threadId: taskDetailId,
       });
 
       setFollowUpValue('');

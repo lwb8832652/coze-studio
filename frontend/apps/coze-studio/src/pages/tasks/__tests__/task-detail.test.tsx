@@ -30,6 +30,7 @@ const mockNavigate = vi.hoisted(() => vi.fn());
 const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
+const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 
@@ -42,6 +43,7 @@ vi.mock('../service', () => ({
   getTask: mockGetTask,
   getTaskThread: mockGetTaskThread,
   listTaskThreadMessages: mockListTaskThreadMessages,
+  appendTaskThreadMessage: mockAppendTaskThreadMessage,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
@@ -118,6 +120,7 @@ describe('TaskDetailPage', () => {
     mockGetTask.mockReset();
     mockGetTaskThread.mockReset();
     mockListTaskThreadMessages.mockReset();
+    mockAppendTaskThreadMessage.mockReset();
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
@@ -166,6 +169,19 @@ describe('TaskDetailPage', () => {
       data: {
         messages: [],
         total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockAppendTaskThreadMessage.mockResolvedValue({
+      data: {
+        message_id: 'msg-appended-1',
+        thread_id: 'thread-1',
+        run_id: '',
+        role: 'user',
+        content: '请继续追问',
+        metadata: '',
+        created_at: 1717000400000,
       },
       code: 0,
       msg: '',
@@ -345,6 +361,149 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).not.toContain('摘要里的旧用户消息');
     expect(container.textContent).not.toContain('摘要里的旧助手消息');
     expect(container.textContent).not.toContain('未找到任务');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('sends canonical thread follow-up messages through the message API', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-only-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-only-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '独立智能体任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '摘要里的旧用户消息',
+        last_agent_message: '摘要里的旧助手消息',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages
+      .mockResolvedValueOnce({
+        data: {
+          messages: [
+            {
+              message_id: 'msg-1',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'user',
+              content: '请基于真实消息分析客户反馈',
+              metadata: '',
+              created_at: 1717000100000,
+            },
+            {
+              message_id: 'msg-2',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'assistant',
+              content: '真实消息显示响应速度最重要',
+              metadata: '',
+              created_at: 1717000200000,
+            },
+          ],
+          total: 2,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          messages: [
+            {
+              message_id: 'msg-1',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'user',
+              content: '请基于真实消息分析客户反馈',
+              metadata: '',
+              created_at: 1717000100000,
+            },
+            {
+              message_id: 'msg-2',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'assistant',
+              content: '真实消息显示响应速度最重要',
+              metadata: '',
+              created_at: 1717000200000,
+            },
+            {
+              message_id: 'msg-3',
+              thread_id: 'thread-only-1',
+              run_id: '',
+              role: 'user',
+              content: '请追加行动建议',
+              metadata: '',
+              created_at: 1717000400000,
+            },
+          ],
+          total: 3,
+        },
+        code: 0,
+        msg: '',
+      });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '请追加行动建议' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockAppendTaskThreadMessage).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      role: 'user',
+      content: '请追加行动建议',
+      metadata: expect.any(String),
+    });
+    expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
+
+    const appendRequest = mockAppendTaskThreadMessage.mock.calls[0]?.[0];
+    expect(JSON.parse(appendRequest.metadata)).toMatchObject({
+      mode: 'Auto',
+      enable_skills: expect.arrayContaining(['meego-guidelines']),
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
+    });
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('请追加行动建议');
 
     act(() => {
       root?.unmount();
