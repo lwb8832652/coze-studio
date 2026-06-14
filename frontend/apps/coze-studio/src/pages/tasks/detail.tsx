@@ -31,7 +31,11 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
-import { appendTaskThreadMessage, sendWorkbenchChat } from './service';
+import {
+  appendTaskThreadMessage,
+  createTaskThreadRun,
+  sendWorkbenchChat,
+} from './service';
 import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
 import {
   formatUpdatedTime,
@@ -334,6 +338,30 @@ const getThreadFollowUpMetadata = (
     enable_databases: payload.enable_databases,
   });
 
+const getThreadFollowUpRunInput = (
+  payload: WorkbenchComposerSubmitPayload,
+  messageId: string,
+) =>
+  JSON.stringify({
+    messages: [
+      {
+        role: 'user',
+        content: payload.message,
+        message_id: messageId,
+      },
+    ],
+  });
+
+const getThreadFollowUpRunMetadata = (
+  payload: WorkbenchComposerSubmitPayload,
+  messageId: string,
+) =>
+  JSON.stringify({
+    source: 'workbench_detail_followup',
+    appended_message_id: messageId,
+    mode: payload.mode,
+  });
+
 const sendFollowUpMessage = async ({
   activeTaskId,
   isCanonicalThreadDetail,
@@ -348,11 +376,20 @@ const sendFollowUpMessage = async ({
   threadId: string;
 }) => {
   if (isCanonicalThreadDetail) {
-    await appendTaskThreadMessage({
+    const appendResponse = await appendTaskThreadMessage({
       thread_id: threadId,
       role: 'user',
       content: payload.message,
       metadata: getThreadFollowUpMetadata(payload),
+    });
+    const appendedMessageId = appendResponse.data?.message_id || 'pending';
+
+    await createTaskThreadRun({
+      thread_id: threadId,
+      input: getThreadFollowUpRunInput(payload, appendedMessageId),
+      config: getThreadFollowUpMetadata(payload),
+      metadata: getThreadFollowUpRunMetadata(payload, appendedMessageId),
+      idempotency_key: `${threadId}:${appendedMessageId}:followup`,
     });
 
     return;

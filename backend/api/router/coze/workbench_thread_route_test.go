@@ -33,9 +33,13 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	detail := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
 	messages := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/messages", nil)
 	appendMessage := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads/1/messages", nil)
+	runs := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/runs", nil)
+	createRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads/1/runs", nil)
 
 	require.NotEqual(t, http.StatusNotFound, list.Code)
 	require.NotEqual(t, http.StatusNotFound, detail.Code)
 	require.NotEqual(t, http.StatusNotFound, messages.Code)
 	require.NotEqual(t, http.StatusNotFound, appendMessage.Code)
+	require.NotEqual(t, http.StatusNotFound, runs.Code)
+	require.NotEqual(t, http.StatusNotFound, createRun.Code)
 }

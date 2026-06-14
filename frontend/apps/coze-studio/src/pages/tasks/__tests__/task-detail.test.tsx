@@ -31,6 +31,7 @@ const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
+const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 
@@ -44,6 +45,7 @@ vi.mock('../service', () => ({
   getTaskThread: mockGetTaskThread,
   listTaskThreadMessages: mockListTaskThreadMessages,
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
+  createTaskThreadRun: mockCreateTaskThreadRun,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
 }));
@@ -121,6 +123,7 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockReset();
     mockListTaskThreadMessages.mockReset();
     mockAppendTaskThreadMessage.mockReset();
+    mockCreateTaskThreadRun.mockReset();
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
@@ -143,6 +146,35 @@ describe('TaskDetailPage', () => {
         }),
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateTaskThreadRun.mockResolvedValue({
+      data: {
+        run_id: 'run-pending-1',
+        thread_id: 'thread-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        assistant_id: 'default',
+        status: 'pending',
+        command: '{}',
+        input: '{"messages":[]}',
+        config: '{}',
+        context: '{}',
+        metadata: '{}',
+        stream_mode: '["messages","updates"]',
+        multitask_strategy: 'enqueue',
+        on_disconnect: 'continue',
+        durability: 'async',
+        idempotency_key: 'run-key',
+        worker_id: '',
+        error_code: '',
+        error_message: '',
+        started_at: 0,
+        ended_at: 0,
+        created_at: 1717000400000,
+        updated_at: 1717000400000,
       },
       code: 0,
       msg: '',
@@ -492,6 +524,13 @@ describe('TaskDetailPage', () => {
       content: '请追加行动建议',
       metadata: expect.any(String),
     });
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      input: expect.any(String),
+      config: expect.any(String),
+      metadata: expect.any(String),
+      idempotency_key: expect.any(String),
+    });
     expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
 
     const appendRequest = mockAppendTaskThreadMessage.mock.calls[0]?.[0];
@@ -502,6 +541,29 @@ describe('TaskDetailPage', () => {
       enable_kbs: [],
       enable_databases: [],
     });
+    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    expect(JSON.parse(runRequest.input)).toMatchObject({
+      messages: [
+        {
+          role: 'user',
+          content: '请追加行动建议',
+        },
+      ],
+    });
+    expect(JSON.parse(runRequest.config)).toMatchObject({
+      mode: 'Auto',
+      enable_skills: expect.arrayContaining(['meego-guidelines']),
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
+    });
+    expect(JSON.parse(runRequest.metadata)).toMatchObject({
+      source: 'workbench_detail_followup',
+      appended_message_id: 'msg-appended-1',
+    });
+    expect(runRequest.idempotency_key).toBe(
+      'thread-only-1:msg-appended-1:followup',
+    );
     expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain('请追加行动建议');
 

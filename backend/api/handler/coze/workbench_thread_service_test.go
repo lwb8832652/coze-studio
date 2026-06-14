@@ -131,6 +131,72 @@ func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
 	require.Equal(t, `{"source":"test"}`, resp.Messages[0].Metadata)
 }
 
+func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"input":           `{"messages":[{"role":"user","content":"请追加行动建议"}]}`,
+		"config":          `{"mode":"Auto"}`,
+		"metadata":        `{"source":"test"}`,
+		"idempotency_key": "thread-only-1-msg-1",
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"status":"pending"`)
+	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"请追加行动建议\"}]}"`)
+
+	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), resp.Total)
+	require.Equal(t, appagentthread.RunStatusPending, resp.Runs[0].Status)
+	require.Equal(t, `{"mode":"Auto"}`, resp.Runs[0].Config)
+	require.Equal(t, "thread-only-1-msg-1", resp.Runs[0].IdempotencyKey)
+}
+
+func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
+	installAgentThreadTestService(t)
+
+	_, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"第一轮"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"第二轮"}]}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/runs?page=1&page_size=10", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":2`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第二轮\"}]}"`)
+	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第一轮\"}]}"`)
+}
+
 func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
@@ -187,6 +253,31 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			content text,
 			metadata json,
 			created_at integer
+		);
+		CREATE TABLE agent_runs (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			space_id integer,
+			creator_id integer,
+			assistant_id text,
+			status text,
+			command json,
+			input json,
+			config json,
+			context json,
+			metadata json,
+			stream_mode json,
+			multitask_strategy text,
+			on_disconnect text,
+			durability text,
+			idempotency_key text,
+			worker_id text,
+			error_code text,
+			error_message text,
+			started_at integer,
+			ended_at integer,
+			created_at integer,
+			updated_at integer
 		)
 	`).Error
 }

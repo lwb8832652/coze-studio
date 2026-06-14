@@ -41,6 +41,32 @@ type TaskThreadMessage struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+type TaskThreadRun struct {
+	RunID             int64  `json:"run_id,string"`
+	ThreadID          int64  `json:"thread_id,string"`
+	SpaceID           int64  `json:"space_id,string"`
+	CreatorID         int64  `json:"creator_id,string"`
+	AssistantID       string `json:"assistant_id"`
+	Status            string `json:"status"`
+	Command           string `json:"command"`
+	Input             string `json:"input"`
+	Config            string `json:"config"`
+	Context           string `json:"context"`
+	Metadata          string `json:"metadata"`
+	StreamMode        string `json:"stream_mode"`
+	MultitaskStrategy string `json:"multitask_strategy"`
+	OnDisconnect      string `json:"on_disconnect"`
+	Durability        string `json:"durability"`
+	IdempotencyKey    string `json:"idempotency_key"`
+	WorkerID          string `json:"worker_id"`
+	ErrorCode         string `json:"error_code"`
+	ErrorMessage      string `json:"error_message"`
+	StartedAt         int64  `json:"started_at"`
+	EndedAt           int64  `json:"ended_at"`
+	CreatedAt         int64  `json:"created_at"`
+	UpdatedAt         int64  `json:"updated_at"`
+}
+
 type ListTaskThreadsRequest struct {
 	SpaceID  int64  `query:"space_id,required"`
 	Status   string `query:"status"`
@@ -66,6 +92,28 @@ type AppendTaskThreadMessageRequest struct {
 	Metadata string `json:"metadata,omitempty"`
 }
 
+type ListTaskThreadRunsRequest struct {
+	ThreadID int64  `path:"thread_id,required"`
+	Status   string `query:"status"`
+	Page     int32  `query:"page"`
+	PageSize int32  `query:"page_size"`
+}
+
+type CreateTaskThreadRunRequest struct {
+	ThreadID          int64  `path:"thread_id,required" json:"-"`
+	AssistantID       string `json:"assistant_id,omitempty"`
+	Command           string `json:"command,omitempty"`
+	Input             string `json:"input,required"`
+	Config            string `json:"config,omitempty"`
+	Context           string `json:"context,omitempty"`
+	Metadata          string `json:"metadata,omitempty"`
+	StreamMode        string `json:"stream_mode,omitempty"`
+	MultitaskStrategy string `json:"multitask_strategy,omitempty"`
+	OnDisconnect      string `json:"on_disconnect,omitempty"`
+	Durability        string `json:"durability,omitempty"`
+	IdempotencyKey    string `json:"idempotency_key,omitempty"`
+}
+
 type ListTaskThreadsData struct {
 	Threads []*TaskThread `json:"threads"`
 	Total   int64         `json:"total"`
@@ -74,6 +122,11 @@ type ListTaskThreadsData struct {
 type ListTaskThreadMessagesData struct {
 	Messages []*TaskThreadMessage `json:"messages"`
 	Total    int64                `json:"total"`
+}
+
+type ListTaskThreadRunsData struct {
+	Runs  []*TaskThreadRun `json:"runs"`
+	Total int64            `json:"total"`
 }
 
 type ListTaskThreadsResponse struct {
@@ -98,4 +151,16 @@ type AppendTaskThreadMessageResponse struct {
 	Data *TaskThreadMessage `json:"data,omitempty"`
 	Code int64              `json:"code"`
 	Msg  string             `json:"msg"`
+}
+
+type ListTaskThreadRunsResponse struct {
+	Data *ListTaskThreadRunsData `json:"data,omitempty"`
+	Code int64                   `json:"code"`
+	Msg  string                  `json:"msg"`
+}
+
+type CreateTaskThreadRunResponse struct {
+	Data *TaskThreadRun `json:"data,omitempty"`
+	Code int64          `json:"code"`
+	Msg  string         `json:"msg"`
 }

@@ -18,8 +18,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendTaskThreadMessage,
+  createTaskThreadRun,
   getTaskThread,
   listTaskThreadMessages,
+  listTaskThreadRuns,
   listTaskThreads,
 } from '../service';
 
@@ -29,5 +31,7 @@ describe('task thread service', () => {
     expect(typeof getTaskThread).toBe('function');
     expect(typeof listTaskThreadMessages).toBe('function');
     expect(typeof appendTaskThreadMessage).toBe('function');
+    expect(typeof listTaskThreadRuns).toBe('function');
+    expect(typeof createTaskThreadRun).toBe('function');
   });
 });

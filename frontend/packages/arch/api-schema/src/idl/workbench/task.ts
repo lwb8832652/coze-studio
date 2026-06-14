@@ -72,6 +72,31 @@ export interface TaskThreadMessage {
   metadata: string,
   created_at: number,
 }
+export interface TaskThreadRun {
+  run_id: string,
+  thread_id: string,
+  space_id: string,
+  creator_id: string,
+  assistant_id: string,
+  status: string,
+  command: string,
+  input: string,
+  config: string,
+  context: string,
+  metadata: string,
+  stream_mode: string,
+  multitask_strategy: string,
+  on_disconnect: string,
+  durability: string,
+  idempotency_key: string,
+  worker_id: string,
+  error_code: string,
+  error_message: string,
+  started_at: number,
+  ended_at: number,
+  created_at: number,
+  updated_at: number,
+}
 export interface CreateTaskRequest {
   space_id: string,
   title: string,
@@ -143,6 +168,26 @@ export interface AppendTaskThreadMessageRequest {
   content: string,
   metadata?: string,
 }
+export interface ListTaskThreadRunsRequest {
+  thread_id: string,
+  status?: string,
+  page?: number,
+  page_size?: number,
+}
+export interface CreateTaskThreadRunRequest {
+  thread_id: string,
+  assistant_id?: string,
+  command?: string,
+  input: string,
+  config?: string,
+  context?: string,
+  metadata?: string,
+  stream_mode?: string,
+  multitask_strategy?: string,
+  on_disconnect?: string,
+  durability?: string,
+  idempotency_key?: string,
+}
 export interface ListTaskThreadMessagesData {
   messages: TaskThreadMessage[],
   total: number,
@@ -154,6 +199,20 @@ export interface ListTaskThreadMessagesResponse {
 }
 export interface AppendTaskThreadMessageResponse {
   data?: TaskThreadMessage,
+  code: number,
+  msg: string,
+}
+export interface ListTaskThreadRunsData {
+  runs: TaskThreadRun[],
+  total: number,
+}
+export interface ListTaskThreadRunsResponse {
+  data?: ListTaskThreadRunsData,
+  code: number,
+  msg: string,
+}
+export interface CreateTaskThreadRunResponse {
+  data?: TaskThreadRun,
   code: number,
   msg: string,
 }
@@ -248,6 +307,32 @@ export const AppendTaskThreadMessage = /*#__PURE__*/createAPI<AppendTaskThreadMe
     "body": ["run_id", "role", "content", "metadata"]
   },
   "resType": "AppendTaskThreadMessageResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const ListTaskThreadRuns = /*#__PURE__*/createAPI<ListTaskThreadRunsRequest, ListTaskThreadRunsResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/runs",
+  "method": "GET",
+  "name": "ListTaskThreadRuns",
+  "reqType": "ListTaskThreadRunsRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "query": ["status", "page", "page_size"]
+  },
+  "resType": "ListTaskThreadRunsResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const CreateTaskThreadRun = /*#__PURE__*/createAPI<CreateTaskThreadRunRequest, CreateTaskThreadRunResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/runs",
+  "method": "POST",
+  "name": "CreateTaskThreadRun",
+  "reqType": "CreateTaskThreadRunRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "body": ["assistant_id", "command", "input", "config", "context", "metadata", "stream_mode", "multitask_strategy", "on_disconnect", "durability", "idempotency_key"]
+  },
+  "resType": "CreateTaskThreadRunResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });

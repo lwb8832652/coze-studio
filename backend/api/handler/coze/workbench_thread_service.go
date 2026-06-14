@@ -140,6 +140,76 @@ func AppendTaskThreadMessage(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// ListTaskThreadRuns .
+// @router /api/workbench/task_threads/:thread_id/runs [GET]
+func ListTaskThreadRuns(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadRunsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	var status *appagentthread.RunStatus
+	if req.Status != "" {
+		mapped := appagentthread.RunStatus(req.Status)
+		status = &mapped
+	}
+	resp, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
+		ThreadID: req.ThreadID,
+		Status:   status,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadRunsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadRunsData{
+			Runs:  taskThreadRunsToAPI(resp.Runs),
+			Total: resp.Total,
+		},
+	})
+}
+
+// CreateTaskThreadRun .
+// @router /api/workbench/task_threads/:thread_id/runs [POST]
+func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.CreateTaskThreadRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.CreateRun(ctx, &appagentthread.CreateRunRequest{
+		ThreadID:          req.ThreadID,
+		AssistantID:       req.AssistantID,
+		Command:           req.Command,
+		Input:             req.Input,
+		Config:            req.Config,
+		Context:           req.Context,
+		Metadata:          req.Metadata,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+		IdempotencyKey:    req.IdempotencyKey,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.CreateTaskThreadRunResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: taskThreadRunToAPI(resp.Run),
+	})
+}
+
 func taskThreadsToAPI(threads []*appagentthread.ThreadSummary) []*threadapi.TaskThread {
 	result := make([]*threadapi.TaskThread, 0, len(threads))
 	for _, item := range threads {
@@ -153,6 +223,15 @@ func taskThreadMessagesToAPI(messages []*appagentthread.MessageSummary) []*threa
 	result := make([]*threadapi.TaskThreadMessage, 0, len(messages))
 	for _, item := range messages {
 		result = append(result, taskThreadMessageToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadRunsToAPI(runs []*appagentthread.RunSummary) []*threadapi.TaskThreadRun {
+	result := make([]*threadapi.TaskThreadRun, 0, len(runs))
+	for _, item := range runs {
+		result = append(result, taskThreadRunToAPI(item))
 	}
 
 	return result
@@ -176,6 +255,38 @@ func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread
 		LastAgentMessage: thread.LastAgentMessage,
 		CreatedAt:        thread.CreatedAt,
 		UpdatedAt:        thread.UpdatedAt,
+	}
+}
+
+func taskThreadRunToAPI(run *appagentthread.RunSummary) *threadapi.TaskThreadRun {
+	if run == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadRun{
+		RunID:             run.RunID,
+		ThreadID:          run.ThreadID,
+		SpaceID:           run.SpaceID,
+		CreatorID:         run.CreatorID,
+		AssistantID:       run.AssistantID,
+		Status:            string(run.Status),
+		Command:           run.Command,
+		Input:             run.Input,
+		Config:            run.Config,
+		Context:           run.Context,
+		Metadata:          run.Metadata,
+		StreamMode:        run.StreamMode,
+		MultitaskStrategy: run.MultitaskStrategy,
+		OnDisconnect:      run.OnDisconnect,
+		Durability:        run.Durability,
+		IdempotencyKey:    run.IdempotencyKey,
+		WorkerID:          run.WorkerID,
+		ErrorCode:         run.ErrorCode,
+		ErrorMessage:      run.ErrorMessage,
+		StartedAt:         run.StartedAt,
+		EndedAt:           run.EndedAt,
+		CreatedAt:         run.CreatedAt,
+		UpdatedAt:         run.UpdatedAt,
 	}
 }
 
