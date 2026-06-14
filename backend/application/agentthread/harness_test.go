@@ -137,6 +137,76 @@ func TestHarnessExecutorEmitsStepFailedWhenRunnerErrors(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"error_message":"model step failed"`)
 }
 
+func TestHarnessExecutorRunsToolStepAndEmitsToolEvents(t *testing.T) {
+	registry := NewInMemoryToolRegistry()
+	err := registry.Register("search_web", AgentToolFunc(func(ctx context.Context, call ToolCall) (*ToolResult, error) {
+		require.Equal(t, `{"query":"coze studio"}`, call.Arguments)
+
+		return &ToolResult{
+			Content:  "找到 Coze Studio 资料",
+			Metadata: `{"documents":2}`,
+		}, nil
+	}))
+	require.NoError(t, err)
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{
+				ID:            "tool-search",
+				Type:          AgentStepTypeTool,
+				Name:          "search_web",
+				ToolName:      "search_web",
+				ToolArguments: `{"query":"coze studio"}`,
+				Final:         true,
+			},
+		}},
+	}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(planner, nil, HarnessExecutorOptions{
+		ToolRegistry: registry,
+		EventSink:    eventSink,
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{ThreadID: 7, RunID: 15})
+
+	require.NoError(t, err)
+	require.Equal(t, "找到 Coze Studio 资料", result.Message)
+	require.Contains(t, result.Metadata, `"source":"agent_harness"`)
+	require.Contains(t, result.Metadata, `"tool_name":"search_web"`)
+	require.Contains(t, result.Metadata, `"documents":2`)
+	require.Equal(t, []string{"tool.started", "tool.completed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[0].Payload, `"step_id":"tool-search"`)
+	require.Contains(t, eventSink.events[0].Payload, `"step_type":"tool"`)
+	require.Contains(t, eventSink.events[0].Payload, `"tool_name":"search_web"`)
+	require.Contains(t, eventSink.events[0].Payload, `"arguments_present":true`)
+	require.Contains(t, eventSink.events[1].Payload, `"result_present":true`)
+}
+
+func TestHarnessExecutorEmitsToolFailedWhenToolRunnerErrors(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{
+				ID:       "tool-missing",
+				Type:     AgentStepTypeTool,
+				Name:     "search_web",
+				ToolName: "search_web",
+			},
+		}},
+	}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(planner, nil, HarnessExecutorOptions{
+		ToolRegistry: NewInMemoryToolRegistry(),
+		EventSink:    eventSink,
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{ThreadID: 8, RunID: 16})
+
+	require.ErrorContains(t, err, "unsupported agent tool: search_web")
+	require.Nil(t, result)
+	require.Equal(t, []string{"tool.started", "tool.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"tool_name":"search_web"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_message":"unsupported agent tool: search_web"`)
+}
+
 func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("默认模型回答", nil),

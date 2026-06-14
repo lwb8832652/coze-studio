@@ -181,6 +181,67 @@ const normalizeExecutionStatus = (value?: string): TaskExecutionStatus => {
   }
 };
 
+interface ToolEventDisplayInput {
+  eventType?: string;
+  payload?: Record<string, unknown>;
+  detail?: string;
+  runtime?: TaskExecutionType;
+}
+
+const getToolEventDisplay = ({
+  eventType,
+  payload,
+  detail,
+  runtime,
+}: ToolEventDisplayInput): TaskEventDisplay | undefined => {
+  if (!eventType?.startsWith('tool.')) {
+    return undefined;
+  }
+
+  const toolName =
+    getString(payload, 'tool_name') ||
+    getString(payload, 'step_name') ||
+    getString(payload, 'step_id') ||
+    '工具';
+  const errorMessage = getString(payload, 'error_message');
+  const argumentsPresent = getBoolean(payload, 'arguments_present');
+  const resultPresent = getBoolean(payload, 'result_present');
+  const baseDisplay = {
+    runtime: runtime ?? 'Agent',
+    structured: true,
+    kind: 'step' as const,
+  };
+
+  if (eventType === 'tool.started') {
+    return {
+      ...baseDisplay,
+      title: `调用工具 ${toolName}`,
+      detail: detail ?? (argumentsPresent ? '参数已准备' : ''),
+      status: 'running',
+    };
+  }
+
+  if (eventType === 'tool.completed') {
+    return {
+      ...baseDisplay,
+      title: `工具 ${toolName} 调用完成`,
+      detail: detail ?? (resultPresent ? '已返回结果' : ''),
+      status: 'completed',
+    };
+  }
+
+  if (eventType === 'tool.failed') {
+    return {
+      ...baseDisplay,
+      title: `工具 ${toolName} 调用失败`,
+      detail: detail ?? errorMessage,
+      status: 'failed',
+    };
+  }
+
+  return undefined;
+};
+
 export const getTaskInputText = (input?: string) => getPayloadText(input);
 
 export const parseTaskResultPayload = (result?: string): TaskResultPayload => {
@@ -260,6 +321,16 @@ export const getTaskEventDisplay = (
   const progress = getNumber(parsed, 'progress');
   const structured = Boolean(title || detail || thought || runtime || progress);
   const status = normalizeExecutionStatus(getString(parsed, 'status'));
+  const toolDisplay = getToolEventDisplay({
+    eventType,
+    payload: parsed,
+    detail,
+    runtime,
+  });
+
+  if (toolDisplay) {
+    return toolDisplay;
+  }
 
   if (eventType?.startsWith('run.')) {
     const workerID = getString(parsed, 'worker_id');

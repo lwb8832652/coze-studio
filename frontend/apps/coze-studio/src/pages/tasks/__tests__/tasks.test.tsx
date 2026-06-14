@@ -217,4 +217,39 @@ describe('TasksPage helpers', () => {
     expect(completed.status).toBe('completed');
     expect(completed.structured).toBe(true);
   });
+
+  it('formats agent tool events as execution steps', () => {
+    const started = getTaskEventDisplay(
+      'tool.started',
+      JSON.stringify({
+        step_name: 'search_web',
+        tool_name: 'search_web',
+        arguments_present: true,
+      }),
+    );
+    const completed = getTaskEventDisplay(
+      'tool.completed',
+      JSON.stringify({
+        step_name: 'search_web',
+        tool_name: 'search_web',
+        result_present: true,
+      }),
+    );
+    const failed = getTaskEventDisplay(
+      'tool.failed',
+      JSON.stringify({
+        step_name: 'search_web',
+        tool_name: 'search_web',
+        error_message: 'unsupported agent tool: search_web',
+      }),
+    );
+
+    expect(started.title).toBe('调用工具 search_web');
+    expect(started.status).toBe('running');
+    expect(started.structured).toBe(true);
+    expect(completed.title).toBe('工具 search_web 调用完成');
+    expect(completed.status).toBe('completed');
+    expect(failed.title).toBe('工具 search_web 调用失败');
+    expect(failed.status).toBe('failed');
+  });
 });

@@ -27,12 +27,18 @@ const defaultHarnessMaxSteps = 4
 
 type AgentStepType string
 
-const AgentStepTypeModel AgentStepType = "model"
+const (
+	AgentStepTypeModel AgentStepType = "model"
+	AgentStepTypeTool  AgentStepType = "tool"
+)
 
 type AgentStep struct {
-	ID   string
-	Type AgentStepType
-	Name string
+	ID            string
+	Type          AgentStepType
+	Name          string
+	ToolName      string
+	ToolArguments string
+	Final         bool
 }
 
 type AgentPlan struct {
@@ -61,6 +67,7 @@ type AgentStepRunner interface {
 type HarnessExecutorOptions struct {
 	MaxSteps      int
 	ModelProvider ChatModelProvider
+	ToolRegistry  ToolRegistry
 	EventSink     RunEventSink
 }
 
@@ -76,7 +83,7 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 		planner = singleModelPlanner{}
 	}
 	if runner == nil {
-		runner = NewModelStepRunner(NewModelExecutor(opts.ModelProvider))
+		runner = NewDefaultAgentStepRunner(opts.ModelProvider, opts.ToolRegistry)
 	}
 	maxSteps := opts.MaxSteps
 	if maxSteps <= 0 {
@@ -139,9 +146,7 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			}
 
 			state.StepIndex = executedSteps
-			e.emitStepEvent(ctx, run, step, "step.started", map[string]any{
-				"step_index": executedSteps,
-			})
+			e.emitStepStartedEvent(ctx, run, step, executedSteps)
 			stepResult, err := runner.RunStep(ctx, run, step, cloneHarnessState(state))
 			if err != nil {
 				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
@@ -163,11 +168,7 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 
 			executedSteps++
 			state.Results = append(state.Results, *stepResult)
-			e.emitStepEvent(ctx, run, step, "step.completed", map[string]any{
-				"step_index":      executedSteps - 1,
-				"final":           stepResult.Final,
-				"message_present": strings.TrimSpace(stepResult.Message) != "",
-			})
+			e.emitStepCompletedEvent(ctx, run, step, executedSteps-1, stepResult)
 			if stepResult.Final {
 				message := strings.TrimSpace(stepResult.Message)
 
@@ -182,11 +183,49 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
 }
 
+func (e *HarnessExecutor) emitStepStartedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int) {
+	payload := map[string]any{
+		"step_index": stepIndex,
+	}
+	eventType := "step.started"
+	if step.Type == AgentStepTypeTool {
+		eventType = "tool.started"
+		payload["tool_name"] = agentStepToolName(step)
+		payload["arguments_present"] = strings.TrimSpace(step.ToolArguments) != ""
+	}
+
+	e.emitStepEvent(ctx, run, step, eventType, payload)
+}
+
+func (e *HarnessExecutor) emitStepCompletedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int, result *AgentStepResult) {
+	payload := map[string]any{
+		"step_index": stepIndex,
+		"final":      result != nil && result.Final,
+	}
+	eventType := "step.completed"
+	if step.Type == AgentStepTypeTool {
+		eventType = "tool.completed"
+		payload["tool_name"] = agentStepToolName(step)
+		payload["result_present"] = result != nil && strings.TrimSpace(result.Message) != ""
+	} else {
+		payload["message_present"] = result != nil && strings.TrimSpace(result.Message) != ""
+	}
+
+	e.emitStepEvent(ctx, run, step, eventType, payload)
+}
+
 func (e *HarnessExecutor) emitStepFailedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int, message string) {
-	e.emitStepEvent(ctx, run, step, "step.failed", map[string]any{
+	payload := map[string]any{
 		"step_index":    stepIndex,
 		"error_message": message,
-	})
+	}
+	eventType := "step.failed"
+	if step.Type == AgentStepTypeTool {
+		eventType = "tool.failed"
+		payload["tool_name"] = agentStepToolName(step)
+	}
+
+	e.emitStepEvent(ctx, run, step, eventType, payload)
 }
 
 func (e *HarnessExecutor) emitStepEvent(ctx context.Context, run *RunSummary, step AgentStep, eventType string, payload map[string]any) {
@@ -209,6 +248,29 @@ func (e *HarnessExecutor) emitStepEvent(ctx context.Context, run *RunSummary, st
 		EventType: eventType,
 		Payload:   encodeRunEventPayload(ctx, eventPayload),
 	})
+}
+
+type defaultAgentStepRunner struct {
+	modelRunner AgentStepRunner
+	toolRunner  AgentStepRunner
+}
+
+func NewDefaultAgentStepRunner(modelProvider ChatModelProvider, registry ToolRegistry) AgentStepRunner {
+	return defaultAgentStepRunner{
+		modelRunner: NewModelStepRunner(NewModelExecutor(modelProvider)),
+		toolRunner:  NewToolStepRunner(registry),
+	}
+}
+
+func (r defaultAgentStepRunner) RunStep(ctx context.Context, run *RunSummary, step AgentStep, state AgentHarnessState) (*AgentStepResult, error) {
+	switch step.Type {
+	case AgentStepTypeModel:
+		return r.modelRunner.RunStep(ctx, run, step, state)
+	case AgentStepTypeTool:
+		return r.toolRunner.RunStep(ctx, run, step, state)
+	default:
+		return nil, fmt.Errorf("unsupported agent step type: %s", step.Type)
+	}
 }
 
 type singleModelPlanner struct{}
@@ -254,6 +316,14 @@ func (r *ModelStepRunner) RunStep(ctx context.Context, run *RunSummary, step Age
 		Metadata: result.Metadata,
 		Final:    true,
 	}, nil
+}
+
+func agentStepToolName(step AgentStep) string {
+	if toolName := strings.TrimSpace(step.ToolName); toolName != "" {
+		return toolName
+	}
+
+	return strings.TrimSpace(step.Name)
 }
 
 func cloneHarnessState(state AgentHarnessState) AgentHarnessState {
