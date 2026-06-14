@@ -150,6 +150,7 @@ func Init(ctx context.Context) (err error) {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
 	task.NewWorker(primaryServices.taskSVC).Start(ctx)
+	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, nil)
 
 	complexServices, err := initComplexServices(ctx, primaryServices)
 	if err != nil {
