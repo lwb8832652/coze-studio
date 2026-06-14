@@ -28,6 +28,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/connector"
 	"github.com/coze-dev/coze-studio/backend/application/conversation"
 	"github.com/coze-dev/coze-studio/backend/application/knowledge"
+	"github.com/coze-dev/coze-studio/backend/application/mcptool"
 	"github.com/coze-dev/coze-studio/backend/application/memory"
 	"github.com/coze-dev/coze-studio/backend/application/modelmgr"
 	"github.com/coze-dev/coze-studio/backend/application/openauth"
@@ -115,6 +116,7 @@ type primaryServices struct {
 	shortcutSVC    *shortcutcmd.ShortcutCmdApplicationService
 	agentThreadSVC *agentthread.ApplicationService
 	skillSVC       *skill.ApplicationService
+	mcpToolSVC     *mcptool.ApplicationService
 	taskSVC        *task.ApplicationService
 	workbenchSVC   *workbench.ApplicationService
 	appSVC         *app.APPApplicationService
@@ -260,6 +262,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		IDGen:      basicServices.infra.IDGenSVC,
 		CodeRunner: basicServices.infra.CodeRunner,
 	})
+	mcpToolSVC := mcptool.InitService(&mcptool.Components{
+		Catalog: mcptool.NewInMemoryCatalog(),
+		IDGen:   basicServices.infra.IDGenSVC,
+	})
 	taskSVC := task.InitService(&task.ServiceComponents{
 		DB:    basicServices.infra.DB,
 		IDGen: basicServices.infra.IDGenSVC,
@@ -279,6 +285,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		shortcutSVC:    shortcutSVC,
 		agentThreadSVC: agentThreadSVC,
 		skillSVC:       skillSVC,
+		mcpToolSVC:     mcpToolSVC,
 		taskSVC:        taskSVC,
 		workbenchSVC:   workbenchSVC,
 		infra:          basicServices.infra,
