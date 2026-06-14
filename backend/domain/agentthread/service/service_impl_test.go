@@ -22,6 +22,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -279,6 +280,77 @@ func TestListRunsNormalizesPaging(t *testing.T) {
 	require.Equal(t, int32(20), repo.lastRunListReq.PageSize)
 }
 
+func TestClaimPendingRunsRequiresWorkerID(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
+		WorkerID: "  ",
+		Limit:    1,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+}
+
+func TestClaimPendingRunsNormalizesLimit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusPending, CreatedAt: 1},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	claimed, err := svc.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
+		WorkerID: " worker-a ",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
+	require.Equal(t, "worker-a", claimed[0].WorkerID)
+	require.Equal(t, int32(10), repo.lastClaimReq.Limit)
+}
+
+func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a"},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CompleteRun(context.Background(), &UpdateRunStatusRequest{
+		RunID:    1,
+		From:     entity.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, run.Status)
+	require.Equal(t, entity.RunStatusRunning, repo.lastUpdateRunReq.From)
+	require.Equal(t, entity.RunStatusSucceeded, repo.lastUpdateRunReq.To)
+}
+
+func TestFailRunStoresError(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a"},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.FailRun(context.Background(), &UpdateRunStatusRequest{
+		RunID:        1,
+		From:         entity.RunStatusRunning,
+		WorkerID:     "worker-a",
+		ErrorCode:    "model_error",
+		ErrorMessage: "model failed",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusFailed, run.Status)
+	require.Equal(t, "model_error", run.ErrorCode)
+	require.Equal(t, "model failed", run.ErrorMessage)
+}
+
 type memoryRepo struct {
 	mu                 sync.Mutex
 	threads            map[int64]*entity.Thread
@@ -287,6 +359,8 @@ type memoryRepo struct {
 	lastListReq        repository.ListThreadsRequest
 	lastMessageListReq repository.ListMessagesRequest
 	lastRunListReq     repository.ListRunsRequest
+	lastClaimReq       repository.ClaimPendingRunsRequest
+	lastUpdateRunReq   repository.UpdateRunStatusRequest
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -442,6 +516,79 @@ func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsReques
 	return runs[start:end], total, nil
 }
 
+func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimPendingRunsRequest) ([]*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastClaimReq = req
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	pending := make([]*entity.Run, 0)
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.Status == entity.RunStatusPending {
+				pending = append(pending, run)
+			}
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].CreatedAt == pending[j].CreatedAt {
+			return pending[i].ID < pending[j].ID
+		}
+		return pending[i].CreatedAt < pending[j].CreatedAt
+	})
+
+	now := time.Now().UnixMilli()
+	claimed := make([]*entity.Run, 0, limit)
+	for _, run := range pending {
+		if len(claimed) >= int(limit) {
+			break
+		}
+		run.Status = entity.RunStatusRunning
+		run.WorkerID = req.WorkerID
+		run.StartedAt = now
+		run.UpdatedAt = now
+		claimed = append(claimed, cloneRun(run))
+	}
+
+	return claimed, nil
+}
+
+func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateRunStatusRequest) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastUpdateRunReq = req
+
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			if run.Status != req.From {
+				return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
+			}
+			if req.WorkerID != "" && run.WorkerID != req.WorkerID {
+				return fmt.Errorf("update run status failed: run %d is not owned by worker %s", req.RunID, req.WorkerID)
+			}
+
+			run.Status = req.To
+			run.ErrorCode = req.ErrorCode
+			run.ErrorMessage = req.ErrorMessage
+			run.UpdatedAt = time.Now().UnixMilli()
+			if isMemoryTerminalRunStatus(req.To) {
+				run.EndedAt = run.UpdatedAt
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("run %d not found", req.RunID)
+}
+
 func cloneThread(thread *entity.Thread) *entity.Thread {
 	if thread == nil {
 		return nil
@@ -480,6 +627,15 @@ func (g fixedIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64, error
 		ids[i] = g.next + int64(i)
 	}
 	return ids, nil
+}
+
+func isMemoryTerminalRunStatus(status entity.RunStatus) bool {
+	switch status {
+	case entity.RunStatusSucceeded, entity.RunStatusFailed, entity.RunStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }
 
 type sequenceIDGen struct {

@@ -25,6 +25,7 @@ import (
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
@@ -291,6 +292,91 @@ func (r *threadRepository) ListRuns(ctx context.Context, req ListRunsRequest) ([
 	return runs, total, nil
 }
 
+func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	workerID := strings.TrimSpace(req.WorkerID)
+	claimed := make([]*entity.Run, 0, limit)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&runPO{}).
+			Where("status = ?", string(entity.RunStatusPending)).
+			Order("created_at ASC, id ASC").
+			Limit(int(limit))
+		if tx.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+		}
+
+		pos := make([]*runPO, 0)
+		if err := query.Find(&pos).Error; err != nil {
+			return err
+		}
+
+		now := time.Now().UnixMilli()
+		for _, po := range pos {
+			db := tx.Model(&runPO{}).
+				Where("id = ? AND status = ?", po.ID, string(entity.RunStatusPending)).
+				Updates(map[string]any{
+					"status":     string(entity.RunStatusRunning),
+					"worker_id":  workerID,
+					"started_at": now,
+					"updated_at": now,
+				})
+			if db.Error != nil {
+				return db.Error
+			}
+			if db.RowsAffected == 0 {
+				continue
+			}
+
+			var updated runPO
+			if err := tx.Where("id = ?", po.ID).First(&updated).Error; err != nil {
+				return err
+			}
+			claimed = append(claimed, updated.toEntity())
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return claimed, nil
+}
+
+func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
+	now := time.Now().UnixMilli()
+	updates := map[string]any{
+		"status":        string(req.To),
+		"error_code":    req.ErrorCode,
+		"error_message": req.ErrorMessage,
+		"updated_at":    now,
+	}
+	if isTerminalRunStatus(req.To) {
+		updates["ended_at"] = now
+	}
+
+	query := r.db.WithContext(ctx).
+		Model(&runPO{}).
+		Where("id = ? AND status = ?", req.RunID, string(req.From))
+	if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
+		query = query.Where("worker_id = ?", workerID)
+	}
+
+	db := query.Updates(updates)
+	if db.Error != nil {
+		return db.Error
+	}
+	if db.RowsAffected == 0 {
+		return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
+	}
+
+	return nil
+}
+
 func threadToPO(thread *entity.Thread) (*threadPO, error) {
 	metadata, err := optionalJSON("metadata", thread.Metadata)
 	if err != nil {
@@ -487,4 +573,13 @@ func stringFromPtr(value *string) string {
 	}
 
 	return *value
+}
+
+func isTerminalRunStatus(status entity.RunStatus) bool {
+	switch status {
+	case entity.RunStatusSucceeded, entity.RunStatusFailed, entity.RunStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }

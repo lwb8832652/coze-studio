@@ -303,6 +303,95 @@ func TestApplicationListRunsMapsDomainRuns(t *testing.T) {
 	require.Equal(t, RunStatusRunning, resp.Runs[1].Status)
 }
 
+func TestApplicationClaimPendingRunsMapsDomainRuns(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:        200,
+				ThreadID:  10,
+				Status:    entity.RunStatusRunning,
+				Input:     `{"messages":[]}`,
+				WorkerID:  "worker-a",
+				StartedAt: 300,
+				UpdatedAt: 301,
+			},
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "worker-a", domainSVC.claimRunsReq.WorkerID)
+	require.Equal(t, int32(2), domainSVC.claimRunsReq.Limit)
+	require.Len(t, resp.Runs, 1)
+	require.Equal(t, int64(200), resp.Runs[0].RunID)
+	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
+	require.Equal(t, "worker-a", resp.Runs[0].WorkerID)
+}
+
+func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+			EndedAt:  400,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CompleteRun(context.Background(), &UpdateRunStatusRequest{
+		RunID:    200,
+		From:     RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
+	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
+	require.Equal(t, "worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.Equal(t, RunStatusSucceeded, resp.Run.Status)
+	require.Equal(t, int64(400), resp.Run.EndedAt)
+}
+
+func TestApplicationFailRunMapsErrorFields(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		failedRun: &entity.Run{
+			ID:           200,
+			ThreadID:     10,
+			Status:       entity.RunStatusFailed,
+			WorkerID:     "worker-a",
+			ErrorCode:    "model_error",
+			ErrorMessage: "model failed",
+			EndedAt:      400,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.FailRun(context.Background(), &UpdateRunStatusRequest{
+		RunID:        200,
+		From:         RunStatusRunning,
+		WorkerID:     "worker-a",
+		ErrorCode:    "model_error",
+		ErrorMessage: "model failed",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), domainSVC.failRunReq.RunID)
+	require.Equal(t, entity.RunStatusRunning, domainSVC.failRunReq.From)
+	require.Equal(t, "model_error", domainSVC.failRunReq.ErrorCode)
+	require.Equal(t, "model failed", domainSVC.failRunReq.ErrorMessage)
+	require.Equal(t, RunStatusFailed, resp.Run.Status)
+	require.Equal(t, "model_error", resp.Run.ErrorCode)
+	require.Equal(t, "model failed", resp.Run.ErrorMessage)
+}
+
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	_, err := (*ApplicationService)(nil).CreateThread(context.Background(), &CreateThreadRequest{Title: "x"})
 	require.Error(t, err)
@@ -313,6 +402,10 @@ func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	require.Contains(t, err.Error(), "agent thread service")
 
 	_, err = (&ApplicationService{}).GetThread(context.Background(), &GetThreadRequest{ThreadID: 1})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent thread service")
+
+	_, err = (&ApplicationService{}).CompleteRun(context.Background(), &UpdateRunStatusRequest{RunID: 1})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "agent thread service")
 }
@@ -361,6 +454,10 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 type recordingThreadService struct {
 	created         *entity.Thread
 	createdRun      *entity.Run
+	claimedRuns     []*entity.Run
+	completedRun    *entity.Run
+	failedRun       *entity.Run
+	canceledRun     *entity.Run
 	listed          []*entity.Thread
 	got             *entity.Thread
 	appended        *entity.Message
@@ -371,6 +468,10 @@ type recordingThreadService struct {
 	runTotal        int64
 	createReq       *domainservice.CreateThreadRequest
 	createRunReq    *domainservice.CreateRunRequest
+	claimRunsReq    *domainservice.ClaimPendingRunsRequest
+	completeRunReq  *domainservice.UpdateRunStatusRequest
+	failRunReq      *domainservice.UpdateRunStatusRequest
+	cancelRunReq    *domainservice.UpdateRunStatusRequest
 	listReq         *domainservice.ListThreadsRequest
 	listRunsReq     *domainservice.ListRunsRequest
 	appendReq       *domainservice.AppendMessageRequest
@@ -463,6 +564,26 @@ func (s *recordingThreadService) GetRun(ctx context.Context, req *domainservice.
 func (s *recordingThreadService) ListRuns(ctx context.Context, req *domainservice.ListRunsRequest) ([]*entity.Run, int64, error) {
 	s.listRunsReq = req
 	return s.runs, s.runTotal, nil
+}
+
+func (s *recordingThreadService) ClaimPendingRuns(ctx context.Context, req *domainservice.ClaimPendingRunsRequest) ([]*entity.Run, error) {
+	s.claimRunsReq = req
+	return s.claimedRuns, nil
+}
+
+func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
+	s.completeRunReq = req
+	return s.completedRun, nil
+}
+
+func (s *recordingThreadService) FailRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
+	s.failRunReq = req
+	return s.failedRun, nil
+}
+
+func (s *recordingThreadService) CancelRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
+	s.cancelRunReq = req
+	return s.canceledRun, nil
 }
 
 type fixedIDGen struct{}

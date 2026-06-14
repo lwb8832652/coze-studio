@@ -289,6 +289,65 @@ func TestThreadRepositoryListRunsFiltersByThreadAndOrdersNewestFirst(t *testing.
 	require.Equal(t, int64(1), got[1].ID)
 }
 
+func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(2, 10, entity.RunStatusPending, 101)))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(3, 10, entity.RunStatusRunning, 99)))
+
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, int64(1), claimed[0].ID)
+	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
+	require.Equal(t, "worker-a", claimed[0].WorkerID)
+	require.NotZero(t, claimed[0].StartedAt)
+	got, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, got.Status)
+	require.Equal(t, "worker-a", got.WorkerID)
+	require.NotZero(t, got.StartedAt)
+}
+
+func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+
+	require.NoError(t, repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:    1,
+		From:     entity.RunStatusRunning,
+		To:       entity.RunStatusSucceeded,
+		WorkerID: "worker-a",
+	}))
+	got, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, got.Status)
+	require.NotZero(t, got.EndedAt)
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:    1,
+		From:     entity.RunStatusRunning,
+		To:       entity.RunStatusFailed,
+		WorkerID: "worker-a",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not in status")
+}
+
 func newRepositoryTestRun(id, threadID int64, status entity.RunStatus, createdAt int64) *entity.Run {
 	return &entity.Run{
 		ID:                id,

@@ -251,6 +251,89 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 	return resp, nil
 }
 
+func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) (*ClaimPendingRunsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("claim pending runs request is required")
+	}
+
+	runs, err := s.ThreadSVC.ClaimPendingRuns(ctx, &domainservice.ClaimPendingRunsRequest{
+		WorkerID: req.WorkerID,
+		Limit:    req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ClaimPendingRunsResponse{
+		Runs: make([]*RunSummary, 0, len(runs)),
+	}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+	}
+
+	return resp, nil
+}
+
+func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+
+	return s.updateRunStatus(ctx, req, s.ThreadSVC.CompleteRun)
+}
+
+func (s *ApplicationService) FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+
+	return s.updateRunStatus(ctx, req, s.ThreadSVC.FailRun)
+}
+
+func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+
+	return s.updateRunStatus(ctx, req, s.ThreadSVC.CancelRun)
+}
+
+func (s *ApplicationService) updateRunStatus(
+	ctx context.Context,
+	req *UpdateRunStatusRequest,
+	update func(context.Context, *domainservice.UpdateRunStatusRequest) (*domainentity.Run, error),
+) (*UpdateRunStatusResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("update run status request is required")
+	}
+	if update == nil {
+		return nil, fmt.Errorf("update run status handler is required")
+	}
+
+	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{
+		RunID:        req.RunID,
+		From:         domainentity.RunStatus(req.From),
+		To:           domainentity.RunStatus(req.To),
+		WorkerID:     req.WorkerID,
+		ErrorCode:    req.ErrorCode,
+		ErrorMessage: req.ErrorMessage,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty run")
+	}
+
+	return &UpdateRunStatusResponse{Run: DomainRunToSummary(run)}, nil
+}
+
 func (s *ApplicationService) requireThreadSVC() error {
 	if s == nil || s.ThreadSVC == nil {
 		return fmt.Errorf("agent thread service is not initialized")

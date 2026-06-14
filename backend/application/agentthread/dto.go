@@ -201,3 +201,25 @@ type ListRunsResponse struct {
 	Runs  []*RunSummary
 	Total int64
 }
+
+type ClaimPendingRunsRequest struct {
+	WorkerID string
+	Limit    int32
+}
+
+type ClaimPendingRunsResponse struct {
+	Runs []*RunSummary
+}
+
+type UpdateRunStatusRequest struct {
+	RunID        int64
+	From         RunStatus
+	To           RunStatus
+	WorkerID     string
+	ErrorCode    string
+	ErrorMessage string
+}
+
+type UpdateRunStatusResponse struct {
+	Run *RunSummary
+}

@@ -288,6 +288,80 @@ func (s *threadService) ListRuns(ctx context.Context, req *ListRunsRequest) ([]*
 	})
 }
 
+func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("claim pending runs request is required")
+	}
+
+	workerID := strings.TrimSpace(req.WorkerID)
+	if workerID == "" {
+		return nil, InvalidArgumentErrorf("worker id is required")
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	return s.repo.ClaimPendingRuns(ctx, repository.ClaimPendingRunsRequest{
+		WorkerID: workerID,
+		Limit:    limit,
+	})
+}
+
+func (s *threadService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
+	return s.transitionRun(ctx, req, entity.RunStatusSucceeded)
+}
+
+func (s *threadService) FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
+	return s.transitionRun(ctx, req, entity.RunStatusFailed)
+}
+
+func (s *threadService) CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
+	return s.transitionRun(ctx, req, entity.RunStatusCanceled)
+}
+
+func (s *threadService) transitionRun(
+	ctx context.Context,
+	req *UpdateRunStatusRequest,
+	to entity.RunStatus,
+) (*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("update run status request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+
+	from := req.From
+	if from == "" {
+		from = entity.RunStatusRunning
+	}
+	if err := EnsureRunTransition(from, to); err != nil {
+		return nil, err
+	}
+
+	workerID := strings.TrimSpace(req.WorkerID)
+	if err := s.repo.UpdateRunStatus(ctx, repository.UpdateRunStatusRequest{
+		RunID:        req.RunID,
+		From:         from,
+		To:           to,
+		WorkerID:     workerID,
+		ErrorCode:    strings.TrimSpace(req.ErrorCode),
+		ErrorMessage: strings.TrimSpace(req.ErrorMessage),
+	}); err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetRun(ctx, req.RunID)
+}
+
 func isValidMessageRole(role entity.MessageRole) bool {
 	switch role {
 	case entity.MessageRoleUser, entity.MessageRoleAssistant, entity.MessageRoleTool, entity.MessageRoleSystem:
