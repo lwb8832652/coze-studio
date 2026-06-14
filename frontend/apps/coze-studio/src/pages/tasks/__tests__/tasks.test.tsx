@@ -43,6 +43,7 @@ import {
   canCancelTask,
   filterTasks,
   formatUpdatedTime,
+  getTaskEventDisplay,
   getTaskInputText,
   getTaskStatusText,
 } from '../helpers';
@@ -190,5 +191,30 @@ describe('TasksPage helpers', () => {
       '请生成报告',
     );
     expect(getTaskInputText('普通输入')).toBe('普通输入');
+  });
+
+  it('formats agent run step events as execution steps', () => {
+    const started = getTaskEventDisplay(
+      'step.started',
+      JSON.stringify({
+        step_name: 'generate_answer',
+        step_index: 0,
+      }),
+    );
+    const completed = getTaskEventDisplay(
+      'step.completed',
+      JSON.stringify({
+        step_name: 'generate_answer',
+        step_index: 0,
+        final: true,
+      }),
+    );
+
+    expect(started.title).toBe('开始执行 generate_answer');
+    expect(started.status).toBe('running');
+    expect(started.structured).toBe(true);
+    expect(completed.title).toBe('完成 generate_answer');
+    expect(completed.status).toBe('completed');
+    expect(completed.structured).toBe(true);
   });
 });

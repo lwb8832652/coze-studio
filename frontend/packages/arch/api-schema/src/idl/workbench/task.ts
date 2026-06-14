@@ -97,6 +97,14 @@ export interface TaskThreadRun {
   created_at: number,
   updated_at: number,
 }
+export interface TaskThreadRunEvent {
+  event_id: string,
+  thread_id: string,
+  run_id: string,
+  event_type: string,
+  payload: string,
+  created_at: number,
+}
 export interface CreateTaskRequest {
   space_id: string,
   title: string,
@@ -174,6 +182,12 @@ export interface ListTaskThreadRunsRequest {
   page?: number,
   page_size?: number,
 }
+export interface ListTaskThreadRunEventsRequest {
+  thread_id: string,
+  run_id?: string,
+  page?: number,
+  page_size?: number,
+}
 export interface CreateTaskThreadRunRequest {
   thread_id: string,
   assistant_id?: string,
@@ -208,6 +222,15 @@ export interface ListTaskThreadRunsData {
 }
 export interface ListTaskThreadRunsResponse {
   data?: ListTaskThreadRunsData,
+  code: number,
+  msg: string,
+}
+export interface ListTaskThreadRunEventsData {
+  events: TaskThreadRunEvent[],
+  total: number,
+}
+export interface ListTaskThreadRunEventsResponse {
+  data?: ListTaskThreadRunEventsData,
   code: number,
   msg: string,
 }
@@ -320,6 +343,19 @@ export const ListTaskThreadRuns = /*#__PURE__*/createAPI<ListTaskThreadRunsReque
     "query": ["status", "page", "page_size"]
   },
   "resType": "ListTaskThreadRunsResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const ListTaskThreadRunEvents = /*#__PURE__*/createAPI<ListTaskThreadRunEventsRequest, ListTaskThreadRunEventsResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/run_events",
+  "method": "GET",
+  "name": "ListTaskThreadRunEvents",
+  "reqType": "ListTaskThreadRunEventsRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "query": ["run_id", "page", "page_size"]
+  },
+  "resType": "ListTaskThreadRunEventsResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });

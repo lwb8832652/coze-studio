@@ -30,6 +30,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
 
@@ -197,6 +198,77 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第一轮\"}]}"`)
 }
 
+func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"分析执行流程"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "run.started",
+		Payload:   `{"status":"running","worker_id":"worker-a"}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/run_events?page=1&page_size=10", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"event_type":"run.started"`)
+	require.Contains(t, body, `"payload":"{\"status\":\"running\",\"worker_id\":\"worker-a\"}"`)
+}
+
+func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"分析执行流程"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.completed",
+		Payload:   `{"step_name":"generate_answer","status":"completed"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamTaskThreadRunEvents(context.Background(), writer, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 10,
+		TimeoutMs:  100,
+	})
+	body := writer.String()
+
+	require.Contains(t, body, "event: run.event")
+	require.Contains(t, body, `data: {"event_id":"3","thread_id":"1","run_id":"2","event_type":"step.completed"`)
+	require.Contains(t, body, "event: done")
+}
+
 func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
@@ -278,6 +350,14 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			ended_at integer,
 			created_at integer,
 			updated_at integer
+		);
+		CREATE TABLE agent_run_events (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			event_type text,
+			payload json,
+			created_at integer
 		)
 	`).Error
 }
@@ -285,6 +365,35 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 type sequentialIDGen struct {
 	mu   sync.Mutex
 	next int64
+}
+
+type recordingTaskThreadRunEventStreamWriter struct {
+	buffer bytes.Buffer
+}
+
+func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType string, data []byte) error {
+	if id != "" {
+		w.buffer.WriteString("id: ")
+		w.buffer.WriteString(id)
+		w.buffer.WriteByte('\n')
+	}
+	if eventType != "" {
+		w.buffer.WriteString("event: ")
+		w.buffer.WriteString(eventType)
+		w.buffer.WriteByte('\n')
+	}
+	if len(data) > 0 {
+		w.buffer.WriteString("data: ")
+		w.buffer.Write(data)
+		w.buffer.WriteByte('\n')
+	}
+	w.buffer.WriteByte('\n')
+
+	return nil
+}
+
+func (w *recordingTaskThreadRunEventStreamWriter) String() string {
+	return w.buffer.String()
 }
 
 func (g *sequentialIDGen) GenID(ctx context.Context) (int64, error) {

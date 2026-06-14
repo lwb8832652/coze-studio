@@ -20,6 +20,7 @@ import {
   getTask,
   getTaskThread,
   listTaskEvents,
+  listTaskThreadRunEvents,
   listTaskThreadMessages,
 } from './service';
 
@@ -27,6 +28,7 @@ type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
 export type TaskDetailSource = 'task' | 'thread';
 
@@ -115,6 +117,16 @@ const mapTaskThreadToTask = (
   };
 };
 
+export const mapTaskThreadRunEventToTaskEvent = (
+  event: TaskThreadRunEvent,
+): TaskEvent => ({
+  id: event.event_id,
+  task_id: event.thread_id,
+  event_type: event.event_type,
+  payload: event.payload,
+  created_at: event.created_at,
+});
+
 const fetchLegacyTaskDetail = async (taskId: string): Promise<TaskDetail> => {
   const [taskResponse, eventsResponse] = await Promise.all([
     getTask({ task_id: taskId }),
@@ -152,14 +164,23 @@ export const fetchTaskDetail = async ({
     return fetchLegacyTaskDetail(thread.legacy_task_id);
   }
 
-  const messagesResponse = await listTaskThreadMessages({
-    thread_id: id,
-    page: 1,
-    page_size: 50,
-  });
+  const [messagesResponse, runEventsResponse] = await Promise.all([
+    listTaskThreadMessages({
+      thread_id: id,
+      page: 1,
+      page_size: 50,
+    }),
+    listTaskThreadRunEvents({
+      thread_id: id,
+      page: 1,
+      page_size: 100,
+    }),
+  ]);
 
   return {
     task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
-    events: [],
+    events: (runEventsResponse.data?.events ?? []).map(
+      mapTaskThreadRunEventToTaskEvent,
+    ),
   };
 };

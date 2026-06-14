@@ -20,6 +20,7 @@ import {
   appendTaskThreadMessage,
   createTaskThreadRun,
   getTaskThread,
+  listTaskThreadRunEvents,
   listTaskThreadMessages,
   listTaskThreadRuns,
   listTaskThreads,
@@ -33,5 +34,6 @@ describe('task thread service', () => {
     expect(typeof appendTaskThreadMessage).toBe('function');
     expect(typeof listTaskThreadRuns).toBe('function');
     expect(typeof createTaskThreadRun).toBe('function');
+    expect(typeof listTaskThreadRunEvents).toBe('function');
   });
 });

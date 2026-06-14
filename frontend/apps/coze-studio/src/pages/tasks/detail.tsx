@@ -31,12 +31,13 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
+import { useTaskThreadRunEventStream } from './task-run-event-stream';
+import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
 import {
   appendTaskThreadMessage,
   createTaskThreadRun,
   sendWorkbenchChat,
 } from './service';
-import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
 import {
   formatUpdatedTime,
   getLatestAnswerEventMessage,
@@ -51,6 +52,8 @@ import {
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+
+const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 
 const AssistantMark = () => (
   <span className="coze-prototype-assistant-mark" aria-hidden="true">
@@ -325,9 +328,7 @@ const FollowUpComposer = ({
   </section>
 );
 
-const getThreadFollowUpMetadata = (
-  payload: WorkbenchComposerSubmitPayload,
-) =>
+const getThreadFollowUpMetadata = (payload: WorkbenchComposerSubmitPayload) =>
   JSON.stringify({
     mode: payload.mode,
     model_type: payload.modelType,
@@ -419,35 +420,29 @@ const TaskDetailPage = () => {
   const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>('Auto');
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpError, setFollowUpError] = useState('');
-
   useEffect(() => {
     if (!taskDetailId) {
       return;
     }
-
     let canceled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-
     const loadTaskDetail = async (showLoading = false) => {
       if (showLoading) {
         setLoading(true);
       }
       setError('');
-
       try {
         const detail = await fetchTaskDetail({
           id: taskDetailId,
           source: taskDetailSource,
         });
-
         if (!canceled) {
           setTask(detail.task);
           setEvents(detail.events);
-
           if (detail.task && !isTaskTerminalStatus(detail.task.status)) {
             timer = setTimeout(() => {
               void loadTaskDetail();
-            }, 2000);
+            }, TASK_DETAIL_POLLING_DELAY_MS);
           }
         }
       } catch (err) {
@@ -460,9 +455,7 @@ const TaskDetailPage = () => {
         }
       }
     };
-
     void loadTaskDetail(true);
-
     return () => {
       canceled = true;
       if (timer) {
@@ -470,27 +463,26 @@ const TaskDetailPage = () => {
       }
     };
   }, [taskDetailId, taskDetailSource]);
-
+  useTaskThreadRunEventStream({
+    enabled: taskDetailSource === 'thread' && task?.id === taskDetailId,
+    setEvents,
+    threadId: taskDetailId,
+  });
   const handleFollowUpSubmit = async (
     payload: WorkbenchComposerSubmitPayload,
   ) => {
     if (!payload.message || followUpLoading) {
       return;
     }
-
     if (!space_id || !taskDetailId) {
       setFollowUpError('缺少任务上下文，无法继续追问');
-
       return;
     }
-
     const isCanonicalThreadDetail =
       taskDetailSource === 'thread' && task?.id === taskDetailId;
     const activeTaskId = task?.id ?? taskDetailId;
-
     setFollowUpLoading(true);
     setFollowUpError('');
-
     try {
       await sendFollowUpMessage({
         activeTaskId,
@@ -501,7 +493,6 @@ const TaskDetailPage = () => {
       });
 
       setFollowUpValue('');
-
       const detail = await fetchTaskDetail({
         id: taskDetailId,
         source: taskDetailSource,
@@ -522,18 +513,15 @@ const TaskDetailPage = () => {
       {task ? <TaskTopBar task={task} /> : null}
       <section className="coze-prototype-detail-inner">
         {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
-
         {error ? <div className="coze-prototype-error">{error}</div> : null}
-
         {!loading && !error && !task ? (
           <div className="coze-prototype-empty">未找到任务</div>
         ) : null}
-
         {task ? (
           <>
             <TaskConversation task={task} />
-            {parseTaskResultPayload(task.result).resultType ===
-            'agent_trace' ? (
+            {events.length ||
+            parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
               <TaskEventsSection events={events} task={task} />
             ) : null}
             <TaskResultSection task={task} events={events} />

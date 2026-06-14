@@ -57,7 +57,9 @@ const STATUS_TEXT_BY_KEY: Record<string, string> = {
   canceled: '任务已取消',
 };
 
-const parseJSONObject = (value?: string): Record<string, unknown> | undefined => {
+const parseJSONObject = (
+  value?: string,
+): Record<string, unknown> | undefined => {
   const trimmed = value?.trim();
 
   if (!trimmed) {
@@ -91,19 +93,38 @@ const getPayloadText = (value?: string) => {
   return value?.trim() ?? '';
 };
 
-const getString = (payload: Record<string, unknown> | undefined, key: string) => {
+const getString = (
+  payload: Record<string, unknown> | undefined,
+  key: string,
+) => {
   const value = payload?.[key];
 
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 };
 
-const getNumber = (payload: Record<string, unknown> | undefined, key: string) => {
+const getNumber = (
+  payload: Record<string, unknown> | undefined,
+  key: string,
+) => {
   const value = payload?.[key];
 
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
 };
 
-const normalizeExecutionType = (value?: string): TaskExecutionType | undefined => {
+const getBoolean = (
+  payload: Record<string, unknown> | undefined,
+  key: string,
+) => {
+  const value = payload?.[key];
+
+  return typeof value === 'boolean' ? value : undefined;
+};
+
+const normalizeExecutionType = (
+  value?: string,
+): TaskExecutionType | undefined => {
   if (value === 'Ark' || value === 'Agent') {
     return value;
   }
@@ -239,6 +260,74 @@ export const getTaskEventDisplay = (
   const progress = getNumber(parsed, 'progress');
   const structured = Boolean(title || detail || thought || runtime || progress);
   const status = normalizeExecutionStatus(getString(parsed, 'status'));
+
+  if (eventType?.startsWith('run.')) {
+    const workerID = getString(parsed, 'worker_id');
+    const errorMessage = getString(parsed, 'error_message');
+    const runDisplayMap: Record<
+      string,
+      Pick<TaskEventDisplay, 'title' | 'status'>
+    > = {
+      'run.started': { title: '任务开始执行', status: 'running' },
+      'run.completed': { title: '任务执行完成', status: 'completed' },
+      'run.failed': { title: '任务执行失败', status: 'failed' },
+    };
+    const display = runDisplayMap[eventType] ?? {
+      title: getTaskEventText(eventType, payload),
+      status,
+    };
+
+    return {
+      ...display,
+      detail: detail ?? errorMessage ?? (workerID ? `Worker: ${workerID}` : ''),
+      runtime: runtime ?? 'Agent',
+      structured: true,
+      kind: 'step',
+    };
+  }
+
+  if (eventType?.startsWith('step.')) {
+    const stepName =
+      getString(parsed, 'step_name') ||
+      getString(parsed, 'step_id') ||
+      `步骤 ${(getNumber(parsed, 'step_index') ?? 0) + 1}`;
+    const stepType = getString(parsed, 'step_type');
+    const errorMessage = getString(parsed, 'error_message');
+    const final = getBoolean(parsed, 'final');
+
+    if (eventType === 'step.started') {
+      return {
+        title: `开始执行 ${stepName}`,
+        detail: detail ?? stepType,
+        status: 'running',
+        runtime: runtime ?? 'Agent',
+        structured: true,
+        kind: 'step',
+      };
+    }
+
+    if (eventType === 'step.completed') {
+      return {
+        title: `完成 ${stepName}`,
+        detail: detail ?? (final ? '已产生最终回答' : stepType),
+        status: 'completed',
+        runtime: runtime ?? 'Agent',
+        structured: true,
+        kind: 'step',
+      };
+    }
+
+    if (eventType === 'step.failed') {
+      return {
+        title: `${stepName} 执行失败`,
+        detail: detail ?? errorMessage ?? stepType,
+        status: 'failed',
+        runtime: runtime ?? 'Agent',
+        structured: true,
+        kind: 'step',
+      };
+    }
+  }
 
   if (eventType === 'agent.database_query') {
     const databaseID = getString(parsed, 'database_id');

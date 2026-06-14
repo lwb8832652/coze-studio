@@ -67,6 +67,15 @@ type TaskThreadRun struct {
 	UpdatedAt         int64  `json:"updated_at"`
 }
 
+type TaskThreadRunEvent struct {
+	EventID   int64  `json:"event_id,string"`
+	ThreadID  int64  `json:"thread_id,string"`
+	RunID     int64  `json:"run_id,string"`
+	EventType string `json:"event_type"`
+	Payload   string `json:"payload"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 type ListTaskThreadsRequest struct {
 	SpaceID  int64  `query:"space_id,required"`
 	Status   string `query:"status"`
@@ -99,6 +108,21 @@ type ListTaskThreadRunsRequest struct {
 	PageSize int32  `query:"page_size"`
 }
 
+type ListTaskThreadRunEventsRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	RunID    int64 `query:"run_id"`
+	Page     int32 `query:"page"`
+	PageSize int32 `query:"page_size"`
+}
+
+type StreamTaskThreadRunEventsRequest struct {
+	ThreadID     int64 `path:"thread_id,required"`
+	RunID        int64 `query:"run_id"`
+	AfterEventID int64 `query:"after_event_id"`
+	IntervalMs   int64 `query:"interval_ms"`
+	TimeoutMs    int64 `query:"timeout_ms"`
+}
+
 type CreateTaskThreadRunRequest struct {
 	ThreadID          int64  `path:"thread_id,required" json:"-"`
 	AssistantID       string `json:"assistant_id,omitempty"`
@@ -129,6 +153,11 @@ type ListTaskThreadRunsData struct {
 	Total int64            `json:"total"`
 }
 
+type ListTaskThreadRunEventsData struct {
+	Events []*TaskThreadRunEvent `json:"events"`
+	Total  int64                 `json:"total"`
+}
+
 type ListTaskThreadsResponse struct {
 	Data *ListTaskThreadsData `json:"data,omitempty"`
 	Code int64                `json:"code"`
@@ -157,6 +186,12 @@ type ListTaskThreadRunsResponse struct {
 	Data *ListTaskThreadRunsData `json:"data,omitempty"`
 	Code int64                   `json:"code"`
 	Msg  string                  `json:"msg"`
+}
+
+type ListTaskThreadRunEventsResponse struct {
+	Data *ListTaskThreadRunEventsData `json:"data,omitempty"`
+	Code int64                        `json:"code"`
+	Msg  string                       `json:"msg"`
 }
 
 type CreateTaskThreadRunResponse struct {

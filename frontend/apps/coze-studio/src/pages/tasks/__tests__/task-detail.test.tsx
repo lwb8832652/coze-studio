@@ -30,6 +30,13 @@ const mockNavigate = vi.hoisted(() => vi.fn());
 const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
+const mockListTaskThreadRunEvents = vi.hoisted(() => vi.fn());
+const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
+  vi.fn(
+    ({ threadId }: { threadId: string }) =>
+      `/api/workbench/task_threads/${threadId}/run_events/stream`,
+  ),
+);
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
@@ -43,7 +50,9 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../service', () => ({
   getTask: mockGetTask,
   getTaskThread: mockGetTaskThread,
+  getTaskThreadRunEventsStreamURL: mockGetTaskThreadRunEventsStreamURL,
   listTaskThreadMessages: mockListTaskThreadMessages,
+  listTaskThreadRunEvents: mockListTaskThreadRunEvents,
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThreadRun: mockCreateTaskThreadRun,
   listTaskEvents: mockListTaskEvents,
@@ -116,12 +125,51 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 
 import TaskDetailPage from '../detail';
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+
+  readonly url: string;
+
+  readonly close = vi.fn();
+
+  private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(
+      type,
+      (this.listeners.get(type) ?? []).filter(item => item !== listener),
+    );
+  }
+
+  emit(type: string, data: string) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({ data } as MessageEvent);
+    }
+  }
+}
+
 describe('TaskDetailPage', () => {
   beforeEach(() => {
+    Object.defineProperty(globalThis, 'EventSource', {
+      configurable: true,
+      value: MockEventSource,
+    });
+    MockEventSource.instances = [];
     mockUseParams.mockReturnValue({ space_id: 'space-1', task_id: 'task-1' });
     mockGetTask.mockReset();
     mockGetTaskThread.mockReset();
+    mockGetTaskThreadRunEventsStreamURL.mockClear();
     mockListTaskThreadMessages.mockReset();
+    mockListTaskThreadRunEvents.mockReset();
     mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
     mockListTaskEvents.mockReset();
@@ -200,6 +248,14 @@ describe('TaskDetailPage', () => {
     mockListTaskThreadMessages.mockResolvedValue({
       data: {
         messages: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [],
         total: 0,
       },
       code: 0,
@@ -387,6 +443,11 @@ describe('TaskDetailPage', () => {
     });
     expect(mockGetTask).not.toHaveBeenCalled();
     expect(mockListTaskEvents).not.toHaveBeenCalled();
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      page: 1,
+      page_size: 100,
+    });
     expect(container.textContent).toContain('独立智能体任务');
     expect(container.textContent).toContain('请基于真实消息分析客户反馈');
     expect(container.textContent).toContain('真实消息显示响应速度最重要');
@@ -397,6 +458,117 @@ describe('TaskDetailPage', () => {
     act(() => {
       root?.unmount();
     });
+    container.remove();
+  });
+
+  it('streams canonical thread run events into the execution flow', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-only-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-only-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '独立智能体任务',
+        status: 'running',
+        source: 'agent',
+        progress: 35,
+        last_user_message: '请分析客户反馈',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-1',
+            thread_id: 'thread-only-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请分析客户反馈',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-run-1',
+            thread_id: 'thread-only-1',
+            run_id: 'run-1',
+            event_type: 'step.started',
+            payload: JSON.stringify({
+              step_name: 'generate_answer',
+              step_index: 0,
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      page: 1,
+      page_size: 100,
+    });
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0].url).toContain(
+      '/api/workbench/task_threads/thread-only-1/run_events/stream',
+    );
+    expect(container.textContent).toContain('执行流程');
+    expect(container.textContent).toContain('开始执行 generate_answer');
+
+    act(() => {
+      MockEventSource.instances[0].emit(
+        'run.event',
+        JSON.stringify({
+          event_id: 'event-run-2',
+          thread_id: 'thread-only-1',
+          run_id: 'run-1',
+          event_type: 'step.completed',
+          payload: JSON.stringify({
+            step_name: 'generate_answer',
+            step_index: 0,
+            final: true,
+          }),
+          created_at: 1717000300000,
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain('完成 generate_answer');
+
+    act(() => {
+      root?.unmount();
+    });
+    expect(MockEventSource.instances[0].close).toHaveBeenCalled();
     container.remove();
   });
 

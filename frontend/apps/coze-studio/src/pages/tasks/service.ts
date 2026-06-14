@@ -24,7 +24,32 @@ export const listTaskThreadMessages = workbenchTask.ListTaskThreadMessages;
 export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
 export const listTaskThreadRuns = workbenchTask.ListTaskThreadRuns;
 export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
+export const listTaskThreadRunEvents = workbenchTask.ListTaskThreadRunEvents;
 export const cancelTask = workbenchTask.CancelTask;
 export const retryTask = workbenchTask.RetryTask;
 export const listTaskEvents = workbenchTask.ListTaskEvents;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
+
+export const getTaskThreadRunEventsStreamURL = ({
+  afterEventId,
+  runId,
+  threadId,
+}: {
+  threadId: string;
+  runId?: string;
+  afterEventId?: string;
+}) => {
+  const params = new URLSearchParams();
+  if (runId) {
+    params.set('run_id', runId);
+  }
+  if (afterEventId) {
+    params.set('after_event_id', afterEventId);
+  }
+
+  const query = params.toString();
+
+  return `/api/workbench/task_threads/${encodeURIComponent(
+    threadId,
+  )}/run_events/stream${query ? `?${query}` : ''}`;
+};

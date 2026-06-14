@@ -18,13 +18,34 @@ package coze
 
 import (
 	"context"
+	"strconv"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
 	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
+	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
+
+const (
+	taskThreadRunEventStreamEvent   = "run.event"
+	taskThreadRunEventStreamDone    = "done"
+	taskThreadRunEventStreamError   = "error"
+	defaultRunEventStreamIntervalMs = int64(1000)
+	defaultRunEventStreamTimeoutMs  = int64(30000)
+	minRunEventStreamIntervalMs     = int64(10)
+	maxRunEventStreamIntervalMs     = int64(5000)
+	minRunEventStreamTimeoutMs      = int64(1)
+	maxRunEventStreamTimeoutMs      = int64(60000)
+)
+
+type taskThreadRunEventStreamWriter interface {
+	WriteEvent(id, eventType string, data []byte) error
+}
 
 // ListTaskThreads .
 // @router /api/workbench/task_threads [GET]
@@ -175,6 +196,58 @@ func ListTaskThreadRuns(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// ListTaskThreadRunEvents .
+// @router /api/workbench/task_threads/:thread_id/run_events [GET]
+func ListTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadRunEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadRunEventsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadRunEventsData{
+			Events: taskThreadRunEventsToAPI(resp.Events),
+			Total:  resp.Total,
+		},
+	})
+}
+
+// StreamTaskThreadRunEvents .
+// @router /api/workbench/task_threads/:thread_id/run_events/stream [GET]
+func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.StreamTaskThreadRunEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	c.SetContentType("text/event-stream; charset=utf-8")
+	c.Response.Header.Set("Cache-Control", "no-cache")
+	c.Response.Header.Set("Connection", "keep-alive")
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close task thread run event stream failed, err=%v", err)
+		}
+	}()
+
+	streamTaskThreadRunEvents(ctx, writer, req)
+}
+
 // CreateTaskThreadRun .
 // @router /api/workbench/task_threads/:thread_id/runs [POST]
 func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
@@ -237,6 +310,15 @@ func taskThreadRunsToAPI(runs []*appagentthread.RunSummary) []*threadapi.TaskThr
 	return result
 }
 
+func taskThreadRunEventsToAPI(events []*appagentthread.RunEventSummary) []*threadapi.TaskThreadRunEvent {
+	result := make([]*threadapi.TaskThreadRunEvent, 0, len(events))
+	for _, item := range events {
+		result = append(result, taskThreadRunEventToAPI(item))
+	}
+
+	return result
+}
+
 func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread {
 	if thread == nil {
 		return nil
@@ -290,6 +372,21 @@ func taskThreadRunToAPI(run *appagentthread.RunSummary) *threadapi.TaskThreadRun
 	}
 }
 
+func taskThreadRunEventToAPI(event *appagentthread.RunEventSummary) *threadapi.TaskThreadRunEvent {
+	if event == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadRunEvent{
+		EventID:   event.EventID,
+		ThreadID:  event.ThreadID,
+		RunID:     event.RunID,
+		EventType: event.EventType,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
+	}
+}
+
 func taskThreadMessageToAPI(message *appagentthread.MessageSummary) *threadapi.TaskThreadMessage {
 	if message == nil {
 		return nil
@@ -308,4 +405,129 @@ func taskThreadMessageToAPI(message *appagentthread.MessageSummary) *threadapi.T
 
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
 	internalServerErrorResponse(ctx, c, err)
+}
+
+func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStreamWriter, req threadapi.StreamTaskThreadRunEventsRequest) {
+	afterEventID := req.AfterEventID
+	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
+	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
+
+	sendNewEvents := func() bool {
+		resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Page:     1,
+			PageSize: 200,
+		})
+		if err != nil {
+			writeTaskThreadRunEventStreamError(ctx, writer, err)
+			return false
+		}
+
+		for _, event := range resp.Events {
+			if event == nil || event.EventID <= afterEventID {
+				continue
+			}
+			if !writeTaskThreadRunEventStreamEvent(ctx, writer, event) {
+				return false
+			}
+			afterEventID = event.EventID
+		}
+
+		return true
+	}
+
+	if !sendNewEvents() {
+		return
+	}
+	if req.RunID > 0 && writeDoneWhenRunTerminal(ctx, writer, req.RunID) {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			return
+		case <-ticker.C:
+			if !sendNewEvents() {
+				return
+			}
+			if req.RunID > 0 && writeDoneWhenRunTerminal(ctx, writer, req.RunID) {
+				return
+			}
+		}
+	}
+}
+
+func writeTaskThreadRunEventStreamEvent(ctx context.Context, writer taskThreadRunEventStreamWriter, event *appagentthread.RunEventSummary) bool {
+	payload, err := sonic.Marshal(taskThreadRunEventToAPI(event))
+	if err != nil {
+		writeTaskThreadRunEventStreamError(ctx, writer, err)
+		return false
+	}
+
+	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), taskThreadRunEventStreamEvent, payload); err != nil {
+		logs.CtxWarnf(ctx, "write task thread run event stream failed, err=%v", err)
+		return false
+	}
+
+	return true
+}
+
+func writeTaskThreadRunEventStreamError(ctx context.Context, writer taskThreadRunEventStreamWriter, err error) {
+	if err == nil {
+		return
+	}
+	if writeErr := writer.WriteEvent("", taskThreadRunEventStreamError, []byte(err.Error())); writeErr != nil {
+		logs.CtxWarnf(ctx, "write task thread run event stream error failed, err=%v", writeErr)
+	}
+}
+
+func writeDoneWhenRunTerminal(ctx context.Context, writer taskThreadRunEventStreamWriter, runID int64) bool {
+	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
+	if err != nil {
+		writeTaskThreadRunEventStreamError(ctx, writer, err)
+		return true
+	}
+	if resp == nil || resp.Run == nil || !isTaskThreadRunTerminal(resp.Run.Status) {
+		return false
+	}
+
+	data, err := sonic.Marshal(map[string]string{"reason": "terminal_run"})
+	if err != nil {
+		writeTaskThreadRunEventStreamError(ctx, writer, err)
+		return true
+	}
+	if err := writer.WriteEvent("", taskThreadRunEventStreamDone, data); err != nil {
+		logs.CtxWarnf(ctx, "write task thread run event stream done failed, err=%v", err)
+	}
+
+	return true
+}
+
+func isTaskThreadRunTerminal(status appagentthread.RunStatus) bool {
+	return status == appagentthread.RunStatusSucceeded ||
+		status == appagentthread.RunStatusFailed ||
+		status == appagentthread.RunStatusCanceled
+}
+
+func clampRunEventStreamDuration(valueMs, defaultMs, minMs, maxMs int64) time.Duration {
+	if valueMs <= 0 {
+		valueMs = defaultMs
+	}
+	if valueMs < minMs {
+		valueMs = minMs
+	}
+	if valueMs > maxMs {
+		valueMs = maxMs
+	}
+
+	return time.Duration(valueMs) * time.Millisecond
 }
