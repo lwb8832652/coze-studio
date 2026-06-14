@@ -56,6 +56,7 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 	var executedRun *RunSummary
+	eventSink := &recordingRunEventSink{}
 	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
 		executedRun = run
 
@@ -66,6 +67,7 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	}), RunProcessorOptions{
 		WorkerID:  "worker-a",
 		BatchSize: 1,
+		EventSink: eventSink,
 	})
 
 	err := processor.ProcessPendingRuns(context.Background())
@@ -83,6 +85,12 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "worker-a", domainSVC.completeRunReq.WorkerID)
 	require.Nil(t, domainSVC.failRunReq)
+	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, int64(10), eventSink.events[0].ThreadID)
+	require.Equal(t, int64(200), eventSink.events[0].RunID)
+	require.Contains(t, eventSink.events[0].Payload, `"status":"running"`)
+	require.Contains(t, eventSink.events[0].Payload, `"worker_id":"worker-a"`)
+	require.Contains(t, eventSink.events[1].Payload, `"status":"succeeded"`)
 }
 
 func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
@@ -107,11 +115,13 @@ func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
 	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
 		return nil, fmt.Errorf("model failed")
 	}), RunProcessorOptions{
 		WorkerID:  "worker-a",
 		BatchSize: 1,
+		EventSink: eventSink,
 	})
 
 	err := processor.ProcessPendingRuns(context.Background())
@@ -125,4 +135,27 @@ func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 	require.Equal(t, "worker-a", domainSVC.failRunReq.WorkerID)
 	require.Equal(t, "executor_error", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "model failed", domainSVC.failRunReq.ErrorMessage)
+	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"status":"failed"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_code":"executor_error"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_message":"model failed"`)
+}
+
+type recordingRunEventSink struct {
+	events []RunEvent
+}
+
+func (s *recordingRunEventSink) EmitRunEvent(ctx context.Context, event RunEvent) error {
+	s.events = append(s.events, event)
+
+	return nil
+}
+
+func (s *recordingRunEventSink) eventTypes() []string {
+	eventTypes := make([]string, 0, len(s.events))
+	for _, event := range s.events {
+		eventTypes = append(eventTypes, event.EventType)
+	}
+
+	return eventTypes
 }

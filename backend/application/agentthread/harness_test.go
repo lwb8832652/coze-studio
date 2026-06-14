@@ -39,8 +39,12 @@ func TestHarnessExecutorRunsPlannedStepAndReturnsFinalMessage(t *testing.T) {
 			Final:    true,
 		},
 	}
-	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{MaxSteps: 3})
-	run := &RunSummary{RunID: 10, Input: `{"message":"生成报告"}`}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:  3,
+		EventSink: eventSink,
+	})
+	run := &RunSummary{ThreadID: 5, RunID: 10, Input: `{"message":"生成报告"}`}
 
 	result, err := executor.Execute(context.Background(), run)
 
@@ -53,6 +57,13 @@ func TestHarnessExecutorRunsPlannedStepAndReturnsFinalMessage(t *testing.T) {
 	require.Equal(t, run, planner.run)
 	require.Equal(t, AgentStepTypeModel, runner.step.Type)
 	require.Equal(t, 0, runner.state.StepIndex)
+	require.Equal(t, []string{"step.started", "step.completed"}, eventSink.eventTypes())
+	require.Equal(t, int64(5), eventSink.events[0].ThreadID)
+	require.Equal(t, int64(10), eventSink.events[0].RunID)
+	require.Contains(t, eventSink.events[0].Payload, `"step_id":"step-1"`)
+	require.Contains(t, eventSink.events[0].Payload, `"step_index":0`)
+	require.Contains(t, eventSink.events[1].Payload, `"final":true`)
+	require.Contains(t, eventSink.events[1].Payload, `"message_present":true`)
 }
 
 func TestHarnessExecutorStopsWhenMaxStepsExceeded(t *testing.T) {
@@ -99,6 +110,31 @@ func TestHarnessExecutorReturnsContextCanceledBeforePlanning(t *testing.T) {
 	require.Nil(t, result)
 	require.Zero(t, planner.calls)
 	require.Zero(t, runner.calls)
+}
+
+func TestHarnessExecutorEmitsStepFailedWhenRunnerErrors(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-err", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		err: errors.New("model step failed"),
+	}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:  1,
+		EventSink: eventSink,
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{ThreadID: 6, RunID: 14, Input: `{"message":"hello"}`})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "model step failed")
+	require.Nil(t, result)
+	require.Equal(t, []string{"step.started", "step.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"step_id":"step-err"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_message":"model step failed"`)
 }
 
 func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {

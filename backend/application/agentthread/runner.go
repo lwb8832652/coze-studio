@@ -47,11 +47,13 @@ type RunExecutionResult struct {
 type RunProcessorOptions struct {
 	WorkerID  string
 	BatchSize int32
+	EventSink RunEventSink
 }
 
 type RunProcessor struct {
 	app       *ApplicationService
 	executor  RunExecutor
+	eventSink RunEventSink
 	workerID  string
 	batchSize int32
 }
@@ -65,10 +67,15 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 	if batchSize <= 0 {
 		batchSize = defaultRunProcessorBatchSize
 	}
+	eventSink := opts.EventSink
+	if eventSink == nil {
+		eventSink = NewApplicationRunEventSink(app)
+	}
 
 	return &RunProcessor{
 		app:       app,
 		executor:  executor,
+		eventSink: eventSink,
 		workerID:  workerID,
 		batchSize: batchSize,
 	}
@@ -104,13 +111,22 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 		return nil
 	}
 
+	p.emitRunEvent(ctx, run, "run.started", map[string]any{
+		"status":    string(RunStatusRunning),
+		"worker_id": p.workerID,
+	})
+
 	result, err := p.executor.Execute(ctx, run)
 	if err != nil {
+		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
+
 		return p.failRun(ctx, run, "executor_error", err.Error())
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
+		p.emitRunFailedEvent(ctx, run, "empty_executor_result", "executor returned empty assistant message")
+
 		return p.failRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
 	}
 
@@ -121,16 +137,25 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 		Content:  message,
 		Metadata: resultMetadata(result),
 	}); err != nil {
+		p.emitRunFailedEvent(ctx, run, "append_message_failed", err.Error())
+
 		return p.failRun(ctx, run, "append_message_failed", err.Error())
 	}
 
-	_, err = p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
 		RunID:    run.RunID,
 		From:     RunStatusRunning,
 		WorkerID: p.workerID,
+	}); err != nil {
+		return err
+	}
+
+	p.emitRunEvent(ctx, run, "run.completed", map[string]any{
+		"status":    string(RunStatusSucceeded),
+		"worker_id": p.workerID,
 	})
 
-	return err
+	return nil
 }
 
 func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) error {
@@ -143,6 +168,28 @@ func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, messa
 	})
 
 	return err
+}
+
+func (p *RunProcessor) emitRunFailedEvent(ctx context.Context, run *RunSummary, code, message string) {
+	p.emitRunEvent(ctx, run, "run.failed", map[string]any{
+		"status":        string(RunStatusFailed),
+		"worker_id":     p.workerID,
+		"error_code":    code,
+		"error_message": message,
+	})
+}
+
+func (p *RunProcessor) emitRunEvent(ctx context.Context, run *RunSummary, eventType string, payload map[string]any) {
+	if p == nil || run == nil {
+		return
+	}
+
+	emitRunEvent(ctx, p.eventSink, RunEvent{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: eventType,
+		Payload:   encodeRunEventPayload(ctx, payload),
+	})
 }
 
 func resultMessage(result *RunExecutionResult) string {

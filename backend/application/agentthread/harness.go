@@ -61,12 +61,14 @@ type AgentStepRunner interface {
 type HarnessExecutorOptions struct {
 	MaxSteps      int
 	ModelProvider ChatModelProvider
+	EventSink     RunEventSink
 }
 
 type HarnessExecutor struct {
-	planner  AgentPlanner
-	runner   AgentStepRunner
-	maxSteps int
+	planner   AgentPlanner
+	runner    AgentStepRunner
+	eventSink RunEventSink
+	maxSteps  int
 }
 
 func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts HarnessExecutorOptions) *HarnessExecutor {
@@ -82,9 +84,10 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 	}
 
 	return &HarnessExecutor{
-		planner:  planner,
-		runner:   runner,
-		maxSteps: maxSteps,
+		planner:   planner,
+		runner:    runner,
+		eventSink: opts.EventSink,
+		maxSteps:  maxSteps,
 	}
 }
 
@@ -136,21 +139,37 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			}
 
 			state.StepIndex = executedSteps
+			e.emitStepEvent(ctx, run, step, "step.started", map[string]any{
+				"step_index": executedSteps,
+			})
 			stepResult, err := runner.RunStep(ctx, run, step, cloneHarnessState(state))
 			if err != nil {
+				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
+
 				return nil, err
 			}
 			if stepResult == nil {
-				return nil, fmt.Errorf("agent harness step runner returned empty result")
+				err := fmt.Errorf("agent harness step runner returned empty result")
+				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
+
+				return nil, err
+			}
+			if stepResult.Final && strings.TrimSpace(stepResult.Message) == "" {
+				err := fmt.Errorf("agent harness final step returned empty message")
+				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
+
+				return nil, err
 			}
 
 			executedSteps++
 			state.Results = append(state.Results, *stepResult)
+			e.emitStepEvent(ctx, run, step, "step.completed", map[string]any{
+				"step_index":      executedSteps - 1,
+				"final":           stepResult.Final,
+				"message_present": strings.TrimSpace(stepResult.Message) != "",
+			})
 			if stepResult.Final {
 				message := strings.TrimSpace(stepResult.Message)
-				if message == "" {
-					return nil, fmt.Errorf("agent harness final step returned empty message")
-				}
 
 				return &RunExecutionResult{
 					Message:  message,
@@ -161,6 +180,35 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	}
 
 	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+}
+
+func (e *HarnessExecutor) emitStepFailedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int, message string) {
+	e.emitStepEvent(ctx, run, step, "step.failed", map[string]any{
+		"step_index":    stepIndex,
+		"error_message": message,
+	})
+}
+
+func (e *HarnessExecutor) emitStepEvent(ctx context.Context, run *RunSummary, step AgentStep, eventType string, payload map[string]any) {
+	if e == nil || run == nil {
+		return
+	}
+
+	eventPayload := map[string]any{
+		"step_id":   step.ID,
+		"step_type": string(step.Type),
+		"step_name": step.Name,
+	}
+	for key, value := range payload {
+		eventPayload[key] = value
+	}
+
+	emitRunEvent(ctx, e.eventSink, RunEvent{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: eventType,
+		Payload:   encodeRunEventPayload(ctx, eventPayload),
+	})
 }
 
 type singleModelPlanner struct{}

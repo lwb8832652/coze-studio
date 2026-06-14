@@ -93,9 +93,11 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 		return nil
 	}
 
+	eventSink := NewApplicationRunEventSink(app)
 	processor := NewRunProcessor(app, executor, RunProcessorOptions{
 		WorkerID:  envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
 		BatchSize: envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink: eventSink,
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{
 		Interval: time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,
