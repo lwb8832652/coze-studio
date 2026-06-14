@@ -1,0 +1,153 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package agentthread
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+	"github.com/stretchr/testify/require"
+)
+
+func TestModelExecutorGeneratesAssistantMessageFromRunInput(t *testing.T) {
+	chatModel := &recordingChatModel{
+		resp: schema.AssistantMessage(" 执行完成 ", nil),
+	}
+	var gotModelID int64
+	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+		gotModelID = modelID
+
+		return chatModel, true, nil
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		RunID:       200,
+		ThreadID:    10,
+		AssistantID: "assistant-a",
+		Input:       `{"messages":[{"role":"user","content":"分析客户反馈"},{"role":"assistant","content":"已有结论"},{"role":"user","content":"补充行动建议"}]}`,
+		Config:      `{"model_id":100002,"model_name":"doubao-pro","temperature":0.2,"max_tokens":512,"top_p":0.8,"system_prompt":"你是任务执行助手"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100002), gotModelID)
+	require.NotNil(t, result)
+	require.Equal(t, "执行完成", result.Message)
+	require.Len(t, chatModel.messages, 4)
+	require.Equal(t, schema.System, chatModel.messages[0].Role)
+	require.Equal(t, "你是任务执行助手", chatModel.messages[0].Content)
+	require.Equal(t, schema.User, chatModel.messages[1].Role)
+	require.Equal(t, "分析客户反馈", chatModel.messages[1].Content)
+	require.Equal(t, schema.Assistant, chatModel.messages[2].Role)
+	require.Equal(t, "已有结论", chatModel.messages[2].Content)
+	require.Equal(t, schema.User, chatModel.messages[3].Role)
+	require.Equal(t, "补充行动建议", chatModel.messages[3].Content)
+	require.NotNil(t, chatModel.options.Model)
+	require.Equal(t, "doubao-pro", *chatModel.options.Model)
+	require.NotNil(t, chatModel.options.Temperature)
+	require.InDelta(t, float32(0.2), *chatModel.options.Temperature, 0.0001)
+	require.NotNil(t, chatModel.options.MaxTokens)
+	require.Equal(t, 512, *chatModel.options.MaxTokens)
+	require.NotNil(t, chatModel.options.TopP)
+	require.InDelta(t, float32(0.8), *chatModel.options.TopP, 0.0001)
+
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(result.Metadata), &metadata))
+	require.Equal(t, "model_executor", metadata["source"])
+	require.Equal(t, float64(100002), metadata["model_id"])
+	require.Equal(t, "doubao-pro", metadata["model_name"])
+}
+
+func TestModelExecutorAcceptsSimpleMessageInput(t *testing.T) {
+	chatModel := &recordingChatModel{
+		resp: schema.AssistantMessage("周报已生成", nil),
+	}
+	var gotModelID int64
+	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+		gotModelID = modelID
+
+		return chatModel, true, nil
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		Input:  `{"message":"请生成周报"}`,
+		Config: `{"modelType":200003}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200003), gotModelID)
+	require.Equal(t, "周报已生成", result.Message)
+	require.Len(t, chatModel.messages, 1)
+	require.Equal(t, schema.User, chatModel.messages[0].Role)
+	require.Equal(t, "请生成周报", chatModel.messages[0].Content)
+}
+
+func TestModelExecutorRejectsEmptyRunInputMessages(t *testing.T) {
+	called := false
+	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+		called = true
+
+		return &recordingChatModel{}, true, nil
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		Input: `{"messages":[{"role":"user","content":"   "}]}`,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "run input messages are required")
+	require.Nil(t, result)
+	require.False(t, called)
+}
+
+func TestModelExecutorPropagatesModelError(t *testing.T) {
+	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+		return &recordingChatModel{err: fmt.Errorf("model failed")}, true, nil
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		Input: `{"messages":[{"role":"user","content":"hello"}]}`,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "model failed")
+	require.Nil(t, result)
+}
+
+type recordingChatModel struct {
+	messages []*schema.Message
+	options  *model.Options
+	resp     *schema.Message
+	err      error
+}
+
+func (m *recordingChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	m.messages = append([]*schema.Message(nil), input...)
+	m.options = model.GetCommonOptions(nil, opts...)
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	return m.resp, nil
+}
+
+func (m *recordingChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	return nil, fmt.Errorf("stream is not implemented")
+}
