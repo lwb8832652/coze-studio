@@ -1,0 +1,170 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package agentthread
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+	"github.com/stretchr/testify/require"
+)
+
+func TestHarnessExecutorRunsPlannedStepAndReturnsFinalMessage(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-1", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{
+			Message:  "任务已完成",
+			Metadata: `{"source":"step"}`,
+			Final:    true,
+		},
+	}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{MaxSteps: 3})
+	run := &RunSummary{RunID: 10, Input: `{"message":"生成报告"}`}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, "任务已完成", result.Message)
+	require.Contains(t, result.Metadata, `"source":"agent_harness"`)
+	require.Contains(t, result.Metadata, `"steps":1`)
+	require.Equal(t, 1, planner.calls)
+	require.Equal(t, 1, runner.calls)
+	require.Equal(t, run, planner.run)
+	require.Equal(t, AgentStepTypeModel, runner.step.Type)
+	require.Equal(t, 0, runner.state.StepIndex)
+}
+
+func TestHarnessExecutorStopsWhenMaxStepsExceeded(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-repeat", Type: AgentStepTypeModel, Name: "retry"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{Final: false},
+	}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{MaxSteps: 2})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{RunID: 11, Input: `{"message":"hello"}`})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "agent harness exceeded max steps: 2")
+	require.Nil(t, result)
+	require.Equal(t, 2, planner.calls)
+	require.Equal(t, 2, runner.calls)
+	require.Len(t, runner.states, 2)
+	require.Equal(t, 0, runner.states[0].StepIndex)
+	require.Equal(t, 1, runner.states[1].StepIndex)
+	require.Len(t, runner.states[1].Results, 1)
+}
+
+func TestHarnessExecutorReturnsContextCanceledBeforePlanning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-1", Type: AgentStepTypeModel},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{Message: "should not run", Final: true},
+	}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{MaxSteps: 1})
+
+	result, err := executor.Execute(ctx, &RunSummary{RunID: 12, Input: `{"message":"hello"}`})
+
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.Canceled))
+	require.Nil(t, result)
+	require.Zero(t, planner.calls)
+	require.Zero(t, runner.calls)
+}
+
+func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
+	chatModel := &recordingChatModel{
+		resp: schema.AssistantMessage("默认模型回答", nil),
+	}
+	var gotModelID int64
+	executor := NewHarnessExecutor(nil, nil, HarnessExecutorOptions{
+		ModelProvider: func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			gotModelID = modelID
+
+			return chatModel, true, nil
+		},
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		RunID:  13,
+		Input:  `{"message":"生成回答"}`,
+		Config: `{"model_id":100002}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100002), gotModelID)
+	require.Equal(t, "默认模型回答", result.Message)
+	require.Contains(t, result.Metadata, `"source":"agent_harness"`)
+	require.Contains(t, result.Metadata, `"model_executor"`)
+	require.Len(t, chatModel.messages, 1)
+	require.Equal(t, "生成回答", chatModel.messages[0].Content)
+}
+
+type recordingPlanner struct {
+	plan  *AgentPlan
+	err   error
+	run   *RunSummary
+	state AgentHarnessState
+	calls int
+}
+
+func (p *recordingPlanner) Plan(ctx context.Context, run *RunSummary, state AgentHarnessState) (*AgentPlan, error) {
+	p.calls++
+	p.run = run
+	p.state = state
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.plan, nil
+}
+
+type recordingStepRunner struct {
+	result *AgentStepResult
+	err    error
+	step   AgentStep
+	state  AgentHarnessState
+	states []AgentHarnessState
+	calls  int
+}
+
+func (r *recordingStepRunner) RunStep(ctx context.Context, run *RunSummary, step AgentStep, state AgentHarnessState) (*AgentStepResult, error) {
+	r.calls++
+	r.step = step
+	r.state = state
+	r.states = append(r.states, state)
+	if r.err != nil {
+		return nil, r.err
+	}
+
+	return r.result, nil
+}
