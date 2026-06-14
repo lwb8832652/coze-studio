@@ -1,4 +1,4 @@
-h1:1IE6x9pB3vYOUsr9Tga5JcEMa3hgf4+n1FLU8zVOsBQ=
+h1:CUjjt7bI9BSr2+MD7d+hGtB/699WBN57AHfzCoyD7wo=
 20250703095335_initial.sql h1:/joaeUTMhXqAEc0KwsSve5+bYM0qPOp+9OizJtsRc+U=
 20250703115304_update.sql h1:cbYo6Q6Lh96hB4hu5KW2Nn/Mr0VDpg7a1WPgpIb1SOc=
 20250704040445_update.sql h1:QWmoPY//oQ+GFZwET9w/oAWa8mM0KVaD5G8Yiu9bMqY=
@@ -20,3 +20,4 @@ h1:1IE6x9pB3vYOUsr9Tga5JcEMa3hgf4+n1FLU8zVOsBQ=
 20260613000100_agent_threads.sql h1:2nyxHtRwAumfV8W5tPJSTd5vY7arHopoJnd3NAVfDnk=
 20260614000100_agent_thread_messages.sql h1:RS4wj/0gGl8DyLNjYrmX3O/a8OJoLl0kJA3PW0HP0yE=
 20260614000200_agent_runs.sql h1:bIZzg+LJqcPoi8D1hQZhzaO3szdnFO77MECdD6Su15M=
+20260614000300_agent_run_events.sql h1:onqtbMWUQpXyLFG3nzprft7YpCJNS9M5XMDAfM6Zrl4=

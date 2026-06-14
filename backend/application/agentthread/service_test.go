@@ -392,6 +392,69 @@ func TestApplicationFailRunMapsErrorFields(t *testing.T) {
 	require.Equal(t, "model failed", resp.Run.ErrorMessage)
 }
 
+func TestApplicationAppendRunEventMapsDomainEvent(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		appendedRunEvent: &entity.RunEvent{
+			ID:        300,
+			ThreadID:  10,
+			RunID:     200,
+			EventType: "run.started",
+			Payload:   `{"status":"running"}`,
+			CreatedAt: 400,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		ThreadID:  10,
+		RunID:     200,
+		EventType: "run.started",
+		Payload:   `{"status":"running"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.appendRunEventReq.ThreadID)
+	require.Equal(t, int64(200), domainSVC.appendRunEventReq.RunID)
+	require.Equal(t, "run.started", domainSVC.appendRunEventReq.EventType)
+	require.Equal(t, `{"status":"running"}`, domainSVC.appendRunEventReq.Payload)
+	require.Equal(t, int64(300), resp.Event.EventID)
+	require.Equal(t, int64(10), resp.Event.ThreadID)
+	require.Equal(t, int64(200), resp.Event.RunID)
+	require.Equal(t, "run.started", resp.Event.EventType)
+	require.Equal(t, `{"status":"running"}`, resp.Event.Payload)
+	require.Equal(t, int64(400), resp.Event.CreatedAt)
+}
+
+func TestApplicationListRunEventsMapsDomainEvents(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		runEvents: []*entity.RunEvent{
+			{ID: 300, ThreadID: 10, RunID: 200, EventType: "run.started", Payload: `{}`, CreatedAt: 400},
+			{ID: 301, ThreadID: 10, RunID: 200, EventType: "run.completed", Payload: `{"ok":true}`, CreatedAt: 500},
+		},
+		runEventTotal: 2,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ListRunEvents(context.Background(), &ListRunEventsRequest{
+		ThreadID: 10,
+		RunID:    200,
+		Page:     2,
+		PageSize: 5,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.listRunEventsReq.ThreadID)
+	require.Equal(t, int64(200), domainSVC.listRunEventsReq.RunID)
+	require.Equal(t, int32(2), domainSVC.listRunEventsReq.Page)
+	require.Equal(t, int32(5), domainSVC.listRunEventsReq.PageSize)
+	require.Equal(t, int64(2), resp.Total)
+	require.Len(t, resp.Events, 2)
+	require.Equal(t, int64(300), resp.Events[0].EventID)
+	require.Equal(t, "run.started", resp.Events[0].EventType)
+	require.Equal(t, int64(301), resp.Events[1].EventID)
+	require.Equal(t, `{"ok":true}`, resp.Events[1].Payload)
+}
+
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
 	_, err := (*ApplicationService)(nil).CreateThread(context.Background(), &CreateThreadRequest{Title: "x"})
 	require.Error(t, err)
@@ -452,32 +515,37 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 }
 
 type recordingThreadService struct {
-	created         *entity.Thread
-	createdRun      *entity.Run
-	claimedRuns     []*entity.Run
-	completedRun    *entity.Run
-	failedRun       *entity.Run
-	canceledRun     *entity.Run
-	listed          []*entity.Thread
-	got             *entity.Thread
-	appended        *entity.Message
-	messages        []*entity.Message
-	runs            []*entity.Run
-	total           int64
-	messageTotal    int64
-	runTotal        int64
-	createReq       *domainservice.CreateThreadRequest
-	createRunReq    *domainservice.CreateRunRequest
-	claimRunsReq    *domainservice.ClaimPendingRunsRequest
-	completeRunReq  *domainservice.UpdateRunStatusRequest
-	failRunReq      *domainservice.UpdateRunStatusRequest
-	cancelRunReq    *domainservice.UpdateRunStatusRequest
-	listReq         *domainservice.ListThreadsRequest
-	listRunsReq     *domainservice.ListRunsRequest
-	appendReq       *domainservice.AppendMessageRequest
-	listMessagesReq *domainservice.ListMessagesRequest
-	getID           int64
-	getRunID        int64
+	created           *entity.Thread
+	createdRun        *entity.Run
+	claimedRuns       []*entity.Run
+	completedRun      *entity.Run
+	failedRun         *entity.Run
+	canceledRun       *entity.Run
+	listed            []*entity.Thread
+	got               *entity.Thread
+	appended          *entity.Message
+	appendedRunEvent  *entity.RunEvent
+	messages          []*entity.Message
+	runs              []*entity.Run
+	runEvents         []*entity.RunEvent
+	total             int64
+	messageTotal      int64
+	runTotal          int64
+	runEventTotal     int64
+	createReq         *domainservice.CreateThreadRequest
+	createRunReq      *domainservice.CreateRunRequest
+	claimRunsReq      *domainservice.ClaimPendingRunsRequest
+	completeRunReq    *domainservice.UpdateRunStatusRequest
+	failRunReq        *domainservice.UpdateRunStatusRequest
+	cancelRunReq      *domainservice.UpdateRunStatusRequest
+	appendRunEventReq *domainservice.AppendRunEventRequest
+	listReq           *domainservice.ListThreadsRequest
+	listRunsReq       *domainservice.ListRunsRequest
+	listRunEventsReq  *domainservice.ListRunEventsRequest
+	appendReq         *domainservice.AppendMessageRequest
+	listMessagesReq   *domainservice.ListMessagesRequest
+	getID             int64
+	getRunID          int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -584,6 +652,16 @@ func (s *recordingThreadService) FailRun(ctx context.Context, req *domainservice
 func (s *recordingThreadService) CancelRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
 	s.cancelRunReq = req
 	return s.canceledRun, nil
+}
+
+func (s *recordingThreadService) AppendRunEvent(ctx context.Context, req *domainservice.AppendRunEventRequest) (*entity.RunEvent, error) {
+	s.appendRunEventReq = req
+	return s.appendedRunEvent, nil
+}
+
+func (s *recordingThreadService) ListRunEvents(ctx context.Context, req *domainservice.ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
+	s.listRunEventsReq = req
+	return s.runEvents, s.runEventTotal, nil
 }
 
 type fixedIDGen struct{}

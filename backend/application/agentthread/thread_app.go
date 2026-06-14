@@ -111,6 +111,21 @@ func DomainRunToSummary(run *entity.Run) *RunSummary {
 	}
 }
 
+func DomainRunEventToSummary(event *entity.RunEvent) *RunEventSummary {
+	if event == nil {
+		return nil
+	}
+
+	return &RunEventSummary{
+		EventID:   event.ID,
+		ThreadID:  event.ThreadID,
+		RunID:     event.RunID,
+		EventType: event.EventType,
+		Payload:   event.Payload,
+		CreatedAt: event.CreatedAt,
+	}
+}
+
 func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
 	switch status {
 	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:

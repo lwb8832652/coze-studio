@@ -76,6 +76,20 @@ type ListRunsRequest struct {
 	PageSize int32
 }
 
+type AppendRunEventRequest struct {
+	ThreadID  int64
+	RunID     int64
+	EventType string
+	Payload   string
+}
+
+type ListRunEventsRequest struct {
+	ThreadID int64
+	RunID    int64
+	Page     int32
+	PageSize int32
+}
+
 type ClaimPendingRunsRequest struct {
 	WorkerID string
 	Limit    int32
@@ -105,6 +119,8 @@ type ThreadService interface {
 	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
 	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
+	AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error)
+	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

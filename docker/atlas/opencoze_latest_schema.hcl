@@ -5137,6 +5137,43 @@ table "agent_runs" {
     columns = [column.space_id, column.idempotency_key]
   }
 }
+table "agent_run_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "event_type" {
+    null = false
+    type = varchar(128)
+  }
+  column "payload" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_run_events_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_run_events_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+}
 table "chat_task_attempts" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"

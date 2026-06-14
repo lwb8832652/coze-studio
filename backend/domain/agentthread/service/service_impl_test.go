@@ -351,23 +351,113 @@ func TestFailRunStoresError(t *testing.T) {
 	require.Equal(t, "model failed", run.ErrorMessage)
 }
 
+func TestAppendRunEventCreatesEventFromRun(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
+
+	event, err := svc.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		RunID:     20,
+		EventType: "  run.started  ",
+		Payload:   `{"status":"running"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3001), event.ID)
+	require.Equal(t, int64(10), event.ThreadID)
+	require.Equal(t, int64(20), event.RunID)
+	require.Equal(t, "run.started", event.EventType)
+	require.Equal(t, `{"status":"running"}`, event.Payload)
+	require.NotZero(t, event.CreatedAt)
+	require.Len(t, repo.runEvents[20], 1)
+	require.Equal(t, "run.started", repo.runEvents[20][0].EventType)
+}
+
+func TestAppendRunEventRequiresRunAndEventType(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
+
+	_, err := svc.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		EventType: "run.started",
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	_, err = svc.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		RunID:     20,
+		EventType: "  ",
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	_, err = svc.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		RunID:     20,
+		EventType: "run.started",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "run")
+	require.Empty(t, repo.runEvents[20])
+}
+
+func TestAppendRunEventRejectsMismatchedThread(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
+
+	_, err := svc.AppendRunEvent(context.Background(), &AppendRunEventRequest{
+		ThreadID:  11,
+		RunID:     20,
+		EventType: "run.started",
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Empty(t, repo.runEvents[20])
+}
+
+func TestListRunEventsNormalizesPaging(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runEvents[20] = []*entity.RunEvent{
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: `{}`, CreatedAt: 1},
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "run.completed", Payload: `{}`, CreatedAt: 2},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
+
+	events, total, err := svc.ListRunEvents(context.Background(), &ListRunEventsRequest{
+		RunID: 20,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, events, 2)
+	require.Equal(t, int32(1), repo.lastRunEventListReq.Page)
+	require.Equal(t, int32(100), repo.lastRunEventListReq.PageSize)
+}
+
 type memoryRepo struct {
-	mu                 sync.Mutex
-	threads            map[int64]*entity.Thread
-	messages           map[int64][]*entity.Message
-	runs               map[int64][]*entity.Run
-	lastListReq        repository.ListThreadsRequest
-	lastMessageListReq repository.ListMessagesRequest
-	lastRunListReq     repository.ListRunsRequest
-	lastClaimReq       repository.ClaimPendingRunsRequest
-	lastUpdateRunReq   repository.UpdateRunStatusRequest
+	mu                  sync.Mutex
+	threads             map[int64]*entity.Thread
+	messages            map[int64][]*entity.Message
+	runs                map[int64][]*entity.Run
+	runEvents           map[int64][]*entity.RunEvent
+	lastListReq         repository.ListThreadsRequest
+	lastMessageListReq  repository.ListMessagesRequest
+	lastRunListReq      repository.ListRunsRequest
+	lastRunEventListReq repository.ListRunEventsRequest
+	lastClaimReq        repository.ClaimPendingRunsRequest
+	lastUpdateRunReq    repository.UpdateRunStatusRequest
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		threads:  make(map[int64]*entity.Thread),
-		messages: make(map[int64][]*entity.Message),
-		runs:     make(map[int64][]*entity.Run),
+		threads:   make(map[int64]*entity.Thread),
+		messages:  make(map[int64][]*entity.Message),
+		runs:      make(map[int64][]*entity.Run),
+		runEvents: make(map[int64][]*entity.RunEvent),
 	}
 }
 
@@ -516,6 +606,51 @@ func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsReques
 	return runs[start:end], total, nil
 }
 
+func (r *memoryRepo) CreateRunEvent(ctx context.Context, event *entity.RunEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runEvents[event.RunID] = append(r.runEvents[event.RunID], cloneRunEvent(event))
+	return nil
+}
+
+func (r *memoryRepo) ListRunEvents(ctx context.Context, req repository.ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRunEventListReq = req
+
+	events := make([]*entity.RunEvent, 0)
+	if req.RunID > 0 {
+		for _, event := range r.runEvents[req.RunID] {
+			events = append(events, cloneRunEvent(event))
+		}
+	} else {
+		for _, runEvents := range r.runEvents {
+			for _, event := range runEvents {
+				if event.ThreadID == req.ThreadID {
+					events = append(events, cloneRunEvent(event))
+				}
+			}
+		}
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].CreatedAt == events[j].CreatedAt {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].CreatedAt < events[j].CreatedAt
+	})
+
+	total := int64(len(events))
+	start := int((req.Page - 1) * req.PageSize)
+	if start >= len(events) {
+		return []*entity.RunEvent{}, total, nil
+	}
+	end := start + int(req.PageSize)
+	if end > len(events) {
+		end = len(events)
+	}
+	return events[start:end], total, nil
+}
+
 func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -610,6 +745,14 @@ func cloneRun(run *entity.Run) *entity.Run {
 		return nil
 	}
 	cloned := *run
+	return &cloned
+}
+
+func cloneRunEvent(event *entity.RunEvent) *entity.RunEvent {
+	if event == nil {
+		return nil
+	}
+	cloned := *event
 	return &cloned
 }
 

@@ -288,6 +288,78 @@ func (s *threadService) ListRuns(ctx context.Context, req *ListRunsRequest) ([]*
 	})
 }
 
+func (s *threadService) AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("append run event request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+
+	eventType := strings.TrimSpace(req.EventType)
+	if eventType == "" {
+		return nil, InvalidArgumentErrorf("run event type is required")
+	}
+
+	run, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if req.ThreadID > 0 && req.ThreadID != run.ThreadID {
+		return nil, InvalidArgumentErrorf("run event thread id does not match run thread id")
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	event := &entity.RunEvent{
+		ID:        id,
+		ThreadID:  run.ThreadID,
+		RunID:     run.ID,
+		EventType: eventType,
+		Payload:   defaultJSON(req.Payload, "{}"),
+		CreatedAt: time.Now().UnixMilli(),
+	}
+	if err := s.repo.CreateRunEvent(ctx, event); err != nil {
+		return nil, err
+	}
+
+	return event, nil
+}
+
+func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, err
+	}
+	if req == nil {
+		return nil, 0, InvalidArgumentErrorf("list run events request is required")
+	}
+	if req.RunID <= 0 && req.ThreadID <= 0 {
+		return nil, 0, InvalidArgumentErrorf("run id or thread id is required")
+	}
+
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
+	return s.repo.ListRunEvents(ctx, repository.ListRunEventsRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
 func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err

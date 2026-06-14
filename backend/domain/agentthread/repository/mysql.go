@@ -89,6 +89,15 @@ type runPO struct {
 	UpdatedAt         int64          `gorm:"column:updated_at"`
 }
 
+type runEventPO struct {
+	ID        int64          `gorm:"column:id;primaryKey"`
+	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_run_events_thread_created"`
+	RunID     int64          `gorm:"column:run_id;index:idx_agent_run_events_run_created"`
+	EventType string         `gorm:"column:event_type"`
+	Payload   datatypes.JSON `gorm:"column:payload;type:json"`
+	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
+}
+
 func (threadPO) TableName() string {
 	return "agent_threads"
 }
@@ -99,6 +108,10 @@ func (messagePO) TableName() string {
 
 func (runPO) TableName() string {
 	return "agent_runs"
+}
+
+func (runEventPO) TableName() string {
+	return "agent_run_events"
 }
 
 func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thread) error {
@@ -290,6 +303,62 @@ func (r *threadRepository) ListRuns(ctx context.Context, req ListRunsRequest) ([
 	}
 
 	return runs, total, nil
+}
+
+func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.RunEvent) error {
+	if event == nil {
+		return fmt.Errorf("run event is required")
+	}
+
+	if event.CreatedAt == 0 {
+		event.CreatedAt = time.Now().UnixMilli()
+	}
+
+	po, err := runEventToPO(event)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
+	query := r.db.WithContext(ctx).Model(&runEventPO{})
+	if req.RunID > 0 {
+		query = query.Where("run_id = ?", req.RunID)
+	} else {
+		query = query.Where("thread_id = ?", req.ThreadID)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*runEventPO, 0)
+	if err := query.
+		Order("created_at ASC, id ASC").
+		Limit(int(pageSize)).
+		Offset(int((page - 1) * pageSize)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	events := make([]*entity.RunEvent, 0, len(pos))
+	for _, po := range pos {
+		events = append(events, po.toEntity())
+	}
+
+	return events, total, nil
 }
 
 func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error) {
@@ -523,6 +592,33 @@ func (po *runPO) toEntity() *entity.Run {
 		EndedAt:           po.EndedAt,
 		CreatedAt:         po.CreatedAt,
 		UpdatedAt:         po.UpdatedAt,
+	}
+}
+
+func runEventToPO(event *entity.RunEvent) (*runEventPO, error) {
+	payload, err := requiredJSON("payload", event.Payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &runEventPO{
+		ID:        event.ID,
+		ThreadID:  event.ThreadID,
+		RunID:     event.RunID,
+		EventType: event.EventType,
+		Payload:   payload,
+		CreatedAt: event.CreatedAt,
+	}, nil
+}
+
+func (po *runEventPO) toEntity() *entity.RunEvent {
+	return &entity.RunEvent{
+		ID:        po.ID,
+		ThreadID:  po.ThreadID,
+		RunID:     po.RunID,
+		EventType: po.EventType,
+		Payload:   jsonToString(po.Payload),
+		CreatedAt: po.CreatedAt,
 	}
 }
 

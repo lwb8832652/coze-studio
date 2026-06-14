@@ -251,6 +251,59 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 	return resp, nil
 }
 
+func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*AppendRunEventResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("append run event request is required")
+	}
+
+	event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		EventType: req.EventType,
+		Payload:   req.Payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if event == nil {
+		return nil, fmt.Errorf("agent thread service returned empty run event")
+	}
+
+	return &AppendRunEventResponse{Event: DomainRunEventToSummary(event)}, nil
+}
+
+func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEventsRequest) (*ListRunEventsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list run events request is required")
+	}
+
+	events, total, err := s.ThreadSVC.ListRunEvents(ctx, &domainservice.ListRunEventsRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListRunEventsResponse{
+		Events: make([]*RunEventSummary, 0, len(events)),
+		Total:  total,
+	}
+	for _, event := range events {
+		resp.Events = append(resp.Events, DomainRunEventToSummary(event))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) (*ClaimPendingRunsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

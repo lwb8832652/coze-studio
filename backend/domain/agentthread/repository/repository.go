@@ -33,6 +33,8 @@ type ThreadRepository interface {
 	ListRuns(ctx context.Context, req ListRunsRequest) ([]*entity.Run, int64, error)
 	ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
+	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
+	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 }
 
 type ListThreadsRequest struct {
@@ -52,6 +54,13 @@ type ListMessagesRequest struct {
 type ListRunsRequest struct {
 	ThreadID int64
 	Status   *entity.RunStatus
+	Page     int32
+	PageSize int32
+}
+
+type ListRunEventsRequest struct {
+	ThreadID int64
+	RunID    int64
 	Page     int32
 	PageSize int32
 }

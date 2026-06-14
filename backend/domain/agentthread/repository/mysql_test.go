@@ -289,6 +289,71 @@ func TestThreadRepositoryListRunsFiltersByThreadAndOrdersNewestFirst(t *testing.
 	require.Equal(t, int64(1), got[1].ID)
 }
 
+func TestThreadRepositoryCreateAndListRunEvents(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, event := range []*entity.RunEvent{
+		{ID: 2, ThreadID: 10, RunID: 20, EventType: "step.completed", Payload: `{"step":2}`, CreatedAt: 200},
+		{ID: 1, ThreadID: 10, RunID: 20, EventType: "run.started", Payload: `{"step":1}`, CreatedAt: 100},
+		{ID: 3, ThreadID: 10, RunID: 21, EventType: "other.run", Payload: `{}`, CreatedAt: 50},
+		{ID: 4, ThreadID: 11, RunID: 22, EventType: "other.thread", Payload: `{}`, CreatedAt: 60},
+	} {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	}
+
+	got, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID:    20,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(1), got[0].ID)
+	require.Equal(t, int64(10), got[0].ThreadID)
+	require.Equal(t, int64(20), got[0].RunID)
+	require.Equal(t, "run.started", got[0].EventType)
+	require.Equal(t, `{"step":1}`, got[0].Payload)
+	require.Equal(t, int64(100), got[0].CreatedAt)
+	require.Equal(t, int64(2), got[1].ID)
+	require.Equal(t, "step.completed", got[1].EventType)
+
+	threadEvents, threadTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), threadTotal)
+	require.Len(t, threadEvents, 3)
+	require.Equal(t, int64(3), threadEvents[0].ID)
+	require.Equal(t, int64(1), threadEvents[1].ID)
+	require.Equal(t, int64(2), threadEvents[2].ID)
+}
+
+func TestThreadRepositoryRejectsInvalidRunEventPayload(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	err = repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID:        1,
+		ThreadID:  10,
+		RunID:     20,
+		EventType: "run.started",
+		Payload:   "{",
+		CreatedAt: 100,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payload")
+}
+
 func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

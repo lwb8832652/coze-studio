@@ -105,6 +105,15 @@ type RunSummary struct {
 	UpdatedAt         int64
 }
 
+type RunEventSummary struct {
+	EventID   int64
+	ThreadID  int64
+	RunID     int64
+	EventType string
+	Payload   string
+	CreatedAt int64
+}
+
 type CreateThreadRequest struct {
 	SpaceID      int64
 	UserID       int64
@@ -200,6 +209,29 @@ type ListRunsRequest struct {
 type ListRunsResponse struct {
 	Runs  []*RunSummary
 	Total int64
+}
+
+type AppendRunEventRequest struct {
+	ThreadID  int64
+	RunID     int64
+	EventType string
+	Payload   string
+}
+
+type AppendRunEventResponse struct {
+	Event *RunEventSummary
+}
+
+type ListRunEventsRequest struct {
+	ThreadID int64
+	RunID    int64
+	Page     int32
+	PageSize int32
+}
+
+type ListRunEventsResponse struct {
+	Events []*RunEventSummary
+	Total  int64
 }
 
 type ClaimPendingRunsRequest struct {
