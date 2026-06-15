@@ -51,9 +51,22 @@ type AgentStepResult struct {
 	Final    bool
 }
 
+type AgentMemory struct {
+	ID       string
+	Scope    string
+	Content  string
+	Metadata string
+	Score    float64
+}
+
+type AgentMemoryContext struct {
+	Items []AgentMemory
+}
+
 type AgentHarnessState struct {
 	StepIndex int
 	Results   []AgentStepResult
+	Memory    AgentMemoryContext
 }
 
 type AgentPlanner interface {
@@ -64,18 +77,24 @@ type AgentStepRunner interface {
 	RunStep(ctx context.Context, run *RunSummary, step AgentStep, state AgentHarnessState) (*AgentStepResult, error)
 }
 
+type MemoryProvider interface {
+	Recall(ctx context.Context, run *RunSummary) ([]AgentMemory, error)
+}
+
 type HarnessExecutorOptions struct {
-	MaxSteps      int
-	ModelProvider ChatModelProvider
-	ToolRegistry  ToolRegistry
-	EventSink     RunEventSink
+	MaxSteps       int
+	ModelProvider  ChatModelProvider
+	ToolRegistry   ToolRegistry
+	EventSink      RunEventSink
+	MemoryProvider MemoryProvider
 }
 
 type HarnessExecutor struct {
-	planner   AgentPlanner
-	runner    AgentStepRunner
-	eventSink RunEventSink
-	maxSteps  int
+	planner        AgentPlanner
+	runner         AgentStepRunner
+	eventSink      RunEventSink
+	memoryProvider MemoryProvider
+	maxSteps       int
 }
 
 func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts HarnessExecutorOptions) *HarnessExecutor {
@@ -91,10 +110,11 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 	}
 
 	return &HarnessExecutor{
-		planner:   planner,
-		runner:    runner,
-		eventSink: opts.EventSink,
-		maxSteps:  maxSteps,
+		planner:        planner,
+		runner:         runner,
+		eventSink:      opts.EventSink,
+		memoryProvider: opts.MemoryProvider,
+		maxSteps:       maxSteps,
 	}
 }
 
@@ -122,7 +142,16 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 		maxSteps = defaultHarnessMaxSteps
 	}
 
-	state := AgentHarnessState{}
+	memory, err := e.recallMemory(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	state := AgentHarnessState{
+		Memory: memory,
+	}
+	if len(memory.Items) > 0 {
+		e.emitMemoryRecalledEvent(ctx, run, memory)
+	}
 	executedSteps := 0
 	for executedSteps < maxSteps {
 		if err := ctx.Err(); err != nil {
@@ -174,13 +203,78 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 
 				return &RunExecutionResult{
 					Message:  message,
-					Metadata: harnessMetadata(stepResult.Metadata, executedSteps),
+					Metadata: harnessMetadata(stepResult.Metadata, executedSteps, state.Memory),
 				}, nil
 			}
 		}
 	}
 
 	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+}
+
+func (e *HarnessExecutor) recallMemory(ctx context.Context, run *RunSummary) (AgentMemoryContext, error) {
+	if e == nil || e.memoryProvider == nil {
+		return AgentMemoryContext{}, nil
+	}
+
+	memories, err := e.memoryProvider.Recall(ctx, run)
+	if err != nil {
+		return AgentMemoryContext{}, err
+	}
+
+	return normalizeMemoryContext(memories), nil
+}
+
+func normalizeMemoryContext(memories []AgentMemory) AgentMemoryContext {
+	if len(memories) == 0 {
+		return AgentMemoryContext{}
+	}
+
+	items := make([]AgentMemory, 0, len(memories))
+	for _, memory := range memories {
+		item := AgentMemory{
+			ID:       strings.TrimSpace(memory.ID),
+			Scope:    strings.TrimSpace(memory.Scope),
+			Content:  strings.TrimSpace(memory.Content),
+			Metadata: strings.TrimSpace(memory.Metadata),
+			Score:    memory.Score,
+		}
+		if item.Content == "" {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return AgentMemoryContext{Items: items}
+}
+
+func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunSummary, memory AgentMemoryContext) {
+	if len(memory.Items) == 0 {
+		return
+	}
+
+	scopes := make([]string, 0, len(memory.Items))
+	seen := make(map[string]struct{}, len(memory.Items))
+	for _, item := range memory.Items {
+		if item.Scope == "" {
+			continue
+		}
+		if _, ok := seen[item.Scope]; ok {
+			continue
+		}
+		seen[item.Scope] = struct{}{}
+		scopes = append(scopes, item.Scope)
+	}
+
+	emitRunEvent(ctx, e.eventSink, RunEvent{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: "memory.recalled",
+		Payload: encodeRunEventPayload(ctx, map[string]any{
+			"memory_count": len(memory.Items),
+			"scopes":       scopes,
+		}),
+	})
 }
 
 func (e *HarnessExecutor) emitStepStartedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int) {
@@ -333,14 +427,20 @@ func cloneHarnessState(state AgentHarnessState) AgentHarnessState {
 	if len(state.Results) > 0 {
 		clone.Results = append([]AgentStepResult(nil), state.Results...)
 	}
+	if len(state.Memory.Items) > 0 {
+		clone.Memory.Items = append([]AgentMemory(nil), state.Memory.Items...)
+	}
 
 	return clone
 }
 
-func harnessMetadata(stepMetadata string, steps int) string {
+func harnessMetadata(stepMetadata string, steps int, memory AgentMemoryContext) string {
 	payload := map[string]any{
 		"source": "agent_harness",
 		"steps":  steps,
+	}
+	if len(memory.Items) > 0 {
+		payload["memory_count"] = len(memory.Items)
 	}
 	if strings.TrimSpace(stepMetadata) != "" {
 		var stepPayload map[string]any

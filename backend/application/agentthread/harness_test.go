@@ -207,6 +207,60 @@ func TestHarnessExecutorEmitsToolFailedWhenToolRunnerErrors(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"error_message":"unsupported agent tool: search_web"`)
 }
 
+func TestHarnessExecutorRecallsMemoryBeforePlanning(t *testing.T) {
+	memoryProvider := &recordingMemoryProvider{
+		memories: []AgentMemory{
+			{
+				ID:       "mem-1",
+				Scope:    "thread",
+				Content:  "用户偏好中文回答",
+				Metadata: `{"source":"profile"}`,
+				Score:    0.92,
+			},
+			{
+				ID:      "mem-2",
+				Scope:   "run",
+				Content: "本次任务需要输出周报",
+				Score:   0.81,
+			},
+		},
+	}
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-memory", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{
+			Message: "已按记忆生成周报",
+			Final:   true,
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       1,
+		EventSink:      eventSink,
+		MemoryProvider: memoryProvider,
+	})
+	run := &RunSummary{ThreadID: 9, RunID: 17, Input: `{"message":"写周报"}`}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, "已按记忆生成周报", result.Message)
+	require.Contains(t, result.Metadata, `"memory_count":2`)
+	require.Equal(t, 1, memoryProvider.calls)
+	require.Equal(t, run, memoryProvider.run)
+	require.Len(t, planner.state.Memory.Items, 2)
+	require.Equal(t, "用户偏好中文回答", planner.state.Memory.Items[0].Content)
+	require.Equal(t, "thread", planner.state.Memory.Items[0].Scope)
+	require.Len(t, runner.state.Memory.Items, 2)
+	require.Equal(t, "本次任务需要输出周报", runner.state.Memory.Items[1].Content)
+	require.Equal(t, []string{"memory.recalled", "step.started", "step.completed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[0].Payload, `"memory_count":2`)
+	require.Contains(t, eventSink.events[0].Payload, `"scopes":["thread","run"]`)
+}
+
 func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("默认模型回答", nil),
@@ -273,4 +327,21 @@ func (r *recordingStepRunner) RunStep(ctx context.Context, run *RunSummary, step
 	}
 
 	return r.result, nil
+}
+
+type recordingMemoryProvider struct {
+	memories []AgentMemory
+	err      error
+	run      *RunSummary
+	calls    int
+}
+
+func (p *recordingMemoryProvider) Recall(ctx context.Context, run *RunSummary) ([]AgentMemory, error) {
+	p.calls++
+	p.run = run
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return append([]AgentMemory(nil), p.memories...), nil
 }
