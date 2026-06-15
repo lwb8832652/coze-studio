@@ -65,6 +65,7 @@ import { WorkspaceTaskList } from '../workspace-task-list';
 describe('Coze Studio WorkspaceSubMenu', () => {
   it('defines the Figma workspace navigation structure', () => {
     const labels = WORKSPACE_MENU_META.map(item => item.label);
+    const paths = WORKSPACE_MENU_META.map(item => item.path);
 
     expect(ASSISTANT_LABEL).toBe('专属助理');
     expect(ASSISTANT_BADGE).toBe('Beta');
@@ -73,7 +74,7 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       '资源配置',
       '技能配置',
       '开发配置',
-      '任务触发器',
+      '工具',
       '全部任务',
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
@@ -85,6 +86,11 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       label: '全部任务',
       path: 'chats',
     });
+    expect(WORKSPACE_MENU_META[4]).toMatchObject({
+      label: '工具',
+      path: 'tools',
+    });
+    expect(paths).not.toContain('task-trigger');
   });
 
   it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {

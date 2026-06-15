@@ -55,8 +55,8 @@ export const Workbench = lazy(() => import('../pages/workbench'));
 // skill configuration page
 export const SkillPage = lazy(() => import('../pages/skill'));
 
-// task trigger page
-export const TaskTriggerPage = lazy(() => import('../pages/task-trigger'));
+// tools configuration page
+export const ToolsPage = lazy(() => import('../pages/tools'));
 
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));

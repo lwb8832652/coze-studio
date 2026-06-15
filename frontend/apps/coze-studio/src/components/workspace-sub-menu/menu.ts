@@ -22,7 +22,7 @@ export const SPACE_SUB_MODULE = {
   LIBRARY: 'library',
   SKILL: 'skill',
   DEVELOP: 'develop',
-  TASK_TRIGGER: 'task-trigger',
+  TOOLS: 'tools',
   TASKS: 'chats',
 } as const;
 
@@ -49,9 +49,9 @@ export const WORKSPACE_MENU_META = [
     dataTestId: 'navigation_workspace_develop',
   },
   {
-    label: '任务触发器',
-    path: SPACE_SUB_MODULE.TASK_TRIGGER,
-    dataTestId: 'navigation_workspace_task_trigger',
+    label: '工具',
+    path: SPACE_SUB_MODULE.TOOLS,
+    dataTestId: 'navigation_workspace_tools',
   },
   {
     label: '全部任务',

@@ -14,9 +14,20 @@
  * limitations under the License.
  */
 
-export * as passport from './idl/passport/passport';
-export * as explore from './idl/marketplace/public_api';
-export * as workbench from './idl/workbench/workbench';
-export * as workbenchSkill from './idl/workbench/skill';
-export * as workbenchTask from './idl/workbench/task';
-export * as workbenchTool from './idl/workbench/tool';
+import { describe, expect, it } from 'vitest';
+
+import {
+  getMCPToolServer,
+  listMCPToolServers,
+  testMCPToolCall,
+  upsertMCPToolServer,
+} from '../service';
+
+describe('tools service', () => {
+  it('exports MCP tool configuration API clients', () => {
+    expect(typeof listMCPToolServers).toBe('function');
+    expect(typeof upsertMCPToolServer).toBe('function');
+    expect(typeof getMCPToolServer).toBe('function');
+    expect(typeof testMCPToolCall).toBe('function');
+  });
+});

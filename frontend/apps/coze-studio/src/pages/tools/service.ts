@@ -14,14 +14,9 @@
  * limitations under the License.
  */
 
-const TaskTriggerPage = () => (
-  <main className="h-full px-[24px] py-[24px] coz-bg-primary">
-    <section className="h-full rounded-[8px] border border-solid coz-stroke-primary coz-bg-plus px-[24px] py-[20px]">
-      <h1 className="m-0 text-[20px] leading-[28px] font-[600] coz-fg-primary">
-        任务触发器
-      </h1>
-    </section>
-  </main>
-);
+import { workbenchTool } from '@coze-studio/api-schema';
 
-export default TaskTriggerPage;
+export const listMCPToolServers = workbenchTool.ListMCPToolServers;
+export const upsertMCPToolServer = workbenchTool.UpsertMCPToolServer;
+export const getMCPToolServer = workbenchTool.GetMCPToolServer;
+export const testMCPToolCall = workbenchTool.TestMCPToolCall;

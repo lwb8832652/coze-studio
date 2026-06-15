@@ -29,11 +29,11 @@ import {
   IconCozKnowledge,
   IconCozKnowledgeFill,
   IconCozMore,
+  IconCozPlugin,
   IconCozPlus,
   IconCozSetting,
   IconCozSettingFill,
   IconCozSideExpand,
-  IconCozTrigger,
 } from '@coze-arch/coze-design/icons';
 
 import {
@@ -63,9 +63,9 @@ const MENU_ICONS = {
     icon: <IconCozCode />,
     activeIcon: <IconCozCodeFill />,
   },
-  [SPACE_SUB_MODULE.TASK_TRIGGER]: {
-    icon: <IconCozTrigger />,
-    activeIcon: <IconCozTrigger />,
+  [SPACE_SUB_MODULE.TOOLS]: {
+    icon: <IconCozPlugin />,
+    activeIcon: <IconCozPlugin />,
   },
   [SPACE_SUB_MODULE.TASKS]: {
     icon: <IconCozAsynchronousTask />,

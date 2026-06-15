@@ -49,7 +49,7 @@ import {
   OAuthConsentConfirmPage,
   Workbench,
   SkillPage,
-  TaskTriggerPage,
+  ToolsPage,
   TaskDetailPage,
   TasksPage,
 } from './async-components';
@@ -225,12 +225,12 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   }),
                 },
 
-                // Task Trigger
+                // Tool Configuration
                 {
-                  path: 'task-trigger',
-                  Component: TaskTriggerPage,
+                  path: 'tools',
+                  Component: ToolsPage,
                   loader: () => ({
-                    subMenuKey: SpaceSubModuleEnum.TASK_TRIGGER,
+                    subMenuKey: SPACE_SUB_MODULE.TOOLS,
                   }),
                 },
 

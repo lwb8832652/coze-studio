@@ -11,7 +11,8 @@
     "./marketplace": "./src/idl/marketplace/public_api.ts",
     "./workbench": "./src/idl/workbench/workbench.ts",
     "./workbench-skill": "./src/idl/workbench/skill.ts",
-    "./workbench-task": "./src/idl/workbench/task.ts"
+    "./workbench-task": "./src/idl/workbench/task.ts",
+    "./workbench-tool": "./src/idl/workbench/tool.ts"
   },
   "main": "src/index.ts",
   "typesVersions": {
@@ -30,6 +31,9 @@
       ],
       "workbench-task": [
         "./src/idl/workbench/task.ts"
+      ],
+      "workbench-tool": [
+        "./src/idl/workbench/tool.ts"
       ]
     }
   },
