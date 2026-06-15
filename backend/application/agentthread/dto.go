@@ -43,6 +43,14 @@ const (
 	MessageRoleSystem    MessageRole = "system"
 )
 
+type MemoryScope string
+
+const (
+	MemoryScopeThread   MemoryScope = "thread"
+	MemoryScopeRun      MemoryScope = "run"
+	MemoryScopeLongTerm MemoryScope = "long_term"
+)
+
 type RunStatus string
 
 const (
@@ -112,6 +120,20 @@ type RunEventSummary struct {
 	EventType string
 	Payload   string
 	CreatedAt int64
+}
+
+type MemorySummary struct {
+	MemoryID  int64
+	ThreadID  int64
+	RunID     int64
+	SpaceID   int64
+	Scope     MemoryScope
+	Content   string
+	Metadata  string
+	Score     float64
+	ExpiresAt int64
+	CreatedAt int64
+	UpdatedAt int64
 }
 
 type CreateThreadRequest struct {
@@ -232,6 +254,32 @@ type ListRunEventsRequest struct {
 type ListRunEventsResponse struct {
 	Events []*RunEventSummary
 	Total  int64
+}
+
+type RememberMemoryRequest struct {
+	ThreadID  int64
+	RunID     int64
+	Scope     MemoryScope
+	Content   string
+	Metadata  string
+	Score     float64
+	ExpiresAt int64
+}
+
+type RememberMemoryResponse struct {
+	Memory *MemorySummary
+}
+
+type RecallMemoriesRequest struct {
+	ThreadID int64
+	RunID    int64
+	Scopes   []MemoryScope
+	Limit    int32
+}
+
+type RecallMemoriesResponse struct {
+	Memories []*MemorySummary
+	Total    int64
 }
 
 type ClaimPendingRunsRequest struct {

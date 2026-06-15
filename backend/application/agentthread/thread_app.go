@@ -126,6 +126,26 @@ func DomainRunEventToSummary(event *entity.RunEvent) *RunEventSummary {
 	}
 }
 
+func DomainMemoryToSummary(memory *entity.Memory) *MemorySummary {
+	if memory == nil {
+		return nil
+	}
+
+	return &MemorySummary{
+		MemoryID:  memory.ID,
+		ThreadID:  memory.ThreadID,
+		RunID:     memory.RunID,
+		SpaceID:   memory.SpaceID,
+		Scope:     MemoryScope(memory.Scope),
+		Content:   memory.Content,
+		Metadata:  memory.Metadata,
+		Score:     memory.Score,
+		ExpiresAt: memory.ExpiresAt,
+		CreatedAt: memory.CreatedAt,
+		UpdatedAt: memory.UpdatedAt,
+	}
+}
+
 func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
 	switch status {
 	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:

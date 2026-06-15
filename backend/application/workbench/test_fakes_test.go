@@ -119,6 +119,58 @@ func (r *recordingAgentThreadService) ListThreads(context.Context, *agentthreads
 	return nil, 0, nil
 }
 
+func (r *recordingAgentThreadService) AppendMessage(context.Context, *agentthreadsvc.AppendMessageRequest) (*agentthreadentity.Message, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListMessages(context.Context, *agentthreadsvc.ListMessagesRequest) ([]*agentthreadentity.Message, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) CreateRun(context.Context, *agentthreadsvc.CreateRunRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) GetRun(context.Context, *agentthreadsvc.GetRunRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListRuns(context.Context, *agentthreadsvc.ListRunsRequest) ([]*agentthreadentity.Run, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) AppendRunEvent(context.Context, *agentthreadsvc.AppendRunEventRequest) (*agentthreadentity.RunEvent, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListRunEvents(context.Context, *agentthreadsvc.ListRunEventsRequest) ([]*agentthreadentity.RunEvent, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) RememberMemory(context.Context, *agentthreadsvc.RememberMemoryRequest) (*agentthreadentity.Memory, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) RecallMemories(context.Context, *agentthreadsvc.RecallMemoriesRequest) ([]*agentthreadentity.Memory, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) ClaimPendingRuns(context.Context, *agentthreadsvc.ClaimPendingRunsRequest) ([]*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) CompleteRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) FailRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) CancelRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
 type fakeAgentRun struct {
 	stream *schema.StreamReader[*agentrunentity.AgentRunResponse]
 	req    *agentrunentity.AgentRunMeta

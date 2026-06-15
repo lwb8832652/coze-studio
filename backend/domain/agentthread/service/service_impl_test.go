@@ -438,16 +438,109 @@ func TestListRunEventsNormalizesPaging(t *testing.T) {
 	require.Equal(t, int32(100), repo.lastRunEventListReq.PageSize)
 }
 
+func TestRememberMemoryCreatesThreadMemory(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4001}})
+
+	memory, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Content:  "  用户偏好中文回答  ",
+		Metadata: `{"source":"profile"}`,
+		Score:    0.75,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(4001), memory.ID)
+	require.Equal(t, int64(10), memory.ThreadID)
+	require.Zero(t, memory.RunID)
+	require.Equal(t, int64(1), memory.SpaceID)
+	require.Equal(t, entity.MemoryScopeThread, memory.Scope)
+	require.Equal(t, "用户偏好中文回答", memory.Content)
+	require.Equal(t, `{"source":"profile"}`, memory.Metadata)
+	require.Equal(t, 0.75, memory.Score)
+	require.NotZero(t, memory.CreatedAt)
+	require.Equal(t, memory.CreatedAt, memory.UpdatedAt)
+	require.Len(t, repo.memories[10], 1)
+}
+
+func TestRememberRunMemoryRequiresRunID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4001}})
+
+	_, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID: 10,
+		Scope:    entity.MemoryScopeRun,
+		Content:  "only for this run",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "run id is required")
+	require.Empty(t, repo.memories[10])
+
+	memory, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Scope:    entity.MemoryScopeRun,
+		Content:  "only for this run",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(20), memory.RunID)
+	require.Equal(t, entity.MemoryScopeRun, memory.Scope)
+}
+
+func TestRecallMemoriesNormalizesLimitAndUsesRunContext(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.memories[10] = []*entity.Memory{
+		{
+			ID:       1,
+			ThreadID: 10,
+			RunID:    0,
+			Scope:    entity.MemoryScopeThread,
+			Content:  "thread memory",
+			Score:    0.8,
+		},
+		{
+			ID:       2,
+			ThreadID: 10,
+			RunID:    20,
+			Scope:    entity.MemoryScopeRun,
+			Content:  "run memory",
+			Score:    0.9,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4001}})
+
+	memories, total, err := svc.RecallMemories(context.Background(), &RecallMemoriesRequest{
+		ThreadID: 10,
+		RunID:    20,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, memories, 2)
+	require.Equal(t, int64(10), repo.lastMemoryListReq.ThreadID)
+	require.Equal(t, int64(20), repo.lastMemoryListReq.RunID)
+	require.Equal(t, int32(8), repo.lastMemoryListReq.Limit)
+	require.NotZero(t, repo.lastMemoryListReq.Now)
+}
+
 type memoryRepo struct {
 	mu                  sync.Mutex
 	threads             map[int64]*entity.Thread
 	messages            map[int64][]*entity.Message
 	runs                map[int64][]*entity.Run
 	runEvents           map[int64][]*entity.RunEvent
+	memories            map[int64][]*entity.Memory
 	lastListReq         repository.ListThreadsRequest
 	lastMessageListReq  repository.ListMessagesRequest
 	lastRunListReq      repository.ListRunsRequest
 	lastRunEventListReq repository.ListRunEventsRequest
+	lastMemoryListReq   repository.ListMemoriesRequest
 	lastClaimReq        repository.ClaimPendingRunsRequest
 	lastUpdateRunReq    repository.UpdateRunStatusRequest
 }
@@ -458,6 +551,7 @@ func newMemoryRepo() *memoryRepo {
 		messages:  make(map[int64][]*entity.Message),
 		runs:      make(map[int64][]*entity.Run),
 		runEvents: make(map[int64][]*entity.RunEvent),
+		memories:  make(map[int64][]*entity.Memory),
 	}
 }
 
@@ -651,6 +745,58 @@ func (r *memoryRepo) ListRunEvents(ctx context.Context, req repository.ListRunEv
 	return events[start:end], total, nil
 }
 
+func (r *memoryRepo) CreateMemory(ctx context.Context, memory *entity.Memory) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.memories[memory.ThreadID] = append(r.memories[memory.ThreadID], cloneMemory(memory))
+	return nil
+}
+
+func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemoriesRequest) ([]*entity.Memory, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastMemoryListReq = req
+
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	memories := make([]*entity.Memory, 0, len(r.memories[req.ThreadID]))
+	for _, memory := range r.memories[req.ThreadID] {
+		if req.RunID > 0 {
+			if memory.RunID != 0 && memory.RunID != req.RunID {
+				continue
+			}
+		} else if memory.RunID != 0 {
+			continue
+		}
+		if memory.ExpiresAt > 0 && memory.ExpiresAt <= now {
+			continue
+		}
+		memories = append(memories, cloneMemory(memory))
+	}
+	sort.Slice(memories, func(i, j int) bool {
+		if memories[i].Score == memories[j].Score {
+			if memories[i].UpdatedAt == memories[j].UpdatedAt {
+				return memories[i].ID > memories[j].ID
+			}
+			return memories[i].UpdatedAt > memories[j].UpdatedAt
+		}
+		return memories[i].Score > memories[j].Score
+	})
+
+	total := int64(len(memories))
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 8
+	}
+	if len(memories) > int(limit) {
+		memories = memories[:limit]
+	}
+
+	return memories, total, nil
+}
+
 func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -753,6 +899,14 @@ func cloneRunEvent(event *entity.RunEvent) *entity.RunEvent {
 		return nil
 	}
 	cloned := *event
+	return &cloned
+}
+
+func cloneMemory(memory *entity.Memory) *entity.Memory {
+	if memory == nil {
+		return nil
+	}
+	cloned := *memory
 	return &cloned
 }
 

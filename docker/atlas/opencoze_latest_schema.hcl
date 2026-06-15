@@ -5174,6 +5174,72 @@ table "agent_run_events" {
     columns = [column.thread_id, column.created_at]
   }
 }
+table "agent_thread_memories" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "scope" {
+    null = false
+    type = varchar(32)
+  }
+  column "content" {
+    null = false
+    type = longtext
+  }
+  column "metadata" {
+    null = true
+    type = json
+  }
+  column "score" {
+    null    = false
+    type    = double
+    default = 0
+  }
+  column "expires_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_thread_memories_expires" {
+    columns = [column.expires_at]
+  }
+  index "idx_agent_thread_memories_space_scope" {
+    columns = [column.space_id, column.scope]
+  }
+  index "idx_agent_thread_memories_thread_run_scope" {
+    columns = [column.thread_id, column.run_id, column.scope]
+  }
+  index "idx_agent_thread_memories_updated" {
+    columns = [column.updated_at]
+  }
+}
 table "chat_task_attempts" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"

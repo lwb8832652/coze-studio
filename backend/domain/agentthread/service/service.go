@@ -83,6 +83,23 @@ type AppendRunEventRequest struct {
 	Payload   string
 }
 
+type RememberMemoryRequest struct {
+	ThreadID  int64
+	RunID     int64
+	Scope     entity.MemoryScope
+	Content   string
+	Metadata  string
+	Score     float64
+	ExpiresAt int64
+}
+
+type RecallMemoriesRequest struct {
+	ThreadID int64
+	RunID    int64
+	Scopes   []entity.MemoryScope
+	Limit    int32
+}
+
 type ListRunEventsRequest struct {
 	ThreadID int64
 	RunID    int64
@@ -121,6 +138,8 @@ type ThreadService interface {
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
 	AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error)
 	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
+	RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error)
+	RecallMemories(ctx context.Context, req *RecallMemoriesRequest) ([]*entity.Memory, int64, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

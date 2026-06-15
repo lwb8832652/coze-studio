@@ -54,6 +54,14 @@ const (
 	MessageRoleSystem    MessageRole = "system"
 )
 
+type MemoryScope string
+
+const (
+	MemoryScopeThread   MemoryScope = "thread"
+	MemoryScopeRun      MemoryScope = "run"
+	MemoryScopeLongTerm MemoryScope = "long_term"
+)
+
 type Thread struct {
 	ID            int64
 	SpaceID       int64
@@ -112,4 +120,18 @@ type RunEvent struct {
 	EventType string
 	Payload   string
 	CreatedAt int64
+}
+
+type Memory struct {
+	ID        int64
+	ThreadID  int64
+	RunID     int64
+	SpaceID   int64
+	Scope     MemoryScope
+	Content   string
+	Metadata  string
+	Score     float64
+	ExpiresAt int64
+	CreatedAt int64
+	UpdatedAt int64
 }

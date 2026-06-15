@@ -360,6 +360,94 @@ func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsReq
 	})
 }
 
+func (s *threadService) RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("remember memory request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		return nil, InvalidArgumentErrorf("memory content is required")
+	}
+
+	scope := req.Scope
+	if scope == "" {
+		scope = entity.MemoryScopeThread
+	}
+	if !isValidMemoryScope(scope) {
+		return nil, InvalidArgumentErrorf("memory scope is invalid")
+	}
+	runID := req.RunID
+	if scope == entity.MemoryScopeRun {
+		if runID <= 0 {
+			return nil, InvalidArgumentErrorf("run id is required for run memory")
+		}
+	} else {
+		runID = 0
+	}
+
+	thread, err := s.repo.GetThread(ctx, req.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	memory := &entity.Memory{
+		ID:        id,
+		ThreadID:  req.ThreadID,
+		RunID:     runID,
+		SpaceID:   thread.SpaceID,
+		Scope:     scope,
+		Content:   content,
+		Metadata:  strings.TrimSpace(req.Metadata),
+		Score:     req.Score,
+		ExpiresAt: req.ExpiresAt,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.repo.CreateMemory(ctx, memory); err != nil {
+		return nil, err
+	}
+
+	return memory, nil
+}
+
+func (s *threadService) RecallMemories(ctx context.Context, req *RecallMemoriesRequest) ([]*entity.Memory, int64, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, err
+	}
+	if req == nil {
+		return nil, 0, InvalidArgumentErrorf("recall memories request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, 0, InvalidArgumentErrorf("thread id is required")
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 8
+	}
+
+	return s.repo.ListMemories(ctx, repository.ListMemoriesRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Scopes:   req.Scopes,
+		Limit:    limit,
+		Now:      time.Now().UnixMilli(),
+	})
+}
+
 func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
@@ -437,6 +525,15 @@ func (s *threadService) transitionRun(
 func isValidMessageRole(role entity.MessageRole) bool {
 	switch role {
 	case entity.MessageRoleUser, entity.MessageRoleAssistant, entity.MessageRoleTool, entity.MessageRoleSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidMemoryScope(scope entity.MemoryScope) bool {
+	switch scope {
+	case entity.MemoryScopeThread, entity.MemoryScopeRun, entity.MemoryScopeLongTerm:
 		return true
 	default:
 		return false

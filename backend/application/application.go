@@ -154,7 +154,8 @@ func Init(ctx context.Context) (err error) {
 	task.NewWorker(primaryServices.taskSVC).Start(ctx)
 	agentRunEventSink := agentthread.NewApplicationRunEventSink(primaryServices.agentThreadSVC)
 	agentRunExecutor := agentthread.NewHarnessExecutor(nil, nil, agentthread.HarnessExecutorOptions{
-		EventSink: agentRunEventSink,
+		EventSink:      agentRunEventSink,
+		MemoryProvider: agentthread.NewThreadMemoryProvider(primaryServices.agentThreadSVC, 8),
 	})
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
 

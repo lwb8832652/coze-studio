@@ -335,6 +335,106 @@ func TestThreadRepositoryCreateAndListRunEvents(t *testing.T) {
 	require.Equal(t, int64(2), threadEvents[2].ID)
 }
 
+func TestThreadRepositoryCreateAndListMemories(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&memoryPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, memory := range []*entity.Memory{
+		{
+			ID:        1,
+			ThreadID:  10,
+			RunID:     0,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeThread,
+			Content:   "thread baseline",
+			Metadata:  `{"source":"profile"}`,
+			Score:     0.7,
+			CreatedAt: 100,
+			UpdatedAt: 100,
+		},
+		{
+			ID:        2,
+			ThreadID:  10,
+			RunID:     20,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeRun,
+			Content:   "current run",
+			Metadata:  `{}`,
+			Score:     0.9,
+			CreatedAt: 200,
+			UpdatedAt: 200,
+		},
+		{
+			ID:        3,
+			ThreadID:  10,
+			RunID:     21,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeRun,
+			Content:   "other run",
+			Metadata:  `{}`,
+			Score:     1,
+			CreatedAt: 300,
+			UpdatedAt: 300,
+		},
+		{
+			ID:        4,
+			ThreadID:  11,
+			RunID:     20,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeThread,
+			Content:   "other thread",
+			Metadata:  `{}`,
+			Score:     1,
+			CreatedAt: 400,
+			UpdatedAt: 400,
+		},
+		{
+			ID:        5,
+			ThreadID:  10,
+			RunID:     0,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeThread,
+			Content:   "expired",
+			Metadata:  `{}`,
+			Score:     1,
+			ExpiresAt: 500,
+			CreatedAt: 500,
+			UpdatedAt: 500,
+		},
+		{
+			ID:        6,
+			ThreadID:  10,
+			RunID:     0,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeLongTerm,
+			Content:   "newer same score",
+			Metadata:  `{}`,
+			Score:     0.7,
+			CreatedAt: 600,
+			UpdatedAt: 600,
+		},
+	} {
+		require.NoError(t, repo.CreateMemory(context.Background(), memory))
+	}
+
+	memories, total, err := repo.ListMemories(context.Background(), ListMemoriesRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Now:      1000,
+		Limit:    10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, memories, 3)
+	require.Equal(t, int64(2), memories[0].ID)
+	require.Equal(t, "current run", memories[0].Content)
+	require.Equal(t, `{"source":"profile"}`, memories[2].Metadata)
+	require.Equal(t, []int64{2, 6, 1}, []int64{memories[0].ID, memories[1].ID, memories[2].ID})
+}
+
 func TestThreadRepositoryRejectsInvalidRunEventPayload(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -211,6 +211,62 @@ func TestApplicationListMessagesMapsDomainMessages(t *testing.T) {
 	require.Equal(t, MessageRoleAssistant, resp.Messages[1].Role)
 }
 
+func TestApplicationMemoryMethodsMapDomainMemories(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		rememberedMemory: &entity.Memory{
+			ID:        300,
+			ThreadID:  10,
+			RunID:     20,
+			SpaceID:   1,
+			Scope:     entity.MemoryScopeThread,
+			Content:   "用户偏好中文回答",
+			Metadata:  `{"source":"profile"}`,
+			Score:     0.9,
+			CreatedAt: 400,
+			UpdatedAt: 401,
+		},
+		recalledMemories: []*entity.Memory{
+			{
+				ID:       301,
+				ThreadID: 10,
+				RunID:    20,
+				Scope:    entity.MemoryScopeRun,
+				Content:  "本次任务需要周报",
+				Score:    0.8,
+			},
+		},
+		memoryTotal: 1,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	rememberResp, err := app.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Content:  "用户偏好中文回答",
+		Score:    0.9,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.rememberMemoryReq.ThreadID)
+	require.Equal(t, int64(20), domainSVC.rememberMemoryReq.RunID)
+	require.Equal(t, int64(300), rememberResp.Memory.MemoryID)
+	require.Equal(t, MemoryScopeThread, rememberResp.Memory.Scope)
+	require.Equal(t, "用户偏好中文回答", rememberResp.Memory.Content)
+
+	recallResp, err := app.RecallMemories(context.Background(), &RecallMemoriesRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Limit:    3,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.recallMemoriesReq.ThreadID)
+	require.Equal(t, int64(20), domainSVC.recallMemoriesReq.RunID)
+	require.Equal(t, int32(3), domainSVC.recallMemoriesReq.Limit)
+	require.Equal(t, int64(1), recallResp.Total)
+	require.Len(t, recallResp.Memories, 1)
+	require.Equal(t, int64(301), recallResp.Memories[0].MemoryID)
+	require.Equal(t, MemoryScopeRun, recallResp.Memories[0].Scope)
+}
+
 func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		createdRun: &entity.Run{
@@ -525,13 +581,16 @@ type recordingThreadService struct {
 	got               *entity.Thread
 	appended          *entity.Message
 	appendedRunEvent  *entity.RunEvent
+	rememberedMemory  *entity.Memory
 	messages          []*entity.Message
 	runs              []*entity.Run
 	runEvents         []*entity.RunEvent
+	recalledMemories  []*entity.Memory
 	total             int64
 	messageTotal      int64
 	runTotal          int64
 	runEventTotal     int64
+	memoryTotal       int64
 	createReq         *domainservice.CreateThreadRequest
 	createRunReq      *domainservice.CreateRunRequest
 	claimRunsReq      *domainservice.ClaimPendingRunsRequest
@@ -539,6 +598,8 @@ type recordingThreadService struct {
 	failRunReq        *domainservice.UpdateRunStatusRequest
 	cancelRunReq      *domainservice.UpdateRunStatusRequest
 	appendRunEventReq *domainservice.AppendRunEventRequest
+	rememberMemoryReq *domainservice.RememberMemoryRequest
+	recallMemoriesReq *domainservice.RecallMemoriesRequest
 	listReq           *domainservice.ListThreadsRequest
 	listRunsReq       *domainservice.ListRunsRequest
 	listRunEventsReq  *domainservice.ListRunEventsRequest
@@ -662,6 +723,16 @@ func (s *recordingThreadService) AppendRunEvent(ctx context.Context, req *domain
 func (s *recordingThreadService) ListRunEvents(ctx context.Context, req *domainservice.ListRunEventsRequest) ([]*entity.RunEvent, int64, error) {
 	s.listRunEventsReq = req
 	return s.runEvents, s.runEventTotal, nil
+}
+
+func (s *recordingThreadService) RememberMemory(ctx context.Context, req *domainservice.RememberMemoryRequest) (*entity.Memory, error) {
+	s.rememberMemoryReq = req
+	return s.rememberedMemory, nil
+}
+
+func (s *recordingThreadService) RecallMemories(ctx context.Context, req *domainservice.RecallMemoriesRequest) ([]*entity.Memory, int64, error) {
+	s.recallMemoriesReq = req
+	return s.recalledMemories, s.memoryTotal, nil
 }
 
 type fixedIDGen struct{}

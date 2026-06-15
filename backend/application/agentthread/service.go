@@ -304,6 +304,70 @@ func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEven
 	return resp, nil
 }
 
+func (s *ApplicationService) RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*RememberMemoryResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("remember memory request is required")
+	}
+
+	memory, err := s.ThreadSVC.RememberMemory(ctx, &domainservice.RememberMemoryRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		Scope:     domainentity.MemoryScope(req.Scope),
+		Content:   req.Content,
+		Metadata:  req.Metadata,
+		Score:     req.Score,
+		ExpiresAt: req.ExpiresAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if memory == nil {
+		return nil, fmt.Errorf("agent thread service returned empty memory")
+	}
+
+	return &RememberMemoryResponse{Memory: DomainMemoryToSummary(memory)}, nil
+}
+
+func (s *ApplicationService) RecallMemories(ctx context.Context, req *RecallMemoriesRequest) (*RecallMemoriesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("recall memories request is required")
+	}
+
+	scopes := make([]domainentity.MemoryScope, 0, len(req.Scopes))
+	for _, scope := range req.Scopes {
+		if scope == "" {
+			continue
+		}
+		scopes = append(scopes, domainentity.MemoryScope(scope))
+	}
+
+	memories, total, err := s.ThreadSVC.RecallMemories(ctx, &domainservice.RecallMemoriesRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Scopes:   scopes,
+		Limit:    req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &RecallMemoriesResponse{
+		Memories: make([]*MemorySummary, 0, len(memories)),
+		Total:    total,
+	}
+	for _, memory := range memories {
+		resp.Memories = append(resp.Memories, DomainMemoryToSummary(memory))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) (*ClaimPendingRunsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

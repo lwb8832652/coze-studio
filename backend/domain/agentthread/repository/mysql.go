@@ -98,6 +98,20 @@ type runEventPO struct {
 	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
 }
 
+type memoryPO struct {
+	ID        int64          `gorm:"column:id;primaryKey"`
+	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_memories_thread_run_scope"`
+	RunID     int64          `gorm:"column:run_id;index:idx_agent_thread_memories_thread_run_scope"`
+	SpaceID   int64          `gorm:"column:space_id;index:idx_agent_thread_memories_space_scope"`
+	Scope     string         `gorm:"column:scope;index:idx_agent_thread_memories_thread_run_scope;index:idx_agent_thread_memories_space_scope"`
+	Content   string         `gorm:"column:content"`
+	Metadata  datatypes.JSON `gorm:"column:metadata;type:json"`
+	Score     float64        `gorm:"column:score"`
+	ExpiresAt int64          `gorm:"column:expires_at;index:idx_agent_thread_memories_expires"`
+	CreatedAt int64          `gorm:"column:created_at"`
+	UpdatedAt int64          `gorm:"column:updated_at;index:idx_agent_thread_memories_updated"`
+}
+
 func (threadPO) TableName() string {
 	return "agent_threads"
 }
@@ -112,6 +126,10 @@ func (runPO) TableName() string {
 
 func (runEventPO) TableName() string {
 	return "agent_run_events"
+}
+
+func (memoryPO) TableName() string {
+	return "agent_thread_memories"
 }
 
 func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thread) error {
@@ -359,6 +377,80 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 	}
 
 	return events, total, nil
+}
+
+func (r *threadRepository) CreateMemory(ctx context.Context, memory *entity.Memory) error {
+	if memory == nil {
+		return fmt.Errorf("memory is required")
+	}
+
+	now := time.Now().UnixMilli()
+	if memory.CreatedAt == 0 {
+		memory.CreatedAt = now
+	}
+	if memory.UpdatedAt == 0 {
+		memory.UpdatedAt = memory.CreatedAt
+	}
+
+	po, err := memoryToPO(memory)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) ListMemories(ctx context.Context, req ListMemoriesRequest) ([]*entity.Memory, int64, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 8
+	}
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+
+	query := r.db.WithContext(ctx).
+		Model(&memoryPO{}).
+		Where("thread_id = ?", req.ThreadID).
+		Where("(expires_at = 0 OR expires_at > ?)", now)
+	if req.RunID > 0 {
+		query = query.Where("(run_id = 0 OR run_id = ?)", req.RunID)
+	} else {
+		query = query.Where("run_id = 0")
+	}
+	if len(req.Scopes) > 0 {
+		scopes := make([]string, 0, len(req.Scopes))
+		for _, scope := range req.Scopes {
+			if scope == "" {
+				continue
+			}
+			scopes = append(scopes, string(scope))
+		}
+		if len(scopes) > 0 {
+			query = query.Where("scope IN ?", scopes)
+		}
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*memoryPO, 0)
+	if err := query.
+		Order("score DESC, updated_at DESC, id DESC").
+		Limit(int(limit)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	memories := make([]*entity.Memory, 0, len(pos))
+	for _, po := range pos {
+		memories = append(memories, po.toEntity())
+	}
+
+	return memories, total, nil
 }
 
 func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error) {
@@ -619,6 +711,43 @@ func (po *runEventPO) toEntity() *entity.RunEvent {
 		EventType: po.EventType,
 		Payload:   jsonToString(po.Payload),
 		CreatedAt: po.CreatedAt,
+	}
+}
+
+func memoryToPO(memory *entity.Memory) (*memoryPO, error) {
+	metadata, err := optionalJSON("metadata", memory.Metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &memoryPO{
+		ID:        memory.ID,
+		ThreadID:  memory.ThreadID,
+		RunID:     memory.RunID,
+		SpaceID:   memory.SpaceID,
+		Scope:     string(memory.Scope),
+		Content:   memory.Content,
+		Metadata:  metadata,
+		Score:     memory.Score,
+		ExpiresAt: memory.ExpiresAt,
+		CreatedAt: memory.CreatedAt,
+		UpdatedAt: memory.UpdatedAt,
+	}, nil
+}
+
+func (po *memoryPO) toEntity() *entity.Memory {
+	return &entity.Memory{
+		ID:        po.ID,
+		ThreadID:  po.ThreadID,
+		RunID:     po.RunID,
+		SpaceID:   po.SpaceID,
+		Scope:     entity.MemoryScope(po.Scope),
+		Content:   po.Content,
+		Metadata:  jsonToString(po.Metadata),
+		Score:     po.Score,
+		ExpiresAt: po.ExpiresAt,
+		CreatedAt: po.CreatedAt,
+		UpdatedAt: po.UpdatedAt,
 	}
 }
 
