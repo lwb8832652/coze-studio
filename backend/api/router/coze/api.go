@@ -417,6 +417,10 @@ func Register(r *server.Hertz) {
 		_api.POST("/threads", coze.CreateLangGraphThread)
 		_api.GET("/threads/:thread_id", coze.GetLangGraphThread)
 		_api.POST("/threads/search", coze.SearchLangGraphThreads)
+		_threads := _api.Group("/threads")
+		_threads.POST("/:thread_id/runs", coze.CreateLangGraphRun)
+		_threads.GET("/:thread_id/runs", coze.ListLangGraphRuns)
+		_threads.GET("/:thread_id/runs/:run_id", coze.GetLangGraphRun)
 		{
 			_workbench := _api.Group("/workbench", _workbenchMw()...)
 			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)
