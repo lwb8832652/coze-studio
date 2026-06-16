@@ -435,6 +435,115 @@ func TestThreadRepositoryCreateAndListMemories(t *testing.T) {
 	require.Equal(t, []int64{2, 6, 1}, []int64{memories[0].ID, memories[1].ID, memories[2].ID})
 }
 
+func TestThreadRepositoryCreateAndAggregateTokenUsage(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&tokenUsagePO{}))
+
+	repo := NewThreadRepository(db)
+	for _, usage := range []*entity.TokenUsage{
+		{
+			ID:           1,
+			ThreadID:     10,
+			RunID:        20,
+			SpaceID:      1,
+			Source:       entity.TokenUsageSourceLeadAgent,
+			StepID:       "model-1",
+			StepIndex:    0,
+			StepName:     "generate_answer",
+			ModelName:    "gpt-test",
+			Provider:     "openai-compatible",
+			InputTokens:  12,
+			OutputTokens: 8,
+			TotalTokens:  20,
+			CostMicros:   250,
+			Currency:     "USD",
+			RawUsage:     `{"prompt_tokens":12,"completion_tokens":8}`,
+			Metadata:     `{"phase":"test"}`,
+			CreatedAt:    100,
+		},
+		{
+			ID:           2,
+			ThreadID:     10,
+			RunID:        20,
+			SpaceID:      1,
+			Source:       entity.TokenUsageSourceTool,
+			StepID:       "tool-1",
+			StepIndex:    1,
+			StepName:     "search",
+			InputTokens:  4,
+			OutputTokens: 6,
+			TotalTokens:  10,
+			CostMicros:   100,
+			Estimated:    true,
+			RawUsage:     `{"estimated":true}`,
+			CreatedAt:    200,
+		},
+		{
+			ID:           3,
+			ThreadID:     10,
+			RunID:        21,
+			SpaceID:      1,
+			Source:       entity.TokenUsageSourceMiddleware,
+			InputTokens:  3,
+			OutputTokens: 2,
+			TotalTokens:  5,
+			CostMicros:   50,
+			CreatedAt:    300,
+		},
+		{
+			ID:           4,
+			ThreadID:     11,
+			RunID:        22,
+			SpaceID:      1,
+			Source:       entity.TokenUsageSourceLeadAgent,
+			InputTokens:  99,
+			OutputTokens: 1,
+			TotalTokens:  100,
+			CostMicros:   900,
+			CreatedAt:    400,
+		},
+	} {
+		require.NoError(t, repo.CreateTokenUsage(context.Background(), usage))
+	}
+
+	rows, total, err := repo.ListTokenUsage(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		RunID:    20,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(1), rows[0].ID)
+	require.Equal(t, entity.TokenUsageSourceLeadAgent, rows[0].Source)
+	require.Equal(t, `{"prompt_tokens":12,"completion_tokens":8}`, rows[0].RawUsage)
+	require.Equal(t, int64(2), rows[1].ID)
+	require.True(t, rows[1].Estimated)
+
+	runAggregate, err := repo.AggregateTokenUsage(context.Background(), AggregateTokenUsageRequest{
+		RunID: 20,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(16), runAggregate.InputTokens)
+	require.Equal(t, int64(14), runAggregate.OutputTokens)
+	require.Equal(t, int64(30), runAggregate.TotalTokens)
+	require.Equal(t, int64(350), runAggregate.CostMicros)
+	require.Equal(t, int64(2), runAggregate.CallCount)
+	require.Equal(t, int64(20), runAggregate.LeadAgentTokens)
+	require.Equal(t, int64(10), runAggregate.ToolTokens)
+
+	threadAggregate, err := repo.AggregateTokenUsage(context.Background(), AggregateTokenUsageRequest{
+		ThreadID: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(35), threadAggregate.TotalTokens)
+	require.Equal(t, int64(3), threadAggregate.CallCount)
+	require.Equal(t, int64(5), threadAggregate.MiddlewareTokens)
+}
+
 func TestThreadRepositoryRejectsInvalidRunEventPayload(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -37,6 +37,9 @@ type ThreadRepository interface {
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 	CreateMemory(ctx context.Context, memory *entity.Memory) error
 	ListMemories(ctx context.Context, req ListMemoriesRequest) ([]*entity.Memory, int64, error)
+	CreateTokenUsage(ctx context.Context, usage *entity.TokenUsage) error
+	ListTokenUsage(ctx context.Context, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error)
+	AggregateTokenUsage(ctx context.Context, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error)
 }
 
 type ListThreadsRequest struct {
@@ -73,6 +76,19 @@ type ListMemoriesRequest struct {
 	Scopes   []entity.MemoryScope
 	Limit    int32
 	Now      int64
+}
+
+type ListTokenUsageRequest struct {
+	ThreadID int64
+	RunID    int64
+	Source   entity.TokenUsageSource
+	Page     int32
+	PageSize int32
+}
+
+type AggregateTokenUsageRequest struct {
+	ThreadID int64
+	RunID    int64
 }
 
 type ClaimPendingRunsRequest struct {

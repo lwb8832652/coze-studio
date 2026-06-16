@@ -112,6 +112,28 @@ type memoryPO struct {
 	UpdatedAt int64          `gorm:"column:updated_at;index:idx_agent_thread_memories_updated"`
 }
 
+type tokenUsagePO struct {
+	ID           int64          `gorm:"column:id;primaryKey"`
+	ThreadID     int64          `gorm:"column:thread_id;index:idx_agent_token_usage_thread_run"`
+	RunID        int64          `gorm:"column:run_id;index:idx_agent_token_usage_thread_run;index:idx_agent_token_usage_run_source"`
+	SpaceID      int64          `gorm:"column:space_id;index:idx_agent_token_usage_space_source"`
+	Source       string         `gorm:"column:source;index:idx_agent_token_usage_space_source;index:idx_agent_token_usage_run_source"`
+	StepID       string         `gorm:"column:step_id"`
+	StepIndex    int32          `gorm:"column:step_index"`
+	StepName     string         `gorm:"column:step_name"`
+	ModelName    string         `gorm:"column:model_name"`
+	Provider     string         `gorm:"column:provider"`
+	InputTokens  int64          `gorm:"column:input_tokens"`
+	OutputTokens int64          `gorm:"column:output_tokens"`
+	TotalTokens  int64          `gorm:"column:total_tokens"`
+	CostMicros   int64          `gorm:"column:cost_micros"`
+	Currency     string         `gorm:"column:currency"`
+	Estimated    bool           `gorm:"column:estimated"`
+	RawUsage     datatypes.JSON `gorm:"column:raw_usage;type:json"`
+	Metadata     datatypes.JSON `gorm:"column:metadata;type:json"`
+	CreatedAt    int64          `gorm:"column:created_at;index:idx_agent_token_usage_created"`
+}
+
 func (threadPO) TableName() string {
 	return "agent_threads"
 }
@@ -130,6 +152,10 @@ func (runEventPO) TableName() string {
 
 func (memoryPO) TableName() string {
 	return "agent_thread_memories"
+}
+
+func (tokenUsagePO) TableName() string {
+	return "agent_token_usage"
 }
 
 func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thread) error {
@@ -453,6 +479,99 @@ func (r *threadRepository) ListMemories(ctx context.Context, req ListMemoriesReq
 	return memories, total, nil
 }
 
+func (r *threadRepository) CreateTokenUsage(ctx context.Context, usage *entity.TokenUsage) error {
+	if usage == nil {
+		return fmt.Errorf("token usage is required")
+	}
+
+	if usage.CreatedAt == 0 {
+		usage.CreatedAt = time.Now().UnixMilli()
+	}
+
+	po, err := tokenUsageToPO(usage)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) ListTokenUsage(ctx context.Context, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error) {
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
+	query := r.db.WithContext(ctx).Model(&tokenUsagePO{})
+	if req.ThreadID > 0 {
+		query = query.Where("thread_id = ?", req.ThreadID)
+	}
+	if req.RunID > 0 {
+		query = query.Where("run_id = ?", req.RunID)
+	}
+	if req.Source != "" {
+		query = query.Where("source = ?", string(req.Source))
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*tokenUsagePO, 0)
+	if err := query.
+		Order("created_at ASC, id ASC").
+		Limit(int(pageSize)).
+		Offset(int((page - 1) * pageSize)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	usages := make([]*entity.TokenUsage, 0, len(pos))
+	for _, po := range pos {
+		usages = append(usages, po.toEntity())
+	}
+
+	return usages, total, nil
+}
+
+func (r *threadRepository) AggregateTokenUsage(ctx context.Context, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error) {
+	query := r.db.WithContext(ctx).Model(&tokenUsagePO{})
+	if req.ThreadID > 0 {
+		query = query.Where("thread_id = ?", req.ThreadID)
+	}
+	if req.RunID > 0 {
+		query = query.Where("run_id = ?", req.RunID)
+	}
+
+	aggregate := &entity.TokenUsageAggregate{}
+	err := query.Select(`
+		COALESCE(SUM(input_tokens), 0) AS input_tokens,
+		COALESCE(SUM(output_tokens), 0) AS output_tokens,
+		COALESCE(SUM(total_tokens), 0) AS total_tokens,
+		COALESCE(SUM(cost_micros), 0) AS cost_micros,
+		COUNT(*) AS call_count,
+		COALESCE(SUM(CASE WHEN source = ? THEN total_tokens ELSE 0 END), 0) AS lead_agent_tokens,
+		COALESCE(SUM(CASE WHEN source = ? THEN total_tokens ELSE 0 END), 0) AS subagent_tokens,
+		COALESCE(SUM(CASE WHEN source = ? THEN total_tokens ELSE 0 END), 0) AS middleware_tokens,
+		COALESCE(SUM(CASE WHEN source = ? THEN total_tokens ELSE 0 END), 0) AS tool_tokens
+	`,
+		string(entity.TokenUsageSourceLeadAgent),
+		string(entity.TokenUsageSourceSubagent),
+		string(entity.TokenUsageSourceMiddleware),
+		string(entity.TokenUsageSourceTool),
+	).Scan(aggregate).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return aggregate, nil
+}
+
 func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	limit := req.Limit
 	if limit <= 0 {
@@ -748,6 +867,63 @@ func (po *memoryPO) toEntity() *entity.Memory {
 		ExpiresAt: po.ExpiresAt,
 		CreatedAt: po.CreatedAt,
 		UpdatedAt: po.UpdatedAt,
+	}
+}
+
+func tokenUsageToPO(usage *entity.TokenUsage) (*tokenUsagePO, error) {
+	rawUsage, err := optionalJSON("raw_usage", usage.RawUsage)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := optionalJSON("metadata", usage.Metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tokenUsagePO{
+		ID:           usage.ID,
+		ThreadID:     usage.ThreadID,
+		RunID:        usage.RunID,
+		SpaceID:      usage.SpaceID,
+		Source:       string(usage.Source),
+		StepID:       usage.StepID,
+		StepIndex:    usage.StepIndex,
+		StepName:     usage.StepName,
+		ModelName:    usage.ModelName,
+		Provider:     usage.Provider,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		CostMicros:   usage.CostMicros,
+		Currency:     usage.Currency,
+		Estimated:    usage.Estimated,
+		RawUsage:     rawUsage,
+		Metadata:     metadata,
+		CreatedAt:    usage.CreatedAt,
+	}, nil
+}
+
+func (po *tokenUsagePO) toEntity() *entity.TokenUsage {
+	return &entity.TokenUsage{
+		ID:           po.ID,
+		ThreadID:     po.ThreadID,
+		RunID:        po.RunID,
+		SpaceID:      po.SpaceID,
+		Source:       entity.TokenUsageSource(po.Source),
+		StepID:       po.StepID,
+		StepIndex:    po.StepIndex,
+		StepName:     po.StepName,
+		ModelName:    po.ModelName,
+		Provider:     po.Provider,
+		InputTokens:  po.InputTokens,
+		OutputTokens: po.OutputTokens,
+		TotalTokens:  po.TotalTokens,
+		CostMicros:   po.CostMicros,
+		Currency:     po.Currency,
+		Estimated:    po.Estimated,
+		RawUsage:     jsonToString(po.RawUsage),
+		Metadata:     jsonToString(po.Metadata),
+		CreatedAt:    po.CreatedAt,
 	}
 }
 

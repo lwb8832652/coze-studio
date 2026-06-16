@@ -100,6 +100,38 @@ type RecallMemoriesRequest struct {
 	Limit    int32
 }
 
+type RecordTokenUsageRequest struct {
+	RunID        int64
+	Source       entity.TokenUsageSource
+	StepID       string
+	StepIndex    int32
+	StepName     string
+	ModelName    string
+	Provider     string
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+	CostMicros   int64
+	Currency     string
+	Estimated    bool
+	RawUsage     string
+	Metadata     string
+}
+
+type GetRunTokenUsageRequest struct {
+	RunID    int64
+	Source   entity.TokenUsageSource
+	Page     int32
+	PageSize int32
+}
+
+type GetThreadTokenUsageRequest struct {
+	ThreadID int64
+	Source   entity.TokenUsageSource
+	Page     int32
+	PageSize int32
+}
+
 type ListRunEventsRequest struct {
 	ThreadID int64
 	RunID    int64
@@ -140,6 +172,9 @@ type ThreadService interface {
 	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 	RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error)
 	RecallMemories(ctx context.Context, req *RecallMemoriesRequest) ([]*entity.Memory, int64, error)
+	RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*entity.TokenUsage, error)
+	GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
+	GetThreadTokenUsage(ctx context.Context, req *GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

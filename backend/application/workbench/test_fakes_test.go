@@ -155,6 +155,18 @@ func (r *recordingAgentThreadService) RecallMemories(context.Context, *agentthre
 	return nil, 0, nil
 }
 
+func (r *recordingAgentThreadService) RecordTokenUsage(context.Context, *agentthreadsvc.RecordTokenUsageRequest) (*agentthreadentity.TokenUsage, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) GetRunTokenUsage(context.Context, *agentthreadsvc.GetRunTokenUsageRequest) ([]*agentthreadentity.TokenUsage, int64, *agentthreadentity.TokenUsageAggregate, error) {
+	return nil, 0, nil, nil
+}
+
+func (r *recordingAgentThreadService) GetThreadTokenUsage(context.Context, *agentthreadsvc.GetThreadTokenUsageRequest) ([]*agentthreadentity.TokenUsage, int64, *agentthreadentity.TokenUsageAggregate, error) {
+	return nil, 0, nil, nil
+}
+
 func (r *recordingAgentThreadService) ClaimPendingRuns(context.Context, *agentthreadsvc.ClaimPendingRunsRequest) ([]*agentthreadentity.Run, error) {
 	return nil, nil
 }

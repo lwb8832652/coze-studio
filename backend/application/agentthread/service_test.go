@@ -267,6 +267,91 @@ func TestApplicationMemoryMethodsMapDomainMemories(t *testing.T) {
 	require.Equal(t, MemoryScopeRun, recallResp.Memories[0].Scope)
 }
 
+func TestApplicationTokenUsageMethodsMapDomainUsage(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		recordedTokenUsage: &entity.TokenUsage{
+			ID:           400,
+			ThreadID:     10,
+			RunID:        20,
+			SpaceID:      1,
+			Source:       entity.TokenUsageSourceLeadAgent,
+			StepID:       "model-1",
+			StepIndex:    0,
+			StepName:     "generate_answer",
+			ModelName:    "gpt-test",
+			Provider:     "openai-compatible",
+			InputTokens:  12,
+			OutputTokens: 8,
+			TotalTokens:  20,
+			CostMicros:   250,
+			Currency:     "USD",
+			RawUsage:     `{"prompt_tokens":12}`,
+			Metadata:     `{"phase":"app"}`,
+			CreatedAt:    500,
+		},
+		tokenUsageRows: []*entity.TokenUsage{
+			{
+				ID:          401,
+				ThreadID:    10,
+				RunID:       20,
+				Source:      entity.TokenUsageSourceTool,
+				TotalTokens: 10,
+				CreatedAt:   501,
+			},
+		},
+		tokenUsageTotal: 1,
+		tokenUsageAggregate: &entity.TokenUsageAggregate{
+			InputTokens:     12,
+			OutputTokens:    8,
+			TotalTokens:     20,
+			CostMicros:      250,
+			CallCount:       1,
+			LeadAgentTokens: 20,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	recordResp, err := app.RecordTokenUsage(context.Background(), &RecordTokenUsageRequest{
+		RunID:        20,
+		Source:       TokenUsageSourceLeadAgent,
+		StepID:       "model-1",
+		StepName:     "generate_answer",
+		ModelName:    "gpt-test",
+		Provider:     "openai-compatible",
+		InputTokens:  12,
+		OutputTokens: 8,
+		RawUsage:     `{"prompt_tokens":12}`,
+		Metadata:     `{"phase":"app"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(20), domainSVC.recordTokenUsageReq.RunID)
+	require.Equal(t, entity.TokenUsageSourceLeadAgent, domainSVC.recordTokenUsageReq.Source)
+	require.Equal(t, int64(400), recordResp.Usage.UsageID)
+	require.Equal(t, TokenUsageSourceLeadAgent, recordResp.Usage.Source)
+	require.Equal(t, int64(20), recordResp.Usage.TotalTokens)
+
+	runResp, err := app.GetRunTokenUsage(context.Background(), &GetTokenUsageRequest{
+		RunID:    20,
+		Page:     2,
+		PageSize: 5,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(20), domainSVC.getRunTokenUsageReq.RunID)
+	require.Equal(t, int32(2), domainSVC.getRunTokenUsageReq.Page)
+	require.Equal(t, int64(1), runResp.Total)
+	require.Len(t, runResp.Usage, 1)
+	require.Equal(t, TokenUsageSourceTool, runResp.Usage[0].Source)
+	require.Equal(t, int64(20), runResp.Aggregate.TotalTokens)
+	require.Equal(t, int64(1), runResp.Aggregate.CallCount)
+
+	threadResp, err := app.GetThreadTokenUsage(context.Background(), &GetTokenUsageRequest{
+		ThreadID: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(10), domainSVC.getThreadTokenUsageReq.ThreadID)
+	require.Equal(t, int64(20), threadResp.Aggregate.LeadAgentTokens)
+}
+
 func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		createdRun: &entity.Run{
@@ -571,42 +656,49 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 }
 
 type recordingThreadService struct {
-	created           *entity.Thread
-	createdRun        *entity.Run
-	claimedRuns       []*entity.Run
-	completedRun      *entity.Run
-	failedRun         *entity.Run
-	canceledRun       *entity.Run
-	listed            []*entity.Thread
-	got               *entity.Thread
-	appended          *entity.Message
-	appendedRunEvent  *entity.RunEvent
-	rememberedMemory  *entity.Memory
-	messages          []*entity.Message
-	runs              []*entity.Run
-	runEvents         []*entity.RunEvent
-	recalledMemories  []*entity.Memory
-	total             int64
-	messageTotal      int64
-	runTotal          int64
-	runEventTotal     int64
-	memoryTotal       int64
-	createReq         *domainservice.CreateThreadRequest
-	createRunReq      *domainservice.CreateRunRequest
-	claimRunsReq      *domainservice.ClaimPendingRunsRequest
-	completeRunReq    *domainservice.UpdateRunStatusRequest
-	failRunReq        *domainservice.UpdateRunStatusRequest
-	cancelRunReq      *domainservice.UpdateRunStatusRequest
-	appendRunEventReq *domainservice.AppendRunEventRequest
-	rememberMemoryReq *domainservice.RememberMemoryRequest
-	recallMemoriesReq *domainservice.RecallMemoriesRequest
-	listReq           *domainservice.ListThreadsRequest
-	listRunsReq       *domainservice.ListRunsRequest
-	listRunEventsReq  *domainservice.ListRunEventsRequest
-	appendReq         *domainservice.AppendMessageRequest
-	listMessagesReq   *domainservice.ListMessagesRequest
-	getID             int64
-	getRunID          int64
+	created                *entity.Thread
+	createdRun             *entity.Run
+	claimedRuns            []*entity.Run
+	completedRun           *entity.Run
+	failedRun              *entity.Run
+	canceledRun            *entity.Run
+	listed                 []*entity.Thread
+	got                    *entity.Thread
+	appended               *entity.Message
+	appendedRunEvent       *entity.RunEvent
+	rememberedMemory       *entity.Memory
+	recordedTokenUsage     *entity.TokenUsage
+	messages               []*entity.Message
+	runs                   []*entity.Run
+	runEvents              []*entity.RunEvent
+	recalledMemories       []*entity.Memory
+	tokenUsageRows         []*entity.TokenUsage
+	total                  int64
+	messageTotal           int64
+	runTotal               int64
+	runEventTotal          int64
+	memoryTotal            int64
+	tokenUsageTotal        int64
+	tokenUsageAggregate    *entity.TokenUsageAggregate
+	createReq              *domainservice.CreateThreadRequest
+	createRunReq           *domainservice.CreateRunRequest
+	claimRunsReq           *domainservice.ClaimPendingRunsRequest
+	completeRunReq         *domainservice.UpdateRunStatusRequest
+	failRunReq             *domainservice.UpdateRunStatusRequest
+	cancelRunReq           *domainservice.UpdateRunStatusRequest
+	appendRunEventReq      *domainservice.AppendRunEventRequest
+	rememberMemoryReq      *domainservice.RememberMemoryRequest
+	recallMemoriesReq      *domainservice.RecallMemoriesRequest
+	recordTokenUsageReq    *domainservice.RecordTokenUsageRequest
+	getRunTokenUsageReq    *domainservice.GetRunTokenUsageRequest
+	getThreadTokenUsageReq *domainservice.GetThreadTokenUsageRequest
+	listReq                *domainservice.ListThreadsRequest
+	listRunsReq            *domainservice.ListRunsRequest
+	listRunEventsReq       *domainservice.ListRunEventsRequest
+	appendReq              *domainservice.AppendMessageRequest
+	listMessagesReq        *domainservice.ListMessagesRequest
+	getID                  int64
+	getRunID               int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -733,6 +825,21 @@ func (s *recordingThreadService) RememberMemory(ctx context.Context, req *domain
 func (s *recordingThreadService) RecallMemories(ctx context.Context, req *domainservice.RecallMemoriesRequest) ([]*entity.Memory, int64, error) {
 	s.recallMemoriesReq = req
 	return s.recalledMemories, s.memoryTotal, nil
+}
+
+func (s *recordingThreadService) RecordTokenUsage(ctx context.Context, req *domainservice.RecordTokenUsageRequest) (*entity.TokenUsage, error) {
+	s.recordTokenUsageReq = req
+	return s.recordedTokenUsage, nil
+}
+
+func (s *recordingThreadService) GetRunTokenUsage(ctx context.Context, req *domainservice.GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error) {
+	s.getRunTokenUsageReq = req
+	return s.tokenUsageRows, s.tokenUsageTotal, s.tokenUsageAggregate, nil
+}
+
+func (s *recordingThreadService) GetThreadTokenUsage(ctx context.Context, req *domainservice.GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error) {
+	s.getThreadTokenUsageReq = req
+	return s.tokenUsageRows, s.tokenUsageTotal, s.tokenUsageAggregate, nil
 }
 
 type fixedIDGen struct{}

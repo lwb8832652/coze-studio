@@ -368,6 +368,96 @@ func (s *ApplicationService) RecallMemories(ctx context.Context, req *RecallMemo
 	return resp, nil
 }
 
+func (s *ApplicationService) RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*RecordTokenUsageResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("record token usage request is required")
+	}
+
+	usage, err := s.ThreadSVC.RecordTokenUsage(ctx, &domainservice.RecordTokenUsageRequest{
+		RunID:        req.RunID,
+		Source:       domainentity.TokenUsageSource(req.Source),
+		StepID:       req.StepID,
+		StepIndex:    req.StepIndex,
+		StepName:     req.StepName,
+		ModelName:    req.ModelName,
+		Provider:     req.Provider,
+		InputTokens:  req.InputTokens,
+		OutputTokens: req.OutputTokens,
+		TotalTokens:  req.TotalTokens,
+		CostMicros:   req.CostMicros,
+		Currency:     req.Currency,
+		Estimated:    req.Estimated,
+		RawUsage:     req.RawUsage,
+		Metadata:     req.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if usage == nil {
+		return nil, fmt.Errorf("agent thread service returned empty token usage")
+	}
+
+	return &RecordTokenUsageResponse{Usage: DomainTokenUsageToSummary(usage)}, nil
+}
+
+func (s *ApplicationService) GetRunTokenUsage(ctx context.Context, req *GetTokenUsageRequest) (*GetTokenUsageResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get run token usage request is required")
+	}
+
+	rows, total, aggregate, err := s.ThreadSVC.GetRunTokenUsage(ctx, &domainservice.GetRunTokenUsageRequest{
+		RunID:    req.RunID,
+		Source:   domainentity.TokenUsageSource(req.Source),
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return tokenUsageResponse(rows, total, aggregate), nil
+}
+
+func (s *ApplicationService) GetThreadTokenUsage(ctx context.Context, req *GetTokenUsageRequest) (*GetTokenUsageResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get thread token usage request is required")
+	}
+
+	rows, total, aggregate, err := s.ThreadSVC.GetThreadTokenUsage(ctx, &domainservice.GetThreadTokenUsageRequest{
+		ThreadID: req.ThreadID,
+		Source:   domainentity.TokenUsageSource(req.Source),
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return tokenUsageResponse(rows, total, aggregate), nil
+}
+
+func tokenUsageResponse(rows []*domainentity.TokenUsage, total int64, aggregate *domainentity.TokenUsageAggregate) *GetTokenUsageResponse {
+	resp := &GetTokenUsageResponse{
+		Usage:     make([]*TokenUsageSummary, 0, len(rows)),
+		Total:     total,
+		Aggregate: DomainTokenUsageAggregateToSummary(aggregate),
+	}
+	for _, usage := range rows {
+		resp.Usage = append(resp.Usage, DomainTokenUsageToSummary(usage))
+	}
+
+	return resp
+}
+
 func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) (*ClaimPendingRunsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

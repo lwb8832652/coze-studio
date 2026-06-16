@@ -529,20 +529,128 @@ func TestRecallMemoriesNormalizesLimitAndUsesRunContext(t *testing.T) {
 	require.NotZero(t, repo.lastMemoryListReq.Now)
 }
 
+func TestRecordTokenUsageNormalizesAndPersistsRunUsage(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	usage, err := svc.RecordTokenUsage(context.Background(), &RecordTokenUsageRequest{
+		RunID:        20,
+		Source:       entity.TokenUsageSourceLeadAgent,
+		StepID:       "model-1",
+		StepIndex:    0,
+		StepName:     "generate_answer",
+		ModelName:    "gpt-test",
+		Provider:     "openai-compatible",
+		InputTokens:  12,
+		OutputTokens: 8,
+		RawUsage:     `{"prompt_tokens":12,"completion_tokens":8}`,
+		Metadata:     `{"phase":"service"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(5001), usage.ID)
+	require.Equal(t, int64(10), usage.ThreadID)
+	require.Equal(t, int64(20), usage.RunID)
+	require.Equal(t, int64(1), usage.SpaceID)
+	require.Equal(t, entity.TokenUsageSourceLeadAgent, usage.Source)
+	require.Equal(t, int64(20), usage.TotalTokens)
+	require.Equal(t, "gpt-test", usage.ModelName)
+	require.NotZero(t, usage.CreatedAt)
+	require.Len(t, repo.tokenUsages, 1)
+	require.Equal(t, `{"prompt_tokens":12,"completion_tokens":8}`, repo.tokenUsages[0].RawUsage)
+}
+
+func TestRecordTokenUsageRejectsInvalidSourceAndNegativeTokens(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	_, err := svc.RecordTokenUsage(context.Background(), &RecordTokenUsageRequest{
+		RunID:       20,
+		Source:      entity.TokenUsageSource("unknown"),
+		InputTokens: 1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "token usage source is invalid")
+
+	_, err = svc.RecordTokenUsage(context.Background(), &RecordTokenUsageRequest{
+		RunID:       20,
+		Source:      entity.TokenUsageSourceLeadAgent,
+		InputTokens: -1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tokens cannot be negative")
+}
+
+func TestGetRunTokenUsageReturnsRowsAndAggregate(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.tokenUsages = []*entity.TokenUsage{
+		{ID: 1, ThreadID: 10, RunID: 20, Source: entity.TokenUsageSourceLeadAgent, InputTokens: 12, OutputTokens: 8, TotalTokens: 20},
+		{ID: 2, ThreadID: 10, RunID: 20, Source: entity.TokenUsageSourceTool, InputTokens: 4, OutputTokens: 6, TotalTokens: 10},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	rows, total, aggregate, err := svc.GetRunTokenUsage(context.Background(), &GetRunTokenUsageRequest{
+		RunID:    20,
+		Page:     0,
+		PageSize: 0,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(20), repo.lastTokenUsageListReq.RunID)
+	require.Equal(t, int32(1), repo.lastTokenUsageListReq.Page)
+	require.Equal(t, int32(100), repo.lastTokenUsageListReq.PageSize)
+	require.Equal(t, int64(30), aggregate.TotalTokens)
+	require.Equal(t, int64(20), aggregate.LeadAgentTokens)
+	require.Equal(t, int64(10), aggregate.ToolTokens)
+}
+
+func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.tokenUsages = []*entity.TokenUsage{
+		{ID: 1, ThreadID: 10, RunID: 20, Source: entity.TokenUsageSourceLeadAgent, TotalTokens: 20},
+		{ID: 2, ThreadID: 10, RunID: 21, Source: entity.TokenUsageSourceMiddleware, TotalTokens: 5},
+		{ID: 3, ThreadID: 11, RunID: 22, Source: entity.TokenUsageSourceLeadAgent, TotalTokens: 99},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	rows, total, aggregate, err := svc.GetThreadTokenUsage(context.Background(), &GetThreadTokenUsageRequest{
+		ThreadID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, rows, 2)
+	require.Equal(t, int64(10), repo.lastTokenUsageListReq.ThreadID)
+	require.Equal(t, int64(25), aggregate.TotalTokens)
+	require.Equal(t, int64(5), aggregate.MiddlewareTokens)
+}
+
 type memoryRepo struct {
-	mu                  sync.Mutex
-	threads             map[int64]*entity.Thread
-	messages            map[int64][]*entity.Message
-	runs                map[int64][]*entity.Run
-	runEvents           map[int64][]*entity.RunEvent
-	memories            map[int64][]*entity.Memory
-	lastListReq         repository.ListThreadsRequest
-	lastMessageListReq  repository.ListMessagesRequest
-	lastRunListReq      repository.ListRunsRequest
-	lastRunEventListReq repository.ListRunEventsRequest
-	lastMemoryListReq   repository.ListMemoriesRequest
-	lastClaimReq        repository.ClaimPendingRunsRequest
-	lastUpdateRunReq    repository.UpdateRunStatusRequest
+	mu                         sync.Mutex
+	threads                    map[int64]*entity.Thread
+	messages                   map[int64][]*entity.Message
+	runs                       map[int64][]*entity.Run
+	runEvents                  map[int64][]*entity.RunEvent
+	memories                   map[int64][]*entity.Memory
+	tokenUsages                []*entity.TokenUsage
+	lastListReq                repository.ListThreadsRequest
+	lastMessageListReq         repository.ListMessagesRequest
+	lastRunListReq             repository.ListRunsRequest
+	lastRunEventListReq        repository.ListRunEventsRequest
+	lastMemoryListReq          repository.ListMemoriesRequest
+	lastTokenUsageListReq      repository.ListTokenUsageRequest
+	lastTokenUsageAggregateReq repository.AggregateTokenUsageRequest
+	lastClaimReq               repository.ClaimPendingRunsRequest
+	lastUpdateRunReq           repository.UpdateRunStatusRequest
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -797,6 +905,93 @@ func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemori
 	return memories, total, nil
 }
 
+func (r *memoryRepo) CreateTokenUsage(ctx context.Context, usage *entity.TokenUsage) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tokenUsages = append(r.tokenUsages, cloneTokenUsage(usage))
+	return nil
+}
+
+func (r *memoryRepo) ListTokenUsage(ctx context.Context, req repository.ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastTokenUsageListReq = req
+
+	rows := make([]*entity.TokenUsage, 0, len(r.tokenUsages))
+	for _, usage := range r.tokenUsages {
+		if req.ThreadID > 0 && usage.ThreadID != req.ThreadID {
+			continue
+		}
+		if req.RunID > 0 && usage.RunID != req.RunID {
+			continue
+		}
+		if req.Source != "" && usage.Source != req.Source {
+			continue
+		}
+		rows = append(rows, cloneTokenUsage(usage))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].CreatedAt == rows[j].CreatedAt {
+			return rows[i].ID < rows[j].ID
+		}
+		return rows[i].CreatedAt < rows[j].CreatedAt
+	})
+
+	total := int64(len(rows))
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	start := int((page - 1) * pageSize)
+	if start >= len(rows) {
+		return []*entity.TokenUsage{}, total, nil
+	}
+	end := start + int(pageSize)
+	if end > len(rows) {
+		end = len(rows)
+	}
+
+	return rows[start:end], total, nil
+}
+
+func (r *memoryRepo) AggregateTokenUsage(ctx context.Context, req repository.AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastTokenUsageAggregateReq = req
+
+	aggregate := &entity.TokenUsageAggregate{}
+	for _, usage := range r.tokenUsages {
+		if req.ThreadID > 0 && usage.ThreadID != req.ThreadID {
+			continue
+		}
+		if req.RunID > 0 && usage.RunID != req.RunID {
+			continue
+		}
+
+		aggregate.InputTokens += usage.InputTokens
+		aggregate.OutputTokens += usage.OutputTokens
+		aggregate.TotalTokens += usage.TotalTokens
+		aggregate.CostMicros += usage.CostMicros
+		aggregate.CallCount++
+		switch usage.Source {
+		case entity.TokenUsageSourceLeadAgent:
+			aggregate.LeadAgentTokens += usage.TotalTokens
+		case entity.TokenUsageSourceSubagent:
+			aggregate.SubagentTokens += usage.TotalTokens
+		case entity.TokenUsageSourceMiddleware:
+			aggregate.MiddlewareTokens += usage.TotalTokens
+		case entity.TokenUsageSourceTool:
+			aggregate.ToolTokens += usage.TotalTokens
+		}
+	}
+
+	return aggregate, nil
+}
+
 func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -907,6 +1102,14 @@ func cloneMemory(memory *entity.Memory) *entity.Memory {
 		return nil
 	}
 	cloned := *memory
+	return &cloned
+}
+
+func cloneTokenUsage(usage *entity.TokenUsage) *entity.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	cloned := *usage
 	return &cloned
 }
 

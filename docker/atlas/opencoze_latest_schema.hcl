@@ -5240,6 +5240,112 @@ table "agent_thread_memories" {
     columns = [column.updated_at]
   }
 }
+table "agent_token_usage" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "source" {
+    null = false
+    type = varchar(32)
+  }
+  column "step_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "step_index" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "step_name" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "model_name" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "provider" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "input_tokens" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "output_tokens" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "total_tokens" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "cost_micros" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "currency" {
+    null    = false
+    type    = varchar(16)
+    default = ""
+  }
+  column "estimated" {
+    null    = false
+    type    = tinyint(1)
+    default = 0
+  }
+  column "raw_usage" {
+    null = true
+    type = json
+  }
+  column "metadata" {
+    null = true
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_token_usage_created" {
+    columns = [column.created_at]
+  }
+  index "idx_agent_token_usage_run_source" {
+    columns = [column.run_id, column.source]
+  }
+  index "idx_agent_token_usage_space_source" {
+    columns = [column.space_id, column.source]
+  }
+  index "idx_agent_token_usage_thread_run" {
+    columns = [column.thread_id, column.run_id]
+  }
+}
 table "chat_task_attempts" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"

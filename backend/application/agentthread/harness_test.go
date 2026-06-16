@@ -261,6 +261,49 @@ func TestHarnessExecutorRecallsMemoryBeforePlanning(t *testing.T) {
 	require.Contains(t, eventSink.events[0].Payload, `"scopes":["thread","run"]`)
 }
 
+func TestHarnessExecutorRecordsTokenUsageFromStepMetadata(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "model-usage", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{
+			Message:  "已完成",
+			Metadata: `{"usage":{"input_tokens":12,"output_tokens":8,"total_tokens":20,"model_name":"gpt-test","provider":"openai-compatible","estimated":false,"raw_usage":{"prompt_tokens":12,"completion_tokens":8}}}`,
+			Final:    true,
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	usageCollector := &recordingUsageCollector{}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       1,
+		EventSink:      eventSink,
+		UsageCollector: usageCollector,
+	})
+	run := &RunSummary{ThreadID: 9, RunID: 17, Input: `{"message":"写周报"}`}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, "已完成", result.Message)
+	require.Equal(t, 1, usageCollector.calls)
+	require.Equal(t, run, usageCollector.run)
+	require.Equal(t, TokenUsageSourceLeadAgent, usageCollector.usage.Source)
+	require.Equal(t, "model-usage", usageCollector.usage.StepID)
+	require.Equal(t, int32(0), usageCollector.usage.StepIndex)
+	require.Equal(t, "generate_answer", usageCollector.usage.StepName)
+	require.Equal(t, "gpt-test", usageCollector.usage.ModelName)
+	require.Equal(t, "openai-compatible", usageCollector.usage.Provider)
+	require.Equal(t, int64(12), usageCollector.usage.InputTokens)
+	require.Equal(t, int64(8), usageCollector.usage.OutputTokens)
+	require.Equal(t, int64(20), usageCollector.usage.TotalTokens)
+	require.Equal(t, `{"completion_tokens":8,"prompt_tokens":12}`, usageCollector.usage.RawUsage)
+	require.Equal(t, []string{"step.started", "step.completed", "usage.recorded"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[2].Payload, `"step_id":"model-usage"`)
+	require.Contains(t, eventSink.events[2].Payload, `"total_tokens":20`)
+}
+
 func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("默认模型回答", nil),
@@ -344,4 +387,19 @@ func (p *recordingMemoryProvider) Recall(ctx context.Context, run *RunSummary) (
 	}
 
 	return append([]AgentMemory(nil), p.memories...), nil
+}
+
+type recordingUsageCollector struct {
+	usage AgentTokenUsage
+	run   *RunSummary
+	err   error
+	calls int
+}
+
+func (c *recordingUsageCollector) Record(ctx context.Context, run *RunSummary, usage AgentTokenUsage) error {
+	c.calls++
+	c.run = run
+	c.usage = usage
+
+	return c.err
 }

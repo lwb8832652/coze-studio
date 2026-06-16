@@ -87,6 +87,7 @@ type HarnessExecutorOptions struct {
 	ToolRegistry   ToolRegistry
 	EventSink      RunEventSink
 	MemoryProvider MemoryProvider
+	UsageCollector UsageCollector
 }
 
 type HarnessExecutor struct {
@@ -94,6 +95,7 @@ type HarnessExecutor struct {
 	runner         AgentStepRunner
 	eventSink      RunEventSink
 	memoryProvider MemoryProvider
+	usageCollector UsageCollector
 	maxSteps       int
 }
 
@@ -114,6 +116,7 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 		runner:         runner,
 		eventSink:      opts.EventSink,
 		memoryProvider: opts.MemoryProvider,
+		usageCollector: opts.UsageCollector,
 		maxSteps:       maxSteps,
 	}
 }
@@ -198,6 +201,7 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			executedSteps++
 			state.Results = append(state.Results, *stepResult)
 			e.emitStepCompletedEvent(ctx, run, step, executedSteps-1, stepResult)
+			e.recordStepUsage(ctx, run, step, executedSteps-1, stepResult)
 			if stepResult.Final {
 				message := strings.TrimSpace(stepResult.Message)
 
@@ -210,6 +214,33 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	}
 
 	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+}
+
+func (e *HarnessExecutor) recordStepUsage(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int, result *AgentStepResult) {
+	if e == nil || e.usageCollector == nil || result == nil {
+		return
+	}
+
+	usage, ok := tokenUsageFromStepResult(step, stepIndex, result)
+	if !ok {
+		return
+	}
+	if err := e.usageCollector.Record(ctx, run, usage); err != nil {
+		return
+	}
+
+	emitRunEvent(ctx, e.eventSink, RunEvent{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: "usage.recorded",
+		Payload: encodeRunEventPayload(ctx, map[string]any{
+			"step_id":      usage.StepID,
+			"step_index":   usage.StepIndex,
+			"step_name":    usage.StepName,
+			"source":       usage.Source,
+			"total_tokens": usage.TotalTokens,
+		}),
+	})
 }
 
 func (e *HarnessExecutor) recallMemory(ctx context.Context, run *RunSummary) (AgentMemoryContext, error) {
@@ -246,6 +277,101 @@ func normalizeMemoryContext(memories []AgentMemory) AgentMemoryContext {
 	}
 
 	return AgentMemoryContext{Items: items}
+}
+
+type stepUsageMetadata struct {
+	Usage *stepUsagePayload `json:"usage"`
+}
+
+type stepUsagePayload struct {
+	Source       string          `json:"source"`
+	ModelName    string          `json:"model_name"`
+	Provider     string          `json:"provider"`
+	InputTokens  int64           `json:"input_tokens"`
+	OutputTokens int64           `json:"output_tokens"`
+	TotalTokens  int64           `json:"total_tokens"`
+	CostMicros   int64           `json:"cost_micros"`
+	Currency     string          `json:"currency"`
+	Estimated    bool            `json:"estimated"`
+	RawUsage     json.RawMessage `json:"raw_usage"`
+	Metadata     json.RawMessage `json:"metadata"`
+}
+
+func tokenUsageFromStepResult(step AgentStep, stepIndex int, result *AgentStepResult) (AgentTokenUsage, bool) {
+	if result == nil {
+		return AgentTokenUsage{}, false
+	}
+	rawMetadata := strings.TrimSpace(result.Metadata)
+	if rawMetadata == "" {
+		return AgentTokenUsage{}, false
+	}
+
+	var metadata stepUsageMetadata
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil || metadata.Usage == nil {
+		return AgentTokenUsage{}, false
+	}
+
+	usagePayload := metadata.Usage
+	totalTokens := usagePayload.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = usagePayload.InputTokens + usagePayload.OutputTokens
+	}
+	rawUsage := normalizeRawJSON(usagePayload.RawUsage)
+	usageMetadata := normalizeRawJSON(usagePayload.Metadata)
+	if totalTokens == 0 && usagePayload.CostMicros == 0 && rawUsage == "" {
+		return AgentTokenUsage{}, false
+	}
+
+	source := TokenUsageSource(strings.TrimSpace(usagePayload.Source))
+	if source == "" {
+		source = TokenUsageSourceLeadAgent
+		if step.Type == AgentStepTypeTool {
+			source = TokenUsageSourceTool
+		}
+	}
+	stepName := strings.TrimSpace(step.Name)
+	toolName := ""
+	if step.Type == AgentStepTypeTool {
+		toolName = agentStepToolName(step)
+		if stepName == "" {
+			stepName = toolName
+		}
+	}
+
+	return AgentTokenUsage{
+		Source:       source,
+		StepID:       strings.TrimSpace(step.ID),
+		StepIndex:    int32(stepIndex),
+		StepName:     stepName,
+		ToolName:     toolName,
+		ModelName:    strings.TrimSpace(usagePayload.ModelName),
+		Provider:     strings.TrimSpace(usagePayload.Provider),
+		InputTokens:  usagePayload.InputTokens,
+		OutputTokens: usagePayload.OutputTokens,
+		TotalTokens:  totalTokens,
+		CostMicros:   usagePayload.CostMicros,
+		Currency:     strings.TrimSpace(usagePayload.Currency),
+		Estimated:    usagePayload.Estimated,
+		RawUsage:     rawUsage,
+		Metadata:     usageMetadata,
+	}, true
+}
+
+func normalizeRawJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+
+	return string(bytes)
 }
 
 func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunSummary, memory AgentMemoryContext) {

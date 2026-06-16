@@ -448,6 +448,132 @@ func (s *threadService) RecallMemories(ctx context.Context, req *RecallMemoriesR
 	})
 }
 
+func (s *threadService) RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*entity.TokenUsage, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("record token usage request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	if !isValidTokenUsageSource(req.Source) {
+		return nil, InvalidArgumentErrorf("token usage source is invalid")
+	}
+	if req.InputTokens < 0 || req.OutputTokens < 0 || req.TotalTokens < 0 || req.CostMicros < 0 {
+		return nil, InvalidArgumentErrorf("tokens cannot be negative")
+	}
+
+	run, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	totalTokens := req.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = req.InputTokens + req.OutputTokens
+	}
+
+	usage := &entity.TokenUsage{
+		ID:           id,
+		ThreadID:     run.ThreadID,
+		RunID:        run.ID,
+		SpaceID:      run.SpaceID,
+		Source:       req.Source,
+		StepID:       strings.TrimSpace(req.StepID),
+		StepIndex:    req.StepIndex,
+		StepName:     strings.TrimSpace(req.StepName),
+		ModelName:    strings.TrimSpace(req.ModelName),
+		Provider:     strings.TrimSpace(req.Provider),
+		InputTokens:  req.InputTokens,
+		OutputTokens: req.OutputTokens,
+		TotalTokens:  totalTokens,
+		CostMicros:   req.CostMicros,
+		Currency:     strings.TrimSpace(req.Currency),
+		Estimated:    req.Estimated,
+		RawUsage:     strings.TrimSpace(req.RawUsage),
+		Metadata:     strings.TrimSpace(req.Metadata),
+		CreatedAt:    time.Now().UnixMilli(),
+	}
+	if err := s.repo.CreateTokenUsage(ctx, usage); err != nil {
+		return nil, err
+	}
+
+	return usage, nil
+}
+
+func (s *threadService) GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, nil, err
+	}
+	if req == nil {
+		return nil, 0, nil, InvalidArgumentErrorf("get run token usage request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, 0, nil, InvalidArgumentErrorf("run id is required")
+	}
+	if req.Source != "" && !isValidTokenUsageSource(req.Source) {
+		return nil, 0, nil, InvalidArgumentErrorf("token usage source is invalid")
+	}
+
+	page, pageSize := normalizeTokenUsagePage(req.Page, req.PageSize)
+	rows, total, err := s.repo.ListTokenUsage(ctx, repository.ListTokenUsageRequest{
+		RunID:    req.RunID,
+		Source:   req.Source,
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	aggregate, err := s.repo.AggregateTokenUsage(ctx, repository.AggregateTokenUsageRequest{RunID: req.RunID})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	return rows, total, aggregate, nil
+}
+
+func (s *threadService) GetThreadTokenUsage(ctx context.Context, req *GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, nil, err
+	}
+	if req == nil {
+		return nil, 0, nil, InvalidArgumentErrorf("get thread token usage request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, 0, nil, InvalidArgumentErrorf("thread id is required")
+	}
+	if req.Source != "" && !isValidTokenUsageSource(req.Source) {
+		return nil, 0, nil, InvalidArgumentErrorf("token usage source is invalid")
+	}
+
+	page, pageSize := normalizeTokenUsagePage(req.Page, req.PageSize)
+	rows, total, err := s.repo.ListTokenUsage(ctx, repository.ListTokenUsageRequest{
+		ThreadID: req.ThreadID,
+		Source:   req.Source,
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	aggregate, err := s.repo.AggregateTokenUsage(ctx, repository.AggregateTokenUsageRequest{ThreadID: req.ThreadID})
+	if err != nil {
+		return nil, 0, nil, err
+	}
+
+	return rows, total, aggregate, nil
+}
+
 func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
@@ -538,6 +664,26 @@ func isValidMemoryScope(scope entity.MemoryScope) bool {
 	default:
 		return false
 	}
+}
+
+func isValidTokenUsageSource(source entity.TokenUsageSource) bool {
+	switch source {
+	case entity.TokenUsageSourceLeadAgent, entity.TokenUsageSourceSubagent, entity.TokenUsageSourceMiddleware, entity.TokenUsageSourceTool:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTokenUsagePage(page, pageSize int32) (int32, int32) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
+	return page, pageSize
 }
 
 func defaultJSON(value, fallback string) string {

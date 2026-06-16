@@ -62,6 +62,15 @@ const (
 	MemoryScopeLongTerm MemoryScope = "long_term"
 )
 
+type TokenUsageSource string
+
+const (
+	TokenUsageSourceLeadAgent  TokenUsageSource = "lead_agent"
+	TokenUsageSourceSubagent   TokenUsageSource = "subagent"
+	TokenUsageSourceMiddleware TokenUsageSource = "middleware"
+	TokenUsageSourceTool       TokenUsageSource = "tool"
+)
+
 type Thread struct {
 	ID            int64
 	SpaceID       int64
@@ -134,4 +143,38 @@ type Memory struct {
 	ExpiresAt int64
 	CreatedAt int64
 	UpdatedAt int64
+}
+
+type TokenUsage struct {
+	ID           int64
+	ThreadID     int64
+	RunID        int64
+	SpaceID      int64
+	Source       TokenUsageSource
+	StepID       string
+	StepIndex    int32
+	StepName     string
+	ModelName    string
+	Provider     string
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+	CostMicros   int64
+	Currency     string
+	Estimated    bool
+	RawUsage     string
+	Metadata     string
+	CreatedAt    int64
+}
+
+type TokenUsageAggregate struct {
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	CostMicros       int64
+	CallCount        int64
+	LeadAgentTokens  int64
+	SubagentTokens   int64
+	MiddlewareTokens int64
+	ToolTokens       int64
 }

@@ -146,6 +146,52 @@ func DomainMemoryToSummary(memory *entity.Memory) *MemorySummary {
 	}
 }
 
+func DomainTokenUsageToSummary(usage *entity.TokenUsage) *TokenUsageSummary {
+	if usage == nil {
+		return nil
+	}
+
+	return &TokenUsageSummary{
+		UsageID:      usage.ID,
+		ThreadID:     usage.ThreadID,
+		RunID:        usage.RunID,
+		SpaceID:      usage.SpaceID,
+		Source:       TokenUsageSource(usage.Source),
+		StepID:       usage.StepID,
+		StepIndex:    usage.StepIndex,
+		StepName:     usage.StepName,
+		ModelName:    usage.ModelName,
+		Provider:     usage.Provider,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		CostMicros:   usage.CostMicros,
+		Currency:     usage.Currency,
+		Estimated:    usage.Estimated,
+		RawUsage:     usage.RawUsage,
+		Metadata:     usage.Metadata,
+		CreatedAt:    usage.CreatedAt,
+	}
+}
+
+func DomainTokenUsageAggregateToSummary(aggregate *entity.TokenUsageAggregate) *TokenUsageAggregateSummary {
+	if aggregate == nil {
+		return &TokenUsageAggregateSummary{}
+	}
+
+	return &TokenUsageAggregateSummary{
+		InputTokens:      aggregate.InputTokens,
+		OutputTokens:     aggregate.OutputTokens,
+		TotalTokens:      aggregate.TotalTokens,
+		CostMicros:       aggregate.CostMicros,
+		CallCount:        aggregate.CallCount,
+		LeadAgentTokens:  aggregate.LeadAgentTokens,
+		SubagentTokens:   aggregate.SubagentTokens,
+		MiddlewareTokens: aggregate.MiddlewareTokens,
+		ToolTokens:       aggregate.ToolTokens,
+	}
+}
+
 func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
 	switch status {
 	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:
