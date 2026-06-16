@@ -308,3 +308,68 @@ func TestLangGraphRunStreamRejectsCrossThreadRun(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, streamResp.Code)
 }
+
+func TestLangGraphRunCreateStreamCreatesRunAndStreamsMetadata(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	_, err := createAndStreamLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
+		ThreadID:    1,
+		AssistantID: "default",
+		Input: map[string]any{
+			"messages": []map[string]any{
+				{
+					"role":    "user",
+					"content": "创建并流式返回",
+				},
+			},
+		},
+		Metadata: map[string]any{
+			"source": "langgraph_sdk",
+		},
+		Config: map[string]any{
+			"configurable": map[string]any{
+				"model_name": "gpt-4.1",
+			},
+		},
+		StreamMode: []string{"updates"},
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	})
+	require.NoError(t, err)
+	body := writer.String()
+
+	require.Contains(t, body, "event: metadata")
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"status":"pending"`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), persisted.Run.ThreadID)
+	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+	require.Contains(t, persisted.Run.Metadata, `"source":"langgraph_sdk"`)
+	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
+	require.Equal(t, `["updates"]`, persisted.Run.StreamMode)
+}
+
+func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/stream", CreateLangGraphRunStream)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+	})
+	require.NoError(t, err)
+
+	streamResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs/stream?timeout_ms=1",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusBadRequest, streamResp.Code)
+}

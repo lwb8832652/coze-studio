@@ -68,12 +68,14 @@ func TestRegisterIncludesLangGraphRunRoutes(t *testing.T) {
 	Register(h)
 
 	createRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs", nil)
+	createRunStream := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs/stream", nil)
 	listRuns := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs", nil)
 	getRun := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs/2", nil)
 	cancelRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs/2/cancel", nil)
 	streamRun := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs/2/stream", nil)
 
 	require.NotEqual(t, http.StatusNotFound, createRun.Code)
+	require.NotEqual(t, http.StatusNotFound, createRunStream.Code)
 	require.NotEqual(t, http.StatusNotFound, listRuns.Code)
 	require.NotEqual(t, http.StatusNotFound, getRun.Code)
 	require.NotEqual(t, http.StatusNotFound, cancelRun.Code)

@@ -57,56 +57,48 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	input, err := langGraphMarshalJSON(req.Input, "{}")
+	createReq, err := buildLangGraphCreateRunRequest(req)
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)
 		return
 	}
-	command, err := langGraphMarshalJSON(req.Command, "{}")
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-	metadata, err := langGraphMarshalJSON(req.Metadata, "{}")
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-	config, err := langGraphMarshalJSON(req.Config, "{}")
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-	runContext, err := langGraphMarshalJSON(req.Context, "{}")
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-	streamMode, err := langGraphMarshalJSON(req.StreamMode, `["messages","updates"]`)
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-
-	resp, err := appagentthread.SVC.CreateRun(ctx, &appagentthread.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		AssistantID:       req.AssistantID,
-		Input:             input,
-		Command:           command,
-		Metadata:          metadata,
-		Config:            config,
-		Context:           runContext,
-		StreamMode:        streamMode,
-		MultitaskStrategy: req.MultitaskStrategy,
-		OnDisconnect:      req.OnDisconnect,
-		Durability:        req.Durability,
-	})
+	resp, err := appagentthread.SVC.CreateRun(ctx, createReq)
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	}
 
 	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
+}
+
+// CreateLangGraphRunStream .
+// @router /api/threads/:thread_id/runs/stream [POST]
+func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.CreateStreamRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if len(req.Input) == 0 {
+		invalidParamRequestResponse(c, "input is required")
+		return
+	}
+
+	resp, err := createLangGraphRunFromStreamRequest(ctx, req)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	setLangGraphRunStreamHeaders(c)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph create run stream failed, err=%v", err)
+		}
+	}()
+
+	streamCreatedLangGraphRun(ctx, writer, req, resp)
 }
 
 // ListLangGraphRuns .
@@ -227,10 +219,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}
 
 	writer := sse.NewWriter(c)
-	c.SetContentType("text/event-stream; charset=utf-8")
-	c.Response.Header.Set("Cache-Control", "no-cache")
-	c.Response.Header.Set("Connection", "keep-alive")
-	c.Response.Header.Set("X-Accel-Buffering", "no")
+	setLangGraphRunStreamHeaders(c)
 	defer func() {
 		if err := writer.Close(); err != nil {
 			logs.CtxWarnf(ctx, "close langgraph run stream failed, err=%v", err)
@@ -238,6 +227,110 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}()
 
 	streamLangGraphRunEvents(ctx, writer, req, current.Run)
+}
+
+func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagentthread.CreateRunRequest, error) {
+	input, err := langGraphMarshalJSON(req.Input, "{}")
+	if err != nil {
+		return nil, err
+	}
+	command, err := langGraphMarshalJSON(req.Command, "{}")
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := langGraphMarshalJSON(req.Metadata, "{}")
+	if err != nil {
+		return nil, err
+	}
+	config, err := langGraphMarshalJSON(req.Config, "{}")
+	if err != nil {
+		return nil, err
+	}
+	runContext, err := langGraphMarshalJSON(req.Context, "{}")
+	if err != nil {
+		return nil, err
+	}
+	streamMode, err := langGraphMarshalJSON(req.StreamMode, `["messages","updates"]`)
+	if err != nil {
+		return nil, err
+	}
+
+	return &appagentthread.CreateRunRequest{
+		ThreadID:          req.ThreadID,
+		AssistantID:       req.AssistantID,
+		Input:             input,
+		Command:           command,
+		Metadata:          metadata,
+		Config:            config,
+		Context:           runContext,
+		StreamMode:        streamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+	}, nil
+}
+
+func createLangGraphRunFromStreamRequest(
+	ctx context.Context,
+	req langgraphapi.CreateStreamRunRequest,
+) (*appagentthread.CreateRunResponse, error) {
+	createReq, err := buildLangGraphCreateRunRequest(langgraphapi.CreateRunRequest{
+		ThreadID:          req.ThreadID,
+		AssistantID:       req.AssistantID,
+		Input:             req.Input,
+		Command:           req.Command,
+		Metadata:          req.Metadata,
+		Config:            req.Config,
+		Context:           req.Context,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return appagentthread.SVC.CreateRun(ctx, createReq)
+}
+
+func createAndStreamLangGraphRun(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.CreateStreamRunRequest,
+) (*appagentthread.CreateRunResponse, error) {
+	resp, err := createLangGraphRunFromStreamRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	streamCreatedLangGraphRun(ctx, writer, req, resp)
+
+	return resp, nil
+}
+
+func streamCreatedLangGraphRun(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.CreateStreamRunRequest,
+	resp *appagentthread.CreateRunResponse,
+) {
+	if resp == nil || resp.Run == nil {
+		return
+	}
+
+	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
+		ThreadID:   req.ThreadID,
+		RunID:      resp.Run.RunID,
+		IntervalMs: req.IntervalMs,
+		TimeoutMs:  req.TimeoutMs,
+	}, resp.Run)
+}
+
+func setLangGraphRunStreamHeaders(c *app.RequestContext) {
+	c.SetContentType("text/event-stream; charset=utf-8")
+	c.Response.Header.Set("Cache-Control", "no-cache")
+	c.Response.Header.Set("Connection", "keep-alive")
+	c.Response.Header.Set("X-Accel-Buffering", "no")
 }
 
 func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
