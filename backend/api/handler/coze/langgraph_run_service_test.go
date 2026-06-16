@@ -373,3 +373,145 @@ func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, streamResp.Code)
 }
+
+func TestLangGraphRunJoinHandlerReturnsTerminalRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"等待完成"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+
+	joinResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?interval_ms=1&timeout_ms=1",
+		nil,
+	)
+	body := string(joinResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, joinResp.Code)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"status":"succeeded"`)
+}
+
+func TestLangGraphRunJoinReturnsCurrentRunOnTimeout(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"等待超时"}]}`,
+	})
+	require.NoError(t, err)
+
+	joinResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?interval_ms=1&timeout_ms=1",
+		nil,
+	)
+	body := string(joinResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, joinResp.Code)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"status":"pending"`)
+}
+
+func TestLangGraphRunJoinRejectsCrossThreadRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRun)
+	h.GET("/api/threads/:thread_id/runs/:run_id/join", JoinLangGraphRunStream)
+	installAgentThreadTestService(t)
+
+	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "另一个任务",
+		Source:   appagentthread.ThreadSourceAPI,
+		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
+	})
+	require.NoError(t, err)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"跨任务等待检查"}]}`,
+	})
+	require.NoError(t, err)
+
+	postResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?timeout_ms=1",
+		nil,
+	)
+	getResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/join?timeout_ms=1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusBadRequest, postResp.Code)
+	require.Equal(t, http.StatusBadRequest, getResp.Code)
+}
+
+func TestLangGraphRunJoinStreamWritesEventsAndEnd(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"join stream"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.completed",
+		Payload:   `{"step_name":"join"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	joinLangGraphRunStreamEvents(context.Background(), writer, langgraphapi.JoinRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	}, persisted.Run)
+	body := writer.String()
+
+	require.Contains(t, body, "event: metadata")
+	require.Contains(t, body, "event: events")
+	require.Contains(t, body, `"event_type":"step.completed"`)
+	require.Contains(t, body, "event: end")
+	require.Contains(t, body, `"status":"succeeded"`)
+}

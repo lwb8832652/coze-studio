@@ -90,3 +90,11 @@ type StreamRunRequest struct {
 	IntervalMs   int64  `query:"interval_ms,omitempty"`
 	TimeoutMs    int64  `query:"timeout_ms,omitempty"`
 }
+
+type JoinRunRequest struct {
+	ThreadID     int64 `path:"thread_id,required"`
+	RunID        int64 `path:"run_id,required"`
+	AfterEventID int64 `query:"after_event_id,omitempty"`
+	IntervalMs   int64 `query:"interval_ms,omitempty"`
+	TimeoutMs    int64 `query:"timeout_ms,omitempty"`
+}

@@ -229,6 +229,72 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	streamLangGraphRunEvents(ctx, writer, req, current.Run)
 }
 
+// JoinLangGraphRun .
+// @router /api/threads/:thread_id/runs/:run_id/join [POST]
+func JoinLangGraphRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.JoinRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+		return
+	}
+
+	joined, err := waitLangGraphRunTerminal(ctx, req, run)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(joined))
+}
+
+// JoinLangGraphRunStream .
+// @router /api/threads/:thread_id/runs/:run_id/join [GET]
+func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.JoinRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if req.AfterEventID <= 0 {
+		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		if !ok {
+			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
+			return
+		}
+		req.AfterEventID = afterEventID
+	}
+
+	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	setLangGraphRunStreamHeaders(c)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph join stream failed, err=%v", err)
+		}
+	}()
+
+	joinLangGraphRunStreamEvents(ctx, writer, req, run)
+}
+
 func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagentthread.CreateRunRequest, error) {
 	input, err := langGraphMarshalJSON(req.Input, "{}")
 	if err != nil {
@@ -331,6 +397,71 @@ func setLangGraphRunStreamHeaders(c *app.RequestContext) {
 	c.Response.Header.Set("Cache-Control", "no-cache")
 	c.Response.Header.Set("Connection", "keep-alive")
 	c.Response.Header.Set("X-Accel-Buffering", "no")
+}
+
+func getLangGraphThreadRun(ctx context.Context, threadID, runID int64) (*appagentthread.RunSummary, error) {
+	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || resp.Run == nil || resp.Run.ThreadID != threadID {
+		return nil, nil
+	}
+
+	return resp.Run, nil
+}
+
+func waitLangGraphRunTerminal(
+	ctx context.Context,
+	req langgraphapi.JoinRunRequest,
+	run *appagentthread.RunSummary,
+) (*appagentthread.RunSummary, error) {
+	if run == nil || isTaskThreadRunTerminal(run.Status) {
+		return run, nil
+	}
+
+	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
+	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return run, ctx.Err()
+		case <-timer.C:
+			return run, nil
+		case <-ticker.C:
+			current, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
+			if err != nil {
+				return nil, err
+			}
+			if current == nil {
+				return run, nil
+			}
+			run = current
+			if isTaskThreadRunTerminal(run.Status) {
+				return run, nil
+			}
+		}
+	}
+}
+
+func joinLangGraphRunStreamEvents(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.JoinRunRequest,
+	run *appagentthread.RunSummary,
+) {
+	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
+		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		AfterEventID: req.AfterEventID,
+		IntervalMs:   req.IntervalMs,
+		TimeoutMs:    req.TimeoutMs,
+	}, run)
 }
 
 func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
