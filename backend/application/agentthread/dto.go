@@ -80,6 +80,7 @@ type ThreadSummary struct {
 	Status           ThreadStatus
 	Source           ThreadSource
 	Progress         int32
+	Metadata         string
 	LastUserMessage  string
 	LastAgentMessage string
 	CreatedAt        int64

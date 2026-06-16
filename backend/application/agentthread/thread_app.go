@@ -58,6 +58,7 @@ func DomainThreadToSummary(thread *entity.Thread) *ThreadSummary {
 		Title:        thread.Title,
 		Status:       ThreadStatus(thread.Status),
 		Source:       ThreadSource(thread.Source),
+		Metadata:     thread.Metadata,
 		CreatedAt:    thread.CreatedAt,
 		UpdatedAt:    thread.UpdatedAt,
 	}

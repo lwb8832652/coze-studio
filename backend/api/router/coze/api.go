@@ -414,6 +414,9 @@ func Register(r *server.Hertz) {
 				}
 			}
 		}
+		_api.POST("/threads", coze.CreateLangGraphThread)
+		_api.GET("/threads/:thread_id", coze.GetLangGraphThread)
+		_api.POST("/threads/search", coze.SearchLangGraphThreads)
 		{
 			_workbench := _api.Group("/workbench", _workbenchMw()...)
 			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)

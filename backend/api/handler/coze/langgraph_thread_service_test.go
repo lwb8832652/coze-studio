@@ -1,0 +1,138 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package coze
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/cloudwego/hertz/pkg/app/server"
+	"github.com/cloudwego/hertz/pkg/common/ut"
+	"github.com/stretchr/testify/require"
+
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+)
+
+func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads", CreateLangGraphThread)
+	h.GET("/api/threads/:thread_id", GetLangGraphThread)
+	h.POST("/api/threads/search", SearchLangGraphThreads)
+	installAgentThreadTestService(t)
+
+	createPayload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"space_id": "7",
+			"user_id":  "9",
+			"title":    "LangGraph 兼容任务",
+			"source":   "api",
+		},
+	})
+	require.NoError(t, err)
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	createBody := string(createResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, createResp.Code)
+	require.Contains(t, createBody, `"thread_id":"2"`)
+	require.Contains(t, createBody, `"status":"idle"`)
+	require.Contains(t, createBody, `"created_at":`)
+	require.Contains(t, createBody, `"updated_at":`)
+	require.Contains(t, createBody, `"metadata":`)
+	require.Contains(t, createBody, `"source":"api"`)
+	require.Contains(t, createBody, `"space_id":"7"`)
+	require.Contains(t, createBody, `"title":"LangGraph 兼容任务"`)
+	require.Contains(t, createBody, `"user_id":"9"`)
+	require.Contains(t, createBody, `"values":{"messages":[]}`)
+
+	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/2", nil)
+	getBody := string(getResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, getResp.Code)
+	require.Contains(t, getBody, `"thread_id":"2"`)
+	require.Contains(t, getBody, `"source":"api"`)
+	require.Contains(t, getBody, `"space_id":"7"`)
+	require.Contains(t, getBody, `"title":"LangGraph 兼容任务"`)
+	require.Contains(t, getBody, `"user_id":"9"`)
+	require.Contains(t, getBody, `"values":{"messages":[]}`)
+
+	searchPayload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"space_id": "7",
+		},
+		"limit":  10,
+		"offset": 0,
+	})
+	require.NoError(t, err)
+	searchResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/search",
+		&ut.Body{Body: bytes.NewBuffer(searchPayload), Len: len(searchPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	searchBody := string(searchResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, searchResp.Code)
+	require.Contains(t, searchBody, `"thread_id":"2"`)
+	require.NotContains(t, searchBody, `"thread_id":"1"`)
+}
+
+func TestLangGraphThreadSearchUsesMetadataSpaceID(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/search", SearchLangGraphThreads)
+	installAgentThreadTestService(t)
+
+	_, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  8,
+		UserID:   9,
+		Title:    "另一个空间任务",
+		Source:   appagentthread.ThreadSourceAPI,
+		Metadata: `{"space_id":"8","title":"另一个空间任务","source":"api"}`,
+	})
+	require.NoError(t, err)
+
+	searchPayload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"space_id": "1",
+		},
+		"limit":  10,
+		"offset": 0,
+	})
+	require.NoError(t, err)
+	searchResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/search",
+		&ut.Body{Body: bytes.NewBuffer(searchPayload), Len: len(searchPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	searchBody := string(searchResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, searchResp.Code)
+	require.Contains(t, searchBody, `"thread_id":"1"`)
+	require.Contains(t, searchBody, `"title":"任务列表"`)
+	require.NotContains(t, searchBody, `"另一个空间任务"`)
+}

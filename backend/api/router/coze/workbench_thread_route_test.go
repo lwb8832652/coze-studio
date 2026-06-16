@@ -49,3 +49,16 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	require.NotEqual(t, http.StatusNotFound, runEventsStream.Code)
 	require.NotEqual(t, http.StatusNotFound, tokenUsage.Code)
 }
+
+func TestRegisterIncludesLangGraphThreadRoutes(t *testing.T) {
+	h := server.Default()
+	Register(h)
+
+	createThread := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads", nil)
+	getThread := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
+	searchThreads := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/search", nil)
+
+	require.NotEqual(t, http.StatusNotFound, createThread.Code)
+	require.NotEqual(t, http.StatusNotFound, getThread.Code)
+	require.NotEqual(t, http.StatusNotFound, searchThreads.Code)
+}
