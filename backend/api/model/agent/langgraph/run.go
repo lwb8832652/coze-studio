@@ -65,6 +65,34 @@ type CreateStreamRunRequest struct {
 	TimeoutMs         int64          `query:"timeout_ms,omitempty"`
 }
 
+type StatelessCreateRunRequest struct {
+	AssistantID       string         `json:"assistant_id,omitempty"`
+	Input             map[string]any `json:"input,omitempty"`
+	Command           map[string]any `json:"command,omitempty"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
+	Config            map[string]any `json:"config,omitempty"`
+	Context           map[string]any `json:"context,omitempty"`
+	StreamMode        []string       `json:"stream_mode,omitempty"`
+	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
+	OnDisconnect      string         `json:"on_disconnect,omitempty"`
+	Durability        string         `json:"durability,omitempty"`
+}
+
+type StatelessCreateStreamRunRequest struct {
+	AssistantID       string         `json:"assistant_id,omitempty"`
+	Input             map[string]any `json:"input,omitempty"`
+	Command           map[string]any `json:"command,omitempty"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
+	Config            map[string]any `json:"config,omitempty"`
+	Context           map[string]any `json:"context,omitempty"`
+	StreamMode        []string       `json:"stream_mode,omitempty"`
+	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
+	OnDisconnect      string         `json:"on_disconnect,omitempty"`
+	Durability        string         `json:"durability,omitempty"`
+	IntervalMs        int64          `query:"interval_ms,omitempty"`
+	TimeoutMs         int64          `query:"timeout_ms,omitempty"`
+}
+
 type ListRunsRequest struct {
 	ThreadID int64  `path:"thread_id,required"`
 	Status   string `query:"status,omitempty"`

@@ -101,6 +101,58 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 	streamCreatedLangGraphRun(ctx, writer, req, resp)
 }
 
+// CreateLangGraphStatelessRun .
+// @router /api/runs [POST]
+func CreateLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessCreateRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if len(req.Input) == 0 {
+		invalidParamRequestResponse(c, "input is required")
+		return
+	}
+
+	resp, err := createLangGraphStatelessRun(ctx, req)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
+}
+
+// CreateLangGraphStatelessRunStream .
+// @router /api/runs/stream [POST]
+func CreateLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessCreateStreamRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if len(req.Input) == 0 {
+		invalidParamRequestResponse(c, "input is required")
+		return
+	}
+
+	resp, err := createLangGraphStatelessRun(ctx, statelessCreateRunRequest(req))
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	setLangGraphRunStreamHeaders(c)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph stateless create run stream failed, err=%v", err)
+		}
+	}()
+
+	streamCreatedLangGraphStatelessRun(ctx, writer, req, resp)
+}
+
 // ListLangGraphRuns .
 // @router /api/threads/:thread_id/runs [GET]
 func ListLangGraphRuns(ctx context.Context, c *app.RequestContext) {
@@ -517,6 +569,95 @@ func createLangGraphRunFromStreamRequest(
 	return appagentthread.SVC.CreateRun(ctx, createReq)
 }
 
+func createLangGraphStatelessRun(
+	ctx context.Context,
+	req langgraphapi.StatelessCreateRunRequest,
+) (*appagentthread.CreateRunResponse, error) {
+	thread, err := createLangGraphStatelessBackingThread(ctx, req.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	if thread == nil || thread.Thread == nil {
+		return nil, nil
+	}
+
+	createReq, err := buildLangGraphCreateRunRequest(langgraphapi.CreateRunRequest{
+		ThreadID:          thread.Thread.ThreadID,
+		AssistantID:       req.AssistantID,
+		Input:             req.Input,
+		Command:           req.Command,
+		Metadata:          statelessRunMetadata(req.Metadata),
+		Config:            req.Config,
+		Context:           req.Context,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return appagentthread.SVC.CreateRun(ctx, createReq)
+}
+
+func createLangGraphStatelessBackingThread(
+	ctx context.Context,
+	metadata map[string]any,
+) (*appagentthread.CreateThreadResponse, error) {
+	normalized := normalizeLangGraphMetadata(metadata)
+	title := langGraphStringMetadata(normalized, "title")
+	if title == "" {
+		title = defaultLangGraphThreadTitle
+		normalized["title"] = title
+	}
+	source := appagentthread.ThreadSource(langGraphStringMetadata(normalized, "source"))
+	if source == "" {
+		source = appagentthread.ThreadSourceAPI
+		normalized["source"] = string(source)
+	}
+
+	metadataJSON, err := sonic.MarshalString(normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	return appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
+		SpaceID:  langGraphInt64Metadata(normalized, "space_id"),
+		UserID:   langGraphInt64Metadata(normalized, "user_id", "creator_id"),
+		Title:    title,
+		Source:   source,
+		Metadata: metadataJSON,
+	})
+}
+
+func statelessRunMetadata(metadata map[string]any) map[string]any {
+	normalized := normalizeLangGraphMetadata(metadata)
+	if _, ok := normalized["source"]; !ok {
+		normalized["source"] = string(appagentthread.ThreadSourceAPI)
+	}
+	if _, ok := normalized["title"]; !ok {
+		normalized["title"] = defaultLangGraphThreadTitle
+	}
+
+	return normalized
+}
+
+func statelessCreateRunRequest(req langgraphapi.StatelessCreateStreamRunRequest) langgraphapi.StatelessCreateRunRequest {
+	return langgraphapi.StatelessCreateRunRequest{
+		AssistantID:       req.AssistantID,
+		Input:             req.Input,
+		Command:           req.Command,
+		Metadata:          req.Metadata,
+		Config:            req.Config,
+		Context:           req.Context,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+	}
+}
+
 func createAndStreamLangGraphRun(
 	ctx context.Context,
 	writer langGraphRunStreamWriter,
@@ -527,6 +668,20 @@ func createAndStreamLangGraphRun(
 		return nil, err
 	}
 	streamCreatedLangGraphRun(ctx, writer, req, resp)
+
+	return resp, nil
+}
+
+func createAndStreamLangGraphStatelessRun(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.StatelessCreateStreamRunRequest,
+) (*appagentthread.CreateRunResponse, error) {
+	resp, err := createLangGraphStatelessRun(ctx, statelessCreateRunRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	streamCreatedLangGraphStatelessRun(ctx, writer, req, resp)
 
 	return resp, nil
 }
@@ -543,6 +698,23 @@ func streamCreatedLangGraphRun(
 
 	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
 		ThreadID:   req.ThreadID,
+		RunID:      resp.Run.RunID,
+		IntervalMs: req.IntervalMs,
+		TimeoutMs:  req.TimeoutMs,
+	}, resp.Run)
+}
+
+func streamCreatedLangGraphStatelessRun(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.StatelessCreateStreamRunRequest,
+	resp *appagentthread.CreateRunResponse,
+) {
+	if resp == nil || resp.Run == nil {
+		return
+	}
+
+	streamLangGraphStatelessRunEvents(ctx, writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:      resp.Run.RunID,
 		IntervalMs: req.IntervalMs,
 		TimeoutMs:  req.TimeoutMs,

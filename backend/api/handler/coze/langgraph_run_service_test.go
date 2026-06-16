@@ -647,3 +647,116 @@ func TestLangGraphStatelessRunStreamWritesEventsAndEnd(t *testing.T) {
 	require.Contains(t, body, "event: end")
 	require.Contains(t, body, `"status":"succeeded"`)
 }
+
+func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/runs", CreateLangGraphStatelessRun)
+	installAgentThreadTestService(t)
+
+	createPayload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"input": map[string]any{
+			"messages": []map[string]any{
+				{
+					"role":    "user",
+					"content": "一次性任务",
+				},
+			},
+		},
+		"metadata": map[string]any{
+			"space_id": "99",
+			"user_id":  "88",
+			"title":    "一次性分析任务",
+			"source":   "api",
+		},
+		"config": map[string]any{
+			"configurable": map[string]any{
+				"model_name": "gpt-4.1",
+			},
+		},
+		"stream_mode": []string{"updates"},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/runs",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(createResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, createResp.Code)
+	require.Contains(t, body, `"run_id":"3"`)
+	require.Contains(t, body, `"thread_id":"2"`)
+	require.Contains(t, body, `"status":"pending"`)
+	require.Contains(t, body, `"source":"api"`)
+	require.Contains(t, body, `"model_name":"gpt-4.1"`)
+	require.Contains(t, body, `"stream_mode":["updates"]`)
+
+	threadResp, err := appagentthread.SVC.GetThread(context.Background(), &appagentthread.GetThreadRequest{ThreadID: 2})
+	require.NoError(t, err)
+	require.Equal(t, int64(99), threadResp.Thread.SpaceID)
+	require.Equal(t, int64(88), threadResp.Thread.CreatorID)
+	require.Equal(t, "一次性分析任务", threadResp.Thread.Title)
+	require.Equal(t, appagentthread.ThreadSourceAPI, threadResp.Thread.Source)
+	require.Contains(t, threadResp.Thread.Metadata, `"title":"一次性分析任务"`)
+}
+
+func TestLangGraphStatelessRunCreateRejectsMissingInput(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/runs", CreateLangGraphStatelessRun)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"metadata": map[string]any{
+			"title": "缺少 input",
+		},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/runs",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusBadRequest, createResp.Code)
+}
+
+func TestLangGraphStatelessRunCreateStreamCreatesRunAndStreamsMetadata(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	resp, err := createAndStreamLangGraphStatelessRun(context.Background(), writer, langgraphapi.StatelessCreateStreamRunRequest{
+		AssistantID: "default",
+		Input: map[string]any{
+			"messages": []map[string]any{
+				{
+					"role":    "user",
+					"content": "一次性流式任务",
+				},
+			},
+		},
+		Metadata: map[string]any{
+			"title":  "一次性流式任务",
+			"source": "api",
+		},
+		StreamMode: []string{"updates"},
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	})
+	require.NoError(t, err)
+	body := writer.String()
+
+	require.Equal(t, int64(3), resp.Run.RunID)
+	require.Equal(t, int64(2), resp.Run.ThreadID)
+	require.Contains(t, body, "event: metadata")
+	require.Contains(t, body, `"run_id":"3"`)
+	require.Contains(t, body, `"thread_id":"2"`)
+	require.Contains(t, body, `"status":"pending"`)
+}

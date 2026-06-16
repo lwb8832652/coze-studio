@@ -417,6 +417,8 @@ func Register(r *server.Hertz) {
 		_api.POST("/threads", coze.CreateLangGraphThread)
 		_api.GET("/threads/:thread_id", coze.GetLangGraphThread)
 		_api.POST("/threads/search", coze.SearchLangGraphThreads)
+		_api.POST("/runs", coze.CreateLangGraphStatelessRun)
+		_api.POST("/runs/stream", coze.CreateLangGraphStatelessRunStream)
 		_runs := _api.Group("/runs")
 		_runs.GET("/:run_id", coze.GetLangGraphStatelessRun)
 		_runs.POST("/:run_id/cancel", coze.CancelLangGraphStatelessRun)
