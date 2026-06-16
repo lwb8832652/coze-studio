@@ -70,8 +70,10 @@ func TestRegisterIncludesLangGraphRunRoutes(t *testing.T) {
 	createRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs", nil)
 	listRuns := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs", nil)
 	getRun := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs/2", nil)
+	cancelRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs/2/cancel", nil)
 
 	require.NotEqual(t, http.StatusNotFound, createRun.Code)
 	require.NotEqual(t, http.StatusNotFound, listRuns.Code)
 	require.NotEqual(t, http.StatusNotFound, getRun.Code)
+	require.NotEqual(t, http.StatusNotFound, cancelRun.Code)
 }

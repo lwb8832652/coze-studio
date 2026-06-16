@@ -129,3 +129,65 @@ func TestLangGraphRunGetRejectsCrossThreadRun(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, getResp.Code)
 }
+
+func TestLangGraphRunCancelHandlerTransitionsPendingRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/:run_id/cancel", CancelLangGraphRun)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"取消这次任务"}]}`,
+	})
+	require.NoError(t, err)
+
+	cancelResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/cancel",
+		nil,
+	)
+	cancelBody := string(cancelResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, cancelResp.Code)
+	require.Contains(t, cancelBody, `"run_id":"2"`)
+	require.Contains(t, cancelBody, `"thread_id":"1"`)
+	require.Contains(t, cancelBody, `"status":"canceled"`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+}
+
+func TestLangGraphRunCancelRejectsCrossThreadRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs/:run_id/cancel", CancelLangGraphRun)
+	installAgentThreadTestService(t)
+
+	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "另一个任务",
+		Source:   appagentthread.ThreadSourceAPI,
+		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
+	})
+	require.NoError(t, err)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"跨线程取消检查"}]}`,
+	})
+	require.NoError(t, err)
+
+	cancelResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/cancel",
+		nil,
+	)
+
+	require.Equal(t, http.StatusBadRequest, cancelResp.Code)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+}

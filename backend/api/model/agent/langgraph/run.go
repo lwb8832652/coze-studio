@@ -60,3 +60,8 @@ type GetRunRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	RunID    int64 `path:"run_id,required"`
 }
+
+type CancelRunRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	RunID    int64 `path:"run_id,required"`
+}

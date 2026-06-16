@@ -153,6 +153,37 @@ func GetLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
 }
 
+// CancelLangGraphRun .
+// @router /api/threads/:thread_id/runs/:run_id/cancel [POST]
+func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.CancelRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
+		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+		return
+	}
+
+	resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
+		RunID: req.RunID,
+		From:  current.Run.Status,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
+}
+
 func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
 	result := make([]*langgraphapi.Run, 0, len(runs))
 	for _, run := range runs {
