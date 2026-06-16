@@ -442,6 +442,7 @@ func Register(r *server.Hertz) {
 			_task_threads.POST("/:thread_id/runs", coze.CreateTaskThreadRun)
 			_task_threads.GET("/:thread_id/run_events", coze.ListTaskThreadRunEvents)
 			_task_threads.GET("/:thread_id/run_events/stream", coze.StreamTaskThreadRunEvents)
+			_task_threads.GET("/:thread_id/token_usage", coze.GetTaskThreadTokenUsage)
 			_tasks := _workbench.Group("/tasks", _tasksMw()...)
 			_tasks.GET("/:task_id", append(_gettaskMw(), coze.GetTask)...)
 			_task_id := _tasks.Group("/:task_id", _task_idMw()...)

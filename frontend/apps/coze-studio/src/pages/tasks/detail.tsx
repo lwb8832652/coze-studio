@@ -27,17 +27,17 @@ import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
 import { WorkbenchComposer } from '../workbench/components/workbench-composer';
 import {
-  mapModeToChatMode,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
+import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
-import { fetchTaskDetail, type TaskDetailSource } from './task-detail-loader';
+import { sendFollowUpMessage } from './task-follow-up';
 import {
-  appendTaskThreadMessage,
-  createTaskThreadRun,
-  sendWorkbenchChat,
-} from './service';
+  fetchTaskDetail,
+  type TaskDetailSource,
+  type TaskDetailTokenUsage,
+} from './task-detail-loader';
 import {
   formatUpdatedTime,
   getLatestAnswerEventMessage,
@@ -55,6 +55,9 @@ type TaskEvent = workbenchTask.TaskEvent;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 
+const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
+  threadId ? 'thread' : 'task';
+
 const AssistantMark = () => (
   <span className="coze-prototype-assistant-mark" aria-hidden="true">
     <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="currentColor">
@@ -63,7 +66,13 @@ const AssistantMark = () => (
   </span>
 );
 
-const TaskTopBar = ({ task }: { task: ChatTask }) => (
+const TaskTopBar = ({
+  task,
+  tokenUsage,
+}: {
+  task: ChatTask;
+  tokenUsage?: TaskDetailTokenUsage;
+}) => (
   <header className="coze-prototype-task-topbar">
     <div className="coze-prototype-task-title-group">
       <IconCozAsynchronousTask className="text-[16px]" />
@@ -73,6 +82,7 @@ const TaskTopBar = ({ task }: { task: ChatTask }) => (
         {getTaskStatusText(task.status)}
       </span>
     </div>
+    <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
     <div className="flex-1" />
     <button type="button" className="coze-prototype-task-action">
       ☆ 收藏
@@ -328,92 +338,13 @@ const FollowUpComposer = ({
   </section>
 );
 
-const getThreadFollowUpMetadata = (payload: WorkbenchComposerSubmitPayload) =>
-  JSON.stringify({
-    mode: payload.mode,
-    model_type: payload.modelType,
-    model_name: payload.modelName,
-    enable_skills: payload.enable_skills,
-    enable_mcp: payload.enable_mcp,
-    enable_kbs: payload.enable_kbs,
-    enable_databases: payload.enable_databases,
-  });
-
-const getThreadFollowUpRunInput = (
-  payload: WorkbenchComposerSubmitPayload,
-  messageId: string,
-) =>
-  JSON.stringify({
-    messages: [
-      {
-        role: 'user',
-        content: payload.message,
-        message_id: messageId,
-      },
-    ],
-  });
-
-const getThreadFollowUpRunMetadata = (
-  payload: WorkbenchComposerSubmitPayload,
-  messageId: string,
-) =>
-  JSON.stringify({
-    source: 'workbench_detail_followup',
-    appended_message_id: messageId,
-    mode: payload.mode,
-  });
-
-const sendFollowUpMessage = async ({
-  activeTaskId,
-  isCanonicalThreadDetail,
-  payload,
-  spaceId,
-  threadId,
-}: {
-  activeTaskId: string;
-  isCanonicalThreadDetail: boolean;
-  payload: WorkbenchComposerSubmitPayload;
-  spaceId: string;
-  threadId: string;
-}) => {
-  if (isCanonicalThreadDetail) {
-    const appendResponse = await appendTaskThreadMessage({
-      thread_id: threadId,
-      role: 'user',
-      content: payload.message,
-      metadata: getThreadFollowUpMetadata(payload),
-    });
-    const appendedMessageId = appendResponse.data?.message_id || 'pending';
-
-    await createTaskThreadRun({
-      thread_id: threadId,
-      input: getThreadFollowUpRunInput(payload, appendedMessageId),
-      config: getThreadFollowUpMetadata(payload),
-      metadata: getThreadFollowUpRunMetadata(payload, appendedMessageId),
-      idempotency_key: `${threadId}:${appendedMessageId}:followup`,
-    });
-
-    return;
-  }
-
-  await sendWorkbenchChat({
-    space_id: spaceId,
-    task_id: activeTaskId,
-    message: payload.message,
-    mode: mapModeToChatMode(payload.mode),
-    enable_skills: payload.enable_skills,
-    enable_mcp: payload.enable_mcp,
-    enable_kbs: payload.enable_kbs,
-    enable_databases: payload.enable_databases,
-  });
-};
-
 const TaskDetailPage = () => {
   const { space_id, task_id, thread_id } = useParams();
   const taskDetailId = thread_id ?? task_id;
-  const taskDetailSource: TaskDetailSource = thread_id ? 'thread' : 'task';
+  const taskDetailSource = getTaskDetailSource(thread_id);
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [followUpValue, setFollowUpValue] = useState('');
@@ -439,6 +370,7 @@ const TaskDetailPage = () => {
         if (!canceled) {
           setTask(detail.task);
           setEvents(detail.events);
+          setTokenUsage(detail.tokenUsage);
           if (detail.task && !isTaskTerminalStatus(detail.task.status)) {
             timer = setTimeout(() => {
               void loadTaskDetail();
@@ -499,6 +431,7 @@ const TaskDetailPage = () => {
       });
       setTask(detail.task);
       setEvents(detail.events);
+      setTokenUsage(detail.tokenUsage);
     } catch (err) {
       setFollowUpError(
         err instanceof Error ? err.message : '继续追问失败，请稍后重试',
@@ -510,7 +443,7 @@ const TaskDetailPage = () => {
 
   return (
     <main className="coze-prototype-page">
-      {task ? <TaskTopBar task={task} /> : null}
+      {task ? <TaskTopBar task={task} tokenUsage={tokenUsage} /> : null}
       <section className="coze-prototype-detail-inner">
         {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
         {error ? <div className="coze-prototype-error">{error}</div> : null}

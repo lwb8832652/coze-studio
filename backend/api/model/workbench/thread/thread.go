@@ -76,6 +76,40 @@ type TaskThreadRunEvent struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+type TaskThreadTokenUsage struct {
+	UsageID      int64  `json:"usage_id,string"`
+	ThreadID     int64  `json:"thread_id,string"`
+	RunID        int64  `json:"run_id,string"`
+	SpaceID      int64  `json:"space_id,string"`
+	Source       string `json:"source"`
+	StepID       string `json:"step_id"`
+	StepIndex    int32  `json:"step_index"`
+	StepName     string `json:"step_name"`
+	ModelName    string `json:"model_name"`
+	Provider     string `json:"provider"`
+	InputTokens  int64  `json:"input_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	TotalTokens  int64  `json:"total_tokens"`
+	CostMicros   int64  `json:"cost_micros"`
+	Currency     string `json:"currency"`
+	Estimated    bool   `json:"estimated"`
+	RawUsage     string `json:"raw_usage"`
+	Metadata     string `json:"metadata"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+type TaskThreadTokenUsageAggregate struct {
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	CostMicros       int64 `json:"cost_micros"`
+	CallCount        int64 `json:"call_count"`
+	LeadAgentTokens  int64 `json:"lead_agent_tokens"`
+	SubagentTokens   int64 `json:"subagent_tokens"`
+	MiddlewareTokens int64 `json:"middleware_tokens"`
+	ToolTokens       int64 `json:"tool_tokens"`
+}
+
 type ListTaskThreadsRequest struct {
 	SpaceID  int64  `query:"space_id,required"`
 	Status   string `query:"status"`
@@ -123,6 +157,14 @@ type StreamTaskThreadRunEventsRequest struct {
 	TimeoutMs    int64 `query:"timeout_ms"`
 }
 
+type GetTaskThreadTokenUsageRequest struct {
+	ThreadID int64  `path:"thread_id,required"`
+	RunID    int64  `query:"run_id"`
+	Source   string `query:"source"`
+	Page     int32  `query:"page"`
+	PageSize int32  `query:"page_size"`
+}
+
 type CreateTaskThreadRunRequest struct {
 	ThreadID          int64  `path:"thread_id,required" json:"-"`
 	AssistantID       string `json:"assistant_id,omitempty"`
@@ -158,6 +200,12 @@ type ListTaskThreadRunEventsData struct {
 	Total  int64                 `json:"total"`
 }
 
+type GetTaskThreadTokenUsageData struct {
+	Usage     []*TaskThreadTokenUsage        `json:"usage"`
+	Total     int64                          `json:"total"`
+	Aggregate *TaskThreadTokenUsageAggregate `json:"aggregate"`
+}
+
 type ListTaskThreadsResponse struct {
 	Data *ListTaskThreadsData `json:"data,omitempty"`
 	Code int64                `json:"code"`
@@ -190,6 +238,12 @@ type ListTaskThreadRunsResponse struct {
 
 type ListTaskThreadRunEventsResponse struct {
 	Data *ListTaskThreadRunEventsData `json:"data,omitempty"`
+	Code int64                        `json:"code"`
+	Msg  string                       `json:"msg"`
+}
+
+type GetTaskThreadTokenUsageResponse struct {
+	Data *GetTaskThreadTokenUsageData `json:"data,omitempty"`
 	Code int64                        `json:"code"`
 	Msg  string                       `json:"msg"`
 }

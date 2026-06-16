@@ -228,6 +228,61 @@ func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
 	require.Contains(t, body, `"payload":"{\"status\":\"running\",\"worker_id\":\"worker-a\"}"`)
 }
 
+func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"统计 token"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
+		RunID:        runResp.Run.RunID,
+		Source:       appagentthread.TokenUsageSourceLeadAgent,
+		StepName:     "generate_answer",
+		ModelName:    "gpt-4.1",
+		Provider:     "openai",
+		InputTokens:  12,
+		OutputTokens: 8,
+		TotalTokens:  20,
+		RawUsage:     `{"prompt_tokens":12,"completion_tokens":8}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
+		RunID:        runResp.Run.RunID,
+		Source:       appagentthread.TokenUsageSourceTool,
+		StepName:     "call_tool",
+		InputTokens:  4,
+		OutputTokens: 6,
+		TotalTokens:  10,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/token_usage?run_id=2&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":2`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"source":"lead_agent"`)
+	require.Contains(t, body, `"source":"tool"`)
+	require.Contains(t, body, `"input_tokens":16`)
+	require.Contains(t, body, `"output_tokens":14`)
+	require.Contains(t, body, `"total_tokens":30`)
+	require.Contains(t, body, `"call_count":2`)
+	require.Contains(t, body, `"lead_agent_tokens":20`)
+	require.Contains(t, body, `"tool_tokens":10`)
+}
+
 func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	installAgentThreadTestService(t)
 
@@ -357,6 +412,27 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			run_id integer,
 			event_type text,
 			payload json,
+			created_at integer
+		);
+		CREATE TABLE agent_token_usage (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			source text,
+			step_id text,
+			step_index integer,
+			step_name text,
+			model_name text,
+			provider text,
+			input_tokens integer,
+			output_tokens integer,
+			total_tokens integer,
+			cost_micros integer,
+			currency text,
+			estimated boolean,
+			raw_usage json,
+			metadata json,
 			created_at integer
 		)
 	`).Error

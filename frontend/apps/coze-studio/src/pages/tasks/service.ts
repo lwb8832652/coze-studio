@@ -25,6 +25,7 @@ export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
 export const listTaskThreadRuns = workbenchTask.ListTaskThreadRuns;
 export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
 export const listTaskThreadRunEvents = workbenchTask.ListTaskThreadRunEvents;
+export const getTaskThreadTokenUsage = workbenchTask.GetTaskThreadTokenUsage;
 export const cancelTask = workbenchTask.CancelTask;
 export const retryTask = workbenchTask.RetryTask;
 export const listTaskEvents = workbenchTask.ListTaskEvents;

@@ -37,6 +37,7 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	createRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads/1/runs", nil)
 	runEvents := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/run_events", nil)
 	runEventsStream := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/run_events/stream?timeout_ms=1", nil)
+	tokenUsage := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/token_usage", nil)
 
 	require.NotEqual(t, http.StatusNotFound, list.Code)
 	require.NotEqual(t, http.StatusNotFound, detail.Code)
@@ -46,4 +47,5 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	require.NotEqual(t, http.StatusNotFound, createRun.Code)
 	require.NotEqual(t, http.StatusNotFound, runEvents.Code)
 	require.NotEqual(t, http.StatusNotFound, runEventsStream.Code)
+	require.NotEqual(t, http.StatusNotFound, tokenUsage.Code)
 }

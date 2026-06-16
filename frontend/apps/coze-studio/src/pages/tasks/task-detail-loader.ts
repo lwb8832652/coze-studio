@@ -19,6 +19,7 @@ import { workbenchTask } from '@coze-studio/api-schema';
 import {
   getTask,
   getTaskThread,
+  getTaskThreadTokenUsage,
   listTaskEvents,
   listTaskThreadRunEvents,
   listTaskThreadMessages,
@@ -29,12 +30,26 @@ type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
+type TaskThreadTokenUsageAggregate =
+  workbenchTask.TaskThreadTokenUsageAggregate;
 
 export type TaskDetailSource = 'task' | 'thread';
 
-interface TaskDetail {
+export interface TaskDetailTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  callCount: number;
+  leadAgentTokens: number;
+  subagentTokens: number;
+  middlewareTokens: number;
+  toolTokens: number;
+}
+
+export interface TaskDetail {
   task?: ChatTask;
   events: TaskEvent[];
+  tokenUsage?: TaskDetailTokenUsage;
 }
 
 const getTaskThreadExecutionType = (thread: TaskThread) =>
@@ -127,6 +142,25 @@ export const mapTaskThreadRunEventToTaskEvent = (
   created_at: event.created_at,
 });
 
+const mapTaskThreadTokenUsageAggregate = (
+  aggregate?: TaskThreadTokenUsageAggregate,
+): TaskDetailTokenUsage | undefined => {
+  if (!aggregate || aggregate.total_tokens <= 0) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: aggregate.input_tokens,
+    outputTokens: aggregate.output_tokens,
+    totalTokens: aggregate.total_tokens,
+    callCount: aggregate.call_count,
+    leadAgentTokens: aggregate.lead_agent_tokens,
+    subagentTokens: aggregate.subagent_tokens,
+    middlewareTokens: aggregate.middleware_tokens,
+    toolTokens: aggregate.tool_tokens,
+  };
+};
+
 const fetchLegacyTaskDetail = async (taskId: string): Promise<TaskDetail> => {
   const [taskResponse, eventsResponse] = await Promise.all([
     getTask({ task_id: taskId }),
@@ -164,23 +198,32 @@ export const fetchTaskDetail = async ({
     return fetchLegacyTaskDetail(thread.legacy_task_id);
   }
 
-  const [messagesResponse, runEventsResponse] = await Promise.all([
-    listTaskThreadMessages({
-      thread_id: id,
-      page: 1,
-      page_size: 50,
-    }),
-    listTaskThreadRunEvents({
-      thread_id: id,
-      page: 1,
-      page_size: 100,
-    }),
-  ]);
+  const [messagesResponse, runEventsResponse, tokenUsageResponse] =
+    await Promise.all([
+      listTaskThreadMessages({
+        thread_id: id,
+        page: 1,
+        page_size: 50,
+      }),
+      listTaskThreadRunEvents({
+        thread_id: id,
+        page: 1,
+        page_size: 100,
+      }),
+      getTaskThreadTokenUsage({
+        thread_id: id,
+        page: 1,
+        page_size: 50,
+      }),
+    ]);
 
   return {
     task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
     events: (runEventsResponse.data?.events ?? []).map(
       mapTaskThreadRunEventToTaskEvent,
+    ),
+    tokenUsage: mapTaskThreadTokenUsageAggregate(
+      tokenUsageResponse.data?.aggregate,
     ),
   };
 };

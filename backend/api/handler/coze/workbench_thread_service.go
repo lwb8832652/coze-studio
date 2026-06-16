@@ -226,6 +226,56 @@ func ListTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// GetTaskThreadTokenUsage .
+// @router /api/workbench/task_threads/:thread_id/token_usage [GET]
+func GetTaskThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.GetTaskThreadTokenUsageRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	usageReq := &appagentthread.GetTokenUsageRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Source:   appagentthread.TokenUsageSource(req.Source),
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	}
+
+	var resp *appagentthread.GetTokenUsageResponse
+	var err error
+	if req.RunID > 0 {
+		runResp, runErr := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
+		if runErr != nil {
+			workbenchThreadErrorResponse(ctx, c, runErr)
+			return
+		}
+		if runResp == nil || runResp.Run == nil || runResp.Run.ThreadID != req.ThreadID {
+			invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+			return
+		}
+
+		resp, err = appagentthread.SVC.GetRunTokenUsage(ctx, usageReq)
+	} else {
+		resp, err = appagentthread.SVC.GetThreadTokenUsage(ctx, usageReq)
+	}
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.GetTaskThreadTokenUsageResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.GetTaskThreadTokenUsageData{
+			Usage:     taskThreadTokenUsagesToAPI(resp.Usage),
+			Total:     resp.Total,
+			Aggregate: taskThreadTokenUsageAggregateToAPI(resp.Aggregate),
+		},
+	})
+}
+
 // StreamTaskThreadRunEvents .
 // @router /api/workbench/task_threads/:thread_id/run_events/stream [GET]
 func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
@@ -319,6 +369,15 @@ func taskThreadRunEventsToAPI(events []*appagentthread.RunEventSummary) []*threa
 	return result
 }
 
+func taskThreadTokenUsagesToAPI(usages []*appagentthread.TokenUsageSummary) []*threadapi.TaskThreadTokenUsage {
+	result := make([]*threadapi.TaskThreadTokenUsage, 0, len(usages))
+	for _, item := range usages {
+		result = append(result, taskThreadTokenUsageToAPI(item))
+	}
+
+	return result
+}
+
 func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread {
 	if thread == nil {
 		return nil
@@ -384,6 +443,52 @@ func taskThreadRunEventToAPI(event *appagentthread.RunEventSummary) *threadapi.T
 		EventType: event.EventType,
 		Payload:   event.Payload,
 		CreatedAt: event.CreatedAt,
+	}
+}
+
+func taskThreadTokenUsageToAPI(usage *appagentthread.TokenUsageSummary) *threadapi.TaskThreadTokenUsage {
+	if usage == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadTokenUsage{
+		UsageID:      usage.UsageID,
+		ThreadID:     usage.ThreadID,
+		RunID:        usage.RunID,
+		SpaceID:      usage.SpaceID,
+		Source:       string(usage.Source),
+		StepID:       usage.StepID,
+		StepIndex:    usage.StepIndex,
+		StepName:     usage.StepName,
+		ModelName:    usage.ModelName,
+		Provider:     usage.Provider,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		CostMicros:   usage.CostMicros,
+		Currency:     usage.Currency,
+		Estimated:    usage.Estimated,
+		RawUsage:     usage.RawUsage,
+		Metadata:     usage.Metadata,
+		CreatedAt:    usage.CreatedAt,
+	}
+}
+
+func taskThreadTokenUsageAggregateToAPI(aggregate *appagentthread.TokenUsageAggregateSummary) *threadapi.TaskThreadTokenUsageAggregate {
+	if aggregate == nil {
+		return &threadapi.TaskThreadTokenUsageAggregate{}
+	}
+
+	return &threadapi.TaskThreadTokenUsageAggregate{
+		InputTokens:      aggregate.InputTokens,
+		OutputTokens:     aggregate.OutputTokens,
+		TotalTokens:      aggregate.TotalTokens,
+		CostMicros:       aggregate.CostMicros,
+		CallCount:        aggregate.CallCount,
+		LeadAgentTokens:  aggregate.LeadAgentTokens,
+		SubagentTokens:   aggregate.SubagentTokens,
+		MiddlewareTokens: aggregate.MiddlewareTokens,
+		ToolTokens:       aggregate.ToolTokens,
 	}
 }
 

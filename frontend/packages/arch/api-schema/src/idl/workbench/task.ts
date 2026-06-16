@@ -105,6 +105,38 @@ export interface TaskThreadRunEvent {
   payload: string,
   created_at: number,
 }
+export interface TaskThreadTokenUsage {
+  usage_id: string,
+  thread_id: string,
+  run_id: string,
+  space_id: string,
+  source: string,
+  step_id: string,
+  step_index: number,
+  step_name: string,
+  model_name: string,
+  provider: string,
+  input_tokens: number,
+  output_tokens: number,
+  total_tokens: number,
+  cost_micros: number,
+  currency: string,
+  estimated: boolean,
+  raw_usage: string,
+  metadata: string,
+  created_at: number,
+}
+export interface TaskThreadTokenUsageAggregate {
+  input_tokens: number,
+  output_tokens: number,
+  total_tokens: number,
+  cost_micros: number,
+  call_count: number,
+  lead_agent_tokens: number,
+  subagent_tokens: number,
+  middleware_tokens: number,
+  tool_tokens: number,
+}
 export interface CreateTaskRequest {
   space_id: string,
   title: string,
@@ -188,6 +220,13 @@ export interface ListTaskThreadRunEventsRequest {
   page?: number,
   page_size?: number,
 }
+export interface GetTaskThreadTokenUsageRequest {
+  thread_id: string,
+  run_id?: string,
+  source?: string,
+  page?: number,
+  page_size?: number,
+}
 export interface CreateTaskThreadRunRequest {
   thread_id: string,
   assistant_id?: string,
@@ -231,6 +270,16 @@ export interface ListTaskThreadRunEventsData {
 }
 export interface ListTaskThreadRunEventsResponse {
   data?: ListTaskThreadRunEventsData,
+  code: number,
+  msg: string,
+}
+export interface GetTaskThreadTokenUsageData {
+  usage: TaskThreadTokenUsage[],
+  total: number,
+  aggregate: TaskThreadTokenUsageAggregate,
+}
+export interface GetTaskThreadTokenUsageResponse {
+  data?: GetTaskThreadTokenUsageData,
   code: number,
   msg: string,
 }
@@ -356,6 +405,19 @@ export const ListTaskThreadRunEvents = /*#__PURE__*/createAPI<ListTaskThreadRunE
     "query": ["run_id", "page", "page_size"]
   },
   "resType": "ListTaskThreadRunEventsResponse",
+  "schemaRoot": "api://schemas/idl_workbench_task",
+  "service": "workbenchTask"
+});
+export const GetTaskThreadTokenUsage = /*#__PURE__*/createAPI<GetTaskThreadTokenUsageRequest, GetTaskThreadTokenUsageResponse>({
+  "url": "/api/workbench/task_threads/:thread_id/token_usage",
+  "method": "GET",
+  "name": "GetTaskThreadTokenUsage",
+  "reqType": "GetTaskThreadTokenUsageRequest",
+  "reqMapping": {
+    "path": ["thread_id"],
+    "query": ["run_id", "source", "page", "page_size"]
+  },
+  "resType": "GetTaskThreadTokenUsageResponse",
   "schemaRoot": "api://schemas/idl_workbench_task",
   "service": "workbenchTask"
 });

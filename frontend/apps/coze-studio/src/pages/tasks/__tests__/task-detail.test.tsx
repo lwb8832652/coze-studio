@@ -31,6 +31,7 @@ const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockListTaskThreadRunEvents = vi.hoisted(() => vi.fn());
+const mockGetTaskThreadTokenUsage = vi.hoisted(() => vi.fn());
 const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
   vi.fn(
     ({ threadId }: { threadId: string }) =>
@@ -53,6 +54,7 @@ vi.mock('../service', () => ({
   getTaskThreadRunEventsStreamURL: mockGetTaskThreadRunEventsStreamURL,
   listTaskThreadMessages: mockListTaskThreadMessages,
   listTaskThreadRunEvents: mockListTaskThreadRunEvents,
+  getTaskThreadTokenUsage: mockGetTaskThreadTokenUsage,
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThreadRun: mockCreateTaskThreadRun,
   listTaskEvents: mockListTaskEvents,
@@ -170,6 +172,7 @@ describe('TaskDetailPage', () => {
     mockGetTaskThreadRunEventsStreamURL.mockClear();
     mockListTaskThreadMessages.mockReset();
     mockListTaskThreadRunEvents.mockReset();
+    mockGetTaskThreadTokenUsage.mockReset();
     mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
     mockListTaskEvents.mockReset();
@@ -257,6 +260,25 @@ describe('TaskDetailPage', () => {
       data: {
         events: [],
         total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [],
+        total: 0,
+        aggregate: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          cost_micros: 0,
+          call_count: 0,
+          lead_agent_tokens: 0,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
       },
       code: 0,
       msg: '',
@@ -454,6 +476,75 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).not.toContain('摘要里的旧用户消息');
     expect(container.textContent).not.toContain('摘要里的旧助手消息');
     expect(container.textContent).not.toContain('未找到任务');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders canonical thread token usage in task detail top bar', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Token 统计任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [],
+        total: 2,
+        aggregate: {
+          input_tokens: 1234,
+          output_tokens: 567,
+          total_tokens: 1801,
+          cost_micros: 0,
+          call_count: 2,
+          lead_agent_tokens: 1500,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 301,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith({
+      thread_id: 'thread-token-1',
+      page: 1,
+      page_size: 50,
+    });
+    expect(container.textContent).toContain('Token 1,801');
+    expect(container.textContent).toContain('In 1,234 / Out 567');
+    expect(container.textContent).toContain('Agent 1,500');
+    expect(container.textContent).toContain('Tool 301');
 
     act(() => {
       root?.unmount();
