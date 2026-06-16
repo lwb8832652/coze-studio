@@ -20,14 +20,29 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
 	langgraphapi "github.com/coze-dev/coze-studio/backend/api/model/agent/langgraph"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
+
+const (
+	langGraphRunStreamMetadata = "metadata"
+	langGraphRunStreamEvents   = "events"
+	langGraphRunStreamEnd      = "end"
+	langGraphRunStreamError    = "error"
+	langGraphRunStreamPageSize = int32(200)
+)
+
+type langGraphRunStreamWriter interface {
+	WriteEvent(id, eventType string, data []byte) error
+}
 
 // CreateLangGraphRun .
 // @router /api/threads/:thread_id/runs [POST]
@@ -184,6 +199,47 @@ func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
 }
 
+// StreamLangGraphRun .
+// @router /api/threads/:thread_id/runs/:run_id/stream [GET]
+func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StreamRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if req.AfterEventID <= 0 {
+		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		if !ok {
+			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
+			return
+		}
+		req.AfterEventID = afterEventID
+	}
+
+	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
+		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	c.SetContentType("text/event-stream; charset=utf-8")
+	c.Response.Header.Set("Cache-Control", "no-cache")
+	c.Response.Header.Set("Connection", "keep-alive")
+	c.Response.Header.Set("X-Accel-Buffering", "no")
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph run stream failed, err=%v", err)
+		}
+	}()
+
+	streamLangGraphRunEvents(ctx, writer, req, current.Run)
+}
+
 func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
 	result := make([]*langgraphapi.Run, 0, len(runs))
 	for _, run := range runs {
@@ -216,6 +272,200 @@ func langGraphRunToAPI(run *appagentthread.RunSummary) *langgraphapi.Run {
 		Durability:        run.Durability,
 		Error:             run.ErrorMessage,
 	}
+}
+
+func streamLangGraphRunEvents(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.StreamRunRequest,
+	run *appagentthread.RunSummary,
+) {
+	afterEventID := req.AfterEventID
+	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
+	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
+
+	if !writeLangGraphRunStreamMetadata(ctx, writer, run) {
+		return
+	}
+
+	sendNewEvents := func() bool {
+		page := int32(1)
+		for {
+			resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+				ThreadID: req.ThreadID,
+				RunID:    req.RunID,
+				Page:     page,
+				PageSize: langGraphRunStreamPageSize,
+			})
+			if err != nil {
+				writeLangGraphRunStreamError(ctx, writer, err)
+				return false
+			}
+
+			for _, event := range resp.Events {
+				if event == nil || event.EventID <= afterEventID {
+					continue
+				}
+				if !writeLangGraphRunStreamEvent(ctx, writer, event) {
+					return false
+				}
+				afterEventID = event.EventID
+			}
+
+			if int64(page)*int64(langGraphRunStreamPageSize) >= resp.Total || len(resp.Events) < int(langGraphRunStreamPageSize) {
+				return true
+			}
+			page++
+		}
+	}
+
+	if !sendNewEvents() {
+		return
+	}
+	if writeEndWhenLangGraphRunTerminal(ctx, writer, req.RunID) {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			return
+		case <-ticker.C:
+			if !sendNewEvents() {
+				return
+			}
+			if writeEndWhenLangGraphRunTerminal(ctx, writer, req.RunID) {
+				return
+			}
+		}
+	}
+}
+
+func writeLangGraphRunStreamMetadata(ctx context.Context, writer langGraphRunStreamWriter, run *appagentthread.RunSummary) bool {
+	if run == nil {
+		return true
+	}
+
+	payload, err := sonic.Marshal(map[string]any{
+		"run_id":      strconv.FormatInt(run.RunID, 10),
+		"thread_id":   strconv.FormatInt(run.ThreadID, 10),
+		"status":      string(run.Status),
+		"attempt":     1,
+		"server_time": langGraphTime(time.Now().UnixMilli()),
+	})
+	if err != nil {
+		writeLangGraphRunStreamError(ctx, writer, err)
+		return false
+	}
+	if err := writer.WriteEvent("", langGraphRunStreamMetadata, payload); err != nil {
+		logs.CtxWarnf(ctx, "write langgraph run stream metadata failed, err=%v", err)
+		return false
+	}
+
+	return true
+}
+
+func writeLangGraphRunStreamEvent(ctx context.Context, writer langGraphRunStreamWriter, event *appagentthread.RunEventSummary) bool {
+	if event == nil {
+		return true
+	}
+
+	payload, err := sonic.Marshal(map[string]any{
+		"event_id":   strconv.FormatInt(event.EventID, 10),
+		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
+		"run_id":     strconv.FormatInt(event.RunID, 10),
+		"event_type": event.EventType,
+		"payload":    langGraphRunEventPayload(event.Payload),
+		"created_at": langGraphTime(event.CreatedAt),
+	})
+	if err != nil {
+		writeLangGraphRunStreamError(ctx, writer, err)
+		return false
+	}
+	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), langGraphRunStreamEvents, payload); err != nil {
+		logs.CtxWarnf(ctx, "write langgraph run stream event failed, err=%v", err)
+		return false
+	}
+
+	return true
+}
+
+func writeLangGraphRunStreamEnd(ctx context.Context, writer langGraphRunStreamWriter, run *appagentthread.RunSummary) bool {
+	if run == nil {
+		return true
+	}
+
+	payload, err := sonic.Marshal(map[string]any{
+		"run_id":    strconv.FormatInt(run.RunID, 10),
+		"thread_id": strconv.FormatInt(run.ThreadID, 10),
+		"status":    string(run.Status),
+		"reason":    "terminal_run",
+	})
+	if err != nil {
+		writeLangGraphRunStreamError(ctx, writer, err)
+		return false
+	}
+	if err := writer.WriteEvent("", langGraphRunStreamEnd, payload); err != nil {
+		logs.CtxWarnf(ctx, "write langgraph run stream end failed, err=%v", err)
+		return false
+	}
+
+	return true
+}
+
+func writeLangGraphRunStreamError(ctx context.Context, writer langGraphRunStreamWriter, err error) {
+	if err == nil {
+		return
+	}
+	if writeErr := writer.WriteEvent("", langGraphRunStreamError, []byte(err.Error())); writeErr != nil {
+		logs.CtxWarnf(ctx, "write langgraph run stream error failed, err=%v", writeErr)
+	}
+}
+
+func writeEndWhenLangGraphRunTerminal(ctx context.Context, writer langGraphRunStreamWriter, runID int64) bool {
+	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
+	if err != nil {
+		writeLangGraphRunStreamError(ctx, writer, err)
+		return true
+	}
+	if resp == nil || resp.Run == nil || !isTaskThreadRunTerminal(resp.Run.Status) {
+		return false
+	}
+
+	return writeLangGraphRunStreamEnd(ctx, writer, resp.Run)
+}
+
+func langGraphRunEventPayload(raw string) any {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]any{}
+	}
+
+	var payload any
+	if err := sonic.UnmarshalString(raw, &payload); err != nil {
+		return raw
+	}
+
+	return payload
+}
+
+func parseLangGraphLastEventID(raw string) (int64, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+
+	return parsed, true
 }
 
 func langGraphMarshalJSON(value any, defaultValue string) (string, error) {

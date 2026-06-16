@@ -28,6 +28,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
 
+	langgraphapi "github.com/coze-dev/coze-studio/backend/api/model/agent/langgraph"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
 
@@ -190,4 +191,120 @@ func TestLangGraphRunCancelRejectsCrossThreadRun(t *testing.T) {
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
 	require.NoError(t, err)
 	require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+}
+
+func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"分析执行流程"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.completed",
+		Payload:   `{"step_name":"generate_answer","status":"completed"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 10,
+		TimeoutMs:  100,
+	}, persisted.Run)
+	body := writer.String()
+
+	require.Contains(t, body, "event: metadata")
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, "id: 3")
+	require.Contains(t, body, "event: events")
+	require.Contains(t, body, `"event_type":"step.completed"`)
+	require.Contains(t, body, `"step_name":"generate_answer"`)
+	require.Contains(t, body, `"status":"completed"`)
+	require.Contains(t, body, "event: end")
+	require.Contains(t, body, `"status":"succeeded"`)
+}
+
+func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"游标回放"}]}`,
+	})
+	require.NoError(t, err)
+	first, err := appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.started",
+		Payload:   `{"step_name":"planner"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.completed",
+		Payload:   `{"step_name":"planner"}`,
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
+		ThreadID:     1,
+		RunID:        runResp.Run.RunID,
+		AfterEventID: first.Event.EventID,
+		IntervalMs:   10,
+		TimeoutMs:    1,
+	}, runResp.Run)
+	body := writer.String()
+
+	require.NotContains(t, body, `"event_type":"step.started"`)
+	require.Contains(t, body, `"event_type":"step.completed"`)
+}
+
+func TestLangGraphRunStreamRejectsCrossThreadRun(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/runs/:run_id/stream", StreamLangGraphRun)
+	installAgentThreadTestService(t)
+
+	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "另一个任务",
+		Source:   appagentthread.ThreadSourceAPI,
+		Metadata: `{"space_id":"1","title":"另一个任务","source":"api"}`,
+	})
+	require.NoError(t, err)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"跨任务流检查"}]}`,
+	})
+	require.NoError(t, err)
+
+	streamResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10)+"/runs/"+strconv.FormatInt(runResp.Run.RunID, 10)+"/stream",
+		nil,
+	)
+
+	require.Equal(t, http.StatusBadRequest, streamResp.Code)
 }
