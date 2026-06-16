@@ -295,6 +295,163 @@ func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 	joinLangGraphRunStreamEvents(ctx, writer, req, run)
 }
 
+// GetLangGraphStatelessRun .
+// @router /api/runs/:run_id [GET]
+func GetLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	run, err := getLangGraphRunSummary(ctx, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id is invalid")
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(run))
+}
+
+// CancelLangGraphStatelessRun .
+// @router /api/runs/:run_id/cancel [POST]
+func CancelLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	current, err := getLangGraphRunSummary(ctx, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if current == nil {
+		invalidParamRequestResponse(c, "run_id is invalid")
+		return
+	}
+
+	resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
+		RunID: req.RunID,
+		From:  current.Status,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
+}
+
+// StreamLangGraphStatelessRun .
+// @router /api/runs/:run_id/stream [GET]
+func StreamLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessStreamRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if req.AfterEventID <= 0 {
+		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		if !ok {
+			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
+			return
+		}
+		req.AfterEventID = afterEventID
+	}
+
+	run, err := getLangGraphRunSummary(ctx, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id is invalid")
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	setLangGraphRunStreamHeaders(c)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph stateless run stream failed, err=%v", err)
+		}
+	}()
+
+	streamLangGraphStatelessRunEvents(ctx, writer, req, run)
+}
+
+// JoinLangGraphStatelessRun .
+// @router /api/runs/:run_id/join [POST]
+func JoinLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessJoinRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	run, err := getLangGraphRunSummary(ctx, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id is invalid")
+		return
+	}
+
+	joined, err := waitLangGraphStatelessRunTerminal(ctx, req, run)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphRunToAPI(joined))
+}
+
+// JoinLangGraphStatelessRunStream .
+// @router /api/runs/:run_id/join [GET]
+func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.StatelessJoinRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if req.AfterEventID <= 0 {
+		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		if !ok {
+			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
+			return
+		}
+		req.AfterEventID = afterEventID
+	}
+
+	run, err := getLangGraphRunSummary(ctx, req.RunID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if run == nil {
+		invalidParamRequestResponse(c, "run_id is invalid")
+		return
+	}
+
+	writer := sse.NewWriter(c)
+	setLangGraphRunStreamHeaders(c)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logs.CtxWarnf(ctx, "close langgraph stateless join stream failed, err=%v", err)
+		}
+	}()
+
+	joinLangGraphStatelessRunStreamEvents(ctx, writer, req, run)
+}
+
 func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagentthread.CreateRunRequest, error) {
 	input, err := langGraphMarshalJSON(req.Input, "{}")
 	if err != nil {
@@ -399,16 +556,28 @@ func setLangGraphRunStreamHeaders(c *app.RequestContext) {
 	c.Response.Header.Set("X-Accel-Buffering", "no")
 }
 
-func getLangGraphThreadRun(ctx context.Context, threadID, runID int64) (*appagentthread.RunSummary, error) {
+func getLangGraphRunSummary(ctx context.Context, runID int64) (*appagentthread.RunSummary, error) {
 	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
 	if err != nil {
 		return nil, err
 	}
-	if resp == nil || resp.Run == nil || resp.Run.ThreadID != threadID {
+	if resp == nil || resp.Run == nil {
 		return nil, nil
 	}
 
 	return resp.Run, nil
+}
+
+func getLangGraphThreadRun(ctx context.Context, threadID, runID int64) (*appagentthread.RunSummary, error) {
+	run, err := getLangGraphRunSummary(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil || run.ThreadID != threadID {
+		return nil, nil
+	}
+
+	return run, nil
 }
 
 func waitLangGraphRunTerminal(
@@ -457,6 +626,78 @@ func joinLangGraphRunStreamEvents(
 ) {
 	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
 		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		AfterEventID: req.AfterEventID,
+		IntervalMs:   req.IntervalMs,
+		TimeoutMs:    req.TimeoutMs,
+	}, run)
+}
+
+func waitLangGraphStatelessRunTerminal(
+	ctx context.Context,
+	req langgraphapi.StatelessJoinRunRequest,
+	run *appagentthread.RunSummary,
+) (*appagentthread.RunSummary, error) {
+	if run == nil || isTaskThreadRunTerminal(run.Status) {
+		return run, nil
+	}
+
+	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
+	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return run, ctx.Err()
+		case <-timer.C:
+			return run, nil
+		case <-ticker.C:
+			current, err := getLangGraphRunSummary(ctx, req.RunID)
+			if err != nil {
+				return nil, err
+			}
+			if current == nil {
+				return run, nil
+			}
+			run = current
+			if isTaskThreadRunTerminal(run.Status) {
+				return run, nil
+			}
+		}
+	}
+}
+
+func streamLangGraphStatelessRunEvents(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.StatelessStreamRunRequest,
+	run *appagentthread.RunSummary,
+) {
+	if run == nil {
+		return
+	}
+
+	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
+		ThreadID:     run.ThreadID,
+		RunID:        req.RunID,
+		StreamMode:   req.StreamMode,
+		AfterEventID: req.AfterEventID,
+		IntervalMs:   req.IntervalMs,
+		TimeoutMs:    req.TimeoutMs,
+	}, run)
+}
+
+func joinLangGraphStatelessRunStreamEvents(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	req langgraphapi.StatelessJoinRunRequest,
+	run *appagentthread.RunSummary,
+) {
+	streamLangGraphStatelessRunEvents(ctx, writer, langgraphapi.StatelessStreamRunRequest{
 		RunID:        req.RunID,
 		AfterEventID: req.AfterEventID,
 		IntervalMs:   req.IntervalMs,

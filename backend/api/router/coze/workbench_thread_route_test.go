@@ -67,6 +67,11 @@ func TestRegisterIncludesLangGraphRunRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
 
+	getStatelessRun := ut.PerformRequest(h.Engine, http.MethodGet, "/api/runs/2", nil)
+	cancelStatelessRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/runs/2/cancel", nil)
+	streamStatelessRun := ut.PerformRequest(h.Engine, http.MethodGet, "/api/runs/2/stream", nil)
+	joinStatelessRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/runs/2/join", nil)
+	joinStatelessRunStream := ut.PerformRequest(h.Engine, http.MethodGet, "/api/runs/2/join", nil)
 	createRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs", nil)
 	createRunStream := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs/stream", nil)
 	listRuns := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs", nil)
@@ -76,6 +81,11 @@ func TestRegisterIncludesLangGraphRunRoutes(t *testing.T) {
 	joinRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/1/runs/2/join", nil)
 	joinRunStream := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs/2/join", nil)
 
+	require.NotEqual(t, http.StatusNotFound, getStatelessRun.Code)
+	require.NotEqual(t, http.StatusNotFound, cancelStatelessRun.Code)
+	require.NotEqual(t, http.StatusNotFound, streamStatelessRun.Code)
+	require.NotEqual(t, http.StatusNotFound, joinStatelessRun.Code)
+	require.NotEqual(t, http.StatusNotFound, joinStatelessRunStream.Code)
 	require.NotEqual(t, http.StatusNotFound, createRun.Code)
 	require.NotEqual(t, http.StatusNotFound, createRunStream.Code)
 	require.NotEqual(t, http.StatusNotFound, listRuns.Code)

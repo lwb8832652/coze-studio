@@ -98,3 +98,22 @@ type JoinRunRequest struct {
 	IntervalMs   int64 `query:"interval_ms,omitempty"`
 	TimeoutMs    int64 `query:"timeout_ms,omitempty"`
 }
+
+type StatelessRunRequest struct {
+	RunID int64 `path:"run_id,required"`
+}
+
+type StatelessStreamRunRequest struct {
+	RunID        int64  `path:"run_id,required"`
+	StreamMode   string `query:"stream_mode,omitempty"`
+	AfterEventID int64  `query:"after_event_id,omitempty"`
+	IntervalMs   int64  `query:"interval_ms,omitempty"`
+	TimeoutMs    int64  `query:"timeout_ms,omitempty"`
+}
+
+type StatelessJoinRunRequest struct {
+	RunID        int64 `path:"run_id,required"`
+	AfterEventID int64 `query:"after_event_id,omitempty"`
+	IntervalMs   int64 `query:"interval_ms,omitempty"`
+	TimeoutMs    int64 `query:"timeout_ms,omitempty"`
+}
