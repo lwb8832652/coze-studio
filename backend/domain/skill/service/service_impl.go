@@ -18,9 +18,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -173,6 +176,57 @@ func (s *skillService) ListVersionResources(ctx context.Context, skillID, versio
 	}
 
 	return s.components.Repo.ListResources(ctx, skillID, versionID)
+}
+
+func (s *skillService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, resourcePath string, content []byte) (*entity.SkillVersion, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if skillID <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+	if versionID <= 0 {
+		return nil, InvalidArgumentErrorf("version id is required")
+	}
+	normalizedPath, err := editableResourcePath(resourcePath)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > maxSkillArchiveFileBytes {
+		return nil, InvalidArgumentErrorf("skill resource %s exceeds %d bytes", normalizedPath, maxSkillArchiveFileBytes)
+	}
+
+	current, err := s.Get(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	version, err := s.getVersion(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := s.components.Repo.ListResources(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	restored, err := skillFromVersionSnapshot(current, version)
+	if err != nil {
+		return nil, err
+	}
+	restored.UpdatedAt = time.Now().UnixMilli()
+	if err := s.components.Repo.Update(ctx, restored); err != nil {
+		return nil, err
+	}
+
+	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, version.SkillMD)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.components.Repo.CreateResources(ctx, resourcesWithEditedContent(skillID, newVersion.ID, resources, normalizedPath, content)); err != nil {
+		return nil, err
+	}
+
+	return newVersion, nil
 }
 
 func (s *skillService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
@@ -401,6 +455,61 @@ func cloneResourcesForVersion(skillID, versionID int64, resources []*entity.Skil
 		})
 	}
 	return items
+}
+
+func resourcesWithEditedContent(skillID, versionID int64, resources []*entity.SkillResource, resourcePath string, content []byte) []*entity.SkillResource {
+	items := make([]*entity.SkillResource, 0, len(resources)+1)
+	replaced := false
+	for _, resource := range resources {
+		if resource == nil {
+			continue
+		}
+		cloned := &entity.SkillResource{
+			SkillID:   skillID,
+			VersionID: versionID,
+			Path:      resource.Path,
+			Content:   append([]byte(nil), resource.Content...),
+			Size:      resource.Size,
+			SHA256:    resource.SHA256,
+		}
+		if resource.Path == resourcePath {
+			cloned.Content = append([]byte(nil), content...)
+			cloned.Size = int64(len(content))
+			cloned.SHA256 = contentSHA256(content)
+			replaced = true
+		}
+		items = append(items, cloned)
+	}
+	if !replaced {
+		items = append(items, &entity.SkillResource{
+			SkillID:   skillID,
+			VersionID: versionID,
+			Path:      resourcePath,
+			Content:   append([]byte(nil), content...),
+			Size:      int64(len(content)),
+			SHA256:    contentSHA256(content),
+		})
+	}
+	return items
+}
+
+func editableResourcePath(value string) (string, error) {
+	normalized, skip, err := safeArchivePath(strings.TrimSpace(value))
+	if err != nil {
+		return "", InvalidArgumentErrorf("%v", err)
+	}
+	if skip || strings.TrimSpace(normalized) == "" {
+		return "", InvalidArgumentErrorf("skill resource path is required")
+	}
+	if strings.EqualFold(path.Base(normalized), "SKILL.md") {
+		return "", InvalidArgumentErrorf("skill resource path conflicts with SKILL.md")
+	}
+	return normalized, nil
+}
+
+func contentSHA256(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {

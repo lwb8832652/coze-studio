@@ -52,6 +52,13 @@ type ListSkillVersionsResponse struct {
 	BaseResp *base.BaseResp         `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
 }
 
+type SkillVersionResponse struct {
+	Data     *SkillVersion  `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64          `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string         `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}
+
 type SkillResource struct {
 	ID            int64  `thrift:"id,1,required" form:"id,required" json:"id,string,required" query:"id,required"`
 	SkillID       int64  `thrift:"skill_id,2,required" form:"skill_id,required" json:"skill_id,string,required" query:"skill_id,required"`
@@ -78,6 +85,14 @@ type ListSkillVersionResourcesResponse struct {
 	Code     int64                          `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
 	Msg      string                         `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
 	BaseResp *base.BaseResp                 `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}
+
+type UpdateSkillVersionResourceRequest struct {
+	SkillID       int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
+	VersionID     int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
+	Path          string     `thrift:"path,3,required" form:"path,required" json:"path,required" query:"path,required"`
+	ContentBase64 string     `thrift:"content_base64,4,required" form:"content_base64,required" json:"content_base64,required" query:"content_base64,required"`
+	Base          *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
 }
 
 type ExportSkillVersionRequest struct {

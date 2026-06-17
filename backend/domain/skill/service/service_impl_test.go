@@ -18,6 +18,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -327,6 +329,104 @@ func TestServiceRollbackVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
 	require.ErrorContains(t, err, "version 404")
 }
 
+func TestServiceUpdateVersionResourceCreatesSnapshotWithEditedResource(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Research Current",
+		Description:  "Current description.",
+		Type:         entity.TypeDeerSkill,
+		Version:      "2.0.0",
+		Enabled:      false,
+		InputSchema:  `{"current":true}`,
+		OutputSchema: `{"current":true}`,
+		Executor:     `{"current":true}`,
+		Permissions:  `{"current":true}`,
+		CreatedAt:    1000,
+		UpdatedAt:    2000,
+	}
+	repo.versions[101] = []*entity.SkillVersion{
+		{
+			ID:      201,
+			SkillID: 101,
+			Version: "1.0.0",
+			SkillMD: `---
+name: weekly-research
+description: Original research skill.
+type: deer_skill
+version: 1.0.0
+enabled: true
+---
+# Weekly Research
+`,
+			InputSchema:  `{"type":"object","rollback":true}`,
+			OutputSchema: `{"type":"object","rollback":true}`,
+			Executor:     `{"mode":"agent"}`,
+			Permissions:  `{"network":false,"allowed_tools":["search"]}`,
+			CreatedAt:    1000,
+		},
+	}
+	repo.resources[201] = []*entity.SkillResource{
+		{
+			ID:        301,
+			SkillID:   101,
+			VersionID: 201,
+			Path:      "references/prompt.md",
+			Content:   []byte("Use concise bullets."),
+			Size:      20,
+			SHA256:    "hash-prompt",
+			CreatedAt: 1000,
+		},
+		{
+			ID:        302,
+			SkillID:   101,
+			VersionID: 201,
+			Path:      "assets/logo.txt",
+			Content:   []byte("asset"),
+			Size:      5,
+			SHA256:    "hash-asset",
+			CreatedAt: 1000,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	version, err := svc.UpdateVersionResource(context.Background(), 101, 201, "references/prompt.md", []byte("Use concise action bullets."))
+
+	require.NoError(t, err)
+	require.Equal(t, int64(401), version.ID)
+	require.Equal(t, int64(101), version.SkillID)
+	require.Equal(t, "1.0.0", version.Version)
+	require.Contains(t, version.SkillMD, "# Weekly Research")
+	require.Equal(t, "weekly-research", repo.items[101].Name)
+	require.Equal(t, "Original research skill.", repo.items[101].Description)
+	require.True(t, repo.items[101].Enabled)
+	require.Len(t, repo.versions[101], 2)
+
+	require.Len(t, repo.resources[401], 2)
+	require.Equal(t, "references/prompt.md", repo.resources[401][0].Path)
+	require.Equal(t, []byte("Use concise action bullets."), repo.resources[401][0].Content)
+	require.Equal(t, int64(len("Use concise action bullets.")), repo.resources[401][0].Size)
+	require.Equal(t, sha256Hex([]byte("Use concise action bullets.")), repo.resources[401][0].SHA256)
+	require.Equal(t, int64(401), repo.resources[401][0].VersionID)
+	require.Equal(t, "assets/logo.txt", repo.resources[401][1].Path)
+	require.Equal(t, []byte("asset"), repo.resources[401][1].Content)
+	require.Equal(t, []byte("Use concise bullets."), repo.resources[201][0].Content)
+}
+
+func TestServiceUpdateVersionResourceRejectsSkillMDPath(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1}
+	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.0.0", SkillMD: "# Skill"}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	_, err := svc.UpdateVersionResource(context.Background(), 101, 201, "SKILL.md", []byte("# Changed"))
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "SKILL.md")
+}
+
 func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{
@@ -462,4 +562,9 @@ func (e *capturingExecutor) Run(ctx context.Context, skill *Declaration, input m
 	e.skill = skill
 	e.input = input
 	return e.result, nil
+}
+
+func sha256Hex(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }

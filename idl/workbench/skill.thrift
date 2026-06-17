@@ -116,6 +116,13 @@ struct ListSkillVersionsResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct SkillVersionResponse {
+    1: optional SkillVersion data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 struct SkillResource {
     1: required i64 id (agw.js_conv="str", api.js_conv="true")
     2: required i64 skill_id (agw.js_conv="str", api.js_conv="true")
@@ -142,6 +149,14 @@ struct ListSkillVersionResourcesResponse {
     253: required i64 code
     254: required string msg
     255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct UpdateSkillVersionResourceRequest {
+    1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
+    3: required string path
+    4: required string content_base64
+    255: optional base.Base Base (api.none="true")
 }
 
 struct ExportSkillVersionRequest {
@@ -231,6 +246,10 @@ service WorkbenchSkillService {
     )
     ListSkillVersionResourcesResponse ListSkillVersionResources(1: ListSkillVersionResourcesRequest request)(
         api.get="/api/workbench/skills/:skill_id/versions/:version_id/resources",
+        api.category="workbench"
+    )
+    SkillVersionResponse UpdateSkillVersionResource(1: UpdateSkillVersionResourceRequest request)(
+        api.put="/api/workbench/skills/:skill_id/versions/:version_id/resources",
         api.category="workbench"
     )
     ExportSkillVersionResponse ExportSkillVersion(1: ExportSkillVersionRequest request)(

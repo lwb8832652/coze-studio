@@ -200,6 +200,31 @@ func (s *ApplicationService) ListSkillVersionResources(ctx context.Context, req 
 	return &skillapi.ListSkillVersionResourcesResponse{Code: 0, Msg: "success", Data: data}, nil
 }
 
+func (s *ApplicationService) UpdateSkillVersionResource(ctx context.Context, req *skillapi.UpdateSkillVersionResourceRequest) (*skillapi.SkillVersionResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("update skill version resource request is required")
+	}
+	if req.SkillID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("skill id is required")
+	}
+	if req.VersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("version id is required")
+	}
+	content, err := base64.StdEncoding.DecodeString(req.ContentBase64)
+	if err != nil {
+		return nil, domain.InvalidArgumentErrorf("invalid skill resource content_base64: %v", err)
+	}
+	version, err := s.DomainSVC.UpdateVersionResource(ctx, req.SkillID, req.VersionID, req.Path, content)
+	if err != nil {
+		return nil, err
+	}
+
+	return &skillapi.SkillVersionResponse{Code: 0, Msg: "success", Data: skillVersionToAPI(version)}, nil
+}
+
 func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skillapi.ExportSkillVersionRequest) (*skillapi.ExportSkillVersionResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err

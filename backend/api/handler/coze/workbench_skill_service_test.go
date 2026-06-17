@@ -17,6 +17,7 @@
 package coze
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"testing"
@@ -105,6 +106,32 @@ func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
 	require.Contains(t, body, `"version":"1.0.0"`)
 }
 
+func TestUpdateSkillVersionResourceHandlerReturnsNewVersion(t *testing.T) {
+	h := server.Default()
+	h.PUT("/api/workbench/skills/:skill_id/versions/:version_id/resources", UpdateSkillVersionResource)
+	installSkillVersionTestService(t)
+
+	payload := []byte(`{"path":"references/prompt.md","content_base64":"VXNlIGNvbmNpc2UgYnVsbGV0cy4="}`)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPut,
+		"/api/workbench/skills/101/versions/201/resources",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.updatedResourceSkillID)
+	require.Equal(t, int64(201), domainSVC.updatedResourceVersionID)
+	require.Equal(t, "references/prompt.md", domainSVC.updatedResourcePath)
+	require.Equal(t, []byte("Use concise bullets."), domainSVC.updatedResourceContent)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"id":"401"`)
+	require.Contains(t, body, `"skill_md":"# Weekly Report"`)
+}
+
 func installSkillVersionTestService(t *testing.T) {
 	t.Helper()
 	previous := appskill.SVC
@@ -138,6 +165,17 @@ func installSkillVersionTestService(t *testing.T) {
 				CreatedAt:    1000,
 				UpdatedAt:    2000,
 			},
+			updatedResourceVersion: &entity.SkillVersion{
+				ID:           401,
+				SkillID:      101,
+				Version:      "1.0.0",
+				SkillMD:      "# Weekly Report",
+				InputSchema:  `{"type":"object"}`,
+				OutputSchema: `{"type":"object"}`,
+				Executor:     `{"mode":"agent"}`,
+				Permissions:  `{"network":false}`,
+				CreatedAt:    3000,
+			},
 			resources: []*entity.SkillResource{
 				{
 					ID:        301,
@@ -159,14 +197,19 @@ func installSkillVersionTestService(t *testing.T) {
 
 type skillVersionDomainService struct {
 	domain.SkillService
-	versions               []*entity.SkillVersion
-	resources              []*entity.SkillResource
-	rolledBack             *entity.Skill
-	listVersionsSkillID    int64
-	listResourcesSkillID   int64
-	listResourcesVersionID int64
-	rollbackSkillID        int64
-	rollbackVersionID      int64
+	versions                 []*entity.SkillVersion
+	resources                []*entity.SkillResource
+	rolledBack               *entity.Skill
+	updatedResourceVersion   *entity.SkillVersion
+	listVersionsSkillID      int64
+	listResourcesSkillID     int64
+	listResourcesVersionID   int64
+	rollbackSkillID          int64
+	rollbackVersionID        int64
+	updatedResourceSkillID   int64
+	updatedResourceVersionID int64
+	updatedResourcePath      string
+	updatedResourceContent   []byte
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -184,4 +227,12 @@ func (s *skillVersionDomainService) RollbackVersion(ctx context.Context, skillID
 	s.rollbackSkillID = skillID
 	s.rollbackVersionID = versionID
 	return s.rolledBack, nil
+}
+
+func (s *skillVersionDomainService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, path string, content []byte) (*entity.SkillVersion, error) {
+	s.updatedResourceSkillID = skillID
+	s.updatedResourceVersionID = versionID
+	s.updatedResourcePath = path
+	s.updatedResourceContent = append([]byte(nil), content...)
+	return s.updatedResourceVersion, nil
 }
