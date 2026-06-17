@@ -270,6 +270,110 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "max_steps_exceeded", err, state, nil, nil)
 }
 
+func (e *HarnessExecutor) Resume(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+	if e == nil {
+		return nil, fmt.Errorf("agent harness executor is required")
+	}
+	if run == nil {
+		return nil, fmt.Errorf("run is required")
+	}
+	if input == nil {
+		return nil, fmt.Errorf("resume input is required")
+	}
+	if input.ThreadID != 0 && input.ThreadID != run.ThreadID {
+		return nil, fmt.Errorf("resume input does not belong to run")
+	}
+	if input.RunID != 0 && input.RunID != run.RunID {
+		return nil, fmt.Errorf("resume input does not belong to run")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(input.PendingSteps) == 0 {
+		return nil, fmt.Errorf("resume input pending steps are required")
+	}
+
+	runner := e.runner
+	if runner == nil {
+		runner = NewModelStepRunner(NewModelExecutor(nil))
+	}
+	maxSteps := e.maxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultHarnessMaxSteps
+	}
+
+	state := cloneHarnessState(input.State)
+	parentCheckpointID := input.CheckpointID
+	for pendingIndex, step := range input.PendingSteps {
+		if pendingIndex >= maxSteps {
+			err := fmt.Errorf("agent harness resume exceeded max steps: %d", maxSteps)
+
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "max_steps_exceeded", err, state, &step, input.PendingSteps[pendingIndex:])
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "context_canceled", err, state, &step, input.PendingSteps[pendingIndex:])
+		}
+
+		stepIndex := len(state.Steps)
+		state.StepIndex = stepIndex
+		e.emitStepStartedEvent(ctx, run, step, stepIndex)
+		stepResult, err := runner.RunStep(ctx, run, step, cloneHarnessState(state))
+		if err != nil {
+			e.emitStepFailedEvent(ctx, run, step, stepIndex, err.Error())
+
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_error", err, state, &step, input.PendingSteps[pendingIndex:])
+		}
+		if stepResult == nil {
+			err := fmt.Errorf("agent harness step runner returned empty result")
+			e.emitStepFailedEvent(ctx, run, step, stepIndex, err.Error())
+
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_empty_result", err, state, &step, input.PendingSteps[pendingIndex:])
+		}
+		if stepResult.Final && strings.TrimSpace(stepResult.Message) == "" {
+			err := fmt.Errorf("agent harness final step returned empty message")
+			e.emitStepFailedEvent(ctx, run, step, stepIndex, err.Error())
+
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_empty_final_message", err, state, &step, input.PendingSteps[pendingIndex:])
+		}
+
+		state.Results = append(state.Results, *stepResult)
+		state.Steps = append(state.Steps, agentExecutedStep(step, stepIndex, stepResult))
+		e.emitStepCompletedEvent(ctx, run, step, stepIndex, stepResult)
+		e.recordStepUsage(ctx, run, step, stepIndex, stepResult)
+		var checkpointErr error
+		parentCheckpointID, checkpointErr = e.saveCheckpoint(
+			ctx,
+			run,
+			parentCheckpointID,
+			harnessStepCheckpointNS(step),
+			harnessStepCheckpointPhase(step),
+			"running",
+			state,
+			&step,
+			input.PendingSteps[pendingIndex+1:],
+		)
+		if checkpointErr != nil {
+			return nil, checkpointErr
+		}
+
+		if stepResult.Final {
+			message := strings.TrimSpace(stepResult.Message)
+			if _, err := e.saveCheckpoint(ctx, run, parentCheckpointID, "harness.terminal", "terminal", "succeeded", state, nil, nil); err != nil {
+				return nil, err
+			}
+
+			return &RunExecutionResult{
+				Message:  message,
+				Metadata: harnessMetadata(stepResult.Metadata, len(state.Steps), state.Memory),
+			}, nil
+		}
+	}
+
+	err := fmt.Errorf("agent harness resume finished without final message")
+
+	return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "resume_no_final_message", err, state, nil, nil)
+}
+
 func (e *HarnessExecutor) saveCheckpoint(
 	ctx context.Context,
 	run *RunSummary,
