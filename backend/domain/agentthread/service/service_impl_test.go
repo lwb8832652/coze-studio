@@ -438,6 +438,87 @@ func TestListRunEventsNormalizesPaging(t *testing.T) {
 	require.Equal(t, int32(100), repo.lastRunEventListReq.PageSize)
 }
 
+func TestCreateCheckpointDefaultsJSONAndPersistsRunCheckpoint(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	checkpoint, err := svc.CreateCheckpoint(context.Background(), &CreateCheckpointRequest{
+		RunID:              20,
+		ParentCheckpointID: 12,
+		CheckpointNS:       " planner ",
+		ChannelValues:      `{"messages":["hello"]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3501), checkpoint.ID)
+	require.Equal(t, int64(10), checkpoint.ThreadID)
+	require.Equal(t, int64(20), checkpoint.RunID)
+	require.Equal(t, int64(12), checkpoint.ParentCheckpointID)
+	require.Equal(t, "planner", checkpoint.CheckpointNS)
+	require.Equal(t, `{"messages":["hello"]}`, checkpoint.ChannelValues)
+	require.Equal(t, `{}`, checkpoint.ChannelVersions)
+	require.Equal(t, `[]`, checkpoint.PendingSends)
+	require.Equal(t, `{}`, checkpoint.Metadata)
+	require.NotZero(t, checkpoint.CreatedAt)
+	require.Len(t, repo.checkpoints[10], 1)
+}
+
+func TestCreateCheckpointRejectsMismatchedThread(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusRunning},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	_, err := svc.CreateCheckpoint(context.Background(), &CreateCheckpointRequest{
+		ThreadID:      11,
+		RunID:         20,
+		ChannelValues: `{}`,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Empty(t, repo.checkpoints[10])
+}
+
+func TestListCheckpointsNormalizesLimit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.checkpoints[10] = []*entity.Checkpoint{
+		{ID: 1, ThreadID: 10, RunID: 20, CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, CreatedAt: 200},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	checkpoints, total, err := svc.ListCheckpoints(context.Background(), &ListCheckpointsRequest{
+		ThreadID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, checkpoints, 2)
+	require.Equal(t, int64(2), checkpoints[0].ID)
+	require.Equal(t, int32(20), repo.lastCheckpointListReq.Limit)
+}
+
+func TestGetLatestCheckpointReturnsNewest(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.checkpoints[10] = []*entity.Checkpoint{
+		{ID: 1, ThreadID: 10, RunID: 20, CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, CreatedAt: 200},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	checkpoint, err := svc.GetLatestCheckpoint(context.Background(), &GetLatestCheckpointRequest{
+		ThreadID: 10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), checkpoint.ID)
+}
+
 func TestRememberMemoryCreatesThreadMemory(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
@@ -640,12 +721,14 @@ type memoryRepo struct {
 	messages                   map[int64][]*entity.Message
 	runs                       map[int64][]*entity.Run
 	runEvents                  map[int64][]*entity.RunEvent
+	checkpoints                map[int64][]*entity.Checkpoint
 	memories                   map[int64][]*entity.Memory
 	tokenUsages                []*entity.TokenUsage
 	lastListReq                repository.ListThreadsRequest
 	lastMessageListReq         repository.ListMessagesRequest
 	lastRunListReq             repository.ListRunsRequest
 	lastRunEventListReq        repository.ListRunEventsRequest
+	lastCheckpointListReq      repository.ListCheckpointsRequest
 	lastMemoryListReq          repository.ListMemoriesRequest
 	lastTokenUsageListReq      repository.ListTokenUsageRequest
 	lastTokenUsageAggregateReq repository.AggregateTokenUsageRequest
@@ -655,11 +738,12 @@ type memoryRepo struct {
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		threads:   make(map[int64]*entity.Thread),
-		messages:  make(map[int64][]*entity.Message),
-		runs:      make(map[int64][]*entity.Run),
-		runEvents: make(map[int64][]*entity.RunEvent),
-		memories:  make(map[int64][]*entity.Memory),
+		threads:     make(map[int64]*entity.Thread),
+		messages:    make(map[int64][]*entity.Message),
+		runs:        make(map[int64][]*entity.Run),
+		runEvents:   make(map[int64][]*entity.RunEvent),
+		checkpoints: make(map[int64][]*entity.Checkpoint),
+		memories:    make(map[int64][]*entity.Memory),
 	}
 }
 
@@ -851,6 +935,66 @@ func (r *memoryRepo) ListRunEvents(ctx context.Context, req repository.ListRunEv
 		end = len(events)
 	}
 	return events[start:end], total, nil
+}
+
+func (r *memoryRepo) CreateCheckpoint(ctx context.Context, checkpoint *entity.Checkpoint) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.checkpoints[checkpoint.ThreadID] = append(r.checkpoints[checkpoint.ThreadID], cloneCheckpoint(checkpoint))
+	return nil
+}
+
+func (r *memoryRepo) ListCheckpoints(ctx context.Context, req repository.ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastCheckpointListReq = req
+
+	checkpoints := make([]*entity.Checkpoint, 0, len(r.checkpoints[req.ThreadID]))
+	for _, checkpoint := range r.checkpoints[req.ThreadID] {
+		if req.RunID > 0 && checkpoint.RunID != req.RunID {
+			continue
+		}
+		checkpoints = append(checkpoints, cloneCheckpoint(checkpoint))
+	}
+	sort.Slice(checkpoints, func(i, j int) bool {
+		if checkpoints[i].CreatedAt == checkpoints[j].CreatedAt {
+			return checkpoints[i].ID > checkpoints[j].ID
+		}
+		return checkpoints[i].CreatedAt > checkpoints[j].CreatedAt
+	})
+
+	total := int64(len(checkpoints))
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if len(checkpoints) > int(limit) {
+		checkpoints = checkpoints[:limit]
+	}
+
+	return checkpoints, total, nil
+}
+
+func (r *memoryRepo) GetLatestCheckpoint(ctx context.Context, threadID int64) (*entity.Checkpoint, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var latest *entity.Checkpoint
+	for _, checkpoint := range r.checkpoints[threadID] {
+		if latest == nil ||
+			checkpoint.CreatedAt > latest.CreatedAt ||
+			(checkpoint.CreatedAt == latest.CreatedAt && checkpoint.ID > latest.ID) {
+			latest = checkpoint
+		}
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("checkpoint for thread %d not found", threadID)
+	}
+
+	return cloneCheckpoint(latest), nil
 }
 
 func (r *memoryRepo) CreateMemory(ctx context.Context, memory *entity.Memory) error {
@@ -1094,6 +1238,14 @@ func cloneRunEvent(event *entity.RunEvent) *entity.RunEvent {
 		return nil
 	}
 	cloned := *event
+	return &cloned
+}
+
+func cloneCheckpoint(checkpoint *entity.Checkpoint) *entity.Checkpoint {
+	if checkpoint == nil {
+		return nil
+	}
+	cloned := *checkpoint
 	return &cloned
 }
 

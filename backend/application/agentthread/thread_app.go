@@ -127,6 +127,25 @@ func DomainRunEventToSummary(event *entity.RunEvent) *RunEventSummary {
 	}
 }
 
+func DomainCheckpointToSummary(checkpoint *entity.Checkpoint) *CheckpointSummary {
+	if checkpoint == nil {
+		return nil
+	}
+
+	return &CheckpointSummary{
+		CheckpointID:       checkpoint.ID,
+		ThreadID:           checkpoint.ThreadID,
+		RunID:              checkpoint.RunID,
+		ParentCheckpointID: checkpoint.ParentCheckpointID,
+		CheckpointNS:       checkpoint.CheckpointNS,
+		ChannelValues:      checkpoint.ChannelValues,
+		ChannelVersions:    checkpoint.ChannelVersions,
+		PendingSends:       checkpoint.PendingSends,
+		Metadata:           checkpoint.Metadata,
+		CreatedAt:          checkpoint.CreatedAt,
+	}
+}
+
 func DomainMemoryToSummary(memory *entity.Memory) *MemorySummary {
 	if memory == nil {
 		return nil

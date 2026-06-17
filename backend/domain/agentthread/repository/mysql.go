@@ -98,6 +98,19 @@ type runEventPO struct {
 	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_run_events_thread_created;index:idx_agent_run_events_run_created"`
 }
 
+type checkpointPO struct {
+	ID                 int64          `gorm:"column:id;primaryKey"`
+	ThreadID           int64          `gorm:"column:thread_id;index:idx_agent_checkpoints_thread_created"`
+	RunID              int64          `gorm:"column:run_id;index:idx_agent_checkpoints_run_created"`
+	ParentCheckpointID int64          `gorm:"column:parent_checkpoint_id"`
+	CheckpointNS       string         `gorm:"column:checkpoint_ns"`
+	ChannelValues      datatypes.JSON `gorm:"column:channel_values;type:json"`
+	ChannelVersions    datatypes.JSON `gorm:"column:channel_versions;type:json"`
+	PendingSends       datatypes.JSON `gorm:"column:pending_sends;type:json"`
+	Metadata           datatypes.JSON `gorm:"column:metadata;type:json"`
+	CreatedAt          int64          `gorm:"column:created_at;index:idx_agent_checkpoints_thread_created;index:idx_agent_checkpoints_run_created"`
+}
+
 type memoryPO struct {
 	ID        int64          `gorm:"column:id;primaryKey"`
 	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_memories_thread_run_scope"`
@@ -148,6 +161,10 @@ func (runPO) TableName() string {
 
 func (runEventPO) TableName() string {
 	return "agent_run_events"
+}
+
+func (checkpointPO) TableName() string {
+	return "agent_checkpoints"
 }
 
 func (memoryPO) TableName() string {
@@ -403,6 +420,70 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 	}
 
 	return events, total, nil
+}
+
+func (r *threadRepository) CreateCheckpoint(ctx context.Context, checkpoint *entity.Checkpoint) error {
+	if checkpoint == nil {
+		return fmt.Errorf("checkpoint is required")
+	}
+
+	if checkpoint.CreatedAt == 0 {
+		checkpoint.CreatedAt = time.Now().UnixMilli()
+	}
+
+	po, err := checkpointToPO(checkpoint)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := r.db.WithContext(ctx).Model(&checkpointPO{}).Where("thread_id = ?", req.ThreadID)
+	if req.RunID > 0 {
+		query = query.Where("run_id = ?", req.RunID)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	pos := make([]*checkpointPO, 0)
+	if err := query.
+		Order("created_at DESC, id DESC").
+		Limit(int(limit)).
+		Find(&pos).Error; err != nil {
+		return nil, 0, err
+	}
+
+	checkpoints := make([]*entity.Checkpoint, 0, len(pos))
+	for _, po := range pos {
+		checkpoints = append(checkpoints, po.toEntity())
+	}
+
+	return checkpoints, total, nil
+}
+
+func (r *threadRepository) GetLatestCheckpoint(ctx context.Context, threadID int64) (*entity.Checkpoint, error) {
+	var po checkpointPO
+	if err := r.db.WithContext(ctx).
+		Where("thread_id = ?", threadID).
+		Order("created_at DESC, id DESC").
+		First(&po).Error; err != nil {
+		return nil, err
+	}
+
+	return po.toEntity(), nil
 }
 
 func (r *threadRepository) CreateMemory(ctx context.Context, memory *entity.Memory) error {
@@ -830,6 +911,53 @@ func (po *runEventPO) toEntity() *entity.RunEvent {
 		EventType: po.EventType,
 		Payload:   jsonToString(po.Payload),
 		CreatedAt: po.CreatedAt,
+	}
+}
+
+func checkpointToPO(checkpoint *entity.Checkpoint) (*checkpointPO, error) {
+	channelValues, err := requiredJSON("channel_values", checkpoint.ChannelValues)
+	if err != nil {
+		return nil, err
+	}
+	channelVersions, err := requiredJSON("channel_versions", checkpoint.ChannelVersions)
+	if err != nil {
+		return nil, err
+	}
+	pendingSends, err := requiredJSON("pending_sends", checkpoint.PendingSends)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := requiredJSON("metadata", checkpoint.Metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	return &checkpointPO{
+		ID:                 checkpoint.ID,
+		ThreadID:           checkpoint.ThreadID,
+		RunID:              checkpoint.RunID,
+		ParentCheckpointID: checkpoint.ParentCheckpointID,
+		CheckpointNS:       checkpoint.CheckpointNS,
+		ChannelValues:      channelValues,
+		ChannelVersions:    channelVersions,
+		PendingSends:       pendingSends,
+		Metadata:           metadata,
+		CreatedAt:          checkpoint.CreatedAt,
+	}, nil
+}
+
+func (po *checkpointPO) toEntity() *entity.Checkpoint {
+	return &entity.Checkpoint{
+		ID:                 po.ID,
+		ThreadID:           po.ThreadID,
+		RunID:              po.RunID,
+		ParentCheckpointID: po.ParentCheckpointID,
+		CheckpointNS:       po.CheckpointNS,
+		ChannelValues:      jsonToString(po.ChannelValues),
+		ChannelVersions:    jsonToString(po.ChannelVersions),
+		PendingSends:       jsonToString(po.PendingSends),
+		Metadata:           jsonToString(po.Metadata),
+		CreatedAt:          po.CreatedAt,
 	}
 }
 

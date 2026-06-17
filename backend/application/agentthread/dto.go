@@ -132,6 +132,19 @@ type RunEventSummary struct {
 	CreatedAt int64
 }
 
+type CheckpointSummary struct {
+	CheckpointID       int64
+	ThreadID           int64
+	RunID              int64
+	ParentCheckpointID int64
+	CheckpointNS       string
+	ChannelValues      string
+	ChannelVersions    string
+	PendingSends       string
+	Metadata           string
+	CreatedAt          int64
+}
+
 type MemorySummary struct {
 	MemoryID  int64
 	ThreadID  int64
@@ -298,6 +311,40 @@ type ListRunEventsRequest struct {
 type ListRunEventsResponse struct {
 	Events []*RunEventSummary
 	Total  int64
+}
+
+type CreateCheckpointRequest struct {
+	ThreadID           int64
+	RunID              int64
+	ParentCheckpointID int64
+	CheckpointNS       string
+	ChannelValues      string
+	ChannelVersions    string
+	PendingSends       string
+	Metadata           string
+}
+
+type CreateCheckpointResponse struct {
+	Checkpoint *CheckpointSummary
+}
+
+type ListCheckpointsRequest struct {
+	ThreadID int64
+	RunID    int64
+	Limit    int32
+}
+
+type ListCheckpointsResponse struct {
+	Checkpoints []*CheckpointSummary
+	Total       int64
+}
+
+type GetLatestCheckpointRequest struct {
+	ThreadID int64
+}
+
+type GetLatestCheckpointResponse struct {
+	Checkpoint *CheckpointSummary
 }
 
 type RememberMemoryRequest struct {

@@ -5174,6 +5174,61 @@ table "agent_run_events" {
     columns = [column.thread_id, column.created_at]
   }
 }
+table "agent_checkpoints" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "parent_checkpoint_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "checkpoint_ns" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "channel_values" {
+    null = false
+    type = json
+  }
+  column "channel_versions" {
+    null = false
+    type = json
+  }
+  column "pending_sends" {
+    null = false
+    type = json
+  }
+  column "metadata" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_checkpoints_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_checkpoints_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+}
 table "agent_thread_memories" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"

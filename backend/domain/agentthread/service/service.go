@@ -83,6 +83,27 @@ type AppendRunEventRequest struct {
 	Payload   string
 }
 
+type CreateCheckpointRequest struct {
+	ThreadID           int64
+	RunID              int64
+	ParentCheckpointID int64
+	CheckpointNS       string
+	ChannelValues      string
+	ChannelVersions    string
+	PendingSends       string
+	Metadata           string
+}
+
+type ListCheckpointsRequest struct {
+	ThreadID int64
+	RunID    int64
+	Limit    int32
+}
+
+type GetLatestCheckpointRequest struct {
+	ThreadID int64
+}
+
 type RememberMemoryRequest struct {
 	ThreadID  int64
 	RunID     int64
@@ -170,6 +191,9 @@ type ThreadService interface {
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
 	AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error)
 	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
+	CreateCheckpoint(ctx context.Context, req *CreateCheckpointRequest) (*entity.Checkpoint, error)
+	ListCheckpoints(ctx context.Context, req *ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error)
+	GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*entity.Checkpoint, error)
 	RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error)
 	RecallMemories(ctx context.Context, req *RecallMemoriesRequest) ([]*entity.Memory, int64, error)
 	RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*entity.TokenUsage, error)

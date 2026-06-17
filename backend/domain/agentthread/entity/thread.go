@@ -131,6 +131,19 @@ type RunEvent struct {
 	CreatedAt int64
 }
 
+type Checkpoint struct {
+	ID                 int64
+	ThreadID           int64
+	RunID              int64
+	ParentCheckpointID int64
+	CheckpointNS       string
+	ChannelValues      string
+	ChannelVersions    string
+	PendingSends       string
+	Metadata           string
+	CreatedAt          int64
+}
+
 type Memory struct {
 	ID        int64
 	ThreadID  int64

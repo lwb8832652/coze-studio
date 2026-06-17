@@ -335,6 +335,92 @@ func TestThreadRepositoryCreateAndListRunEvents(t *testing.T) {
 	require.Equal(t, int64(2), threadEvents[2].ID)
 }
 
+func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&checkpointPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, checkpoint := range []*entity.Checkpoint{
+		{
+			ID:              1,
+			ThreadID:        10,
+			RunID:           20,
+			CheckpointNS:    "",
+			ChannelValues:   `{"messages":["old"]}`,
+			ChannelVersions: `{"messages":1}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"source":"runtime"}`,
+			CreatedAt:       100,
+		},
+		{
+			ID:                 2,
+			ThreadID:           10,
+			RunID:              20,
+			ParentCheckpointID: 1,
+			CheckpointNS:       "planner",
+			ChannelValues:      `{"messages":["new"],"next":["tools"]}`,
+			ChannelVersions:    `{"messages":2,"next":1}`,
+			PendingSends:       `[{"node":"tools"}]`,
+			Metadata:           `{"source":"runtime","step":2}`,
+			CreatedAt:          200,
+		},
+		{
+			ID:              3,
+			ThreadID:        11,
+			RunID:           21,
+			ChannelValues:   `{}`,
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{}`,
+			CreatedAt:       300,
+		},
+	} {
+		require.NoError(t, repo.CreateCheckpoint(context.Background(), checkpoint))
+	}
+
+	got, total, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10,
+		Limit:    10,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(2), got[0].ID)
+	require.Equal(t, int64(1), got[0].ParentCheckpointID)
+	require.Equal(t, "planner", got[0].CheckpointNS)
+	require.Equal(t, `{"messages":["new"],"next":["tools"]}`, got[0].ChannelValues)
+	require.Equal(t, `{"messages":2,"next":1}`, got[0].ChannelVersions)
+	require.Equal(t, `[{"node":"tools"}]`, got[0].PendingSends)
+	require.Equal(t, `{"source":"runtime","step":2}`, got[0].Metadata)
+	require.Equal(t, int64(1), got[1].ID)
+
+	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), latest.ID)
+}
+
+func TestThreadRepositoryRejectsInvalidCheckpointJSON(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&checkpointPO{}))
+
+	repo := NewThreadRepository(db)
+	err = repo.CreateCheckpoint(context.Background(), &entity.Checkpoint{
+		ID:              1,
+		ThreadID:        10,
+		RunID:           20,
+		ChannelValues:   "{",
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{}`,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "channel_values")
+}
+
 func TestThreadRepositoryCreateAndListMemories(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

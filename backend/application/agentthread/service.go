@@ -304,6 +304,83 @@ func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEven
 	return resp, nil
 }
 
+func (s *ApplicationService) CreateCheckpoint(ctx context.Context, req *CreateCheckpointRequest) (*CreateCheckpointResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("create checkpoint request is required")
+	}
+
+	checkpoint, err := s.ThreadSVC.CreateCheckpoint(ctx, &domainservice.CreateCheckpointRequest{
+		ThreadID:           req.ThreadID,
+		RunID:              req.RunID,
+		ParentCheckpointID: req.ParentCheckpointID,
+		CheckpointNS:       req.CheckpointNS,
+		ChannelValues:      req.ChannelValues,
+		ChannelVersions:    req.ChannelVersions,
+		PendingSends:       req.PendingSends,
+		Metadata:           req.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if checkpoint == nil {
+		return nil, fmt.Errorf("agent thread service returned empty checkpoint")
+	}
+
+	return &CreateCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
+}
+
+func (s *ApplicationService) ListCheckpoints(ctx context.Context, req *ListCheckpointsRequest) (*ListCheckpointsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list checkpoints request is required")
+	}
+
+	checkpoints, total, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Limit:    req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListCheckpointsResponse{
+		Checkpoints: make([]*CheckpointSummary, 0, len(checkpoints)),
+		Total:       total,
+	}
+	for _, checkpoint := range checkpoints {
+		resp.Checkpoints = append(resp.Checkpoints, DomainCheckpointToSummary(checkpoint))
+	}
+
+	return resp, nil
+}
+
+func (s *ApplicationService) GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*GetLatestCheckpointResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get latest checkpoint request is required")
+	}
+
+	checkpoint, err := s.ThreadSVC.GetLatestCheckpoint(ctx, &domainservice.GetLatestCheckpointRequest{
+		ThreadID: req.ThreadID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if checkpoint == nil {
+		return nil, fmt.Errorf("agent thread service returned empty checkpoint")
+	}
+
+	return &GetLatestCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
+}
+
 func (s *ApplicationService) RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*RememberMemoryResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

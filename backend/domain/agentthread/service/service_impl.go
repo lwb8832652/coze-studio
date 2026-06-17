@@ -360,6 +360,81 @@ func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsReq
 	})
 }
 
+func (s *threadService) CreateCheckpoint(ctx context.Context, req *CreateCheckpointRequest) (*entity.Checkpoint, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("create checkpoint request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+
+	run, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if req.ThreadID > 0 && req.ThreadID != run.ThreadID {
+		return nil, InvalidArgumentErrorf("checkpoint thread id does not match run thread id")
+	}
+
+	id, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	checkpoint := &entity.Checkpoint{
+		ID:                 id,
+		ThreadID:           run.ThreadID,
+		RunID:              run.ID,
+		ParentCheckpointID: req.ParentCheckpointID,
+		CheckpointNS:       strings.TrimSpace(req.CheckpointNS),
+		ChannelValues:      defaultJSON(req.ChannelValues, "{}"),
+		ChannelVersions:    defaultJSON(req.ChannelVersions, "{}"),
+		PendingSends:       defaultJSON(req.PendingSends, "[]"),
+		Metadata:           defaultJSON(req.Metadata, "{}"),
+		CreatedAt:          time.Now().UnixMilli(),
+	}
+	if err := s.repo.CreateCheckpoint(ctx, checkpoint); err != nil {
+		return nil, err
+	}
+
+	return checkpoint, nil
+}
+
+func (s *threadService) ListCheckpoints(ctx context.Context, req *ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, 0, err
+	}
+	if req == nil {
+		return nil, 0, InvalidArgumentErrorf("list checkpoints request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, 0, InvalidArgumentErrorf("thread id is required")
+	}
+
+	return s.repo.ListCheckpoints(ctx, repository.ListCheckpointsRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Limit:    normalizeCheckpointLimit(req.Limit),
+	})
+}
+
+func (s *threadService) GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*entity.Checkpoint, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("get latest checkpoint request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+
+	return s.repo.GetLatestCheckpoint(ctx, req.ThreadID)
+}
+
 func (s *threadService) RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error) {
 	if err := s.requireComponents(); err != nil {
 		return nil, err
@@ -684,6 +759,17 @@ func normalizeTokenUsagePage(page, pageSize int32) (int32, int32) {
 	}
 
 	return page, pageSize
+}
+
+func normalizeCheckpointLimit(limit int32) int32 {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+
+	return limit
 }
 
 func defaultJSON(value, fallback string) string {
