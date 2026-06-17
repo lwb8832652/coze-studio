@@ -97,6 +97,41 @@ func TestParseDeclarationJSON(t *testing.T) {
 	assert.True(t, decl.Permissions.Network)
 }
 
+func TestParseDeclarationSkillMarkdown(t *testing.T) {
+	content := []byte(`---
+name: weekly-research
+description: Research weekly market changes.
+allowed-tools:
+  - search
+  - browser
+---
+# Weekly Research
+
+Collect signals and write a short brief.
+`)
+
+	decl, err := ParseDeclaration("SKILL.md", content)
+
+	require.NoError(t, err)
+	assert.Equal(t, "weekly-research", decl.ID)
+	assert.Equal(t, "weekly-research", decl.Name)
+	assert.Equal(t, "Research weekly market changes.", decl.Description)
+	assert.Equal(t, "deer_skill", decl.Type)
+	assert.Equal(t, "1.0.0", decl.Version)
+	assert.True(t, decl.Enabled)
+	assert.Equal(t, []string{"search", "browser"}, decl.Permissions.AllowedTools)
+	assert.Contains(t, decl.Body, "Collect signals")
+	assert.Equal(t, string(content), decl.SkillMD)
+}
+
+func TestParseDeclarationSkillMarkdownRequiresFrontmatter(t *testing.T) {
+	decl, err := ParseDeclaration("SKILL.md", []byte("# Missing frontmatter"))
+
+	require.Error(t, err)
+	assert.Nil(t, decl)
+	assert.Contains(t, err.Error(), "frontmatter")
+}
+
 func TestParseDeclarationUnsupportedExtension(t *testing.T) {
 	decl, err := ParseDeclaration("weekly_report.toml", []byte("id = weekly_report"))
 

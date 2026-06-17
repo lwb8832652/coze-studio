@@ -283,6 +283,12 @@ func apiTypeToEntity(typ skillapi.SkillType) (entity.Type, error) {
 		return entity.TypeScript, nil
 	case skillapi.SkillType_Workflow:
 		return entity.TypeWorkflow, nil
+	case skillapi.SkillType_DeerSkill:
+		return entity.TypeDeerSkill, nil
+	case skillapi.SkillType_PublicSkill:
+		return entity.TypePublicSkill, nil
+	case skillapi.SkillType_CustomSkill:
+		return entity.TypeCustomSkill, nil
 	default:
 		return "", domain.InvalidArgumentErrorf("unsupported skill type: %d", typ)
 	}
@@ -294,6 +300,12 @@ func entityTypeToAPI(typ entity.Type) (skillapi.SkillType, error) {
 		return skillapi.SkillType_Script, nil
 	case entity.TypeWorkflow:
 		return skillapi.SkillType_Workflow, nil
+	case entity.TypeDeerSkill:
+		return skillapi.SkillType_DeerSkill, nil
+	case entity.TypePublicSkill:
+		return skillapi.SkillType_PublicSkill, nil
+	case entity.TypeCustomSkill:
+		return skillapi.SkillType_CustomSkill, nil
 	default:
 		return 0, domain.InvalidArgumentErrorf("unsupported skill type: %s", typ)
 	}

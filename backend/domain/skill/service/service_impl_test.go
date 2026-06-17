@@ -48,6 +48,33 @@ permissions: {network: false}
 	require.Equal(t, "Weekly Report", skill.Name)
 }
 
+func TestServiceImportsSkillMarkdownAndRecordsOriginalSkillMD(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := []byte(`---
+name: weekly-research
+description: Research weekly market changes.
+allowed-tools:
+  - search
+---
+# Weekly Research
+
+Collect signals and write a short brief.
+`)
+
+	skill, err := svc.ImportDeclaration(context.Background(), 1, "SKILL.md", content)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), skill.ID)
+	require.Equal(t, entity.TypeDeerSkill, skill.Type)
+	require.Equal(t, "weekly-research", skill.Name)
+	require.Equal(t, "Research weekly market changes.", skill.Description)
+	require.True(t, skill.Enabled)
+	require.JSONEq(t, `{"network":false,"allowed_tools":["search"]}`, skill.Permissions)
+	require.Len(t, repo.versions[101], 1)
+	require.Equal(t, string(content), repo.versions[101][0].SkillMD)
+}
+
 func TestServiceCreateRecordsSkillVersion(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})

@@ -64,6 +64,25 @@ func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
 	require.Equal(t, `{"language":"python"}`, resp.Data.Versions[0].Executor)
 }
 
+func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
+	apiSkill, err := entityToAPI(&entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "weekly-research",
+		Description:  "Research weekly market changes.",
+		Type:         entity.TypeDeerSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  "{}",
+		OutputSchema: "{}",
+		Executor:     "{}",
+		Permissions:  "{}",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, skillapi.SkillType_DeerSkill, apiSkill.Type)
+}
+
 type recordingSkillDomainService struct {
 	domain.SkillService
 	versions            []*entity.SkillVersion

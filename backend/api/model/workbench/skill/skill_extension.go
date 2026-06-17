@@ -18,6 +18,12 @@ package skill
 
 import "github.com/coze-dev/coze-studio/backend/api/model/base"
 
+const (
+	SkillType_DeerSkill   SkillType = 3
+	SkillType_PublicSkill SkillType = 4
+	SkillType_CustomSkill SkillType = 5
+)
+
 type SkillVersion struct {
 	ID           int64  `thrift:"id,1,required" form:"id,required" json:"id,string,required" query:"id,required"`
 	SkillID      int64  `thrift:"skill_id,2,required" form:"skill_id,required" json:"skill_id,string,required" query:"skill_id,required"`

@@ -5,6 +5,9 @@ include "../base.thrift"
 enum SkillType {
     Script = 1,
     Workflow = 2,
+    DeerSkill = 3,
+    PublicSkill = 4,
+    CustomSkill = 5,
 }
 
 struct Skill {

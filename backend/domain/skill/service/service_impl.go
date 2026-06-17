@@ -65,7 +65,7 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 	if err := s.components.Repo.Create(ctx, skill); err != nil {
 		return nil, err
 	}
-	if err := s.recordVersion(ctx, skill); err != nil {
+	if err := s.recordVersionWithSkillMD(ctx, skill, decl.SkillMD); err != nil {
 		return nil, err
 	}
 
@@ -208,6 +208,10 @@ func (s *skillService) requireIDGen() error {
 }
 
 func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) error {
+	return s.recordVersionWithSkillMD(ctx, skill, "")
+}
+
+func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *entity.Skill, skillMD string) error {
 	if skill == nil {
 		return InvalidArgumentErrorf("skill is required")
 	}
@@ -219,11 +223,15 @@ func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) e
 		return err
 	}
 	now := time.Now().UnixMilli()
+	versionSkillMD := skillMD
+	if strings.TrimSpace(versionSkillMD) == "" {
+		versionSkillMD = skillMarkdown(skill)
+	}
 	version := &entity.SkillVersion{
 		ID:           id,
 		SkillID:      skill.ID,
 		Version:      skill.Version,
-		SkillMD:      skillMarkdown(skill),
+		SkillMD:      versionSkillMD,
 		InputSchema:  skill.InputSchema,
 		OutputSchema: skill.OutputSchema,
 		Executor:     skill.Executor,
@@ -249,6 +257,8 @@ func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {
 			return UnsupportedExecutor{}, nil
 		}
 		return s.components.WorkflowRunner, nil
+	case entity.TypeDeerSkill, entity.TypePublicSkill, entity.TypeCustomSkill:
+		return nil, InvalidArgumentErrorf("skill type %s does not support direct test run", typ)
 	default:
 		return nil, InvalidArgumentErrorf("unsupported skill type: %s", typ)
 	}
@@ -358,6 +368,12 @@ func declarationTypeToEntity(typ string) (entity.Type, error) {
 		return entity.TypeScript, nil
 	case string(entity.TypeWorkflow):
 		return entity.TypeWorkflow, nil
+	case string(entity.TypeDeerSkill):
+		return entity.TypeDeerSkill, nil
+	case string(entity.TypePublicSkill):
+		return entity.TypePublicSkill, nil
+	case string(entity.TypeCustomSkill):
+		return entity.TypeCustomSkill, nil
 	default:
 		return "", InvalidArgumentErrorf("unsupported declaration type: %s", typ)
 	}
