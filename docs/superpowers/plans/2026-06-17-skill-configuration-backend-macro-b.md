@@ -4,6 +4,20 @@
 
 Macro Stage B replicates Deer-flow style skill configuration on top of the existing Coze Studio skill compatibility layer. This document tracks the backend slices completed so far. It does not add frontend pages, new menu behavior, MCP tool permissions, IM channels, or unrelated security scanning.
 
+Per the latest delivery decision, MCP and IM are moved out of the current first-stage scope and into Phase 2. Current Macro Stage B must not start MCP server configuration, MCP runtime transport, MCP permission hardening, IM inbound/outbound messages, IM channel binding, or IM channel UI.
+
+## Phase 2 Boundary
+
+The following work is explicitly Phase 2:
+
+- MCP tool configuration backend and frontend.
+- MCP stdio/SSE/HTTP transports, OAuth, secret masking, health checks, and session pool.
+- MCP runtime invocation through Tool Registry.
+- IM channel configuration, inbound/outbound routing, channel-thread binding, and channel-specific run policies.
+- IM-related task detail badges, filters, and message handoff behavior.
+
+The current first-stage work can keep neutral data fields such as `source`, `enable_mcp`, or future extension points when they already exist, but it must not implement or expand MCP/IM behavior.
+
 ## Completed In This Slice
 
 - Extend the skill entity type vocabulary toward Deer-flow and compatibility sources:
@@ -84,9 +98,12 @@ Until the next full thriftgo/hz generation pass, the new Workbench skill version
 - Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.
 
+## Explicitly Deferred To Phase 2
+
+- MCP production permissions, server config, transports, runtime invocation, and tool page replication.
+- IM channels, channel-thread binding, inbound/outbound delivery, and channel UI integration.
+
 ## Explicitly Deferred To Later Macro Stages
 
-- MCP production permissions and server config.
-- IM channels.
 - Complex security scanning.
 - Final production acceptance.
