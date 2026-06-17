@@ -27,22 +27,40 @@ import (
 const defaultResumeRunProcessorWorkerID = "agent-harness-resume"
 
 const (
-	resumeRunPayloadInvalidCode       = "checkpoint_resume_payload_invalid"
-	resumeRunCheckpointInvalidCode    = "checkpoint_resume_checkpoint_invalid"
-	resumeRunReplayNotImplementedCode = "checkpoint_replay_not_implemented"
+	resumeRunPayloadInvalidCode     = "checkpoint_resume_payload_invalid"
+	resumeRunCheckpointInvalidCode  = "checkpoint_resume_checkpoint_invalid"
+	resumeRunExecutorErrorCode      = "checkpoint_resume_executor_error"
+	resumeRunEmptyResultCode        = "checkpoint_resume_empty_executor_result"
+	resumeRunAppendMessageErrorCode = "checkpoint_resume_append_message_failed"
 )
 
 type ResumeRunProcessorOptions struct {
 	WorkerID  string
 	BatchSize int32
 	EventSink RunEventSink
+	Executor  ResumeRunExecutor
 }
 
 type ResumeRunProcessor struct {
 	app       *ApplicationService
+	executor  ResumeRunExecutor
 	eventSink RunEventSink
 	workerID  string
 	batchSize int32
+}
+
+type ResumeRunExecutor interface {
+	Resume(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error)
+}
+
+type ResumeRunExecutorFunc func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error)
+
+func (f ResumeRunExecutorFunc) Resume(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+	if f == nil {
+		return nil, fmt.Errorf("resume run executor function is required")
+	}
+
+	return f(ctx, run, input)
 }
 
 type resumeRunPayload struct {
@@ -79,9 +97,14 @@ func NewResumeRunProcessor(app *ApplicationService, opts ResumeRunProcessorOptio
 	if eventSink == nil {
 		eventSink = NewApplicationRunEventSink(app)
 	}
+	executor := opts.Executor
+	if executor == nil && app != nil {
+		executor = NewApplicationHarnessExecutor(app)
+	}
 
 	return &ResumeRunProcessor{
 		app:       app,
+		executor:  executor,
 		eventSink: eventSink,
 		workerID:  workerID,
 		batchSize: batchSize,
@@ -91,6 +114,9 @@ func NewResumeRunProcessor(app *ApplicationService, opts ResumeRunProcessorOptio
 func (p *ResumeRunProcessor) ProcessQueuedResumeRuns(ctx context.Context) error {
 	if p == nil || p.app == nil {
 		return fmt.Errorf("agent resume run processor application service is required")
+	}
+	if p.executor == nil {
+		return fmt.Errorf("agent resume run executor is required")
 	}
 
 	claimed, err := p.app.ClaimQueuedResumeRuns(ctx, &ClaimQueuedResumeRunsRequest{
@@ -143,7 +169,37 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	}
 	p.emitResumeRunLoaded(ctx, run, resumeInput)
 
-	return p.failResumeRun(ctx, run, resume, resumeRunReplayNotImplementedCode, "checkpoint replay is not implemented yet")
+	result, err := p.executor.Resume(ctx, run, resumeInput)
+	if err != nil {
+		return p.failResumeRun(ctx, run, resume, resumeRunExecutorErrorCode, err.Error())
+	}
+
+	message := strings.TrimSpace(resultMessage(result))
+	if message == "" {
+		return p.failResumeRun(ctx, run, resume, resumeRunEmptyResultCode, "resume executor returned empty assistant message")
+	}
+
+	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
+		ThreadID: run.ThreadID,
+		RunID:    run.RunID,
+		Role:     MessageRoleAssistant,
+		Content:  message,
+		Metadata: resultMetadata(result),
+	}); err != nil {
+		return p.failResumeRun(ctx, run, resume, resumeRunAppendMessageErrorCode, err.Error())
+	}
+
+	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+		RunID:    run.RunID,
+		From:     RunStatusRunning,
+		WorkerID: p.workerID,
+	}); err != nil {
+		return err
+	}
+
+	p.emitResumeRunCompleted(ctx, run, resume)
+
+	return nil
 }
 
 func parseResumeRunPayload(command string) (resumeRunPayload, error) {
@@ -486,6 +542,14 @@ func (p *ResumeRunProcessor) emitResumeRunFailed(
 		"error_message": message,
 	})
 	p.emitRunEvent(ctx, run, "run.failed", payload)
+}
+
+func (p *ResumeRunProcessor) emitResumeRunCompleted(ctx context.Context, run *RunSummary, resume resumeRunPayload) {
+	payload := p.resumeRunEventPayload(resume, map[string]any{
+		"status":    string(RunStatusSucceeded),
+		"worker_id": p.workerID,
+	})
+	p.emitRunEvent(ctx, run, "run.completed", payload)
 }
 
 func (p *ResumeRunProcessor) resumeRunEventPayload(resume resumeRunPayload, payload map[string]any) map[string]any {

@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
-func TestResumeRunProcessorFailsClaimedRunUntilReplayIsImplemented(t *testing.T) {
+func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{
 			{
@@ -47,21 +48,33 @@ func TestResumeRunProcessorFailsClaimedRunUntilReplayIsImplemented(t *testing.T)
 			PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
 			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
 		},
-		failedRun: &entity.Run{
-			ID:           200,
-			ThreadID:     10,
-			Status:       entity.RunStatusFailed,
-			WorkerID:     "resume-worker-a",
-			ErrorCode:    "checkpoint_replay_not_implemented",
-			ErrorMessage: "checkpoint replay is not implemented yet",
+		appended: &entity.Message{
+			ID:       301,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "resumed answer",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "resume-worker-a",
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 	eventSink := &recordingRunEventSink{}
+	executor := &recordingResumeRunExecutor{
+		result: &RunExecutionResult{
+			Message:  "resumed answer",
+			Metadata: `{"source":"agent_harness","steps":2}`,
+		},
+	}
 	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
 		WorkerID:  "resume-worker-a",
 		BatchSize: 1,
 		EventSink: eventSink,
+		Executor:  executor,
 	})
 
 	err := processor.ProcessQueuedResumeRuns(context.Background())
@@ -70,19 +83,24 @@ func TestResumeRunProcessorFailsClaimedRunUntilReplayIsImplemented(t *testing.T)
 	require.Equal(t, "resume-worker-a", domainSVC.claimQueuedResumeRunsReq.WorkerID)
 	require.Equal(t, int32(1), domainSVC.claimQueuedResumeRunsReq.Limit)
 	require.Equal(t, int64(503), domainSVC.getCheckpointReq.CheckpointID)
-	require.NotNil(t, domainSVC.failRunReq)
-	require.Equal(t, int64(200), domainSVC.failRunReq.RunID)
-	require.Equal(t, entity.RunStatusRunning, domainSVC.failRunReq.From)
-	require.Equal(t, "resume-worker-a", domainSVC.failRunReq.WorkerID)
-	require.Equal(t, "checkpoint_replay_not_implemented", domainSVC.failRunReq.ErrorCode)
-	require.Equal(t, "checkpoint replay is not implemented yet", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
+	require.Equal(t, int64(200), executor.run.RunID)
+	require.Equal(t, int64(503), executor.input.CheckpointID)
+	require.Len(t, executor.input.PendingSteps, 1)
+	require.Equal(t, int64(200), domainSVC.appendReq.RunID)
+	require.Equal(t, entity.MessageRoleAssistant, domainSVC.appendReq.Role)
+	require.Equal(t, "resumed answer", domainSVC.appendReq.Content)
+	require.Equal(t, `{"source":"agent_harness","steps":2}`, domainSVC.appendReq.Metadata)
+	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
+	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
+	require.Equal(t, "resume-worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.completed"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[0].Payload, `"checkpoint_id":"503"`)
 	require.Contains(t, eventSink.events[0].Payload, `"resume_from":"pending_sends"`)
 	require.Contains(t, eventSink.events[1].Payload, `"checkpoint_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"pending_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
-	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_replay_not_implemented"`)
+	require.Contains(t, eventSink.events[2].Payload, `"status":"succeeded"`)
 	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
 }
 
@@ -181,4 +199,73 @@ func TestResumeRunProcessorFailsRunWhenCheckpointIDIsMissing(t *testing.T) {
 	require.Equal(t, "resume run is missing command.resume.checkpoint_id", domainSVC.failRunReq.ErrorMessage)
 	require.Equal(t, []string{"run.resume.started", "run.failed"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[1].Payload, `"error_code":"checkpoint_resume_payload_invalid"`)
+}
+
+func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				WorkerID: "resume-worker-a",
+				Command:  `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+			},
+		},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		failedRun: &entity.Run{
+			ID:           200,
+			ThreadID:     10,
+			Status:       entity.RunStatusFailed,
+			WorkerID:     "resume-worker-a",
+			ErrorCode:    "checkpoint_resume_executor_error",
+			ErrorMessage: "resume executor failed",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+		Executor:  &recordingResumeRunExecutor{err: errors.New("resume executor failed")},
+	})
+
+	err := processor.ProcessQueuedResumeRuns(context.Background())
+
+	require.NoError(t, err)
+	require.Nil(t, domainSVC.appendReq)
+	require.Nil(t, domainSVC.completeRunReq)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Equal(t, int64(200), domainSVC.failRunReq.RunID)
+	require.Equal(t, entity.RunStatusRunning, domainSVC.failRunReq.From)
+	require.Equal(t, "resume-worker-a", domainSVC.failRunReq.WorkerID)
+	require.Equal(t, "checkpoint_resume_executor_error", domainSVC.failRunReq.ErrorCode)
+	require.Equal(t, "resume executor failed", domainSVC.failRunReq.ErrorMessage)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_resume_executor_error"`)
+}
+
+type recordingResumeRunExecutor struct {
+	run    *RunSummary
+	input  *HarnessResumeInput
+	result *RunExecutionResult
+	err    error
+}
+
+func (e *recordingResumeRunExecutor) Resume(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+	e.run = run
+	e.input = input
+
+	return e.result, e.err
 }
