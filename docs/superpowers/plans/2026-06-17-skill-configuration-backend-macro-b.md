@@ -33,6 +33,12 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
   - file content
   - byte size
   - SHA-256 hash
+- Expose version resource reads through the Workbench skill backend:
+  - domain-level `ListVersionResources`
+  - application-level `ListSkillVersionResources`
+  - IDL contract and HTTP handler for `GET /api/workbench/skills/:skill_id/versions/:version_id/resources`
+  - route registration under the existing Workbench skill path without redirects
+  - base64 encoded content for Markdown, scripts, assets, and binary-safe future export/edit flows
 - Add a production migration for the resource table and the current skill-version snapshot columns.
 - Expose Deer-flow compatible skill types through the Workbench API enum extension:
   - `DeerSkill`
@@ -46,7 +52,7 @@ The existing `skills` table remains the live skill compatibility table. The new 
 
 For create/update flows, `SkillMD` is generated from the existing skill entity fields. For `SKILL.md` and `.skill` archive imports, the original Markdown entrypoint content is stored in the version snapshot so the future editor, rollback, and export flows can preserve Deer-flow skill instructions.
 
-`.skill` archive resources are validated, fingerprinted, and stored as version-scoped attachments. They are not executed, edited through UI, exported, rolled back, or injected into the runtime yet.
+`.skill` archive resources are validated, fingerprinted, stored as version-scoped attachments, and readable through the Workbench skill version resource API. Resource content is returned as base64 so text and binary assets share one transport shape. Resources are not executed, edited through UI, exported, rolled back, or injected into the runtime yet.
 
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 

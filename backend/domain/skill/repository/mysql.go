@@ -278,10 +278,10 @@ func (r *skillRepository) CreateResources(ctx context.Context, resources []*enti
 	return r.db.WithContext(ctx).CreateInBatches(pos, 100).Error
 }
 
-func (r *skillRepository) ListResources(ctx context.Context, versionID int64) ([]*entity.SkillResource, error) {
+func (r *skillRepository) ListResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error) {
 	pos := make([]*skillResourcePO, 0)
 	if err := r.db.WithContext(ctx).
-		Where("version_id = ?", versionID).
+		Where("skill_id = ? AND version_id = ?", skillID, versionID).
 		Order("path ASC, id ASC").
 		Find(&pos).Error; err != nil {
 		return nil, err

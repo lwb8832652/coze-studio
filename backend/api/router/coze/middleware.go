@@ -1795,6 +1795,11 @@ func _listskillversionsMw() []app.HandlerFunc {
 	return nil
 }
 
+func _listskillversionresourcesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _exportskillMw() []app.HandlerFunc {
 	// your code...
 	return nil

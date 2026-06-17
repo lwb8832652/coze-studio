@@ -30,6 +30,8 @@ func TestRegisterIncludesWorkbenchSkillVersionRoutes(t *testing.T) {
 	Register(h)
 
 	versions := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/100/versions", nil)
+	resources := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/100/versions/200/resources", nil)
 
 	require.NotEqual(t, http.StatusNotFound, versions.Code)
+	require.NotEqual(t, http.StatusNotFound, resources.Code)
 }

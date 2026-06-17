@@ -51,3 +51,31 @@ type ListSkillVersionsResponse struct {
 	Msg      string                 `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
 	BaseResp *base.BaseResp         `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
 }
+
+type SkillResource struct {
+	ID            int64  `thrift:"id,1,required" form:"id,required" json:"id,string,required" query:"id,required"`
+	SkillID       int64  `thrift:"skill_id,2,required" form:"skill_id,required" json:"skill_id,string,required" query:"skill_id,required"`
+	VersionID     int64  `thrift:"version_id,3,required" form:"version_id,required" json:"version_id,string,required" query:"version_id,required"`
+	Path          string `thrift:"path,4,required" form:"path,required" json:"path,required" query:"path,required"`
+	ContentBase64 string `thrift:"content_base64,5,required" form:"content_base64,required" json:"content_base64,required" query:"content_base64,required"`
+	Size          int64  `thrift:"size,6,required" form:"size,required" json:"size,required" query:"size,required"`
+	SHA256        string `thrift:"sha256,7,required" form:"sha256,required" json:"sha256,required" query:"sha256,required"`
+	CreatedAt     int64  `thrift:"created_at,8,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
+}
+
+type ListSkillVersionResourcesRequest struct {
+	SkillID   int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
+	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
+	Base      *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}
+
+type ListSkillVersionResourcesData struct {
+	Resources []*SkillResource `thrift:"resources,1,required,list<SkillResource>" form:"resources,required" json:"resources,required" query:"resources,required"`
+}
+
+type ListSkillVersionResourcesResponse struct {
+	Data     *ListSkillVersionResourcesData `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64                          `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                         `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp                 `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}

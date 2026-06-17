@@ -64,6 +64,40 @@ func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
 	require.Equal(t, `{"language":"python"}`, resp.Data.Versions[0].Executor)
 }
 
+func TestApplicationListSkillVersionResourcesMapsDomainResources(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		resources: []*entity.SkillResource{
+			{
+				ID:        301,
+				SkillID:   101,
+				VersionID: 201,
+				Path:      "references/prompt.md",
+				Content:   []byte("Use concise bullets."),
+				Size:      20,
+				SHA256:    "hash-prompt",
+				CreatedAt: 1000,
+			},
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.ListSkillVersionResources(context.Background(), &skillapi.ListSkillVersionResourcesRequest{
+		SkillID:   101,
+		VersionID: 201,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), domainSVC.listResourcesSkillID)
+	require.Equal(t, int64(201), domainSVC.listResourcesVersionID)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Len(t, resp.Data.Resources, 1)
+	require.Equal(t, int64(301), resp.Data.Resources[0].ID)
+	require.Equal(t, "references/prompt.md", resp.Data.Resources[0].Path)
+	require.Equal(t, "VXNlIGNvbmNpc2UgYnVsbGV0cy4=", resp.Data.Resources[0].ContentBase64)
+	require.Equal(t, "hash-prompt", resp.Data.Resources[0].SHA256)
+}
+
 func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 	apiSkill, err := entityToAPI(&entity.Skill{
 		ID:           101,
@@ -85,11 +119,20 @@ func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 
 type recordingSkillDomainService struct {
 	domain.SkillService
-	versions            []*entity.SkillVersion
-	listVersionsSkillID int64
+	versions               []*entity.SkillVersion
+	resources              []*entity.SkillResource
+	listVersionsSkillID    int64
+	listResourcesSkillID   int64
+	listResourcesVersionID int64
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
 	s.listVersionsSkillID = skillID
 	return s.versions, nil
+}
+
+func (s *recordingSkillDomainService) ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error) {
+	s.listResourcesSkillID = skillID
+	s.listResourcesVersionID = versionID
+	return s.resources, nil
 }

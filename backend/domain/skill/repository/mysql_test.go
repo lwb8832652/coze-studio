@@ -115,7 +115,7 @@ func TestSkillRepositoryCreateAndListResources(t *testing.T) {
 	}
 
 	require.NoError(t, repo.CreateResources(context.Background(), resources))
-	got, err := repo.ListResources(context.Background(), 101)
+	got, err := repo.ListResources(context.Background(), 1, 101)
 
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -125,6 +125,10 @@ func TestSkillRepositoryCreateAndListResources(t *testing.T) {
 	require.Equal(t, "references/prompt.md", got[1].Path)
 	require.Equal(t, int64(1), got[1].SkillID)
 	require.Equal(t, int64(101), got[1].VersionID)
+
+	other, err := repo.ListResources(context.Background(), 2, 101)
+	require.NoError(t, err)
+	require.Empty(t, other)
 }
 
 func TestSkillRepositoryListAndUpdate(t *testing.T) {

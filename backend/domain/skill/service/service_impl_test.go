@@ -214,6 +214,32 @@ func TestServiceListVersions(t *testing.T) {
 	require.Equal(t, "1.1.0", versions[0].Version)
 }
 
+func TestServiceListVersionResources(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.resources[201] = []*entity.SkillResource{
+		{
+			ID:        301,
+			SkillID:   101,
+			VersionID: 201,
+			Path:      "references/prompt.md",
+			Content:   []byte("Use concise bullets."),
+			Size:      20,
+			SHA256:    "hash-prompt",
+			CreatedAt: 1000,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 202}})
+
+	resources, err := svc.ListVersionResources(context.Background(), 101, 201)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), repo.listResourcesSkillID)
+	require.Equal(t, int64(201), repo.listResourcesVersionID)
+	require.Len(t, resources, 1)
+	require.Equal(t, "references/prompt.md", resources[0].Path)
+	require.Equal(t, []byte("Use concise bullets."), resources[0].Content)
+}
+
 func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{
@@ -262,9 +288,11 @@ func TestServiceTestRunWorkflowReturnsNotImplementedClientError(t *testing.T) {
 }
 
 type memoryRepo struct {
-	items     map[int64]*entity.Skill
-	versions  map[int64][]*entity.SkillVersion
-	resources map[int64][]*entity.SkillResource
+	items                  map[int64]*entity.Skill
+	versions               map[int64][]*entity.SkillVersion
+	resources              map[int64][]*entity.SkillResource
+	listResourcesSkillID   int64
+	listResourcesVersionID int64
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -315,7 +343,9 @@ func (r *memoryRepo) CreateResources(ctx context.Context, resources []*entity.Sk
 	return nil
 }
 
-func (r *memoryRepo) ListResources(ctx context.Context, versionID int64) ([]*entity.SkillResource, error) {
+func (r *memoryRepo) ListResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error) {
+	r.listResourcesSkillID = skillID
+	r.listResourcesVersionID = versionID
 	return append([]*entity.SkillResource(nil), r.resources[versionID]...), nil
 }
 

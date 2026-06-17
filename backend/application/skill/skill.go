@@ -18,6 +18,7 @@ package skill
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -172,6 +173,28 @@ func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *skillap
 	return &skillapi.ListSkillVersionsResponse{Code: 0, Msg: "success", Data: data}, nil
 }
 
+func (s *ApplicationService) ListSkillVersionResources(ctx context.Context, req *skillapi.ListSkillVersionResourcesRequest) (*skillapi.ListSkillVersionResourcesResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("list skill version resources request is required")
+	}
+	resources, err := s.DomainSVC.ListVersionResources(ctx, req.SkillID, req.VersionID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := &skillapi.ListSkillVersionResourcesData{
+		Resources: make([]*skillapi.SkillResource, 0, len(resources)),
+	}
+	for _, resource := range resources {
+		data.Resources = append(data.Resources, skillResourceToAPI(resource))
+	}
+
+	return &skillapi.ListSkillVersionResourcesResponse{Code: 0, Msg: "success", Data: data}, nil
+}
+
 func (s *ApplicationService) requireDomainSVC() error {
 	if s == nil || s.DomainSVC == nil {
 		return fmt.Errorf("skill service is not initialized")
@@ -274,6 +297,23 @@ func skillVersionToAPI(version *entity.SkillVersion) *skillapi.SkillVersion {
 		Executor:     version.Executor,
 		Permissions:  version.Permissions,
 		CreatedAt:    version.CreatedAt,
+	}
+}
+
+func skillResourceToAPI(resource *entity.SkillResource) *skillapi.SkillResource {
+	if resource == nil {
+		return nil
+	}
+
+	return &skillapi.SkillResource{
+		ID:            resource.ID,
+		SkillID:       resource.SkillID,
+		VersionID:     resource.VersionID,
+		Path:          resource.Path,
+		ContentBase64: base64.StdEncoding.EncodeToString(resource.Content),
+		Size:          resource.Size,
+		SHA256:        resource.SHA256,
+		CreatedAt:     resource.CreatedAt,
 	}
 }
 

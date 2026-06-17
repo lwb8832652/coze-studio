@@ -161,6 +161,20 @@ func (s *skillService) ListVersions(ctx context.Context, skillID int64) ([]*enti
 	return s.components.Repo.ListVersions(ctx, skillID)
 }
 
+func (s *skillService) ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if skillID <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+	if versionID <= 0 {
+		return nil, InvalidArgumentErrorf("version id is required")
+	}
+
+	return s.components.Repo.ListResources(ctx, skillID, versionID)
+}
+
 func (s *skillService) TestRun(ctx context.Context, id int64, input string) (string, error) {
 	skill, err := s.Get(ctx, id)
 	if err != nil {

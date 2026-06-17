@@ -31,6 +31,7 @@ type SkillService interface {
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)
+	ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error)
 	TestRun(ctx context.Context, id int64, input string) (string, error)
 }
 

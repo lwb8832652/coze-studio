@@ -148,6 +148,26 @@ func ListSkillVersions(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// ListSkillVersionResources .
+// @router /api/workbench/skills/:skill_id/versions/:version_id/resources [GET]
+func ListSkillVersionResources(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req skillapi.ListSkillVersionResourcesRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appskill.SVC.ListSkillVersionResources(ctx, &req)
+	if err != nil {
+		workbenchSkillErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
 // ExportSkill .
 // @router /api/workbench/skills/:skill_id/export [GET]
 func ExportSkill(ctx context.Context, c *app.RequestContext) {

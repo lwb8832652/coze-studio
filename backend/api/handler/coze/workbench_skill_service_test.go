@@ -48,6 +48,26 @@ func TestListSkillVersionsHandlerReturnsVersions(t *testing.T) {
 	require.Contains(t, body, `"executor":"{\"language\":\"python\"}"`)
 }
 
+func TestListSkillVersionResourcesHandlerReturnsResources(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/skills/:skill_id/versions/:version_id/resources", ListSkillVersionResources)
+	installSkillVersionTestService(t)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/101/versions/201/resources", nil)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.listResourcesSkillID)
+	require.Equal(t, int64(201), domainSVC.listResourcesVersionID)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"skill_id":"101"`)
+	require.Contains(t, body, `"version_id":"201"`)
+	require.Contains(t, body, `"path":"references/prompt.md"`)
+	require.Contains(t, body, `"content_base64":"VXNlIGNvbmNpc2UgYnVsbGV0cy4="`)
+	require.Contains(t, body, `"sha256":"hash-prompt"`)
+}
+
 func installSkillVersionTestService(t *testing.T) {
 	t.Helper()
 	previous := appskill.SVC
@@ -66,6 +86,18 @@ func installSkillVersionTestService(t *testing.T) {
 					CreatedAt:    1000,
 				},
 			},
+			resources: []*entity.SkillResource{
+				{
+					ID:        301,
+					SkillID:   101,
+					VersionID: 201,
+					Path:      "references/prompt.md",
+					Content:   []byte("Use concise bullets."),
+					Size:      20,
+					SHA256:    "hash-prompt",
+					CreatedAt: 1000,
+				},
+			},
 		},
 	}
 	t.Cleanup(func() {
@@ -75,11 +107,20 @@ func installSkillVersionTestService(t *testing.T) {
 
 type skillVersionDomainService struct {
 	domain.SkillService
-	versions            []*entity.SkillVersion
-	listVersionsSkillID int64
+	versions               []*entity.SkillVersion
+	resources              []*entity.SkillResource
+	listVersionsSkillID    int64
+	listResourcesSkillID   int64
+	listResourcesVersionID int64
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
 	s.listVersionsSkillID = skillID
 	return s.versions, nil
+}
+
+func (s *skillVersionDomainService) ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error) {
+	s.listResourcesSkillID = skillID
+	s.listResourcesVersionID = versionID
+	return s.resources, nil
 }
