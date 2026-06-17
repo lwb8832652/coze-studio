@@ -87,6 +87,45 @@ func TestSkillRepositoryCreateAndListVersions(t *testing.T) {
 	require.Equal(t, `{"language":"python"}`, items[0].Executor)
 }
 
+func TestSkillRepositoryAllowsMultipleSnapshotsForSameSemanticVersion(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillPO{}, &skillVersionPO{}))
+
+	repo := NewSkillRepository(db, fixedIDGen{})
+	first := &entity.SkillVersion{
+		ID:           101,
+		SkillID:      1,
+		Version:      "1.0.0",
+		SkillMD:      "# First",
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+		CreatedAt:    10,
+	}
+	second := &entity.SkillVersion{
+		ID:           102,
+		SkillID:      1,
+		Version:      "1.0.0",
+		SkillMD:      "# Second",
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+		CreatedAt:    20,
+	}
+
+	require.NoError(t, repo.CreateVersion(context.Background(), first))
+	require.NoError(t, repo.CreateVersion(context.Background(), second))
+	items, err := repo.ListVersions(context.Background(), 1)
+
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, int64(102), items[0].ID)
+	require.Equal(t, int64(101), items[1].ID)
+}
+
 func TestSkillRepositoryCreateAndListResources(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

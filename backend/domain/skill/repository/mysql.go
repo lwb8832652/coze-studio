@@ -64,8 +64,8 @@ func (skillPO) TableName() string {
 
 type skillVersionPO struct {
 	ID           int64          `gorm:"column:id;primaryKey"`
-	SkillID      int64          `gorm:"column:skill_id;index:idx_skill_versions_skill_created;uniqueIndex:uk_skill_versions_skill_version"`
-	Version      string         `gorm:"column:version;uniqueIndex:uk_skill_versions_skill_version"`
+	SkillID      int64          `gorm:"column:skill_id;index:idx_skill_versions_skill_created;index:idx_skill_versions_skill_version"`
+	Version      string         `gorm:"column:version;index:idx_skill_versions_skill_version"`
 	SkillMD      string         `gorm:"column:skill_md;type:text"`
 	InputSchema  datatypes.JSON `gorm:"column:input_schema;type:json"`
 	OutputSchema datatypes.JSON `gorm:"column:output_schema;type:json"`

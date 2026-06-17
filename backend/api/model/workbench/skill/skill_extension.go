@@ -98,3 +98,9 @@ type ExportSkillVersionResponse struct {
 	Msg      string                  `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
 	BaseResp *base.BaseResp          `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
 }
+
+type RollbackSkillVersionRequest struct {
+	SkillID   int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
+	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
+	Base      *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}

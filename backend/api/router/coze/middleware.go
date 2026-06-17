@@ -1805,6 +1805,11 @@ func _exportskillversionMw() []app.HandlerFunc {
 	return nil
 }
 
+func _rollbackskillversionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _exportskillMw() []app.HandlerFunc {
 	// your code...
 	return nil

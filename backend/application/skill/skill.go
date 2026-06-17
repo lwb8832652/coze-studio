@@ -238,6 +238,27 @@ func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skilla
 	}, nil
 }
 
+func (s *ApplicationService) RollbackSkillVersion(ctx context.Context, req *skillapi.RollbackSkillVersionRequest) (*skillapi.SkillResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("rollback skill version request is required")
+	}
+	if req.SkillID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("skill id is required")
+	}
+	if req.VersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("version id is required")
+	}
+
+	skill, err := s.DomainSVC.RollbackVersion(ctx, req.SkillID, req.VersionID)
+	if err != nil {
+		return nil, err
+	}
+	return skillResponse(skill)
+}
+
 func (s *ApplicationService) getSkillVersion(ctx context.Context, skillID, versionID int64) (*entity.SkillVersion, error) {
 	versions, err := s.DomainSVC.ListVersions(ctx, skillID)
 	if err != nil {

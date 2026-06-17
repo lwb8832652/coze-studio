@@ -45,6 +45,17 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
   - route registration under the existing Workbench skill path without redirects
   - base64 encoded zip content with `Content-Type` metadata
   - preserved `SKILL.md` entrypoint plus version-scoped resource files
+- Expose skill version rollback through the Workbench skill backend:
+  - domain-level `RollbackVersion`
+  - application-level `RollbackSkillVersion`
+  - IDL contract and HTTP handler for `POST /api/workbench/skills/:skill_id/versions/:version_id/rollback`
+  - route registration under the existing Workbench skill path without redirects
+  - restore live skill metadata and execution configuration from the selected immutable version snapshot
+  - create a new current snapshot and copy selected version resources so latest history reflects the rollback result
+- Change `skill_versions` from unique semantic versions to append-only snapshots:
+  - drop `uk_skill_versions_skill_version`
+  - add non-unique `idx_skill_versions_skill_version`
+  - allow update and rollback flows to preserve history even when the semantic version string repeats
 - Add a production migration for the resource table and the current skill-version snapshot columns.
 - Expose Deer-flow compatible skill types through the Workbench API enum extension:
   - `DeerSkill`
@@ -60,13 +71,15 @@ For create/update flows, `SkillMD` is generated from the existing skill entity f
 
 `.skill` archive resources are validated, fingerprinted, stored as version-scoped attachments, and readable through the Workbench skill version resource API. Resource content is returned as base64 so text and binary assets share one transport shape. Resources are not executed, edited through UI, rolled back, or injected into the runtime yet.
 
-Version snapshots can now be exported as `.skill` zip archives from the version export endpoint. The archive is assembled from the immutable version `SKILL.md` snapshot and stored version resources, then returned as base64 JSON payload for frontend download flows. Resources are still not executed, edited through UI, rolled back, or injected into the runtime yet.
+Version snapshots can now be exported as `.skill` zip archives from the version export endpoint. The archive is assembled from the immutable version `SKILL.md` snapshot and stored version resources, then returned as base64 JSON payload for frontend download flows. Resources are still not executed, edited through UI, or injected into the runtime yet.
+
+Version rollback now restores the live skill row from an immutable snapshot, preserving the current skill ID and space binding. Rollback also writes a new latest snapshot and clones the selected snapshot's resources, so subsequent history reads, exports, and future runtime lookup can treat the rollback result as the current skill state. The version table is snapshot-oriented, so the same semantic version string may appear multiple times.
 
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- Resource editing and rollback for `.skill` archive assets, scripts, and references.
+- Resource editing for `.skill` archive assets, scripts, and references.
 - Custom skill content editing.
 - Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.

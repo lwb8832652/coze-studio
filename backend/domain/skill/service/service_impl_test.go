@@ -240,6 +240,93 @@ func TestServiceListVersionResources(t *testing.T) {
 	require.Equal(t, []byte("Use concise bullets."), resources[0].Content)
 }
 
+func TestServiceRollbackVersionRestoresSkillAndCopiesResources(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Research Current",
+		Description:  "Current description.",
+		Type:         entity.TypeDeerSkill,
+		Version:      "2.0.0",
+		Enabled:      false,
+		InputSchema:  `{"current":true}`,
+		OutputSchema: `{"current":true}`,
+		Executor:     `{"current":true}`,
+		Permissions:  `{"current":true}`,
+		CreatedAt:    1000,
+		UpdatedAt:    2000,
+	}
+	repo.versions[101] = []*entity.SkillVersion{
+		{
+			ID:      201,
+			SkillID: 101,
+			Version: "1.0.0",
+			SkillMD: `---
+name: weekly-research
+description: Original research skill.
+type: deer_skill
+version: 1.0.0
+enabled: true
+---
+# Weekly Research
+`,
+			InputSchema:  `{"type":"object","rollback":true}`,
+			OutputSchema: `{"type":"object","rollback":true}`,
+			Executor:     `{"mode":"agent"}`,
+			Permissions:  `{"network":false,"allowed_tools":["search"]}`,
+			CreatedAt:    1000,
+		},
+	}
+	repo.resources[201] = []*entity.SkillResource{
+		{
+			ID:        301,
+			SkillID:   101,
+			VersionID: 201,
+			Path:      "references/prompt.md",
+			Content:   []byte("Use concise bullets."),
+			Size:      20,
+			SHA256:    "hash-prompt",
+			CreatedAt: 1000,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	rolledBack, err := svc.RollbackVersion(context.Background(), 101, 201)
+
+	require.NoError(t, err)
+	require.Equal(t, "weekly-research", rolledBack.Name)
+	require.Equal(t, "Original research skill.", rolledBack.Description)
+	require.Equal(t, entity.TypeDeerSkill, rolledBack.Type)
+	require.Equal(t, "1.0.0", rolledBack.Version)
+	require.True(t, rolledBack.Enabled)
+	require.JSONEq(t, `{"type":"object","rollback":true}`, rolledBack.InputSchema)
+	require.JSONEq(t, `{"mode":"agent"}`, rolledBack.Executor)
+	require.JSONEq(t, `{"network":false,"allowed_tools":["search"]}`, rolledBack.Permissions)
+	require.Equal(t, rolledBack, repo.items[101])
+	require.Len(t, repo.versions[101], 2)
+	require.Equal(t, int64(401), repo.versions[101][1].ID)
+	require.Equal(t, "1.0.0", repo.versions[101][1].Version)
+	require.Contains(t, repo.versions[101][1].SkillMD, "# Weekly Research")
+	require.Len(t, repo.resources[401], 1)
+	require.Equal(t, "references/prompt.md", repo.resources[401][0].Path)
+	require.Equal(t, []byte("Use concise bullets."), repo.resources[401][0].Content)
+	require.Equal(t, int64(401), repo.resources[401][0].VersionID)
+}
+
+func TestServiceRollbackVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1}
+	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.0.0"}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	_, err := svc.RollbackVersion(context.Background(), 101, 404)
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "version 404")
+}
+
 func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{

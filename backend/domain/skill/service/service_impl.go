@@ -175,6 +175,50 @@ func (s *skillService) ListVersionResources(ctx context.Context, skillID, versio
 	return s.components.Repo.ListResources(ctx, skillID, versionID)
 }
 
+func (s *skillService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if skillID <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+	if versionID <= 0 {
+		return nil, InvalidArgumentErrorf("version id is required")
+	}
+
+	current, err := s.Get(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	version, err := s.getVersion(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := s.components.Repo.ListResources(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	restored, err := skillFromVersionSnapshot(current, version)
+	if err != nil {
+		return nil, err
+	}
+	restored.UpdatedAt = time.Now().UnixMilli()
+	if err := s.components.Repo.Update(ctx, restored); err != nil {
+		return nil, err
+	}
+
+	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, version.SkillMD)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.components.Repo.CreateResources(ctx, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+		return nil, err
+	}
+
+	return restored, nil
+}
+
 func (s *skillService) TestRun(ctx context.Context, id int64, input string) (string, error) {
 	skill, err := s.Get(ctx, id)
 	if err != nil {
@@ -263,6 +307,19 @@ func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *enti
 	return version, nil
 }
 
+func (s *skillService) getVersion(ctx context.Context, skillID, versionID int64) (*entity.SkillVersion, error) {
+	versions, err := s.components.Repo.ListVersions(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	for _, version := range versions {
+		if version != nil && version.ID == versionID {
+			return version, nil
+		}
+	}
+	return nil, NotFoundErrorf("skill %d version %d not found", skillID, versionID)
+}
+
 func (s *skillService) recordResources(ctx context.Context, skillID, versionID int64, resources []ArchiveResource) error {
 	if len(resources) == 0 {
 		return nil
@@ -281,6 +338,69 @@ func (s *skillService) recordResources(ctx context.Context, skillID, versionID i
 	}
 
 	return s.components.Repo.CreateResources(ctx, items)
+}
+
+func skillFromVersionSnapshot(current *entity.Skill, version *entity.SkillVersion) (*entity.Skill, error) {
+	if current == nil {
+		return nil, InvalidArgumentErrorf("skill is required")
+	}
+	if version == nil {
+		return nil, InvalidArgumentErrorf("skill version is required")
+	}
+	if version.SkillID != current.ID {
+		return nil, InvalidArgumentErrorf("skill version %d does not belong to skill %d", version.ID, current.ID)
+	}
+	if strings.TrimSpace(version.SkillMD) == "" {
+		return nil, InvalidArgumentErrorf("skill version SKILL.md is required")
+	}
+
+	decl, err := parseSkillMarkdown([]byte(version.SkillMD))
+	if err != nil {
+		return nil, InvalidArgumentErrorf("parse skill version SKILL.md: %v", err)
+	}
+	if strings.TrimSpace(decl.Name) == "" {
+		return nil, InvalidArgumentErrorf("skill version name is required")
+	}
+	typ, err := declarationTypeToEntity(decl.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	return &entity.Skill{
+		ID:           current.ID,
+		SpaceID:      current.SpaceID,
+		Name:         decl.Name,
+		Description:  decl.Description,
+		Type:         typ,
+		Version:      firstNonEmpty(decl.Version, version.Version),
+		Enabled:      decl.Enabled,
+		InputSchema:  jsonObjectString(version.InputSchema),
+		OutputSchema: jsonObjectString(version.OutputSchema),
+		Executor:     jsonObjectString(version.Executor),
+		Permissions:  jsonObjectString(version.Permissions),
+		CreatedAt:    current.CreatedAt,
+	}, nil
+}
+
+func cloneResourcesForVersion(skillID, versionID int64, resources []*entity.SkillResource) []*entity.SkillResource {
+	if len(resources) == 0 {
+		return nil
+	}
+	items := make([]*entity.SkillResource, 0, len(resources))
+	for _, resource := range resources {
+		if resource == nil {
+			continue
+		}
+		items = append(items, &entity.SkillResource{
+			SkillID:   skillID,
+			VersionID: versionID,
+			Path:      resource.Path,
+			Content:   append([]byte(nil), resource.Content...),
+			Size:      resource.Size,
+			SHA256:    resource.SHA256,
+		})
+	}
+	return items
 }
 
 func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {
@@ -426,6 +546,13 @@ func marshalString(v any) (string, error) {
 		return "", err
 	}
 	return string(bs), nil
+}
+
+func jsonObjectString(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "{}"
+	}
+	return value
 }
 
 func unmarshalString(name, value string, target any) error {

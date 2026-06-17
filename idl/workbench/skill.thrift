@@ -163,6 +163,12 @@ struct ExportSkillVersionResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct RollbackSkillVersionRequest {
+    1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
 struct GetSkillRequest {
     1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
@@ -229,6 +235,10 @@ service WorkbenchSkillService {
     )
     ExportSkillVersionResponse ExportSkillVersion(1: ExportSkillVersionRequest request)(
         api.get="/api/workbench/skills/:skill_id/versions/:version_id/export",
+        api.category="workbench"
+    )
+    SkillResponse RollbackSkillVersion(1: RollbackSkillVersionRequest request)(
+        api.post="/api/workbench/skills/:skill_id/versions/:version_id/rollback",
         api.category="workbench"
     )
     ExportSkillResponse ExportSkill(1: GetSkillRequest request)(

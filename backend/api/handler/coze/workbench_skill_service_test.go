@@ -87,6 +87,24 @@ func TestExportSkillVersionHandlerReturnsArchive(t *testing.T) {
 	require.Contains(t, body, `"content_base64":"`)
 }
 
+func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/skills/:skill_id/versions/:version_id/rollback", RollbackSkillVersion)
+	installSkillVersionTestService(t)
+
+	w := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/skills/101/versions/201/rollback", nil)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.rollbackSkillID)
+	require.Equal(t, int64(201), domainSVC.rollbackVersionID)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"name":"weekly-research"`)
+	require.Contains(t, body, `"description":"Original research skill."`)
+	require.Contains(t, body, `"version":"1.0.0"`)
+}
+
 func installSkillVersionTestService(t *testing.T) {
 	t.Helper()
 	previous := appskill.SVC
@@ -104,6 +122,21 @@ func installSkillVersionTestService(t *testing.T) {
 					Permissions:  `{"network":false}`,
 					CreatedAt:    1000,
 				},
+			},
+			rolledBack: &entity.Skill{
+				ID:           101,
+				SpaceID:      1,
+				Name:         "weekly-research",
+				Description:  "Original research skill.",
+				Type:         entity.TypeDeerSkill,
+				Version:      "1.0.0",
+				Enabled:      true,
+				InputSchema:  `{"type":"object"}`,
+				OutputSchema: `{"type":"object"}`,
+				Executor:     `{"mode":"agent"}`,
+				Permissions:  `{"network":false}`,
+				CreatedAt:    1000,
+				UpdatedAt:    2000,
 			},
 			resources: []*entity.SkillResource{
 				{
@@ -128,9 +161,12 @@ type skillVersionDomainService struct {
 	domain.SkillService
 	versions               []*entity.SkillVersion
 	resources              []*entity.SkillResource
+	rolledBack             *entity.Skill
 	listVersionsSkillID    int64
 	listResourcesSkillID   int64
 	listResourcesVersionID int64
+	rollbackSkillID        int64
+	rollbackVersionID      int64
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -142,4 +178,10 @@ func (s *skillVersionDomainService) ListVersionResources(ctx context.Context, sk
 	s.listResourcesSkillID = skillID
 	s.listResourcesVersionID = versionID
 	return s.resources, nil
+}
+
+func (s *skillVersionDomainService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
+	s.rollbackSkillID = skillID
+	s.rollbackVersionID = versionID
+	return s.rolledBack, nil
 }

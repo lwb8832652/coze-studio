@@ -4851,8 +4851,7 @@ table "skill_versions" {
   primary_key {
     columns = [column.id]
   }
-  index "uk_skill_versions_skill_version" {
-    unique  = true
+  index "idx_skill_versions_skill_version" {
     columns = [column.skill_id, column.version]
   }
 }

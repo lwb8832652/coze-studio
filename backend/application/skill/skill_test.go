@@ -168,6 +168,42 @@ func TestApplicationExportSkillVersionReturnsNotFoundForUnknownVersion(t *testin
 	require.ErrorContains(t, err, "version 404")
 }
 
+func TestApplicationRollbackSkillVersionRestoresSkill(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		rolledBack: &entity.Skill{
+			ID:           101,
+			SpaceID:      1,
+			Name:         "weekly-research",
+			Description:  "Original research skill.",
+			Type:         entity.TypeDeerSkill,
+			Version:      "1.0.0",
+			Enabled:      true,
+			InputSchema:  `{"type":"object"}`,
+			OutputSchema: `{"type":"object"}`,
+			Executor:     `{"mode":"agent"}`,
+			Permissions:  `{"network":false}`,
+			CreatedAt:    1000,
+			UpdatedAt:    2000,
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.RollbackSkillVersion(context.Background(), &skillapi.RollbackSkillVersionRequest{
+		SkillID:   101,
+		VersionID: 201,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), domainSVC.rollbackSkillID)
+	require.Equal(t, int64(201), domainSVC.rollbackVersionID)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Equal(t, int64(101), resp.Data.ID)
+	require.Equal(t, "weekly-research", resp.Data.Name)
+	require.Equal(t, skillapi.SkillType_DeerSkill, resp.Data.Type)
+	require.Equal(t, "1.0.0", resp.Data.Version)
+}
+
 func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 	apiSkill, err := entityToAPI(&entity.Skill{
 		ID:           101,
@@ -191,9 +227,12 @@ type recordingSkillDomainService struct {
 	domain.SkillService
 	versions               []*entity.SkillVersion
 	resources              []*entity.SkillResource
+	rolledBack             *entity.Skill
 	listVersionsSkillID    int64
 	listResourcesSkillID   int64
 	listResourcesVersionID int64
+	rollbackSkillID        int64
+	rollbackVersionID      int64
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -205,6 +244,12 @@ func (s *recordingSkillDomainService) ListVersionResources(ctx context.Context, 
 	s.listResourcesSkillID = skillID
 	s.listResourcesVersionID = versionID
 	return s.resources, nil
+}
+
+func (s *recordingSkillDomainService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
+	s.rollbackSkillID = skillID
+	s.rollbackVersionID = versionID
+	return s.rolledBack, nil
 }
 
 func readZipArchive(t *testing.T, content []byte) map[string]string {
