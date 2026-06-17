@@ -150,11 +150,16 @@ func TestResumeRunWorkerRunOnceDelegatesToProcessor(t *testing.T) {
 	})
 	worker := NewResumeRunWorker(processor, ResumeRunWorkerOptions{Interval: time.Second})
 
-	worker.RunOnce(context.Background())
+	result := worker.RunOnce(context.Background())
 
 	require.Equal(t, "resume-worker-a", domainSVC.claimQueuedResumeRunsReq.WorkerID)
 	require.Equal(t, int32(4), domainSVC.claimQueuedResumeRunsReq.Limit)
 	require.Equal(t, int64(201), domainSVC.completeRunReq.RunID)
+	require.Equal(t, ResumeRunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		SucceededRuns: 1,
+	}, result)
 }
 
 func TestResumeRunWorkerFromEnvDisabledByDefault(t *testing.T) {

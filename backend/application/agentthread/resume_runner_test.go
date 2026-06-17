@@ -104,6 +104,61 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
 }
 
+func TestResumeRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				WorkerID: "resume-worker-a",
+				Command:  `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+			},
+		},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		appended: &entity.Message{
+			ID:       301,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "resumed answer",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "resume-worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		Executor: ResumeRunExecutorFunc(func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "resumed answer"}, nil
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, ResumeRunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		SucceededRuns: 1,
+	}, result)
+}
+
 func TestLoadHarnessResumeInputConvertsCheckpointState(t *testing.T) {
 	run := &RunSummary{ThreadID: 10, RunID: 200}
 	resume := resumeRunPayload{
@@ -254,6 +309,54 @@ func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) 
 	require.Equal(t, "resume executor failed", domainSVC.failRunReq.ErrorMessage)
 	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_resume_executor_error"`)
+}
+
+func TestResumeRunProcessorReportsProcessResultForFailedRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				WorkerID: "resume-worker-a",
+				Command:  `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+			},
+		},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		failedRun: &entity.Run{
+			ID:           200,
+			ThreadID:     10,
+			Status:       entity.RunStatusFailed,
+			WorkerID:     "resume-worker-a",
+			ErrorCode:    "checkpoint_resume_executor_error",
+			ErrorMessage: "resume executor failed",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		Executor:  &recordingResumeRunExecutor{err: errors.New("resume executor failed")},
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, ResumeRunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		FailedRuns:    1,
+	}, result)
 }
 
 type recordingResumeRunExecutor struct {

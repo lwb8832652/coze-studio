@@ -155,14 +155,38 @@ func (w *ResumeRunWorker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *ResumeRunWorker) RunOnce(ctx context.Context) {
+func (w *ResumeRunWorker) RunOnce(ctx context.Context) ResumeRunProcessResult {
 	if w == nil || w.processor == nil {
-		return
+		return ResumeRunProcessResult{}
 	}
 
-	if err := w.processor.ProcessQueuedResumeRuns(ctx); err != nil {
-		logs.CtxErrorf(ctx, "[agent-resume-run-worker] process queued resume runs failed, err=%v", err)
+	result, err := w.processor.ProcessQueuedResumeRunsWithResult(ctx)
+	if err != nil {
+		logs.CtxErrorf(
+			ctx,
+			"[agent-resume-run-worker] process queued resume runs failed, claimed=%d processed=%d succeeded=%d failed=%d errored=%d err=%v",
+			result.ClaimedRuns,
+			result.ProcessedRuns,
+			result.SucceededRuns,
+			result.FailedRuns,
+			result.ErroredRuns,
+			err,
+		)
+
+		return result
 	}
+	if result.ClaimedRuns > 0 {
+		logs.CtxInfof(
+			ctx,
+			"[agent-resume-run-worker] processed queued resume runs, claimed=%d processed=%d succeeded=%d failed=%d",
+			result.ClaimedRuns,
+			result.ProcessedRuns,
+			result.SucceededRuns,
+			result.FailedRuns,
+		)
+	}
+
+	return result
 }
 
 func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executor ResumeRunExecutor) *ResumeRunWorker {
