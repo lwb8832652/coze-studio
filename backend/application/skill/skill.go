@@ -17,11 +17,16 @@
 package skill
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path"
+	"sort"
 	"strconv"
+	"strings"
 
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
@@ -193,6 +198,57 @@ func (s *ApplicationService) ListSkillVersionResources(ctx context.Context, req 
 	}
 
 	return &skillapi.ListSkillVersionResourcesResponse{Code: 0, Msg: "success", Data: data}, nil
+}
+
+func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skillapi.ExportSkillVersionRequest) (*skillapi.ExportSkillVersionResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("export skill version request is required")
+	}
+	if req.SkillID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("skill id is required")
+	}
+	if req.VersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("version id is required")
+	}
+
+	version, err := s.getSkillVersion(ctx, req.SkillID, req.VersionID)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := s.DomainSVC.ListVersionResources(ctx, req.SkillID, req.VersionID)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := buildSkillVersionArchive(version, resources)
+	if err != nil {
+		return nil, err
+	}
+
+	return &skillapi.ExportSkillVersionResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &skillapi.ExportSkillVersionData{
+			FileName:      fmt.Sprintf("skill_%d_%d.skill", req.SkillID, req.VersionID),
+			ContentBase64: base64.StdEncoding.EncodeToString(archive),
+			ContentType:   "application/zip",
+		},
+	}, nil
+}
+
+func (s *ApplicationService) getSkillVersion(ctx context.Context, skillID, versionID int64) (*entity.SkillVersion, error) {
+	versions, err := s.DomainSVC.ListVersions(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	for _, version := range versions {
+		if version != nil && version.ID == versionID {
+			return version, nil
+		}
+	}
+	return nil, domain.NotFoundErrorf("skill %d version %d not found", skillID, versionID)
 }
 
 func (s *ApplicationService) requireDomainSVC() error {
@@ -377,6 +433,88 @@ func exportContent(skill *entity.Skill) (string, error) {
 		return "", err
 	}
 	return string(content), nil
+}
+
+func buildSkillVersionArchive(version *entity.SkillVersion, resources []*entity.SkillResource) ([]byte, error) {
+	if version == nil {
+		return nil, domain.InvalidArgumentErrorf("skill version is required")
+	}
+	if strings.TrimSpace(version.SkillMD) == "" {
+		return nil, domain.InvalidArgumentErrorf("skill version SKILL.md is required")
+	}
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	if err := writeZipFile(zw, "SKILL.md", []byte(version.SkillMD)); err != nil {
+		_ = zw.Close()
+		return nil, err
+	}
+
+	sorted := append([]*entity.SkillResource(nil), resources...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i] == nil {
+			return false
+		}
+		if sorted[j] == nil {
+			return true
+		}
+		return sorted[i].Path < sorted[j].Path
+	})
+
+	for _, resource := range sorted {
+		if resource == nil {
+			continue
+		}
+		name, err := safeSkillArchiveExportPath(resource.Path)
+		if err != nil {
+			_ = zw.Close()
+			return nil, err
+		}
+		if strings.EqualFold(name, "SKILL.md") {
+			_ = zw.Close()
+			return nil, domain.InvalidArgumentErrorf("skill resource path conflicts with SKILL.md")
+		}
+		if err := writeZipFile(zw, name, resource.Content); err != nil {
+			_ = zw.Close()
+			return nil, err
+		}
+	}
+
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func safeSkillArchiveExportPath(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", domain.InvalidArgumentErrorf("skill resource path is required")
+	}
+	if strings.Contains(trimmed, "\x00") || strings.Contains(trimmed, "\\") || path.IsAbs(trimmed) {
+		return "", domain.InvalidArgumentErrorf("unsafe skill resource path: %s", value)
+	}
+
+	normalized := path.Clean(strings.TrimPrefix(trimmed, "/"))
+	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") || strings.Contains(normalized, "/../") {
+		return "", domain.InvalidArgumentErrorf("unsafe skill resource path: %s", value)
+	}
+	return normalized, nil
+}
+
+func writeZipFile(zw *zip.Writer, name string, content []byte) error {
+	header := &zip.FileHeader{
+		Name:   name,
+		Method: zip.Deflate,
+	}
+	w, err := zw.CreateHeader(header)
+	if err != nil {
+		return fmt.Errorf("create archive file %s: %w", name, err)
+	}
+	if _, err := w.Write(content); err != nil {
+		return fmt.Errorf("write archive file %s: %w", name, err)
+	}
+	return nil
 }
 
 func setJSONField(target map[string]any, key string, value string) error {

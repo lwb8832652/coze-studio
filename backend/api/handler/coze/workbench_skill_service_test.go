@@ -68,6 +68,25 @@ func TestListSkillVersionResourcesHandlerReturnsResources(t *testing.T) {
 	require.Contains(t, body, `"sha256":"hash-prompt"`)
 }
 
+func TestExportSkillVersionHandlerReturnsArchive(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/skills/:skill_id/versions/:version_id/export", ExportSkillVersion)
+	installSkillVersionTestService(t)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/101/versions/201/export", nil)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.listVersionsSkillID)
+	require.Equal(t, int64(101), domainSVC.listResourcesSkillID)
+	require.Equal(t, int64(201), domainSVC.listResourcesVersionID)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"file_name":"skill_101_201.skill"`)
+	require.Contains(t, body, `"content_type":"application/zip"`)
+	require.Contains(t, body, `"content_base64":"`)
+}
+
 func installSkillVersionTestService(t *testing.T) {
 	t.Helper()
 	previous := appskill.SVC

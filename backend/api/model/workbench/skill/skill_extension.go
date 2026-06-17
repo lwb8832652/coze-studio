@@ -79,3 +79,22 @@ type ListSkillVersionResourcesResponse struct {
 	Msg      string                         `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
 	BaseResp *base.BaseResp                 `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
 }
+
+type ExportSkillVersionRequest struct {
+	SkillID   int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
+	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
+	Base      *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}
+
+type ExportSkillVersionData struct {
+	FileName      string `thrift:"file_name,1,required" form:"file_name,required" json:"file_name,required" query:"file_name,required"`
+	ContentBase64 string `thrift:"content_base64,2,required" form:"content_base64,required" json:"content_base64,required" query:"content_base64,required"`
+	ContentType   string `thrift:"content_type,3,required" form:"content_type,required" json:"content_type,required" query:"content_type,required"`
+}
+
+type ExportSkillVersionResponse struct {
+	Data     *ExportSkillVersionData `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64                   `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                  `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp          `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}

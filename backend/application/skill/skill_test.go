@@ -17,7 +17,11 @@
 package skill
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"encoding/base64"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -98,6 +102,72 @@ func TestApplicationListSkillVersionResourcesMapsDomainResources(t *testing.T) {
 	require.Equal(t, "hash-prompt", resp.Data.Resources[0].SHA256)
 }
 
+func TestApplicationExportSkillVersionBuildsSkillArchive(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		versions: []*entity.SkillVersion{
+			{
+				ID:      201,
+				SkillID: 101,
+				Version: "1.1.0",
+				SkillMD: `---
+name: weekly-research
+description: Research weekly market changes.
+---
+# Weekly Research
+`,
+			},
+		},
+		resources: []*entity.SkillResource{
+			{
+				ID:        301,
+				SkillID:   101,
+				VersionID: 201,
+				Path:      "references/prompt.md",
+				Content:   []byte("Use concise bullets."),
+				Size:      20,
+				SHA256:    "hash-prompt",
+			},
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.ExportSkillVersion(context.Background(), &skillapi.ExportSkillVersionRequest{
+		SkillID:   101,
+		VersionID: 201,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), domainSVC.listVersionsSkillID)
+	require.Equal(t, int64(101), domainSVC.listResourcesSkillID)
+	require.Equal(t, int64(201), domainSVC.listResourcesVersionID)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Equal(t, "skill_101_201.skill", resp.Data.FileName)
+	require.Equal(t, "application/zip", resp.Data.ContentType)
+	archiveBytes, err := base64.StdEncoding.DecodeString(resp.Data.ContentBase64)
+	require.NoError(t, err)
+	files := readZipArchive(t, archiveBytes)
+	require.Equal(t, domainSVC.versions[0].SkillMD, files["SKILL.md"])
+	require.Equal(t, "Use concise bullets.", files["references/prompt.md"])
+}
+
+func TestApplicationExportSkillVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
+	app := &ApplicationService{
+		DomainSVC: &recordingSkillDomainService{
+			versions: []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.1.0"}},
+		},
+	}
+
+	_, err := app.ExportSkillVersion(context.Background(), &skillapi.ExportSkillVersionRequest{
+		SkillID:   101,
+		VersionID: 404,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "version 404")
+}
+
 func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 	apiSkill, err := entityToAPI(&entity.Skill{
 		ID:           101,
@@ -135,4 +205,20 @@ func (s *recordingSkillDomainService) ListVersionResources(ctx context.Context, 
 	s.listResourcesSkillID = skillID
 	s.listResourcesVersionID = versionID
 	return s.resources, nil
+}
+
+func readZipArchive(t *testing.T, content []byte) map[string]string {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	require.NoError(t, err)
+	files := map[string]string{}
+	for _, file := range reader.File {
+		rc, err := file.Open()
+		require.NoError(t, err)
+		bs, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		require.NoError(t, rc.Close())
+		files[file.Name] = string(bs)
+	}
+	return files
 }
