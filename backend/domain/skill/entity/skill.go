@@ -55,3 +55,14 @@ type SkillVersion struct {
 	Permissions  string
 	CreatedAt    int64
 }
+
+type SkillResource struct {
+	ID        int64
+	SkillID   int64
+	VersionID int64
+	Path      string
+	Content   []byte
+	Size      int64
+	SHA256    string
+	CreatedAt int64
+}

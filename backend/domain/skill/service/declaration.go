@@ -51,9 +51,10 @@ type Declaration struct {
 }
 
 type ArchiveResource struct {
-	Path   string
-	Size   int64
-	SHA256 string
+	Path    string
+	Content []byte
+	Size    int64
+	SHA256  string
 }
 
 type ExecutorDeclaration struct {
@@ -204,9 +205,10 @@ func parseSkillArchive(content []byte) (*Declaration, error) {
 		}
 		sum := sha256.Sum256(bs)
 		resources = append(resources, ArchiveResource{
-			Path:   relativePath,
-			Size:   int64(len(bs)),
-			SHA256: hex.EncodeToString(sum[:]),
+			Path:    relativePath,
+			Content: append([]byte(nil), bs...),
+			Size:    int64(len(bs)),
+			SHA256:  hex.EncodeToString(sum[:]),
 		})
 	}
 

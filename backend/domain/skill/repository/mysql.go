@@ -78,6 +78,21 @@ func (skillVersionPO) TableName() string {
 	return "skill_versions"
 }
 
+type skillResourcePO struct {
+	ID        int64  `gorm:"column:id;primaryKey"`
+	SkillID   int64  `gorm:"column:skill_id;index:idx_skill_resources_skill_version"`
+	VersionID int64  `gorm:"column:version_id;index:idx_skill_resources_skill_version;uniqueIndex:uk_skill_resources_version_path,priority:1"`
+	Path      string `gorm:"column:path;size:512;uniqueIndex:uk_skill_resources_version_path,priority:2"`
+	Content   []byte `gorm:"column:content;type:longblob"`
+	Size      int64  `gorm:"column:size"`
+	SHA256    string `gorm:"column:sha256;size:64"`
+	CreatedAt int64  `gorm:"column:created_at"`
+}
+
+func (skillResourcePO) TableName() string {
+	return "skill_resources"
+}
+
 func (r *skillRepository) Create(ctx context.Context, skill *entity.Skill) error {
 	if skill.ID == 0 {
 		id, err := r.idGen.GenID(ctx)
@@ -220,6 +235,66 @@ func (r *skillRepository) ListVersions(ctx context.Context, skillID int64) ([]*e
 	return versions, nil
 }
 
+func (r *skillRepository) CreateResources(ctx context.Context, resources []*entity.SkillResource) error {
+	if len(resources) == 0 {
+		return nil
+	}
+
+	missingIDs := 0
+	for _, resource := range resources {
+		if resource != nil && resource.ID == 0 {
+			missingIDs++
+		}
+	}
+	var ids []int64
+	if missingIDs > 0 {
+		generated, err := r.idGen.GenMultiIDs(ctx, missingIDs)
+		if err != nil {
+			return err
+		}
+		ids = generated
+	}
+
+	now := time.Now().UnixMilli()
+	pos := make([]*skillResourcePO, 0, len(resources))
+	idIndex := 0
+	for _, resource := range resources {
+		if resource == nil {
+			continue
+		}
+		if resource.ID == 0 {
+			resource.ID = ids[idIndex]
+			idIndex++
+		}
+		if resource.CreatedAt == 0 {
+			resource.CreatedAt = now
+		}
+		pos = append(pos, skillResourceToPO(resource))
+	}
+	if len(pos) == 0 {
+		return nil
+	}
+
+	return r.db.WithContext(ctx).CreateInBatches(pos, 100).Error
+}
+
+func (r *skillRepository) ListResources(ctx context.Context, versionID int64) ([]*entity.SkillResource, error) {
+	pos := make([]*skillResourcePO, 0)
+	if err := r.db.WithContext(ctx).
+		Where("version_id = ?", versionID).
+		Order("path ASC, id ASC").
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	resources := make([]*entity.SkillResource, 0, len(pos))
+	for _, po := range pos {
+		resources = append(resources, po.toEntity())
+	}
+
+	return resources, nil
+}
+
 func skillToPO(skill *entity.Skill) (*skillPO, error) {
 	inputSchema, err := requiredJSON("input_schema", skill.InputSchema)
 	if err != nil {
@@ -315,6 +390,32 @@ func (po *skillVersionPO) toEntity() *entity.SkillVersion {
 		Executor:     jsonToString(po.Executor),
 		Permissions:  jsonToString(po.Permissions),
 		CreatedAt:    po.CreatedAt,
+	}
+}
+
+func skillResourceToPO(resource *entity.SkillResource) *skillResourcePO {
+	return &skillResourcePO{
+		ID:        resource.ID,
+		SkillID:   resource.SkillID,
+		VersionID: resource.VersionID,
+		Path:      resource.Path,
+		Content:   append([]byte(nil), resource.Content...),
+		Size:      resource.Size,
+		SHA256:    resource.SHA256,
+		CreatedAt: resource.CreatedAt,
+	}
+}
+
+func (po *skillResourcePO) toEntity() *entity.SkillResource {
+	return &entity.SkillResource{
+		ID:        po.ID,
+		SkillID:   po.SkillID,
+		VersionID: po.VersionID,
+		Path:      po.Path,
+		Content:   append([]byte(nil), po.Content...),
+		Size:      po.Size,
+		SHA256:    po.SHA256,
+		CreatedAt: po.CreatedAt,
 	}
 }
 

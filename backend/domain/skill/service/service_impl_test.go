@@ -100,6 +100,40 @@ allowed-tools:
 	require.NotContains(t, repo.versions[101][0].SkillMD, "Use concise bullets")
 }
 
+func TestServiceImportsSkillArchivePersistsResources(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+allowed-tools:
+  - search
+---
+# Weekly Research
+`,
+		"weekly-research/references/prompt.md": "Use concise bullets.",
+		"weekly-research/assets/logo.txt":      "asset",
+	})
+
+	skill, err := svc.ImportDeclaration(context.Background(), 1, "weekly-research.skill", content)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), skill.ID)
+	require.Len(t, repo.versions[101], 1)
+	versionID := repo.versions[101][0].ID
+	resources := repo.resources[versionID]
+	require.Len(t, resources, 2)
+	require.Equal(t, "assets/logo.txt", resources[0].Path)
+	require.Equal(t, []byte("asset"), resources[0].Content)
+	require.Equal(t, int64(5), resources[0].Size)
+	require.NotEmpty(t, resources[0].SHA256)
+	require.Equal(t, int64(101), resources[0].SkillID)
+	require.Equal(t, versionID, resources[0].VersionID)
+	require.Equal(t, "references/prompt.md", resources[1].Path)
+	require.Equal(t, []byte("Use concise bullets."), resources[1].Content)
+}
+
 func TestServiceCreateRecordsSkillVersion(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
@@ -228,14 +262,16 @@ func TestServiceTestRunWorkflowReturnsNotImplementedClientError(t *testing.T) {
 }
 
 type memoryRepo struct {
-	items    map[int64]*entity.Skill
-	versions map[int64][]*entity.SkillVersion
+	items     map[int64]*entity.Skill
+	versions  map[int64][]*entity.SkillVersion
+	resources map[int64][]*entity.SkillResource
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		items:    map[int64]*entity.Skill{},
-		versions: map[int64][]*entity.SkillVersion{},
+		items:     map[int64]*entity.Skill{},
+		versions:  map[int64][]*entity.SkillVersion{},
+		resources: map[int64][]*entity.SkillResource{},
 	}
 }
 
@@ -270,6 +306,17 @@ func (r *memoryRepo) CreateVersion(ctx context.Context, version *entity.SkillVer
 
 func (r *memoryRepo) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
 	return append([]*entity.SkillVersion(nil), r.versions[skillID]...), nil
+}
+
+func (r *memoryRepo) CreateResources(ctx context.Context, resources []*entity.SkillResource) error {
+	for _, resource := range resources {
+		r.resources[resource.VersionID] = append(r.resources[resource.VersionID], resource)
+	}
+	return nil
+}
+
+func (r *memoryRepo) ListResources(ctx context.Context, versionID int64) ([]*entity.SkillResource, error) {
+	return append([]*entity.SkillResource(nil), r.resources[versionID]...), nil
 }
 
 type fixedIDGen struct {

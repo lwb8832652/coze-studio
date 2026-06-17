@@ -87,6 +87,46 @@ func TestSkillRepositoryCreateAndListVersions(t *testing.T) {
 	require.Equal(t, `{"language":"python"}`, items[0].Executor)
 }
 
+func TestSkillRepositoryCreateAndListResources(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillResourcePO{}))
+
+	repo := NewSkillRepository(db, fixedIDGen{})
+	resources := []*entity.SkillResource{
+		{
+			ID:        10,
+			SkillID:   1,
+			VersionID: 101,
+			Path:      "references/prompt.md",
+			Content:   []byte("Use concise bullets."),
+			Size:      20,
+			SHA256:    "hash-prompt",
+		},
+		{
+			ID:        11,
+			SkillID:   1,
+			VersionID: 101,
+			Path:      "assets/logo.txt",
+			Content:   []byte("asset"),
+			Size:      5,
+			SHA256:    "hash-logo",
+		},
+	}
+
+	require.NoError(t, repo.CreateResources(context.Background(), resources))
+	got, err := repo.ListResources(context.Background(), 101)
+
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "assets/logo.txt", got[0].Path)
+	require.Equal(t, []byte("asset"), got[0].Content)
+	require.Equal(t, "hash-logo", got[0].SHA256)
+	require.Equal(t, "references/prompt.md", got[1].Path)
+	require.Equal(t, int64(1), got[1].SkillID)
+	require.Equal(t, int64(101), got[1].VersionID)
+}
+
 func TestSkillRepositoryListAndUpdate(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

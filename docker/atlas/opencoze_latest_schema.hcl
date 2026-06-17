@@ -4820,8 +4820,28 @@ table "skill_versions" {
     null = false
     type = varchar(64)
   }
+  column "skill_md" {
+    null = true
+    type = text
+  }
+  column "input_schema" {
+    null = true
+    type = json
+  }
+  column "output_schema" {
+    null = true
+    type = json
+  }
+  column "executor" {
+    null = true
+    type = json
+  }
+  column "permissions" {
+    null = true
+    type = json
+  }
   column "declaration" {
-    null = false
+    null = true
     type = json
   }
   column "created_at" {
@@ -4834,6 +4854,52 @@ table "skill_versions" {
   index "uk_skill_versions_skill_version" {
     unique  = true
     columns = [column.skill_id, column.version]
+  }
+}
+table "skill_resources" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "skill_id" {
+    null = false
+    type = bigint
+  }
+  column "version_id" {
+    null = false
+    type = bigint
+  }
+  column "path" {
+    null = false
+    type = varchar(512)
+  }
+  column "content" {
+    null = false
+    type = longblob
+  }
+  column "size" {
+    null = false
+    type = bigint
+  }
+  column "sha256" {
+    null = false
+    type = varchar(64)
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_skill_resources_skill_version" {
+    columns = [column.skill_id, column.version_id]
+  }
+  index "uk_skill_resources_version_path" {
+    unique  = true
+    columns = [column.version_id, column.path]
   }
 }
 table "chat_tasks" {

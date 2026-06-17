@@ -65,7 +65,11 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 	if err := s.components.Repo.Create(ctx, skill); err != nil {
 		return nil, err
 	}
-	if err := s.recordVersionWithSkillMD(ctx, skill, decl.SkillMD); err != nil {
+	version, err := s.recordVersionWithSkillMD(ctx, skill, decl.SkillMD)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recordResources(ctx, skill.ID, version.ID, decl.Resources); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +103,7 @@ func (s *skillService) Create(ctx context.Context, skill *entity.Skill) (*entity
 	if err := s.components.Repo.Create(ctx, skill); err != nil {
 		return nil, err
 	}
-	if err := s.recordVersion(ctx, skill); err != nil {
+	if _, err := s.recordVersion(ctx, skill); err != nil {
 		return nil, err
 	}
 	return skill, nil
@@ -116,7 +120,7 @@ func (s *skillService) Update(ctx context.Context, skill *entity.Skill) (*entity
 	if err := s.components.Repo.Update(ctx, skill); err != nil {
 		return nil, err
 	}
-	if err := s.recordVersion(ctx, skill); err != nil {
+	if _, err := s.recordVersion(ctx, skill); err != nil {
 		return nil, err
 	}
 	return skill, nil
@@ -207,20 +211,20 @@ func (s *skillService) requireIDGen() error {
 	return nil
 }
 
-func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) error {
+func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) (*entity.SkillVersion, error) {
 	return s.recordVersionWithSkillMD(ctx, skill, "")
 }
 
-func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *entity.Skill, skillMD string) error {
+func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *entity.Skill, skillMD string) (*entity.SkillVersion, error) {
 	if skill == nil {
-		return InvalidArgumentErrorf("skill is required")
+		return nil, InvalidArgumentErrorf("skill is required")
 	}
 	if err := s.requireIDGen(); err != nil {
-		return err
+		return nil, err
 	}
 	id, err := s.components.IDGen.GenID(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	now := time.Now().UnixMilli()
 	versionSkillMD := skillMD
@@ -239,7 +243,30 @@ func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *enti
 		CreatedAt:    now,
 	}
 
-	return s.components.Repo.CreateVersion(ctx, version)
+	if err := s.components.Repo.CreateVersion(ctx, version); err != nil {
+		return nil, err
+	}
+	return version, nil
+}
+
+func (s *skillService) recordResources(ctx context.Context, skillID, versionID int64, resources []ArchiveResource) error {
+	if len(resources) == 0 {
+		return nil
+	}
+
+	items := make([]*entity.SkillResource, 0, len(resources))
+	for _, resource := range resources {
+		items = append(items, &entity.SkillResource{
+			SkillID:   skillID,
+			VersionID: versionID,
+			Path:      resource.Path,
+			Content:   append([]byte(nil), resource.Content...),
+			Size:      resource.Size,
+			SHA256:    resource.SHA256,
+		})
+	}
+
+	return s.components.Repo.CreateResources(ctx, items)
 }
 
 func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {

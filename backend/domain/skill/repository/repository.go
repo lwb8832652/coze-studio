@@ -29,4 +29,6 @@ type SkillRepository interface {
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	CreateVersion(ctx context.Context, version *entity.SkillVersion) error
 	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)
+	CreateResources(ctx context.Context, resources []*entity.SkillResource) error
+	ListResources(ctx context.Context, versionID int64) ([]*entity.SkillResource, error)
 }

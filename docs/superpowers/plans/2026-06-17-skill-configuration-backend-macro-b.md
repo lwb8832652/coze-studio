@@ -26,6 +26,14 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
   - relative path
   - byte size
   - SHA-256 hash
+- Persist `.skill` archive resources as immutable version attachments in `skill_resources`:
+  - `skill_id`
+  - `version_id`
+  - relative path
+  - file content
+  - byte size
+  - SHA-256 hash
+- Add a production migration for the resource table and the current skill-version snapshot columns.
 - Expose Deer-flow compatible skill types through the Workbench API enum extension:
   - `DeerSkill`
   - `PublicSkill`
@@ -38,14 +46,14 @@ The existing `skills` table remains the live skill compatibility table. The new 
 
 For create/update flows, `SkillMD` is generated from the existing skill entity fields. For `SKILL.md` and `.skill` archive imports, the original Markdown entrypoint content is stored in the version snapshot so the future editor, rollback, and export flows can preserve Deer-flow skill instructions.
 
-`.skill` archive parsing is intentionally read-only in this backend slice. Resource files are validated and fingerprinted, but they are not persisted, executed, or injected into the runtime yet.
+`.skill` archive resources are validated, fingerprinted, and stored as version-scoped attachments. They are not executed, edited through UI, exported, rolled back, or injected into the runtime yet.
 
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- Resource persistence for `.skill` archive assets, scripts, and references.
-- Custom skill content editing and rollback.
+- Resource editing, export, and rollback for `.skill` archive assets, scripts, and references.
+- Custom skill content editing.
 - Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.
 
