@@ -38,13 +38,14 @@ func TestResumeRunProcessorFailsClaimedRunUntilReplayIsImplemented(t *testing.T)
 			},
 		},
 		checkpoint: &entity.Checkpoint{
-			ID:            503,
-			ThreadID:      10,
-			RunID:         199,
-			CheckpointNS:  "harness.terminal",
-			ChannelValues: `{"messages":[{"role":"assistant","content":"partial"}]}`,
-			PendingSends:  `[{"node":"generate_answer","step_id":"step-1"}]`,
-			Metadata:      `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
 		},
 		failedRun: &entity.Run{
 			ID:           200,
@@ -75,11 +76,71 @@ func TestResumeRunProcessorFailsClaimedRunUntilReplayIsImplemented(t *testing.T)
 	require.Equal(t, "resume-worker-a", domainSVC.failRunReq.WorkerID)
 	require.Equal(t, "checkpoint_replay_not_implemented", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "checkpoint replay is not implemented yet", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.failed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[0].Payload, `"checkpoint_id":"503"`)
 	require.Contains(t, eventSink.events[0].Payload, `"resume_from":"pending_sends"`)
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"checkpoint_replay_not_implemented"`)
-	require.Contains(t, eventSink.events[1].Payload, `"checkpoint_ns":"harness.terminal"`)
+	require.Contains(t, eventSink.events[1].Payload, `"checkpoint_step_count":1`)
+	require.Contains(t, eventSink.events[1].Payload, `"pending_step_count":1`)
+	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
+	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_replay_not_implemented"`)
+	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
+}
+
+func TestLoadHarnessResumeInputConvertsCheckpointState(t *testing.T) {
+	run := &RunSummary{ThreadID: 10, RunID: 200}
+	resume := resumeRunPayload{
+		CheckpointID: 503,
+		CheckpointNS: "harness.terminal",
+		ResumeFrom:   "pending_sends",
+	}
+	checkpoint := &CheckpointSummary{
+		CheckpointID: 503,
+		ThreadID:     10,
+		RunID:        199,
+		CheckpointNS: "harness.terminal",
+		ChannelValues: `{
+			"messages":[
+				{"role":"user","content":"hello"},
+				{"role":"assistant","content":"partial","step_id":"step-1"}
+			],
+			"steps":[
+				{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}
+			],
+			"memory":{"items":[{"id":"mem-1","scope":"thread","content":"remember this","score":0.8,"metadata":"{\"kind\":\"fact\"}"}]}
+		}`,
+		ChannelVersions: `{"messages":1,"steps":1,"memory":1}`,
+		PendingSends:    `[{"node":"generate_answer","step_id":"step-2","step_type":"model","step_name":"generate_answer","final":true}]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+	}
+
+	input, err := loadHarnessResumeInput(run, resume, checkpoint)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), input.ThreadID)
+	require.Equal(t, int64(200), input.RunID)
+	require.Equal(t, int64(199), input.SourceRunID)
+	require.Equal(t, int64(503), input.CheckpointID)
+	require.Equal(t, "harness.terminal", input.CheckpointNS)
+	require.Equal(t, "pending_sends", input.ResumeFrom)
+	require.Len(t, input.Messages, 2)
+	require.Equal(t, float64(1), input.ChannelVersions["steps"])
+	require.Equal(t, "failed", input.Metadata["status"])
+	require.Len(t, input.State.Steps, 1)
+	require.Equal(t, "step-1", input.State.Steps[0].StepID)
+	require.Equal(t, AgentStepTypeModel, input.State.Steps[0].StepType)
+	require.Equal(t, "draft", input.State.Steps[0].StepName)
+	require.Equal(t, "partial", input.State.Steps[0].Message)
+	require.Equal(t, 1, input.State.StepIndex)
+	require.Len(t, input.State.Results, 1)
+	require.Equal(t, "partial", input.State.Results[0].Message)
+	require.Len(t, input.State.Memory.Items, 1)
+	require.Equal(t, "mem-1", input.State.Memory.Items[0].ID)
+	require.Equal(t, "remember this", input.State.Memory.Items[0].Content)
+	require.Len(t, input.PendingSteps, 1)
+	require.Equal(t, "step-2", input.PendingSteps[0].ID)
+	require.Equal(t, AgentStepTypeModel, input.PendingSteps[0].Type)
+	require.Equal(t, "generate_answer", input.PendingSteps[0].Name)
+	require.True(t, input.PendingSteps[0].Final)
 }
 
 func TestResumeRunProcessorFailsRunWhenCheckpointIDIsMissing(t *testing.T) {

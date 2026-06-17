@@ -51,6 +51,21 @@ type resumeRunPayload struct {
 	ResumeFrom   string
 }
 
+type HarnessResumeInput struct {
+	ThreadID        int64
+	RunID           int64
+	SourceRunID     int64
+	CheckpointID    int64
+	CheckpointNS    string
+	ResumeFrom      string
+	ChannelValues   map[string]any
+	ChannelVersions map[string]any
+	Metadata        map[string]any
+	Messages        []map[string]any
+	PendingSteps    []AgentStep
+	State           AgentHarnessState
+}
+
 func NewResumeRunProcessor(app *ApplicationService, opts ResumeRunProcessorOptions) *ResumeRunProcessor {
 	workerID := strings.TrimSpace(opts.WorkerID)
 	if workerID == "" {
@@ -122,6 +137,12 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 		return p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
 	}
 
+	resumeInput, err := loadHarnessResumeInput(run, resume, checkpoint)
+	if err != nil {
+		return p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
+	}
+	p.emitResumeRunLoaded(ctx, run, resumeInput)
+
 	return p.failResumeRun(ctx, run, resume, resumeRunReplayNotImplementedCode, "checkpoint replay is not implemented yet")
 }
 
@@ -168,6 +189,242 @@ func validateResumeCheckpoint(run *RunSummary, checkpoint *CheckpointSummary) er
 	return nil
 }
 
+func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint *CheckpointSummary) (*HarnessResumeInput, error) {
+	if run == nil {
+		return nil, fmt.Errorf("resume run is required")
+	}
+	if checkpoint == nil {
+		return nil, fmt.Errorf("checkpoint is missing")
+	}
+	if err := validateResumeCheckpoint(run, checkpoint); err != nil {
+		return nil, err
+	}
+
+	channelValues, err := decodeResumeJSONMap(checkpoint.ChannelValues, "checkpoint channel values")
+	if err != nil {
+		return nil, err
+	}
+	channelVersions, err := decodeResumeJSONMap(checkpoint.ChannelVersions, "checkpoint channel versions")
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := decodeResumeJSONMap(checkpoint.Metadata, "checkpoint metadata")
+	if err != nil {
+		return nil, err
+	}
+	pendingValues, err := decodeResumeJSONArray(checkpoint.PendingSends, "checkpoint pending sends")
+	if err != nil {
+		return nil, err
+	}
+
+	messages := resumeMessages(channelValues["messages"])
+	state := AgentHarnessState{
+		Steps:  resumeExecutedSteps(channelValues["steps"], messages),
+		Memory: resumeMemoryContext(channelValues["memory"]),
+	}
+	state.StepIndex = len(state.Steps)
+	state.Results = resumeStepResults(state.Steps)
+	pendingSteps := resumePendingSteps(pendingValues)
+	if len(pendingSteps) == 0 {
+		return nil, fmt.Errorf("checkpoint pending sends are missing")
+	}
+
+	checkpointNS := strings.TrimSpace(resume.CheckpointNS)
+	if checkpointNS == "" {
+		checkpointNS = checkpoint.CheckpointNS
+	}
+
+	return &HarnessResumeInput{
+		ThreadID:        run.ThreadID,
+		RunID:           run.RunID,
+		SourceRunID:     checkpoint.RunID,
+		CheckpointID:    checkpoint.CheckpointID,
+		CheckpointNS:    checkpointNS,
+		ResumeFrom:      resumeDefaultString(resume.ResumeFrom, "pending_sends"),
+		ChannelValues:   channelValues,
+		ChannelVersions: channelVersions,
+		Metadata:        metadata,
+		Messages:        messages,
+		PendingSteps:    pendingSteps,
+		State:           state,
+	}, nil
+}
+
+func decodeResumeJSONMap(raw string, field string) (map[string]any, error) {
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &result); err != nil || result == nil {
+		return nil, fmt.Errorf("%s is invalid", field)
+	}
+
+	return result, nil
+}
+
+func decodeResumeJSONArray(raw string, field string) ([]any, error) {
+	var result []any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &result); err != nil || result == nil {
+		return nil, fmt.Errorf("%s is invalid", field)
+	}
+
+	return result, nil
+}
+
+func resumeMessages(value any) []map[string]any {
+	items, ok := value.([]any)
+	if !ok {
+		return []map[string]any{}
+	}
+
+	messages := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		messages = append(messages, copyResumeMap(payload))
+	}
+
+	return messages
+}
+
+func resumeExecutedSteps(value any, messages []map[string]any) []AgentExecutedStep {
+	items, ok := value.([]any)
+	if !ok {
+		return []AgentExecutedStep{}
+	}
+
+	messagesByStepID := resumeMessagesByStepID(messages)
+	steps := make([]AgentExecutedStep, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		stepID := resumePayloadString(payload["step_id"])
+		if stepID == "" {
+			continue
+		}
+		step := AgentExecutedStep{
+			StepID:    stepID,
+			StepType:  resumeStepType(payload["step_type"]),
+			StepName:  resumeDefaultString(resumePayloadString(payload["step_name"]), resumePayloadString(payload["node"])),
+			StepIndex: int(resumePayloadInt64(payload["step_index"])),
+			Final:     resumePayloadBool(payload["final"]),
+			Message:   messagesByStepID[stepID],
+		}
+		steps = append(steps, step)
+	}
+
+	return steps
+}
+
+func resumeStepResults(steps []AgentExecutedStep) []AgentStepResult {
+	results := make([]AgentStepResult, 0, len(steps))
+	for _, step := range steps {
+		results = append(results, AgentStepResult{
+			Message: step.Message,
+			Final:   step.Final,
+		})
+	}
+
+	return results
+}
+
+func resumeMemoryContext(value any) AgentMemoryContext {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return AgentMemoryContext{}
+	}
+	items, ok := payload["items"].([]any)
+	if !ok {
+		return AgentMemoryContext{}
+	}
+
+	memories := make([]AgentMemory, 0, len(items))
+	for _, item := range items {
+		memoryPayload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		memory := AgentMemory{
+			ID:       resumePayloadString(memoryPayload["id"]),
+			Scope:    resumePayloadString(memoryPayload["scope"]),
+			Content:  resumePayloadString(memoryPayload["content"]),
+			Metadata: resumePayloadString(memoryPayload["metadata"]),
+			Score:    resumePayloadFloat64(memoryPayload["score"]),
+		}
+		if strings.TrimSpace(memory.Content) == "" {
+			continue
+		}
+		memories = append(memories, memory)
+	}
+
+	return AgentMemoryContext{Items: memories}
+}
+
+func resumePendingSteps(items []any) []AgentStep {
+	steps := make([]AgentStep, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := resumeDefaultString(resumePayloadString(payload["step_name"]), resumePayloadString(payload["node"]))
+		step := AgentStep{
+			ID:            resumePayloadString(payload["step_id"]),
+			Type:          resumeStepType(payload["step_type"]),
+			Name:          name,
+			ToolName:      resumePayloadString(payload["tool_name"]),
+			ToolArguments: resumePayloadString(payload["tool_arguments"]),
+			Final:         resumePayloadBool(payload["final"]),
+		}
+		if strings.TrimSpace(step.ID) == "" {
+			step.ID = name
+		}
+		if strings.TrimSpace(step.Name) == "" {
+			step.Name = step.ID
+		}
+		if strings.TrimSpace(step.ID) == "" && strings.TrimSpace(step.Name) == "" {
+			continue
+		}
+		steps = append(steps, step)
+	}
+
+	return steps
+}
+
+func resumeMessagesByStepID(messages []map[string]any) map[string]string {
+	result := make(map[string]string, len(messages))
+	for _, message := range messages {
+		stepID := resumePayloadString(message["step_id"])
+		content := resumePayloadString(message["content"])
+		if stepID == "" || content == "" {
+			continue
+		}
+		result[stepID] = content
+	}
+
+	return result
+}
+
+func copyResumeMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+
+	return result
+}
+
+func resumeStepType(value any) AgentStepType {
+	stepType := AgentStepType(resumePayloadString(value))
+	switch stepType {
+	case AgentStepTypeModel, AgentStepTypeTool:
+		return stepType
+	default:
+		return AgentStepTypeModel
+	}
+}
+
 func (p *ResumeRunProcessor) failResumeRun(
 	ctx context.Context,
 	run *RunSummary,
@@ -194,6 +451,25 @@ func (p *ResumeRunProcessor) emitResumeRunStarted(ctx context.Context, run *RunS
 		"worker_id": p.workerID,
 	})
 	p.emitRunEvent(ctx, run, "run.resume.started", payload)
+}
+
+func (p *ResumeRunProcessor) emitResumeRunLoaded(ctx context.Context, run *RunSummary, input *HarnessResumeInput) {
+	if input == nil {
+		return
+	}
+
+	payload := p.resumeRunEventPayload(resumeRunPayload{
+		CheckpointID: input.CheckpointID,
+		CheckpointNS: input.CheckpointNS,
+		ResumeFrom:   input.ResumeFrom,
+	}, map[string]any{
+		"status":                string(RunStatusRunning),
+		"worker_id":             p.workerID,
+		"checkpoint_step_count": len(input.State.Steps),
+		"pending_step_count":    len(input.PendingSteps),
+		"message_count":         len(input.Messages),
+	})
+	p.emitRunEvent(ctx, run, "run.resume.loaded", payload)
 }
 
 func (p *ResumeRunProcessor) emitResumeRunFailed(
@@ -248,6 +524,15 @@ func resumePayloadString(value any) string {
 	}
 }
 
+func resumeDefaultString(value, fallback string) string {
+	normalized := strings.TrimSpace(value)
+	if normalized != "" {
+		return normalized
+	}
+
+	return strings.TrimSpace(fallback)
+}
+
 func resumePayloadInt64(value any) int64 {
 	switch typed := value.(type) {
 	case string:
@@ -259,6 +544,28 @@ func resumePayloadInt64(value any) int64 {
 		return typed
 	case int:
 		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+func resumePayloadBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	default:
+		return false
+	}
+}
+
+func resumePayloadFloat64(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
 	default:
 		return 0
 	}
