@@ -19,6 +19,7 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -186,23 +187,27 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	executedSteps := 0
 	for executedSteps < maxSteps {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "context_canceled", err, state, nil, nil)
 		}
 
 		plan, err := planner.Plan(ctx, run, cloneHarnessState(state))
 		if err != nil {
-			return nil, err
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "planner_error", err, state, nil, nil)
 		}
 		if plan == nil || len(plan.Steps) == 0 {
-			return nil, fmt.Errorf("agent harness planner returned no steps")
+			err := fmt.Errorf("agent harness planner returned no steps")
+
+			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "planner_no_steps", err, state, nil, nil)
 		}
 
 		for stepPlanIndex, step := range plan.Steps {
 			if executedSteps >= maxSteps {
-				return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+				err := fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+
+				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "max_steps_exceeded", err, state, &step, plan.Steps[stepPlanIndex:])
 			}
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "context_canceled", err, state, &step, plan.Steps[stepPlanIndex:])
 			}
 
 			state.StepIndex = executedSteps
@@ -211,19 +216,19 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			if err != nil {
 				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
 
-				return nil, err
+				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_error", err, state, &step, plan.Steps[stepPlanIndex:])
 			}
 			if stepResult == nil {
 				err := fmt.Errorf("agent harness step runner returned empty result")
 				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
 
-				return nil, err
+				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_empty_result", err, state, &step, plan.Steps[stepPlanIndex:])
 			}
 			if stepResult.Final && strings.TrimSpace(stepResult.Message) == "" {
 				err := fmt.Errorf("agent harness final step returned empty message")
 				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
 
-				return nil, err
+				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_empty_final_message", err, state, &step, plan.Steps[stepPlanIndex:])
 			}
 
 			executedSteps++
@@ -260,7 +265,9 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 		}
 	}
 
-	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+	err = fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+
+	return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "max_steps_exceeded", err, state, nil, nil)
 }
 
 func (e *HarnessExecutor) saveCheckpoint(
@@ -274,6 +281,44 @@ func (e *HarnessExecutor) saveCheckpoint(
 	step *AgentStep,
 	pendingSteps []AgentStep,
 ) (int64, error) {
+	return e.saveCheckpointWithFailure(ctx, run, parentCheckpointID, checkpointNS, phase, status, state, step, pendingSteps, "", nil)
+}
+
+func (e *HarnessExecutor) saveFailedCheckpoint(
+	ctx context.Context,
+	run *RunSummary,
+	parentCheckpointID int64,
+	errorType string,
+	runErr error,
+	state AgentHarnessState,
+	step *AgentStep,
+	pendingSteps []AgentStep,
+) error {
+	status := "failed"
+	if errors.Is(runErr, context.Canceled) {
+		status = "canceled"
+		errorType = "context_canceled"
+	}
+	if _, checkpointErr := e.saveCheckpointWithFailure(ctx, run, parentCheckpointID, "harness.terminal", "terminal", status, state, step, pendingSteps, errorType, runErr); checkpointErr != nil {
+		return fmt.Errorf("%w; checkpoint write failed: %v", runErr, checkpointErr)
+	}
+
+	return runErr
+}
+
+func (e *HarnessExecutor) saveCheckpointWithFailure(
+	ctx context.Context,
+	run *RunSummary,
+	parentCheckpointID int64,
+	checkpointNS string,
+	phase string,
+	status string,
+	state AgentHarnessState,
+	step *AgentStep,
+	pendingSteps []AgentStep,
+	errorType string,
+	runErr error,
+) (int64, error) {
 	if e == nil || e.checkpointSink == nil {
 		return parentCheckpointID, nil
 	}
@@ -284,7 +329,7 @@ func (e *HarnessExecutor) saveCheckpoint(
 		ChannelValues:      encodeHarnessJSON(harnessCheckpointValues(run, state), "{}"),
 		ChannelVersions:    encodeHarnessJSON(harnessCheckpointVersions(state), "{}"),
 		PendingSends:       encodeHarnessJSON(harnessPendingSends(pendingSteps), "[]"),
-		Metadata:           encodeHarnessJSON(harnessCheckpointMetadata(run, phase, status, state, step), "{}"),
+		Metadata:           encodeHarnessJSON(harnessCheckpointMetadata(run, phase, status, state, step, errorType, runErr), "{}"),
 	}
 	saved, err := e.checkpointSink.SaveCheckpoint(ctx, run, checkpoint)
 	if err != nil {
@@ -342,6 +387,8 @@ func harnessCheckpointMetadata(
 	status string,
 	state AgentHarnessState,
 	step *AgentStep,
+	errorType string,
+	runErr error,
 ) map[string]any {
 	metadata := map[string]any{
 		"source":           "agent_harness",
@@ -357,6 +404,12 @@ func harnessCheckpointMetadata(
 		metadata["step_id"] = step.ID
 		metadata["step_type"] = string(step.Type)
 		metadata["step_name"] = step.Name
+	}
+	if errorType != "" {
+		metadata["error_type"] = errorType
+	}
+	if runErr != nil {
+		metadata["error_message"] = runErr.Error()
 	}
 
 	return metadata
