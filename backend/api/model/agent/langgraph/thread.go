@@ -45,3 +45,22 @@ type SearchThreadsRequest struct {
 	Limit    int32          `json:"limit,omitempty"`
 	Offset   int32          `json:"offset,omitempty"`
 }
+
+type GetThreadStateRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+}
+
+type GetThreadHistoryRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	Limit    int32 `query:"limit,omitempty"`
+	Offset   int32 `query:"offset,omitempty"`
+}
+
+type ThreadState struct {
+	Values    map[string]any `json:"values"`
+	Next      []string       `json:"next"`
+	Config    map[string]any `json:"config"`
+	Metadata  map[string]any `json:"metadata"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at,omitempty"`
+}

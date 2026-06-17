@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
@@ -135,4 +136,76 @@ func TestLangGraphThreadSearchUsesMetadataSpaceID(t *testing.T) {
 	require.Contains(t, searchBody, `"thread_id":"1"`)
 	require.Contains(t, searchBody, `"title":"任务列表"`)
 	require.NotContains(t, searchBody, `"另一个空间任务"`)
+}
+
+func TestLangGraphThreadStateHandlerReturnsMessagesAndConfig(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/state", GetLangGraphThreadState)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"state run"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleUser,
+		Content:  "请总结任务状态",
+		Metadata: `{"source":"test"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "当前任务正在整理结果。",
+	})
+	require.NoError(t, err)
+
+	stateResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/state", nil)
+	body := string(stateResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, stateResp.Code)
+	require.Contains(t, body, `"messages":[`)
+	require.Contains(t, body, `"role":"user"`)
+	require.Contains(t, body, `"content":"请总结任务状态"`)
+	require.Contains(t, body, `"role":"assistant"`)
+	require.Contains(t, body, `"content":"当前任务正在整理结果。"`)
+	require.Contains(t, body, `"next":[]`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"checkpoint_id":"thread-1-latest"`)
+	require.Contains(t, body, `"source":"web"`)
+	require.Contains(t, body, `"checkpoint_source":"thread_snapshot"`)
+}
+
+func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"history run"}]}`,
+	})
+	require.NoError(t, err)
+	eventResp, err := appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "node.update",
+		Payload:   `{"node":"agent","delta":{"status":"planning"}}`,
+	})
+	require.NoError(t, err)
+
+	historyResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/history?limit=10", nil)
+	body := string(historyResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, historyResp.Code)
+	require.Contains(t, body, `"checkpoint_id":"event-`+strconv.FormatInt(eventResp.Event.EventID, 10)+`"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"source":"event_log"`)
+	require.Contains(t, body, `"event_type":"node.update"`)
+	require.Contains(t, body, `"status":"planning"`)
 }

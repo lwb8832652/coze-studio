@@ -137,6 +137,78 @@ func SearchLangGraphThreads(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, langGraphThreadsToAPI(resp.Threads))
 }
 
+// GetLangGraphThreadState .
+// @router /api/threads/:thread_id/state [GET]
+func GetLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.GetThreadStateRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if threadResp == nil || threadResp.Thread == nil {
+		invalidParamRequestResponse(c, "thread_id is invalid")
+		return
+	}
+
+	state, err := buildLangGraphThreadState(ctx, threadResp.Thread)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, state)
+}
+
+// GetLangGraphThreadHistory .
+// @router /api/threads/:thread_id/history [GET]
+func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.GetThreadHistoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if threadResp == nil || threadResp.Thread == nil {
+		invalidParamRequestResponse(c, "thread_id is invalid")
+		return
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	page := int32(1)
+	if req.Offset > 0 {
+		page = req.Offset/limit + 1
+	}
+
+	eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+		ThreadID: req.ThreadID,
+		Page:     page,
+		PageSize: limit,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphThreadHistoryFromEvents(eventsResp.Events))
+}
+
 func langGraphThreadsToAPI(threads []*appagentthread.ThreadSummary) []*langgraphapi.Thread {
 	result := make([]*langgraphapi.Thread, 0, len(threads))
 	for _, thread := range threads {
@@ -144,6 +216,118 @@ func langGraphThreadsToAPI(threads []*appagentthread.ThreadSummary) []*langgraph
 	}
 
 	return result
+}
+
+func buildLangGraphThreadState(ctx context.Context, thread *appagentthread.ThreadSummary) (*langgraphapi.ThreadState, error) {
+	if thread == nil {
+		return nil, nil
+	}
+
+	messagesResp, err := appagentthread.SVC.ListMessages(ctx, &appagentthread.ListMessagesRequest{
+		ThreadID: thread.ThreadID,
+		Page:     1,
+		PageSize: 100,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &langgraphapi.ThreadState{
+		Values: langGraphThreadStateValues(messagesResp.Messages),
+		Next:   []string{},
+		Config: langGraphThreadStateConfig(thread.ThreadID, "thread-"+strconv.FormatInt(thread.ThreadID, 10)+"-latest"),
+		Metadata: langGraphThreadStateMetadata(
+			thread,
+			map[string]any{
+				"checkpoint_source": "thread_snapshot",
+			},
+		),
+		CreatedAt: langGraphTime(thread.CreatedAt),
+		UpdatedAt: langGraphTime(thread.UpdatedAt),
+	}, nil
+}
+
+func langGraphThreadHistoryFromEvents(events []*appagentthread.RunEventSummary) []*langgraphapi.ThreadState {
+	result := make([]*langgraphapi.ThreadState, 0, len(events))
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		checkpointID := "event-" + strconv.FormatInt(event.EventID, 10)
+		result = append(result, &langgraphapi.ThreadState{
+			Values: map[string]any{
+				"messages":     []map[string]any{},
+				"artifacts":    map[string]any{},
+				"todos":        []any{},
+				"memory":       map[string]any{},
+				"tool_results": map[string]any{},
+				"event":        langGraphRunEventPayload(event.Payload),
+			},
+			Next:   []string{},
+			Config: langGraphThreadStateConfig(event.ThreadID, checkpointID),
+			Metadata: map[string]any{
+				"thread_id":  strconv.FormatInt(event.ThreadID, 10),
+				"run_id":     strconv.FormatInt(event.RunID, 10),
+				"event_id":   strconv.FormatInt(event.EventID, 10),
+				"event_type": event.EventType,
+				"source":     "event_log",
+			},
+			CreatedAt: langGraphTime(event.CreatedAt),
+		})
+	}
+
+	return result
+}
+
+func langGraphThreadStateValues(messages []*appagentthread.MessageSummary) map[string]any {
+	result := map[string]any{
+		"messages":     langGraphThreadStateMessages(messages),
+		"artifacts":    map[string]any{},
+		"todos":        []any{},
+		"memory":       map[string]any{},
+		"tool_results": map[string]any{},
+	}
+
+	return result
+}
+
+func langGraphThreadStateMessages(messages []*appagentthread.MessageSummary) []map[string]any {
+	result := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		result = append(result, map[string]any{
+			"id":         strconv.FormatInt(message.MessageID, 10),
+			"thread_id":  strconv.FormatInt(message.ThreadID, 10),
+			"run_id":     strconv.FormatInt(message.RunID, 10),
+			"role":       string(message.Role),
+			"content":    message.Content,
+			"metadata":   langGraphJSONMap(message.Metadata),
+			"created_at": langGraphTime(message.CreatedAt),
+		})
+	}
+
+	return result
+}
+
+func langGraphThreadStateConfig(threadID int64, checkpointID string) map[string]any {
+	return map[string]any{
+		"configurable": map[string]any{
+			"thread_id":     strconv.FormatInt(threadID, 10),
+			"checkpoint_id": checkpointID,
+			"checkpoint_ns": "",
+		},
+	}
+}
+
+func langGraphThreadStateMetadata(thread *appagentthread.ThreadSummary, extra map[string]any) map[string]any {
+	metadata := langGraphThreadMetadata(thread)
+	for key, value := range extra {
+		metadata[key] = value
+	}
+
+	return metadata
 }
 
 func langGraphThreadToAPI(thread *appagentthread.ThreadSummary) *langgraphapi.Thread {

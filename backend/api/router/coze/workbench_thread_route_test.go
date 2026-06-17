@@ -56,10 +56,14 @@ func TestRegisterIncludesLangGraphThreadRoutes(t *testing.T) {
 
 	createThread := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads", nil)
 	getThread := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
+	getThreadState := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/state", nil)
+	getThreadHistory := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/history", nil)
 	searchThreads := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads/search", nil)
 
 	require.NotEqual(t, http.StatusNotFound, createThread.Code)
 	require.NotEqual(t, http.StatusNotFound, getThread.Code)
+	require.NotEqual(t, http.StatusNotFound, getThreadState.Code)
+	require.NotEqual(t, http.StatusNotFound, getThreadHistory.Code)
 	require.NotEqual(t, http.StatusNotFound, searchThreads.Code)
 }
 
