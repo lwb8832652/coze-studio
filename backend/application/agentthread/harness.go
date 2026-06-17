@@ -66,7 +66,18 @@ type AgentMemoryContext struct {
 type AgentHarnessState struct {
 	StepIndex int
 	Results   []AgentStepResult
+	Steps     []AgentExecutedStep
 	Memory    AgentMemoryContext
+}
+
+type AgentExecutedStep struct {
+	StepID    string
+	StepType  AgentStepType
+	StepName  string
+	StepIndex int
+	Message   string
+	Metadata  string
+	Final     bool
 }
 
 type AgentPlanner interface {
@@ -88,6 +99,7 @@ type HarnessExecutorOptions struct {
 	EventSink      RunEventSink
 	MemoryProvider MemoryProvider
 	UsageCollector UsageCollector
+	CheckpointSink CheckpointSink
 }
 
 type HarnessExecutor struct {
@@ -96,6 +108,7 @@ type HarnessExecutor struct {
 	eventSink      RunEventSink
 	memoryProvider MemoryProvider
 	usageCollector UsageCollector
+	checkpointSink CheckpointSink
 	maxSteps       int
 }
 
@@ -117,8 +130,18 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 		eventSink:      opts.EventSink,
 		memoryProvider: opts.MemoryProvider,
 		usageCollector: opts.UsageCollector,
+		checkpointSink: opts.CheckpointSink,
 		maxSteps:       maxSteps,
 	}
+}
+
+func NewApplicationHarnessExecutor(app *ApplicationService) *HarnessExecutor {
+	return NewHarnessExecutor(nil, nil, HarnessExecutorOptions{
+		EventSink:      NewApplicationRunEventSink(app),
+		MemoryProvider: NewThreadMemoryProvider(app, 8),
+		UsageCollector: NewThreadUsageCollector(app),
+		CheckpointSink: NewThreadCheckpointSink(app),
+	})
 }
 
 func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
@@ -155,6 +178,11 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	if len(memory.Items) > 0 {
 		e.emitMemoryRecalledEvent(ctx, run, memory)
 	}
+	parentCheckpointID, err := e.saveCheckpoint(ctx, run, 0, "harness.initial", "initial", "running", state, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	executedSteps := 0
 	for executedSteps < maxSteps {
 		if err := ctx.Err(); err != nil {
@@ -169,7 +197,7 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			return nil, fmt.Errorf("agent harness planner returned no steps")
 		}
 
-		for _, step := range plan.Steps {
+		for stepPlanIndex, step := range plan.Steps {
 			if executedSteps >= maxSteps {
 				return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
 			}
@@ -200,10 +228,29 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 
 			executedSteps++
 			state.Results = append(state.Results, *stepResult)
+			state.Steps = append(state.Steps, agentExecutedStep(step, executedSteps-1, stepResult))
 			e.emitStepCompletedEvent(ctx, run, step, executedSteps-1, stepResult)
 			e.recordStepUsage(ctx, run, step, executedSteps-1, stepResult)
+			parentCheckpointID, err = e.saveCheckpoint(
+				ctx,
+				run,
+				parentCheckpointID,
+				harnessStepCheckpointNS(step),
+				harnessStepCheckpointPhase(step),
+				"running",
+				state,
+				&step,
+				plan.Steps[stepPlanIndex+1:],
+			)
+			if err != nil {
+				return nil, err
+			}
+
 			if stepResult.Final {
 				message := strings.TrimSpace(stepResult.Message)
+				if _, err := e.saveCheckpoint(ctx, run, parentCheckpointID, "harness.terminal", "terminal", "succeeded", state, nil, nil); err != nil {
+					return nil, err
+				}
 
 				return &RunExecutionResult{
 					Message:  message,
@@ -214,6 +261,282 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	}
 
 	return nil, fmt.Errorf("agent harness exceeded max steps: %d", maxSteps)
+}
+
+func (e *HarnessExecutor) saveCheckpoint(
+	ctx context.Context,
+	run *RunSummary,
+	parentCheckpointID int64,
+	checkpointNS string,
+	phase string,
+	status string,
+	state AgentHarnessState,
+	step *AgentStep,
+	pendingSteps []AgentStep,
+) (int64, error) {
+	if e == nil || e.checkpointSink == nil {
+		return parentCheckpointID, nil
+	}
+
+	checkpoint := AgentCheckpoint{
+		ParentCheckpointID: parentCheckpointID,
+		CheckpointNS:       checkpointNS,
+		ChannelValues:      encodeHarnessJSON(harnessCheckpointValues(run, state), "{}"),
+		ChannelVersions:    encodeHarnessJSON(harnessCheckpointVersions(state), "{}"),
+		PendingSends:       encodeHarnessJSON(harnessPendingSends(pendingSteps), "[]"),
+		Metadata:           encodeHarnessJSON(harnessCheckpointMetadata(run, phase, status, state, step), "{}"),
+	}
+	saved, err := e.checkpointSink.SaveCheckpoint(ctx, run, checkpoint)
+	if err != nil {
+		return parentCheckpointID, err
+	}
+	if saved == nil || saved.CheckpointID <= 0 {
+		return parentCheckpointID, fmt.Errorf("agent harness checkpoint sink returned empty checkpoint")
+	}
+
+	return saved.CheckpointID, nil
+}
+
+func harnessCheckpointValues(run *RunSummary, state AgentHarnessState) map[string]any {
+	messages := harnessInputMessages(runInput(run))
+	for _, step := range state.Steps {
+		message := strings.TrimSpace(step.Message)
+		if message == "" {
+			continue
+		}
+		role := string(MessageRoleAssistant)
+		payload := map[string]any{
+			"role":    role,
+			"content": message,
+			"step_id": step.StepID,
+		}
+		if step.StepType == AgentStepTypeTool {
+			payload["role"] = string(MessageRoleTool)
+			payload["tool_name"] = step.StepName
+		}
+		messages = append(messages, payload)
+	}
+
+	return map[string]any{
+		"messages":     messages,
+		"artifacts":    map[string]any{},
+		"todos":        []any{},
+		"memory":       harnessMemoryValues(state.Memory),
+		"tool_results": harnessToolResults(state.Steps),
+		"steps":        harnessStepValues(state.Steps),
+	}
+}
+
+func harnessCheckpointVersions(state AgentHarnessState) map[string]any {
+	return map[string]any{
+		"messages":     len(state.Steps),
+		"memory":       len(state.Memory.Items),
+		"steps":        len(state.Steps),
+		"tool_results": len(harnessToolResults(state.Steps)),
+	}
+}
+
+func harnessCheckpointMetadata(
+	run *RunSummary,
+	phase string,
+	status string,
+	state AgentHarnessState,
+	step *AgentStep,
+) map[string]any {
+	metadata := map[string]any{
+		"source":           "agent_harness",
+		"checkpoint_phase": phase,
+		"status":           status,
+		"step_count":       len(state.Steps),
+	}
+	if run != nil {
+		metadata["thread_id"] = run.ThreadID
+		metadata["run_id"] = run.RunID
+	}
+	if step != nil {
+		metadata["step_id"] = step.ID
+		metadata["step_type"] = string(step.Type)
+		metadata["step_name"] = step.Name
+	}
+
+	return metadata
+}
+
+func harnessInputMessages(rawInput string) []map[string]any {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" {
+		return []map[string]any{}
+	}
+
+	var input modelExecutorRunInput
+	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
+		return []map[string]any{}
+	}
+
+	messages := make([]map[string]any, 0, len(input.Messages)+1)
+	for _, item := range input.Messages {
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(item.Role))
+		if role == "" {
+			role = string(MessageRoleUser)
+		}
+		message := map[string]any{
+			"role":    role,
+			"content": content,
+		}
+		if toolCallID := strings.TrimSpace(item.ToolCallID); toolCallID != "" {
+			message["tool_call_id"] = toolCallID
+		}
+		if toolName := strings.TrimSpace(item.ToolName); toolName != "" {
+			message["tool_name"] = toolName
+		}
+		messages = append(messages, message)
+	}
+	if len(messages) == 0 {
+		if message := strings.TrimSpace(input.Message); message != "" {
+			messages = append(messages, map[string]any{
+				"role":    string(MessageRoleUser),
+				"content": message,
+			})
+		}
+	}
+
+	return messages
+}
+
+func harnessMemoryValues(memory AgentMemoryContext) map[string]any {
+	items := make([]map[string]any, 0, len(memory.Items))
+	for _, item := range memory.Items {
+		payload := map[string]any{
+			"id":      item.ID,
+			"scope":   item.Scope,
+			"content": item.Content,
+			"score":   item.Score,
+		}
+		if metadata := strings.TrimSpace(item.Metadata); metadata != "" {
+			payload["metadata"] = metadata
+		}
+		items = append(items, payload)
+	}
+
+	return map[string]any{"items": items}
+}
+
+func harnessToolResults(steps []AgentExecutedStep) map[string]any {
+	results := map[string]any{}
+	for _, step := range steps {
+		if step.StepType != AgentStepTypeTool || strings.TrimSpace(step.Message) == "" {
+			continue
+		}
+		key := strings.TrimSpace(step.StepName)
+		if key == "" {
+			key = step.StepID
+		}
+		results[key] = map[string]any{
+			"content": step.Message,
+			"step_id": step.StepID,
+		}
+	}
+
+	return results
+}
+
+func harnessStepValues(steps []AgentExecutedStep) []map[string]any {
+	values := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		values = append(values, map[string]any{
+			"step_id":         step.StepID,
+			"step_type":       string(step.StepType),
+			"step_name":       step.StepName,
+			"step_index":      step.StepIndex,
+			"final":           step.Final,
+			"message_present": strings.TrimSpace(step.Message) != "",
+		})
+	}
+
+	return values
+}
+
+func harnessPendingSends(steps []AgentStep) []map[string]any {
+	pending := make([]map[string]any, 0, len(steps))
+	for _, step := range steps {
+		node := harnessStepNodeName(step)
+		if node == "" {
+			continue
+		}
+		pending = append(pending, map[string]any{
+			"node":      node,
+			"step_id":   step.ID,
+			"step_type": string(step.Type),
+		})
+	}
+
+	return pending
+}
+
+func agentExecutedStep(step AgentStep, stepIndex int, result *AgentStepResult) AgentExecutedStep {
+	executed := AgentExecutedStep{
+		StepID:    strings.TrimSpace(step.ID),
+		StepType:  step.Type,
+		StepName:  harnessStepNodeName(step),
+		StepIndex: stepIndex,
+		Final:     result != nil && result.Final,
+	}
+	if result != nil {
+		executed.Message = strings.TrimSpace(result.Message)
+		executed.Metadata = strings.TrimSpace(result.Metadata)
+	}
+
+	return executed
+}
+
+func harnessStepCheckpointNS(step AgentStep) string {
+	if step.Type == AgentStepTypeTool {
+		return "harness.tool"
+	}
+
+	return "harness.step"
+}
+
+func harnessStepCheckpointPhase(step AgentStep) string {
+	if step.Type == AgentStepTypeTool {
+		return "tool"
+	}
+
+	return "step"
+}
+
+func harnessStepNodeName(step AgentStep) string {
+	if step.Type == AgentStepTypeTool {
+		if toolName := agentStepToolName(step); toolName != "" {
+			return toolName
+		}
+	}
+	if name := strings.TrimSpace(step.Name); name != "" {
+		return name
+	}
+
+	return strings.TrimSpace(step.ID)
+}
+
+func runInput(run *RunSummary) string {
+	if run == nil {
+		return ""
+	}
+
+	return run.Input
+}
+
+func encodeHarnessJSON(value any, fallback string) string {
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return fallback
+	}
+
+	return string(bytes)
 }
 
 func (e *HarnessExecutor) recordStepUsage(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int, result *AgentStepResult) {
@@ -552,6 +875,9 @@ func cloneHarnessState(state AgentHarnessState) AgentHarnessState {
 	}
 	if len(state.Results) > 0 {
 		clone.Results = append([]AgentStepResult(nil), state.Results...)
+	}
+	if len(state.Steps) > 0 {
+		clone.Steps = append([]AgentExecutedStep(nil), state.Steps...)
 	}
 	if len(state.Memory.Items) > 0 {
 		clone.Memory.Items = append([]AgentMemory(nil), state.Memory.Items...)

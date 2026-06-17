@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -304,6 +305,104 @@ func TestHarnessExecutorRecordsTokenUsageFromStepMetadata(t *testing.T) {
 	require.Contains(t, eventSink.events[2].Payload, `"total_tokens":20`)
 }
 
+func TestHarnessExecutorWritesCheckpointsAcrossRunLifecycle(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "model-final", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{
+			Message:  "任务已完成",
+			Metadata: `{"usage":{"input_tokens":3,"output_tokens":4}}`,
+			Final:    true,
+		},
+	}
+	checkpointSink := &recordingCheckpointSink{nextID: 100}
+	memoryProvider := &recordingMemoryProvider{
+		memories: []AgentMemory{
+			{ID: "mem-1", Scope: "thread", Content: "用户偏好中文", Score: 0.9},
+		},
+	}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       1,
+		MemoryProvider: memoryProvider,
+		CheckpointSink: checkpointSink,
+	})
+	run := &RunSummary{
+		ThreadID: 5,
+		RunID:    10,
+		Input:    `{"messages":[{"role":"user","content":"生成报告"}]}`,
+	}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, "任务已完成", result.Message)
+	require.Len(t, checkpointSink.checkpoints, 3)
+	require.Equal(t, []string{"harness.initial", "harness.step", "harness.terminal"}, checkpointSink.namespaces())
+	require.Equal(t, int64(0), checkpointSink.checkpoints[0].ParentCheckpointID)
+	require.Equal(t, int64(100), checkpointSink.checkpoints[1].ParentCheckpointID)
+	require.Equal(t, int64(101), checkpointSink.checkpoints[2].ParentCheckpointID)
+
+	initialValues := decodeCheckpointValues(t, checkpointSink.checkpoints[0].ChannelValues)
+	require.Equal(t, []any{map[string]any{"content": "生成报告", "role": "user"}}, initialValues["messages"])
+	require.Contains(t, checkpointSink.checkpoints[0].Metadata, `"checkpoint_phase":"initial"`)
+	require.Contains(t, checkpointSink.checkpoints[0].Metadata, `"status":"running"`)
+	require.Contains(t, checkpointSink.checkpoints[0].ChannelValues, `"用户偏好中文"`)
+
+	stepValues := decodeCheckpointValues(t, checkpointSink.checkpoints[1].ChannelValues)
+	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"checkpoint_phase":"step"`)
+	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"step_id":"model-final"`)
+	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"status":"running"`)
+	require.Contains(t, stepValues["messages"], map[string]any{
+		"content": "任务已完成",
+		"role":    "assistant",
+		"step_id": "model-final",
+	})
+
+	terminalValues := decodeCheckpointValues(t, checkpointSink.checkpoints[2].ChannelValues)
+	require.Contains(t, checkpointSink.checkpoints[2].Metadata, `"checkpoint_phase":"terminal"`)
+	require.Contains(t, checkpointSink.checkpoints[2].Metadata, `"status":"succeeded"`)
+	require.NotContains(t, checkpointSink.checkpoints[2].PendingSends, "generate_answer")
+	require.Contains(t, terminalValues["steps"], map[string]any{
+		"final":           true,
+		"message_present": true,
+		"step_id":         "model-final",
+		"step_index":      float64(0),
+		"step_name":       "generate_answer",
+		"step_type":       "model",
+	})
+}
+
+func TestHarnessExecutorReturnsCheckpointWriteError(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-1", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{Message: "should not run", Final: true},
+	}
+	checkpointSink := &recordingCheckpointSink{err: errors.New("checkpoint write failed")}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       1,
+		CheckpointSink: checkpointSink,
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 5,
+		RunID:    10,
+		Input:    `{"message":"hello"}`,
+	})
+
+	require.ErrorContains(t, err, "checkpoint write failed")
+	require.Nil(t, result)
+	require.Zero(t, planner.calls)
+	require.Zero(t, runner.calls)
+	require.Equal(t, 1, checkpointSink.calls)
+}
+
 func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("默认模型回答", nil),
@@ -330,6 +429,16 @@ func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	require.Contains(t, result.Metadata, `"model_executor"`)
 	require.Len(t, chatModel.messages, 1)
 	require.Equal(t, "生成回答", chatModel.messages[0].Content)
+}
+
+func TestNewApplicationHarnessExecutorConfiguresDurableSinks(t *testing.T) {
+	executor := NewApplicationHarnessExecutor(&ApplicationService{ThreadSVC: &recordingThreadService{}})
+
+	require.NotNil(t, executor)
+	require.NotNil(t, executor.eventSink)
+	require.NotNil(t, executor.memoryProvider)
+	require.NotNil(t, executor.usageCollector)
+	require.NotNil(t, executor.checkpointSink)
 }
 
 type recordingPlanner struct {
@@ -402,4 +511,50 @@ func (c *recordingUsageCollector) Record(ctx context.Context, run *RunSummary, u
 	c.usage = usage
 
 	return c.err
+}
+
+type recordingCheckpointSink struct {
+	checkpoints []AgentCheckpoint
+	runs        []*RunSummary
+	err         error
+	nextID      int64
+	calls       int
+}
+
+func (s *recordingCheckpointSink) SaveCheckpoint(ctx context.Context, run *RunSummary, checkpoint AgentCheckpoint) (*CheckpointSummary, error) {
+	s.calls++
+	s.runs = append(s.runs, run)
+	s.checkpoints = append(s.checkpoints, checkpoint)
+	if s.err != nil {
+		return nil, s.err
+	}
+	id := s.nextID
+	if id == 0 {
+		id = int64(s.calls)
+	}
+	s.nextID = id + 1
+
+	return &CheckpointSummary{
+		CheckpointID: id,
+		ThreadID:     run.ThreadID,
+		RunID:        run.RunID,
+	}, nil
+}
+
+func (s *recordingCheckpointSink) namespaces() []string {
+	namespaces := make([]string, 0, len(s.checkpoints))
+	for _, checkpoint := range s.checkpoints {
+		namespaces = append(namespaces, checkpoint.CheckpointNS)
+	}
+
+	return namespaces
+}
+
+func decodeCheckpointValues(t *testing.T, raw string) map[string]any {
+	t.Helper()
+
+	var values map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &values))
+
+	return values
 }

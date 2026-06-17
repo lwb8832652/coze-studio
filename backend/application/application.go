@@ -152,12 +152,7 @@ func Init(ctx context.Context) (err error) {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
 	task.NewWorker(primaryServices.taskSVC).Start(ctx)
-	agentRunEventSink := agentthread.NewApplicationRunEventSink(primaryServices.agentThreadSVC)
-	agentRunExecutor := agentthread.NewHarnessExecutor(nil, nil, agentthread.HarnessExecutorOptions{
-		EventSink:      agentRunEventSink,
-		MemoryProvider: agentthread.NewThreadMemoryProvider(primaryServices.agentThreadSVC, 8),
-		UsageCollector: agentthread.NewThreadUsageCollector(primaryServices.agentThreadSVC),
-	})
+	agentRunExecutor := agentthread.NewApplicationHarnessExecutor(primaryServices.agentThreadSVC)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
 
 	complexServices, err := initComplexServices(ctx, primaryServices)
