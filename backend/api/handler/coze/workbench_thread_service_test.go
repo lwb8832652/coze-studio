@@ -414,6 +414,18 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			payload json,
 			created_at integer
 		);
+		CREATE TABLE agent_checkpoints (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			parent_checkpoint_id integer,
+			checkpoint_ns text,
+			channel_values json,
+			channel_versions json,
+			pending_sends json,
+			metadata json,
+			created_at integer
+		);
 		CREATE TABLE agent_token_usage (
 			id integer PRIMARY KEY,
 			thread_id integer,

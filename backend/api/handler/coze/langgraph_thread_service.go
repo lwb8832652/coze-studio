@@ -19,12 +19,14 @@ package coze
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"gorm.io/gorm"
 
 	langgraphapi "github.com/coze-dev/coze-studio/backend/api/model/agent/langgraph"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
@@ -191,6 +193,35 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 	if limit > 100 {
 		limit = 100
 	}
+
+	checkpointLimit := limit + req.Offset
+	if checkpointLimit <= 0 || checkpointLimit > 100 {
+		checkpointLimit = 100
+	}
+	checkpointsResp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
+		ThreadID: req.ThreadID,
+		Limit:    checkpointLimit,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if checkpointsResp != nil && checkpointsResp.Total > 0 {
+		checkpoints := checkpointsResp.Checkpoints
+		if req.Offset > 0 {
+			if req.Offset >= int32(len(checkpoints)) {
+				c.JSON(consts.StatusOK, []*langgraphapi.ThreadState{})
+				return
+			}
+			checkpoints = checkpoints[req.Offset:]
+		}
+		if int32(len(checkpoints)) > limit {
+			checkpoints = checkpoints[:limit]
+		}
+		c.JSON(consts.StatusOK, langGraphThreadHistoryFromCheckpoints(threadResp.Thread, checkpoints))
+		return
+	}
+
 	page := int32(1)
 	if req.Offset > 0 {
 		page = req.Offset/limit + 1
@@ -223,6 +254,16 @@ func buildLangGraphThreadState(ctx context.Context, thread *appagentthread.Threa
 		return nil, nil
 	}
 
+	checkpointResp, err := appagentthread.SVC.GetLatestCheckpoint(ctx, &appagentthread.GetLatestCheckpointRequest{
+		ThreadID: thread.ThreadID,
+	})
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if checkpointResp != nil && checkpointResp.Checkpoint != nil {
+		return langGraphThreadStateFromCheckpoint(thread, checkpointResp.Checkpoint), nil
+	}
+
 	messagesResp, err := appagentthread.SVC.ListMessages(ctx, &appagentthread.ListMessagesRequest{
 		ThreadID: thread.ThreadID,
 		Page:     1,
@@ -245,6 +286,45 @@ func buildLangGraphThreadState(ctx context.Context, thread *appagentthread.Threa
 		CreatedAt: langGraphTime(thread.CreatedAt),
 		UpdatedAt: langGraphTime(thread.UpdatedAt),
 	}, nil
+}
+
+func langGraphThreadHistoryFromCheckpoints(
+	thread *appagentthread.ThreadSummary,
+	checkpoints []*appagentthread.CheckpointSummary,
+) []*langgraphapi.ThreadState {
+	result := make([]*langgraphapi.ThreadState, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		if checkpoint == nil {
+			continue
+		}
+		result = append(result, langGraphThreadStateFromCheckpoint(thread, checkpoint))
+	}
+
+	return result
+}
+
+func langGraphThreadStateFromCheckpoint(
+	thread *appagentthread.ThreadSummary,
+	checkpoint *appagentthread.CheckpointSummary,
+) *langgraphapi.ThreadState {
+	values := langGraphCheckpointValues(checkpoint.ChannelValues)
+	metadata := langGraphThreadStateMetadata(
+		thread,
+		langGraphCheckpointMetadata(checkpoint),
+	)
+
+	return &langgraphapi.ThreadState{
+		Values: values,
+		Next:   langGraphCheckpointNext(checkpoint.PendingSends, values),
+		Config: langGraphThreadStateConfig(
+			checkpoint.ThreadID,
+			strconv.FormatInt(checkpoint.CheckpointID, 10),
+			checkpoint.CheckpointNS,
+		),
+		Metadata:  metadata,
+		CreatedAt: langGraphTime(checkpoint.CreatedAt),
+		UpdatedAt: langGraphTime(checkpoint.CreatedAt),
+	}
 }
 
 func langGraphThreadHistoryFromEvents(events []*appagentthread.RunEventSummary) []*langgraphapi.ThreadState {
@@ -279,6 +359,71 @@ func langGraphThreadHistoryFromEvents(events []*appagentthread.RunEventSummary) 
 	return result
 }
 
+func langGraphCheckpointValues(raw string) map[string]any {
+	values := langGraphRunEventPayloadMap(raw)
+	defaults := langGraphThreadStateValues(nil)
+	for key, value := range defaults {
+		if _, ok := values[key]; !ok {
+			values[key] = value
+		}
+	}
+
+	return values
+}
+
+func langGraphCheckpointMetadata(checkpoint *appagentthread.CheckpointSummary) map[string]any {
+	metadata := langGraphJSONMap(checkpoint.Metadata)
+	metadata["thread_id"] = strconv.FormatInt(checkpoint.ThreadID, 10)
+	metadata["run_id"] = strconv.FormatInt(checkpoint.RunID, 10)
+	metadata["checkpoint_id"] = strconv.FormatInt(checkpoint.CheckpointID, 10)
+	metadata["checkpoint_ns"] = checkpoint.CheckpointNS
+	metadata["checkpoint_source"] = "checkpoint"
+	if checkpoint.ParentCheckpointID > 0 {
+		metadata["parent_checkpoint_id"] = strconv.FormatInt(checkpoint.ParentCheckpointID, 10)
+	}
+	if strings.TrimSpace(checkpoint.ChannelVersions) != "" {
+		metadata["channel_versions"] = langGraphRunEventPayload(checkpoint.ChannelVersions)
+	}
+
+	return metadata
+}
+
+func langGraphCheckpointNext(raw string, values map[string]any) []string {
+	next := langGraphStringSliceValue(langGraphRunEventPayload(raw))
+	if len(next) > 0 {
+		return next
+	}
+
+	return langGraphStringSliceValue(values["next"])
+}
+
+func langGraphStringSliceValue(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return compactLangGraphStreamModes(typed)
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			switch candidate := item.(type) {
+			case string:
+				if candidate = strings.TrimSpace(candidate); candidate != "" {
+					result = append(result, candidate)
+				}
+			case map[string]any:
+				for _, key := range []string{"node", "target", "name"} {
+					if candidate := langGraphStringValue(candidate[key]); candidate != "" {
+						result = append(result, candidate)
+						break
+					}
+				}
+			}
+		}
+		return result
+	default:
+		return []string{}
+	}
+}
+
 func langGraphThreadStateValues(messages []*appagentthread.MessageSummary) map[string]any {
 	result := map[string]any{
 		"messages":     langGraphThreadStateMessages(messages),
@@ -311,12 +456,17 @@ func langGraphThreadStateMessages(messages []*appagentthread.MessageSummary) []m
 	return result
 }
 
-func langGraphThreadStateConfig(threadID int64, checkpointID string) map[string]any {
+func langGraphThreadStateConfig(threadID int64, checkpointID string, checkpointNS ...string) map[string]any {
+	ns := ""
+	if len(checkpointNS) > 0 {
+		ns = checkpointNS[0]
+	}
+
 	return map[string]any{
 		"configurable": map[string]any{
 			"thread_id":     strconv.FormatInt(threadID, 10),
 			"checkpoint_id": checkpointID,
-			"checkpoint_ns": "",
+			"checkpoint_ns": ns,
 		},
 	}
 }

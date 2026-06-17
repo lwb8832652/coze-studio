@@ -180,6 +180,50 @@ func TestLangGraphThreadStateHandlerReturnsMessagesAndConfig(t *testing.T) {
 	require.Contains(t, body, `"checkpoint_source":"thread_snapshot"`)
 }
 
+func TestLangGraphThreadStateHandlerPrefersLatestCheckpoint(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/state", GetLangGraphThreadState)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"checkpoint run"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleUser,
+		Content:  "fallback message should not be used",
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:           1,
+		RunID:              runResp.Run.RunID,
+		ParentCheckpointID: 99,
+		CheckpointNS:       "planner",
+		ChannelValues:      `{"messages":[{"role":"assistant","content":"checkpoint state"}],"artifacts":{"report_id":"artifact-1"},"memory":{"items":["from-checkpoint"]}}`,
+		ChannelVersions:    `{"messages":2,"artifacts":1}`,
+		PendingSends:       `[{"node":"tools"}]`,
+		Metadata:           `{"source":"checkpoint","runtime":"go"}`,
+	})
+	require.NoError(t, err)
+
+	stateResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/state", nil)
+	body := string(stateResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, stateResp.Code)
+	require.Contains(t, body, `"checkpoint_id":"`+strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"checkpoint_ns":"planner"`)
+	require.Contains(t, body, `"content":"checkpoint state"`)
+	require.NotContains(t, body, "fallback message should not be used")
+	require.Contains(t, body, `"next":["tools"]`)
+	require.Contains(t, body, `"report_id":"artifact-1"`)
+	require.Contains(t, body, `"checkpoint_source":"checkpoint"`)
+	require.Contains(t, body, `"runtime":"go"`)
+	require.Contains(t, body, `"parent_checkpoint_id":"99"`)
+}
+
 func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
@@ -208,4 +252,58 @@ func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
 	require.Contains(t, body, `"source":"event_log"`)
 	require.Contains(t, body, `"event_type":"node.update"`)
 	require.Contains(t, body, `"status":"planning"`)
+}
+
+func TestLangGraphThreadHistoryHandlerPrefersCheckpointHistory(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"checkpoint history"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "node.update",
+		Payload:   `{"node":"agent","delta":{"status":"event-fallback"}}`,
+	})
+	require.NoError(t, err)
+	first, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "planner",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"older checkpoint"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"checkpoint","step":1}`,
+	})
+	require.NoError(t, err)
+	second, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:           1,
+		RunID:              runResp.Run.RunID,
+		ParentCheckpointID: first.Checkpoint.CheckpointID,
+		CheckpointNS:       "tools",
+		ChannelValues:      `{"messages":[{"role":"assistant","content":"newer checkpoint"}],"tool_results":{"search":"ok"}}`,
+		ChannelVersions:    `{"messages":2,"tool_results":1}`,
+		PendingSends:       `[{"node":"final"}]`,
+		Metadata:           `{"source":"checkpoint","step":2}`,
+	})
+	require.NoError(t, err)
+
+	historyResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/history?limit=10", nil)
+	body := string(historyResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, historyResp.Code)
+	require.Contains(t, body, `"checkpoint_id":"`+strconv.FormatInt(second.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"checkpoint_id":"`+strconv.FormatInt(first.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"checkpoint_ns":"tools"`)
+	require.Contains(t, body, `"content":"newer checkpoint"`)
+	require.Contains(t, body, `"tool_results":{"search":"ok"}`)
+	require.Contains(t, body, `"next":["final"]`)
+	require.Contains(t, body, `"parent_checkpoint_id":"`+strconv.FormatInt(first.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"checkpoint_source":"checkpoint"`)
+	require.NotContains(t, body, "event-fallback")
 }
