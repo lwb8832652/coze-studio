@@ -213,6 +213,11 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 		return nil, err
 	}
 
+	status, err := normalizeInitialRunStatus(req.Status)
+	if err != nil {
+		return nil, err
+	}
+
 	id, err := s.idGen.GenID(ctx)
 	if err != nil {
 		return nil, err
@@ -225,7 +230,7 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 		SpaceID:           thread.SpaceID,
 		CreatorID:         thread.CreatorID,
 		AssistantID:       defaultString(req.AssistantID, "default"),
-		Status:            entity.RunStatusPending,
+		Status:            status,
 		Command:           defaultJSON(req.Command, "{}"),
 		Input:             input,
 		Config:            defaultJSON(req.Config, "{}"),
@@ -244,6 +249,19 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	}
 
 	return run, nil
+}
+
+func normalizeInitialRunStatus(status entity.RunStatus) (entity.RunStatus, error) {
+	if status == "" {
+		return entity.RunStatusPending, nil
+	}
+
+	switch status {
+	case entity.RunStatusPending, entity.RunStatusQueued:
+		return status, nil
+	default:
+		return "", InvalidArgumentErrorf("initial run status %q is not supported", status)
+	}
 }
 
 func (s *threadService) GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error) {

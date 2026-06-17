@@ -53,6 +53,7 @@ type AppendMessageRequest struct {
 type CreateRunRequest struct {
 	ThreadID          int64
 	AssistantID       string
+	Status            entity.RunStatus
 	Command           string
 	Input             string
 	Config            string

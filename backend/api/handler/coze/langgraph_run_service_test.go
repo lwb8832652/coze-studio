@@ -163,7 +163,7 @@ func TestLangGraphRunCreateAcceptsEmptyObjectInput(t *testing.T) {
 	require.Contains(t, body, `"input":{}`)
 }
 
-func TestLangGraphRunCreateRejectsReadyCheckpointResumeUntilReplayIsImplemented(t *testing.T) {
+func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testing.T) {
 	h := server.Default()
 	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
 	installAgentThreadTestService(t)
@@ -171,6 +171,19 @@ func TestLangGraphRunCreateRejectsReadyCheckpointResumeUntilReplayIsImplemented(
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
 		ThreadID: 1,
 		Input:    `{"messages":[{"role":"user","content":"resume guard"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "source-worker",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:        runResp.Run.RunID,
+		From:         appagentthread.RunStatusRunning,
+		WorkerID:     "source-worker",
+		ErrorCode:    "step_error",
+		ErrorMessage: "source run failed",
 	})
 	require.NoError(t, err)
 	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
@@ -187,6 +200,9 @@ func TestLangGraphRunCreateRejectsReadyCheckpointResumeUntilReplayIsImplemented(
 		"assistant_id": "default",
 		"input": map[string]any{
 			"messages": []map[string]any{{"role": "user", "content": "resume"}},
+		},
+		"metadata": map[string]any{
+			"client": "langgraph_sdk",
 		},
 		"command": map[string]any{
 			"resume": map[string]any{
@@ -205,9 +221,37 @@ func TestLangGraphRunCreateRejectsReadyCheckpointResumeUntilReplayIsImplemented(
 	)
 	body := string(createResp.Result().Body())
 
-	require.Equal(t, http.StatusBadRequest, createResp.Code)
-	require.Contains(t, body, "checkpoint resume execution is not enabled")
-	require.Contains(t, body, "pending_sends_available")
+	require.Equal(t, http.StatusOK, createResp.Code)
+
+	var apiRun langgraphapi.Run
+	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
+	require.Equal(t, "queued", apiRun.Status)
+	require.Equal(t, "langgraph_sdk", apiRun.Metadata["client"])
+
+	resumeCommand, ok := apiRun.Command["resume"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeCommand["checkpoint_id"])
+	require.Equal(t, "harness.terminal", resumeCommand["checkpoint_ns"])
+	require.Equal(t, "pending_sends", resumeCommand["resume_from"])
+	require.Equal(t, "pending_sends_available", resumeCommand["reason"])
+	require.Equal(t, "worker_replay_not_enabled", resumeCommand["guard"])
+
+	resumeMetadata, ok := apiRun.Metadata["checkpoint_resume"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, resumeMetadata["protected_from_worker_claim"])
+	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeMetadata["checkpoint_id"])
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusQueued, persisted.Run.Status)
+
+	claimed, err := appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, claimed.Runs)
+	require.Contains(t, body, `"checkpoint_resume"`)
 }
 
 func TestLangGraphRunCreateRejectsNotResumableCheckpoint(t *testing.T) {
@@ -630,6 +674,58 @@ func TestLangGraphRunCreateStreamCreatesRunAndStreamsMetadata(t *testing.T) {
 	require.Contains(t, persisted.Run.Metadata, `"source":"langgraph_sdk"`)
 	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
 	require.Equal(t, `["updates"]`, persisted.Run.StreamMode)
+}
+
+func TestLangGraphRunCreateStreamCreatesProtectedResumeRunFromReadyCheckpoint(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"resume stream guard"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "source-worker",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:        runResp.Run.RunID,
+		From:         appagentthread.RunStatusRunning,
+		WorkerID:     "source-worker",
+		ErrorCode:    "step_error",
+		ErrorMessage: "source run failed",
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "harness.terminal",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"partial"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed","error_type":"step_error"}`,
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	resp, err := createAndStreamLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
+		ThreadID:    1,
+		AssistantID: "default",
+		Input:       map[string]any{},
+		Command: map[string]any{
+			"resume": map[string]any{
+				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
+			},
+		},
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusQueued, resp.Run.Status)
+	require.Contains(t, writer.String(), `"status":"queued"`)
+	require.Contains(t, resp.Run.Metadata, `"protected_from_worker_claim":true`)
 }
 
 func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {

@@ -176,6 +176,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
 		ThreadID:          req.ThreadID,
 		AssistantID:       req.AssistantID,
+		Status:            domainentity.RunStatus(req.Status),
 		Command:           req.Command,
 		Input:             req.Input,
 		Config:            req.Config,

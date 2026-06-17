@@ -44,6 +44,8 @@ const (
 	langGraphRunStreamEnd      = "end"
 	langGraphRunStreamError    = "error"
 	langGraphRunStreamPageSize = int32(200)
+
+	langGraphCheckpointResumeGuard = "worker_replay_not_enabled"
 )
 
 type langGraphRunStreamWriter interface {
@@ -62,7 +64,8 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
-	if msg, err := validateLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config); err != nil {
+	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
+	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	} else if msg != "" {
@@ -70,7 +73,7 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	createReq, err := buildLangGraphCreateRunRequest(req)
+	createReq, err := buildLangGraphCreateRunRequest(req, resume)
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)
 		return
@@ -96,7 +99,8 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
-	if msg, err := validateLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config); err != nil {
+	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
+	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	} else if msg != "" {
@@ -104,7 +108,7 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	resp, err := createLangGraphRunFromStreamRequest(ctx, req)
+	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
@@ -524,16 +528,28 @@ func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext)
 	joinLangGraphStatelessRunStreamEvents(ctx, writer, req, run)
 }
 
-func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagentthread.CreateRunRequest, error) {
+func buildLangGraphCreateRunRequest(
+	req langgraphapi.CreateRunRequest,
+	resume *langgraphapi.CheckpointResumeReadiness,
+) (*appagentthread.CreateRunRequest, error) {
 	input, err := langGraphMarshalJSON(req.Input, "{}")
 	if err != nil {
 		return nil, err
 	}
-	command, err := langGraphMarshalJSON(req.Command, "{}")
+	commandValue := req.Command
+	metadataValue := req.Metadata
+	status := appagentthread.RunStatus("")
+	if resume != nil {
+		commandValue = langGraphRunCommandWithCheckpointResume(req.Command, resume)
+		metadataValue = langGraphRunMetadataWithCheckpointResume(req.Metadata, resume)
+		status = appagentthread.RunStatusQueued
+	}
+
+	command, err := langGraphMarshalJSON(commandValue, "{}")
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := langGraphMarshalJSON(req.Metadata, "{}")
+	metadata, err := langGraphMarshalJSON(metadataValue, "{}")
 	if err != nil {
 		return nil, err
 	}
@@ -553,6 +569,7 @@ func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagen
 	return &appagentthread.CreateRunRequest{
 		ThreadID:          req.ThreadID,
 		AssistantID:       req.AssistantID,
+		Status:            status,
 		Input:             input,
 		Command:           command,
 		Metadata:          metadata,
@@ -565,29 +582,71 @@ func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagen
 	}, nil
 }
 
-func validateLangGraphRunCheckpointResumeRequest(
+func resolveLangGraphRunCheckpointResumeRequest(
 	ctx context.Context,
 	threadID int64,
 	command map[string]any,
 	config map[string]any,
-) (string, error) {
+) (*langgraphapi.CheckpointResumeReadiness, string, error) {
 	checkpointID := langGraphRequestedCheckpointID(command, config)
 	if checkpointID <= 0 {
-		return "", nil
+		return nil, "", nil
 	}
 
 	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, threadID, checkpointID)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	if readiness == nil {
-		return "checkpoint_id does not belong to thread_id", nil
+		return nil, "checkpoint_id does not belong to thread_id", nil
 	}
 	if !readiness.Resumable {
-		return "checkpoint is not resumable: " + readiness.Reason, nil
+		return nil, "checkpoint is not resumable: " + readiness.Reason, nil
 	}
 
-	return "checkpoint resume execution is not enabled yet: " + readiness.Reason, nil
+	return readiness, "", nil
+}
+
+func langGraphRunCommandWithCheckpointResume(
+	command map[string]any,
+	readiness *langgraphapi.CheckpointResumeReadiness,
+) map[string]any {
+	normalized := normalizeLangGraphMetadata(command)
+	resume := map[string]any{}
+	if existing, ok := normalized["resume"].(map[string]any); ok {
+		resume = normalizeLangGraphMetadata(existing)
+	}
+
+	resume["checkpoint_id"] = readiness.CheckpointID
+	resume["checkpoint_ns"] = readiness.CheckpointNS
+	resume["thread_id"] = readiness.ThreadID
+	resume["run_id"] = readiness.RunID
+	resume["resume_from"] = readiness.ResumeFrom
+	resume["reason"] = readiness.Reason
+	resume["pending_sends"] = readiness.PendingSends
+	resume["guard"] = langGraphCheckpointResumeGuard
+	normalized["resume"] = resume
+
+	return normalized
+}
+
+func langGraphRunMetadataWithCheckpointResume(
+	metadata map[string]any,
+	readiness *langgraphapi.CheckpointResumeReadiness,
+) map[string]any {
+	normalized := normalizeLangGraphMetadata(metadata)
+	normalized["checkpoint_resume"] = map[string]any{
+		"checkpoint_id":                 readiness.CheckpointID,
+		"checkpoint_ns":                 readiness.CheckpointNS,
+		"source_run_id":                 readiness.RunID,
+		"resume_from":                   readiness.ResumeFrom,
+		"reason":                        readiness.Reason,
+		"protected_from_worker_claim":   true,
+		"guard":                         langGraphCheckpointResumeGuard,
+		"pending_sends_available_count": len(readiness.PendingSends),
+	}
+
+	return normalized
 }
 
 func langGraphRequestedCheckpointID(command map[string]any, config map[string]any) int64 {
@@ -614,6 +673,7 @@ func langGraphRequestedCheckpointID(command map[string]any, config map[string]an
 func createLangGraphRunFromStreamRequest(
 	ctx context.Context,
 	req langgraphapi.CreateStreamRunRequest,
+	resume *langgraphapi.CheckpointResumeReadiness,
 ) (*appagentthread.CreateRunResponse, error) {
 	createReq, err := buildLangGraphCreateRunRequest(langgraphapi.CreateRunRequest{
 		ThreadID:          req.ThreadID,
@@ -627,7 +687,7 @@ func createLangGraphRunFromStreamRequest(
 		MultitaskStrategy: req.MultitaskStrategy,
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
-	})
+	}, resume)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +719,7 @@ func createLangGraphStatelessRun(
 		MultitaskStrategy: req.MultitaskStrategy,
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
-	})
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -729,7 +789,15 @@ func createAndStreamLangGraphRun(
 	writer langGraphRunStreamWriter,
 	req langgraphapi.CreateStreamRunRequest,
 ) (*appagentthread.CreateRunResponse, error) {
-	resp, err := createLangGraphRunFromStreamRequest(ctx, req)
+	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
+	if err != nil {
+		return nil, err
+	}
+	if msg != "" {
+		return nil, fmt.Errorf("%s", msg)
+	}
+
+	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
 	if err != nil {
 		return nil, err
 	}

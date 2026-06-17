@@ -685,6 +685,32 @@ func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	require.NotZero(t, got.StartedAt)
 }
 
+func TestThreadRepositoryClaimPendingRunsSkipsQueuedResumeRuns(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	queued := newRepositoryTestRun(1, 10, entity.RunStatusQueued, 100)
+	queued.Metadata = `{"checkpoint_resume":{"protected_from_worker_claim":true}}`
+	require.NoError(t, repo.CreateRun(context.Background(), queued))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(2, 10, entity.RunStatusPending, 101)))
+
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    10,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, int64(2), claimed[0].ID)
+
+	gotQueued, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusQueued, gotQueued.Status)
+	require.Empty(t, gotQueued.WorkerID)
+}
+
 func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

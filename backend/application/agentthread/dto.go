@@ -254,6 +254,7 @@ type ListMessagesResponse struct {
 type CreateRunRequest struct {
 	ThreadID          int64
 	AssistantID       string
+	Status            RunStatus
 	Command           string
 	Input             string
 	Config            string

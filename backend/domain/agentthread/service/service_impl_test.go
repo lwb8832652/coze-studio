@@ -261,6 +261,38 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.Len(t, repo.runs[10], 1)
 }
 
+func TestCreateRunAcceptsQueuedInitialStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[{"role":"user","content":"resume"}]}`,
+		Status:   entity.RunStatusQueued,
+		Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusQueued, run.Status)
+	require.Equal(t, entity.RunStatusQueued, repo.runs[10][0].Status)
+}
+
+func TestCreateRunRejectsUnsupportedInitialStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[{"role":"user","content":"resume"}]}`,
+		Status:   entity.RunStatusRunning,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "initial run status")
+}
+
 func TestListRunsNormalizesPaging(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.runs[10] = []*entity.Run{

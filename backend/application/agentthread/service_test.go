@@ -376,6 +376,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
+	initialStatus := RunStatusQueued
 
 	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
 		ThreadID:       10,
@@ -385,6 +386,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 		Context:        `{"source":"web"}`,
 		Metadata:       `{"trace":"abc"}`,
 		IdempotencyKey: "idem-1",
+		Status:         initialStatus,
 	})
 
 	require.NoError(t, err)
@@ -395,6 +397,7 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	require.Equal(t, `{"source":"web"}`, domainSVC.createRunReq.Context)
 	require.Equal(t, `{"trace":"abc"}`, domainSVC.createRunReq.Metadata)
 	require.Equal(t, "idem-1", domainSVC.createRunReq.IdempotencyKey)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
 	require.Equal(t, int64(200), resp.Run.RunID)
 	require.Equal(t, int64(10), resp.Run.ThreadID)
 	require.Equal(t, RunStatusPending, resp.Run.Status)
