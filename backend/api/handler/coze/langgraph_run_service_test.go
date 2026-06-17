@@ -135,7 +135,7 @@ func TestLangGraphRunCreateAcceptsFlexibleInputAndStreamMode(t *testing.T) {
 
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
 	require.NoError(t, err)
-	require.Equal(t, `[{"content":"数组输入","role":"user"}]`, persisted.Run.Input)
+	require.JSONEq(t, `[{"content":"数组输入","role":"user"}]`, persisted.Run.Input)
 	require.Equal(t, `["updates"]`, persisted.Run.StreamMode)
 }
 
@@ -161,6 +161,98 @@ func TestLangGraphRunCreateAcceptsEmptyObjectInput(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, createResp.Code)
 	require.Contains(t, body, `"input":{}`)
+}
+
+func TestLangGraphRunCreateRejectsReadyCheckpointResumeUntilReplayIsImplemented(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"resume guard"}]}`,
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "harness.terminal",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"partial"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed","error_type":"step_error"}`,
+	})
+	require.NoError(t, err)
+	createPayload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"input": map[string]any{
+			"messages": []map[string]any{{"role": "user", "content": "resume"}},
+		},
+		"command": map[string]any{
+			"resume": map[string]any{
+				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(createResp.Result().Body())
+
+	require.Equal(t, http.StatusBadRequest, createResp.Code)
+	require.Contains(t, body, "checkpoint resume execution is not enabled")
+	require.Contains(t, body, "pending_sends_available")
+}
+
+func TestLangGraphRunCreateRejectsNotResumableCheckpoint(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"done guard"}]}`,
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "harness.terminal",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"done"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"succeeded"}`,
+	})
+	require.NoError(t, err)
+	createPayload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"input":        map[string]any{},
+		"config": map[string]any{
+			"configurable": map[string]any{
+				"checkpoint_id": strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(createResp.Result().Body())
+
+	require.Equal(t, http.StatusBadRequest, createResp.Code)
+	require.Contains(t, body, "checkpoint is not resumable")
+	require.Contains(t, body, "checkpoint_already_succeeded")
 }
 
 func TestLangGraphRunListAcceptsCompatibleStatusFilter(t *testing.T) {

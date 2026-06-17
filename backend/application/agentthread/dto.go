@@ -339,6 +339,14 @@ type ListCheckpointsResponse struct {
 	Total       int64
 }
 
+type GetCheckpointRequest struct {
+	CheckpointID int64
+}
+
+type GetCheckpointResponse struct {
+	Checkpoint *CheckpointSummary
+}
+
 type GetLatestCheckpointRequest struct {
 	ThreadID int64
 }

@@ -240,6 +240,28 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, langGraphThreadHistoryFromEvents(eventsResp.Events))
 }
 
+// GetLangGraphCheckpointResumeReadiness .
+// @router /api/threads/:thread_id/checkpoints/:checkpoint_id/resume [GET]
+func GetLangGraphCheckpointResumeReadiness(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.GetCheckpointResumeRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, req.ThreadID, req.CheckpointID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if readiness == nil {
+		invalidParamRequestResponse(c, "checkpoint_id does not belong to thread_id")
+		return
+	}
+
+	c.JSON(consts.StatusOK, readiness)
+}
+
 func langGraphThreadsToAPI(threads []*appagentthread.ThreadSummary) []*langgraphapi.Thread {
 	result := make([]*langgraphapi.Thread, 0, len(threads))
 	for _, thread := range threads {
@@ -247,6 +269,85 @@ func langGraphThreadsToAPI(threads []*appagentthread.ThreadSummary) []*langgraph
 	}
 
 	return result
+}
+
+func buildLangGraphCheckpointResumeReadiness(
+	ctx context.Context,
+	threadID int64,
+	checkpointID int64,
+) (*langgraphapi.CheckpointResumeReadiness, error) {
+	checkpointResp, err := appagentthread.SVC.GetCheckpoint(ctx, &appagentthread.GetCheckpointRequest{
+		CheckpointID: checkpointID,
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
+		return nil, err
+	}
+	if checkpointResp == nil || checkpointResp.Checkpoint == nil || checkpointResp.Checkpoint.ThreadID != threadID {
+		return nil, nil
+	}
+
+	return langGraphCheckpointResumeReadiness(checkpointResp.Checkpoint), nil
+}
+
+func langGraphCheckpointResumeReadiness(checkpoint *appagentthread.CheckpointSummary) *langgraphapi.CheckpointResumeReadiness {
+	if checkpoint == nil {
+		return nil
+	}
+
+	values := langGraphCheckpointValues(checkpoint.ChannelValues)
+	next := langGraphCheckpointNext(checkpoint.PendingSends, values)
+	metadata := langGraphCheckpointMetadata(checkpoint)
+	status := langGraphStringValue(metadata["status"])
+	errorType := langGraphStringValue(metadata["error_type"])
+	reason := langGraphCheckpointResumeReason(metadata, status, next)
+	resumable := reason == "pending_sends_available"
+	resumeFrom := ""
+	if resumable {
+		resumeFrom = "pending_sends"
+	}
+
+	return &langgraphapi.CheckpointResumeReadiness{
+		ThreadID:     strconv.FormatInt(checkpoint.ThreadID, 10),
+		RunID:        strconv.FormatInt(checkpoint.RunID, 10),
+		CheckpointID: strconv.FormatInt(checkpoint.CheckpointID, 10),
+		CheckpointNS: checkpoint.CheckpointNS,
+		Resumable:    resumable,
+		ResumeFrom:   resumeFrom,
+		Reason:       reason,
+		Status:       status,
+		ErrorType:    errorType,
+		PendingSends: next,
+		Config: langGraphThreadStateConfig(
+			checkpoint.ThreadID,
+			strconv.FormatInt(checkpoint.CheckpointID, 10),
+			checkpoint.CheckpointNS,
+		),
+		Metadata: metadata,
+	}
+}
+
+func langGraphCheckpointResumeReason(metadata map[string]any, status string, pendingSends []string) string {
+	if source := langGraphStringValue(metadata["source"]); source != "agent_harness" {
+		return "unsupported_checkpoint_source"
+	}
+	if phase := langGraphStringValue(metadata["checkpoint_phase"]); phase != "terminal" {
+		return "checkpoint_not_terminal"
+	}
+	if status == "succeeded" {
+		return "checkpoint_already_succeeded"
+	}
+	if len(pendingSends) == 0 {
+		return "no_pending_sends"
+	}
+	if status == "failed" || status == "canceled" {
+		return "pending_sends_available"
+	}
+
+	return "unsupported_checkpoint_status"
 }
 
 func buildLangGraphThreadState(ctx context.Context, thread *appagentthread.ThreadSummary) (*langgraphapi.ThreadState, error) {

@@ -360,6 +360,27 @@ func (s *ApplicationService) ListCheckpoints(ctx context.Context, req *ListCheck
 	return resp, nil
 }
 
+func (s *ApplicationService) GetCheckpoint(ctx context.Context, req *GetCheckpointRequest) (*GetCheckpointResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get checkpoint request is required")
+	}
+
+	checkpoint, err := s.ThreadSVC.GetCheckpoint(ctx, &domainservice.GetCheckpointRequest{
+		CheckpointID: req.CheckpointID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if checkpoint == nil {
+		return nil, fmt.Errorf("agent thread service returned empty checkpoint")
+	}
+
+	return &GetCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
+}
+
 func (s *ApplicationService) GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*GetLatestCheckpointResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

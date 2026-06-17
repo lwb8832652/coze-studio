@@ -62,6 +62,13 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
+	if msg, err := validateLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config); err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	} else if msg != "" {
+		invalidParamRequestResponse(c, msg)
+		return
+	}
 
 	createReq, err := buildLangGraphCreateRunRequest(req)
 	if err != nil {
@@ -87,6 +94,13 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 	}
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
+		return
+	}
+	if msg, err := validateLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config); err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	} else if msg != "" {
+		invalidParamRequestResponse(c, msg)
 		return
 	}
 
@@ -549,6 +563,52 @@ func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagen
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
 	}, nil
+}
+
+func validateLangGraphRunCheckpointResumeRequest(
+	ctx context.Context,
+	threadID int64,
+	command map[string]any,
+	config map[string]any,
+) (string, error) {
+	checkpointID := langGraphRequestedCheckpointID(command, config)
+	if checkpointID <= 0 {
+		return "", nil
+	}
+
+	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, threadID, checkpointID)
+	if err != nil {
+		return "", err
+	}
+	if readiness == nil {
+		return "checkpoint_id does not belong to thread_id", nil
+	}
+	if !readiness.Resumable {
+		return "checkpoint is not resumable: " + readiness.Reason, nil
+	}
+
+	return "checkpoint resume execution is not enabled yet: " + readiness.Reason, nil
+}
+
+func langGraphRequestedCheckpointID(command map[string]any, config map[string]any) int64 {
+	if checkpointID := langGraphInt64Value(command["checkpoint_id"]); checkpointID > 0 {
+		return checkpointID
+	}
+	if resume, ok := command["resume"].(map[string]any); ok {
+		if checkpointID := langGraphInt64Value(resume["checkpoint_id"]); checkpointID > 0 {
+			return checkpointID
+		}
+	}
+	if checkpointID := langGraphInt64Value(config["checkpoint_id"]); checkpointID > 0 {
+		return checkpointID
+	}
+	if configurable, ok := config["configurable"].(map[string]any); ok {
+		if checkpointID := langGraphInt64Value(configurable["checkpoint_id"]); checkpointID > 0 {
+			return checkpointID
+		}
+	}
+
+	return 0
 }
 
 func createLangGraphRunFromStreamRequest(

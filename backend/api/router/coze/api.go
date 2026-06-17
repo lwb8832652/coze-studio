@@ -428,6 +428,7 @@ func Register(r *server.Hertz) {
 		_threads := _api.Group("/threads")
 		_threads.GET("/:thread_id/state", coze.GetLangGraphThreadState)
 		_threads.GET("/:thread_id/history", coze.GetLangGraphThreadHistory)
+		_threads.GET("/:thread_id/checkpoints/:checkpoint_id/resume", coze.GetLangGraphCheckpointResumeReadiness)
 		_threads.POST("/:thread_id/runs", coze.CreateLangGraphRun)
 		_threads.POST("/:thread_id/runs/stream", coze.CreateLangGraphRunStream)
 		_threads.GET("/:thread_id/runs", coze.ListLangGraphRuns)

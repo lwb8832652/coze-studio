@@ -421,6 +421,20 @@ func (s *threadService) ListCheckpoints(ctx context.Context, req *ListCheckpoint
 	})
 }
 
+func (s *threadService) GetCheckpoint(ctx context.Context, req *GetCheckpointRequest) (*entity.Checkpoint, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("get checkpoint request is required")
+	}
+	if req.CheckpointID <= 0 {
+		return nil, InvalidArgumentErrorf("checkpoint id is required")
+	}
+
+	return s.repo.GetCheckpoint(ctx, req.CheckpointID)
+}
+
 func (s *threadService) GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*entity.Checkpoint, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err

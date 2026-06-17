@@ -100,6 +100,10 @@ type ListCheckpointsRequest struct {
 	Limit    int32
 }
 
+type GetCheckpointRequest struct {
+	CheckpointID int64
+}
+
 type GetLatestCheckpointRequest struct {
 	ThreadID int64
 }
@@ -192,6 +196,7 @@ type ThreadService interface {
 	AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error)
 	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 	CreateCheckpoint(ctx context.Context, req *CreateCheckpointRequest) (*entity.Checkpoint, error)
+	GetCheckpoint(ctx context.Context, req *GetCheckpointRequest) (*entity.Checkpoint, error)
 	ListCheckpoints(ctx context.Context, req *ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error)
 	GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*entity.Checkpoint, error)
 	RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error)

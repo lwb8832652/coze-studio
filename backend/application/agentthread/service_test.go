@@ -623,6 +623,17 @@ func TestApplicationCheckpointMethodsMapDomainCheckpoints(t *testing.T) {
 			Metadata:        `{}`,
 			CreatedAt:       602,
 		},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           202,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":["by-id"]}`,
+			ChannelVersions: `{}`,
+			PendingSends:    `[{"node":"resume"}]`,
+			Metadata:        `{"source":"agent_harness"}`,
+			CreatedAt:       603,
+		},
 		checkpointTotal: 1,
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
@@ -662,6 +673,15 @@ func TestApplicationCheckpointMethodsMapDomainCheckpoints(t *testing.T) {
 	require.Equal(t, int64(10), domainSVC.getLatestCheckpointReq.ThreadID)
 	require.Equal(t, int64(502), latestResp.Checkpoint.CheckpointID)
 	require.Equal(t, `{"messages":["latest"]}`, latestResp.Checkpoint.ChannelValues)
+
+	getResp, err := app.GetCheckpoint(context.Background(), &GetCheckpointRequest{
+		CheckpointID: 503,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(503), domainSVC.getCheckpointReq.CheckpointID)
+	require.Equal(t, int64(503), getResp.Checkpoint.CheckpointID)
+	require.Equal(t, "harness.terminal", getResp.Checkpoint.CheckpointNS)
+	require.Equal(t, `[{"node":"resume"}]`, getResp.Checkpoint.PendingSends)
 }
 
 func TestApplicationServiceRequiresThreadService(t *testing.T) {
@@ -736,6 +756,7 @@ type recordingThreadService struct {
 	appendedRunEvent       *entity.RunEvent
 	createdCheckpoint      *entity.Checkpoint
 	latestCheckpoint       *entity.Checkpoint
+	checkpoint             *entity.Checkpoint
 	rememberedMemory       *entity.Memory
 	recordedTokenUsage     *entity.TokenUsage
 	messages               []*entity.Message
@@ -761,6 +782,7 @@ type recordingThreadService struct {
 	appendRunEventReq      *domainservice.AppendRunEventRequest
 	createCheckpointReq    *domainservice.CreateCheckpointRequest
 	listCheckpointsReq     *domainservice.ListCheckpointsRequest
+	getCheckpointReq       *domainservice.GetCheckpointRequest
 	getLatestCheckpointReq *domainservice.GetLatestCheckpointRequest
 	rememberMemoryReq      *domainservice.RememberMemoryRequest
 	recallMemoriesReq      *domainservice.RecallMemoriesRequest
@@ -900,6 +922,11 @@ func (s *recordingThreadService) CreateCheckpoint(ctx context.Context, req *doma
 func (s *recordingThreadService) ListCheckpoints(ctx context.Context, req *domainservice.ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {
 	s.listCheckpointsReq = req
 	return s.checkpoints, s.checkpointTotal, nil
+}
+
+func (s *recordingThreadService) GetCheckpoint(ctx context.Context, req *domainservice.GetCheckpointRequest) (*entity.Checkpoint, error) {
+	s.getCheckpointReq = req
+	return s.checkpoint, nil
 }
 
 func (s *recordingThreadService) GetLatestCheckpoint(ctx context.Context, req *domainservice.GetLatestCheckpointRequest) (*entity.Checkpoint, error) {

@@ -519,6 +519,24 @@ func TestGetLatestCheckpointReturnsNewest(t *testing.T) {
 	require.Equal(t, int64(2), checkpoint.ID)
 }
 
+func TestGetCheckpointReturnsCheckpointByID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.checkpoints[10] = []*entity.Checkpoint{
+		{ID: 1, ThreadID: 10, RunID: 20, CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, CheckpointNS: "harness.terminal", CreatedAt: 200},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	checkpoint, err := svc.GetCheckpoint(context.Background(), &GetCheckpointRequest{
+		CheckpointID: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), repo.lastCheckpointID)
+	require.Equal(t, int64(2), checkpoint.ID)
+	require.Equal(t, "harness.terminal", checkpoint.CheckpointNS)
+}
+
 func TestRememberMemoryCreatesThreadMemory(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
@@ -729,6 +747,7 @@ type memoryRepo struct {
 	lastRunListReq             repository.ListRunsRequest
 	lastRunEventListReq        repository.ListRunEventsRequest
 	lastCheckpointListReq      repository.ListCheckpointsRequest
+	lastCheckpointID           int64
 	lastMemoryListReq          repository.ListMemoriesRequest
 	lastTokenUsageListReq      repository.ListTokenUsageRequest
 	lastTokenUsageAggregateReq repository.AggregateTokenUsageRequest
@@ -942,6 +961,22 @@ func (r *memoryRepo) CreateCheckpoint(ctx context.Context, checkpoint *entity.Ch
 	defer r.mu.Unlock()
 	r.checkpoints[checkpoint.ThreadID] = append(r.checkpoints[checkpoint.ThreadID], cloneCheckpoint(checkpoint))
 	return nil
+}
+
+func (r *memoryRepo) GetCheckpoint(ctx context.Context, checkpointID int64) (*entity.Checkpoint, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastCheckpointID = checkpointID
+
+	for _, threadCheckpoints := range r.checkpoints {
+		for _, checkpoint := range threadCheckpoints {
+			if checkpoint.ID == checkpointID {
+				return cloneCheckpoint(checkpoint), nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("checkpoint %d not found", checkpointID)
 }
 
 func (r *memoryRepo) ListCheckpoints(ctx context.Context, req repository.ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {

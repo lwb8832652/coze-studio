@@ -399,6 +399,14 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), latest.ID)
+
+	byID, err := repo.GetCheckpoint(context.Background(), 2)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), byID.ThreadID)
+	require.Equal(t, int64(20), byID.RunID)
+	require.Equal(t, int64(1), byID.ParentCheckpointID)
+	require.Equal(t, "planner", byID.CheckpointNS)
+	require.Equal(t, `{"messages":["new"],"next":["tools"]}`, byID.ChannelValues)
 }
 
 func TestThreadRepositoryRejectsInvalidCheckpointJSON(t *testing.T) {

@@ -307,3 +307,82 @@ func TestLangGraphThreadHistoryHandlerPrefersCheckpointHistory(t *testing.T) {
 	require.Contains(t, body, `"checkpoint_source":"checkpoint"`)
 	require.NotContains(t, body, "event-fallback")
 }
+
+func TestLangGraphCheckpointResumeReadinessHandlerReturnsPendingSends(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"resume me"}]}`,
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "harness.terminal",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"partial"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[{"node":"generate_answer","step_id":"step-1"},{"node":"finalize","step_id":"step-2"}]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed","error_type":"step_error"}`,
+	})
+	require.NoError(t, err)
+
+	resumeResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/1/checkpoints/"+strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10)+"/resume",
+		nil,
+	)
+	body := string(resumeResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, resumeResp.Code)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"checkpoint_id":"`+strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"checkpoint_ns":"harness.terminal"`)
+	require.Contains(t, body, `"run_id":"2"`)
+	require.Contains(t, body, `"resumable":true`)
+	require.Contains(t, body, `"resume_from":"pending_sends"`)
+	require.Contains(t, body, `"reason":"pending_sends_available"`)
+	require.Contains(t, body, `"status":"failed"`)
+	require.Contains(t, body, `"error_type":"step_error"`)
+	require.Contains(t, body, `"pending_sends":["generate_answer","finalize"]`)
+	require.Contains(t, body, `"checkpoint_source":"checkpoint"`)
+}
+
+func TestLangGraphCheckpointResumeReadinessHandlerReturnsNotResumableForSucceededCheckpoint(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"done"}]}`,
+	})
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "harness.terminal",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"done"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"succeeded"}`,
+	})
+	require.NoError(t, err)
+
+	resumeResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/1/checkpoints/"+strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10)+"/resume",
+		nil,
+	)
+	body := string(resumeResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, resumeResp.Code)
+	require.Contains(t, body, `"resumable":false`)
+	require.Contains(t, body, `"reason":"checkpoint_already_succeeded"`)
+	require.Contains(t, body, `"status":"succeeded"`)
+	require.Contains(t, body, `"pending_sends":[]`)
+}

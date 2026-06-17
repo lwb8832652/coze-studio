@@ -56,6 +56,11 @@ type GetThreadHistoryRequest struct {
 	Offset   int32 `query:"offset,omitempty"`
 }
 
+type GetCheckpointResumeRequest struct {
+	ThreadID     int64 `path:"thread_id,required"`
+	CheckpointID int64 `path:"checkpoint_id,required"`
+}
+
 type ThreadState struct {
 	Values    map[string]any `json:"values"`
 	Next      []string       `json:"next"`
@@ -63,4 +68,19 @@ type ThreadState struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt string         `json:"created_at"`
 	UpdatedAt string         `json:"updated_at,omitempty"`
+}
+
+type CheckpointResumeReadiness struct {
+	ThreadID     string         `json:"thread_id"`
+	RunID        string         `json:"run_id"`
+	CheckpointID string         `json:"checkpoint_id"`
+	CheckpointNS string         `json:"checkpoint_ns"`
+	Resumable    bool           `json:"resumable"`
+	ResumeFrom   string         `json:"resume_from,omitempty"`
+	Reason       string         `json:"reason"`
+	Status       string         `json:"status,omitempty"`
+	ErrorType    string         `json:"error_type,omitempty"`
+	PendingSends []string       `json:"pending_sends"`
+	Config       map[string]any `json:"config"`
+	Metadata     map[string]any `json:"metadata"`
 }

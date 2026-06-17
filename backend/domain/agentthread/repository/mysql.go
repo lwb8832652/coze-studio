@@ -439,6 +439,17 @@ func (r *threadRepository) CreateCheckpoint(ctx context.Context, checkpoint *ent
 	return r.db.WithContext(ctx).Create(po).Error
 }
 
+func (r *threadRepository) GetCheckpoint(ctx context.Context, checkpointID int64) (*entity.Checkpoint, error) {
+	var po checkpointPO
+	if err := r.db.WithContext(ctx).
+		Where("id = ?", checkpointID).
+		First(&po).Error; err != nil {
+		return nil, err
+	}
+
+	return po.toEntity(), nil
+}
+
 func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error) {
 	limit := req.Limit
 	if limit <= 0 {

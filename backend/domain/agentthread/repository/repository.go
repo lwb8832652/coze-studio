@@ -36,6 +36,7 @@ type ThreadRepository interface {
 	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
 	CreateCheckpoint(ctx context.Context, checkpoint *entity.Checkpoint) error
+	GetCheckpoint(ctx context.Context, checkpointID int64) (*entity.Checkpoint, error)
 	ListCheckpoints(ctx context.Context, req ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error)
 	GetLatestCheckpoint(ctx context.Context, threadID int64) (*entity.Checkpoint, error)
 	CreateMemory(ctx context.Context, memory *entity.Memory) error
