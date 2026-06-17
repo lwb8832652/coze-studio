@@ -33,26 +33,6 @@ type ApplicationService struct {
 	DomainSVC domain.SkillService
 }
 
-type ListSkillVersionsRequest struct {
-	SkillID int64
-}
-
-type ListSkillVersionsResponse struct {
-	Versions []*SkillVersionSummary
-}
-
-type SkillVersionSummary struct {
-	ID           int64
-	SkillID      int64
-	Version      string
-	SkillMD      string
-	InputSchema  string
-	OutputSchema string
-	Executor     string
-	Permissions  string
-	CreatedAt    int64
-}
-
 func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.ImportSkillRequest) (*skillapi.SkillResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
@@ -170,7 +150,7 @@ func (s *ApplicationService) TestRunSkill(ctx context.Context, req *skillapi.Tes
 	}, nil
 }
 
-func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *ListSkillVersionsRequest) (*ListSkillVersionsResponse, error) {
+func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *skillapi.ListSkillVersionsRequest) (*skillapi.ListSkillVersionsResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -182,14 +162,14 @@ func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *ListSki
 		return nil, err
 	}
 
-	resp := &ListSkillVersionsResponse{
-		Versions: make([]*SkillVersionSummary, 0, len(versions)),
+	data := &skillapi.ListSkillVersionsData{
+		Versions: make([]*skillapi.SkillVersion, 0, len(versions)),
 	}
 	for _, version := range versions {
-		resp.Versions = append(resp.Versions, skillVersionToSummary(version))
+		data.Versions = append(data.Versions, skillVersionToAPI(version))
 	}
 
-	return resp, nil
+	return &skillapi.ListSkillVersionsResponse{Code: 0, Msg: "success", Data: data}, nil
 }
 
 func (s *ApplicationService) requireDomainSVC() error {
@@ -279,12 +259,12 @@ func entityToAPI(skill *entity.Skill) (*skillapi.Skill, error) {
 	}, nil
 }
 
-func skillVersionToSummary(version *entity.SkillVersion) *SkillVersionSummary {
+func skillVersionToAPI(version *entity.SkillVersion) *skillapi.SkillVersion {
 	if version == nil {
 		return nil
 	}
 
-	return &SkillVersionSummary{
+	return &skillapi.SkillVersion{
 		ID:           version.ID,
 		SkillID:      version.SkillID,
 		Version:      version.Version,

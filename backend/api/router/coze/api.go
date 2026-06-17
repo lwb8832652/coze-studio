@@ -444,6 +444,7 @@ func Register(r *server.Hertz) {
 			_skills := _workbench.Group("/skills", _skillsMw()...)
 			_skills.GET("/:skill_id", append(_getskillMw(), coze.GetSkill)...)
 			_skill_id := _skills.Group("/:skill_id", _skill_idMw()...)
+			_skill_id.GET("/versions", append(_listskillversionsMw(), coze.ListSkillVersions)...)
 			_skill_id.GET("/export", append(_exportskillMw(), coze.ExportSkill)...)
 			_skill_id.POST("/test_run", append(_testrunskillMw(), coze.TestRunSkill)...)
 			_workbench.POST("/skills", append(_createskillMw(), coze.CreateSkill)...)

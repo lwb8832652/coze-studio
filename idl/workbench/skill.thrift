@@ -85,6 +85,34 @@ struct ListSkillsResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct SkillVersion {
+    1: required i64 id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 skill_id (agw.js_conv="str", api.js_conv="true")
+    3: required string version
+    4: required string skill_md
+    5: required string input_schema
+    6: required string output_schema
+    7: required string executor
+    8: required string permissions
+    9: required i64 created_at
+}
+
+struct ListSkillVersionsRequest {
+    1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListSkillVersionsData {
+    1: required list<SkillVersion> versions
+}
+
+struct ListSkillVersionsResponse {
+    1: optional ListSkillVersionsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 struct GetSkillRequest {
     1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
@@ -139,6 +167,10 @@ service WorkbenchSkillService {
     )
     SkillResponse GetSkill(1: GetSkillRequest request)(
         api.get="/api/workbench/skills/:skill_id",
+        api.category="workbench"
+    )
+    ListSkillVersionsResponse ListSkillVersions(1: ListSkillVersionsRequest request)(
+        api.get="/api/workbench/skills/:skill_id/versions",
         api.category="workbench"
     )
     ExportSkillResponse ExportSkill(1: GetSkillRequest request)(

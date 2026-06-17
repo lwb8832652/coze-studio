@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
 	domain "github.com/coze-dev/coze-studio/backend/domain/skill/service"
 )
@@ -49,16 +50,18 @@ func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
 	}
 	app := &ApplicationService{DomainSVC: domainSVC}
 
-	resp, err := app.ListSkillVersions(context.Background(), &ListSkillVersionsRequest{SkillID: 101})
+	resp, err := app.ListSkillVersions(context.Background(), &skillapi.ListSkillVersionsRequest{SkillID: 101})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(101), domainSVC.listVersionsSkillID)
-	require.Len(t, resp.Versions, 1)
-	require.Equal(t, int64(201), resp.Versions[0].ID)
-	require.Equal(t, int64(101), resp.Versions[0].SkillID)
-	require.Equal(t, "1.1.0", resp.Versions[0].Version)
-	require.Equal(t, "# Weekly Report", resp.Versions[0].SkillMD)
-	require.Equal(t, `{"language":"python"}`, resp.Versions[0].Executor)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Len(t, resp.Data.Versions, 1)
+	require.Equal(t, int64(201), resp.Data.Versions[0].ID)
+	require.Equal(t, int64(101), resp.Data.Versions[0].SkillID)
+	require.Equal(t, "1.1.0", resp.Data.Versions[0].Version)
+	require.Equal(t, "# Weekly Report", resp.Data.Versions[0].SkillMD)
+	require.Equal(t, `{"language":"python"}`, resp.Data.Versions[0].Executor)
 }
 
 type recordingSkillDomainService struct {

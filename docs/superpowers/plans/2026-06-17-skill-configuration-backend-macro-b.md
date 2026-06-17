@@ -2,7 +2,7 @@
 
 ## Frozen Scope
 
-Macro Stage B replicates Deer-flow style skill configuration on top of the existing Coze Studio skill compatibility layer. This document covers the first backend slice only. It does not add frontend pages, new menu behavior, MCP tool permissions, IM channels, or unrelated security scanning.
+Macro Stage B replicates Deer-flow style skill configuration on top of the existing Coze Studio skill compatibility layer. This document tracks the backend slices completed so far. It does not add frontend pages, new menu behavior, MCP tool permissions, IM channels, or unrelated security scanning.
 
 ## Completed In This Slice
 
@@ -16,18 +16,21 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
 - Add repository support for creating and listing skill versions.
 - Record a version snapshot when a skill is imported, created, or updated.
 - Expose domain-level `ListVersions`.
-- Expose application-level `ListSkillVersions` with a stable summary DTO.
+- Expose application-level `ListSkillVersions` with the Workbench API response shape.
+- Add IDL contract and HTTP handler for `GET /api/workbench/skills/:skill_id/versions`.
+- Register the version list route under the existing Workbench skill path without redirects.
 - Keep existing Workbench skill API methods compatible.
 
 ## Current Semantics
 
 The existing `skills` table remains the live skill compatibility table. The new `skill_versions` repository model stores immutable snapshots for history, future rollback, and export workflows.
 
-For this slice, `SkillMD` is generated from the existing skill entity fields. Later Deer-flow `.skill` package support will replace this generated text with the actual `SKILL.md` entrypoint content and frontmatter.
+For the current backend slices, `SkillMD` is generated from the existing skill entity fields. Later Deer-flow `.skill` package support will replace this generated text with the actual `SKILL.md` entrypoint content and frontmatter.
+
+Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- HTTP handler and IDL exposure for listing versions.
 - Deer-flow `SKILL.md` frontmatter parser.
 - `.skill` archive import and safe extraction.
 - Custom skill content editing and rollback.
