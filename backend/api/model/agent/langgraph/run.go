@@ -24,7 +24,7 @@ type Run struct {
 	CreatedAt         string         `json:"created_at"`
 	UpdatedAt         string         `json:"updated_at"`
 	Metadata          map[string]any `json:"metadata"`
-	Input             map[string]any `json:"input"`
+	Input             any            `json:"input"`
 	Command           map[string]any `json:"command"`
 	Config            map[string]any `json:"config"`
 	Context           map[string]any `json:"context"`
@@ -38,12 +38,12 @@ type Run struct {
 type CreateRunRequest struct {
 	ThreadID          int64          `path:"thread_id,required" json:"-"`
 	AssistantID       string         `json:"assistant_id,omitempty"`
-	Input             map[string]any `json:"input,omitempty"`
+	Input             any            `json:"input,omitempty"`
 	Command           map[string]any `json:"command,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	Config            map[string]any `json:"config,omitempty"`
 	Context           map[string]any `json:"context,omitempty"`
-	StreamMode        []string       `json:"stream_mode,omitempty"`
+	StreamMode        any            `json:"stream_mode,omitempty"`
 	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
 	OnDisconnect      string         `json:"on_disconnect,omitempty"`
 	Durability        string         `json:"durability,omitempty"`
@@ -52,12 +52,12 @@ type CreateRunRequest struct {
 type CreateStreamRunRequest struct {
 	ThreadID          int64          `path:"thread_id,required" json:"-"`
 	AssistantID       string         `json:"assistant_id,omitempty"`
-	Input             map[string]any `json:"input,omitempty"`
+	Input             any            `json:"input,omitempty"`
 	Command           map[string]any `json:"command,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	Config            map[string]any `json:"config,omitempty"`
 	Context           map[string]any `json:"context,omitempty"`
-	StreamMode        []string       `json:"stream_mode,omitempty"`
+	StreamMode        any            `json:"stream_mode,omitempty"`
 	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
 	OnDisconnect      string         `json:"on_disconnect,omitempty"`
 	Durability        string         `json:"durability,omitempty"`
@@ -67,12 +67,12 @@ type CreateStreamRunRequest struct {
 
 type StatelessCreateRunRequest struct {
 	AssistantID       string         `json:"assistant_id,omitempty"`
-	Input             map[string]any `json:"input,omitempty"`
+	Input             any            `json:"input,omitempty"`
 	Command           map[string]any `json:"command,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	Config            map[string]any `json:"config,omitempty"`
 	Context           map[string]any `json:"context,omitempty"`
-	StreamMode        []string       `json:"stream_mode,omitempty"`
+	StreamMode        any            `json:"stream_mode,omitempty"`
 	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
 	OnDisconnect      string         `json:"on_disconnect,omitempty"`
 	Durability        string         `json:"durability,omitempty"`
@@ -80,12 +80,12 @@ type StatelessCreateRunRequest struct {
 
 type StatelessCreateStreamRunRequest struct {
 	AssistantID       string         `json:"assistant_id,omitempty"`
-	Input             map[string]any `json:"input,omitempty"`
+	Input             any            `json:"input,omitempty"`
 	Command           map[string]any `json:"command,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
 	Config            map[string]any `json:"config,omitempty"`
 	Context           map[string]any `json:"context,omitempty"`
-	StreamMode        []string       `json:"stream_mode,omitempty"`
+	StreamMode        any            `json:"stream_mode,omitempty"`
 	MultitaskStrategy string         `json:"multitask_strategy,omitempty"`
 	OnDisconnect      string         `json:"on_disconnect,omitempty"`
 	Durability        string         `json:"durability,omitempty"`

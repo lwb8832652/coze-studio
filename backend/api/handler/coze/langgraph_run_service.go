@@ -18,6 +18,7 @@ package coze
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
-	if len(req.Input) == 0 {
+	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
@@ -79,7 +80,7 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
-	if len(req.Input) == 0 {
+	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
@@ -109,7 +110,7 @@ func CreateLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
-	if len(req.Input) == 0 {
+	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
@@ -131,7 +132,7 @@ func CreateLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContex
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
-	if len(req.Input) == 0 {
+	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
 	}
@@ -164,7 +165,7 @@ func ListLangGraphRuns(ctx context.Context, c *app.RequestContext) {
 
 	var status *appagentthread.RunStatus
 	if strings.TrimSpace(req.Status) != "" {
-		mapped := appagentthread.RunStatus(req.Status)
+		mapped := langGraphInternalRunStatus(req.Status)
 		status = &mapped
 	}
 	pageSize := req.Limit
@@ -525,7 +526,7 @@ func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagen
 	if err != nil {
 		return nil, err
 	}
-	streamMode, err := langGraphMarshalJSON(req.StreamMode, `["messages","updates"]`)
+	streamMode, err := langGraphMarshalStreamMode(req.StreamMode)
 	if err != nil {
 		return nil, err
 	}
@@ -895,11 +896,11 @@ func langGraphRunToAPI(run *appagentthread.RunSummary) *langgraphapi.Run {
 		RunID:             strconv.FormatInt(run.RunID, 10),
 		ThreadID:          strconv.FormatInt(run.ThreadID, 10),
 		AssistantID:       run.AssistantID,
-		Status:            string(run.Status),
+		Status:            langGraphRunStatus(run.Status),
 		CreatedAt:         langGraphTime(run.CreatedAt),
 		UpdatedAt:         langGraphTime(run.UpdatedAt),
 		Metadata:          langGraphJSONMap(run.Metadata),
-		Input:             langGraphJSONMap(run.Input),
+		Input:             langGraphJSONValue(run.Input, map[string]any{}),
 		Command:           langGraphJSONMap(run.Command),
 		Config:            langGraphJSONMap(run.Config),
 		Context:           langGraphJSONMap(run.Context),
@@ -993,7 +994,7 @@ func writeLangGraphRunStreamMetadata(ctx context.Context, writer langGraphRunStr
 	payload, err := sonic.Marshal(map[string]any{
 		"run_id":      strconv.FormatInt(run.RunID, 10),
 		"thread_id":   strconv.FormatInt(run.ThreadID, 10),
-		"status":      string(run.Status),
+		"status":      langGraphRunStatus(run.Status),
 		"attempt":     1,
 		"server_time": langGraphTime(time.Now().UnixMilli()),
 	})
@@ -1042,7 +1043,7 @@ func writeLangGraphRunStreamEnd(ctx context.Context, writer langGraphRunStreamWr
 	payload, err := sonic.Marshal(map[string]any{
 		"run_id":    strconv.FormatInt(run.RunID, 10),
 		"thread_id": strconv.FormatInt(run.ThreadID, 10),
-		"status":    string(run.Status),
+		"status":    langGraphRunStatus(run.Status),
 		"reason":    "terminal_run",
 	})
 	if err != nil {
@@ -1105,6 +1106,93 @@ func parseLangGraphLastEventID(raw string) (int64, bool) {
 	return parsed, true
 }
 
+func langGraphInputProvided(value any) bool {
+	return value != nil
+}
+
+func langGraphRunStatus(status appagentthread.RunStatus) string {
+	switch status {
+	case appagentthread.RunStatusSucceeded:
+		return "success"
+	case appagentthread.RunStatusFailed:
+		return "error"
+	case appagentthread.RunStatusCanceled:
+		return "interrupted"
+	default:
+		return string(status)
+	}
+}
+
+func langGraphInternalRunStatus(status string) appagentthread.RunStatus {
+	switch strings.TrimSpace(status) {
+	case "success":
+		return appagentthread.RunStatusSucceeded
+	case "error":
+		return appagentthread.RunStatusFailed
+	case "interrupted":
+		return appagentthread.RunStatusCanceled
+	default:
+		return appagentthread.RunStatus(status)
+	}
+}
+
+func langGraphMarshalStreamMode(value any) (string, error) {
+	modes, ok, err := langGraphStreamModes(value)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		modes = []string{"messages", "updates"}
+	}
+
+	return sonic.MarshalString(modes)
+}
+
+func langGraphStreamModes(value any) ([]string, bool, error) {
+	if value == nil {
+		return nil, false, nil
+	}
+
+	switch typed := value.(type) {
+	case string:
+		mode := strings.TrimSpace(typed)
+		if mode == "" {
+			return nil, false, nil
+		}
+		return []string{mode}, true, nil
+	case []string:
+		modes := compactLangGraphStreamModes(typed)
+		return modes, len(modes) > 0, nil
+	case []any:
+		modes := make([]string, 0, len(typed))
+		for _, item := range typed {
+			mode, ok := item.(string)
+			if !ok {
+				return nil, false, fmt.Errorf("stream_mode must be a string or string array")
+			}
+			mode = strings.TrimSpace(mode)
+			if mode != "" {
+				modes = append(modes, mode)
+			}
+		}
+		return modes, len(modes) > 0, nil
+	default:
+		return nil, false, fmt.Errorf("stream_mode must be a string or string array")
+	}
+}
+
+func compactLangGraphStreamModes(values []string) []string {
+	modes := make([]string, 0, len(values))
+	for _, value := range values {
+		mode := strings.TrimSpace(value)
+		if mode != "" {
+			modes = append(modes, mode)
+		}
+	}
+
+	return modes
+}
+
 func langGraphMarshalJSON(value any, defaultValue string) (string, error) {
 	if value == nil {
 		return defaultValue, nil
@@ -1124,6 +1212,19 @@ func langGraphMarshalJSON(value any, defaultValue string) (string, error) {
 	return sonic.MarshalString(value)
 }
 
+func langGraphJSONValue(raw string, defaultValue any) any {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue
+	}
+
+	var result any
+	if err := sonic.UnmarshalString(raw, &result); err != nil || result == nil {
+		return defaultValue
+	}
+
+	return result
+}
+
 func langGraphJSONMap(raw string) map[string]any {
 	result := map[string]any{}
 	if strings.TrimSpace(raw) == "" {
@@ -1137,13 +1238,19 @@ func langGraphJSONMap(raw string) map[string]any {
 }
 
 func langGraphJSONStringSlice(raw string) []string {
-	result := []string{}
 	if strings.TrimSpace(raw) == "" {
-		return result
+		return []string{}
 	}
+
+	var result any
 	if err := sonic.UnmarshalString(raw, &result); err != nil {
 		return []string{}
 	}
 
-	return result
+	modes, ok, err := langGraphStreamModes(result)
+	if err != nil || !ok {
+		return []string{}
+	}
+
+	return modes
 }
