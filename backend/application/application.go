@@ -154,6 +154,7 @@ func Init(ctx context.Context) (err error) {
 	task.NewWorker(primaryServices.taskSVC).Start(ctx)
 	agentRunExecutor := agentthread.NewApplicationHarnessExecutor(primaryServices.agentThreadSVC)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
+	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
 
 	complexServices, err := initComplexServices(ctx, primaryServices)
 	if err != nil {

@@ -29,9 +29,17 @@ const (
 	agentThreadWorkerIDEnv         = "AGENT_THREAD_WORKER_ID"
 	agentThreadWorkerBatchSizeEnv  = "AGENT_THREAD_WORKER_BATCH_SIZE"
 	agentThreadWorkerIntervalMsEnv = "AGENT_THREAD_WORKER_INTERVAL_MS"
+
+	agentThreadResumeWorkerEnabledEnv    = "AGENT_THREAD_RESUME_WORKER_ENABLED"
+	agentThreadResumeWorkerIDEnv         = "AGENT_THREAD_RESUME_WORKER_ID"
+	agentThreadResumeWorkerBatchSizeEnv  = "AGENT_THREAD_RESUME_WORKER_BATCH_SIZE"
+	agentThreadResumeWorkerIntervalMsEnv = "AGENT_THREAD_RESUME_WORKER_INTERVAL_MS"
 )
 
-const defaultRunWorkerInterval = 2 * time.Second
+const (
+	defaultRunWorkerInterval       = 2 * time.Second
+	defaultResumeRunWorkerInterval = 2 * time.Second
+)
 
 type RunWorkerOptions struct {
 	Interval time.Duration
@@ -101,6 +109,81 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{
 		Interval: time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,
+	})
+	worker.Start(ctx)
+
+	return worker
+}
+
+type ResumeRunWorkerOptions struct {
+	Interval time.Duration
+}
+
+type ResumeRunWorker struct {
+	processor *ResumeRunProcessor
+	interval  time.Duration
+}
+
+func NewResumeRunWorker(processor *ResumeRunProcessor, opts ResumeRunWorkerOptions) *ResumeRunWorker {
+	interval := opts.Interval
+	if interval <= 0 {
+		interval = defaultResumeRunWorkerInterval
+	}
+
+	return &ResumeRunWorker{
+		processor: processor,
+		interval:  interval,
+	}
+}
+
+func (w *ResumeRunWorker) Start(ctx context.Context) {
+	if w == nil || w.processor == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(w.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.RunOnce(ctx)
+			}
+		}
+	}()
+}
+
+func (w *ResumeRunWorker) RunOnce(ctx context.Context) {
+	if w == nil || w.processor == nil {
+		return
+	}
+
+	if err := w.processor.ProcessQueuedResumeRuns(ctx); err != nil {
+		logs.CtxErrorf(ctx, "[agent-resume-run-worker] process queued resume runs failed, err=%v", err)
+	}
+}
+
+func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executor ResumeRunExecutor) *ResumeRunWorker {
+	if !envkey.GetBoolD(agentThreadResumeWorkerEnabledEnv, false) {
+		return nil
+	}
+	if executor == nil {
+		logs.CtxWarnf(ctx, "[agent-resume-run-worker] enabled but executor is not configured")
+
+		return nil
+	}
+
+	eventSink := NewApplicationRunEventSink(app)
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  envkey.GetStringD(agentThreadResumeWorkerIDEnv, defaultResumeRunProcessorWorkerID),
+		BatchSize: envkey.GetI32D(agentThreadResumeWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink: eventSink,
+		Executor:  executor,
+	})
+	worker := NewResumeRunWorker(processor, ResumeRunWorkerOptions{
+		Interval: time.Duration(envkey.GetIntD(agentThreadResumeWorkerIntervalMsEnv, int(defaultResumeRunWorkerInterval/time.Millisecond))) * time.Millisecond,
 	})
 	worker.Start(ctx)
 
