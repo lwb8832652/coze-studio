@@ -705,6 +705,30 @@ func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingR
 	})
 }
 
+func (s *threadService) ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("claim queued resume runs request is required")
+	}
+
+	workerID := strings.TrimSpace(req.WorkerID)
+	if workerID == "" {
+		return nil, InvalidArgumentErrorf("worker id is required")
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	return s.repo.ClaimQueuedResumeRuns(ctx, repository.ClaimQueuedResumeRunsRequest{
+		WorkerID: workerID,
+		Limit:    limit,
+	})
+}
+
 func (s *threadService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
 	return s.transitionRun(ctx, req, entity.RunStatusSucceeded)
 }

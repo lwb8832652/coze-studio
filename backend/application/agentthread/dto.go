@@ -427,6 +427,15 @@ type ClaimPendingRunsResponse struct {
 	Runs []*RunSummary
 }
 
+type ClaimQueuedResumeRunsRequest struct {
+	WorkerID string
+	Limit    int32
+}
+
+type ClaimQueuedResumeRunsResponse struct {
+	Runs []*RunSummary
+}
+
 type UpdateRunStatusRequest struct {
 	RunID        int64
 	From         RunStatus

@@ -170,6 +170,11 @@ type ClaimPendingRunsRequest struct {
 	Limit    int32
 }
 
+type ClaimQueuedResumeRunsRequest struct {
+	WorkerID string
+	Limit    int32
+}
+
 type UpdateRunStatusRequest struct {
 	RunID        int64
 	From         entity.RunStatus
@@ -206,6 +211,7 @@ type ThreadService interface {
 	GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
 	GetThreadTokenUsage(ctx context.Context, req *GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
+	ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

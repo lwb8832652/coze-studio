@@ -32,6 +32,7 @@ type ThreadRepository interface {
 	GetRun(ctx context.Context, id int64) (*entity.Run, error)
 	ListRuns(ctx context.Context, req ListRunsRequest) ([]*entity.Run, int64, error)
 	ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error)
+	ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
 	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
@@ -102,6 +103,11 @@ type AggregateTokenUsageRequest struct {
 }
 
 type ClaimPendingRunsRequest struct {
+	WorkerID string
+	Limit    int32
+}
+
+type ClaimQueuedResumeRunsRequest struct {
 	WorkerID string
 	Limit    int32
 }

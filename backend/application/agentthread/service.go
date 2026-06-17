@@ -583,6 +583,32 @@ func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPen
 	return resp, nil
 }
 
+func (s *ApplicationService) ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) (*ClaimQueuedResumeRunsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("claim queued resume runs request is required")
+	}
+
+	runs, err := s.ThreadSVC.ClaimQueuedResumeRuns(ctx, &domainservice.ClaimQueuedResumeRunsRequest{
+		WorkerID: req.WorkerID,
+		Limit:    req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ClaimQueuedResumeRunsResponse{
+		Runs: make([]*RunSummary, 0, len(runs)),
+	}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

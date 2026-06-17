@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -341,6 +342,52 @@ func TestClaimPendingRunsNormalizesLimit(t *testing.T) {
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "worker-a", claimed[0].WorkerID)
 	require.Equal(t, int32(10), repo.lastClaimReq.Limit)
+}
+
+func TestClaimQueuedResumeRunsRequiresWorkerID(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
+		WorkerID: " ",
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.Contains(t, err.Error(), "worker id")
+}
+
+func TestClaimQueuedResumeRunsNormalizesLimit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{
+			ID:        1,
+			ThreadID:  10,
+			Status:    entity.RunStatusQueued,
+			Metadata:  `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+			CreatedAt: 1,
+		},
+		{
+			ID:        2,
+			ThreadID:  10,
+			Status:    entity.RunStatusQueued,
+			Metadata:  `{"source":"manual_queue"}`,
+			CreatedAt: 2,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	claimed, err := svc.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
+		WorkerID: "resume-worker-a",
+		Limit:    0,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, "resume-worker-a", repo.lastClaimQueuedResumeReq.WorkerID)
+	require.Equal(t, int32(10), repo.lastClaimQueuedResumeReq.Limit)
+	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
+	require.Equal(t, int64(1), claimed[0].ID)
 }
 
 func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
@@ -784,6 +831,7 @@ type memoryRepo struct {
 	lastTokenUsageListReq      repository.ListTokenUsageRequest
 	lastTokenUsageAggregateReq repository.AggregateTokenUsageRequest
 	lastClaimReq               repository.ClaimPendingRunsRequest
+	lastClaimQueuedResumeReq   repository.ClaimQueuedResumeRunsRequest
 	lastUpdateRunReq           repository.UpdateRunStatusRequest
 }
 
@@ -1231,6 +1279,47 @@ func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimP
 	now := time.Now().UnixMilli()
 	claimed := make([]*entity.Run, 0, limit)
 	for _, run := range pending {
+		if len(claimed) >= int(limit) {
+			break
+		}
+		run.Status = entity.RunStatusRunning
+		run.WorkerID = req.WorkerID
+		run.StartedAt = now
+		run.UpdatedAt = now
+		claimed = append(claimed, cloneRun(run))
+	}
+
+	return claimed, nil
+}
+
+func (r *memoryRepo) ClaimQueuedResumeRuns(ctx context.Context, req repository.ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastClaimQueuedResumeReq = req
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	queued := make([]*entity.Run, 0)
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.Status == entity.RunStatusQueued && strings.Contains(run.Metadata, `"checkpoint_resume"`) {
+				queued = append(queued, run)
+			}
+		}
+	}
+	sort.Slice(queued, func(i, j int) bool {
+		if queued[i].CreatedAt == queued[j].CreatedAt {
+			return queued[i].ID < queued[j].ID
+		}
+		return queued[i].CreatedAt < queued[j].CreatedAt
+	})
+
+	now := time.Now().UnixMilli()
+	claimed := make([]*entity.Run, 0, limit)
+	for _, run := range queued {
 		if len(claimed) >= int(limit) {
 			break
 		}

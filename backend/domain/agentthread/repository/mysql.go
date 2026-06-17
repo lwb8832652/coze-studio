@@ -719,6 +719,65 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	return claimed, nil
 }
 
+func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	workerID := strings.TrimSpace(req.WorkerID)
+	claimed := make([]*entity.Run, 0, limit)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := queuedResumeRunQuery(tx.Model(&runPO{})).
+			Order("created_at ASC, id ASC").
+			Limit(int(limit))
+		if tx.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+		}
+
+		pos := make([]*runPO, 0)
+		if err := query.Find(&pos).Error; err != nil {
+			return err
+		}
+
+		now := time.Now().UnixMilli()
+		for _, po := range pos {
+			db := queuedResumeRunQuery(tx.Model(&runPO{}).Where("id = ?", po.ID)).
+				Updates(map[string]any{
+					"status":     string(entity.RunStatusRunning),
+					"worker_id":  workerID,
+					"started_at": now,
+					"updated_at": now,
+				})
+			if db.Error != nil {
+				return db.Error
+			}
+			if db.RowsAffected == 0 {
+				continue
+			}
+
+			var updated runPO
+			if err := tx.Where("id = ?", po.ID).First(&updated).Error; err != nil {
+				return err
+			}
+			claimed = append(claimed, updated.toEntity())
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return claimed, nil
+}
+
+func queuedResumeRunQuery(db *gorm.DB) *gorm.DB {
+	return db.
+		Where("status = ?", string(entity.RunStatusQueued)).
+		Where("JSON_EXTRACT(metadata, '$.checkpoint_resume') IS NOT NULL")
+}
+
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
 	now := time.Now().UnixMilli()
 	updates := map[string]any{

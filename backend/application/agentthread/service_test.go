@@ -477,6 +477,34 @@ func TestApplicationClaimPendingRunsMapsDomainRuns(t *testing.T) {
 	require.Equal(t, "worker-a", resp.Runs[0].WorkerID)
 }
 
+func TestApplicationClaimQueuedResumeRunsMapsDomainRuns(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{
+				ID:       201,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				WorkerID: "resume-worker-a",
+				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+			},
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
+		WorkerID: "resume-worker-a",
+		Limit:    2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "resume-worker-a", domainSVC.claimQueuedResumeRunsReq.WorkerID)
+	require.Equal(t, int32(2), domainSVC.claimQueuedResumeRunsReq.Limit)
+	require.Len(t, resp.Runs, 1)
+	require.Equal(t, int64(201), resp.Runs[0].RunID)
+	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
+	require.Equal(t, "resume-worker-a", resp.Runs[0].WorkerID)
+}
+
 func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		completedRun: &entity.Run{
@@ -747,58 +775,60 @@ func TestInitServiceBuildsUsableThreadService(t *testing.T) {
 }
 
 type recordingThreadService struct {
-	created                *entity.Thread
-	createdRun             *entity.Run
-	claimedRuns            []*entity.Run
-	completedRun           *entity.Run
-	failedRun              *entity.Run
-	canceledRun            *entity.Run
-	listed                 []*entity.Thread
-	got                    *entity.Thread
-	appended               *entity.Message
-	appendedRunEvent       *entity.RunEvent
-	createdCheckpoint      *entity.Checkpoint
-	latestCheckpoint       *entity.Checkpoint
-	checkpoint             *entity.Checkpoint
-	rememberedMemory       *entity.Memory
-	recordedTokenUsage     *entity.TokenUsage
-	messages               []*entity.Message
-	runs                   []*entity.Run
-	runEvents              []*entity.RunEvent
-	checkpoints            []*entity.Checkpoint
-	recalledMemories       []*entity.Memory
-	tokenUsageRows         []*entity.TokenUsage
-	total                  int64
-	messageTotal           int64
-	runTotal               int64
-	runEventTotal          int64
-	checkpointTotal        int64
-	memoryTotal            int64
-	tokenUsageTotal        int64
-	tokenUsageAggregate    *entity.TokenUsageAggregate
-	createReq              *domainservice.CreateThreadRequest
-	createRunReq           *domainservice.CreateRunRequest
-	claimRunsReq           *domainservice.ClaimPendingRunsRequest
-	completeRunReq         *domainservice.UpdateRunStatusRequest
-	failRunReq             *domainservice.UpdateRunStatusRequest
-	cancelRunReq           *domainservice.UpdateRunStatusRequest
-	appendRunEventReq      *domainservice.AppendRunEventRequest
-	createCheckpointReq    *domainservice.CreateCheckpointRequest
-	listCheckpointsReq     *domainservice.ListCheckpointsRequest
-	getCheckpointReq       *domainservice.GetCheckpointRequest
-	getLatestCheckpointReq *domainservice.GetLatestCheckpointRequest
-	rememberMemoryReq      *domainservice.RememberMemoryRequest
-	recallMemoriesReq      *domainservice.RecallMemoriesRequest
-	recordTokenUsageReq    *domainservice.RecordTokenUsageRequest
-	getRunTokenUsageReq    *domainservice.GetRunTokenUsageRequest
-	getThreadTokenUsageReq *domainservice.GetThreadTokenUsageRequest
-	listReq                *domainservice.ListThreadsRequest
-	listRunsReq            *domainservice.ListRunsRequest
-	listRunEventsReq       *domainservice.ListRunEventsRequest
-	appendReq              *domainservice.AppendMessageRequest
-	listMessagesReq        *domainservice.ListMessagesRequest
-	getID                  int64
-	getRunID               int64
+	created                  *entity.Thread
+	createdRun               *entity.Run
+	claimedRuns              []*entity.Run
+	completedRun             *entity.Run
+	failedRun                *entity.Run
+	canceledRun              *entity.Run
+	listed                   []*entity.Thread
+	got                      *entity.Thread
+	appended                 *entity.Message
+	appendedRunEvent         *entity.RunEvent
+	createdCheckpoint        *entity.Checkpoint
+	latestCheckpoint         *entity.Checkpoint
+	checkpoint               *entity.Checkpoint
+	rememberedMemory         *entity.Memory
+	recordedTokenUsage       *entity.TokenUsage
+	messages                 []*entity.Message
+	runs                     []*entity.Run
+	claimedQueuedResumeRuns  []*entity.Run
+	runEvents                []*entity.RunEvent
+	checkpoints              []*entity.Checkpoint
+	recalledMemories         []*entity.Memory
+	tokenUsageRows           []*entity.TokenUsage
+	total                    int64
+	messageTotal             int64
+	runTotal                 int64
+	runEventTotal            int64
+	checkpointTotal          int64
+	memoryTotal              int64
+	tokenUsageTotal          int64
+	tokenUsageAggregate      *entity.TokenUsageAggregate
+	createReq                *domainservice.CreateThreadRequest
+	createRunReq             *domainservice.CreateRunRequest
+	claimRunsReq             *domainservice.ClaimPendingRunsRequest
+	claimQueuedResumeRunsReq *domainservice.ClaimQueuedResumeRunsRequest
+	completeRunReq           *domainservice.UpdateRunStatusRequest
+	failRunReq               *domainservice.UpdateRunStatusRequest
+	cancelRunReq             *domainservice.UpdateRunStatusRequest
+	appendRunEventReq        *domainservice.AppendRunEventRequest
+	createCheckpointReq      *domainservice.CreateCheckpointRequest
+	listCheckpointsReq       *domainservice.ListCheckpointsRequest
+	getCheckpointReq         *domainservice.GetCheckpointRequest
+	getLatestCheckpointReq   *domainservice.GetLatestCheckpointRequest
+	rememberMemoryReq        *domainservice.RememberMemoryRequest
+	recallMemoriesReq        *domainservice.RecallMemoriesRequest
+	recordTokenUsageReq      *domainservice.RecordTokenUsageRequest
+	getRunTokenUsageReq      *domainservice.GetRunTokenUsageRequest
+	getThreadTokenUsageReq   *domainservice.GetThreadTokenUsageRequest
+	listReq                  *domainservice.ListThreadsRequest
+	listRunsReq              *domainservice.ListRunsRequest
+	listRunEventsReq         *domainservice.ListRunEventsRequest
+	appendReq                *domainservice.AppendMessageRequest
+	listMessagesReq          *domainservice.ListMessagesRequest
+	getID                    int64
+	getRunID                 int64
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -890,6 +920,11 @@ func (s *recordingThreadService) ListRuns(ctx context.Context, req *domainservic
 func (s *recordingThreadService) ClaimPendingRuns(ctx context.Context, req *domainservice.ClaimPendingRunsRequest) ([]*entity.Run, error) {
 	s.claimRunsReq = req
 	return s.claimedRuns, nil
+}
+
+func (s *recordingThreadService) ClaimQueuedResumeRuns(ctx context.Context, req *domainservice.ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
+	s.claimQueuedResumeRunsReq = req
+	return s.claimedQueuedResumeRuns, nil
 }
 
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
