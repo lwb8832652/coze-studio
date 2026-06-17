@@ -17,6 +17,9 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
+	"io/fs"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -130,6 +133,87 @@ func TestParseDeclarationSkillMarkdownRequiresFrontmatter(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, decl)
 	assert.Contains(t, err.Error(), "frontmatter")
+}
+
+func TestParseDeclarationSkillArchive(t *testing.T) {
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+allowed-tools:
+  - search
+---
+# Weekly Research
+`,
+		"weekly-research/references/prompt.md": "Use concise bullets.",
+		"weekly-research/assets/logo.txt":      "asset",
+	})
+
+	decl, err := ParseDeclaration("weekly-research.skill", content)
+
+	require.NoError(t, err)
+	assert.Equal(t, "weekly-research", decl.Name)
+	assert.Equal(t, "deer_skill", decl.Type)
+	assert.Contains(t, decl.SkillMD, "# Weekly Research")
+	require.Len(t, decl.Resources, 2)
+	assert.Equal(t, "assets/logo.txt", decl.Resources[0].Path)
+	assert.Equal(t, int64(5), decl.Resources[0].Size)
+	assert.NotEmpty(t, decl.Resources[0].SHA256)
+	assert.Equal(t, "references/prompt.md", decl.Resources[1].Path)
+}
+
+func TestParseDeclarationSkillArchiveRejectsUnsafePath(t *testing.T) {
+	content := buildSkillArchive(t, map[string]string{
+		"../escape/SKILL.md": "bad",
+	})
+
+	decl, err := ParseDeclaration("bad.skill", content)
+
+	require.Error(t, err)
+	assert.Nil(t, decl)
+	assert.Contains(t, err.Error(), "unsafe archive path")
+}
+
+func TestParseDeclarationSkillArchiveRejectsDuplicateSkillMD(t *testing.T) {
+	content := buildSkillArchive(t, map[string]string{
+		"first/SKILL.md": `---
+name: first
+description: First skill.
+---`,
+		"second/SKILL.md": `---
+name: second
+description: Second skill.
+---`,
+	})
+
+	decl, err := ParseDeclaration("duplicate.skill", content)
+
+	require.Error(t, err)
+	assert.Nil(t, decl)
+	assert.Contains(t, err.Error(), "multiple SKILL.md")
+}
+
+func TestParseDeclarationSkillArchiveRejectsSymlink(t *testing.T) {
+	content := buildSkillArchiveEntries(t, []skillArchiveTestEntry{
+		{
+			Name: "weekly-research/SKILL.md",
+			Content: `---
+name: weekly-research
+description: Research weekly market changes.
+---`,
+		},
+		{
+			Name:    "weekly-research/assets/link",
+			Content: "../secret",
+			Mode:    fs.ModeSymlink | 0o777,
+		},
+	})
+
+	decl, err := ParseDeclaration("symlink.skill", content)
+
+	require.Error(t, err)
+	assert.Nil(t, decl)
+	assert.Contains(t, err.Error(), "symlink")
 }
 
 func TestParseDeclarationUnsupportedExtension(t *testing.T) {
@@ -275,4 +359,37 @@ func TestValidateDeclarationNormalizesWhitespace(t *testing.T) {
 	assert.Equal(t, "main.py", decl.Executor.Entry)
 	assert.Equal(t, "print('hello')", decl.Executor.Code)
 	assert.Equal(t, "workflow-123", decl.Executor.WorkflowID)
+}
+
+func buildSkillArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	entries := make([]skillArchiveTestEntry, 0, len(files))
+	for name, content := range files {
+		entries = append(entries, skillArchiveTestEntry{Name: name, Content: content})
+	}
+	return buildSkillArchiveEntries(t, entries)
+}
+
+type skillArchiveTestEntry struct {
+	Name    string
+	Content string
+	Mode    fs.FileMode
+}
+
+func buildSkillArchiveEntries(t *testing.T, entries []skillArchiveTestEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, entry := range entries {
+		header := &zip.FileHeader{Name: entry.Name}
+		if entry.Mode != 0 {
+			header.SetMode(entry.Mode)
+		}
+		w, err := zw.CreateHeader(header)
+		require.NoError(t, err)
+		_, err = w.Write([]byte(entry.Content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
 }

@@ -75,6 +75,31 @@ Collect signals and write a short brief.
 	require.Equal(t, string(content), repo.versions[101][0].SkillMD)
 }
 
+func TestServiceImportsSkillArchiveAndRecordsSkillMD(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+allowed-tools:
+  - search
+---
+# Weekly Research
+`,
+		"weekly-research/references/prompt.md": "Use concise bullets.",
+	})
+
+	skill, err := svc.ImportDeclaration(context.Background(), 1, "weekly-research.skill", content)
+
+	require.NoError(t, err)
+	require.Equal(t, entity.TypeDeerSkill, skill.Type)
+	require.Equal(t, "weekly-research", skill.Name)
+	require.Len(t, repo.versions[101], 1)
+	require.Contains(t, repo.versions[101][0].SkillMD, "# Weekly Research")
+	require.NotContains(t, repo.versions[101][0].SkillMD, "Use concise bullets")
+}
+
 func TestServiceCreateRecordsSkillVersion(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})

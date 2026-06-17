@@ -17,9 +17,17 @@
 package service
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
@@ -39,6 +47,13 @@ type Declaration struct {
 	Permissions  PermissionDeclaration `json:"permissions" yaml:"permissions"`
 	Body         string                `json:"-" yaml:"-"`
 	SkillMD      string                `json:"-" yaml:"-"`
+	Resources    []ArchiveResource     `json:"-" yaml:"-"`
+}
+
+type ArchiveResource struct {
+	Path   string
+	Size   int64
+	SHA256 string
 }
 
 type ExecutorDeclaration struct {
@@ -69,6 +84,13 @@ type skillMarkdownFrontmatter struct {
 	AllowedToolsSnake []string       `yaml:"allowed_tools"`
 }
 
+const (
+	maxSkillArchiveFiles      = 100
+	maxSkillArchiveBytes      = 10 << 20
+	maxSkillArchiveFileBytes  = 2 << 20
+	maxSkillArchiveSkillBytes = 512 << 10
+)
+
 func ParseDeclaration(fileName string, content []byte) (*Declaration, error) {
 	decl := &Declaration{}
 	lowerFileName := strings.ToLower(fileName)
@@ -78,6 +100,12 @@ func ParseDeclaration(fileName string, content []byte) (*Declaration, error) {
 	case baseFileName == "skill.md":
 		var err error
 		decl, err = parseSkillMarkdown(content)
+		if err != nil {
+			return nil, err
+		}
+	case strings.HasSuffix(lowerFileName, ".skill"):
+		var err error
+		decl, err = parseSkillArchive(content)
 		if err != nil {
 			return nil, err
 		}
@@ -98,6 +126,154 @@ func ParseDeclaration(fileName string, content []byte) (*Declaration, error) {
 	}
 
 	return decl, nil
+}
+
+func parseSkillArchive(content []byte) (*Declaration, error) {
+	if len(content) == 0 {
+		return nil, fmt.Errorf("skill archive is empty")
+	}
+	if len(content) > maxSkillArchiveBytes {
+		return nil, fmt.Errorf("skill archive exceeds size limit")
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return nil, fmt.Errorf("open skill archive: %w", err)
+	}
+	if len(reader.File) > maxSkillArchiveFiles {
+		return nil, fmt.Errorf("skill archive exceeds file count limit")
+	}
+
+	files := make([]archiveFile, 0, len(reader.File))
+	var skillMDPath string
+	for _, file := range reader.File {
+		normalizedPath, skip, err := safeArchivePath(file.Name)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		if file.FileInfo().Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("skill archive symlink is not allowed: %s", normalizedPath)
+		}
+		if file.UncompressedSize64 > maxSkillArchiveFileBytes {
+			return nil, fmt.Errorf("skill archive file exceeds size limit: %s", normalizedPath)
+		}
+		if strings.EqualFold(path.Base(normalizedPath), "skill.md") {
+			if skillMDPath != "" {
+				return nil, fmt.Errorf("multiple SKILL.md files in skill archive")
+			}
+			if file.UncompressedSize64 > maxSkillArchiveSkillBytes {
+				return nil, fmt.Errorf("SKILL.md exceeds size limit")
+			}
+			skillMDPath = normalizedPath
+		}
+		files = append(files, archiveFile{path: normalizedPath, file: file})
+	}
+	if skillMDPath == "" {
+		return nil, fmt.Errorf("SKILL.md is required in skill archive")
+	}
+
+	rootDir := path.Dir(skillMDPath)
+	if rootDir == "." {
+		rootDir = ""
+	}
+
+	var skillMD string
+	resources := make([]ArchiveResource, 0, len(files))
+	for _, item := range files {
+		relativePath, ok := archiveRelativePath(rootDir, item.path)
+		if !ok {
+			return nil, fmt.Errorf("skill archive file is outside skill root: %s", item.path)
+		}
+		if strings.EqualFold(relativePath, "skill.md") {
+			bs, err := readZipFile(item.file, maxSkillArchiveSkillBytes)
+			if err != nil {
+				return nil, err
+			}
+			skillMD = string(bs)
+			continue
+		}
+		bs, err := readZipFile(item.file, maxSkillArchiveFileBytes)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(bs)
+		resources = append(resources, ArchiveResource{
+			Path:   relativePath,
+			Size:   int64(len(bs)),
+			SHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+
+	decl, err := parseSkillMarkdown([]byte(skillMD))
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		return resources[i].Path < resources[j].Path
+	})
+	decl.Resources = resources
+
+	return decl, nil
+}
+
+type archiveFile struct {
+	path string
+	file *zip.File
+}
+
+func safeArchivePath(name string) (string, bool, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", false, fmt.Errorf("unsafe archive path: empty")
+	}
+	if strings.Contains(name, "\x00") || strings.Contains(name, "\\") {
+		return "", false, fmt.Errorf("unsafe archive path: %s", name)
+	}
+	normalized := path.Clean(strings.TrimPrefix(name, "/"))
+	if normalized == "." {
+		return "", true, nil
+	}
+	if path.IsAbs(name) || strings.HasPrefix(normalized, "../") || normalized == ".." || strings.Contains(normalized, "/../") {
+		return "", false, fmt.Errorf("unsafe archive path: %s", name)
+	}
+	if strings.HasPrefix(normalized, "__MACOSX/") || strings.HasSuffix(normalized, "/.DS_Store") || normalized == ".DS_Store" {
+		return "", true, nil
+	}
+
+	return normalized, false, nil
+}
+
+func archiveRelativePath(rootDir, filePath string) (string, bool) {
+	if rootDir == "" {
+		return filePath, true
+	}
+	prefix := rootDir + "/"
+	if !strings.HasPrefix(filePath, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(filePath, prefix), true
+}
+
+func readZipFile(file *zip.File, limit int64) ([]byte, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open archive file %s: %w", file.Name, err)
+	}
+	defer rc.Close()
+	reader := io.LimitReader(rc, limit+1)
+	bs, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read archive file %s: %w", file.Name, err)
+	}
+	if int64(len(bs)) > limit {
+		return nil, fmt.Errorf("archive file exceeds size limit: %s", file.Name)
+	}
+	return bs, nil
 }
 
 func parseSkillMarkdown(content []byte) (*Declaration, error) {

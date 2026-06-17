@@ -21,6 +21,11 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
 - Register the version list route under the existing Workbench skill path without redirects.
 - Parse Deer-flow style `SKILL.md` files with YAML frontmatter and Markdown body.
 - Import `SKILL.md` text files as `deer_skill` records and preserve the original `SKILL.md` content in version snapshots.
+- Parse `.skill` zip archives with safe path validation, file count and size limits, unique `SKILL.md` detection, and symlink rejection.
+- Capture archive resource metadata for files under the same skill root:
+  - relative path
+  - byte size
+  - SHA-256 hash
 - Expose Deer-flow compatible skill types through the Workbench API enum extension:
   - `DeerSkill`
   - `PublicSkill`
@@ -31,13 +36,15 @@ Macro Stage B replicates Deer-flow style skill configuration on top of the exist
 
 The existing `skills` table remains the live skill compatibility table. The new `skill_versions` repository model stores immutable snapshots for history, future rollback, and export workflows.
 
-For create/update flows, `SkillMD` is generated from the existing skill entity fields. For `SKILL.md` imports, the original Markdown file content is stored in the version snapshot so the future editor, rollback, and export flows can preserve Deer-flow skill instructions.
+For create/update flows, `SkillMD` is generated from the existing skill entity fields. For `SKILL.md` and `.skill` archive imports, the original Markdown entrypoint content is stored in the version snapshot so the future editor, rollback, and export flows can preserve Deer-flow skill instructions.
+
+`.skill` archive parsing is intentionally read-only in this backend slice. Resource files are validated and fingerprinted, but they are not persisted, executed, or injected into the runtime yet.
 
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- `.skill` archive import, resource directory support, and safe extraction.
+- Resource persistence for `.skill` archive assets, scripts, and references.
 - Custom skill content editing and rollback.
 - Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.
