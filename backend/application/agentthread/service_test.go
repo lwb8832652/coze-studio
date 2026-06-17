@@ -829,6 +829,7 @@ type recordingThreadService struct {
 	listMessagesReq          *domainservice.ListMessagesRequest
 	getID                    int64
 	getRunID                 int64
+	completeRunErr           error
 }
 
 func migrateAgentThreadTableForTest(db *gorm.DB) error {
@@ -929,6 +930,10 @@ func (s *recordingThreadService) ClaimQueuedResumeRuns(ctx context.Context, req 
 
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
 	s.completeRunReq = req
+	if s.completeRunErr != nil {
+		return nil, s.completeRunErr
+	}
+
 	return s.completedRun, nil
 }
 

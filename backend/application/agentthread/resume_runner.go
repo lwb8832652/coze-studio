@@ -83,6 +83,7 @@ const (
 	resumeRunProcessSkipped   resumeRunProcessOutcome = "skipped"
 	resumeRunProcessSucceeded resumeRunProcessOutcome = "succeeded"
 	resumeRunProcessFailed    resumeRunProcessOutcome = "failed"
+	resumeRunProcessErrored   resumeRunProcessOutcome = "errored"
 )
 
 type HarnessResumeInput struct {
@@ -160,6 +161,8 @@ func (p *ResumeRunProcessor) ProcessQueuedResumeRunsWithResult(ctx context.Conte
 		case resumeRunProcessFailed:
 			result.ProcessedRuns++
 			result.FailedRuns++
+		case resumeRunProcessErrored:
+			result.ProcessedRuns++
 		}
 		if err != nil {
 			result.ErroredRuns++
@@ -229,7 +232,7 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 		From:     RunStatusRunning,
 		WorkerID: p.workerID,
 	}); err != nil {
-		return resumeRunProcessSkipped, err
+		return resumeRunProcessErrored, err
 	}
 
 	p.emitResumeRunCompleted(ctx, run, resume)

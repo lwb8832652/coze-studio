@@ -81,14 +81,38 @@ func (w *RunWorker) Start(ctx context.Context) {
 	}()
 }
 
-func (w *RunWorker) RunOnce(ctx context.Context) {
+func (w *RunWorker) RunOnce(ctx context.Context) RunProcessResult {
 	if w == nil || w.processor == nil {
-		return
+		return RunProcessResult{}
 	}
 
-	if err := w.processor.ProcessPendingRuns(ctx); err != nil {
-		logs.CtxErrorf(ctx, "[agent-run-worker] process pending runs failed, err=%v", err)
+	result, err := w.processor.ProcessPendingRunsWithResult(ctx)
+	if err != nil {
+		logs.CtxErrorf(
+			ctx,
+			"[agent-run-worker] process pending runs failed, claimed=%d processed=%d succeeded=%d failed=%d errored=%d err=%v",
+			result.ClaimedRuns,
+			result.ProcessedRuns,
+			result.SucceededRuns,
+			result.FailedRuns,
+			result.ErroredRuns,
+			err,
+		)
+
+		return result
 	}
+	if result.ClaimedRuns > 0 {
+		logs.CtxInfof(
+			ctx,
+			"[agent-run-worker] processed pending runs, claimed=%d processed=%d succeeded=%d failed=%d",
+			result.ClaimedRuns,
+			result.ProcessedRuns,
+			result.SucceededRuns,
+			result.FailedRuns,
+		)
+	}
+
+	return result
 }
 
 func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executor RunExecutor) *RunWorker {

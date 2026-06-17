@@ -93,6 +93,90 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"status":"succeeded"`)
 }
 
+func TestRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{"messages":[]}`,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "ok",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		SucceededRuns: 1,
+	}, result)
+}
+
+func TestRunProcessorReportsProcessResultWhenCompleteRunFails(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{"messages":[]}`,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "ok",
+		},
+		completeRunErr: fmt.Errorf("complete run failed"),
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.ErrorContains(t, err, "complete run failed")
+	require.NotNil(t, domainSVC.appendReq)
+	require.NotNil(t, domainSVC.completeRunReq)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		ErroredRuns:   1,
+	}, result)
+}
+
 func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{

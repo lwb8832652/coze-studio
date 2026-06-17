@@ -60,11 +60,16 @@ func TestRunWorkerRunOnceDelegatesToProcessor(t *testing.T) {
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{Interval: time.Second})
 
-	worker.RunOnce(context.Background())
+	result := worker.RunOnce(context.Background())
 
 	require.Equal(t, "worker-a", domainSVC.claimRunsReq.WorkerID)
 	require.Equal(t, int32(3), domainSVC.claimRunsReq.Limit)
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		SucceededRuns: 1,
+	}, result)
 }
 
 func TestRunWorkerFromEnvDisabledByDefault(t *testing.T) {

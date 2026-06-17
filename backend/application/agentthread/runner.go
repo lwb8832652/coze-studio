@@ -58,6 +58,23 @@ type RunProcessor struct {
 	batchSize int32
 }
 
+type RunProcessResult struct {
+	ClaimedRuns   int
+	ProcessedRuns int
+	SucceededRuns int
+	FailedRuns    int
+	ErroredRuns   int
+}
+
+type runProcessOutcome string
+
+const (
+	runProcessSkipped   runProcessOutcome = "skipped"
+	runProcessSucceeded runProcessOutcome = "succeeded"
+	runProcessFailed    runProcessOutcome = "failed"
+	runProcessErrored   runProcessOutcome = "errored"
+)
+
 func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProcessorOptions) *RunProcessor {
 	workerID := strings.TrimSpace(opts.WorkerID)
 	if workerID == "" {
@@ -82,11 +99,18 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 }
 
 func (p *RunProcessor) ProcessPendingRuns(ctx context.Context) error {
+	_, err := p.ProcessPendingRunsWithResult(ctx)
+
+	return err
+}
+
+func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunProcessResult, error) {
+	result := RunProcessResult{}
 	if p == nil || p.app == nil {
-		return fmt.Errorf("agent run processor application service is required")
+		return result, fmt.Errorf("agent run processor application service is required")
 	}
 	if p.executor == nil {
-		return fmt.Errorf("agent run executor is required")
+		return result, fmt.Errorf("agent run executor is required")
 	}
 
 	claimed, err := p.app.ClaimPendingRuns(ctx, &ClaimPendingRunsRequest{
@@ -94,21 +118,35 @@ func (p *RunProcessor) ProcessPendingRuns(ctx context.Context) error {
 		Limit:    p.batchSize,
 	})
 	if err != nil {
-		return err
+		return result, err
 	}
 
+	result.ClaimedRuns = len(claimed.Runs)
 	for _, run := range claimed.Runs {
-		if err := p.processRun(ctx, run); err != nil {
-			return err
+		outcome, err := p.processRun(ctx, run)
+		switch outcome {
+		case runProcessSucceeded:
+			result.ProcessedRuns++
+			result.SucceededRuns++
+		case runProcessFailed:
+			result.ProcessedRuns++
+			result.FailedRuns++
+		case runProcessErrored:
+			result.ProcessedRuns++
+		}
+		if err != nil {
+			result.ErroredRuns++
+
+			return result, err
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
-func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
+func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProcessOutcome, error) {
 	if run == nil {
-		return nil
+		return runProcessSkipped, nil
 	}
 
 	p.emitRunEvent(ctx, run, "run.started", map[string]any{
@@ -120,14 +158,14 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 	if err != nil {
 		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
 
-		return p.failRun(ctx, run, "executor_error", err.Error())
+		return runProcessFailed, p.failRun(ctx, run, "executor_error", err.Error())
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
 		p.emitRunFailedEvent(ctx, run, "empty_executor_result", "executor returned empty assistant message")
 
-		return p.failRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
+		return runProcessFailed, p.failRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
 	}
 
 	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
@@ -139,7 +177,7 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 	}); err != nil {
 		p.emitRunFailedEvent(ctx, run, "append_message_failed", err.Error())
 
-		return p.failRun(ctx, run, "append_message_failed", err.Error())
+		return runProcessFailed, p.failRun(ctx, run, "append_message_failed", err.Error())
 	}
 
 	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
@@ -147,7 +185,7 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 		From:     RunStatusRunning,
 		WorkerID: p.workerID,
 	}); err != nil {
-		return err
+		return runProcessErrored, err
 	}
 
 	p.emitRunEvent(ctx, run, "run.completed", map[string]any{
@@ -155,7 +193,7 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) error {
 		"worker_id": p.workerID,
 	})
 
-	return nil
+	return runProcessSucceeded, nil
 }
 
 func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) error {
