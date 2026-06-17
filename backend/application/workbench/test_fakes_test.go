@@ -147,6 +147,22 @@ func (r *recordingAgentThreadService) ListRunEvents(context.Context, *agentthrea
 	return nil, 0, nil
 }
 
+func (r *recordingAgentThreadService) CreateCheckpoint(context.Context, *agentthreadsvc.CreateCheckpointRequest) (*agentthreadentity.Checkpoint, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) GetCheckpoint(context.Context, *agentthreadsvc.GetCheckpointRequest) (*agentthreadentity.Checkpoint, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListCheckpoints(context.Context, *agentthreadsvc.ListCheckpointsRequest) ([]*agentthreadentity.Checkpoint, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) GetLatestCheckpoint(context.Context, *agentthreadsvc.GetLatestCheckpointRequest) (*agentthreadentity.Checkpoint, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) RememberMemory(context.Context, *agentthreadsvc.RememberMemoryRequest) (*agentthreadentity.Memory, error) {
 	return nil, nil
 }
@@ -168,6 +184,10 @@ func (r *recordingAgentThreadService) GetThreadTokenUsage(context.Context, *agen
 }
 
 func (r *recordingAgentThreadService) ClaimPendingRuns(context.Context, *agentthreadsvc.ClaimPendingRunsRequest) ([]*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ClaimQueuedResumeRuns(context.Context, *agentthreadsvc.ClaimQueuedResumeRunsRequest) ([]*agentthreadentity.Run, error) {
 	return nil, nil
 }
 

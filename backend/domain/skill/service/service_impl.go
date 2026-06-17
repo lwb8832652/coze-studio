@@ -65,6 +65,9 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 	if err := s.components.Repo.Create(ctx, skill); err != nil {
 		return nil, err
 	}
+	if err := s.recordVersion(ctx, skill); err != nil {
+		return nil, err
+	}
 
 	return skill, nil
 }
@@ -96,6 +99,9 @@ func (s *skillService) Create(ctx context.Context, skill *entity.Skill) (*entity
 	if err := s.components.Repo.Create(ctx, skill); err != nil {
 		return nil, err
 	}
+	if err := s.recordVersion(ctx, skill); err != nil {
+		return nil, err
+	}
 	return skill, nil
 }
 
@@ -108,6 +114,9 @@ func (s *skillService) Update(ctx context.Context, skill *entity.Skill) (*entity
 	}
 	skill.UpdatedAt = time.Now().UnixMilli()
 	if err := s.components.Repo.Update(ctx, skill); err != nil {
+		return nil, err
+	}
+	if err := s.recordVersion(ctx, skill); err != nil {
 		return nil, err
 	}
 	return skill, nil
@@ -135,6 +144,17 @@ func (s *skillService) List(ctx context.Context, spaceID int64, typ *entity.Type
 		return nil, err
 	}
 	return s.components.Repo.List(ctx, spaceID, typ, enabled)
+}
+
+func (s *skillService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if skillID <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+
+	return s.components.Repo.ListVersions(ctx, skillID)
 }
 
 func (s *skillService) TestRun(ctx context.Context, id int64, input string) (string, error) {
@@ -185,6 +205,33 @@ func (s *skillService) requireIDGen() error {
 		return fmt.Errorf("id generator is required")
 	}
 	return nil
+}
+
+func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) error {
+	if skill == nil {
+		return InvalidArgumentErrorf("skill is required")
+	}
+	if err := s.requireIDGen(); err != nil {
+		return err
+	}
+	id, err := s.components.IDGen.GenID(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UnixMilli()
+	version := &entity.SkillVersion{
+		ID:           id,
+		SkillID:      skill.ID,
+		Version:      skill.Version,
+		SkillMD:      skillMarkdown(skill),
+		InputSchema:  skill.InputSchema,
+		OutputSchema: skill.OutputSchema,
+		Executor:     skill.Executor,
+		Permissions:  skill.Permissions,
+		CreatedAt:    now,
+	}
+
+	return s.components.Repo.CreateVersion(ctx, version)
 }
 
 func (s *skillService) runnerForType(typ entity.Type) (Executor, error) {
@@ -242,6 +289,37 @@ func declarationToSkill(spaceID, id int64, decl *Declaration) (*entity.Skill, er
 		Executor:     executor,
 		Permissions:  permissions,
 	}, nil
+}
+
+func skillMarkdown(skill *entity.Skill) string {
+	if skill == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("---\n")
+	b.WriteString("name: ")
+	b.WriteString(skill.Name)
+	b.WriteString("\n")
+	b.WriteString("description: ")
+	b.WriteString(skill.Description)
+	b.WriteString("\n")
+	b.WriteString("type: ")
+	b.WriteString(string(skill.Type))
+	b.WriteString("\n")
+	b.WriteString("version: ")
+	b.WriteString(skill.Version)
+	b.WriteString("\n")
+	b.WriteString("enabled: ")
+	b.WriteString(strconv.FormatBool(skill.Enabled))
+	b.WriteString("\n")
+	b.WriteString("---\n")
+	if strings.TrimSpace(skill.Description) != "" {
+		b.WriteString("\n")
+		b.WriteString(skill.Description)
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 func skillToDeclaration(skill *entity.Skill) (*Declaration, error) {

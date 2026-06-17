@@ -57,6 +57,36 @@ func TestSkillRepositoryCreateAndGet(t *testing.T) {
 	require.Equal(t, `{"language":"python","entry":"main.py"}`, got.Executor)
 }
 
+func TestSkillRepositoryCreateAndListVersions(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillPO{}, &skillVersionPO{}))
+
+	repo := NewSkillRepository(db, fixedIDGen{})
+	version := &entity.SkillVersion{
+		ID:           101,
+		SkillID:      1,
+		Version:      "1.0.0",
+		SkillMD:      "# Weekly Report",
+		InputSchema:  `{"type":"object"}`,
+		OutputSchema: `{"type":"object"}`,
+		Executor:     `{"language":"python"}`,
+		Permissions:  `{"network":false}`,
+		CreatedAt:    10,
+	}
+
+	require.NoError(t, repo.CreateVersion(context.Background(), version))
+	items, err := repo.ListVersions(context.Background(), 1)
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(101), items[0].ID)
+	require.Equal(t, int64(1), items[0].SkillID)
+	require.Equal(t, "1.0.0", items[0].Version)
+	require.Equal(t, "# Weekly Report", items[0].SkillMD)
+	require.Equal(t, `{"language":"python"}`, items[0].Executor)
+}
+
 func TestSkillRepositoryListAndUpdate(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

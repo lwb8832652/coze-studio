@@ -19,8 +19,13 @@ package entity
 type Type string
 
 const (
-	TypeScript   Type = "script"
-	TypeWorkflow Type = "workflow"
+	TypeScript       Type = "script"
+	TypeWorkflow     Type = "workflow"
+	TypeDeerSkill    Type = "deer_skill"
+	TypePublicSkill  Type = "public_skill"
+	TypeCustomSkill  Type = "custom_skill"
+	TypeCozeScript   Type = "coze_script"
+	TypeCozeWorkflow Type = "coze_workflow"
 )
 
 type Skill struct {
@@ -37,4 +42,16 @@ type Skill struct {
 	Permissions  string
 	CreatedAt    int64
 	UpdatedAt    int64
+}
+
+type SkillVersion struct {
+	ID           int64
+	SkillID      int64
+	Version      string
+	SkillMD      string
+	InputSchema  string
+	OutputSchema string
+	Executor     string
+	Permissions  string
+	CreatedAt    int64
 }

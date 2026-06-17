@@ -30,6 +30,7 @@ type SkillService interface {
 	Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
+	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)
 	TestRun(ctx context.Context, id int64, input string) (string, error)
 }
 

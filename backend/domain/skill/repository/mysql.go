@@ -62,6 +62,22 @@ func (skillPO) TableName() string {
 	return "skills"
 }
 
+type skillVersionPO struct {
+	ID           int64          `gorm:"column:id;primaryKey"`
+	SkillID      int64          `gorm:"column:skill_id;index:idx_skill_versions_skill_created;uniqueIndex:uk_skill_versions_skill_version"`
+	Version      string         `gorm:"column:version;uniqueIndex:uk_skill_versions_skill_version"`
+	SkillMD      string         `gorm:"column:skill_md;type:text"`
+	InputSchema  datatypes.JSON `gorm:"column:input_schema;type:json"`
+	OutputSchema datatypes.JSON `gorm:"column:output_schema;type:json"`
+	Executor     datatypes.JSON `gorm:"column:executor;type:json"`
+	Permissions  datatypes.JSON `gorm:"column:permissions;type:json"`
+	CreatedAt    int64          `gorm:"column:created_at;index:idx_skill_versions_skill_created"`
+}
+
+func (skillVersionPO) TableName() string {
+	return "skill_versions"
+}
+
 func (r *skillRepository) Create(ctx context.Context, skill *entity.Skill) error {
 	if skill.ID == 0 {
 		id, err := r.idGen.GenID(ctx)
@@ -167,6 +183,43 @@ func (r *skillRepository) List(ctx context.Context, spaceID int64, typ *entity.T
 	return skills, nil
 }
 
+func (r *skillRepository) CreateVersion(ctx context.Context, version *entity.SkillVersion) error {
+	if version.ID == 0 {
+		id, err := r.idGen.GenID(ctx)
+		if err != nil {
+			return err
+		}
+		version.ID = id
+	}
+	if version.CreatedAt == 0 {
+		version.CreatedAt = time.Now().UnixMilli()
+	}
+
+	po, err := skillVersionToPO(version)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *skillRepository) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
+	pos := make([]*skillVersionPO, 0)
+	if err := r.db.WithContext(ctx).
+		Where("skill_id = ?", skillID).
+		Order("created_at DESC, id DESC").
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	versions := make([]*entity.SkillVersion, 0, len(pos))
+	for _, po := range pos {
+		versions = append(versions, po.toEntity())
+	}
+
+	return versions, nil
+}
+
 func skillToPO(skill *entity.Skill) (*skillPO, error) {
 	inputSchema, err := requiredJSON("input_schema", skill.InputSchema)
 	if err != nil {
@@ -217,6 +270,51 @@ func (po *skillPO) toEntity() *entity.Skill {
 		Permissions:  jsonToString(po.Permissions),
 		CreatedAt:    po.CreatedAt,
 		UpdatedAt:    po.UpdatedAt,
+	}
+}
+
+func skillVersionToPO(version *entity.SkillVersion) (*skillVersionPO, error) {
+	inputSchema, err := requiredJSON("input_schema", version.InputSchema)
+	if err != nil {
+		return nil, err
+	}
+	outputSchema, err := requiredJSON("output_schema", version.OutputSchema)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := requiredJSON("executor", version.Executor)
+	if err != nil {
+		return nil, err
+	}
+	permissions, err := requiredJSON("permissions", version.Permissions)
+	if err != nil {
+		return nil, err
+	}
+
+	return &skillVersionPO{
+		ID:           version.ID,
+		SkillID:      version.SkillID,
+		Version:      version.Version,
+		SkillMD:      version.SkillMD,
+		InputSchema:  inputSchema,
+		OutputSchema: outputSchema,
+		Executor:     executor,
+		Permissions:  permissions,
+		CreatedAt:    version.CreatedAt,
+	}, nil
+}
+
+func (po *skillVersionPO) toEntity() *entity.SkillVersion {
+	return &entity.SkillVersion{
+		ID:           po.ID,
+		SkillID:      po.SkillID,
+		Version:      po.Version,
+		SkillMD:      po.SkillMD,
+		InputSchema:  jsonToString(po.InputSchema),
+		OutputSchema: jsonToString(po.OutputSchema),
+		Executor:     jsonToString(po.Executor),
+		Permissions:  jsonToString(po.Permissions),
+		CreatedAt:    po.CreatedAt,
 	}
 }
 

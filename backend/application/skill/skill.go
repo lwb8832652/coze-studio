@@ -33,6 +33,26 @@ type ApplicationService struct {
 	DomainSVC domain.SkillService
 }
 
+type ListSkillVersionsRequest struct {
+	SkillID int64
+}
+
+type ListSkillVersionsResponse struct {
+	Versions []*SkillVersionSummary
+}
+
+type SkillVersionSummary struct {
+	ID           int64
+	SkillID      int64
+	Version      string
+	SkillMD      string
+	InputSchema  string
+	OutputSchema string
+	Executor     string
+	Permissions  string
+	CreatedAt    int64
+}
+
 func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.ImportSkillRequest) (*skillapi.SkillResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
@@ -150,6 +170,28 @@ func (s *ApplicationService) TestRunSkill(ctx context.Context, req *skillapi.Tes
 	}, nil
 }
 
+func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *ListSkillVersionsRequest) (*ListSkillVersionsResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("list skill versions request is required")
+	}
+	versions, err := s.DomainSVC.ListVersions(ctx, req.SkillID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListSkillVersionsResponse{
+		Versions: make([]*SkillVersionSummary, 0, len(versions)),
+	}
+	for _, version := range versions {
+		resp.Versions = append(resp.Versions, skillVersionToSummary(version))
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) requireDomainSVC() error {
 	if s == nil || s.DomainSVC == nil {
 		return fmt.Errorf("skill service is not initialized")
@@ -235,6 +277,24 @@ func entityToAPI(skill *entity.Skill) (*skillapi.Skill, error) {
 		CreatedAt:    skill.CreatedAt,
 		UpdatedAt:    skill.UpdatedAt,
 	}, nil
+}
+
+func skillVersionToSummary(version *entity.SkillVersion) *SkillVersionSummary {
+	if version == nil {
+		return nil
+	}
+
+	return &SkillVersionSummary{
+		ID:           version.ID,
+		SkillID:      version.SkillID,
+		Version:      version.Version,
+		SkillMD:      version.SkillMD,
+		InputSchema:  version.InputSchema,
+		OutputSchema: version.OutputSchema,
+		Executor:     version.Executor,
+		Permissions:  version.Permissions,
+		CreatedAt:    version.CreatedAt,
+	}
 }
 
 func apiTypeToEntity(typ skillapi.SkillType) (entity.Type, error) {
