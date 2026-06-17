@@ -111,12 +111,13 @@ type CancelRunRequest struct {
 }
 
 type StreamRunRequest struct {
-	ThreadID     int64  `path:"thread_id,required"`
-	RunID        int64  `path:"run_id,required"`
-	StreamMode   string `query:"stream_mode,omitempty"`
-	AfterEventID int64  `query:"after_event_id,omitempty"`
-	IntervalMs   int64  `query:"interval_ms,omitempty"`
-	TimeoutMs    int64  `query:"timeout_ms,omitempty"`
+	ThreadID     int64    `path:"thread_id,required"`
+	RunID        int64    `path:"run_id,required"`
+	StreamMode   string   `query:"stream_mode,omitempty"`
+	StreamModes  []string `json:"-" query:"-"`
+	AfterEventID int64    `query:"after_event_id,omitempty"`
+	IntervalMs   int64    `query:"interval_ms,omitempty"`
+	TimeoutMs    int64    `query:"timeout_ms,omitempty"`
 }
 
 type JoinRunRequest struct {
@@ -132,11 +133,12 @@ type StatelessRunRequest struct {
 }
 
 type StatelessStreamRunRequest struct {
-	RunID        int64  `path:"run_id,required"`
-	StreamMode   string `query:"stream_mode,omitempty"`
-	AfterEventID int64  `query:"after_event_id,omitempty"`
-	IntervalMs   int64  `query:"interval_ms,omitempty"`
-	TimeoutMs    int64  `query:"timeout_ms,omitempty"`
+	RunID        int64    `path:"run_id,required"`
+	StreamMode   string   `query:"stream_mode,omitempty"`
+	StreamModes  []string `json:"-" query:"-"`
+	AfterEventID int64    `query:"after_event_id,omitempty"`
+	IntervalMs   int64    `query:"interval_ms,omitempty"`
+	TimeoutMs    int64    `query:"timeout_ms,omitempty"`
 }
 
 type StatelessJoinRunRequest struct {

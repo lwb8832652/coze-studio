@@ -371,6 +371,102 @@ func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 	require.Contains(t, body, `"event_type":"step.completed"`)
 }
 
+func TestLangGraphRunStreamRespectsUpdatesMode(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"updates mode"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "node.update",
+		Payload:   `{"node":"agent","delta":{"messages":[{"role":"assistant","content":"收到"}]}}`,
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		StreamMode: "updates",
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	}, runResp.Run)
+	body := writer.String()
+
+	require.Contains(t, body, "event: updates")
+	require.NotContains(t, body, "event: events")
+	require.Contains(t, body, `"agent":{"messages":[{`)
+	require.Contains(t, body, `"content":"收到"`)
+	require.Contains(t, body, `"role":"assistant"`)
+}
+
+func TestLangGraphRunStreamRespectsMessagesMode(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"messages mode"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "llm.token",
+		Payload:   `{"node":"agent","chunk":{"content":"你"}}`,
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamLangGraphRunEvents(context.Background(), writer, langgraphapi.StreamRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		StreamMode: "messages",
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	}, runResp.Run)
+	body := writer.String()
+
+	require.Contains(t, body, "event: messages")
+	require.NotContains(t, body, "event: events")
+	require.Contains(t, body, `"chunk":{"content":"你"}`)
+	require.Contains(t, body, `"node":"agent"`)
+}
+
+func TestLangGraphRunCreateStreamUsesRequestedStreamMode(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:   1,
+		Input:      `{"messages":[{"role":"user","content":"create stream mode"}]}`,
+		StreamMode: `["updates"]`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "node.update",
+		Payload:   `{"node":"agent","delta":{"status":"planning"}}`,
+	})
+	require.NoError(t, err)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamCreatedLangGraphRun(context.Background(), writer, langgraphapi.CreateStreamRunRequest{
+		ThreadID:   1,
+		StreamMode: []string{"updates"},
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	}, runResp)
+	body := writer.String()
+
+	require.Contains(t, body, "event: updates")
+	require.NotContains(t, body, "event: events")
+	require.Contains(t, body, `"agent":{"status":"planning"}`)
+}
+
 func TestLangGraphRunStreamRejectsCrossThreadRun(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/threads/:thread_id/runs/:run_id/stream", StreamLangGraphRun)

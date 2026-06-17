@@ -35,7 +35,12 @@ import (
 
 const (
 	langGraphRunStreamMetadata = "metadata"
+	langGraphRunStreamValues   = "values"
+	langGraphRunStreamUpdates  = "updates"
+	langGraphRunStreamMessages = "messages"
 	langGraphRunStreamEvents   = "events"
+	langGraphRunStreamDebug    = "debug"
+	langGraphRunStreamCustom   = "custom"
 	langGraphRunStreamEnd      = "end"
 	langGraphRunStreamError    = "error"
 	langGraphRunStreamPageSize = int32(200)
@@ -698,10 +703,12 @@ func streamCreatedLangGraphRun(
 	}
 
 	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
-		ThreadID:   req.ThreadID,
-		RunID:      resp.Run.RunID,
-		IntervalMs: req.IntervalMs,
-		TimeoutMs:  req.TimeoutMs,
+		ThreadID:    req.ThreadID,
+		RunID:       resp.Run.RunID,
+		StreamMode:  langGraphStreamModeParam(req.StreamMode),
+		StreamModes: langGraphStreamModeList(req.StreamMode),
+		IntervalMs:  req.IntervalMs,
+		TimeoutMs:   req.TimeoutMs,
 	}, resp.Run)
 }
 
@@ -716,9 +723,11 @@ func streamCreatedLangGraphStatelessRun(
 	}
 
 	streamLangGraphStatelessRunEvents(ctx, writer, langgraphapi.StatelessStreamRunRequest{
-		RunID:      resp.Run.RunID,
-		IntervalMs: req.IntervalMs,
-		TimeoutMs:  req.TimeoutMs,
+		RunID:       resp.Run.RunID,
+		StreamMode:  langGraphStreamModeParam(req.StreamMode),
+		StreamModes: langGraphStreamModeList(req.StreamMode),
+		IntervalMs:  req.IntervalMs,
+		TimeoutMs:   req.TimeoutMs,
 	}, resp.Run)
 }
 
@@ -858,6 +867,7 @@ func streamLangGraphStatelessRunEvents(
 		ThreadID:     run.ThreadID,
 		RunID:        req.RunID,
 		StreamMode:   req.StreamMode,
+		StreamModes:  req.StreamModes,
 		AfterEventID: req.AfterEventID,
 		IntervalMs:   req.IntervalMs,
 		TimeoutMs:    req.TimeoutMs,
@@ -921,6 +931,7 @@ func streamLangGraphRunEvents(
 	afterEventID := req.AfterEventID
 	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
 	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
+	streamModes := langGraphRequestedStreamModes(req.StreamMode, req.StreamModes)
 
 	if !writeLangGraphRunStreamMetadata(ctx, writer, run) {
 		return
@@ -944,7 +955,7 @@ func streamLangGraphRunEvents(
 				if event == nil || event.EventID <= afterEventID {
 					continue
 				}
-				if !writeLangGraphRunStreamEvent(ctx, writer, event) {
+				if !writeLangGraphRunStreamEvent(ctx, writer, event, streamModes) {
 					return false
 				}
 				afterEventID = event.EventID
@@ -1010,24 +1021,27 @@ func writeLangGraphRunStreamMetadata(ctx context.Context, writer langGraphRunStr
 	return true
 }
 
-func writeLangGraphRunStreamEvent(ctx context.Context, writer langGraphRunStreamWriter, event *appagentthread.RunEventSummary) bool {
+func writeLangGraphRunStreamEvent(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	event *appagentthread.RunEventSummary,
+	streamModes map[string]struct{},
+) bool {
 	if event == nil {
 		return true
 	}
 
-	payload, err := sonic.Marshal(map[string]any{
-		"event_id":   strconv.FormatInt(event.EventID, 10),
-		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
-		"run_id":     strconv.FormatInt(event.RunID, 10),
-		"event_type": event.EventType,
-		"payload":    langGraphRunEventPayload(event.Payload),
-		"created_at": langGraphTime(event.CreatedAt),
-	})
+	eventType, eventPayload, ok := langGraphRunStreamEventPayload(event, streamModes)
+	if !ok {
+		return true
+	}
+
+	payload, err := sonic.Marshal(eventPayload)
 	if err != nil {
 		writeLangGraphRunStreamError(ctx, writer, err)
 		return false
 	}
-	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), langGraphRunStreamEvents, payload); err != nil {
+	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), eventType, payload); err != nil {
 		logs.CtxWarnf(ctx, "write langgraph run stream event failed, err=%v", err)
 		return false
 	}
@@ -1080,6 +1094,147 @@ func writeEndWhenLangGraphRunTerminal(ctx context.Context, writer langGraphRunSt
 	return writeLangGraphRunStreamEnd(ctx, writer, resp.Run)
 }
 
+func langGraphRunStreamEventPayload(
+	event *appagentthread.RunEventSummary,
+	streamModes map[string]struct{},
+) (string, any, bool) {
+	if event == nil {
+		return "", nil, false
+	}
+	if len(streamModes) == 0 {
+		return langGraphRunStreamEvents, langGraphRunGenericEventPayload(event), true
+	}
+	if _, ok := streamModes[langGraphRunStreamEvents]; ok {
+		return langGraphRunStreamEvents, langGraphRunGenericEventPayload(event), true
+	}
+
+	mode := langGraphRunStreamEventMode(event)
+	if _, ok := streamModes[mode]; !ok {
+		return "", nil, false
+	}
+
+	switch mode {
+	case langGraphRunStreamUpdates:
+		return mode, langGraphRunUpdateEventPayload(event), true
+	case langGraphRunStreamMessages:
+		return mode, langGraphRunMessageEventPayload(event, false), true
+	case "messages-tuple":
+		return mode, langGraphRunMessageEventPayload(event, true), true
+	case langGraphRunStreamValues:
+		return mode, langGraphRunValuesEventPayload(event), true
+	default:
+		return mode, langGraphRunModeEventPayload(event), true
+	}
+}
+
+func langGraphRunGenericEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+	return map[string]any{
+		"event_id":   strconv.FormatInt(event.EventID, 10),
+		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
+		"run_id":     strconv.FormatInt(event.RunID, 10),
+		"event_type": event.EventType,
+		"payload":    langGraphRunEventPayload(event.Payload),
+		"created_at": langGraphTime(event.CreatedAt),
+	}
+}
+
+func langGraphRunUpdateEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+	payload := langGraphRunEventPayloadMap(event.Payload)
+	node := langGraphStringValue(payload["node"])
+	if node == "" {
+		node = "agent"
+	}
+
+	update := any(payload)
+	if value, ok := payload["delta"]; ok {
+		update = value
+	} else if value, ok := payload["update"]; ok {
+		update = value
+	}
+
+	return map[string]any{
+		node:       update,
+		"metadata": langGraphRunStreamEventMetadata(event, node),
+	}
+}
+
+func langGraphRunMessageEventPayload(event *appagentthread.RunEventSummary, tuple bool) any {
+	payload := langGraphRunEventPayloadMap(event.Payload)
+	node := langGraphStringValue(payload["node"])
+	if node == "" {
+		node = "agent"
+	}
+
+	chunk := any(payload)
+	if value, ok := payload["chunk"]; ok {
+		chunk = value
+	} else if value, ok := payload["message"]; ok {
+		chunk = value
+	}
+	metadata := langGraphRunStreamEventMetadata(event, node)
+	if tuple {
+		return []any{chunk, metadata}
+	}
+
+	return map[string]any{
+		"chunk":    chunk,
+		"metadata": metadata,
+	}
+}
+
+func langGraphRunValuesEventPayload(event *appagentthread.RunEventSummary) any {
+	payload := langGraphRunEventPayloadMap(event.Payload)
+	if value, ok := payload["values"]; ok {
+		return value
+	}
+
+	return payload
+}
+
+func langGraphRunModeEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+	payload := langGraphRunEventPayload(event.Payload)
+	return map[string]any{
+		"payload":  payload,
+		"metadata": langGraphRunStreamEventMetadata(event, ""),
+	}
+}
+
+func langGraphRunStreamEventMetadata(event *appagentthread.RunEventSummary, node string) map[string]any {
+	metadata := map[string]any{
+		"event_id":   strconv.FormatInt(event.EventID, 10),
+		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
+		"run_id":     strconv.FormatInt(event.RunID, 10),
+		"event_type": event.EventType,
+		"created_at": langGraphTime(event.CreatedAt),
+	}
+	if node != "" {
+		metadata["node"] = node
+	}
+
+	return metadata
+}
+
+func langGraphRunStreamEventMode(event *appagentthread.RunEventSummary) string {
+	eventType := strings.ToLower(strings.TrimSpace(event.EventType))
+	switch {
+	case eventType == langGraphRunStreamValues || strings.HasPrefix(eventType, "state.") || strings.HasPrefix(eventType, "checkpoint."):
+		return langGraphRunStreamValues
+	case eventType == langGraphRunStreamUpdates || strings.HasPrefix(eventType, "node.") || strings.HasPrefix(eventType, "step."):
+		return langGraphRunStreamUpdates
+	case eventType == langGraphRunStreamMessages || eventType == "messages-tuple" || strings.HasPrefix(eventType, "message.") || strings.HasPrefix(eventType, "llm."):
+		if eventType == "messages-tuple" {
+			return "messages-tuple"
+		}
+		return langGraphRunStreamMessages
+	case eventType == langGraphRunStreamDebug || strings.HasPrefix(eventType, "debug."):
+		return langGraphRunStreamDebug
+	case eventType == langGraphRunStreamCustom || strings.HasPrefix(eventType, "custom."):
+		return langGraphRunStreamCustom
+	default:
+		return langGraphRunStreamEvents
+	}
+}
+
 func langGraphRunEventPayload(raw string) any {
 	if strings.TrimSpace(raw) == "" {
 		return map[string]any{}
@@ -1091,6 +1246,15 @@ func langGraphRunEventPayload(raw string) any {
 	}
 
 	return payload
+}
+
+func langGraphRunEventPayloadMap(raw string) map[string]any {
+	payload := langGraphRunEventPayload(raw)
+	if mapped, ok := payload.(map[string]any); ok {
+		return mapped
+	}
+
+	return map[string]any{"value": payload}
 }
 
 func parseLangGraphLastEventID(raw string) (int64, bool) {
@@ -1181,6 +1345,56 @@ func langGraphStreamModes(value any) ([]string, bool, error) {
 	}
 }
 
+func langGraphStreamModeParam(value any) string {
+	modes := langGraphStreamModeList(value)
+	if len(modes) == 0 {
+		return ""
+	}
+
+	return strings.Join(modes, ",")
+}
+
+func langGraphStreamModeList(value any) []string {
+	modes, ok, err := langGraphStreamModes(value)
+	if err != nil || !ok {
+		return nil
+	}
+
+	return modes
+}
+
+func langGraphRequestedStreamModes(raw string, values []string) map[string]struct{} {
+	modes := compactLangGraphStreamModes(values)
+	if len(modes) == 0 {
+		modes = langGraphStreamModeQueryValues(raw)
+	}
+	if len(modes) == 0 {
+		return nil
+	}
+
+	result := make(map[string]struct{}, len(modes))
+	for _, mode := range modes {
+		result[mode] = struct{}{}
+	}
+
+	return result
+}
+
+func langGraphStreamModeQueryValues(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") {
+		var values []string
+		if err := sonic.UnmarshalString(raw, &values); err == nil {
+			return compactLangGraphStreamModes(values)
+		}
+	}
+
+	return compactLangGraphStreamModes(strings.Split(raw, ","))
+}
+
 func compactLangGraphStreamModes(values []string) []string {
 	modes := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1191,6 +1405,15 @@ func compactLangGraphStreamModes(values []string) []string {
 	}
 
 	return modes
+}
+
+func langGraphStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
+	}
 }
 
 func langGraphMarshalJSON(value any, defaultValue string) (string, error) {
