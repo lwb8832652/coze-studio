@@ -447,6 +447,7 @@ func Register(r *server.Hertz) {
 			_skill_id.GET("/versions", append(_listskillversionsMw(), coze.ListSkillVersions)...)
 			_skill_id.GET("/versions/:version_id/resources", append(_listskillversionresourcesMw(), coze.ListSkillVersionResources)...)
 			_skill_id.PUT("/versions/:version_id/resources", append(_updateskillversionresourceMw(), coze.UpdateSkillVersionResource)...)
+			_skill_id.PUT("/versions/:version_id/content", append(_updateskillversioncontentMw(), coze.UpdateSkillVersionContent)...)
 			_skill_id.GET("/versions/:version_id/export", append(_exportskillversionMw(), coze.ExportSkillVersion)...)
 			_skill_id.POST("/versions/:version_id/rollback", append(_rollbackskillversionMw(), coze.RollbackSkillVersion)...)
 			_skill_id.GET("/export", append(_exportskillMw(), coze.ExportSkill)...)

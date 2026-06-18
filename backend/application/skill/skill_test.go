@@ -238,6 +238,38 @@ func TestApplicationUpdateSkillVersionResourceReturnsNewVersion(t *testing.T) {
 	require.Equal(t, "# Weekly Report", resp.Data.SkillMD)
 }
 
+func TestApplicationUpdateSkillVersionContentReturnsNewVersion(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		updatedContentVersion: &entity.SkillVersion{
+			ID:           402,
+			SkillID:      101,
+			Version:      "1.2.0",
+			SkillMD:      "# Updated Weekly Report",
+			InputSchema:  `{"type":"object"}`,
+			OutputSchema: `{"type":"object"}`,
+			Executor:     `{"mode":"agent"}`,
+			Permissions:  `{"network":false}`,
+			CreatedAt:    3000,
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.UpdateSkillVersionContent(context.Background(), &skillapi.UpdateSkillVersionContentRequest{
+		SkillID:   101,
+		VersionID: 201,
+		SkillMD:   "# Updated Weekly Report",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), domainSVC.updatedContentSkillID)
+	require.Equal(t, int64(201), domainSVC.updatedContentVersionID)
+	require.Equal(t, "# Updated Weekly Report", domainSVC.updatedSkillMD)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Equal(t, int64(402), resp.Data.ID)
+	require.Equal(t, "# Updated Weekly Report", resp.Data.SkillMD)
+}
+
 func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 	apiSkill, err := entityToAPI(&entity.Skill{
 		ID:           101,
@@ -263,6 +295,7 @@ type recordingSkillDomainService struct {
 	resources                []*entity.SkillResource
 	rolledBack               *entity.Skill
 	updatedResourceVersion   *entity.SkillVersion
+	updatedContentVersion    *entity.SkillVersion
 	listVersionsSkillID      int64
 	listResourcesSkillID     int64
 	listResourcesVersionID   int64
@@ -272,6 +305,9 @@ type recordingSkillDomainService struct {
 	updatedResourceVersionID int64
 	updatedResourcePath      string
 	updatedResourceContent   []byte
+	updatedContentSkillID    int64
+	updatedContentVersionID  int64
+	updatedSkillMD           string
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -297,6 +333,13 @@ func (s *recordingSkillDomainService) UpdateVersionResource(ctx context.Context,
 	s.updatedResourcePath = path
 	s.updatedResourceContent = append([]byte(nil), content...)
 	return s.updatedResourceVersion, nil
+}
+
+func (s *recordingSkillDomainService) UpdateVersionContent(ctx context.Context, skillID, versionID int64, skillMD string) (*entity.SkillVersion, error) {
+	s.updatedContentSkillID = skillID
+	s.updatedContentVersionID = versionID
+	s.updatedSkillMD = skillMD
+	return s.updatedContentVersion, nil
 }
 
 func readZipArchive(t *testing.T, content []byte) map[string]string {

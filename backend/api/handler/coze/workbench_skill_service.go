@@ -188,6 +188,26 @@ func UpdateSkillVersionResource(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// UpdateSkillVersionContent .
+// @router /api/workbench/skills/:skill_id/versions/:version_id/content [PUT]
+func UpdateSkillVersionContent(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req skillapi.UpdateSkillVersionContentRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appskill.SVC.UpdateSkillVersionContent(ctx, &req)
+	if err != nil {
+		workbenchSkillErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
 // ExportSkillVersion .
 // @router /api/workbench/skills/:skill_id/versions/:version_id/export [GET]
 func ExportSkillVersion(ctx context.Context, c *app.RequestContext) {

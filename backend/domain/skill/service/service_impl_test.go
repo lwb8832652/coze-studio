@@ -427,6 +427,98 @@ func TestServiceUpdateVersionResourceRejectsSkillMDPath(t *testing.T) {
 	require.ErrorContains(t, err, "SKILL.md")
 }
 
+func TestServiceUpdateVersionContentCreatesSnapshotAndCopiesResources(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Research Current",
+		Description:  "Current description.",
+		Type:         entity.TypeDeerSkill,
+		Version:      "2.0.0",
+		Enabled:      false,
+		InputSchema:  `{"current":true}`,
+		OutputSchema: `{"current":true}`,
+		Executor:     `{"current":true}`,
+		Permissions:  `{"current":true}`,
+		CreatedAt:    1000,
+		UpdatedAt:    2000,
+	}
+	repo.versions[101] = []*entity.SkillVersion{
+		{
+			ID:      201,
+			SkillID: 101,
+			Version: "1.0.0",
+			SkillMD: `---
+name: weekly-research
+description: Original research skill.
+type: deer_skill
+version: 1.0.0
+enabled: true
+---
+# Weekly Research
+`,
+			InputSchema:  `{"type":"object","selected":true}`,
+			OutputSchema: `{"type":"object","selected":true}`,
+			Executor:     `{"mode":"agent"}`,
+			Permissions:  `{"network":false,"allowed_tools":["search"]}`,
+			CreatedAt:    1000,
+		},
+	}
+	repo.resources[201] = []*entity.SkillResource{
+		{
+			ID:        301,
+			SkillID:   101,
+			VersionID: 201,
+			Path:      "references/prompt.md",
+			Content:   []byte("Use concise bullets."),
+			Size:      20,
+			SHA256:    "hash-prompt",
+			CreatedAt: 1000,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+	updatedSkillMD := `---
+name: custom-weekly-research
+description: Updated custom research skill.
+type: custom_skill
+version: 1.2.0
+enabled: false
+---
+# Custom Weekly Research
+
+Use the selected version resources.
+`
+
+	version, err := svc.UpdateVersionContent(context.Background(), 101, 201, updatedSkillMD)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(401), version.ID)
+	require.Equal(t, int64(101), version.SkillID)
+	require.Equal(t, "1.2.0", version.Version)
+	require.Equal(t, updatedSkillMD, version.SkillMD)
+	require.JSONEq(t, `{"type":"object","selected":true}`, version.InputSchema)
+	require.JSONEq(t, `{"mode":"agent"}`, version.Executor)
+	require.JSONEq(t, `{"network":false,"allowed_tools":["search"]}`, version.Permissions)
+
+	current := repo.items[101]
+	require.Equal(t, "custom-weekly-research", current.Name)
+	require.Equal(t, "Updated custom research skill.", current.Description)
+	require.Equal(t, entity.TypeCustomSkill, current.Type)
+	require.Equal(t, "1.2.0", current.Version)
+	require.False(t, current.Enabled)
+	require.JSONEq(t, `{"type":"object","selected":true}`, current.InputSchema)
+	require.JSONEq(t, `{"mode":"agent"}`, current.Executor)
+	require.JSONEq(t, `{"network":false,"allowed_tools":["search"]}`, current.Permissions)
+
+	require.Len(t, repo.versions[101], 2)
+	require.Len(t, repo.resources[401], 1)
+	require.Equal(t, "references/prompt.md", repo.resources[401][0].Path)
+	require.Equal(t, []byte("Use concise bullets."), repo.resources[401][0].Content)
+	require.Equal(t, int64(401), repo.resources[401][0].VersionID)
+	require.Equal(t, []byte("Use concise bullets."), repo.resources[201][0].Content)
+}
+
 func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{

@@ -95,6 +95,13 @@ type UpdateSkillVersionResourceRequest struct {
 	Base          *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
 }
 
+type UpdateSkillVersionContentRequest struct {
+	SkillID   int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
+	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
+	SkillMD   string     `thrift:"skill_md,3,required" form:"skill_md,required" json:"skill_md,required" query:"skill_md,required"`
+	Base      *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}
+
 type ExportSkillVersionRequest struct {
 	SkillID   int64      `thrift:"skill_id,1,required" json:"skill_id,string,required" path:"skill_id,required"`
 	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`

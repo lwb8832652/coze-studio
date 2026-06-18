@@ -32,6 +32,7 @@ type SkillService interface {
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)
 	ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error)
+	UpdateVersionContent(ctx context.Context, skillID, versionID int64, skillMD string) (*entity.SkillVersion, error)
 	UpdateVersionResource(ctx context.Context, skillID, versionID int64, path string, content []byte) (*entity.SkillVersion, error)
 	RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error)
 	TestRun(ctx context.Context, id int64, input string) (string, error)

@@ -178,6 +178,61 @@ func (s *skillService) ListVersionResources(ctx context.Context, skillID, versio
 	return s.components.Repo.ListResources(ctx, skillID, versionID)
 }
 
+func (s *skillService) UpdateVersionContent(ctx context.Context, skillID, versionID int64, skillMD string) (*entity.SkillVersion, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if skillID <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+	if versionID <= 0 {
+		return nil, InvalidArgumentErrorf("version id is required")
+	}
+	if strings.TrimSpace(skillMD) == "" {
+		return nil, InvalidArgumentErrorf("SKILL.md content is required")
+	}
+	if len(skillMD) > maxSkillArchiveSkillBytes {
+		return nil, InvalidArgumentErrorf("SKILL.md exceeds %d bytes", maxSkillArchiveSkillBytes)
+	}
+	if _, err := ParseDeclaration("SKILL.md", []byte(skillMD)); err != nil {
+		return nil, InvalidArgumentErrorf("invalid SKILL.md: %v", err)
+	}
+
+	current, err := s.Get(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	version, err := s.getVersion(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := s.components.Repo.ListResources(ctx, skillID, versionID)
+	if err != nil {
+		return nil, err
+	}
+
+	editedVersion := *version
+	editedVersion.SkillMD = skillMD
+	restored, err := skillFromVersionSnapshot(current, &editedVersion)
+	if err != nil {
+		return nil, err
+	}
+	restored.UpdatedAt = time.Now().UnixMilli()
+	if err := s.components.Repo.Update(ctx, restored); err != nil {
+		return nil, err
+	}
+
+	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, skillMD)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.components.Repo.CreateResources(ctx, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+		return nil, err
+	}
+
+	return newVersion, nil
+}
+
 func (s *skillService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, resourcePath string, content []byte) (*entity.SkillVersion, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err

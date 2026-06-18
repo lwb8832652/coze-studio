@@ -1805,6 +1805,11 @@ func _updateskillversionresourceMw() []app.HandlerFunc {
 	return nil
 }
 
+func _updateskillversioncontentMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _exportskillversionMw() []app.HandlerFunc {
 	// your code...
 	return nil

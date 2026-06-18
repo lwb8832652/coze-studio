@@ -132,6 +132,31 @@ func TestUpdateSkillVersionResourceHandlerReturnsNewVersion(t *testing.T) {
 	require.Contains(t, body, `"skill_md":"# Weekly Report"`)
 }
 
+func TestUpdateSkillVersionContentHandlerReturnsNewVersion(t *testing.T) {
+	h := server.Default()
+	h.PUT("/api/workbench/skills/:skill_id/versions/:version_id/content", UpdateSkillVersionContent)
+	installSkillVersionTestService(t)
+
+	payload := []byte(`{"skill_md":"# Updated Weekly Report"}`)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPut,
+		"/api/workbench/skills/101/versions/201/content",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.updatedContentSkillID)
+	require.Equal(t, int64(201), domainSVC.updatedContentVersionID)
+	require.Equal(t, "# Updated Weekly Report", domainSVC.updatedSkillMD)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"id":"402"`)
+	require.Contains(t, body, `"skill_md":"# Updated Weekly Report"`)
+}
+
 func installSkillVersionTestService(t *testing.T) {
 	t.Helper()
 	previous := appskill.SVC
@@ -176,6 +201,17 @@ func installSkillVersionTestService(t *testing.T) {
 				Permissions:  `{"network":false}`,
 				CreatedAt:    3000,
 			},
+			updatedContentVersion: &entity.SkillVersion{
+				ID:           402,
+				SkillID:      101,
+				Version:      "1.2.0",
+				SkillMD:      "# Updated Weekly Report",
+				InputSchema:  `{"type":"object"}`,
+				OutputSchema: `{"type":"object"}`,
+				Executor:     `{"mode":"agent"}`,
+				Permissions:  `{"network":false}`,
+				CreatedAt:    3000,
+			},
 			resources: []*entity.SkillResource{
 				{
 					ID:        301,
@@ -201,6 +237,7 @@ type skillVersionDomainService struct {
 	resources                []*entity.SkillResource
 	rolledBack               *entity.Skill
 	updatedResourceVersion   *entity.SkillVersion
+	updatedContentVersion    *entity.SkillVersion
 	listVersionsSkillID      int64
 	listResourcesSkillID     int64
 	listResourcesVersionID   int64
@@ -210,6 +247,9 @@ type skillVersionDomainService struct {
 	updatedResourceVersionID int64
 	updatedResourcePath      string
 	updatedResourceContent   []byte
+	updatedContentSkillID    int64
+	updatedContentVersionID  int64
+	updatedSkillMD           string
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -235,4 +275,11 @@ func (s *skillVersionDomainService) UpdateVersionResource(ctx context.Context, s
 	s.updatedResourcePath = path
 	s.updatedResourceContent = append([]byte(nil), content...)
 	return s.updatedResourceVersion, nil
+}
+
+func (s *skillVersionDomainService) UpdateVersionContent(ctx context.Context, skillID, versionID int64, skillMD string) (*entity.SkillVersion, error) {
+	s.updatedContentSkillID = skillID
+	s.updatedContentVersionID = versionID
+	s.updatedSkillMD = skillMD
+	return s.updatedContentVersion, nil
 }

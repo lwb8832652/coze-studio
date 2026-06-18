@@ -225,6 +225,27 @@ func (s *ApplicationService) UpdateSkillVersionResource(ctx context.Context, req
 	return &skillapi.SkillVersionResponse{Code: 0, Msg: "success", Data: skillVersionToAPI(version)}, nil
 }
 
+func (s *ApplicationService) UpdateSkillVersionContent(ctx context.Context, req *skillapi.UpdateSkillVersionContentRequest) (*skillapi.SkillVersionResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("update skill version content request is required")
+	}
+	if req.SkillID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("skill id is required")
+	}
+	if req.VersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("version id is required")
+	}
+	version, err := s.DomainSVC.UpdateVersionContent(ctx, req.SkillID, req.VersionID, req.SkillMD)
+	if err != nil {
+		return nil, err
+	}
+
+	return &skillapi.SkillVersionResponse{Code: 0, Msg: "success", Data: skillVersionToAPI(version)}, nil
+}
+
 func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skillapi.ExportSkillVersionRequest) (*skillapi.ExportSkillVersionResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err

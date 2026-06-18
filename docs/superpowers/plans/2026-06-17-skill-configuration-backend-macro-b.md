@@ -74,6 +74,15 @@ The current first-stage work can keep neutral data fields such as `source`, `ena
   - JSON body with resource `path` and base64 encoded content to avoid path wildcard ambiguity
   - safe resource path validation, `SKILL.md` conflict rejection, per-file size limit reuse, and SHA-256 refresh
   - create a new current snapshot from the selected version and attach the edited resource set without mutating historical resources
+- Expose `SKILL.md` entrypoint editing through the Workbench skill backend:
+  - domain-level `UpdateVersionContent`
+  - application-level `UpdateSkillVersionContent`
+  - IDL contract and HTTP handler for `PUT /api/workbench/skills/:skill_id/versions/:version_id/content`
+  - route registration under the existing Workbench skill path without redirects
+  - JSON body with raw `skill_md` content for the future custom skill editor
+  - reuse the existing `SKILL.md` parser, declaration validation, and entrypoint size limit
+  - update live skill metadata from edited frontmatter while preserving the selected snapshot's schemas, executor, and permissions
+  - create a new immutable current snapshot and copy selected version resources without mutating historical versions
 - Change `skill_versions` from unique semantic versions to append-only snapshots:
   - drop `uk_skill_versions_skill_version`
   - add non-unique `idx_skill_versions_skill_version`
@@ -93,15 +102,14 @@ For create/update flows, `SkillMD` is generated from the existing skill entity f
 
 `.skill` archive resources are validated, fingerprinted, stored as version-scoped attachments, readable through the Workbench skill version resource API, and editable through a version-scoped resource update API. Resource content is returned and accepted as base64 so text and binary assets share one transport shape. Resource edits create a new current snapshot and do not mutate historical resources. Resources are not executed through the runtime yet.
 
-Version snapshots can now be exported as `.skill` zip archives from the version export endpoint. The archive is assembled from the immutable version `SKILL.md` snapshot and stored version resources, then returned as base64 JSON payload for frontend download flows. Resource content can now be edited through backend APIs, but `SKILL.md` entrypoint editing and frontend editor replication remain separate Macro Stage B work.
+Version snapshots can now be exported as `.skill` zip archives from the version export endpoint. The archive is assembled from the immutable version `SKILL.md` snapshot and stored version resources, then returned as base64 JSON payload for frontend download flows. Resource content and the `SKILL.md` entrypoint can now be edited through backend APIs. Both operations append a new snapshot so the frontend editor can preserve history while working from any selected version.
 
-Version rollback now restores the live skill row from an immutable snapshot, preserving the current skill ID and space binding. Rollback also writes a new latest snapshot and clones the selected snapshot's resources, so subsequent history reads, exports, and future runtime lookup can treat the rollback result as the current skill state. Resource edits use the same latest-snapshot pattern. The version table is snapshot-oriented, so the same semantic version string may appear multiple times.
+Version rollback now restores the live skill row from an immutable snapshot, preserving the current skill ID and space binding. Rollback also writes a new latest snapshot and clones the selected snapshot's resources, so subsequent history reads, exports, and future runtime lookup can treat the rollback result as the current skill state. Resource and entrypoint edits use the same latest-snapshot pattern. Entrypoint edits take name, description, type, semantic version, enabled state, and Markdown instructions from the submitted `SKILL.md`; explicit execution configuration remains version-scoped and is copied from the selected snapshot. The version table is snapshot-oriented, so the same semantic version string may appear multiple times.
 
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- `SKILL.md` entrypoint and custom skill content editing.
 - Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.
 
