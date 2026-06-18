@@ -83,6 +83,16 @@ The current first-stage work can keep neutral data fields such as `source`, `ena
   - reuse the existing `SKILL.md` parser, declaration validation, and entrypoint size limit
   - update live skill metadata from edited frontmatter while preserving the selected snapshot's schemas, executor, and permissions
   - create a new immutable current snapshot and copy selected version resources without mutating historical versions
+- Inject enabled prompt skills into the Go Agent Harness runtime:
+  - add a Harness-level `SkillProvider` and immutable `AgentSkillContext`
+  - load skills by the run's `space_id` with `enabled=true`
+  - restrict prompt injection to `deer_skill`, `public_skill`, and `custom_skill`
+  - honor `run.config.enable_skills` as an optional name or ID filter while ignoring stale unmatched frontend selections
+  - load the latest immutable `SKILL.md` snapshot and inject only its Markdown body into the lead model system prompt
+  - enforce deterministic ordering, a maximum skill count, and a total instruction byte budget
+  - persist the selected skill context in Harness checkpoints and restore it during checkpoint resume
+  - emit `skills.loaded` events and include `skill_count` in terminal run metadata
+  - wire the production run and resume workers to the existing Skill Domain Service
 - Change `skill_versions` from unique semantic versions to append-only snapshots:
   - drop `uk_skill_versions_skill_version`
   - add non-unique `idx_skill_versions_skill_version`
@@ -106,11 +116,12 @@ Version snapshots can now be exported as `.skill` zip archives from the version 
 
 Version rollback now restores the live skill row from an immutable snapshot, preserving the current skill ID and space binding. Rollback also writes a new latest snapshot and clones the selected snapshot's resources, so subsequent history reads, exports, and future runtime lookup can treat the rollback result as the current skill state. Resource and entrypoint edits use the same latest-snapshot pattern. Entrypoint edits take name, description, type, semantic version, enabled state, and Markdown instructions from the submitted `SKILL.md`; explicit execution configuration remains version-scoped and is copied from the selected snapshot. The version table is snapshot-oriented, so the same semantic version string may appear multiple times.
 
+The production Go Agent Harness now resolves enabled prompt skills for each run's space. If `enable_skills` is present in run config, only matching enabled skill names or IDs are injected; unmatched legacy frontend selections are ignored until the frontend skill catalog is connected. The selected skill bodies are added to the model system prompt, written to checkpoints, restored for resume execution, and exposed through runtime events without emitting full instructions in event payloads.
+
 Until the next full thriftgo/hz generation pass, the new Workbench skill version DTOs are kept in a small extension file next to the generated skill model. The IDL remains the source contract.
 
 ## Deferred Within Macro Stage B
 
-- Skill enablement injection into the Go Agent Harness runtime.
 - Frontend skill list/detail/editor/test-run replication.
 
 ## Explicitly Deferred To Phase 2

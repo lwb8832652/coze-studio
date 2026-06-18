@@ -64,11 +64,25 @@ type AgentMemoryContext struct {
 	Items []AgentMemory
 }
 
+type AgentSkill struct {
+	ID          int64
+	Name        string
+	Description string
+	Type        string
+	Version     string
+	Body        string
+}
+
+type AgentSkillContext struct {
+	Items []AgentSkill
+}
+
 type AgentHarnessState struct {
 	StepIndex int
 	Results   []AgentStepResult
 	Steps     []AgentExecutedStep
 	Memory    AgentMemoryContext
+	Skills    AgentSkillContext
 }
 
 type AgentExecutedStep struct {
@@ -93,12 +107,17 @@ type MemoryProvider interface {
 	Recall(ctx context.Context, run *RunSummary) ([]AgentMemory, error)
 }
 
+type SkillProvider interface {
+	Load(ctx context.Context, run *RunSummary) ([]AgentSkill, error)
+}
+
 type HarnessExecutorOptions struct {
 	MaxSteps       int
 	ModelProvider  ChatModelProvider
 	ToolRegistry   ToolRegistry
 	EventSink      RunEventSink
 	MemoryProvider MemoryProvider
+	SkillProvider  SkillProvider
 	UsageCollector UsageCollector
 	CheckpointSink CheckpointSink
 }
@@ -108,6 +127,7 @@ type HarnessExecutor struct {
 	runner         AgentStepRunner
 	eventSink      RunEventSink
 	memoryProvider MemoryProvider
+	skillProvider  SkillProvider
 	usageCollector UsageCollector
 	checkpointSink CheckpointSink
 	maxSteps       int
@@ -130,16 +150,23 @@ func NewHarnessExecutor(planner AgentPlanner, runner AgentStepRunner, opts Harne
 		runner:         runner,
 		eventSink:      opts.EventSink,
 		memoryProvider: opts.MemoryProvider,
+		skillProvider:  opts.SkillProvider,
 		usageCollector: opts.UsageCollector,
 		checkpointSink: opts.CheckpointSink,
 		maxSteps:       maxSteps,
 	}
 }
 
-func NewApplicationHarnessExecutor(app *ApplicationService) *HarnessExecutor {
+func NewApplicationHarnessExecutor(app *ApplicationService, skillProviders ...SkillProvider) *HarnessExecutor {
+	var skillProvider SkillProvider
+	if len(skillProviders) > 0 {
+		skillProvider = skillProviders[0]
+	}
+
 	return NewHarnessExecutor(nil, nil, HarnessExecutorOptions{
 		EventSink:      NewApplicationRunEventSink(app),
 		MemoryProvider: NewThreadMemoryProvider(app, 8),
+		SkillProvider:  skillProvider,
 		UsageCollector: NewThreadUsageCollector(app),
 		CheckpointSink: NewThreadCheckpointSink(app),
 	})
@@ -173,11 +200,19 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 	if err != nil {
 		return nil, err
 	}
+	skills, err := e.loadSkills(ctx, run)
+	if err != nil {
+		return nil, err
+	}
 	state := AgentHarnessState{
 		Memory: memory,
+		Skills: skills,
 	}
 	if len(memory.Items) > 0 {
 		e.emitMemoryRecalledEvent(ctx, run, memory)
+	}
+	if len(skills.Items) > 0 {
+		e.emitSkillsLoadedEvent(ctx, run, skills)
 	}
 	parentCheckpointID, err := e.saveCheckpoint(ctx, run, 0, "harness.initial", "initial", "running", state, nil, nil)
 	if err != nil {
@@ -259,7 +294,7 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 
 				return &RunExecutionResult{
 					Message:  message,
-					Metadata: harnessMetadata(stepResult.Metadata, executedSteps, state.Memory),
+					Metadata: harnessMetadata(stepResult.Metadata, executedSteps, state.Memory, state.Skills),
 				}, nil
 			}
 		}
@@ -364,7 +399,7 @@ func (e *HarnessExecutor) Resume(ctx context.Context, run *RunSummary, input *Ha
 
 			return &RunExecutionResult{
 				Message:  message,
-				Metadata: harnessMetadata(stepResult.Metadata, len(state.Steps), state.Memory),
+				Metadata: harnessMetadata(stepResult.Metadata, len(state.Steps), state.Memory, state.Skills),
 			}, nil
 		}
 	}
@@ -471,6 +506,7 @@ func harnessCheckpointValues(run *RunSummary, state AgentHarnessState) map[strin
 		"artifacts":    map[string]any{},
 		"todos":        []any{},
 		"memory":       harnessMemoryValues(state.Memory),
+		"skills":       harnessSkillValues(state.Skills),
 		"tool_results": harnessToolResults(state.Steps),
 		"steps":        harnessStepValues(state.Steps),
 	}
@@ -480,6 +516,7 @@ func harnessCheckpointVersions(state AgentHarnessState) map[string]any {
 	return map[string]any{
 		"messages":     len(state.Steps),
 		"memory":       len(state.Memory.Items),
+		"skills":       len(state.Skills.Items),
 		"steps":        len(state.Steps),
 		"tool_results": len(harnessToolResults(state.Steps)),
 	}
@@ -577,6 +614,22 @@ func harnessMemoryValues(memory AgentMemoryContext) map[string]any {
 			payload["metadata"] = metadata
 		}
 		items = append(items, payload)
+	}
+
+	return map[string]any{"items": items}
+}
+
+func harnessSkillValues(skills AgentSkillContext) map[string]any {
+	items := make([]map[string]any, 0, len(skills.Items))
+	for _, item := range skills.Items {
+		items = append(items, map[string]any{
+			"id":          fmt.Sprintf("%d", item.ID),
+			"name":        item.Name,
+			"description": item.Description,
+			"type":        item.Type,
+			"version":     item.Version,
+			"body":        item.Body,
+		})
 	}
 
 	return map[string]any{"items": items}
@@ -736,6 +789,43 @@ func (e *HarnessExecutor) recallMemory(ctx context.Context, run *RunSummary) (Ag
 	return normalizeMemoryContext(memories), nil
 }
 
+func (e *HarnessExecutor) loadSkills(ctx context.Context, run *RunSummary) (AgentSkillContext, error) {
+	if e == nil || e.skillProvider == nil {
+		return AgentSkillContext{}, nil
+	}
+
+	skills, err := e.skillProvider.Load(ctx, run)
+	if err != nil {
+		return AgentSkillContext{}, err
+	}
+
+	return normalizeSkillContext(skills), nil
+}
+
+func normalizeSkillContext(skills []AgentSkill) AgentSkillContext {
+	if len(skills) == 0 {
+		return AgentSkillContext{}
+	}
+
+	items := make([]AgentSkill, 0, len(skills))
+	for _, skill := range skills {
+		item := AgentSkill{
+			ID:          skill.ID,
+			Name:        strings.TrimSpace(skill.Name),
+			Description: strings.TrimSpace(skill.Description),
+			Type:        strings.TrimSpace(skill.Type),
+			Version:     strings.TrimSpace(skill.Version),
+			Body:        strings.TrimSpace(skill.Body),
+		}
+		if item.ID <= 0 || item.Name == "" || item.Body == "" {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	return AgentSkillContext{Items: items}
+}
+
 func normalizeMemoryContext(memories []AgentMemory) AgentMemoryContext {
 	if len(memories) == 0 {
 		return AgentMemoryContext{}
@@ -883,6 +973,30 @@ func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunS
 	})
 }
 
+func (e *HarnessExecutor) emitSkillsLoadedEvent(ctx context.Context, run *RunSummary, skills AgentSkillContext) {
+	if len(skills.Items) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(skills.Items))
+	names := make([]string, 0, len(skills.Items))
+	for _, item := range skills.Items {
+		ids = append(ids, fmt.Sprintf("%d", item.ID))
+		names = append(names, item.Name)
+	}
+
+	emitRunEvent(ctx, e.eventSink, RunEvent{
+		ThreadID:  run.ThreadID,
+		RunID:     run.RunID,
+		EventType: "skills.loaded",
+		Payload: encodeRunEventPayload(ctx, map[string]any{
+			"skill_count": len(skills.Items),
+			"skill_ids":   ids,
+			"skill_names": names,
+		}),
+	})
+}
+
 func (e *HarnessExecutor) emitStepStartedEvent(ctx context.Context, run *RunSummary, step AgentStep, stepIndex int) {
 	payload := map[string]any{
 		"step_index": stepIndex,
@@ -1003,7 +1117,11 @@ func (r *ModelStepRunner) RunStep(ctx context.Context, run *RunSummary, step Age
 		return nil, fmt.Errorf("unsupported agent step type: %s", step.Type)
 	}
 
-	result, err := r.executor.Execute(ctx, run)
+	modelRun, err := runWithSkillPrompt(run, state.Skills)
+	if err != nil {
+		return nil, err
+	}
+	result, err := r.executor.Execute(ctx, modelRun)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,17 +1157,23 @@ func cloneHarnessState(state AgentHarnessState) AgentHarnessState {
 	if len(state.Memory.Items) > 0 {
 		clone.Memory.Items = append([]AgentMemory(nil), state.Memory.Items...)
 	}
+	if len(state.Skills.Items) > 0 {
+		clone.Skills.Items = append([]AgentSkill(nil), state.Skills.Items...)
+	}
 
 	return clone
 }
 
-func harnessMetadata(stepMetadata string, steps int, memory AgentMemoryContext) string {
+func harnessMetadata(stepMetadata string, steps int, memory AgentMemoryContext, skills AgentSkillContext) string {
 	payload := map[string]any{
 		"source": "agent_harness",
 		"steps":  steps,
 	}
 	if len(memory.Items) > 0 {
 		payload["memory_count"] = len(memory.Items)
+	}
+	if len(skills.Items) > 0 {
+		payload["skill_count"] = len(skills.Items)
 	}
 	if strings.TrimSpace(stepMetadata) != "" {
 		var stepPayload map[string]any

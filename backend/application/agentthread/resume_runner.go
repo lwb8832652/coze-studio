@@ -315,6 +315,7 @@ func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint
 	state := AgentHarnessState{
 		Steps:  resumeExecutedSteps(channelValues["steps"], messages),
 		Memory: resumeMemoryContext(channelValues["memory"]),
+		Skills: resumeSkillContext(channelValues["skills"]),
 	}
 	state.StepIndex = len(state.Steps)
 	state.Results = resumeStepResults(state.Steps)
@@ -453,6 +454,39 @@ func resumeMemoryContext(value any) AgentMemoryContext {
 	}
 
 	return AgentMemoryContext{Items: memories}
+}
+
+func resumeSkillContext(value any) AgentSkillContext {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return AgentSkillContext{}
+	}
+	items, ok := payload["items"].([]any)
+	if !ok {
+		return AgentSkillContext{}
+	}
+
+	skills := make([]AgentSkill, 0, len(items))
+	for _, item := range items {
+		skillPayload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		skill := AgentSkill{
+			ID:          resumePayloadInt64(skillPayload["id"]),
+			Name:        strings.TrimSpace(resumePayloadString(skillPayload["name"])),
+			Description: strings.TrimSpace(resumePayloadString(skillPayload["description"])),
+			Type:        strings.TrimSpace(resumePayloadString(skillPayload["type"])),
+			Version:     strings.TrimSpace(resumePayloadString(skillPayload["version"])),
+			Body:        strings.TrimSpace(resumePayloadString(skillPayload["body"])),
+		}
+		if skill.ID <= 0 || skill.Name == "" || skill.Body == "" {
+			continue
+		}
+		skills = append(skills, skill)
+	}
+
+	return AgentSkillContext{Items: skills}
 }
 
 func resumePendingSteps(items []any) []AgentStep {

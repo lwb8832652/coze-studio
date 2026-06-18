@@ -179,9 +179,10 @@ func TestLoadHarnessResumeInputConvertsCheckpointState(t *testing.T) {
 			"steps":[
 				{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}
 			],
-			"memory":{"items":[{"id":"mem-1","scope":"thread","content":"remember this","score":0.8,"metadata":"{\"kind\":\"fact\"}"}]}
+			"memory":{"items":[{"id":"mem-1","scope":"thread","content":"remember this","score":0.8,"metadata":"{\"kind\":\"fact\"}"}]},
+			"skills":{"items":[{"id":"101","name":"weekly-research","description":"Research weekly changes.","type":"deer_skill","version":"1.2.0","body":"Collect sources."}]}
 		}`,
-		ChannelVersions: `{"messages":1,"steps":1,"memory":1}`,
+		ChannelVersions: `{"messages":1,"steps":1,"memory":1,"skills":1}`,
 		PendingSends:    `[{"node":"generate_answer","step_id":"step-2","step_type":"model","step_name":"generate_answer","final":true}]`,
 		Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
 	}
@@ -209,6 +210,10 @@ func TestLoadHarnessResumeInputConvertsCheckpointState(t *testing.T) {
 	require.Len(t, input.State.Memory.Items, 1)
 	require.Equal(t, "mem-1", input.State.Memory.Items[0].ID)
 	require.Equal(t, "remember this", input.State.Memory.Items[0].Content)
+	require.Len(t, input.State.Skills.Items, 1)
+	require.Equal(t, int64(101), input.State.Skills.Items[0].ID)
+	require.Equal(t, "weekly-research", input.State.Skills.Items[0].Name)
+	require.Equal(t, "Collect sources.", input.State.Skills.Items[0].Body)
 	require.Len(t, input.PendingSteps, 1)
 	require.Equal(t, "step-2", input.PendingSteps[0].ID)
 	require.Equal(t, AgentStepTypeModel, input.PendingSteps[0].Type)

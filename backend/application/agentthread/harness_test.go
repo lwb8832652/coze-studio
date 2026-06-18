@@ -262,6 +262,55 @@ func TestHarnessExecutorRecallsMemoryBeforePlanning(t *testing.T) {
 	require.Contains(t, eventSink.events[0].Payload, `"scopes":["thread","run"]`)
 }
 
+func TestHarnessExecutorLoadsEnabledSkillsBeforePlanning(t *testing.T) {
+	skillProvider := &recordingSkillProvider{
+		skills: []AgentSkill{
+			{
+				ID:          101,
+				Name:        "weekly-research",
+				Description: "Research weekly changes.",
+				Type:        "deer_skill",
+				Version:     "1.2.0",
+				Body:        "Collect sources and produce a concise brief.",
+			},
+		},
+	}
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{
+			{ID: "step-skill", Type: AgentStepTypeModel, Name: "generate_answer"},
+		}},
+	}
+	runner := &recordingStepRunner{
+		result: &AgentStepResult{Message: "已按技能生成周报", Final: true},
+	}
+	eventSink := &recordingRunEventSink{}
+	checkpointSink := &recordingCheckpointSink{nextID: 700}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       1,
+		EventSink:      eventSink,
+		SkillProvider:  skillProvider,
+		CheckpointSink: checkpointSink,
+	})
+	run := &RunSummary{ThreadID: 9, RunID: 18, SpaceID: 7, Input: `{"message":"写周报"}`}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.NoError(t, err)
+	require.Equal(t, "已按技能生成周报", result.Message)
+	require.Contains(t, result.Metadata, `"skill_count":1`)
+	require.Equal(t, 1, skillProvider.calls)
+	require.Equal(t, run, skillProvider.run)
+	require.Len(t, planner.state.Skills.Items, 1)
+	require.Equal(t, "weekly-research", planner.state.Skills.Items[0].Name)
+	require.Equal(t, "Collect sources and produce a concise brief.", runner.state.Skills.Items[0].Body)
+	require.Equal(t, []string{"skills.loaded", "step.started", "step.completed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[0].Payload, `"skill_count":1`)
+	require.Contains(t, eventSink.events[0].Payload, `"skill_ids":["101"]`)
+	require.Contains(t, checkpointSink.checkpoints[0].ChannelValues, `"skills":{"items":[{`)
+	require.Contains(t, checkpointSink.checkpoints[0].ChannelValues, `"id":"101"`)
+	require.Contains(t, checkpointSink.checkpoints[0].ChannelVersions, `"skills":1`)
+}
+
 func TestHarnessExecutorRecordsTokenUsageFromStepMetadata(t *testing.T) {
 	planner := &recordingPlanner{
 		plan: &AgentPlan{Steps: []AgentStep{
@@ -671,12 +720,62 @@ func TestHarnessExecutorDefaultModelStepUsesModelExecutor(t *testing.T) {
 	require.Equal(t, "生成回答", chatModel.messages[0].Content)
 }
 
+func TestModelStepRunnerInjectsSkillInstructionsIntoSystemPrompt(t *testing.T) {
+	executor := &recordingRunExecutor{
+		result: &RunExecutionResult{Message: "完成", Metadata: `{"source":"model"}`},
+	}
+	runner := NewModelStepRunner(executor)
+	run := &RunSummary{
+		RunID: 18,
+		Input: `{"message":"写周报"}`,
+		Config: `{
+			"model_id": 100002,
+			"system_prompt": "你是任务执行助手"
+		}`,
+	}
+
+	result, err := runner.RunStep(context.Background(), run, AgentStep{
+		ID:   "model-1",
+		Type: AgentStepTypeModel,
+	}, AgentHarnessState{
+		Skills: AgentSkillContext{Items: []AgentSkill{
+			{
+				ID:          101,
+				Name:        "weekly-research",
+				Description: "Research weekly changes.",
+				Type:        "deer_skill",
+				Version:     "1.2.0",
+				Body:        "Collect sources and produce a concise brief.",
+			},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "完成", result.Message)
+	require.NotNil(t, executor.run)
+	require.NotSame(t, run, executor.run)
+	require.Equal(t, run.Config, `{
+			"model_id": 100002,
+			"system_prompt": "你是任务执行助手"
+		}`)
+	var config map[string]any
+	require.NoError(t, json.Unmarshal([]byte(executor.run.Config), &config))
+	require.Equal(t, float64(100002), config["model_id"])
+	systemPrompt := config["system_prompt"].(string)
+	require.Contains(t, systemPrompt, "你是任务执行助手")
+	require.Contains(t, systemPrompt, "## Enabled Skills")
+	require.Contains(t, systemPrompt, "weekly-research")
+	require.Contains(t, systemPrompt, "Collect sources and produce a concise brief.")
+}
+
 func TestNewApplicationHarnessExecutorConfiguresDurableSinks(t *testing.T) {
-	executor := NewApplicationHarnessExecutor(&ApplicationService{ThreadSVC: &recordingThreadService{}})
+	skillProvider := &recordingSkillProvider{}
+	executor := NewApplicationHarnessExecutor(&ApplicationService{ThreadSVC: &recordingThreadService{}}, skillProvider)
 
 	require.NotNil(t, executor)
 	require.NotNil(t, executor.eventSink)
 	require.NotNil(t, executor.memoryProvider)
+	require.Equal(t, skillProvider, executor.skillProvider)
 	require.NotNil(t, executor.usageCollector)
 	require.NotNil(t, executor.checkpointSink)
 }
@@ -736,6 +835,40 @@ func (p *recordingMemoryProvider) Recall(ctx context.Context, run *RunSummary) (
 	}
 
 	return append([]AgentMemory(nil), p.memories...), nil
+}
+
+type recordingSkillProvider struct {
+	skills []AgentSkill
+	err    error
+	run    *RunSummary
+	calls  int
+}
+
+func (p *recordingSkillProvider) Load(ctx context.Context, run *RunSummary) ([]AgentSkill, error) {
+	p.calls++
+	p.run = run
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return append([]AgentSkill(nil), p.skills...), nil
+}
+
+type recordingRunExecutor struct {
+	result *RunExecutionResult
+	err    error
+	run    *RunSummary
+	calls  int
+}
+
+func (e *recordingRunExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+	e.calls++
+	e.run = run
+	if e.err != nil {
+		return nil, e.err
+	}
+
+	return e.result, nil
 }
 
 type recordingUsageCollector struct {
