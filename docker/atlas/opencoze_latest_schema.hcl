@@ -5834,6 +5834,10 @@ table "agent_files" {
     null = false
     type = varchar(1024)
   }
+  column "virtual_path_hash" {
+    null = false
+    type = varchar(64)
+  }
   column "object_uri" {
     null = false
     type = varchar(1024)
@@ -5881,7 +5885,7 @@ table "agent_files" {
   }
   index "uk_agent_files_run_path" {
     unique  = true
-    columns = [column.run_id, column.virtual_path]
+    columns = [column.run_id, column.virtual_path_hash]
   }
 }
 table "agent_artifacts" {
@@ -6024,6 +6028,11 @@ table "agent_artifact_scan_jobs" {
     null = false
     type = varchar(32)
   }
+  column "worker_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
   column "attempt_count" {
     null    = false
     type    = int
@@ -6036,6 +6045,21 @@ table "agent_artifact_scan_jobs" {
   column "available_at" {
     null = false
     type = bigint
+  }
+  column "lease_expires_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "started_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "ended_at" {
+    null    = false
+    type    = bigint
+    default = 0
   }
   column "created_at" {
     null = false

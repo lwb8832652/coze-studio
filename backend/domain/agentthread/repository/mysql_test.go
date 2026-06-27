@@ -219,6 +219,10 @@ func TestRuntimeFileRepositoryUpsertsByRunAndVirtualPath(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&agentFilePO{}).Count(&count).Error)
 	require.Equal(t, int64(1), count)
+
+	var storedPO agentFilePO
+	require.NoError(t, db.Where("id = ?", first.ID).First(&storedPO).Error)
+	require.Equal(t, agentFileVirtualPathHash(first.VirtualPath), storedPO.VirtualPathHash)
 }
 
 func TestArtifactRepositoryUpsertsByFileAndListsByThread(t *testing.T) {
@@ -457,6 +461,9 @@ func TestArtifactRepositoryListDeletedCleanupCandidates(t *testing.T) {
 			CreatedAt:   1000,
 			UpdatedAt:   1000,
 		},
+	}
+	for _, file := range files {
+		file.VirtualPathHash = agentFileVirtualPathHash(file.VirtualPath)
 	}
 	require.NoError(t, db.Create(&files).Error)
 	artifacts := []*agentArtifactPO{

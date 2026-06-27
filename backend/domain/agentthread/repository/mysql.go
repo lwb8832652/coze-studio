@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,7 +205,8 @@ type agentFilePO struct {
 	FileName         string         `gorm:"column:file_name"`
 	OriginalFileName string         `gorm:"column:original_file_name"`
 	FileKind         string         `gorm:"column:file_kind;index:idx_agent_files_thread_kind"`
-	VirtualPath      string         `gorm:"column:virtual_path;uniqueIndex:uk_agent_files_run_path"`
+	VirtualPath      string         `gorm:"column:virtual_path"`
+	VirtualPathHash  string         `gorm:"column:virtual_path_hash;size:64;uniqueIndex:uk_agent_files_run_path"`
 	ObjectURI        string         `gorm:"column:object_uri"`
 	ContentType      string         `gorm:"column:content_type"`
 	SizeBytes        int64          `gorm:"column:size_bytes"`
@@ -1406,8 +1408,9 @@ func (r *threadRepository) UpsertRuntimeFile(
 		updateResult := r.db.WithContext(ctx).
 			Model(&agentFilePO{}).
 			Where(
-				"run_id = ? AND virtual_path = ?",
+				"run_id = ? AND virtual_path_hash = ? AND virtual_path = ?",
 				po.RunID,
+				po.VirtualPathHash,
 				po.VirtualPath,
 			).
 			Updates(updates)
@@ -1426,8 +1429,9 @@ func (r *threadRepository) UpsertRuntimeFile(
 	stored := &agentFilePO{}
 	if err := r.db.WithContext(ctx).
 		Where(
-			"run_id = ? AND virtual_path = ?",
+			"run_id = ? AND virtual_path_hash = ? AND virtual_path = ?",
 			po.RunID,
+			po.VirtualPathHash,
 			po.VirtualPath,
 		).
 		First(stored).Error; err != nil {
@@ -1442,8 +1446,14 @@ func (r *threadRepository) GetRuntimeFile(
 	virtualPath string,
 ) (*entity.AgentFile, error) {
 	var stored agentFilePO
+	virtualPathHash := agentFileVirtualPathHash(virtualPath)
 	err := r.db.WithContext(ctx).
-		Where("run_id = ? AND virtual_path = ?", runID, virtualPath).
+		Where(
+			"run_id = ? AND virtual_path_hash = ? AND virtual_path = ?",
+			runID,
+			virtualPathHash,
+			virtualPath,
+		).
 		First(&stored).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -3146,6 +3156,7 @@ func agentFileToPO(file *entity.AgentFile) (*agentFilePO, error) {
 		OriginalFileName: file.OriginalFileName,
 		FileKind:         string(file.FileKind),
 		VirtualPath:      file.VirtualPath,
+		VirtualPathHash:  agentFileVirtualPathHash(file.VirtualPath),
 		ObjectURI:        file.ObjectURI,
 		ContentType:      file.ContentType,
 		SizeBytes:        file.SizeBytes,
@@ -3155,6 +3166,11 @@ func agentFileToPO(file *entity.AgentFile) (*agentFilePO, error) {
 		CreatedAt:        file.CreatedAt,
 		UpdatedAt:        file.UpdatedAt,
 	}, nil
+}
+
+func agentFileVirtualPathHash(virtualPath string) string {
+	sum := sha256.Sum256([]byte(virtualPath))
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (po *agentFilePO) toEntity() *entity.AgentFile {

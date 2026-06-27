@@ -237,8 +237,9 @@ Browser smoke remains required before RC:
 ## Known P0 Issues
 
 - Full desktop browser smoke is still pending.
-- Full Atlas apply/dry-run against the approved DB target is still a release
-  gate. The debug flow intentionally no longer pulls a MySQL dev image.
+- Atlas apply against the approved external debug DB target completed, and the
+  follow-up dry-run reports `Schema is synced, no changes to be made`. The
+  debug flow intentionally no longer pulls a MySQL dev image.
 - A broad `go test ./api/handler/coze ... -run Test` command runs unrelated
   legacy handler tests and currently fails on non-P0 Workflow/Conversation
   paths plus Mockey `-gcflags` requirements. Use the targeted P0 commands

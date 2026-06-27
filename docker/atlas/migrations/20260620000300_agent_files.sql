@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS `agent_files` (
   `original_file_name` VARCHAR(255) NOT NULL DEFAULT '',
   `file_kind` VARCHAR(32) NOT NULL,
   `virtual_path` VARCHAR(1024) NOT NULL,
+  `virtual_path_hash` VARCHAR(64) NOT NULL,
   `object_uri` VARCHAR(1024) NOT NULL,
   `content_type` VARCHAR(255) NOT NULL DEFAULT '',
   `size_bytes` BIGINT NOT NULL DEFAULT 0,
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `agent_files` (
   `created_at` BIGINT NOT NULL,
   `updated_at` BIGINT NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_agent_files_run_path` (`run_id`, `virtual_path`),
+  UNIQUE KEY `uk_agent_files_run_path` (`run_id`, `virtual_path_hash`),
   KEY `idx_agent_files_thread_kind` (`thread_id`, `file_kind`),
   KEY `idx_agent_files_space_created` (`space_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
