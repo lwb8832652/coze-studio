@@ -1019,6 +1019,14 @@ cd backend && go test ./...
   clamp result counts to `1-10`. DuckDuckGo and Google Eino-ext adapters are
   backend candidates only after network policy, retry behavior, secret
   storage, masked settings, and provider audit pass review.
+- The production-shaped HTTP search adapter is
+  `NewADKHTTPWebSearchBackend`, wired only when
+  `AGENT_THREAD_WEB_SEARCH_ENABLED=true`. It posts bounded JSON to a fixed
+  endpoint, defaults to HTTPS, rejects private IP literals and cross-host
+  redirects unless explicitly configured for local/internal deployments, and
+  must not expose queries, endpoint paths, API keys, provider response bodies,
+  raw URLs, object keys, or credentials in errors or events. Durable Web
+  provider settings and UI remain future work.
 - Use a Coze-backed `plantask.Backend` for durable task-plan state. Do not make
   DeepAgent `write_todos` and `plantask` independent systems of record; disable
   one when both would otherwise be exposed.

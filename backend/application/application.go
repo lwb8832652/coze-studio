@@ -182,6 +182,10 @@ func Init(ctx context.Context) (err error) {
 		infra.IDGenSVC,
 	)
 	primaryServices.agentThreadSVC.GuardrailProviderStatus = guardrailStatus
+	webSearchBackend, _, err := agentthread.ADKWebSearchBackendFromEnv()
+	if err != nil {
+		return fmt.Errorf("Init - configure agent web search backend: %w", err)
+	}
 	adkRuntimeFileRegistry := agentthread.NewApplicationADKRuntimeFileRegistry(
 		primaryServices.agentThreadSVC,
 	)
@@ -271,6 +275,9 @@ func Init(ctx context.Context) (err error) {
 				),
 				agentthread.WithDefaultADKToolProviderGuardrailEnforcer(
 					guardrailEnforcer,
+				),
+				agentthread.WithDefaultADKToolProviderWebSearchBackend(
+					webSearchBackend,
 				),
 			),
 			agentthread.NewADKMiddlewareAssembler(agentthread.ADKMiddlewareAssemblerOptions{

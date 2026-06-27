@@ -242,7 +242,7 @@ Migration rules:
 | Settings | model/mode/token/memory/skills/tools/runtime settings | scattered controls | consolidated Agent settings while preserving account/API auth |
 | Feedback | run feedback and statistics | absent | run-level feedback API and task-detail interaction |
 | Suggestions | follow-up suggestions | absent | post-run suggestion generation and UI |
-| Web tools | search, fetch and HTTP tools | ADK Web Tool Catalog exposes disabled-by-default `web_fetch` and backend-driven `web_search` | Durable provider settings, secret-backed search adapters, scanner and domain policy |
+| Web tools | search, fetch and HTTP tools | ADK Web Tool Catalog exposes policy-controlled `web_fetch` and backend-driven/env-backed HTTP `web_search` | Durable provider settings/UI, scanner and domain policy |
 | Runtime doctor | provider and extension diagnostics | scattered configuration errors | model/MCP/sandbox/Skill connectivity and capability checks |
 | Observability | tracing, run journal, structured metrics | logs and local counters | Phase 2 enhancement: OpenTelemetry traces, metrics, dashboards, runbook. Phase 1 keeps only the events and usage data visible in DeerFlow-equivalent workflows. |
 
@@ -390,12 +390,22 @@ Progress evidence as of 2026-06-21:
   `coze.web_fetch.v1` output. Direct Eino-ext `httprequest` exposure remains
   rejected because Coze must own SSRF, redirect, budget, audit, and output
   policy.
+- [x] M2.18a complete: `web_search` now has an explicit production bootstrap
+  path through `ADKWebSearchBackendFromEnv` and `NewADKHTTPWebSearchBackend`.
+  The backend is disabled by default, requires
+  `AGENT_THREAD_WEB_SEARCH_ENABLED=true`, posts bounded JSON to a fixed
+  endpoint, supports secret-backed auth headers, clamps response budgets, and
+  rejects private IP literals, HTTP, query/fragment endpoints, userinfo, and
+  cross-host redirects unless explicitly configured for local/internal
+  deployments. Application bootstrap injects the backend through
+  `WithDefaultADKToolProviderWebSearchBackend`; sanitized errors avoid query
+  text, endpoint paths, provider response bodies, and API keys.
 - [ ] M2.9b and later middleware capabilities remain open. General workspace
   tools, upload mounting, output promotion, user-visible `agent_artifacts`,
   preview/download APIs, MIME/security scanning, retention cleanup, shell, and
   sandbox providers remain in M4. Failover candidate selection and
-  provider-specific reasoning option projection, durable Web provider settings,
-  and secret-backed Web search adapters also remain open.
+  provider-specific reasoning option projection and durable Web provider
+  settings/UI also remain open.
 
 Exit gate:
 
