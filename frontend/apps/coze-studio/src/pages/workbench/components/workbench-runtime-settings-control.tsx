@@ -20,6 +20,7 @@ import {
   useState,
 } from 'react';
 
+import { Input } from '@coze-arch/coze-design';
 import { IconCozSetting } from '@coze-arch/coze-design/icons';
 
 import type { WorkbenchRuntimeSettings } from './types';
@@ -35,6 +36,21 @@ type WorkbenchRuntimeSettingsUpdate = (
     current: WorkbenchRuntimeSettings,
   ) => Partial<WorkbenchRuntimeSettings>,
 ) => void;
+
+const parseAllowedHostsInput = (value: string) => {
+  const seen = new Set<string>();
+
+  return value
+    .split(',')
+    .map(host => host.trim())
+    .filter(host => {
+      if (!host || seen.has(host)) {
+        return false;
+      }
+      seen.add(host);
+      return true;
+    });
+};
 
 const WorkbenchModelReliabilitySettingsRows = ({
   failoverCandidateCount,
@@ -93,6 +109,118 @@ const WorkbenchModelReliabilitySettingsRows = ({
   </>
 );
 
+const WorkbenchWebToolSettingsRows = ({
+  settings,
+  update,
+}: {
+  settings: WorkbenchRuntimeSettings;
+  update: WorkbenchRuntimeSettingsUpdate;
+}) => {
+  const [allowedHostsInput, setAllowedHostsInput] = useState(() =>
+    settings.web_tools.http.allowed_hosts.join(', '),
+  );
+  const updateWebTools = (
+    resolveWebTools: (
+      current: WorkbenchRuntimeSettings['web_tools'],
+    ) => Partial<WorkbenchRuntimeSettings['web_tools']>,
+  ) =>
+    update(current => ({
+      web_tools: {
+        ...current.web_tools,
+        ...resolveWebTools(current.web_tools),
+      },
+    }));
+  const webFetchHostCount = settings.web_tools.http.allowed_hosts.length;
+
+  return (
+    <>
+      <div className="chat-workbench-runtime-row">
+        <span>联网搜索</span>
+        <button
+          type="button"
+          aria-pressed={settings.web_tools.search.enabled}
+          data-active={settings.web_tools.search.enabled}
+          onClick={() => {
+            updateWebTools(current => {
+              const searchEnabled = !current.search.enabled;
+
+              return {
+                enabled: searchEnabled || current.http.enabled,
+                search: {
+                  ...current.search,
+                  enabled: searchEnabled,
+                },
+              };
+            });
+          }}
+        >
+          {settings.web_tools.search.enabled ? '已开启' : '关闭'}
+        </button>
+      </div>
+      <div className="chat-workbench-runtime-row">
+        <span>网页读取</span>
+        <button
+          type="button"
+          aria-label="网页读取"
+          aria-pressed={settings.web_tools.http.enabled}
+          data-active={settings.web_tools.http.enabled}
+          disabled={webFetchHostCount === 0}
+          onClick={() => {
+            updateWebTools(current => {
+              const httpEnabled =
+                !current.http.enabled && current.http.allowed_hosts.length > 0;
+
+              return {
+                enabled: current.search.enabled || httpEnabled,
+                http: {
+                  ...current.http,
+                  enabled: httpEnabled,
+                },
+              };
+            });
+          }}
+        >
+          {webFetchHostCount > 0
+            ? [
+                settings.web_tools.http.enabled ? '已开启' : '关闭',
+                webFetchHostCount,
+              ].join(' · ')
+            : '需域名'}
+        </button>
+      </div>
+      <div className="chat-workbench-runtime-row chat-workbench-runtime-input-row">
+        <span>允许域名</span>
+        <Input
+          aria-label="网页读取允许域名"
+          className="chat-workbench-runtime-host-input"
+          placeholder="example.com, docs.example.com"
+          showClear
+          size="small"
+          value={allowedHostsInput}
+          onChange={value => {
+            setAllowedHostsInput(value);
+            const allowedHosts = parseAllowedHostsInput(value);
+
+            updateWebTools(current => {
+              const httpEnabled =
+                current.http.enabled && allowedHosts.length > 0;
+
+              return {
+                enabled: current.search.enabled || httpEnabled,
+                http: {
+                  ...current.http,
+                  enabled: httpEnabled,
+                  allowed_hosts: allowedHosts,
+                },
+              };
+            });
+          }}
+        />
+      </div>
+    </>
+  );
+};
+
 const WorkbenchRuntimeSettingsPanel = ({
   failoverCandidateCount,
   open,
@@ -112,17 +240,6 @@ const WorkbenchRuntimeSettingsPanel = ({
     onChange(current => ({
       ...current,
       ...resolveNext(current),
-    }));
-  const updateWebTools = (
-    resolveWebTools: (
-      current: WorkbenchRuntimeSettings['web_tools'],
-    ) => Partial<WorkbenchRuntimeSettings['web_tools']>,
-  ) =>
-    update(current => ({
-      web_tools: {
-        ...current.web_tools,
-        ...resolveWebTools(current.web_tools),
-      },
     }));
 
   return (
@@ -167,29 +284,7 @@ const WorkbenchRuntimeSettingsPanel = ({
         settings={settings}
         update={update}
       />
-      <div className="chat-workbench-runtime-row">
-        <span>联网搜索</span>
-        <button
-          type="button"
-          aria-pressed={settings.web_tools.search.enabled}
-          data-active={settings.web_tools.search.enabled}
-          onClick={() => {
-            updateWebTools(current => {
-              const enabled = !current.search.enabled;
-
-              return {
-                enabled,
-                search: {
-                  ...current.search,
-                  enabled,
-                },
-              };
-            });
-          }}
-        >
-          {settings.web_tools.search.enabled ? '已开启' : '关闭'}
-        </button>
-      </div>
+      <WorkbenchWebToolSettingsRows settings={settings} update={update} />
       <div className="chat-workbench-runtime-row">
         <span>Token 用量</span>
         <button

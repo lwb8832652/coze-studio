@@ -1027,6 +1027,14 @@ cd backend && go test ./...
   must not expose queries, endpoint paths, API keys, provider response bodies,
   raw URLs, object keys, or credentials in errors or events. Durable Web
   provider settings and UI remain future work.
+- The Workbench runtime settings panel may serialize explicit
+  `web_tools.search` and `web_tools.http` run config for ad-hoc task runs.
+  Keep both disabled by default. `web_tools.http` must require at least one
+  user-entered allowed host before `网页读取` can be enabled; trim and
+  de-duplicate comma-separated host input on the frontend, and disable fetch
+  again when the host list is cleared. This UI is a per-run convenience layer
+  over the existing `ADKWebToolCatalog`, not a durable Web provider settings,
+  tenant policy, scanner, or domain-policy substitute.
 - Use a Coze-backed `plantask.Backend` for durable task-plan state. Do not make
   DeepAgent `write_todos` and `plantask` independent systems of record; disable
   one when both would otherwise be exposed.

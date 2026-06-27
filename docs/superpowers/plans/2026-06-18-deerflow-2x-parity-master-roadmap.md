@@ -242,7 +242,7 @@ Migration rules:
 | Settings | model/mode/token/memory/skills/tools/runtime settings | scattered controls | consolidated Agent settings while preserving account/API auth |
 | Feedback | run feedback and statistics | absent | run-level feedback API and task-detail interaction |
 | Suggestions | follow-up suggestions | absent | post-run suggestion generation and UI |
-| Web tools | search, fetch and HTTP tools | ADK Web Tool Catalog exposes policy-controlled `web_fetch` and backend-driven/env-backed HTTP `web_search` | Durable provider settings/UI, scanner and domain policy |
+| Web tools | search, fetch and HTTP tools | ADK Web Tool Catalog exposes policy-controlled `web_fetch` and backend-driven/env-backed HTTP `web_search`; Workbench can serialize per-run search/fetch settings | Durable provider settings/UI, scanner and domain policy |
 | Runtime doctor | provider and extension diagnostics | scattered configuration errors | model/MCP/sandbox/Skill connectivity and capability checks |
 | Observability | tracing, run journal, structured metrics | logs and local counters | Phase 2 enhancement: OpenTelemetry traces, metrics, dashboards, runbook. Phase 1 keeps only the events and usage data visible in DeerFlow-equivalent workflows. |
 
@@ -425,6 +425,13 @@ Progress evidence as of 2026-06-21:
   deployments. Application bootstrap injects the backend through
   `WithDefaultADKToolProviderWebSearchBackend`; sanitized errors avoid query
   text, endpoint paths, provider response bodies, and API keys.
+- [x] M2.18b complete: the Workbench runtime settings panel now exposes
+  disabled-by-default Web Fetch controls for ad-hoc task runs. Users must enter
+  explicit allowed hosts before `网页读取` can be enabled; the frontend trims and
+  de-duplicates comma-separated hosts, disables fetch when the list is cleared,
+  and serializes bounded `web_tools.http` run config consumed by the existing
+  ADK `web_fetch` backend. Durable Web provider settings, tenant policy,
+  scanner/domain policy, and admin UI remain future settings work.
 - [ ] M2.9b and later middleware capabilities remain open. General workspace
   tools, upload mounting, output promotion, user-visible `agent_artifacts`,
   preview/download APIs, MIME/security scanning, retention cleanup, shell, and

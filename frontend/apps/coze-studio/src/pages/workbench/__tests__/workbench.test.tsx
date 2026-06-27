@@ -727,4 +727,105 @@ describe('WorkbenchPage', () => {
     });
     container.remove();
   });
+
+  it('sends web fetch runtime settings only after allowed hosts are configured', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        task: {
+          id: 'task-with-web-fetch',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '读取网页资料',
+          status: workbenchTask.TaskStatus.Running,
+          progress: 0,
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const runtimeButton = container.querySelector(
+      'button[aria-label="运行设置"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      runtimeButton.click();
+    });
+
+    const fetchButton = container.querySelector(
+      'button[aria-label="网页读取"]',
+    ) as HTMLButtonElement;
+    expect(fetchButton.disabled).toBe(true);
+
+    const allowedHostsInput = container.querySelector(
+      'input[aria-label="网页读取允许域名"]',
+    ) as HTMLInputElement;
+    act(() => {
+      Simulate.change(allowedHostsInput, {
+        target: { value: 'example.com,' },
+      } as unknown as Event);
+    });
+    expect(allowedHostsInput.value).toBe('example.com,');
+
+    expect(fetchButton.disabled).toBe(false);
+
+    act(() => {
+      Simulate.change(allowedHostsInput, {
+        target: { value: ' example.com, docs.example.com, ' },
+      } as unknown as Event);
+    });
+
+    act(() => {
+      fetchButton.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '读取网页资料' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const runtimeSettings = JSON.parse(
+      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+    );
+    expect(runtimeSettings).toMatchObject({
+      web_tools: {
+        enabled: true,
+        http: {
+          enabled: true,
+          allowed_hosts: ['example.com', 'docs.example.com'],
+          timeout_ms: 10000,
+          max_response_bytes: 262144,
+        },
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
 });
