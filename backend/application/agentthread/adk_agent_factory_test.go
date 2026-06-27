@@ -22,6 +22,12 @@ import (
 	"fmt"
 	"testing"
 
+	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
+	claudemodel "github.com/cloudwego/eino-ext/components/model/claude"
+	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
+	geminimodel "github.com/cloudwego/eino-ext/components/model/gemini"
+	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
+	qwenmodel "github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -237,6 +243,189 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.Video)
 }
 
+func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{
+			Thinking:  true,
+			Reasoning: true,
+		},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"reasoning_effort":"high",
+			"thinking_enabled":true
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("think")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, ADKReasoningRequest{
+		ReasoningEffort: "high",
+		ThinkingEnabled: true,
+	}, chatModel.reasoningRequest)
+	require.Equal(t, []string{"reasoning:high", "thinking:true"}, chatModel.options.Stop)
+}
+
+func TestADKAgentFactoryRequiresProjectorForSupportedReasoningRequest(t *testing.T) {
+	chatModel := &providerCapabilityChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("unused", nil),
+		},
+		capabilities: ADKModelCapabilities{Reasoning: true},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{"reasoning_effort":"medium"}`,
+	})
+
+	require.ErrorContains(t, err, "reasoning option projector is required")
+	require.Nil(t, agent)
+}
+
+func TestADKBuiltInReasoningModelCapabilities(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     model.BaseChatModel
+		reasoning bool
+		thinking  bool
+	}{
+		{
+			name:      "openai",
+			model:     (*openaimodel.ChatModel)(nil),
+			reasoning: true,
+		},
+		{
+			name:      "ark",
+			model:     (*arkmodel.ChatModel)(nil),
+			reasoning: true,
+			thinking:  true,
+		},
+		{
+			name:     "claude",
+			model:    (*claudemodel.ChatModel)(nil),
+			thinking: true,
+		},
+		{
+			name:     "qwen",
+			model:    (*qwenmodel.ChatModel)(nil),
+			thinking: true,
+		},
+		{
+			name:     "gemini",
+			model:    (*geminimodel.ChatModel)(nil),
+			thinking: true,
+		},
+		{
+			name:     "deepseek",
+			model:    (*deepseekmodel.ChatModel)(nil),
+			thinking: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			capabilities := adkBuiltInModelCapabilities(tt.model)
+
+			require.Equal(t, tt.reasoning, capabilities.Reasoning)
+			require.Equal(t, tt.thinking, capabilities.Thinking)
+		})
+	}
+}
+
+func TestADKBuiltInReasoningModelOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   model.BaseChatModel
+		request ADKReasoningRequest
+		wantLen int
+		wantErr string
+	}{
+		{
+			name:    "openai reasoning effort",
+			model:   (*openaimodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ReasoningEffort: "high"},
+			wantLen: 1,
+		},
+		{
+			name:  "ark reasoning and thinking",
+			model: (*arkmodel.ChatModel)(nil),
+			request: ADKReasoningRequest{
+				ReasoningEffort: "medium",
+				ThinkingEnabled: true,
+			},
+			wantLen: 2,
+		},
+		{
+			name:    "qwen thinking",
+			model:   (*qwenmodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ThinkingEnabled: true},
+			wantLen: 1,
+		},
+		{
+			name:    "gemini thinking",
+			model:   (*geminimodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ThinkingEnabled: true},
+			wantLen: 1,
+		},
+		{
+			name:    "claude thinking",
+			model:   (*claudemodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ThinkingEnabled: true},
+			wantLen: 1,
+		},
+		{
+			name:    "deepseek thinking",
+			model:   (*deepseekmodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ThinkingEnabled: true},
+			wantLen: 1,
+		},
+		{
+			name:    "qwen reasoning effort unsupported",
+			model:   (*qwenmodel.ChatModel)(nil),
+			request: ADKReasoningRequest{ReasoningEffort: "high"},
+			wantErr: "reasoning_effort is not supported",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options, ok, err := adkBuiltInReasoningModelOptions(
+				tt.model,
+				tt.request,
+			)
+
+			require.True(t, ok)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, options, tt.wantLen)
+		})
+	}
+}
+
 func TestADKAgentFactoryUsesPolicyFilteredToolSetForModelAndMiddleware(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("done", nil),
@@ -338,6 +527,33 @@ func (m *providerCapabilityChatModel) ADKProviderCapabilities() ADKModelCapabili
 		return ADKModelCapabilities{}
 	}
 	return m.capabilities
+}
+
+type reasoningProjectingChatModel struct {
+	recordingChatModel
+	capabilities      ADKModelCapabilities
+	reasoningRequest  ADKReasoningRequest
+	reasoningProjects int
+}
+
+func (m *reasoningProjectingChatModel) ADKProviderCapabilities() ADKModelCapabilities {
+	if m == nil {
+		return ADKModelCapabilities{}
+	}
+	return m.capabilities
+}
+
+func (m *reasoningProjectingChatModel) ProjectADKReasoningOptions(
+	request ADKReasoningRequest,
+) ([]model.Option, error) {
+	m.reasoningRequest = request
+	m.reasoningProjects++
+	return []model.Option{
+		model.WithStop([]string{
+			"reasoning:" + request.ReasoningEffort,
+			fmt.Sprintf("thinking:%t", request.ThinkingEnabled),
+		}),
+	}, nil
 }
 
 func TestADKAgentFactoryRejectsUnconfiguredModel(t *testing.T) {

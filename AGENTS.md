@@ -1656,6 +1656,15 @@ cd backend && go test ./...
   (`minimal`, `low`, `medium`, `high`), `thinking_enabled`, and media parts
   against declared capabilities while preserving complete source messages for
   transcript and checkpoint state.
+- Per-run reasoning and thinking requests must be projected through
+  Coze-owned model option adapters before provider invocation. Prefer an
+  explicit `ADKReasoningOptionProjector` implementation on custom model
+  adapters; otherwise `ApplicationADKAgentFactory` may use the built-in
+  Eino-ext projections for OpenAI reasoning effort, Ark reasoning/thinking,
+  and Qwen/Gemini/Claude/DeepSeek thinking. Do not silently ignore a supported
+  reasoning request when no projector exists. Current built-in declarations
+  are provider-family coarse; future durable model catalog capabilities should
+  narrow support per model/version.
 - Map `ADKProviderCapabilityError` to `model.unsupported_capability` with only
   capability, part type, count, and bounded error text. Do not include raw
   attachment URLs, filenames, base64 data, prompt text, provider responses,

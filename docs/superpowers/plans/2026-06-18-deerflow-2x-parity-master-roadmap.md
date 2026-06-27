@@ -382,6 +382,15 @@ Progress evidence as of 2026-06-21:
   projection, rejects unsupported reasoning/thinking requests and unsupported
   media parts before provider invocation, and maps failures to content-free
   `model.unsupported_capability` events.
+- [x] M2.17a complete: per-run reasoning/thinking settings now project into
+  provider-specific Eino model options before ADK model invocation.
+  `ApplicationADKAgentFactory` consumes explicit
+  `ADKReasoningOptionProjector` adapters and includes built-in projections for
+  OpenAI reasoning effort, Ark reasoning/thinking, and
+  Qwen/Gemini/Claude/DeepSeek thinking. Supported requests fail closed when no
+  projector exists instead of being silently ignored. Current built-in
+  provider-family declarations are intentionally coarse; durable model catalog
+  model/version capability narrowing remains future settings work.
 - [x] M2.18 complete: A disabled-by-default `ADKWebToolCatalog` now exposes
   policy-controlled `web_fetch` and backend-driven `web_search` through the
   existing Eino runtime tool catalog path. `web_fetch` requires explicit host
@@ -404,8 +413,7 @@ Progress evidence as of 2026-06-21:
   tools, upload mounting, output promotion, user-visible `agent_artifacts`,
   preview/download APIs, MIME/security scanning, retention cleanup, shell, and
   sandbox providers remain in M4. Failover candidate selection and
-  provider-specific reasoning option projection and durable Web provider
-  settings/UI also remain open.
+  durable Web provider settings/UI also remain open.
 
 Exit gate:
 

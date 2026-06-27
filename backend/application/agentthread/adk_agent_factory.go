@@ -21,16 +21,25 @@ import (
 	"fmt"
 	"strings"
 
+	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
+	claudemodel "github.com/cloudwego/eino-ext/components/model/claude"
+	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
+	geminimodel "github.com/cloudwego/eino-ext/components/model/gemini"
+	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
+	qwenmodel "github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	arkruntime "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+	"google.golang.org/genai"
 )
 
 const (
-	defaultADKAgentName        = "lead"
-	defaultADKAgentDescription = "Coze task lead agent"
+	defaultADKAgentName                  = "lead"
+	defaultADKAgentDescription           = "Coze task lead agent"
+	defaultADKClaudeThinkingBudgetTokens = 4096
 )
 
 type ADKAgentFactory interface {
@@ -116,6 +125,10 @@ type ADKProviderCapabilityModel interface {
 	ADKProviderCapabilities() ADKModelCapabilities
 }
 
+type ADKReasoningOptionProjector interface {
+	ProjectADKReasoningOptions(ADKReasoningRequest) ([]model.Option, error)
+}
+
 type ApplicationADKAgentFactory struct {
 	modelProvider ChatModelProvider
 	toolProvider  ADKToolProvider
@@ -180,8 +193,28 @@ func (f *ApplicationADKAgentFactory) Build(
 			capable.ADKProviderCapabilities(),
 		)
 	}
+	modelCapabilities = mergeADKModelCapabilities(
+		modelCapabilities,
+		adkBuiltInModelCapabilities(chatModel),
+	)
+	providerCapabilityConfig, err := adkProviderCapabilityConfigFromRun(
+		run,
+		modelCapabilities,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	options := modelExecutorOptions(cfg)
+	reasoningOptions, err := adkReasoningModelOptions(
+		chatModel,
+		providerCapabilityConfig.Reasoning,
+		modelCapabilities,
+	)
+	if err != nil {
+		return nil, err
+	}
+	options = append(options, reasoningOptions...)
 	if len(options) > 0 {
 		chatModel = &optionedADKChatModel{
 			base:    chatModel,
@@ -287,6 +320,154 @@ func mergeADKModelCapabilities(
 		base.Video = true
 	}
 	return base
+}
+
+func adkReasoningModelOptions(
+	chatModel model.BaseChatModel,
+	request ADKReasoningRequest,
+	capabilities ADKModelCapabilities,
+) ([]model.Option, error) {
+	if strings.TrimSpace(request.ReasoningEffort) == "" &&
+		!request.ThinkingEnabled {
+		return nil, nil
+	}
+	if strings.TrimSpace(request.ReasoningEffort) != "" &&
+		!capabilities.Reasoning {
+		return nil, nil
+	}
+	if request.ThinkingEnabled && !capabilities.Thinking {
+		return nil, nil
+	}
+	projector, ok := chatModel.(ADKReasoningOptionProjector)
+	if ok && projector != nil {
+		options, err := projector.ProjectADKReasoningOptions(request)
+		if err != nil {
+			return nil, fmt.Errorf("project agent thread reasoning options: %w", err)
+		}
+
+		return options, nil
+	}
+	options, ok, err := adkBuiltInReasoningModelOptions(chatModel, request)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return options, nil
+	}
+
+	return nil, fmt.Errorf("agent thread reasoning option projector is required")
+}
+
+func adkBuiltInModelCapabilities(chatModel model.BaseChatModel) ADKModelCapabilities {
+	switch chatModel.(type) {
+	case *openaimodel.ChatModel:
+		return ADKModelCapabilities{Reasoning: true}
+	case *arkmodel.ChatModel:
+		return ADKModelCapabilities{Reasoning: true, Thinking: true}
+	case *claudemodel.ChatModel,
+		*deepseekmodel.ChatModel,
+		*geminimodel.ChatModel,
+		*qwenmodel.ChatModel:
+		return ADKModelCapabilities{Thinking: true}
+	default:
+		return ADKModelCapabilities{}
+	}
+}
+
+func adkBuiltInReasoningModelOptions(
+	chatModel model.BaseChatModel,
+	request ADKReasoningRequest,
+) ([]model.Option, bool, error) {
+	switch chatModel.(type) {
+	case *openaimodel.ChatModel:
+		options := make([]model.Option, 0, 1)
+		if request.ThinkingEnabled {
+			return nil, true, fmt.Errorf(
+				"thinking_enabled is not supported by openai model",
+			)
+		}
+		if effort := strings.TrimSpace(request.ReasoningEffort); effort != "" {
+			options = append(
+				options,
+				openaimodel.WithReasoningEffort(openaimodel.ReasoningEffortLevel(effort)),
+			)
+		}
+		return options, true, nil
+	case *arkmodel.ChatModel:
+		options := make([]model.Option, 0, 2)
+		if effort := strings.TrimSpace(request.ReasoningEffort); effort != "" {
+			options = append(
+				options,
+				arkmodel.WithReasoningEffort(arkruntime.ReasoningEffort(effort)),
+			)
+		}
+		if request.ThinkingEnabled {
+			options = append(
+				options,
+				arkmodel.WithThinking(&arkruntime.Thinking{
+					Type: arkruntime.ThinkingTypeEnabled,
+				}),
+			)
+		}
+		return options, true, nil
+	case *claudemodel.ChatModel:
+		if strings.TrimSpace(request.ReasoningEffort) != "" {
+			return nil, true, fmt.Errorf(
+				"reasoning_effort is not supported by claude model",
+			)
+		}
+		if request.ThinkingEnabled {
+			return []model.Option{
+				claudemodel.WithThinking(&claudemodel.Thinking{
+					Enable:       true,
+					BudgetTokens: defaultADKClaudeThinkingBudgetTokens,
+				}),
+			}, true, nil
+		}
+		return nil, true, nil
+	case *deepseekmodel.ChatModel:
+		if strings.TrimSpace(request.ReasoningEffort) != "" {
+			return nil, true, fmt.Errorf(
+				"reasoning_effort is not supported by deepseek model",
+			)
+		}
+		if request.ThinkingEnabled {
+			return []model.Option{
+				deepseekmodel.WithExtraFields(map[string]interface{}{
+					"thinking": map[string]interface{}{
+						"type": "enabled",
+					},
+				}),
+			}, true, nil
+		}
+		return nil, true, nil
+	case *geminimodel.ChatModel:
+		if strings.TrimSpace(request.ReasoningEffort) != "" {
+			return nil, true, fmt.Errorf(
+				"reasoning_effort is not supported by gemini model",
+			)
+		}
+		if request.ThinkingEnabled {
+			return []model.Option{
+				geminimodel.WithThinkingConfig(&genai.ThinkingConfig{
+					IncludeThoughts: true,
+				}),
+			}, true, nil
+		}
+		return nil, true, nil
+	case *qwenmodel.ChatModel:
+		if strings.TrimSpace(request.ReasoningEffort) != "" {
+			return nil, true, fmt.Errorf(
+				"reasoning_effort is not supported by qwen model",
+			)
+		}
+		if request.ThinkingEnabled {
+			return []model.Option{qwenmodel.WithEnableThinking(true)}, true, nil
+		}
+		return nil, true, nil
+	default:
+		return nil, false, nil
+	}
 }
 
 type optionedADKChatModel struct {
