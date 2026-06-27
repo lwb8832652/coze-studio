@@ -359,10 +359,28 @@ describe('WorkbenchPage', () => {
       space_id: 'space-1',
       message: '帮我生成周报',
       mode: workbench.ChatMode.Auto,
+      runtime_settings: expect.any(String),
       enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
+    });
+    expect(
+      JSON.parse(mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings),
+    ).toMatchObject({
+      runtime: 'eino_adk',
+      memory_retrieval: {
+        limit: 5,
+        candidate_limit: 20,
+        scopes: ['thread', 'long_term'],
+        min_confidence: 0.2,
+      },
+      web_tools: {
+        enabled: false,
+      },
+      token_usage: {
+        enabled: true,
+      },
     });
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/task-1');
 
@@ -527,6 +545,7 @@ describe('WorkbenchPage', () => {
       mode: workbench.ChatMode.Auto,
       model_type: '100002',
       model_name: 'deepseek-v4-pro',
+      runtime_settings: expect.any(String),
       enable_skills: ['skill-101'],
       enable_mcp: [],
       enable_kbs: [],
@@ -608,6 +627,7 @@ describe('WorkbenchPage', () => {
       mode: workbench.ChatMode.Auto,
       model_type: '100003',
       model_name: 'gpt-4.1',
+      runtime_settings: expect.any(String),
       enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],

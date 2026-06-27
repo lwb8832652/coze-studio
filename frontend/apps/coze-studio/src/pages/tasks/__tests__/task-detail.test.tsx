@@ -305,6 +305,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozRefresh: () => <span />,
   IconCozSearch: () => <span />,
   IconCozSendFill: () => <span />,
+  IconCozSetting: () => <span />,
   IconCozTrashCan: () => <span />,
   IconCozUpload: () => <span />,
 }));
@@ -3281,11 +3282,24 @@ describe('TaskDetailPage', () => {
       ],
     });
     expect(JSON.parse(runRequest.config)).toMatchObject({
+      runtime: 'eino_adk',
       mode: 'Auto',
       enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
+      memory_retrieval: {
+        limit: 5,
+        candidate_limit: 20,
+        scopes: ['thread', 'long_term'],
+        min_confidence: 0.2,
+      },
+      web_tools: {
+        enabled: false,
+      },
+      token_usage: {
+        enabled: true,
+      },
     });
     expect(JSON.parse(runRequest.metadata)).toMatchObject({
       source: 'workbench_detail_followup',
@@ -3572,10 +3586,28 @@ describe('TaskDetailPage', () => {
       task_id: 'task-1',
       message: '请补充风险项',
       mode: workbench.ChatMode.Auto,
+      runtime_settings: expect.any(String),
       enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
+    });
+    expect(
+      JSON.parse(mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings),
+    ).toMatchObject({
+      runtime: 'eino_adk',
+      memory_retrieval: {
+        limit: 5,
+        candidate_limit: 20,
+        scopes: ['thread', 'long_term'],
+        min_confidence: 0.2,
+      },
+      web_tools: {
+        enabled: false,
+      },
+      token_usage: {
+        enabled: true,
+      },
     });
     expect(mockGetTask).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain('已补充风险项。');

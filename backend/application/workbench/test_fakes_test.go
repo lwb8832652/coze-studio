@@ -185,7 +185,38 @@ func (r *recordingAgentThreadService) RememberMemory(context.Context, *agentthre
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) ImportMemories(
+	context.Context,
+	*agentthreadsvc.ImportMemoriesRequest,
+) (*agentthreadsvc.ImportMemoriesResult, error) {
+	return &agentthreadsvc.ImportMemoriesResult{}, nil
+}
+
 func (r *recordingAgentThreadService) RecallMemories(context.Context, *agentthreadsvc.RecallMemoriesRequest) ([]*agentthreadentity.Memory, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) ListMemories(context.Context, *agentthreadsvc.ListMemoriesRequest) ([]*agentthreadentity.Memory, int64, error) {
+	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) UpdateMemory(context.Context, *agentthreadsvc.UpdateMemoryRequest) (*agentthreadentity.Memory, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) DeleteMemory(context.Context, *agentthreadsvc.DeleteMemoryRequest) (bool, error) {
+	return false, nil
+}
+
+func (r *recordingAgentThreadService) ClearMemories(context.Context, *agentthreadsvc.ClearMemoriesRequest) (int64, error) {
+	return 0, nil
+}
+
+func (r *recordingAgentThreadService) RestoreMemory(context.Context, *agentthreadsvc.RestoreMemoryRequest) (*agentthreadentity.Memory, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) ListMemoryAuditEvents(context.Context, *agentthreadsvc.ListMemoryAuditEventsRequest) ([]*agentthreadentity.MemoryAuditEvent, int64, error) {
 	return nil, 0, nil
 }
 

@@ -49,6 +49,7 @@ type agentRequest struct {
 	enableMcp        []string
 	enableKbs        []string
 	enableDatabases  []string
+	runtimeSettings  string
 }
 
 func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (resultPayload, error) {
@@ -66,6 +67,17 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 	}
 	if req.sectionID == 0 {
 		return resultPayload{}, fmt.Errorf("workbench agent section_id is required")
+	}
+
+	ext := map[string]string{
+		"workbench_task_id": fmt.Sprintf("%d", req.taskID),
+		"enable_skills":     strings.Join(req.enableSkills, ","),
+		"enable_mcp":        strings.Join(req.enableMcp, ","),
+		"enable_kbs":        strings.Join(req.enableKbs, ","),
+		"enable_databases":  strings.Join(req.enableDatabases, ","),
+	}
+	if runtimeSettings := strings.TrimSpace(req.runtimeSettings); runtimeSettings != "" {
+		ext["runtime_settings"] = runtimeSettings
 	}
 
 	stream, err := s.agentRunSVC.AgentRun(ctx, &agentrunentity.AgentRunMeta{
@@ -87,13 +99,7 @@ func (s *ApplicationService) runAgent(ctx context.Context, req agentRequest) (re
 		DisplayContent:   req.message,
 		PreRetrieveTools: req.preRetrieveTools,
 		CustomVariables:  req.customVariables,
-		Ext: map[string]string{
-			"workbench_task_id": fmt.Sprintf("%d", req.taskID),
-			"enable_skills":     strings.Join(req.enableSkills, ","),
-			"enable_mcp":        strings.Join(req.enableMcp, ","),
-			"enable_kbs":        strings.Join(req.enableKbs, ","),
-			"enable_databases":  strings.Join(req.enableDatabases, ","),
-		},
+		Ext:              ext,
 	})
 	if err != nil {
 		return resultPayload{}, err

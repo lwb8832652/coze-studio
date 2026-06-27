@@ -36,20 +36,25 @@ func (s *ApplicationService) createAgentThreadForTask(ctx context.Context, req *
 		userID = *uid
 	}
 
-	_, err := s.agentThreadSVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
+	metadata, err := agentThreadMetadataJSON(req, message)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.agentThreadSVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
 		SpaceID:      req.SpaceID,
 		UserID:       userID,
 		Title:        task.Title,
 		Source:       appagentthread.ThreadSourceWeb,
 		LegacyTaskID: task.ID,
-		Metadata:     agentThreadMetadataJSON(req, message),
+		Metadata:     metadata,
 	})
 
 	return err
 }
 
-func agentThreadMetadataJSON(req *chatapi.WorkbenchChatRequest, message string) string {
-	payload := map[string]string{
+func agentThreadMetadataJSON(req *chatapi.WorkbenchChatRequest, message string) (string, error) {
+	payload := map[string]any{
 		"message": message,
 		"mode":    req.Mode.String(),
 	}
@@ -59,6 +64,11 @@ func agentThreadMetadataJSON(req *chatapi.WorkbenchChatRequest, message string) 
 	if req.SelectedSkillID != nil {
 		payload["skill_id"] = strconv.FormatInt(*req.SelectedSkillID, 10)
 	}
+	if settings, ok, err := workbenchRuntimeSettingsPayload(req); err != nil {
+		return "", err
+	} else if ok {
+		payload["runtime_settings"] = settings
+	}
 
-	return mustJSON(payload)
+	return mustJSONAny(payload), nil
 }

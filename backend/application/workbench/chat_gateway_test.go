@@ -18,6 +18,7 @@ package workbench
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -62,6 +63,7 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 	taskID := int64(100)
 	modelType := int64(100002)
 	modelName := "deepseek-v4-pro"
+	runtimeSettings := `{"runtime":"eino_adk","memory_retrieval":{"limit":5}}`
 	req := &chatapi.WorkbenchChatRequest{
 		SpaceID:         1,
 		Message:         "hello",
@@ -73,6 +75,7 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 		EnableDatabases: []string{"db-a"},
 		ModelType:       &modelType,
 		ModelName:       &modelName,
+		RuntimeSettings: &runtimeSettings,
 	}
 
 	require.True(t, req.IsSetTaskID())
@@ -82,6 +85,7 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 	require.True(t, req.IsSetEnableDatabases())
 	require.True(t, req.IsSetModelType())
 	require.True(t, req.IsSetModelName())
+	require.True(t, req.IsSetRuntimeSettings())
 	require.Equal(t, int64(100), req.GetTaskID())
 	require.Equal(t, []string{"skill-a"}, req.GetEnableSkills())
 	require.Equal(t, []string{"mcp-a"}, req.GetEnableMcp())
@@ -89,10 +93,12 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 	require.Equal(t, []string{"db-a"}, req.GetEnableDatabases())
 	require.Equal(t, int64(100002), req.GetModelType())
 	require.Equal(t, "deepseek-v4-pro", req.GetModelName())
+	require.Equal(t, runtimeSettings, req.GetRuntimeSettings())
 
 	emptyReq := &chatapi.WorkbenchChatRequest{}
 	require.False(t, emptyReq.IsSetEnableSkills())
 	require.Nil(t, emptyReq.GetEnableSkills())
+	require.False(t, emptyReq.IsSetRuntimeSettings())
 
 	resultType := "answer"
 	executionType := "Ark"
@@ -104,6 +110,19 @@ func TestWorkbenchChatContractHasTaskAndResourceFields(t *testing.T) {
 
 	require.Equal(t, "answer", data.GetResultType())
 	require.Equal(t, "Ark", data.GetExecutionType())
+}
+
+func TestHandleMessageRejectsInvalidRuntimeSettingsAsClientError(t *testing.T) {
+	runtimeSettings := `{"runtime":`
+	_, err := SVC.HandleMessage(context.Background(), &chatapi.WorkbenchChatRequest{
+		SpaceID:         1,
+		Message:         "hello",
+		Mode:            chatapi.ChatMode_Auto,
+		RuntimeSettings: &runtimeSettings,
+	})
+
+	require.Error(t, err)
+	assert.True(t, IsClientError(err))
 }
 
 func TestHandleMessageAutoCreatesTaskAndCompletesAnswer(t *testing.T) {
@@ -165,6 +184,7 @@ func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
 	ctxcache.Store(ctx, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 99})
 	conversationID := int64(30)
 	skillID := int64(40)
+	runtimeSettings := `{"runtime":"eino_adk","memory_retrieval":{"limit":5},"web_tools":{"enabled":false}}`
 
 	resp, err := app.HandleMessage(ctx, &chatapi.WorkbenchChatRequest{
 		SpaceID:         1,
@@ -172,6 +192,7 @@ func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
 		SelectedSkillID: &skillID,
 		Message:         "请生成周报",
 		Mode:            chatapi.ChatMode_Auto,
+		RuntimeSettings: &runtimeSettings,
 	})
 
 	require.NoError(t, err)
@@ -185,6 +206,14 @@ func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
 	require.Contains(t, agentThreadDomain.createReq.Metadata, `"message":"请生成周报"`)
 	require.Contains(t, agentThreadDomain.createReq.Metadata, `"conversation_id":"30"`)
 	require.Contains(t, agentThreadDomain.createReq.Metadata, `"skill_id":"40"`)
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(agentThreadDomain.createReq.Metadata), &metadata))
+	settings, ok := metadata["runtime_settings"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "eino_adk", settings["runtime"])
+	memory, ok := settings["memory_retrieval"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(5), memory["limit"])
 }
 
 func TestHandleMessageWithTaskIDAppendsUserMessageWithoutCreatingTask(t *testing.T) {

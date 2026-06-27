@@ -60,6 +60,9 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 	if err != nil {
 		return nil, err
 	}
+	if _, _, err := workbenchRuntimeSettingsPayload(req); err != nil {
+		return nil, err
+	}
 
 	task, err := s.prepareTask(ctx, req, message)
 	if err != nil {
@@ -208,6 +211,7 @@ func (s *ApplicationService) agentRequestFromWorkbench(ctx context.Context, task
 		enableMcp:       req.GetEnableMcp(),
 		enableKbs:       req.GetEnableKbs(),
 		enableDatabases: req.GetEnableDatabases(),
+		runtimeSettings: req.GetRuntimeSettings(),
 	}
 }
 
@@ -235,6 +239,10 @@ func cloneWorkbenchChatRequest(req *chatapi.WorkbenchChatRequest) *chatapi.Workb
 	if req.ModelName != nil {
 		v := *req.ModelName
 		clone.ModelName = &v
+	}
+	if req.RuntimeSettings != nil {
+		v := *req.RuntimeSettings
+		clone.RuntimeSettings = &v
 	}
 	clone.EnableSkills = append([]string(nil), req.EnableSkills...)
 	clone.EnableMcp = append([]string(nil), req.EnableMcp...)

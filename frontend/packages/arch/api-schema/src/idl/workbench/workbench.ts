@@ -43,6 +43,7 @@ export interface WorkbenchChatRequest {
   enable_databases?: string[],
   model_type?: string,
   model_name?: string,
+  runtime_settings?: string,
 }
 export interface WorkbenchChatData {
   route_target: RouteTarget,
@@ -76,7 +77,8 @@ export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, Workbe
       "enable_kbs",
       "enable_databases",
       "model_type",
-      "model_name"
+      "model_name",
+      "runtime_settings"
     ]
   },
   "resType": "WorkbenchChatResponse",

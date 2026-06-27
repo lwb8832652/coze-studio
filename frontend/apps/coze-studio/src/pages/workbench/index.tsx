@@ -35,6 +35,7 @@ import { getWorkbenchLLMModels, sendWorkbenchChat } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
   mapModeToChatMode,
+  stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from './components/types';
@@ -254,6 +255,7 @@ const WorkbenchPage = () => {
         space_id,
         message: payload.message,
         mode: mapModeToChatMode(payload.mode),
+        runtime_settings: stringifyWorkbenchRunConfig(payload),
         ...(payload.modelType
           ? {
               model_type: String(payload.modelType),

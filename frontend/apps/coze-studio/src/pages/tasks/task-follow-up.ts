@@ -16,6 +16,7 @@
 
 import {
   mapModeToChatMode,
+  stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import {
@@ -24,16 +25,7 @@ import {
   sendWorkbenchChat,
 } from './service';
 
-const getThreadFollowUpMetadata = (payload: WorkbenchComposerSubmitPayload) =>
-  JSON.stringify({
-    mode: payload.mode,
-    model_type: payload.modelType,
-    model_name: payload.modelName,
-    enable_skills: payload.enable_skills,
-    enable_mcp: payload.enable_mcp,
-    enable_kbs: payload.enable_kbs,
-    enable_databases: payload.enable_databases,
-  });
+const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
 
 const getThreadFollowUpRunInput = (
   payload: WorkbenchComposerSubmitPayload,
@@ -97,6 +89,13 @@ export const sendFollowUpMessage = async ({
     task_id: activeTaskId,
     message: payload.message,
     mode: mapModeToChatMode(payload.mode),
+    ...(payload.modelType
+      ? {
+          model_type: String(payload.modelType),
+          model_name: payload.modelName,
+        }
+      : {}),
+    runtime_settings: stringifyWorkbenchRunConfig(payload),
     enable_skills: payload.enable_skills,
     enable_mcp: payload.enable_mcp,
     enable_kbs: payload.enable_kbs,

@@ -24,9 +24,11 @@ import {
 import { Button, TextArea } from '@coze-arch/coze-design';
 
 import { ExtensionsPopover } from '../extensions-popover';
-
+import { WorkbenchRuntimeSettingsControl } from './workbench-runtime-settings-control';
 import {
+  cloneWorkbenchRuntimeSettings,
   createDefaultWorkbenchResourceSelection,
+  createDefaultWorkbenchRuntimeSettings,
   WORKBENCH_MODE_PROMPTS,
   WORKBENCH_MODE_SYMBOLS,
   WORKBENCH_MODES,
@@ -35,6 +37,7 @@ import {
   type WorkbenchComposerVariant,
   type WorkbenchMode,
   type WorkbenchResourceSelection,
+  type WorkbenchRuntimeSettings,
 } from './types';
 
 const AT_RESOURCES = [
@@ -131,7 +134,9 @@ const WorkbenchModelSelector = ({
   onOpenChange: (open: boolean) => void;
   onChange: (model: WorkbenchLLMModel) => void;
 }) => {
-  const selectedModel = models.find(model => modelTypeToNumber(model) === value);
+  const selectedModel = models.find(
+    model => modelTypeToNumber(model) === value,
+  );
   const modelGroups = useMemo(() => groupModelsByClass(models), [models]);
   const label = loading ? '模型加载中' : selectedModel?.name || '默认模型';
 
@@ -263,23 +268,175 @@ const createSubmitPayload = ({
   taskId,
   selectedModel,
   resourceSelection,
+  runtimeSettings,
 }: {
   message: string;
   mode: WorkbenchMode;
   taskId?: string;
   selectedModel?: WorkbenchLLMModel;
   resourceSelection: WorkbenchResourceSelection;
+  runtimeSettings: WorkbenchRuntimeSettings;
 }): WorkbenchComposerSubmitPayload => ({
   message,
   mode,
   taskId,
   modelType: selectedModel ? modelTypeToNumber(selectedModel) : undefined,
   modelName: selectedModel?.name,
+  runtimeSettings: cloneWorkbenchRuntimeSettings(runtimeSettings),
   enable_skills: [...resourceSelection.enable_skills],
   enable_mcp: [...resourceSelection.enable_mcp],
   enable_kbs: [...resourceSelection.enable_kbs],
   enable_databases: [...resourceSelection.enable_databases],
 });
+
+const WorkbenchComposerBody = ({
+  value,
+  mode,
+  onChange,
+}: {
+  value: string;
+  mode: WorkbenchMode;
+  onChange: (value: string) => void;
+}) => (
+  <div className="chat-workbench-composer-body">
+    <TextArea
+      aria-label="任务描述"
+      autosize={false}
+      rows={3}
+      value={value}
+      onChange={onChange}
+      placeholder=""
+      className="chat-workbench-input"
+    />
+    {!value ? (
+      <div className="chat-workbench-composer-prompt" aria-label="当前模式提示">
+        <span aria-hidden="true">{WORKBENCH_MODE_SYMBOLS[mode]}</span>
+        <span>{WORKBENCH_MODE_PROMPTS[mode]}</span>
+      </div>
+    ) : null}
+  </div>
+);
+
+const WorkbenchModeSelector = ({
+  mode,
+  onModeChange,
+}: {
+  mode: WorkbenchMode;
+  onModeChange: (mode: WorkbenchMode) => void;
+}) => (
+  <div className="chat-workbench-mode" aria-label="模式选择">
+    {WORKBENCH_MODES.map(item => (
+      <button
+        key={item}
+        type="button"
+        className="chat-workbench-mode-button"
+        data-active={mode === item}
+        aria-pressed={mode === item}
+        onClick={() => onModeChange(item)}
+      >
+        {item}
+      </button>
+    ))}
+  </div>
+);
+
+const WorkbenchComposerToolbar = ({
+  atMenuOpen,
+  canSend,
+  loading,
+  modelLoader,
+  modelMenuOpen,
+  models,
+  modelsLoading,
+  mode,
+  resourceSelection,
+  runtimeSettings,
+  selectedModelType,
+  spaceId,
+  onAtMenuOpenChange,
+  onModelMenuOpenChange,
+  onModeChange,
+  onResourceSelectionChange,
+  onRuntimeSettingsChange,
+  onSelectedModelTypeChange,
+  onSubmit,
+}: {
+  atMenuOpen: boolean;
+  canSend: boolean;
+  loading: boolean;
+  modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
+  modelMenuOpen: boolean;
+  models: WorkbenchLLMModel[];
+  modelsLoading: boolean;
+  mode: WorkbenchMode;
+  resourceSelection: WorkbenchResourceSelection;
+  runtimeSettings: WorkbenchRuntimeSettings;
+  selectedModelType?: number;
+  spaceId?: string;
+  onAtMenuOpenChange: (open: boolean) => void;
+  onModelMenuOpenChange: (open: boolean) => void;
+  onModeChange: (mode: WorkbenchMode) => void;
+  onResourceSelectionChange: (selection: WorkbenchResourceSelection) => void;
+  onRuntimeSettingsChange: (settings: WorkbenchRuntimeSettings) => void;
+  onSelectedModelTypeChange: (modelType: number) => void;
+  onSubmit: () => void;
+}) => (
+  <div className="chat-workbench-toolbar">
+    <div className="chat-workbench-toolbar-left">
+      <WorkbenchModeSelector mode={mode} onModeChange={onModeChange} />
+
+      <ExtensionsPopover
+        value={resourceSelection}
+        onChange={onResourceSelectionChange}
+      />
+
+      {spaceId && modelLoader ? (
+        <WorkbenchModelSelector
+          loading={modelsLoading}
+          models={models}
+          value={selectedModelType}
+          open={modelMenuOpen}
+          onOpenChange={onModelMenuOpenChange}
+          onChange={model =>
+            onSelectedModelTypeChange(modelTypeToNumber(model))
+          }
+        />
+      ) : null}
+
+      <WorkbenchRuntimeSettingsControl
+        settings={runtimeSettings}
+        onChange={onRuntimeSettingsChange}
+      />
+    </div>
+
+    <div className="chat-workbench-toolbar-actions">
+      <button
+        type="button"
+        aria-label="添加上下文"
+        aria-expanded={atMenuOpen}
+        onClick={() => onAtMenuOpenChange(!atMenuOpen)}
+      >
+        @
+      </button>
+      <button type="button" aria-label="添加附件">
+        <IconCozLink />
+      </button>
+    </div>
+    <Button
+      aria-label="发送任务"
+      color="primary"
+      disabled={!canSend}
+      icon={<IconCozSendFill />}
+      loading={loading}
+      onClick={onSubmit}
+      className="chat-workbench-send"
+    >
+      <span className="chat-workbench-send-label">
+        {loading ? '发送中' : '发送'}
+      </span>
+    </Button>
+  </div>
+);
 
 export const WorkbenchComposer = ({
   value,
@@ -298,6 +455,9 @@ export const WorkbenchComposer = ({
   const [resourceSelection, setResourceSelection] = useState(
     createDefaultWorkbenchResourceSelection,
   );
+  const [runtimeSettings, setRuntimeSettings] = useState(
+    createDefaultWorkbenchRuntimeSettings,
+  );
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const canSend = Boolean(value.trim()) && !loading;
   const {
@@ -307,6 +467,17 @@ export const WorkbenchComposer = ({
     selectedModelType,
     setSelectedModelType,
   } = useWorkbenchModelSelection({ spaceId, modelLoader });
+
+  useEffect(() => {
+    setRuntimeSettings(prevSettings => ({
+      ...prevSettings,
+      mcp_tools: {
+        ...prevSettings.mcp_tools,
+        enabled: resourceSelection.enable_mcp.length > 0,
+        allowed_tools: [...resourceSelection.enable_mcp],
+      },
+    }));
+  }, [resourceSelection.enable_mcp]);
 
   const handleValueChange = (nextValue: string) => {
     onValueChange(nextValue);
@@ -320,13 +491,16 @@ export const WorkbenchComposer = ({
       return;
     }
 
-    onSubmit(createSubmitPayload({
-      message,
-      mode,
-      taskId,
-      selectedModel,
-      resourceSelection,
-    }));
+    onSubmit(
+      createSubmitPayload({
+        message,
+        mode,
+        taskId,
+        selectedModel,
+        resourceSelection,
+        runtimeSettings,
+      }),
+    );
   };
 
   return (
@@ -337,90 +511,33 @@ export const WorkbenchComposer = ({
         aria-label="任务输入"
       >
         {atMenuOpen ? <AtMenu onClose={() => setAtMenuOpen(false)} /> : null}
-        <div className="chat-workbench-composer-body">
-          <TextArea
-            aria-label="任务描述"
-            autosize={false}
-            rows={3}
-            value={value}
-            onChange={handleValueChange}
-            placeholder=""
-            className="chat-workbench-input"
-          />
-          {!value ? (
-            <div
-              className="chat-workbench-composer-prompt"
-              aria-label="当前模式提示"
-            >
-              <span aria-hidden="true">{WORKBENCH_MODE_SYMBOLS[mode]}</span>
-              <span>{WORKBENCH_MODE_PROMPTS[mode]}</span>
-            </div>
-          ) : null}
-        </div>
+        <WorkbenchComposerBody
+          value={value}
+          mode={mode}
+          onChange={handleValueChange}
+        />
 
-        <div className="chat-workbench-toolbar">
-          <div className="chat-workbench-toolbar-left">
-            <div className="chat-workbench-mode" aria-label="模式选择">
-              {WORKBENCH_MODES.map(item => (
-                <button
-                  key={item}
-                  type="button"
-                  className="chat-workbench-mode-button"
-                  data-active={mode === item}
-                  aria-pressed={mode === item}
-                  onClick={() => onModeChange(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-
-            <ExtensionsPopover
-              value={resourceSelection}
-              onChange={setResourceSelection}
-            />
-
-            {spaceId && modelLoader ? (
-              <WorkbenchModelSelector
-                loading={modelsLoading}
-                models={models}
-                value={selectedModelType}
-                open={modelMenuOpen}
-                onOpenChange={setModelMenuOpen}
-                onChange={model =>
-                  setSelectedModelType(modelTypeToNumber(model))
-                }
-              />
-            ) : null}
-          </div>
-
-          <div className="chat-workbench-toolbar-actions">
-            <button
-              type="button"
-              aria-label="添加上下文"
-              aria-expanded={atMenuOpen}
-              onClick={() => setAtMenuOpen(open => !open)}
-            >
-              @
-            </button>
-            <button type="button" aria-label="添加附件">
-              <IconCozLink />
-            </button>
-          </div>
-          <Button
-            aria-label="发送任务"
-            color="primary"
-            disabled={!canSend}
-            icon={<IconCozSendFill />}
-            loading={loading}
-            onClick={handleSubmit}
-            className="chat-workbench-send"
-          >
-            <span className="chat-workbench-send-label">
-              {loading ? '发送中' : '发送'}
-            </span>
-          </Button>
-        </div>
+        <WorkbenchComposerToolbar
+          atMenuOpen={atMenuOpen}
+          canSend={canSend}
+          loading={loading}
+          modelLoader={modelLoader}
+          modelMenuOpen={modelMenuOpen}
+          models={models}
+          modelsLoading={modelsLoading}
+          mode={mode}
+          resourceSelection={resourceSelection}
+          runtimeSettings={runtimeSettings}
+          selectedModelType={selectedModelType}
+          spaceId={spaceId}
+          onAtMenuOpenChange={setAtMenuOpen}
+          onModelMenuOpenChange={setModelMenuOpen}
+          onModeChange={onModeChange}
+          onResourceSelectionChange={setResourceSelection}
+          onRuntimeSettingsChange={setRuntimeSettings}
+          onSelectedModelTypeChange={setSelectedModelType}
+          onSubmit={handleSubmit}
+        />
       </section>
 
       {error ? (
