@@ -600,11 +600,78 @@ func resolveLangGraphRunCheckpointResumeRequest(
 	if readiness == nil {
 		return nil, "checkpoint_id does not belong to thread_id", nil
 	}
+	if msg, err := validateLangGraphResumeTargets(ctx, threadID, checkpointID, command); err != nil {
+		return nil, "", err
+	} else if msg != "" {
+		return nil, msg, nil
+	}
 	if !readiness.Resumable {
 		return nil, "checkpoint is not resumable: " + readiness.Reason, nil
 	}
 
 	return readiness, "", nil
+}
+
+func validateLangGraphResumeTargets(
+	ctx context.Context,
+	threadID int64,
+	checkpointID int64,
+	command map[string]any,
+) (string, error) {
+	targets, hasTargets, msg := langGraphCommandResumeTargets(command)
+	if msg != "" || !hasTargets {
+		return msg, nil
+	}
+
+	checkpointResp, err := appagentthread.SVC.GetCheckpoint(ctx, &appagentthread.GetCheckpointRequest{
+		CheckpointID: checkpointID,
+	})
+	if err != nil {
+		return "", err
+	}
+	if checkpointResp == nil || checkpointResp.Checkpoint == nil || checkpointResp.Checkpoint.ThreadID != threadID {
+		return "checkpoint_id does not belong to thread_id", nil
+	}
+	checkpoint := checkpointResp.Checkpoint
+	if strings.TrimSpace(checkpoint.RuntimeType) != string(appagentthread.RuntimeModeEinoADK) {
+		return "", nil
+	}
+
+	envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	if err != nil {
+		return "", fmt.Errorf("decode eino checkpoint: %w", err)
+	}
+	for key := range targets {
+		targetID := strings.TrimSpace(key)
+		if targetID == "" {
+			return "command.resume.targets contains empty target id", nil
+		}
+		if _, ok := envelope.Interrupts[targetID]; !ok {
+			return fmt.Sprintf("resume target %s is not present in checkpoint interrupts", targetID), nil
+		}
+	}
+
+	return "", nil
+}
+
+func langGraphCommandResumeTargets(command map[string]any) (map[string]any, bool, string) {
+	resume, ok := command["resume"].(map[string]any)
+	if !ok {
+		return nil, false, ""
+	}
+	value, exists := resume["targets"]
+	if !exists || value == nil {
+		return nil, false, ""
+	}
+	targets, ok := value.(map[string]any)
+	if !ok {
+		return nil, true, "command.resume.targets must be an object"
+	}
+	if len(targets) == 0 {
+		return nil, false, ""
+	}
+
+	return targets, true, ""
 }
 
 func langGraphRunCommandWithCheckpointResume(
@@ -1422,7 +1489,7 @@ func langGraphInternalRunStatus(status string) appagentthread.RunStatus {
 	case "error":
 		return appagentthread.RunStatusFailed
 	case "interrupted":
-		return appagentthread.RunStatusCanceled
+		return appagentthread.RunStatusInterrupted
 	default:
 		return appagentthread.RunStatus(status)
 	}

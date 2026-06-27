@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,23 @@ func TestRunWorkerRunOnceDelegatesToProcessor(t *testing.T) {
 		ProcessedRuns: 1,
 		SucceededRuns: 1,
 	}, result)
+}
+
+func TestRunWorkerOwnsConfiguredTurnLoopRegistry(t *testing.T) {
+	registry := NewADKTurnLoopRegistry()
+
+	worker := NewRunWorker(nil, RunWorkerOptions{
+		Interval:         time.Second,
+		TurnLoopRegistry: registry,
+	})
+
+	require.Same(t, registry, worker.TurnLoopRegistry())
+}
+
+func TestRunWorkerCreatesTurnLoopRegistryByDefault(t *testing.T) {
+	worker := NewRunWorker(nil, RunWorkerOptions{Interval: time.Second})
+
+	require.NotNil(t, worker.TurnLoopRegistry())
 }
 
 func TestRunWorkerFromEnvDisabledByDefault(t *testing.T) {
@@ -201,4 +219,273 @@ func TestResumeRunWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	require.Equal(t, 1750*time.Millisecond, worker.interval)
 	require.Equal(t, "resume-worker-env", worker.processor.workerID)
 	require.Equal(t, int32(5), worker.processor.batchSize)
+}
+
+func TestArtifactScanWorkerRunOnceDelegatesToApplication(t *testing.T) {
+	artifactSVC := &recordingArtifactService{
+		claimedScanJobs: []*entity.ArtifactScanJob{
+			{
+				ID:         800,
+				ThreadID:   10,
+				RunID:      20,
+				SpaceID:    30,
+				UserID:     40,
+				ArtifactID: 100,
+				FileID:     90,
+				Scanner:    "clamav",
+				Status:     entity.ArtifactScanJobStatusProcessing,
+				WorkerID:   "artifact-scan-worker-a",
+			},
+		},
+		got: &entity.AgentArtifact{
+			ID:           100,
+			SpaceID:      30,
+			ThreadID:     10,
+			RunID:        20,
+			FileID:       90,
+			ArtifactType: "report",
+			ObjectURI:    "agent-runtime/30/10/runs/20/outputs/report.txt",
+			ContentType:  "text/plain",
+			SizeBytes:    13,
+			Metadata:     `{"scan_status":"pending"}`,
+		},
+		completeScanJob:   &entity.ArtifactScanJob{ID: 800, Status: entity.ArtifactScanJobStatusSucceeded},
+		completeScanJobOK: true,
+	}
+	storage := &recordingArtifactObjectReader{
+		objects: map[string][]byte{
+			"agent-runtime/30/10/runs/20/outputs/report.txt": []byte("artifact body"),
+		},
+	}
+	scanner := &recordingArtifactContentScanner{
+		result: &ArtifactScanResult{ScanStatus: "clean", ScannerVersion: "1.4.0"},
+	}
+	app := &ApplicationService{
+		ThreadSVC:             &recordingThreadService{},
+		ArtifactSVC:           artifactSVC,
+		ArtifactObjectStorage: storage,
+		ArtifactScanner:       scanner,
+	}
+	worker := NewArtifactScanWorker(app, ArtifactScanWorkerOptions{
+		Scanner:   "clamav",
+		WorkerID:  "artifact-scan-worker-a",
+		BatchSize: 4,
+		LeaseTTL:  90 * time.Second,
+		Interval:  time.Second,
+	})
+
+	result := worker.RunOnce(context.Background())
+
+	require.Equal(t, "clamav", artifactSVC.claimScanJobsReq.Scanner)
+	require.Equal(t, "artifact-scan-worker-a", artifactSVC.claimScanJobsReq.WorkerID)
+	require.Equal(t, int32(4), artifactSVC.claimScanJobsReq.Limit)
+	require.Equal(t, int64((90 * time.Second).Milliseconds()), artifactSVC.claimScanJobsReq.LeaseTTLMillis)
+	require.Equal(t, "agent-runtime/30/10/runs/20/outputs/report.txt", storage.key)
+	require.Equal(t, "clamav", scanner.req.Scanner)
+	require.Equal(t, ArtifactScanWorkerResult{
+		ClaimedJobs:   1,
+		SucceededJobs: 1,
+	}, result)
+}
+
+func TestMemoryFlushWorkerRunOnceDelegatesToApplication(t *testing.T) {
+	digest := strings.Repeat("c", 64)
+	domainSVC := &recordingThreadService{
+		claimedMemoryFlushJobs: []*entity.MemoryFlushJob{
+			{
+				ID:                   810,
+				ThreadID:             10,
+				RunID:                20,
+				SpaceID:              30,
+				TranscriptSnapshotID: 510,
+				Status:               entity.MemoryFlushJobStatusProcessing,
+				WorkerID:             "memory-worker-a",
+			},
+		},
+		gotTranscriptSnapshot: &entity.TranscriptSnapshot{
+			ID:             510,
+			ThreadID:       10,
+			RunID:          20,
+			SpaceID:        30,
+			Kind:           entity.TranscriptKindTerminal,
+			Digest:         digest,
+			IdempotencyKey: "terminal:" + digest,
+			MessageCount:   1,
+			Messages:       `[{"role":"user","content":"记住我的区域是 APAC"}]`,
+			Metadata:       `{"runtime":"eino_adk"}`,
+		},
+		rememberedMemories: []*entity.Memory{
+			{
+				ID:         311,
+				ThreadID:   10,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "用户区域是 APAC",
+				SourceType: "transcript_summary",
+				SourceID:   "snapshot:510:region",
+			},
+		},
+		completedMemoryFlushJob: &entity.MemoryFlushJob{
+			ID:     810,
+			Status: entity.MemoryFlushJobStatusSucceeded,
+		},
+		memoryFlushUpdated: true,
+	}
+	app := &ApplicationService{
+		ThreadSVC: domainSVC,
+		MemoryExtractor: &recordingMemoryExtractor{
+			facts: []MemoryExtractionFact{
+				{
+					Key:        "region",
+					Content:    "用户区域是 APAC",
+					Confidence: 0.9,
+				},
+			},
+		},
+	}
+	worker := NewMemoryFlushWorker(app, MemoryFlushWorkerOptions{
+		WorkerID:     "memory-worker-a",
+		BatchSize:    4,
+		LeaseTTL:     90 * time.Second,
+		Interval:     time.Second,
+		MaxAttempts:  3,
+		RetryBackoff: 2 * time.Minute,
+	})
+
+	result := worker.RunOnce(context.Background())
+
+	require.Equal(t, "memory-worker-a", domainSVC.claimMemoryFlushReq.WorkerID)
+	require.Equal(t, int32(4), domainSVC.claimMemoryFlushReq.Limit)
+	require.Equal(t, int64((90 * time.Second).Milliseconds()), domainSVC.claimMemoryFlushReq.LeaseTTLMillis)
+	require.Equal(t, int64(810), domainSVC.completeMemoryFlushReq.JobID)
+	require.Equal(t, MemoryFlushWorkerResult{
+		ClaimedJobs:   1,
+		SucceededJobs: 1,
+	}, result)
+}
+
+func TestMemoryFlushWorkerFromEnvDisabledByDefault(t *testing.T) {
+	t.Setenv(agentMemoryFlushWorkerEnabledEnv, "")
+
+	worker := StartMemoryFlushWorkerFromEnv(
+		context.Background(),
+		&ApplicationService{MemoryExtractor: &recordingMemoryExtractor{}},
+	)
+
+	require.Nil(t, worker)
+}
+
+func TestMemoryFlushWorkerFromEnvRequiresExtractorWhenEnabled(t *testing.T) {
+	t.Setenv(agentMemoryFlushWorkerEnabledEnv, "true")
+
+	worker := StartMemoryFlushWorkerFromEnv(
+		context.Background(),
+		&ApplicationService{ThreadSVC: &recordingThreadService{}},
+	)
+
+	require.Nil(t, worker)
+}
+
+func TestMemoryFlushWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
+	t.Setenv(agentMemoryFlushWorkerEnabledEnv, "true")
+	t.Setenv(agentMemoryFlushWorkerIDEnv, "memory-worker-env")
+	t.Setenv(agentMemoryFlushWorkerBatchSizeEnv, "6")
+	t.Setenv(agentMemoryFlushWorkerIntervalMsEnv, "2500")
+	t.Setenv(agentMemoryFlushWorkerLeaseTTLMsEnv, "120000")
+	t.Setenv(agentMemoryFlushWorkerMaxAttemptsEnv, "4")
+	t.Setenv(agentMemoryFlushWorkerRetryBackoffMsEnv, "30000")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker := StartMemoryFlushWorkerFromEnv(
+		ctx,
+		&ApplicationService{
+			ThreadSVC:       &recordingThreadService{},
+			MemoryExtractor: &recordingMemoryExtractor{},
+		},
+	)
+
+	require.NotNil(t, worker)
+	require.Equal(t, 2500*time.Millisecond, worker.interval)
+	require.Equal(t, "memory-worker-env", worker.workerID)
+	require.Equal(t, int32(6), worker.batchSize)
+	require.Equal(t, 120*time.Second, worker.leaseTTL)
+	require.Equal(t, int32(4), worker.maxAttempts)
+	require.Equal(t, 30*time.Second, worker.retryBackoff)
+}
+
+func TestArtifactScanWorkerFromEnvDisabledByDefault(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "")
+
+	worker := StartArtifactScanWorkerFromEnv(
+		context.Background(),
+		&ApplicationService{ArtifactScanner: &recordingArtifactContentScanner{}},
+	)
+
+	require.Nil(t, worker)
+}
+
+func TestArtifactScanWorkerFromEnvRequiresScannerWhenEnabled(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
+
+	worker := StartArtifactScanWorkerFromEnv(
+		context.Background(),
+		&ApplicationService{ArtifactObjectStorage: &recordingArtifactObjectReader{}},
+	)
+
+	require.Nil(t, worker)
+}
+
+func TestArtifactScanWorkerFromEnvReportsScannerConfigError(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
+
+	worker, status := StartArtifactScanWorkerFromEnvWithStatus(
+		context.Background(),
+		&ApplicationService{
+			ArtifactSVC:           &recordingArtifactService{},
+			ArtifactObjectStorage: &recordingArtifactObjectReader{},
+			ArtifactScannerStatus: ArtifactScannerEnvStatus{
+				Enabled: true,
+				Type:    "http",
+				Error:   "artifact scanner endpoint is required",
+			},
+		},
+	)
+
+	require.Nil(t, worker)
+	require.True(t, status.Enabled)
+	require.False(t, status.Started)
+	require.Equal(t, "artifact scanner is not configured", status.Reason)
+	require.Equal(t, "artifact scanner endpoint is required", status.ScannerStatus.Error)
+	require.NotContains(t, status.ScannerStatus.Error, "agent-runtime")
+}
+
+func TestArtifactScanWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
+	t.Setenv(agentArtifactScanWorkerEnabledEnv, "true")
+	t.Setenv(agentArtifactScanWorkerIDEnv, "artifact-worker-env")
+	t.Setenv(agentArtifactScanWorkerScannerEnv, "clamav")
+	t.Setenv(agentArtifactScanWorkerBatchSizeEnv, "6")
+	t.Setenv(agentArtifactScanWorkerIntervalMsEnv, "2500")
+	t.Setenv(agentArtifactScanWorkerLeaseTTLMsEnv, "120000")
+	t.Setenv(agentArtifactScanWorkerMaxAttemptsEnv, "4")
+	t.Setenv(agentArtifactScanWorkerRetryBackoffMsEnv, "30000")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker := StartArtifactScanWorkerFromEnv(
+		ctx,
+		&ApplicationService{
+			ArtifactSVC:           &recordingArtifactService{},
+			ArtifactObjectStorage: &recordingArtifactObjectReader{},
+			ArtifactScanner:       &recordingArtifactContentScanner{},
+		},
+	)
+
+	require.NotNil(t, worker)
+	require.Equal(t, 2500*time.Millisecond, worker.interval)
+	require.Equal(t, "artifact-worker-env", worker.workerID)
+	require.Equal(t, "clamav", worker.scanner)
+	require.Equal(t, int32(6), worker.batchSize)
+	require.Equal(t, 120000*time.Millisecond, worker.leaseTTL)
+	require.Equal(t, int32(4), worker.maxAttempts)
+	require.Equal(t, 30000*time.Millisecond, worker.retryBackoff)
 }

@@ -1,0 +1,41 @@
+CREATE TABLE IF NOT EXISTS `agent_transcript_snapshots` (
+  `id` bigint NOT NULL,
+  `thread_id` bigint NOT NULL,
+  `run_id` bigint NOT NULL,
+  `space_id` bigint NOT NULL,
+  `kind` varchar(32) NOT NULL,
+  `digest` varchar(64) NOT NULL,
+  `idempotency_key` varchar(128) NOT NULL,
+  `message_count` int NOT NULL,
+  `messages` json NOT NULL,
+  `metadata` json DEFAULT NULL,
+  `created_at` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_transcripts_run_key` (`run_id`, `idempotency_key`),
+  KEY `idx_agent_transcripts_thread_created` (`thread_id`, `created_at`),
+  KEY `idx_agent_transcripts_run_created` (`run_id`, `created_at`),
+  KEY `idx_agent_transcripts_space_created` (`space_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `agent_memory_flush_jobs` (
+  `id` bigint NOT NULL,
+  `thread_id` bigint NOT NULL,
+  `run_id` bigint NOT NULL,
+  `space_id` bigint NOT NULL,
+  `user_id` bigint NOT NULL,
+  `assistant_id` varchar(128) NOT NULL DEFAULT '',
+  `transcript_snapshot_id` bigint NOT NULL,
+  `idempotency_key` varchar(128) NOT NULL,
+  `status` varchar(32) NOT NULL,
+  `attempt_count` int NOT NULL DEFAULT 0,
+  `last_error` text NOT NULL,
+  `available_at` bigint NOT NULL,
+  `created_at` bigint NOT NULL,
+  `updated_at` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_memory_flush_run_key` (`run_id`, `idempotency_key`),
+  KEY `idx_agent_memory_flush_pending` (`status`, `available_at`, `created_at`),
+  KEY `idx_agent_memory_flush_snapshot` (`transcript_snapshot_id`),
+  KEY `idx_agent_memory_flush_thread_created` (`thread_id`, `created_at`),
+  KEY `idx_agent_memory_flush_space_created` (`space_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

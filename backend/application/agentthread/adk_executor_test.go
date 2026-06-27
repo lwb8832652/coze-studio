@@ -1,0 +1,1183 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package agentthread
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	"github.com/stretchr/testify/require"
+)
+
+func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) {
+	agent := &scriptedADKAgent{
+		run: func(context.Context) []*adk.AgentEvent {
+			return []*adk.AgentEvent{
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{
+						MessageOutput: &adk.MessageVariant{
+							IsStreaming: true,
+							MessageStream: schema.StreamReaderFromArray([]*schema.Message{
+								{Role: schema.Assistant, Content: "draft "},
+								{Role: schema.Assistant, Content: "answer"},
+							}),
+							Role: schema.Assistant,
+						},
+					},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{
+						MessageOutput: &adk.MessageVariant{
+							Message: &schema.Message{
+								Role:       schema.Tool,
+								Content:    `{"result":"ok"}`,
+								ToolCallID: "call-1",
+							},
+							Role:     schema.Tool,
+							ToolName: "search",
+						},
+					},
+				},
+				{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{
+						MessageOutput: &adk.MessageVariant{
+							Message: schema.AssistantMessage("final answer", nil),
+							Role:    schema.Assistant,
+						},
+					},
+				},
+			}
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	store := newMemoryADKCheckpointStore()
+	executor := NewADKExecutor(ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+		return agent, nil
+	}), eventSink, func(*RunSummary) (adk.CheckPointStore, error) {
+		return store, nil
+	}, nil)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"research"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "final answer", result.Message)
+	require.JSONEq(t, `{"source":"eino_adk","checkpoint_key":"coze-run-20"}`, result.Metadata)
+	require.Equal(t, []string{
+		"message.completed",
+		"tool.completed",
+		"message.completed",
+	}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[0].Payload, `"content":"draft answer"`)
+	require.Contains(t, eventSink.events[1].Payload, `"tool_name":"search"`)
+	require.Contains(t, eventSink.events[2].Payload, `"content":"final answer"`)
+}
+
+func TestADKExecutorPersistsSummarizationEventsWithBoundedMemory(t *testing.T) {
+	chatModel := &summarizationIntegrationChatModel{}
+	memoryProvider := &recordingMemoryProvider{memories: []AgentMemory{{
+		ID:      "1",
+		Scope:   "thread",
+		Content: "deployment region is APAC",
+	}}}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+			MemoryProvider: memoryProvider,
+		}),
+	)
+	eventSink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		factory,
+		eventSink,
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Config: `{
+			"agent_name":"lead",
+			"context_budget":{
+				"summarization_messages":2,
+				"memory_tokens":100
+			}
+		}`,
+		Input: `{"messages":[
+			{"role":"user","content":"first"},
+			{"role":"assistant","content":"second"},
+			{"role":"user","content":"third"}
+		]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "final after summary", result.Message)
+	require.Equal(t, 1, memoryProvider.calls)
+	require.Equal(t, []string{
+		"context.summarizing",
+		"context.summary_model_call",
+		"context.summarized",
+		"message.completed",
+	}, eventSink.eventTypes())
+	require.Equal(t, []string{"summarization", ""}, chatModel.usageKindValues())
+	require.Equal(t, 1, chatModel.finalInputMemoryCount("deployment region is APAC"))
+	for _, event := range eventSink.events {
+		require.NotContains(t, event.Payload, "first")
+		require.NotContains(t, event.Payload, "second")
+		require.NotContains(t, event.Payload, "third")
+	}
+}
+
+func TestADKSummarizedCheckpointRestartsWithoutOriginalHistoryOrDuplicateMemory(t *testing.T) {
+	checkpointService := newContractCheckpointService()
+	approvalTool := &summarizationApprovalTool{}
+	memoryProvider := &recordingMemoryProvider{memories: []AgentMemory{{
+		ID:      "1",
+		Scope:   "thread",
+		Content: "deployment region is APAC",
+	}}}
+	newFactory := func(
+		chatModel model.BaseChatModel,
+		transcriptStore ADKTranscriptStore,
+	) *ApplicationADKAgentFactory {
+		return NewApplicationADKAgentFactory(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+			ADKToolProviderFunc(func(context.Context, *RunSummary) ([]tool.BaseTool, error) {
+				return []tool.BaseTool{approvalTool}, nil
+			}),
+			NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+				MemoryProvider:  memoryProvider,
+				TranscriptStore: transcriptStore,
+			}),
+		)
+	}
+	storeFactory := func(run *RunSummary) (adk.CheckPointStore, error) {
+		return NewADKCheckpointStore(checkpointService, run)
+	}
+	longFirst := "first-" + strings.Repeat("a", 4000)
+	longSecond := "second-" + strings.Repeat("b", 4000)
+	longThird := "third-" + strings.Repeat("c", 4000)
+	run := &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Config: `{
+			"agent_name":"lead",
+			"context_budget":{
+				"context_window_tokens":10000,
+				"summarization_tokens":2000,
+				"summarization_messages":200,
+				"memory_tokens":32
+			}
+		}`,
+		Input: fmt.Sprintf(`{"messages":[
+			{"role":"user","content":%q},
+			{"role":"assistant","content":%q},
+			{"role":"user","content":%q}
+		]}`, longFirst, longSecond, longThird),
+	}
+
+	initialModel := &summarizingInterruptChatModel{}
+	initialSink := &recordingRunEventSink{}
+	initialTranscriptStore := &recordingADKTranscriptStore{}
+	initialExecutor := NewADKExecutor(
+		newFactory(initialModel, initialTranscriptStore),
+		initialSink,
+		storeFactory,
+		nil,
+	)
+	initialResult, initialErr := initialExecutor.Execute(context.Background(), run)
+
+	require.Nil(t, initialResult)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, initialErr, &interrupted)
+	require.NotEmpty(t, interrupted.Interrupts)
+	require.Len(t, initialTranscriptStore.calls, 1)
+	require.Equal(
+		t,
+		TranscriptKindSummaryInput,
+		initialTranscriptStore.calls[0].Kind,
+	)
+	requireOrderedEventTypes(t, initialSink.eventTypes(), []string{
+		"context.summarizing",
+		"context.summary_model_call",
+		"context.summarized",
+		"run.interrupted",
+	})
+	persisted, err := checkpointService.GetLatestRuntimeCheckpoint(
+		context.Background(),
+		&GetLatestRuntimeCheckpointRequest{
+			ThreadID:    run.ThreadID,
+			RunID:       run.RunID,
+			RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey:  interrupted.CheckpointKey,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.Checkpoint)
+	envelope, err := UnmarshalADKCheckpointEnvelope(
+		[]byte(persisted.Checkpoint.ChannelValues),
+	)
+	require.NoError(t, err)
+
+	resumeModel := &summarizingInterruptChatModel{}
+	resumeSink := &recordingRunEventSink{}
+	resumeTranscriptStore := &recordingADKTranscriptStore{}
+	resumeExecutor := NewADKExecutor(
+		newFactory(resumeModel, resumeTranscriptStore),
+		resumeSink,
+		storeFactory,
+		nil,
+	)
+	resumeRun := *run
+	resumeRun.RunID = 21
+	targetID := interrupted.Interrupts[0].ID
+	result, err := resumeExecutor.Resume(
+		context.Background(),
+		&resumeRun,
+		&HarnessResumeInput{
+			Runtime:      RuntimeModeEinoADK,
+			RuntimeKey:   interrupted.CheckpointKey,
+			ThreadID:     run.ThreadID,
+			RunID:        resumeRun.RunID,
+			SourceRunID:  run.RunID,
+			CheckpointNS: adkCheckpointNamespace,
+			ResumeFrom:   "interrupt",
+			ADKResumeTargets: map[string]any{
+				targetID: "approved",
+			},
+			ADKCheckpoint: &envelope,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "final after approval", result.Message)
+	require.Len(t, resumeTranscriptStore.calls, 1)
+	require.Equal(
+		t,
+		TranscriptKindTerminal,
+		resumeTranscriptStore.calls[0].Kind,
+	)
+	require.NotContains(t, resumeModel.allInputText(), longFirst)
+	require.NotContains(t, resumeModel.allInputText(), longSecond)
+	require.NotContains(t, resumeModel.allInputText(), longThird)
+	require.Equal(t, 1, strings.Count(
+		resumeModel.allInputText(),
+		"deployment region is APAC",
+	))
+	require.Equal(t, []string{""}, resumeModel.usageKindValues())
+	require.Equal(t, []string{"tool.completed", "message.completed"}, resumeSink.eventTypes())
+}
+
+func TestADKMultimodalProjectionSurvivesInterruptAndFreshResume(t *testing.T) {
+	checkpointService := newContractCheckpointService()
+	approvalTool := &summarizationApprovalTool{}
+	newFactory := func(
+		chatModel model.BaseChatModel,
+		transcriptStore ADKTranscriptStore,
+		eventSink RunEventSink,
+	) *ApplicationADKAgentFactory {
+		return NewApplicationADKAgentFactory(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+			ADKToolProviderFunc(func(
+				context.Context,
+				*RunSummary,
+			) ([]tool.BaseTool, error) {
+				return []tool.BaseTool{approvalTool}, nil
+			}),
+			NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+				TranscriptStore: transcriptStore,
+				EventSink:       eventSink,
+			}),
+		)
+	}
+	storeFactory := func(run *RunSummary) (adk.CheckPointStore, error) {
+		return NewADKCheckpointStore(checkpointService, run)
+	}
+	imageURL := "https://example.test/checkpoint-image.png"
+	run := &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Config: `{
+			"agent_name":"lead",
+			"provider_capabilities":{
+				"vision":true
+			},
+			"context_budget":{
+				"context_window_tokens":10000,
+				"summarization_tokens":9000,
+				"summarization_messages":100,
+				"memory_tokens":100,
+				"multimodal_history_tokens":1,
+				"file_history_tokens":2048
+			}
+		}`,
+		Input: fmt.Sprintf(`{"messages":[
+			{
+				"role":"user",
+				"content":"",
+				"user_input_multi_content":[{
+					"type":"image_url",
+					"image":{"url":%q,"detail":"low"}
+				}]
+			},
+			{"role":"user","content":"approve analysis"}
+		]}`, imageURL),
+	}
+
+	initialModel := &summarizingInterruptChatModel{}
+	initialSink := &recordingRunEventSink{}
+	initialTranscriptStore := &recordingADKTranscriptStore{}
+	initialExecutor := NewADKExecutor(
+		newFactory(initialModel, initialTranscriptStore, initialSink),
+		initialSink,
+		storeFactory,
+		nil,
+	)
+	initialResult, initialErr := initialExecutor.Execute(
+		context.Background(),
+		run,
+	)
+
+	require.Nil(t, initialResult)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, initialErr, &interrupted)
+	require.NotEmpty(t, interrupted.Interrupts)
+	require.Empty(t, initialTranscriptStore.calls)
+	require.Len(t, initialModel.inputs, 1)
+	require.NotContains(
+		t,
+		multimodalBudgetMessagesJSON(t, initialModel.inputs[0]),
+		imageURL,
+	)
+
+	persisted, err := checkpointService.GetLatestRuntimeCheckpoint(
+		context.Background(),
+		&GetLatestRuntimeCheckpointRequest{
+			ThreadID:    run.ThreadID,
+			RunID:       run.RunID,
+			RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey:  interrupted.CheckpointKey,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.Checkpoint)
+	envelope, err := UnmarshalADKCheckpointEnvelope(
+		[]byte(persisted.Checkpoint.ChannelValues),
+	)
+	require.NoError(t, err)
+
+	resumeModel := &summarizingInterruptChatModel{}
+	resumeSink := &recordingRunEventSink{}
+	resumeTranscriptStore := &recordingADKTranscriptStore{}
+	resumeExecutor := NewADKExecutor(
+		newFactory(resumeModel, resumeTranscriptStore, resumeSink),
+		resumeSink,
+		storeFactory,
+		nil,
+	)
+	resumeRun := *run
+	resumeRun.RunID = 21
+	targetID := interrupted.Interrupts[0].ID
+	result, err := resumeExecutor.Resume(
+		context.Background(),
+		&resumeRun,
+		&HarnessResumeInput{
+			Runtime:      RuntimeModeEinoADK,
+			RuntimeKey:   interrupted.CheckpointKey,
+			ThreadID:     run.ThreadID,
+			RunID:        resumeRun.RunID,
+			SourceRunID:  run.RunID,
+			CheckpointNS: adkCheckpointNamespace,
+			ResumeFrom:   "interrupt",
+			ADKResumeTargets: map[string]any{
+				targetID: "approved",
+			},
+			ADKCheckpoint: &envelope,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "final after approval", result.Message)
+	require.Len(t, resumeModel.inputs, 1)
+	require.NotContains(
+		t,
+		multimodalBudgetMessagesJSON(t, resumeModel.inputs[0]),
+		imageURL,
+	)
+	require.Len(t, resumeTranscriptStore.calls, 1)
+	require.Equal(
+		t,
+		TranscriptKindTerminal,
+		resumeTranscriptStore.calls[0].Kind,
+	)
+	require.Contains(t, resumeTranscriptStore.calls[0].Messages, imageURL)
+}
+
+func TestADKExecutorInterruptsAndResumesWithTargets(t *testing.T) {
+	agent := &scriptedADKAgent{
+		run: func(ctx context.Context) []*adk.AgentEvent {
+			return []*adk.AgentEvent{
+				adk.Interrupt(ctx, map[string]any{"question": "approve?"}),
+			}
+		},
+		resume: func(ctx context.Context, info *adk.ResumeInfo) []*adk.AgentEvent {
+			return []*adk.AgentEvent{{
+				AgentName: "lead",
+				Output: &adk.AgentOutput{
+					MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("approved result", nil),
+						Role:    schema.Assistant,
+					},
+				},
+			}}
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	sourceStore := newMemoryADKCheckpointStore()
+	currentStore := newMemoryADKCheckpointStore()
+	storeRunIDs := make([]int64, 0, 3)
+	agentRuns := make([]RunSummary, 0, 2)
+	executor := NewADKExecutor(ADKAgentFactoryFunc(func(
+		_ context.Context,
+		run *RunSummary,
+	) (adk.ResumableAgent, error) {
+		agentRuns = append(agentRuns, *run)
+		return agent, nil
+	}), eventSink, func(run *RunSummary) (adk.CheckPointStore, error) {
+		storeRunIDs = append(storeRunIDs, run.RunID)
+		if run.RunID == 20 {
+			return sourceStore, nil
+		}
+		if run.RunID == 21 {
+			return currentStore, nil
+		}
+		return nil, fmt.Errorf("unexpected store run id: %d", run.RunID)
+	}, nil)
+	run := &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"requires approval"}]}`,
+	}
+
+	result, err := executor.Execute(context.Background(), run)
+
+	require.Nil(t, result)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, err, &interrupted)
+	require.Equal(t, "coze-run-20", interrupted.CheckpointKey)
+	require.NotEmpty(t, interrupted.Interrupts)
+	_, exists, storeErr := sourceStore.Get(context.Background(), interrupted.CheckpointKey)
+	require.NoError(t, storeErr)
+	require.True(t, exists)
+
+	targetID := interrupted.Interrupts[0].ID
+	envelope := &ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      interrupted.CheckpointKey,
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1},
+		Interrupts: map[string]ADKInterruptItem{
+			targetID: interrupted.Interrupts[0],
+		},
+	}
+	resumeRun := *run
+	resumeRun.RunID = 21
+	result, err = executor.Resume(context.Background(), &resumeRun, &HarnessResumeInput{
+		Runtime:          RuntimeModeEinoADK,
+		RuntimeKey:       interrupted.CheckpointKey,
+		ADKCheckpoint:    envelope,
+		ADKResumeTargets: map[string]any{targetID: "approved"},
+		ThreadID:         10,
+		RunID:            21,
+		SourceRunID:      20,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "approved result", result.Message)
+	require.NotNil(t, agent.resumeInfo)
+	require.True(t, agent.resumeInfo.WasInterrupted)
+	require.True(t, agent.resumeInfo.IsResumeTarget)
+	require.Equal(t, "approved", agent.resumeInfo.ResumeData)
+	require.Equal(t, []int64{20, 21, 20}, storeRunIDs)
+	require.Len(t, agentRuns, 2)
+	require.Equal(t, int64(0), agentRuns[0].PlanScopeRunID)
+	require.Equal(t, int64(21), agentRuns[1].RunID)
+	require.Equal(t, int64(20), agentRuns[1].PlanScopeRunID)
+	require.Equal(t, []string{
+		"run.interrupted",
+		"message.completed",
+	}, eventSink.eventTypes())
+}
+
+func TestADKAgentRunForResumeSelectsPlanScope(t *testing.T) {
+	run := &RunSummary{RunID: 21, ThreadID: 10}
+
+	for _, testCase := range []struct {
+		name          string
+		sourceRunID   int64
+		wantPlanScope int64
+		wantError     string
+	}{
+		{name: "no source", sourceRunID: 0},
+		{name: "same run", sourceRunID: 21, wantPlanScope: 21},
+		{name: "source run", sourceRunID: 20, wantPlanScope: 20},
+		{
+			name:        "invalid source",
+			sourceRunID: -1,
+			wantError:   "source run id is invalid",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			agentRun, err := adkAgentRunForResume(run, testCase.sourceRunID)
+
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+				require.Nil(t, agentRun)
+				return
+			}
+			require.NoError(t, err)
+			require.NotSame(t, run, agentRun)
+			require.Equal(t, run.RunID, agentRun.RunID)
+			require.Equal(t, testCase.wantPlanScope, agentRun.PlanScopeRunID)
+		})
+	}
+}
+
+func TestADKExecutorReturnsCanceledError(t *testing.T) {
+	agent := &scriptedADKAgent{
+		run: func(context.Context) []*adk.AgentEvent {
+			return []*adk.AgentEvent{{
+				AgentName: "lead",
+				Err: &adk.CancelError{
+					Info: &adk.AgentCancelInfo{Mode: adk.CancelAfterToolCalls},
+				},
+			}}
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		eventSink,
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Input:    `{"messages":[{"role":"user","content":"cancel"}]}`,
+	})
+
+	require.Nil(t, result)
+	var canceled *RunCanceledError
+	require.ErrorAs(t, err, &canceled)
+	require.True(t, canceled.EventPersisted)
+	require.Equal(t, []string{"run.canceling"}, eventSink.eventTypes())
+}
+
+func TestADKExecutorRegistersActiveExecutionForCancel(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	agent := &scriptedADKAgent{
+		run: func(context.Context) []*adk.AgentEvent {
+			close(entered)
+			<-release
+			return []*adk.AgentEvent{{
+				AgentName: "lead",
+				Output: &adk.AgentOutput{
+					MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("done", nil),
+						Role:    schema.Assistant,
+					},
+				},
+			}}
+		},
+	}
+	registry := NewADKCancelRegistry()
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKCancelRegistry(registry),
+	)
+	done := make(chan error, 1)
+	go func() {
+		_, err := executor.Execute(context.Background(), &RunSummary{
+			ThreadID: 10,
+			RunID:    20,
+			Input:    `{"messages":[{"role":"user","content":"wait"}]}`,
+		})
+		done <- err
+	}()
+
+	<-entered
+	registry.mu.Lock()
+	_, active := registry.handles[20]
+	registry.mu.Unlock()
+	require.True(t, active)
+
+	close(release)
+	require.NoError(t, <-done)
+	registry.mu.Lock()
+	_, active = registry.handles[20]
+	registry.mu.Unlock()
+	require.False(t, active)
+}
+
+func TestADKExecutorCollectsChatModelCallbackUsageOnce(t *testing.T) {
+	agent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name:        "lead",
+		Description: "usage test agent",
+		Model:       &usageChatModel{},
+	})
+	require.NoError(t, err)
+
+	collector := &recordingADKUsageCollector{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return agent, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		collector,
+	)
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    20,
+		Config:   `{"runtime":"eino_adk","agent_name":"lead"}`,
+		Input:    `{"messages":[{"role":"user","content":"usage"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "callback answer", result.Message)
+	require.Len(t, collector.usages, 1)
+	require.Equal(t, int64(12), collector.usages[0].InputTokens)
+	require.Equal(t, int64(5), collector.usages[0].OutputTokens)
+	require.Contains(t, collector.usages[0].Metadata, `"source":"eino_callback"`)
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(result.Metadata), &metadata))
+	require.Regexp(t, `^[0-9a-f]{32}$`, metadata["trace_id"])
+}
+
+func TestADKExecutorReplaysSubagentRetryFromSourceChildRun(t *testing.T) {
+	childAgent := &recordingSubagentReplayAgent{
+		name:        "researcher",
+		description: "Research public information.",
+		response:    "child replay answer",
+	}
+	sourceRun := &RunSummary{
+		RunID:       20,
+		ThreadID:    10,
+		ParentRunID: 15,
+		RunKind:     RunKindSubagent,
+		AssistantID: "singleagent:1001",
+		Input: `{
+			"schema":"coze.subagent_tool_call.v1",
+			"tool_name":"researcher",
+			"arguments":{"request":"redo analysis"}
+		}`,
+		Config: `{
+			"runtime":"eino_adk",
+			"agent_name":"researcher",
+			"agent_description":"Research public information.",
+			"single_agent":{"agent_id":1001,"version":"v1","is_draft":false},
+			"full_chat_history":false,
+			"tool_policy":{"allowed_tools":[],"allowed_dynamic_tools":[]}
+		}`,
+	}
+	resolver := ADKSubagentRetrySourceResolverFunc(func(
+		_ context.Context,
+		req ADKSubagentRetrySourceRequest,
+	) (*RunSummary, error) {
+		require.Equal(t, int64(30), req.RetryRun.RunID)
+		require.Equal(t, int64(20), req.SourceRunID)
+		require.Equal(t, int64(15), req.ParentRunID)
+		return sourceRun, nil
+	})
+	var factoryRun *RunSummary
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(
+			_ context.Context,
+			run *RunSummary,
+		) (adk.ResumableAgent, error) {
+			copied := *run
+			factoryRun = &copied
+			return childAgent, nil
+		}),
+		&recordingRunEventSink{},
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+		WithADKSubagentRetrySourceResolver(resolver),
+	)
+
+	result, err := executor.ExecuteSubagentRetry(context.Background(), &RunSummary{
+		ThreadID: 10,
+		RunID:    30,
+		Command: `{
+			"subagent_retry":{
+				"schema":"coze.subagent_retry.v1",
+				"source_run_id":20,
+				"parent_run_id":15
+			}
+		}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "child replay answer", result.Message)
+	require.JSONEq(t, `{
+		"source":"eino_adk_subagent_retry",
+		"source_run_id":20,
+		"parent_run_id":15
+	}`, result.Metadata)
+	require.NotNil(t, factoryRun)
+	require.Equal(t, int64(20), factoryRun.RunID)
+	require.Equal(t, RunKindSubagent, factoryRun.RunKind)
+	require.Equal(t, "redo analysis", childAgent.inputText())
+}
+
+func TestApplicationADKSubagentRetrySourceResolverLoadsSourceRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		gotRunsByID: map[int64]*entity.Run{
+			20: {
+				ID:          20,
+				ThreadID:    10,
+				ParentRunID: 15,
+				RunKind:     entity.RunKindSubagent,
+				Status:      entity.RunStatusFailed,
+				Input:       `{"schema":"coze.subagent_tool_call.v1","tool_name":"researcher","arguments":{}}`,
+			},
+		},
+	}
+	resolver := NewApplicationADKSubagentRetrySourceResolver(
+		&ApplicationService{ThreadSVC: domainSVC},
+	)
+
+	source, err := resolver.ResolveADKSubagentRetrySource(
+		context.Background(),
+		ADKSubagentRetrySourceRequest{
+			RetryRun:    &RunSummary{RunID: 30, ThreadID: 10},
+			SourceRunID: 20,
+			ParentRunID: 15,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(20), domainSVC.getRunID)
+	require.Equal(t, int64(20), source.RunID)
+	require.Equal(t, RunKindSubagent, source.RunKind)
+}
+
+type recordingSubagentReplayAgent struct {
+	mu          sync.Mutex
+	name        string
+	description string
+	response    string
+	inputs      [][]*schema.Message
+}
+
+func (a *recordingSubagentReplayAgent) Name(context.Context) string {
+	return a.name
+}
+
+func (a *recordingSubagentReplayAgent) Description(context.Context) string {
+	return a.description
+}
+
+func (a *recordingSubagentReplayAgent) Run(
+	ctx context.Context,
+	input *adk.AgentInput,
+	_ ...adk.AgentRunOption,
+) *adk.AsyncIterator[*adk.AgentEvent] {
+	a.mu.Lock()
+	if input != nil {
+		a.inputs = append(a.inputs, append([]*schema.Message(nil), input.Messages...))
+	}
+	a.mu.Unlock()
+
+	return adkAgentEventIterator([]*adk.AgentEvent{{
+		AgentName: a.name,
+		Output: &adk.AgentOutput{
+			MessageOutput: &adk.MessageVariant{
+				Message: schema.AssistantMessage(a.response, nil),
+				Role:    schema.Assistant,
+			},
+		},
+	}})
+}
+
+func (a *recordingSubagentReplayAgent) Resume(
+	context.Context,
+	*adk.ResumeInfo,
+	...adk.AgentRunOption,
+) *adk.AsyncIterator[*adk.AgentEvent] {
+	return adkAgentEventIterator(nil)
+}
+
+func (a *recordingSubagentReplayAgent) inputText() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var builder strings.Builder
+	for _, input := range a.inputs {
+		for _, message := range input {
+			if message != nil {
+				builder.WriteString(message.Content)
+			}
+		}
+	}
+	return builder.String()
+}
+
+type scriptedADKAgent struct {
+	run        func(context.Context) []*adk.AgentEvent
+	resume     func(context.Context, *adk.ResumeInfo) []*adk.AgentEvent
+	resumeInfo *adk.ResumeInfo
+}
+
+func (a *scriptedADKAgent) Name(context.Context) string {
+	return "lead"
+}
+
+func (a *scriptedADKAgent) Description(context.Context) string {
+	return "scripted test agent"
+}
+
+func (a *scriptedADKAgent) Run(
+	ctx context.Context,
+	input *adk.AgentInput,
+	options ...adk.AgentRunOption,
+) *adk.AsyncIterator[*adk.AgentEvent] {
+	if a.run == nil {
+		return adkAgentEventIterator(nil)
+	}
+
+	return adkAgentEventIterator(a.run(ctx))
+}
+
+func (a *scriptedADKAgent) Resume(
+	ctx context.Context,
+	info *adk.ResumeInfo,
+	options ...adk.AgentRunOption,
+) *adk.AsyncIterator[*adk.AgentEvent] {
+	a.resumeInfo = info
+	if a.resume == nil {
+		return adkAgentEventIterator(nil)
+	}
+
+	return adkAgentEventIterator(a.resume(ctx, info))
+}
+
+type usageChatModel struct{}
+
+func (m *usageChatModel) Generate(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.Message, error) {
+	return usageChatModelMessage(), nil
+}
+
+func (m *usageChatModel) Stream(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	return schema.StreamReaderFromArray([]*schema.Message{usageChatModelMessage()}), nil
+}
+
+func usageChatModelMessage() *schema.Message {
+	return &schema.Message{
+		Role:    schema.Assistant,
+		Content: "callback answer",
+		ResponseMeta: &schema.ResponseMeta{
+			Usage: &schema.TokenUsage{
+				PromptTokens:     12,
+				CompletionTokens: 5,
+				TotalTokens:      17,
+				PromptTokenDetails: schema.PromptTokenDetails{
+					CachedTokens: 3,
+				},
+				CompletionTokensDetails: schema.CompletionTokensDetails{
+					ReasoningTokens: 2,
+				},
+			},
+		},
+	}
+}
+
+type summarizationIntegrationChatModel struct {
+	mu         sync.Mutex
+	calls      int
+	usageKinds []string
+	inputs     [][]*schema.Message
+}
+
+func (m *summarizationIntegrationChatModel) Generate(
+	ctx context.Context,
+	input []*schema.Message,
+	_ ...model.Option,
+) (*schema.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	m.usageKinds = append(m.usageKinds, adkUsageKindFromContext(ctx))
+	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
+	if m.calls == 1 {
+		return schema.AssistantMessage("condensed context", nil), nil
+	}
+	return schema.AssistantMessage("final after summary", nil), nil
+}
+
+func (m *summarizationIntegrationChatModel) Stream(
+	ctx context.Context,
+	input []*schema.Message,
+	options ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, input, options...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func (m *summarizationIntegrationChatModel) usageKindValues() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.usageKinds...)
+}
+
+func (m *summarizationIntegrationChatModel) finalInputMemoryCount(value string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.inputs) == 0 {
+		return 0
+	}
+	count := 0
+	for _, message := range m.inputs[len(m.inputs)-1] {
+		if message != nil {
+			count += strings.Count(message.Content, value)
+		}
+	}
+	return count
+}
+
+type summarizingInterruptChatModel struct {
+	mu         sync.Mutex
+	usageKinds []string
+	inputs     [][]*schema.Message
+}
+
+func (m *summarizingInterruptChatModel) Generate(
+	ctx context.Context,
+	input []*schema.Message,
+	_ ...model.Option,
+) (*schema.Message, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageKinds = append(m.usageKinds, adkUsageKindFromContext(ctx))
+	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
+	if adkUsageKindFromContext(ctx) == string(ADKMiddlewareSummarization) {
+		return schema.AssistantMessage("condensed context", nil), nil
+	}
+	for _, message := range input {
+		if message != nil && message.Role == schema.Tool {
+			return schema.AssistantMessage("final after approval", nil), nil
+		}
+	}
+	return schema.AssistantMessage("", []schema.ToolCall{{
+		ID:   "approval-call-1",
+		Type: "function",
+		Function: schema.FunctionCall{
+			Name:      "approval",
+			Arguments: `{}`,
+		},
+	}}), nil
+}
+
+func (m *summarizingInterruptChatModel) Stream(
+	ctx context.Context,
+	input []*schema.Message,
+	options ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, input, options...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func (m *summarizingInterruptChatModel) WithTools(
+	_ []*schema.ToolInfo,
+) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+
+func (m *summarizingInterruptChatModel) usageKindValues() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.usageKinds...)
+}
+
+func (m *summarizingInterruptChatModel) allInputText() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var text strings.Builder
+	for _, input := range m.inputs {
+		for _, message := range input {
+			if message != nil {
+				text.WriteString(message.Content)
+				text.WriteByte('\n')
+			}
+		}
+	}
+	return text.String()
+}
+
+type summarizationApprovalTool struct{}
+
+func (t *summarizationApprovalTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{
+		Name: "approval",
+		Desc: "Require approval before continuing.",
+	}, nil
+}
+
+func (t *summarizationApprovalTool) InvokableRun(
+	ctx context.Context,
+	_ string,
+	_ ...tool.Option,
+) (string, error) {
+	wasInterrupted, _, _ := tool.GetInterruptState[string](ctx)
+	if !wasInterrupted {
+		return "", tool.StatefulInterrupt(ctx, "approval required", "pending")
+	}
+	isResumeTarget, hasData, data := tool.GetResumeContext[string](ctx)
+	if !isResumeTarget || !hasData {
+		return "", tool.StatefulInterrupt(ctx, "approval required", "pending")
+	}
+	return data, nil
+}
+
+func requireOrderedEventTypes(
+	t *testing.T,
+	actual []string,
+	expected []string,
+) {
+	t.Helper()
+	position := 0
+	for _, eventType := range actual {
+		if position < len(expected) && eventType == expected[position] {
+			position++
+		}
+	}
+	require.Equal(t, len(expected), position, "actual event types: %v", actual)
+}
+
+func adkAgentEventIterator(events []*adk.AgentEvent) *adk.AsyncIterator[*adk.AgentEvent] {
+	iter, generator := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	go func() {
+		defer generator.Close()
+		for _, event := range events {
+			generator.Send(event)
+		}
+	}()
+
+	return iter
+}
+
+type memoryADKCheckpointStore struct {
+	mu     sync.Mutex
+	values map[string][]byte
+}
+
+func newMemoryADKCheckpointStore() *memoryADKCheckpointStore {
+	return &memoryADKCheckpointStore{values: make(map[string][]byte)}
+}
+
+func (s *memoryADKCheckpointStore) Get(
+	ctx context.Context,
+	checkpointID string,
+) ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	value, exists := s.values[checkpointID]
+	return append([]byte(nil), value...), exists, nil
+}
+
+func (s *memoryADKCheckpointStore) Set(
+	ctx context.Context,
+	checkpointID string,
+	checkpoint []byte,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.values[checkpointID] = append([]byte(nil), checkpoint...)
+	return nil
+}
+
+func (s *memoryADKCheckpointStore) Delete(ctx context.Context, checkpointID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.values, checkpointID)
+	return nil
+}
+
+var _ adk.CheckPointStore = (*memoryADKCheckpointStore)(nil)
+var _ adk.CheckPointDeleter = (*memoryADKCheckpointStore)(nil)

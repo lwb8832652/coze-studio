@@ -99,6 +99,113 @@ func TestModelExecutorAcceptsSimpleMessageInput(t *testing.T) {
 	require.Equal(t, "请生成周报", chatModel.messages[0].Content)
 }
 
+func TestParseModelExecutorMessagesPreservesCompleteMultimodalMessages(
+	t *testing.T,
+) {
+	messages, err := parseModelExecutorMessages(`{
+		"messages":[
+			{
+				"role":"user",
+				"content":"",
+				"user_input_multi_content":[
+					{
+						"type":"image_url",
+						"image":{
+							"base64data":"aW1hZ2UtYnl0ZXM=",
+							"mime_type":"image/png",
+							"detail":"high"
+						},
+						"extra":{"asset_id":"image-1"}
+					},
+					{
+						"type":"file_url",
+						"file":{
+							"url":"https://example.test/report.pdf",
+							"mime_type":"application/pdf",
+							"name":"report.pdf"
+						}
+					}
+				],
+				"multi_content":[
+					{
+						"type":"audio_url",
+						"audio_url":{
+							"uri":"audio-legacy-1",
+							"mime_type":"audio/wav"
+						}
+					}
+				]
+			},
+			{
+				"role":"assistant",
+				"content":"",
+				"reasoning_content":"inspect attachments",
+				"tool_calls":[{
+					"id":"call-1",
+					"type":"function",
+					"function":{
+						"name":"inspect_file",
+						"arguments":"{\"name\":\"report.pdf\"}"
+					}
+				}],
+				"assistant_output_multi_content":[{
+					"type":"reasoning",
+					"reasoning":{"text":"inspect attachments","signature":"signed"}
+				}]
+			},
+			{
+				"role":"tool",
+				"content":"pdf is valid",
+				"tool_call_id":"call-1",
+				"tool_name":"inspect_file"
+			}
+		]
+	}`, "")
+
+	require.NoError(t, err)
+	require.Len(t, messages, 3)
+	require.Equal(t, schema.User, messages[0].Role)
+	require.Empty(t, messages[0].Content)
+	require.Len(t, messages[0].UserInputMultiContent, 2)
+	require.Equal(
+		t,
+		"aW1hZ2UtYnl0ZXM=",
+		*messages[0].UserInputMultiContent[0].Image.Base64Data,
+	)
+	require.Equal(
+		t,
+		schema.ImageURLDetailHigh,
+		messages[0].UserInputMultiContent[0].Image.Detail,
+	)
+	require.Equal(
+		t,
+		"image-1",
+		messages[0].UserInputMultiContent[0].Extra["asset_id"],
+	)
+	require.Equal(
+		t,
+		"report.pdf",
+		messages[0].UserInputMultiContent[1].File.Name,
+	)
+	require.Len(t, messages[0].MultiContent, 1)
+	require.Equal(
+		t,
+		"audio-legacy-1",
+		messages[0].MultiContent[0].AudioURL.URI,
+	)
+	require.Equal(t, schema.Assistant, messages[1].Role)
+	require.Equal(t, "inspect attachments", messages[1].ReasoningContent)
+	require.Equal(t, "inspect_file", messages[1].ToolCalls[0].Function.Name)
+	require.Equal(
+		t,
+		"signed",
+		messages[1].AssistantGenMultiContent[0].Reasoning.Signature,
+	)
+	require.Equal(t, schema.Tool, messages[2].Role)
+	require.Equal(t, "call-1", messages[2].ToolCallID)
+	require.Equal(t, "inspect_file", messages[2].ToolName)
+}
+
 func TestModelExecutorRejectsEmptyRunInputMessages(t *testing.T) {
 	called := false
 	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
@@ -136,9 +243,11 @@ type recordingChatModel struct {
 	options  *model.Options
 	resp     *schema.Message
 	err      error
+	calls    int
 }
 
 func (m *recordingChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	m.calls++
 	m.messages = append([]*schema.Message(nil), input...)
 	m.options = model.GetCommonOptions(nil, opts...)
 	if m.err != nil {

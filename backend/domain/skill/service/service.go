@@ -28,6 +28,7 @@ type SkillService interface {
 	ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error)
 	Create(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
 	Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
+	Delete(ctx context.Context, id int64) (*entity.Skill, error)
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)

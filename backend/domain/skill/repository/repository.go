@@ -25,6 +25,7 @@ import (
 type SkillRepository interface {
 	Create(ctx context.Context, skill *entity.Skill) error
 	Update(ctx context.Context, skill *entity.Skill) error
+	Delete(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	CreateVersion(ctx context.Context, version *entity.SkillVersion) error

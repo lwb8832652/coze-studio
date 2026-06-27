@@ -59,8 +59,8 @@ vi.mock('@coze-arch/coze-design/icons', () => {
 });
 
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
-import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
 import { WorkspaceTaskList } from '../workspace-task-list';
+import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
   it('defines the Figma workspace navigation structure', () => {
@@ -136,6 +136,10 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       tone: 'danger',
       color: '#f54a45',
       ariaLabel: '异常状态',
+    });
+    expect(getWorkspaceTaskStatusMeta('interrupted')).toMatchObject({
+      tone: 'waiting',
+      ariaLabel: '等待状态',
     });
   });
 

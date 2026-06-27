@@ -101,29 +101,25 @@ func (e *ModelExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExecu
 
 	return &RunExecutionResult{
 		Message:  message,
-		Metadata: modelExecutorMetadata(cfg),
+		Metadata: modelExecutorMetadataWithUsage(cfg, resp),
 	}, nil
 }
 
 type modelExecutorRunInput struct {
-	Messages []modelExecutorInputMessage `json:"messages"`
-	Message  string                      `json:"message"`
-}
-
-type modelExecutorInputMessage struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ToolCallID string `json:"tool_call_id"`
-	ToolName   string `json:"tool_name"`
+	Messages []*schema.Message `json:"messages"`
+	Message  string            `json:"message"`
 }
 
 type modelExecutorConfig struct {
-	ModelID      int64
-	ModelName    string
-	Temperature  *float32
-	MaxTokens    *int
-	TopP         *float32
-	SystemPrompt string
+	ModelID          int64
+	ModelName        string
+	Temperature      *float32
+	MaxTokens        *int
+	TopP             *float32
+	SystemPrompt     string
+	AgentName        string
+	AgentDescription string
+	MaxIterations    int
 }
 
 func parseModelExecutorMessages(rawInput, systemPrompt string) ([]*schema.Message, error) {
@@ -143,7 +139,7 @@ func parseModelExecutorMessages(rawInput, systemPrompt string) ([]*schema.Messag
 	}
 
 	for _, item := range input.Messages {
-		message, err := toSchemaMessage(item)
+		message, err := normalizeModelExecutorMessage(item)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +156,9 @@ func parseModelExecutorMessages(rawInput, systemPrompt string) ([]*schema.Messag
 
 	hasUserVisibleMessage := false
 	for _, message := range messages {
-		if message != nil && message.Role != schema.System && strings.TrimSpace(message.Content) != "" {
+		if message != nil &&
+			message.Role != schema.System &&
+			hasModelExecutorMessageContent(message) {
 			hasUserVisibleMessage = true
 			break
 		}
@@ -172,34 +170,50 @@ func parseModelExecutorMessages(rawInput, systemPrompt string) ([]*schema.Messag
 	return messages, nil
 }
 
-func toSchemaMessage(input modelExecutorInputMessage) (*schema.Message, error) {
-	content := strings.TrimSpace(input.Content)
-	if content == "" {
+func normalizeModelExecutorMessage(
+	message *schema.Message,
+) (*schema.Message, error) {
+	if message == nil {
 		return nil, nil
 	}
 
-	role := strings.ToLower(strings.TrimSpace(input.Role))
+	role := strings.ToLower(strings.TrimSpace(string(message.Role)))
 	if role == "" {
 		role = string(MessageRoleUser)
 	}
+	message.Role = schema.RoleType(role)
+	message.Content = strings.TrimSpace(message.Content)
+	message.Name = strings.TrimSpace(message.Name)
+	message.ToolCallID = strings.TrimSpace(message.ToolCallID)
+	message.ToolName = strings.TrimSpace(message.ToolName)
 
 	switch role {
 	case string(MessageRoleSystem):
-		return schema.SystemMessage(content), nil
 	case string(MessageRoleUser):
-		return schema.UserMessage(content), nil
 	case string(MessageRoleAssistant):
-		return schema.AssistantMessage(content, nil), nil
 	case string(MessageRoleTool):
-		opts := make([]schema.ToolMessageOption, 0, 1)
-		if toolName := strings.TrimSpace(input.ToolName); toolName != "" {
-			opts = append(opts, schema.WithToolName(toolName))
-		}
-
-		return schema.ToolMessage(content, strings.TrimSpace(input.ToolCallID), opts...), nil
 	default:
-		return nil, fmt.Errorf("unsupported run input message role: %s", input.Role)
+		return nil, fmt.Errorf(
+			"unsupported run input message role: %s",
+			message.Role,
+		)
 	}
+	if !hasModelExecutorMessageContent(message) {
+		return nil, nil
+	}
+	return message, nil
+}
+
+func hasModelExecutorMessageContent(message *schema.Message) bool {
+	if message == nil {
+		return false
+	}
+	return strings.TrimSpace(message.Content) != "" ||
+		strings.TrimSpace(message.ReasoningContent) != "" ||
+		len(message.ToolCalls) > 0 ||
+		len(message.MultiContent) > 0 ||
+		len(message.UserInputMultiContent) > 0 ||
+		len(message.AssistantGenMultiContent) > 0
 }
 
 func parseModelExecutorConfig(rawConfig string) (modelExecutorConfig, error) {
@@ -223,6 +237,11 @@ func parseModelExecutorConfig(rawConfig string) (modelExecutorConfig, error) {
 	}
 	cfg.TopP = firstConfigFloat32(payload, "top_p", "topP")
 	cfg.SystemPrompt = firstConfigString(payload, "system_prompt", "systemPrompt")
+	cfg.AgentName = firstConfigString(payload, "agent_name", "agentName")
+	cfg.AgentDescription = firstConfigString(payload, "agent_description", "agentDescription")
+	if maxIterations := firstConfigInt64(payload, "max_iterations", "maxIterations"); maxIterations > 0 {
+		cfg.MaxIterations = int(maxIterations)
+	}
 
 	return cfg, nil
 }
@@ -261,6 +280,51 @@ func modelExecutorMetadata(cfg modelExecutorConfig) string {
 		return `{"source":"model_executor"}`
 	}
 
+	return string(bytes)
+}
+
+func modelExecutorMetadataWithUsage(
+	cfg modelExecutorConfig,
+	message *schema.Message,
+) string {
+	usage := (*schema.TokenUsage)(nil)
+	if message != nil && message.ResponseMeta != nil {
+		usage = message.ResponseMeta.Usage
+	}
+	if usage == nil {
+		return modelExecutorMetadata(cfg)
+	}
+
+	totalTokens := usage.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	payload := map[string]any{
+		"source": "model_executor",
+		"usage": map[string]any{
+			"source":        string(TokenUsageSourceLeadAgent),
+			"model_name":    cfg.ModelName,
+			"input_tokens":  usage.PromptTokens,
+			"output_tokens": usage.CompletionTokens,
+			"total_tokens":  totalTokens,
+			"raw_usage": map[string]any{
+				"prompt_tokens":     usage.PromptTokens,
+				"completion_tokens": usage.CompletionTokens,
+				"total_tokens":      totalTokens,
+			},
+		},
+	}
+	if cfg.ModelID > 0 {
+		payload["model_id"] = cfg.ModelID
+	}
+	if cfg.ModelName != "" {
+		payload["model_name"] = cfg.ModelName
+	}
+
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		return modelExecutorMetadata(cfg)
+	}
 	return string(bytes)
 }
 

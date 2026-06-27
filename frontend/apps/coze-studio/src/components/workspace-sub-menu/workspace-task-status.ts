@@ -29,16 +29,39 @@ export interface WorkspaceTaskStatusMeta {
   ariaLabel: string;
 }
 
+type WorkspaceTaskStatusValue = workbenchTask.TaskStatus | string;
+
+const waitingStatuses = new Set<WorkspaceTaskStatusValue>([
+  workbenchTask.TaskStatus.Created,
+  workbenchTask.TaskStatus.Queued,
+  'created',
+  'queued',
+  'interrupted',
+  'idle',
+]);
+
+const runningStatuses = new Set<WorkspaceTaskStatusValue>([
+  workbenchTask.TaskStatus.Running,
+  workbenchTask.TaskStatus.Canceling,
+  'running',
+  'canceling',
+]);
+
+const successStatuses = new Set<WorkspaceTaskStatusValue>([
+  workbenchTask.TaskStatus.Succeeded,
+  'succeeded',
+  'completed',
+]);
+
+const dangerStatuses = new Set<WorkspaceTaskStatusValue>([
+  workbenchTask.TaskStatus.Failed,
+  'failed',
+]);
+
 export const getWorkspaceTaskStatusMeta = (
-  status: workbenchTask.TaskStatus | string,
+  status: WorkspaceTaskStatusValue,
 ): WorkspaceTaskStatusMeta => {
-  if (
-    status === workbenchTask.TaskStatus.Created ||
-    status === workbenchTask.TaskStatus.Queued ||
-    status === 'created' ||
-    status === 'queued' ||
-    status === 'idle'
-  ) {
+  if (waitingStatuses.has(status)) {
     return {
       tone: 'waiting',
       color: '#f5a623',
@@ -46,12 +69,7 @@ export const getWorkspaceTaskStatusMeta = (
     };
   }
 
-  if (
-    status === workbenchTask.TaskStatus.Running ||
-    status === workbenchTask.TaskStatus.Canceling ||
-    status === 'running' ||
-    status === 'canceling'
-  ) {
+  if (runningStatuses.has(status)) {
     return {
       tone: 'running',
       color: '#2a6df4',
@@ -59,11 +77,7 @@ export const getWorkspaceTaskStatusMeta = (
     };
   }
 
-  if (
-    status === workbenchTask.TaskStatus.Succeeded ||
-    status === 'succeeded' ||
-    status === 'completed'
-  ) {
+  if (successStatuses.has(status)) {
     return {
       tone: 'success',
       color: '#2a9e06',
@@ -71,7 +85,7 @@ export const getWorkspaceTaskStatusMeta = (
     };
   }
 
-  if (status === workbenchTask.TaskStatus.Failed || status === 'failed') {
+  if (dangerStatuses.has(status)) {
     return {
       tone: 'danger',
       color: '#f54a45',

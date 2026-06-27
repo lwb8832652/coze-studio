@@ -32,6 +32,10 @@ export interface MCPToolServer {
   config: string;
   auth: string;
   tools: MCPToolDefinition[];
+  health_status: string;
+  health_checked_at: number;
+  health_latency_ms: number;
+  health_error: string;
   created_at: number;
   updated_at: number;
 }
@@ -52,6 +56,10 @@ export interface ListMCPToolServersRequest {
   space_id: string;
 }
 
+export interface ListMCPToolRegistryEntriesRequest {
+  space_id: string;
+}
+
 export interface GetMCPToolServerRequest {
   server_id: string;
 }
@@ -64,6 +72,27 @@ export interface TestMCPToolCallRequest {
 
 export interface ListMCPToolServersData {
   servers: MCPToolServer[];
+  total: number;
+}
+
+export interface MCPToolRegistryEntry {
+  name: string;
+  source: string;
+  category: string;
+  visibility: string;
+  server_id: string;
+  server_name: string;
+  tool_name: string;
+  description: string;
+  enabled: boolean;
+  health_status: string;
+  health_checked_at: number;
+  health_latency_ms: number;
+  health_error: string;
+}
+
+export interface ListMCPToolRegistryEntriesData {
+  tools: MCPToolRegistryEntry[];
   total: number;
 }
 
@@ -81,6 +110,12 @@ export interface MCPToolServerResponse {
 
 export interface ListMCPToolServersResponse {
   data?: ListMCPToolServersData;
+  code: number;
+  msg: string;
+}
+
+export interface ListMCPToolRegistryEntriesResponse {
+  data?: ListMCPToolRegistryEntriesData;
   code: number;
   msg: string;
 }
@@ -133,6 +168,22 @@ export const UpsertMCPToolServer = /*#__PURE__*/createAPI<
   service: 'workbenchTool',
 });
 
+export const ListMCPToolRegistryEntries = /*#__PURE__*/createAPI<
+  ListMCPToolRegistryEntriesRequest,
+  ListMCPToolRegistryEntriesResponse
+>({
+  url: '/api/workbench/mcp_tools/registry_entries',
+  method: 'GET',
+  name: 'ListMCPToolRegistryEntries',
+  reqType: 'ListMCPToolRegistryEntriesRequest',
+  reqMapping: {
+    query: ['space_id'],
+  },
+  resType: 'ListMCPToolRegistryEntriesResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
 export const GetMCPToolServer = /*#__PURE__*/createAPI<
   GetMCPToolServerRequest,
   MCPToolServerResponse
@@ -140,6 +191,22 @@ export const GetMCPToolServer = /*#__PURE__*/createAPI<
   url: '/api/workbench/mcp_tools/:server_id',
   method: 'GET',
   name: 'GetMCPToolServer',
+  reqType: 'GetMCPToolServerRequest',
+  reqMapping: {
+    path: ['server_id'],
+  },
+  resType: 'MCPToolServerResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const DeleteMCPToolServer = /*#__PURE__*/createAPI<
+  GetMCPToolServerRequest,
+  MCPToolServerResponse
+>({
+  url: '/api/workbench/mcp_tools/:server_id',
+  method: 'DELETE',
+  name: 'DeleteMCPToolServer',
   reqType: 'GetMCPToolServerRequest',
   reqMapping: {
     path: ['server_id'],

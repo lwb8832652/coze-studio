@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"testing"
@@ -252,6 +253,92 @@ func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testi
 	require.NoError(t, err)
 	require.Empty(t, claimed.Runs)
 	require.Contains(t, body, `"checkpoint_resume"`)
+}
+
+func TestLangGraphRunCreatePreservesResumeTargets(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
+	installAgentThreadTestService(t)
+	_, checkpointID := createInterruptedHumanInteractionRunWithCheckpoint(t)
+
+	createPayload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"input":        map[string]any{},
+		"command": map[string]any{
+			"resume": map[string]any{
+				"checkpoint_id": strconv.FormatInt(checkpointID, 10),
+				"targets": map[string]any{
+					"interrupt-1": map[string]any{
+						"schema":         "coze.human_interaction_response.v1",
+						"interaction_id": "hi_1",
+						"kind":           "clarification",
+						"decision":       "answered",
+						"answer":         "最近 7 天",
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusOK, createResp.Code)
+	var apiRun langgraphapi.Run
+	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
+	resumeCommand, ok := apiRun.Command["resume"].(map[string]any)
+	require.True(t, ok)
+	targets, ok := resumeCommand["targets"].(map[string]any)
+	require.True(t, ok)
+	target, ok := targets["interrupt-1"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "最近 7 天", target["answer"])
+	require.Equal(t, "interrupt", resumeCommand["resume_from"])
+}
+
+func TestLangGraphRunCreateRejectsUnknownResumeTarget(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
+	installAgentThreadTestService(t)
+	_, checkpointID := createInterruptedHumanInteractionRunWithCheckpoint(t)
+
+	createPayload, err := json.Marshal(map[string]any{
+		"assistant_id": "default",
+		"input":        map[string]any{},
+		"command": map[string]any{
+			"resume": map[string]any{
+				"checkpoint_id": strconv.FormatInt(checkpointID, 10),
+				"targets": map[string]any{
+					"missing": map[string]any{
+						"schema":         "coze.human_interaction_response.v1",
+						"interaction_id": "hi_1",
+						"kind":           "clarification",
+						"decision":       "answered",
+						"answer":         "最近 7 天",
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	createResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(createPayload), Len: len(createPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(createResp.Result().Body())
+
+	require.Equal(t, http.StatusBadRequest, createResp.Code)
+	require.Contains(t, body, "resume target missing is not present in checkpoint interrupts")
 }
 
 func TestLangGraphRunCreateRejectsNotResumableCheckpoint(t *testing.T) {
@@ -505,6 +592,50 @@ func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 
 	require.NotContains(t, body, `"event_type":"step.started"`)
 	require.Contains(t, body, `"event_type":"step.completed"`)
+}
+
+func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"断线续传"}]}`,
+	})
+	require.NoError(t, err)
+
+	expectedIDs := make([]int64, 0, 3)
+	for _, eventType := range []string{"step.started", "llm.token", "step.completed"} {
+		eventResp, appendErr := appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+			ThreadID:  1,
+			RunID:     runResp.Run.RunID,
+			EventType: eventType,
+			Payload:   `{"step_name":"planner"}`,
+		})
+		require.NoError(t, appendErr)
+		expectedIDs = append(expectedIDs, eventResp.Event.EventID)
+	}
+
+	firstWriter := &cursorRecordingLangGraphRunStreamWriter{failAfterEvents: 1}
+	streamLangGraphRunEvents(context.Background(), firstWriter, langgraphapi.StreamRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 1,
+		TimeoutMs:  1,
+	}, runResp.Run)
+	require.Len(t, firstWriter.eventIDs, 1)
+
+	secondWriter := &cursorRecordingLangGraphRunStreamWriter{}
+	streamLangGraphRunEvents(context.Background(), secondWriter, langgraphapi.StreamRunRequest{
+		ThreadID:     1,
+		RunID:        runResp.Run.RunID,
+		AfterEventID: firstWriter.eventIDs[0],
+		IntervalMs:   1,
+		TimeoutMs:    1,
+	}, runResp.Run)
+
+	replayedIDs := append(append([]int64{}, firstWriter.eventIDs...), secondWriter.eventIDs...)
+	require.Equal(t, expectedIDs, replayedIDs)
+	require.Len(t, secondWriter.eventIDs, 2)
 }
 
 func TestLangGraphRunStreamRespectsUpdatesMode(t *testing.T) {
@@ -1134,4 +1265,34 @@ func TestLangGraphStatelessRunCreateStreamCreatesRunAndStreamsMetadata(t *testin
 	require.Contains(t, body, `"run_id":"3"`)
 	require.Contains(t, body, `"thread_id":"2"`)
 	require.Contains(t, body, `"status":"pending"`)
+}
+
+func TestLangGraphInterruptedStatusMapsToResumableInternalState(t *testing.T) {
+	require.Equal(
+		t,
+		appagentthread.RunStatusInterrupted,
+		langGraphInternalRunStatus("interrupted"),
+	)
+	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusInterrupted))
+	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusCanceled))
+}
+
+type cursorRecordingLangGraphRunStreamWriter struct {
+	eventIDs        []int64
+	failAfterEvents int
+}
+
+func (w *cursorRecordingLangGraphRunStreamWriter) WriteEvent(id, _ string, _ []byte) error {
+	if id == "" {
+		return nil
+	}
+	if w.failAfterEvents > 0 && len(w.eventIDs) >= w.failAfterEvents {
+		return errors.New("stream disconnected")
+	}
+	eventID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return err
+	}
+	w.eventIDs = append(w.eventIDs, eventID)
+	return nil
 }

@@ -24,12 +24,14 @@ const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockListMCPToolServers = vi.hoisted(() => vi.fn());
 const mockUpsertMCPToolServer = vi.hoisted(() => vi.fn());
 const mockTestMCPToolCall = vi.hoisted(() => vi.fn());
+const mockDeleteMCPToolServer = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useParams: mockUseParams,
 }));
 
 vi.mock('../service', () => ({
+  deleteMCPToolServer: mockDeleteMCPToolServer,
   getMCPToolServer: vi.fn(),
   listMCPToolServers: mockListMCPToolServers,
   testMCPToolCall: mockTestMCPToolCall,
@@ -54,6 +56,10 @@ const server = {
       input_schema: '{"type":"object"}',
     },
   ],
+  health_status: 'healthy',
+  health_checked_at: 1717000200000,
+  health_latency_ms: 12,
+  health_error: '',
   created_at: 1717000000000,
   updated_at: 1717000300000,
 };
@@ -83,6 +89,12 @@ describe('ToolsPage', () => {
       code: 0,
       msg: '',
     });
+    mockDeleteMCPToolServer.mockReset();
+    mockDeleteMCPToolServer.mockResolvedValue({
+      data: server,
+      code: 0,
+      msg: '',
+    });
   });
 
   it('renders MCP tool servers from the backend', async () => {
@@ -98,6 +110,7 @@ describe('ToolsPage', () => {
     expect(container.textContent).toContain('stdio');
     expect(container.textContent).toContain('search');
     expect(container.textContent).toContain('已启用');
+    expect(container.textContent).toContain('健康 12ms');
 
     cleanup(container, root);
   });
@@ -146,6 +159,28 @@ describe('ToolsPage', () => {
     expect(container.textContent).toContain('browser-tools');
     expect(container.textContent).toContain('latency_ms');
 
+    cleanup(container, root);
+  });
+
+  it('deletes an MCP server after confirmation', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const { container, root } = await renderToolsPage();
+
+    const deleteButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '删除',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      deleteButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockDeleteMCPToolServer).toHaveBeenCalledWith({
+      server_id: '100',
+    });
+    expect(mockListMCPToolServers).toHaveBeenCalledTimes(2);
+
+    confirmSpy.mockRestore();
     cleanup(container, root);
   });
 });

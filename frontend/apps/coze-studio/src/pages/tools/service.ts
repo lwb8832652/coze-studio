@@ -17,6 +17,9 @@
 import { workbenchTool } from '@coze-studio/api-schema';
 
 export const listMCPToolServers = workbenchTool.ListMCPToolServers;
+export const listMCPToolRegistryEntries =
+  workbenchTool.ListMCPToolRegistryEntries;
 export const upsertMCPToolServer = workbenchTool.UpsertMCPToolServer;
 export const getMCPToolServer = workbenchTool.GetMCPToolServer;
+export const deleteMCPToolServer = workbenchTool.DeleteMCPToolServer;
 export const testMCPToolCall = workbenchTool.TestMCPToolCall;

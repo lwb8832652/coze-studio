@@ -135,6 +135,10 @@ func (r *recordingAgentThreadService) GetRun(context.Context, *agentthreadsvc.Ge
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) GetRunByIdempotencyKey(context.Context, int64, string) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) ListRuns(context.Context, *agentthreadsvc.ListRunsRequest) ([]*agentthreadentity.Run, int64, error) {
 	return nil, 0, nil
 }
@@ -163,6 +167,20 @@ func (r *recordingAgentThreadService) GetLatestCheckpoint(context.Context, *agen
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) GetLatestRuntimeCheckpoint(
+	context.Context,
+	*agentthreadsvc.GetLatestRuntimeCheckpointRequest,
+) (*agentthreadentity.Checkpoint, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) DeleteRuntimeCheckpoint(
+	context.Context,
+	*agentthreadsvc.DeleteRuntimeCheckpointRequest,
+) error {
+	return nil
+}
+
 func (r *recordingAgentThreadService) RememberMemory(context.Context, *agentthreadsvc.RememberMemoryRequest) (*agentthreadentity.Memory, error) {
 	return nil, nil
 }
@@ -171,12 +189,61 @@ func (r *recordingAgentThreadService) RecallMemories(context.Context, *agentthre
 	return nil, 0, nil
 }
 
+func (r *recordingAgentThreadService) PersistTranscriptSnapshot(
+	context.Context,
+	*agentthreadsvc.PersistTranscriptSnapshotRequest,
+) (*agentthreadentity.TranscriptSnapshot, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) GetTranscriptSnapshot(
+	context.Context,
+	*agentthreadsvc.GetTranscriptSnapshotRequest,
+) (*agentthreadentity.TranscriptSnapshot, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) EnqueueMemoryFlushJob(
+	context.Context,
+	*agentthreadsvc.EnqueueMemoryFlushJobRequest,
+) (*agentthreadentity.MemoryFlushJob, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) ClaimMemoryFlushJobs(
+	context.Context,
+	*agentthreadsvc.ClaimMemoryFlushJobsRequest,
+) ([]*agentthreadentity.MemoryFlushJob, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) CompleteMemoryFlushJob(
+	context.Context,
+	*agentthreadsvc.CompleteMemoryFlushJobRequest,
+) (*agentthreadentity.MemoryFlushJob, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) RetryMemoryFlushJob(
+	context.Context,
+	*agentthreadsvc.RetryMemoryFlushJobRequest,
+) (*agentthreadentity.MemoryFlushJob, bool, error) {
+	return nil, false, nil
+}
+
+func (r *recordingAgentThreadService) FailMemoryFlushJob(
+	context.Context,
+	*agentthreadsvc.FailMemoryFlushJobRequest,
+) (*agentthreadentity.MemoryFlushJob, bool, error) {
+	return nil, false, nil
+}
+
 func (r *recordingAgentThreadService) RecordTokenUsage(context.Context, *agentthreadsvc.RecordTokenUsageRequest) (*agentthreadentity.TokenUsage, error) {
 	return nil, nil
 }
 
-func (r *recordingAgentThreadService) GetRunTokenUsage(context.Context, *agentthreadsvc.GetRunTokenUsageRequest) ([]*agentthreadentity.TokenUsage, int64, *agentthreadentity.TokenUsageAggregate, error) {
-	return nil, 0, nil, nil
+func (r *recordingAgentThreadService) GetRunTokenUsage(context.Context, *agentthreadsvc.GetRunTokenUsageRequest) ([]*agentthreadentity.TokenUsage, int64, *agentthreadentity.TokenUsageAggregate, []*agentthreadentity.RunTokenUsageAggregate, error) {
+	return nil, 0, nil, nil, nil
 }
 
 func (r *recordingAgentThreadService) GetThreadTokenUsage(context.Context, *agentthreadsvc.GetThreadTokenUsageRequest) ([]*agentthreadentity.TokenUsage, int64, *agentthreadentity.TokenUsageAggregate, error) {
@@ -192,6 +259,10 @@ func (r *recordingAgentThreadService) ClaimQueuedResumeRuns(context.Context, *ag
 }
 
 func (r *recordingAgentThreadService) CompleteRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) InterruptRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
 	return nil, nil
 }
 

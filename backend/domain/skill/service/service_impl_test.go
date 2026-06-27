@@ -201,8 +201,87 @@ func TestServiceUpdateRecordsSkillVersion(t *testing.T) {
 	require.Contains(t, repo.versions[101][0].SkillMD, "build updated report")
 }
 
+func TestServiceDeleteHidesSkillAndKeepsVersions(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Report",
+		Description:  "build report",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+	}
+	repo.versions[101] = []*entity.SkillVersion{
+		{ID: 201, SkillID: 101, Version: "1.0.0", SkillMD: "# Weekly Report"},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 202}})
+
+	deleted, err := svc.Delete(context.Background(), 101)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), deleted.ID)
+	require.Equal(t, int64(101), repo.deletedSkillID)
+	_, err = svc.Get(context.Background(), 101)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	versions, err := repo.ListVersions(context.Background(), 101)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	require.Equal(t, "# Weekly Report", versions[0].SkillMD)
+}
+
+func TestServiceDeleteBlocksVersionAPIsButKeepsSnapshots(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Report",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+	}
+	repo.versions[101] = []*entity.SkillVersion{
+		{ID: 201, SkillID: 101, Version: "1.0.0", SkillMD: "# Weekly Report"},
+	}
+	repo.resources[201] = []*entity.SkillResource{
+		{ID: 301, SkillID: 101, VersionID: 201, Path: "references/prompt.md", Content: []byte("keep")},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 202}})
+
+	_, err := svc.Delete(context.Background(), 101)
+	require.NoError(t, err)
+
+	_, err = svc.ListVersions(context.Background(), 101)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "not found")
+
+	_, err = svc.ListVersionResources(context.Background(), 101, 201)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "not found")
+	require.Equal(t, int64(0), repo.listResourcesSkillID)
+
+	versions, err := repo.ListVersions(context.Background(), 101)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	resources, err := repo.ListResources(context.Background(), 101, 201)
+	require.NoError(t, err)
+	require.Len(t, resources, 1)
+}
+
 func TestServiceListVersions(t *testing.T) {
 	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1}
 	repo.versions[101] = []*entity.SkillVersion{
 		{ID: 201, SkillID: 101, Version: "1.1.0"},
 		{ID: 200, SkillID: 101, Version: "1.0.0"},
@@ -218,6 +297,7 @@ func TestServiceListVersions(t *testing.T) {
 
 func TestServiceListVersionResources(t *testing.T) {
 	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1}
 	repo.resources[201] = []*entity.SkillResource{
 		{
 			ID:        301,
@@ -570,6 +650,7 @@ type memoryRepo struct {
 	items                  map[int64]*entity.Skill
 	versions               map[int64][]*entity.SkillVersion
 	resources              map[int64][]*entity.SkillResource
+	deletedSkillID         int64
 	listResourcesSkillID   int64
 	listResourcesVersionID int64
 }
@@ -592,8 +673,20 @@ func (r *memoryRepo) Update(ctx context.Context, skill *entity.Skill) error {
 	return nil
 }
 
+func (r *memoryRepo) Delete(ctx context.Context, id int64) error {
+	r.deletedSkillID = id
+	if skill := r.items[id]; skill != nil {
+		skill.DeletedAt = 1000
+	}
+	return nil
+}
+
 func (r *memoryRepo) Get(ctx context.Context, id int64) (*entity.Skill, error) {
-	return r.items[id], nil
+	item := r.items[id]
+	if item != nil && item.DeletedAt == 0 {
+		return item, nil
+	}
+	return nil, nil
 }
 
 func (r *memoryRepo) List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error) {

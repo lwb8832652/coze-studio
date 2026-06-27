@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -53,11 +54,16 @@ type AgentStepResult struct {
 }
 
 type AgentMemory struct {
-	ID       string
-	Scope    string
-	Content  string
-	Metadata string
-	Score    float64
+	ID                   string
+	Scope                string
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
 }
 
 type AgentMemoryContext struct {
@@ -70,6 +76,9 @@ type AgentSkill struct {
 	Description string
 	Type        string
 	Version     string
+	Context     string
+	Agent       string
+	Model       string
 	Body        string
 }
 
@@ -249,6 +258,18 @@ func (e *HarnessExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExe
 			e.emitStepStartedEvent(ctx, run, step, executedSteps)
 			stepResult, err := runner.RunStep(ctx, run, step, cloneHarnessState(state))
 			if err != nil {
+				var interrupted *RunInterruptedError
+				if errors.As(err, &interrupted) {
+					return nil, e.saveInterruptedCheckpoint(
+						ctx,
+						run,
+						parentCheckpointID,
+						err,
+						state,
+						&step,
+						plan.Steps[stepPlanIndex:],
+					)
+				}
 				e.emitStepFailedEvent(ctx, run, step, executedSteps, err.Error())
 
 				return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_error", err, state, &step, plan.Steps[stepPlanIndex:])
@@ -354,6 +375,18 @@ func (e *HarnessExecutor) Resume(ctx context.Context, run *RunSummary, input *Ha
 		e.emitStepStartedEvent(ctx, run, step, stepIndex)
 		stepResult, err := runner.RunStep(ctx, run, step, cloneHarnessState(state))
 		if err != nil {
+			var interrupted *RunInterruptedError
+			if errors.As(err, &interrupted) {
+				return nil, e.saveInterruptedCheckpoint(
+					ctx,
+					run,
+					parentCheckpointID,
+					err,
+					state,
+					&step,
+					input.PendingSteps[pendingIndex:],
+				)
+			}
 			e.emitStepFailedEvent(ctx, run, step, stepIndex, err.Error())
 
 			return nil, e.saveFailedCheckpoint(ctx, run, parentCheckpointID, "step_error", err, state, &step, input.PendingSteps[pendingIndex:])
@@ -443,6 +476,48 @@ func (e *HarnessExecutor) saveFailedCheckpoint(
 	}
 
 	return runErr
+}
+
+func (e *HarnessExecutor) saveInterruptedCheckpoint(
+	ctx context.Context,
+	run *RunSummary,
+	parentCheckpointID int64,
+	runErr error,
+	state AgentHarnessState,
+	step *AgentStep,
+	pendingSteps []AgentStep,
+) error {
+	var interrupted *RunInterruptedError
+	if !errors.As(runErr, &interrupted) {
+		return runErr
+	}
+
+	checkpointID, checkpointErr := e.saveCheckpointWithFailure(
+		ctx,
+		run,
+		parentCheckpointID,
+		"harness.terminal",
+		"interrupt",
+		"interrupted",
+		state,
+		step,
+		pendingSteps,
+		"interrupt",
+		runErr,
+	)
+	if checkpointErr != nil {
+		return fmt.Errorf("%w; checkpoint write failed: %v", runErr, checkpointErr)
+	}
+
+	checkpointKey := strings.TrimSpace(interrupted.CheckpointKey)
+	if checkpointID > 0 {
+		checkpointKey = strconv.FormatInt(checkpointID, 10)
+	}
+	return &RunInterruptedError{
+		CheckpointKey:  checkpointKey,
+		Interrupts:     append([]ADKInterruptItem(nil), interrupted.Interrupts...),
+		EventPersisted: interrupted.EventPersisted,
+	}
 }
 
 func (e *HarnessExecutor) saveCheckpointWithFailure(
@@ -569,25 +644,19 @@ func harnessInputMessages(rawInput string) []map[string]any {
 
 	messages := make([]map[string]any, 0, len(input.Messages)+1)
 	for _, item := range input.Messages {
-		content := strings.TrimSpace(item.Content)
-		if content == "" {
+		message, err := normalizeModelExecutorMessage(item)
+		if err != nil || message == nil {
 			continue
 		}
-		role := strings.ToLower(strings.TrimSpace(item.Role))
-		if role == "" {
-			role = string(MessageRoleUser)
+		raw, err := json.Marshal(message)
+		if err != nil {
+			continue
 		}
-		message := map[string]any{
-			"role":    role,
-			"content": content,
+		var mapped map[string]any
+		if err := json.Unmarshal(raw, &mapped); err != nil {
+			continue
 		}
-		if toolCallID := strings.TrimSpace(item.ToolCallID); toolCallID != "" {
-			message["tool_call_id"] = toolCallID
-		}
-		if toolName := strings.TrimSpace(item.ToolName); toolName != "" {
-			message["tool_name"] = toolName
-		}
-		messages = append(messages, message)
+		messages = append(messages, mapped)
 	}
 	if len(messages) == 0 {
 		if message := strings.TrimSpace(input.Message); message != "" {
@@ -605,13 +674,26 @@ func harnessMemoryValues(memory AgentMemoryContext) map[string]any {
 	items := make([]map[string]any, 0, len(memory.Items))
 	for _, item := range memory.Items {
 		payload := map[string]any{
-			"id":      item.ID,
-			"scope":   item.Scope,
-			"content": item.Content,
-			"score":   item.Score,
+			"id":         item.ID,
+			"scope":      item.Scope,
+			"content":    item.Content,
+			"score":      item.Score,
+			"confidence": item.Confidence,
 		}
 		if metadata := strings.TrimSpace(item.Metadata); metadata != "" {
 			payload["metadata"] = metadata
+		}
+		if sourceType := strings.TrimSpace(item.SourceType); sourceType != "" {
+			payload["source_type"] = sourceType
+		}
+		if sourceID := strings.TrimSpace(item.SourceID); sourceID != "" {
+			payload["source_id"] = sourceID
+		}
+		if item.CorrectionOfMemoryID > 0 {
+			payload["correction_of_memory_id"] = item.CorrectionOfMemoryID
+		}
+		if item.CorrectedAt > 0 {
+			payload["corrected_at"] = item.CorrectedAt
 		}
 		items = append(items, payload)
 	}
@@ -628,6 +710,9 @@ func harnessSkillValues(skills AgentSkillContext) map[string]any {
 			"description": item.Description,
 			"type":        item.Type,
 			"version":     item.Version,
+			"context":     item.Context,
+			"agent":       item.Agent,
+			"model":       item.Model,
 			"body":        item.Body,
 		})
 	}
@@ -815,6 +900,9 @@ func normalizeSkillContext(skills []AgentSkill) AgentSkillContext {
 			Description: strings.TrimSpace(skill.Description),
 			Type:        strings.TrimSpace(skill.Type),
 			Version:     strings.TrimSpace(skill.Version),
+			Context:     strings.TrimSpace(skill.Context),
+			Agent:       strings.TrimSpace(skill.Agent),
+			Model:       strings.TrimSpace(skill.Model),
 			Body:        strings.TrimSpace(skill.Body),
 		}
 		if item.ID <= 0 || item.Name == "" || item.Body == "" {
@@ -834,11 +922,16 @@ func normalizeMemoryContext(memories []AgentMemory) AgentMemoryContext {
 	items := make([]AgentMemory, 0, len(memories))
 	for _, memory := range memories {
 		item := AgentMemory{
-			ID:       strings.TrimSpace(memory.ID),
-			Scope:    strings.TrimSpace(memory.Scope),
-			Content:  strings.TrimSpace(memory.Content),
-			Metadata: strings.TrimSpace(memory.Metadata),
-			Score:    memory.Score,
+			ID:                   strings.TrimSpace(memory.ID),
+			Scope:                strings.TrimSpace(memory.Scope),
+			Content:              strings.TrimSpace(memory.Content),
+			Metadata:             strings.TrimSpace(memory.Metadata),
+			Score:                memory.Score,
+			Confidence:           memory.Confidence,
+			SourceType:           strings.TrimSpace(memory.SourceType),
+			SourceID:             strings.TrimSpace(memory.SourceID),
+			CorrectionOfMemoryID: memory.CorrectionOfMemoryID,
+			CorrectedAt:          memory.CorrectedAt,
 		}
 		if item.Content == "" {
 			continue

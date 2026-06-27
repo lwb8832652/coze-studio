@@ -222,6 +222,66 @@ func TestSkillRepositoryListAndUpdate(t *testing.T) {
 	require.False(t, got.Enabled)
 }
 
+func TestSkillRepositorySoftDeleteHidesSkillAndPreservesVersions(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillPO{}, &skillVersionPO{}))
+
+	repo := NewSkillRepository(db, fixedIDGen{})
+	require.NoError(t, repo.Create(context.Background(), &entity.Skill{
+		ID:           1,
+		SpaceID:      10,
+		Name:         "Custom Research",
+		Description:  "research skill",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+		UpdatedAt:    2,
+	}))
+	require.NoError(t, repo.CreateVersion(context.Background(), &entity.SkillVersion{
+		ID:           101,
+		SkillID:      1,
+		Version:      "1.0.0",
+		SkillMD:      "# Custom Research",
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+		CreatedAt:    10,
+	}))
+
+	require.NoError(t, repo.Delete(context.Background(), 1))
+
+	_, err = repo.Get(context.Background(), 1)
+	require.Error(t, err)
+	items, err := repo.List(context.Background(), 10, nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	err = repo.Update(context.Background(), &entity.Skill{
+		ID:           1,
+		SpaceID:      10,
+		Name:         "Should Not Update",
+		Description:  "deleted skill",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.1.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+	})
+	require.Error(t, err)
+
+	versions, err := repo.ListVersions(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	require.Equal(t, "# Custom Research", versions[0].SkillMD)
+}
+
 func TestSkillRepositoryDefaultsEmptyJSONFields(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -247,6 +247,8 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.Equal(t, int64(1), run.SpaceID)
 	require.Equal(t, int64(2), run.CreatorID)
 	require.Equal(t, "default", run.AssistantID)
+	require.Equal(t, int64(0), run.ParentRunID)
+	require.Equal(t, entity.RunKindTask, run.RunKind)
 	require.Equal(t, entity.RunStatusPending, run.Status)
 	require.Equal(t, `{}`, run.Command)
 	require.Equal(t, `{"messages":[{"role":"user","content":"hello"}]}`, run.Input)
@@ -260,6 +262,80 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.NotZero(t, run.CreatedAt)
 	require.Equal(t, run.CreatedAt, run.UpdatedAt)
 	require.Len(t, repo.runs[10], 1)
+}
+
+func TestCreateRunCreatesSubagentRunWhenParentRunIsSet(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.runs[10] = []*entity.Run{{
+		ID:        100,
+		ThreadID:  10,
+		SpaceID:   1,
+		CreatorID: 2,
+		RunKind:   entity.RunKindTask,
+		Status:    entity.RunStatusRunning,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:    10,
+		ParentRunID: 100,
+		AssistantID: "singleagent:1001",
+		Input:       `{"messages":[{"role":"user","content":"delegate"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100), run.ParentRunID)
+	require.Equal(t, entity.RunKindSubagent, run.RunKind)
+	require.Equal(t, "singleagent:1001", run.AssistantID)
+	require.Len(t, repo.runs[10], 2)
+	require.Equal(t, entity.RunKindSubagent, repo.runs[10][1].RunKind)
+}
+
+func TestCreateRunAcceptsRunningSubagentInitialStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.runs[10] = []*entity.Run{{
+		ID:        100,
+		ThreadID:  10,
+		SpaceID:   1,
+		CreatorID: 2,
+		RunKind:   entity.RunKindTask,
+		Status:    entity.RunStatusRunning,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:    10,
+		ParentRunID: 100,
+		Status:      entity.RunStatusRunning,
+		Input:       `{"messages":[]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, run.Status)
+	require.NotZero(t, run.StartedAt)
+}
+
+func TestCreateRunRejectsSubagentRunWithMismatchedParentThread(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.threads[11] = &entity.Thread{ID: 11, SpaceID: 1, CreatorID: 2}
+	repo.runs[11] = []*entity.Run{{
+		ID:       100,
+		ThreadID: 11,
+		RunKind:  entity.RunKindTask,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:    10,
+		ParentRunID: 100,
+		Input:       `{"messages":[{"role":"user","content":"delegate"}]}`,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parent run thread")
 }
 
 func TestCreateRunAcceptsQueuedInitialStatus(t *testing.T) {
@@ -292,6 +368,43 @@ func TestCreateRunRejectsUnsupportedInitialStatus(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "initial run status")
+}
+
+func TestThreadServiceGetRunByIdempotencyKey(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:             100,
+		ThreadID:       10,
+		SpaceID:        1,
+		Status:         entity.RunStatusQueued,
+		IdempotencyKey: "idem-1",
+	}}
+	repo.runs[11] = []*entity.Run{{
+		ID:             101,
+		ThreadID:       11,
+		SpaceID:        2,
+		Status:         entity.RunStatusQueued,
+		IdempotencyKey: "idem-1",
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.GetRunByIdempotencyKey(context.Background(), 1, "idem-1")
+
+	require.NoError(t, err)
+	require.NotNil(t, run)
+	require.Equal(t, int64(100), run.ID)
+
+	missing, err := svc.GetRunByIdempotencyKey(context.Background(), 1, "missing")
+	require.NoError(t, err)
+	require.Nil(t, missing)
+
+	_, err = svc.GetRunByIdempotencyKey(context.Background(), 0, "idem-1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "space id is required")
+
+	_, err = svc.GetRunByIdempotencyKey(context.Background(), 1, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "idempotency key is invalid")
 }
 
 func TestListRunsNormalizesPaging(t *testing.T) {
@@ -528,6 +641,9 @@ func TestCreateCheckpointDefaultsJSONAndPersistsRunCheckpoint(t *testing.T) {
 		RunID:              20,
 		ParentCheckpointID: 12,
 		CheckpointNS:       " planner ",
+		RuntimeType:        " eino_adk ",
+		RuntimeKey:         " checkpoint-1 ",
+		EnvelopeVersion:    1,
 		ChannelValues:      `{"messages":["hello"]}`,
 	})
 
@@ -537,6 +653,9 @@ func TestCreateCheckpointDefaultsJSONAndPersistsRunCheckpoint(t *testing.T) {
 	require.Equal(t, int64(20), checkpoint.RunID)
 	require.Equal(t, int64(12), checkpoint.ParentCheckpointID)
 	require.Equal(t, "planner", checkpoint.CheckpointNS)
+	require.Equal(t, "eino_adk", checkpoint.RuntimeType)
+	require.Equal(t, "checkpoint-1", checkpoint.RuntimeKey)
+	require.Equal(t, int32(1), checkpoint.EnvelopeVersion)
 	require.Equal(t, `{"messages":["hello"]}`, checkpoint.ChannelValues)
 	require.Equal(t, `{}`, checkpoint.ChannelVersions)
 	require.Equal(t, `[]`, checkpoint.PendingSends)
@@ -598,6 +717,58 @@ func TestGetLatestCheckpointReturnsNewest(t *testing.T) {
 	require.Equal(t, int64(2), checkpoint.ID)
 }
 
+func TestRuntimeCheckpointLifecycleDelegatesToRepository(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.checkpoints[10] = []*entity.Checkpoint{
+		{
+			ID:              1,
+			ThreadID:        10,
+			RunID:           20,
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			CreatedAt:       100,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
+
+	checkpoint, err := svc.GetLatestRuntimeCheckpoint(
+		context.Background(),
+		&GetLatestRuntimeCheckpointRequest{
+			ThreadID:    10,
+			RunID:       20,
+			RuntimeType: " eino_adk ",
+			RuntimeKey:  " checkpoint-1 ",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), checkpoint.ID)
+
+	require.NoError(t, svc.DeleteRuntimeCheckpoint(
+		context.Background(),
+		&DeleteRuntimeCheckpointRequest{
+			ThreadID:    10,
+			RunID:       20,
+			RuntimeType: "eino_adk",
+			RuntimeKey:  "checkpoint-1",
+			DeletedAt:   500,
+		},
+	))
+	require.Equal(t, int64(500), repo.checkpoints[10][0].RuntimeDeletedAt)
+
+	checkpoint, err = svc.GetLatestRuntimeCheckpoint(
+		context.Background(),
+		&GetLatestRuntimeCheckpointRequest{
+			ThreadID:    10,
+			RunID:       20,
+			RuntimeType: "eino_adk",
+			RuntimeKey:  "checkpoint-1",
+		},
+	)
+	require.NoError(t, err)
+	require.Nil(t, checkpoint)
+}
+
 func TestGetCheckpointReturnsCheckpointByID(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.checkpoints[10] = []*entity.Checkpoint{
@@ -641,6 +812,86 @@ func TestRememberMemoryCreatesThreadMemory(t *testing.T) {
 	require.NotZero(t, memory.CreatedAt)
 	require.Equal(t, memory.CreatedAt, memory.UpdatedAt)
 	require.Len(t, repo.memories[10], 1)
+}
+
+func TestRememberLongTermMemoryPersistsFactFields(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4002}})
+
+	memory, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID:             10,
+		RunID:                20,
+		Scope:                entity.MemoryScopeLongTerm,
+		Content:              "  用户喜欢简短中文总结  ",
+		Score:                0.76,
+		Confidence:           0.92,
+		SourceType:           " transcript_summary ",
+		SourceID:             " snapshot-200 ",
+		CorrectionOfMemoryID: 300,
+		CorrectedAt:          900,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(4002), memory.ID)
+	require.Equal(t, entity.MemoryScopeLongTerm, memory.Scope)
+	require.Zero(t, memory.RunID)
+	require.Equal(t, "用户喜欢简短中文总结", memory.Content)
+	require.Equal(t, 0.76, memory.Score)
+	require.Equal(t, 0.92, memory.Confidence)
+	require.Equal(t, "transcript_summary", memory.SourceType)
+	require.Equal(t, "snapshot-200", memory.SourceID)
+	require.Equal(t, int64(300), memory.CorrectionOfMemoryID)
+	require.Equal(t, int64(900), memory.CorrectedAt)
+	require.Len(t, repo.memories[10], 1)
+	require.Equal(t, "snapshot-200", repo.memories[10][0].SourceID)
+}
+
+func TestRememberMemoryUsesSourceIdempotency(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.sourceMemory = &entity.Memory{
+		ID:         3001,
+		ThreadID:   10,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "已有事实",
+		SourceType: "transcript_summary",
+		SourceID:   "snapshot:501:language",
+	}
+	repo.sourceMemoryCreated = false
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4003}})
+
+	memory, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID:   10,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "重复事实",
+		SourceType: "transcript_summary",
+		SourceID:   "snapshot:501:language",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3001), memory.ID)
+	require.Equal(t, "已有事实", memory.Content)
+	require.NotNil(t, repo.lastCreateOrGetMemoryBySource)
+	require.Equal(t, "snapshot:501:language", repo.lastCreateOrGetMemoryBySource.SourceID)
+	require.Empty(t, repo.memories[10])
+}
+
+func TestRememberMemoryRejectsInvalidConfidence(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4003}})
+
+	_, err := svc.RememberMemory(context.Background(), &RememberMemoryRequest{
+		ThreadID:   10,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "bad confidence",
+		Confidence: 1.01,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory confidence")
+	require.Empty(t, repo.memories[10])
 }
 
 func TestRememberRunMemoryRequiresRunID(t *testing.T) {
@@ -705,6 +956,407 @@ func TestRecallMemoriesNormalizesLimitAndUsesRunContext(t *testing.T) {
 	require.Equal(t, int64(20), repo.lastMemoryListReq.RunID)
 	require.Equal(t, int32(8), repo.lastMemoryListReq.Limit)
 	require.NotZero(t, repo.lastMemoryListReq.Now)
+}
+
+func TestManageMemoriesNormalizesAndDelegates(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.memories[10] = []*entity.Memory{
+		{
+			ID:         1,
+			ThreadID:   10,
+			Scope:      entity.MemoryScopeLongTerm,
+			Content:    "用户偏好中文回答",
+			Score:      0.8,
+			Confidence: 0.9,
+		},
+	}
+	repo.updatedMemory = &entity.Memory{
+		ID:         1,
+		ThreadID:   10,
+		SpaceID:    1,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "用户偏好简短中文回答",
+		Metadata:   `{"source":"edited"}`,
+		Score:      0.9,
+		Confidence: 0.95,
+		UpdatedAt:  900,
+	}
+	repo.restoredMemory = &entity.Memory{
+		ID:        1,
+		ThreadID:  10,
+		SpaceID:   1,
+		Scope:     entity.MemoryScopeLongTerm,
+		Content:   "用户偏好简短中文回答",
+		UpdatedAt: 1200,
+	}
+	repo.deleteMemoryOK = true
+	repo.clearMemoryCount = 1
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4001}})
+
+	memories, total, err := svc.ListMemories(context.Background(), &ListMemoriesRequest{
+		ThreadID:       10,
+		Query:          "  中文  ",
+		Scopes:         []entity.MemoryScope{entity.MemoryScopeLongTerm},
+		IncludeExpired: true,
+		Page:           0,
+		PageSize:       0,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, memories, 1)
+	require.Equal(t, "中文", repo.lastMemoryListReq.Query)
+	require.Equal(t, []entity.MemoryScope{entity.MemoryScopeLongTerm}, repo.lastMemoryListReq.Scopes)
+	require.True(t, repo.lastMemoryListReq.IncludeExpired)
+	require.Equal(t, int32(1), repo.lastMemoryListReq.Page)
+	require.Equal(t, int32(20), repo.lastMemoryListReq.PageSize)
+
+	updated, ok, err := svc.UpdateMemory(context.Background(), &UpdateMemoryRequest{
+		ThreadID:   10,
+		MemoryID:   1,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "  用户偏好简短中文回答  ",
+		Metadata:   `{"source":"edited"}`,
+		Score:      0.9,
+		Confidence: 0.95,
+		SourceType: " manual ",
+		SourceID:   " memory-1 ",
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "用户偏好简短中文回答", repo.lastUpdateMemoryReq.Content)
+	require.Equal(t, "manual", repo.lastUpdateMemoryReq.SourceType)
+	require.Equal(t, "memory-1", repo.lastUpdateMemoryReq.SourceID)
+	require.NotZero(t, repo.lastUpdateMemoryReq.UpdatedAt)
+	require.Equal(t, int64(1), updated.ID)
+
+	deleted, err := svc.DeleteMemory(context.Background(), &DeleteMemoryRequest{
+		ThreadID: 10,
+		MemoryID: 1,
+	})
+	require.NoError(t, err)
+	require.True(t, deleted)
+	require.Equal(t, int64(10), repo.lastDeleteMemoryReq.ThreadID)
+	require.NotZero(t, repo.lastDeleteMemoryReq.DeletedAt)
+
+	cleared, err := svc.ClearMemories(context.Background(), &ClearMemoriesRequest{
+		ThreadID: 10,
+		Scopes:   []entity.MemoryScope{entity.MemoryScopeLongTerm},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cleared)
+	require.Equal(t, []entity.MemoryScope{entity.MemoryScopeLongTerm}, repo.lastClearMemoriesReq.Scopes)
+	require.NotZero(t, repo.lastClearMemoriesReq.DeletedAt)
+	require.Len(t, repo.memoryAuditEvents, 3)
+	require.Equal(t, "memory.updated", repo.memoryAuditEvents[0].EventType)
+	require.Equal(t, "memory.deleted", repo.memoryAuditEvents[1].EventType)
+	require.Equal(t, "memory.cleared", repo.memoryAuditEvents[2].EventType)
+
+	restored, ok, err := svc.RestoreMemory(context.Background(), &RestoreMemoryRequest{
+		ThreadID: 10,
+		MemoryID: 1,
+		ActorID:  7,
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(1), restored.ID)
+	require.Equal(t, int64(7), repo.lastRestoreMemoryReq.ActorID)
+	require.Len(t, repo.memoryAuditEvents, 4)
+	require.Equal(t, "memory.restored", repo.memoryAuditEvents[3].EventType)
+	require.Equal(t, int64(7), repo.memoryAuditEvents[3].ActorID)
+}
+
+func TestImportMemoriesCreatesRowsSkipsDuplicateSourcesAndAudits(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	repo.sourceMemory = &entity.Memory{
+		ID:         9001,
+		ThreadID:   10,
+		SpaceID:    1,
+		Scope:      entity.MemoryScopeThread,
+		Content:    "existing imported memory",
+		SourceType: "import",
+		SourceID:   "duplicate-source",
+		CreatedAt:  100,
+		UpdatedAt:  100,
+	}
+	repo.sourceMemoryCreated = false
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	result, err := svc.ImportMemories(context.Background(), &ImportMemoriesRequest{
+		ThreadID: 10,
+		ActorID:  7,
+		Memories: []ImportMemoryItem{
+			{
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "  用户偏好中文摘要  ",
+				Metadata:   `{"origin":"manual"}`,
+				Score:      0.8,
+				Confidence: 0.9,
+				SourceType: " manual ",
+				SourceID:   " memory-ui-1 ",
+			},
+			{
+				RunID:      20,
+				Scope:      entity.MemoryScopeRun,
+				Content:    "运行中需要保留的约束",
+				Confidence: 0.7,
+			},
+			{
+				Scope:      entity.MemoryScopeThread,
+				Content:    "duplicate imported memory",
+				Confidence: 0.6,
+				SourceType: " import ",
+				SourceID:   " duplicate-source ",
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), result.Imported)
+	require.Equal(t, int64(1), result.Skipped)
+	require.Len(t, result.Memories, 3)
+	require.Len(t, repo.memories[10], 2)
+	require.Equal(t, "用户偏好中文摘要", repo.memories[10][0].Content)
+	require.Equal(t, entity.MemoryScopeLongTerm, repo.memories[10][0].Scope)
+	require.Equal(t, int64(0), repo.memories[10][0].RunID)
+	require.Equal(t, "manual", repo.memories[10][0].SourceType)
+	require.Equal(t, "memory-ui-1", repo.memories[10][0].SourceID)
+	require.Equal(t, entity.MemoryScopeRun, repo.memories[10][1].Scope)
+	require.Equal(t, int64(20), repo.memories[10][1].RunID)
+	require.Equal(t, "import", repo.lastCreateOrGetMemoryBySource.SourceType)
+	require.Equal(t, "duplicate-source", repo.lastCreateOrGetMemoryBySource.SourceID)
+	require.Len(t, repo.memoryAuditEvents, 1)
+	require.Equal(t, "memory.imported", repo.memoryAuditEvents[0].EventType)
+	require.Equal(t, int64(7), repo.memoryAuditEvents[0].ActorID)
+	require.Equal(t, int64(2), repo.memoryAuditEvents[0].AffectedCount)
+}
+
+func TestManageMemoriesRejectsInvalidInput(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4001}})
+
+	_, _, err := svc.UpdateMemory(context.Background(), &UpdateMemoryRequest{
+		ThreadID:   10,
+		MemoryID:   1,
+		Scope:      entity.MemoryScopeRun,
+		Content:    "run memory missing run id",
+		Confidence: 0.5,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "run id is required")
+
+	_, _, err = svc.UpdateMemory(context.Background(), &UpdateMemoryRequest{
+		ThreadID:   10,
+		MemoryID:   1,
+		Scope:      entity.MemoryScopeLongTerm,
+		Content:    "bad confidence",
+		Confidence: 1.1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "memory confidence")
+}
+
+func TestPersistTranscriptSnapshotValidatesRunAndIsIdempotent(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:        20,
+		ThreadID:  10,
+		SpaceID:   1,
+		CreatorID: 2,
+		Status:    entity.RunStatusRunning,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4501}})
+	digest := strings.Repeat("a", 64)
+	req := &PersistTranscriptSnapshotRequest{
+		ThreadID:       10,
+		RunID:          20,
+		Kind:           entity.TranscriptKindSummaryInput,
+		Digest:         digest,
+		IdempotencyKey: "summary_input:" + digest,
+		MessageCount:   2,
+		Messages:       `[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]`,
+		Metadata:       `{"runtime":"eino_adk"}`,
+	}
+
+	snapshot, created, err := svc.PersistTranscriptSnapshot(
+		context.Background(),
+		req,
+	)
+
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, int64(4501), snapshot.ID)
+	require.Equal(t, int64(1), snapshot.SpaceID)
+	require.Equal(t, entity.TranscriptKindSummaryInput, snapshot.Kind)
+	require.Equal(t, int32(2), snapshot.MessageCount)
+
+	snapshot, created, err = svc.PersistTranscriptSnapshot(
+		context.Background(),
+		req,
+	)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, int64(4501), snapshot.ID)
+
+	bad := *req
+	bad.Digest = "short"
+	_, _, err = svc.PersistTranscriptSnapshot(context.Background(), &bad)
+	require.ErrorContains(t, err, "digest")
+}
+
+func TestEnqueueMemoryFlushJobValidatesAndIsIdempotent(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:          20,
+		ThreadID:    10,
+		SpaceID:     1,
+		CreatorID:   2,
+		AssistantID: "lead",
+		Status:      entity.RunStatusRunning,
+	}}
+	repo.transcriptSnapshots["20:summary"] = &entity.TranscriptSnapshot{
+		ID:             4501,
+		ThreadID:       10,
+		RunID:          20,
+		SpaceID:        1,
+		IdempotencyKey: "summary_input:" + strings.Repeat("a", 64),
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 4601}})
+	req := &EnqueueMemoryFlushJobRequest{
+		ThreadID:             10,
+		RunID:                20,
+		TranscriptSnapshotID: 4501,
+		IdempotencyKey:       "summary_input:" + strings.Repeat("a", 64),
+	}
+
+	job, created, err := svc.EnqueueMemoryFlushJob(context.Background(), req)
+
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, int64(4601), job.ID)
+	require.Equal(t, int64(1), job.SpaceID)
+	require.Equal(t, int64(2), job.UserID)
+	require.Equal(t, "lead", job.AssistantID)
+	require.Equal(t, entity.MemoryFlushJobStatusPending, job.Status)
+	require.Equal(t, job.CreatedAt, job.AvailableAt)
+
+	job, created, err = svc.EnqueueMemoryFlushJob(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, int64(4601), job.ID)
+
+	bad := *req
+	bad.TranscriptSnapshotID = 0
+	_, _, err = svc.EnqueueMemoryFlushJob(context.Background(), &bad)
+	require.ErrorContains(t, err, "transcript snapshot id")
+
+	bad = *req
+	bad.TranscriptSnapshotID = 9999
+	_, _, err = svc.EnqueueMemoryFlushJob(context.Background(), &bad)
+	require.ErrorContains(t, err, "not found")
+
+	bad = *req
+	bad.IdempotencyKey = "terminal:" + strings.Repeat("b", 64)
+	_, _, err = svc.EnqueueMemoryFlushJob(context.Background(), &bad)
+	require.ErrorContains(t, err, "does not match transcript snapshot")
+
+	repo.transcriptSnapshots["other-run"] = &entity.TranscriptSnapshot{
+		ID:       4502,
+		ThreadID: 11,
+		RunID:    21,
+		SpaceID:  1,
+	}
+	bad = *req
+	bad.TranscriptSnapshotID = 4502
+	_, _, err = svc.EnqueueMemoryFlushJob(context.Background(), &bad)
+	require.ErrorContains(t, err, "does not belong to run")
+}
+
+func TestClaimMemoryFlushJobsNormalizesWorkerLeaseAndLimit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.claimedMemoryFlushJobs = []*entity.MemoryFlushJob{
+		{
+			ID:       4601,
+			ThreadID: 10,
+			RunID:    20,
+			Status:   entity.MemoryFlushJobStatusProcessing,
+		},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1}})
+
+	jobs, err := svc.ClaimMemoryFlushJobs(context.Background(), &ClaimMemoryFlushJobsRequest{
+		WorkerID:       " worker-a ",
+		LeaseTTLMillis: 600000,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, "worker-a", repo.lastClaimMemoryFlushReq.WorkerID)
+	require.Equal(t, int32(10), repo.lastClaimMemoryFlushReq.Limit)
+	require.Greater(t, repo.lastClaimMemoryFlushReq.Now, int64(0))
+	require.Equal(t, repo.lastClaimMemoryFlushReq.Now+600000, repo.lastClaimMemoryFlushReq.LeaseExpiresAt)
+
+	_, err = svc.ClaimMemoryFlushJobs(context.Background(), &ClaimMemoryFlushJobsRequest{
+		WorkerID: " ",
+	})
+	require.ErrorContains(t, err, "worker id")
+}
+
+func TestFinishMemoryFlushJobsValidateWorkerAndDelegate(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.completedMemoryFlushJob = &entity.MemoryFlushJob{
+		ID:     4601,
+		Status: entity.MemoryFlushJobStatusSucceeded,
+	}
+	repo.retriedMemoryFlushJob = &entity.MemoryFlushJob{
+		ID:     4602,
+		Status: entity.MemoryFlushJobStatusPending,
+	}
+	repo.failedMemoryFlushJob = &entity.MemoryFlushJob{
+		ID:     4603,
+		Status: entity.MemoryFlushJobStatusFailed,
+	}
+	repo.memoryFlushUpdated = true
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1}})
+
+	completed, ok, err := svc.CompleteMemoryFlushJob(context.Background(), &CompleteMemoryFlushJobRequest{
+		JobID:    4601,
+		WorkerID: " worker-a ",
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, entity.MemoryFlushJobStatusSucceeded, completed.Status)
+	require.Equal(t, "worker-a", repo.lastCompleteMemoryFlushReq.WorkerID)
+	require.Greater(t, repo.lastCompleteMemoryFlushReq.Now, int64(0))
+
+	retried, ok, err := svc.RetryMemoryFlushJob(context.Background(), &RetryMemoryFlushJobRequest{
+		JobID:       4602,
+		WorkerID:    " worker-a ",
+		ErrorText:   "temporary extractor error",
+		AvailableAt: 900,
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, entity.MemoryFlushJobStatusPending, retried.Status)
+	require.Equal(t, "worker-a", repo.lastRetryMemoryFlushReq.WorkerID)
+	require.Equal(t, int64(900), repo.lastRetryMemoryFlushReq.AvailableAt)
+
+	failed, ok, err := svc.FailMemoryFlushJob(context.Background(), &FailMemoryFlushJobRequest{
+		JobID:     4603,
+		WorkerID:  " worker-a ",
+		ErrorText: "dead letter",
+	})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, entity.MemoryFlushJobStatusFailed, failed.Status)
+	require.Equal(t, "worker-a", repo.lastFailMemoryFlushReq.WorkerID)
+
+	_, _, err = svc.CompleteMemoryFlushJob(context.Background(), &CompleteMemoryFlushJobRequest{
+		JobID:    4601,
+		WorkerID: " ",
+	})
+	require.ErrorContains(t, err, "worker id")
 }
 
 func TestRecordTokenUsageNormalizesAndPersistsRunUsage(t *testing.T) {
@@ -774,7 +1426,7 @@ func TestGetRunTokenUsageReturnsRowsAndAggregate(t *testing.T) {
 	}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
 
-	rows, total, aggregate, err := svc.GetRunTokenUsage(context.Background(), &GetRunTokenUsageRequest{
+	rows, total, aggregate, runAggregates, err := svc.GetRunTokenUsage(context.Background(), &GetRunTokenUsageRequest{
 		RunID:    20,
 		Page:     0,
 		PageSize: 0,
@@ -789,6 +1441,41 @@ func TestGetRunTokenUsageReturnsRowsAndAggregate(t *testing.T) {
 	require.Equal(t, int64(30), aggregate.TotalTokens)
 	require.Equal(t, int64(20), aggregate.LeadAgentTokens)
 	require.Equal(t, int64(10), aggregate.ToolTokens)
+	require.Empty(t, runAggregates)
+}
+
+func TestGetRunTokenUsageCanIncludeDirectChildRuns(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{
+		{ID: 20, ThreadID: 10, RunKind: entity.RunKindTask},
+		{ID: 21, ThreadID: 10, ParentRunID: 20, RunKind: entity.RunKindSubagent},
+		{ID: 22, ThreadID: 10, RunKind: entity.RunKindTask},
+	}
+	repo.tokenUsages = []*entity.TokenUsage{
+		{ID: 1, ThreadID: 10, RunID: 20, Source: entity.TokenUsageSourceLeadAgent, TotalTokens: 20},
+		{ID: 2, ThreadID: 10, RunID: 21, Source: entity.TokenUsageSourceSubagent, TotalTokens: 10},
+		{ID: 3, ThreadID: 10, RunID: 22, Source: entity.TokenUsageSourceLeadAgent, TotalTokens: 99},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 5001}})
+
+	rows, total, aggregate, runAggregates, err := svc.GetRunTokenUsage(context.Background(), &GetRunTokenUsageRequest{
+		RunID:            20,
+		IncludeChildRuns: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, rows, 2)
+	require.Equal(t, []int64{20, 21}, repo.lastTokenUsageListReq.RunIDs)
+	require.Equal(t, []int64{20, 21}, repo.lastTokenUsageAggregateReq.RunIDs)
+	require.Equal(t, int64(30), aggregate.TotalTokens)
+	require.Equal(t, int64(20), aggregate.LeadAgentTokens)
+	require.Equal(t, int64(10), aggregate.SubagentTokens)
+	require.Len(t, runAggregates, 2)
+	require.Equal(t, int64(20), runAggregates[0].RunID)
+	require.Equal(t, int64(20), runAggregates[0].Aggregate.TotalTokens)
+	require.Equal(t, int64(21), runAggregates[1].RunID)
+	require.Equal(t, int64(10), runAggregates[1].Aggregate.TotalTokens)
 }
 
 func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
@@ -813,36 +1500,62 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 }
 
 type memoryRepo struct {
-	mu                         sync.Mutex
-	threads                    map[int64]*entity.Thread
-	messages                   map[int64][]*entity.Message
-	runs                       map[int64][]*entity.Run
-	runEvents                  map[int64][]*entity.RunEvent
-	checkpoints                map[int64][]*entity.Checkpoint
-	memories                   map[int64][]*entity.Memory
-	tokenUsages                []*entity.TokenUsage
-	lastListReq                repository.ListThreadsRequest
-	lastMessageListReq         repository.ListMessagesRequest
-	lastRunListReq             repository.ListRunsRequest
-	lastRunEventListReq        repository.ListRunEventsRequest
-	lastCheckpointListReq      repository.ListCheckpointsRequest
-	lastCheckpointID           int64
-	lastMemoryListReq          repository.ListMemoriesRequest
-	lastTokenUsageListReq      repository.ListTokenUsageRequest
-	lastTokenUsageAggregateReq repository.AggregateTokenUsageRequest
-	lastClaimReq               repository.ClaimPendingRunsRequest
-	lastClaimQueuedResumeReq   repository.ClaimQueuedResumeRunsRequest
-	lastUpdateRunReq           repository.UpdateRunStatusRequest
+	mu                            sync.Mutex
+	threads                       map[int64]*entity.Thread
+	messages                      map[int64][]*entity.Message
+	runs                          map[int64][]*entity.Run
+	runEvents                     map[int64][]*entity.RunEvent
+	checkpoints                   map[int64][]*entity.Checkpoint
+	memories                      map[int64][]*entity.Memory
+	sourceMemory                  *entity.Memory
+	sourceMemoryCreated           bool
+	updatedMemory                 *entity.Memory
+	restoredMemory                *entity.Memory
+	deleteMemoryOK                bool
+	clearMemoryCount              int64
+	memoryAuditEvents             []*entity.MemoryAuditEvent
+	transcriptSnapshots           map[string]*entity.TranscriptSnapshot
+	memoryFlushJobs               map[string]*entity.MemoryFlushJob
+	claimedMemoryFlushJobs        []*entity.MemoryFlushJob
+	completedMemoryFlushJob       *entity.MemoryFlushJob
+	retriedMemoryFlushJob         *entity.MemoryFlushJob
+	failedMemoryFlushJob          *entity.MemoryFlushJob
+	memoryFlushUpdated            bool
+	tokenUsages                   []*entity.TokenUsage
+	lastListReq                   repository.ListThreadsRequest
+	lastMessageListReq            repository.ListMessagesRequest
+	lastRunListReq                repository.ListRunsRequest
+	lastRunEventListReq           repository.ListRunEventsRequest
+	lastCheckpointListReq         repository.ListCheckpointsRequest
+	lastCheckpointID              int64
+	lastMemoryListReq             repository.ListMemoriesRequest
+	lastUpdateMemoryReq           repository.UpdateMemoryRequest
+	lastDeleteMemoryReq           repository.DeleteMemoryRequest
+	lastRestoreMemoryReq          repository.RestoreMemoryRequest
+	lastClearMemoriesReq          repository.ClearMemoriesRequest
+	lastMemoryAuditListReq        repository.ListMemoryAuditEventsRequest
+	lastCreateOrGetMemoryBySource *entity.Memory
+	lastClaimMemoryFlushReq       repository.ClaimMemoryFlushJobsRequest
+	lastCompleteMemoryFlushReq    repository.CompleteMemoryFlushJobRequest
+	lastRetryMemoryFlushReq       repository.RetryMemoryFlushJobRequest
+	lastFailMemoryFlushReq        repository.FailMemoryFlushJobRequest
+	lastTokenUsageListReq         repository.ListTokenUsageRequest
+	lastTokenUsageAggregateReq    repository.AggregateTokenUsageRequest
+	lastClaimReq                  repository.ClaimPendingRunsRequest
+	lastClaimQueuedResumeReq      repository.ClaimQueuedResumeRunsRequest
+	lastUpdateRunReq              repository.UpdateRunStatusRequest
 }
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		threads:     make(map[int64]*entity.Thread),
-		messages:    make(map[int64][]*entity.Message),
-		runs:        make(map[int64][]*entity.Run),
-		runEvents:   make(map[int64][]*entity.RunEvent),
-		checkpoints: make(map[int64][]*entity.Checkpoint),
-		memories:    make(map[int64][]*entity.Memory),
+		threads:             make(map[int64]*entity.Thread),
+		messages:            make(map[int64][]*entity.Message),
+		runs:                make(map[int64][]*entity.Run),
+		runEvents:           make(map[int64][]*entity.RunEvent),
+		checkpoints:         make(map[int64][]*entity.Checkpoint),
+		memories:            make(map[int64][]*entity.Memory),
+		transcriptSnapshots: make(map[string]*entity.TranscriptSnapshot),
+		memoryFlushJobs:     make(map[string]*entity.MemoryFlushJob),
 	}
 }
 
@@ -960,6 +1673,24 @@ func (r *memoryRepo) GetRun(ctx context.Context, id int64) (*entity.Run, error) 
 	return nil, fmt.Errorf("run %d not found", id)
 }
 
+func (r *memoryRepo) GetRunByIdempotencyKey(
+	ctx context.Context,
+	spaceID int64,
+	idempotencyKey string,
+) (*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.SpaceID == spaceID && run.IdempotencyKey == idempotencyKey {
+				return cloneRun(run), nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
 func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsRequest) ([]*entity.Run, int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -967,6 +1698,13 @@ func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsReques
 
 	runs := make([]*entity.Run, 0, len(r.runs[req.ThreadID]))
 	for _, run := range r.runs[req.ThreadID] {
+		if req.ParentRunID != nil {
+			if run.ParentRunID != *req.ParentRunID {
+				continue
+			}
+		} else if !req.IncludeChildRuns && run.ParentRunID != 0 {
+			continue
+		}
 		if req.Status != nil && run.Status != *req.Status {
 			continue
 		}
@@ -1112,11 +1850,77 @@ func (r *memoryRepo) GetLatestCheckpoint(ctx context.Context, threadID int64) (*
 	return cloneCheckpoint(latest), nil
 }
 
+func (r *memoryRepo) GetLatestRuntimeCheckpoint(
+	ctx context.Context,
+	threadID, runID int64,
+	runtimeType, runtimeKey string,
+) (*entity.Checkpoint, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var latest *entity.Checkpoint
+	for _, checkpoint := range r.checkpoints[threadID] {
+		if checkpoint.RunID != runID ||
+			checkpoint.RuntimeType != runtimeType ||
+			checkpoint.RuntimeKey != runtimeKey ||
+			checkpoint.RuntimeDeletedAt != 0 {
+			continue
+		}
+		if latest == nil ||
+			checkpoint.CreatedAt > latest.CreatedAt ||
+			(checkpoint.CreatedAt == latest.CreatedAt && checkpoint.ID > latest.ID) {
+			latest = checkpoint
+		}
+	}
+	if latest == nil {
+		return nil, nil
+	}
+
+	return cloneCheckpoint(latest), nil
+}
+
+func (r *memoryRepo) DeleteRuntimeCheckpoint(
+	ctx context.Context,
+	threadID, runID int64,
+	runtimeType, runtimeKey string,
+	deletedAt int64,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, checkpoint := range r.checkpoints[threadID] {
+		if checkpoint.RunID == runID &&
+			checkpoint.RuntimeType == runtimeType &&
+			checkpoint.RuntimeKey == runtimeKey &&
+			checkpoint.RuntimeDeletedAt == 0 {
+			checkpoint.RuntimeDeletedAt = deletedAt
+		}
+	}
+
+	return nil
+}
+
 func (r *memoryRepo) CreateMemory(ctx context.Context, memory *entity.Memory) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.memories[memory.ThreadID] = append(r.memories[memory.ThreadID], cloneMemory(memory))
 	return nil
+}
+
+func (r *memoryRepo) CreateOrGetMemoryBySource(
+	ctx context.Context,
+	memory *entity.Memory,
+) (*entity.Memory, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastCreateOrGetMemoryBySource = cloneMemory(memory)
+	if r.sourceMemory != nil &&
+		r.sourceMemory.SourceType == memory.SourceType &&
+		r.sourceMemory.SourceID == memory.SourceID {
+		return cloneMemory(r.sourceMemory), r.sourceMemoryCreated, nil
+	}
+	r.memories[memory.ThreadID] = append(r.memories[memory.ThreadID], cloneMemory(memory))
+	return cloneMemory(memory), true, nil
 }
 
 func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemoriesRequest) ([]*entity.Memory, int64, error) {
@@ -1130,6 +1934,9 @@ func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemori
 	}
 	memories := make([]*entity.Memory, 0, len(r.memories[req.ThreadID]))
 	for _, memory := range r.memories[req.ThreadID] {
+		if !req.IncludeDeleted && memory.DeletedAt > 0 {
+			continue
+		}
 		if req.RunID > 0 {
 			if memory.RunID != 0 && memory.RunID != req.RunID {
 				continue
@@ -1137,7 +1944,22 @@ func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemori
 		} else if memory.RunID != 0 {
 			continue
 		}
-		if memory.ExpiresAt > 0 && memory.ExpiresAt <= now {
+		if !req.IncludeExpired && memory.ExpiresAt > 0 && memory.ExpiresAt <= now {
+			continue
+		}
+		if len(req.Scopes) > 0 {
+			matched := false
+			for _, scope := range req.Scopes {
+				if scope == memory.Scope {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if req.Query != "" && !strings.Contains(memory.Content, req.Query) {
 			continue
 		}
 		memories = append(memories, cloneMemory(memory))
@@ -1160,8 +1982,177 @@ func (r *memoryRepo) ListMemories(ctx context.Context, req repository.ListMemori
 	if len(memories) > int(limit) {
 		memories = memories[:limit]
 	}
+	if req.Page > 0 && req.PageSize > 0 {
+		start := int((req.Page - 1) * req.PageSize)
+		if start >= len(memories) {
+			return []*entity.Memory{}, total, nil
+		}
+		end := start + int(req.PageSize)
+		if end > len(memories) {
+			end = len(memories)
+		}
+		memories = memories[start:end]
+	}
 
 	return memories, total, nil
+}
+
+func (r *memoryRepo) UpdateMemory(
+	ctx context.Context,
+	req repository.UpdateMemoryRequest,
+) (*entity.Memory, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastUpdateMemoryReq = req
+	if r.updatedMemory != nil {
+		return cloneMemory(r.updatedMemory), true, nil
+	}
+	return nil, false, nil
+}
+
+func (r *memoryRepo) DeleteMemory(
+	ctx context.Context,
+	req repository.DeleteMemoryRequest,
+) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastDeleteMemoryReq = req
+	return r.deleteMemoryOK, nil
+}
+
+func (r *memoryRepo) RestoreMemory(
+	ctx context.Context,
+	req repository.RestoreMemoryRequest,
+) (*entity.Memory, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRestoreMemoryReq = req
+	if r.restoredMemory != nil {
+		return cloneMemory(r.restoredMemory), true, nil
+	}
+	return nil, false, nil
+}
+
+func (r *memoryRepo) ClearMemories(
+	ctx context.Context,
+	req repository.ClearMemoriesRequest,
+) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastClearMemoriesReq = req
+	return r.clearMemoryCount, nil
+}
+
+func (r *memoryRepo) CreateMemoryAuditEvent(ctx context.Context, event *entity.MemoryAuditEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.memoryAuditEvents = append(r.memoryAuditEvents, cloneMemoryAuditEvent(event))
+	return nil
+}
+
+func (r *memoryRepo) ListMemoryAuditEvents(
+	ctx context.Context,
+	req repository.ListMemoryAuditEventsRequest,
+) ([]*entity.MemoryAuditEvent, int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastMemoryAuditListReq = req
+	events := make([]*entity.MemoryAuditEvent, 0, len(r.memoryAuditEvents))
+	for _, event := range r.memoryAuditEvents {
+		events = append(events, cloneMemoryAuditEvent(event))
+	}
+	return events, int64(len(events)), nil
+}
+
+func (r *memoryRepo) CreateOrGetTranscriptSnapshot(
+	ctx context.Context,
+	snapshot *entity.TranscriptSnapshot,
+) (*entity.TranscriptSnapshot, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := fmt.Sprintf("%d:%s", snapshot.RunID, snapshot.IdempotencyKey)
+	if existing := r.transcriptSnapshots[key]; existing != nil {
+		cloned := *existing
+		return &cloned, false, nil
+	}
+	cloned := *snapshot
+	r.transcriptSnapshots[key] = &cloned
+	return snapshot, true, nil
+}
+
+func (r *memoryRepo) GetTranscriptSnapshot(
+	ctx context.Context,
+	snapshotID int64,
+) (*entity.TranscriptSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, snapshot := range r.transcriptSnapshots {
+		if snapshot.ID == snapshotID {
+			cloned := *snapshot
+			return &cloned, nil
+		}
+	}
+	return nil, fmt.Errorf("transcript snapshot %d not found", snapshotID)
+}
+
+func (r *memoryRepo) CreateOrGetMemoryFlushJob(
+	ctx context.Context,
+	job *entity.MemoryFlushJob,
+) (*entity.MemoryFlushJob, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := fmt.Sprintf("%d:%s", job.RunID, job.IdempotencyKey)
+	if existing := r.memoryFlushJobs[key]; existing != nil {
+		cloned := *existing
+		return &cloned, false, nil
+	}
+	cloned := *job
+	r.memoryFlushJobs[key] = &cloned
+	return job, true, nil
+}
+
+func (r *memoryRepo) ClaimMemoryFlushJobs(
+	ctx context.Context,
+	req repository.ClaimMemoryFlushJobsRequest,
+) ([]*entity.MemoryFlushJob, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastClaimMemoryFlushReq = req
+	jobs := make([]*entity.MemoryFlushJob, 0, len(r.claimedMemoryFlushJobs))
+	for _, job := range r.claimedMemoryFlushJobs {
+		jobs = append(jobs, cloneMemoryFlushJob(job))
+	}
+	return jobs, nil
+}
+
+func (r *memoryRepo) CompleteMemoryFlushJob(
+	ctx context.Context,
+	req repository.CompleteMemoryFlushJobRequest,
+) (*entity.MemoryFlushJob, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastCompleteMemoryFlushReq = req
+	return cloneMemoryFlushJob(r.completedMemoryFlushJob), r.memoryFlushUpdated, nil
+}
+
+func (r *memoryRepo) RetryMemoryFlushJob(
+	ctx context.Context,
+	req repository.RetryMemoryFlushJobRequest,
+) (*entity.MemoryFlushJob, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRetryMemoryFlushReq = req
+	return cloneMemoryFlushJob(r.retriedMemoryFlushJob), r.memoryFlushUpdated, nil
+}
+
+func (r *memoryRepo) FailMemoryFlushJob(
+	ctx context.Context,
+	req repository.FailMemoryFlushJobRequest,
+) (*entity.MemoryFlushJob, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastFailMemoryFlushReq = req
+	return cloneMemoryFlushJob(r.failedMemoryFlushJob), r.memoryFlushUpdated, nil
 }
 
 func (r *memoryRepo) CreateTokenUsage(ctx context.Context, usage *entity.TokenUsage) error {
@@ -1181,7 +2172,10 @@ func (r *memoryRepo) ListTokenUsage(ctx context.Context, req repository.ListToke
 		if req.ThreadID > 0 && usage.ThreadID != req.ThreadID {
 			continue
 		}
-		if req.RunID > 0 && usage.RunID != req.RunID {
+		if len(req.RunIDs) > 0 && !containsInt64(req.RunIDs, usage.RunID) {
+			continue
+		}
+		if len(req.RunIDs) == 0 && req.RunID > 0 && usage.RunID != req.RunID {
 			continue
 		}
 		if req.Source != "" && usage.Source != req.Source {
@@ -1227,7 +2221,10 @@ func (r *memoryRepo) AggregateTokenUsage(ctx context.Context, req repository.Agg
 		if req.ThreadID > 0 && usage.ThreadID != req.ThreadID {
 			continue
 		}
-		if req.RunID > 0 && usage.RunID != req.RunID {
+		if len(req.RunIDs) > 0 && !containsInt64(req.RunIDs, usage.RunID) {
+			continue
+		}
+		if len(req.RunIDs) == 0 && req.RunID > 0 && usage.RunID != req.RunID {
 			continue
 		}
 
@@ -1249,6 +2246,72 @@ func (r *memoryRepo) AggregateTokenUsage(ctx context.Context, req repository.Agg
 	}
 
 	return aggregate, nil
+}
+
+func (r *memoryRepo) AggregateTokenUsageByRun(ctx context.Context, req repository.AggregateTokenUsageRequest) ([]*entity.RunTokenUsageAggregate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	aggregateByRunID := make(map[int64]*entity.TokenUsageAggregate)
+	for _, usage := range r.tokenUsages {
+		if req.ThreadID > 0 && usage.ThreadID != req.ThreadID {
+			continue
+		}
+		if len(req.RunIDs) > 0 && !containsInt64(req.RunIDs, usage.RunID) {
+			continue
+		}
+		if len(req.RunIDs) == 0 && req.RunID > 0 && usage.RunID != req.RunID {
+			continue
+		}
+
+		aggregate := aggregateByRunID[usage.RunID]
+		if aggregate == nil {
+			aggregate = &entity.TokenUsageAggregate{}
+			aggregateByRunID[usage.RunID] = aggregate
+		}
+		aggregate.InputTokens += usage.InputTokens
+		aggregate.OutputTokens += usage.OutputTokens
+		aggregate.TotalTokens += usage.TotalTokens
+		aggregate.CostMicros += usage.CostMicros
+		aggregate.CallCount++
+		switch usage.Source {
+		case entity.TokenUsageSourceLeadAgent:
+			aggregate.LeadAgentTokens += usage.TotalTokens
+		case entity.TokenUsageSourceSubagent:
+			aggregate.SubagentTokens += usage.TotalTokens
+		case entity.TokenUsageSourceMiddleware:
+			aggregate.MiddlewareTokens += usage.TotalTokens
+		case entity.TokenUsageSourceTool:
+			aggregate.ToolTokens += usage.TotalTokens
+		}
+	}
+
+	runIDs := make([]int64, 0, len(aggregateByRunID))
+	for runID := range aggregateByRunID {
+		runIDs = append(runIDs, runID)
+	}
+	sort.Slice(runIDs, func(i, j int) bool {
+		return runIDs[i] < runIDs[j]
+	})
+
+	result := make([]*entity.RunTokenUsageAggregate, 0, len(runIDs))
+	for _, runID := range runIDs {
+		result = append(result, &entity.RunTokenUsageAggregate{
+			RunID:     runID,
+			Aggregate: aggregateByRunID[runID],
+		})
+	}
+
+	return result, nil
+}
+
+func containsInt64(values []int64, target int64) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimPendingRunsRequest) ([]*entity.Run, error) {
@@ -1410,6 +2473,22 @@ func cloneMemory(memory *entity.Memory) *entity.Memory {
 		return nil
 	}
 	cloned := *memory
+	return &cloned
+}
+
+func cloneMemoryAuditEvent(event *entity.MemoryAuditEvent) *entity.MemoryAuditEvent {
+	if event == nil {
+		return nil
+	}
+	cloned := *event
+	return &cloned
+}
+
+func cloneMemoryFlushJob(job *entity.MemoryFlushJob) *entity.MemoryFlushJob {
+	if job == nil {
+		return nil
+	}
+	cloned := *job
 	return &cloned
 }
 

@@ -17,39 +17,47 @@
 import { workbenchTask } from '@coze-studio/api-schema';
 
 import {
+  mapTaskThreadTokenUsageAggregate,
+  type TaskDetailTokenUsage,
+} from './task-detail-token-usage';
+import {
+  fetchTaskThreadSubagentRuns,
+  getSubagentLifecycleByChildRunID,
+  getSubagentTimelineByChildRunID,
+  type TaskDetailSubagentRun,
+} from './task-detail-subagents';
+import {
   getTask,
   getTaskThread,
   getTaskThreadTokenUsage,
+  listTaskThreadArtifacts,
   listTaskEvents,
-  listTaskThreadRunEvents,
   listTaskThreadMessages,
+  listTaskThreadRunEvents,
 } from './service';
+
+export type {
+  TaskDetailSubagentRun,
+  TaskDetailSubagentStatus,
+  TaskDetailSubagentTimelineItem,
+} from './task-detail-subagents';
+export type { TaskDetailTokenUsage } from './task-detail-token-usage';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
+type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
-type TaskThreadTokenUsageAggregate =
-  workbenchTask.TaskThreadTokenUsageAggregate;
 
 export type TaskDetailSource = 'task' | 'thread';
-
-export interface TaskDetailTokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  callCount: number;
-  leadAgentTokens: number;
-  subagentTokens: number;
-  middlewareTokens: number;
-  toolTokens: number;
-}
 
 export interface TaskDetail {
   task?: ChatTask;
   events: TaskEvent[];
+  artifacts?: TaskThreadArtifact[];
   tokenUsage?: TaskDetailTokenUsage;
+  subagentRuns?: TaskDetailSubagentRun[];
 }
 
 const getTaskThreadExecutionType = (thread: TaskThread) =>
@@ -137,29 +145,11 @@ export const mapTaskThreadRunEventToTaskEvent = (
 ): TaskEvent => ({
   id: event.event_id,
   task_id: event.thread_id,
+  run_id: event.run_id,
   event_type: event.event_type,
   payload: event.payload,
   created_at: event.created_at,
 });
-
-const mapTaskThreadTokenUsageAggregate = (
-  aggregate?: TaskThreadTokenUsageAggregate,
-): TaskDetailTokenUsage | undefined => {
-  if (!aggregate || aggregate.total_tokens <= 0) {
-    return undefined;
-  }
-
-  return {
-    inputTokens: aggregate.input_tokens,
-    outputTokens: aggregate.output_tokens,
-    totalTokens: aggregate.total_tokens,
-    callCount: aggregate.call_count,
-    leadAgentTokens: aggregate.lead_agent_tokens,
-    subagentTokens: aggregate.subagent_tokens,
-    middlewareTokens: aggregate.middleware_tokens,
-    toolTokens: aggregate.tool_tokens,
-  };
-};
 
 const fetchLegacyTaskDetail = async (taskId: string): Promise<TaskDetail> => {
   const [taskResponse, eventsResponse] = await Promise.all([
@@ -198,32 +188,47 @@ export const fetchTaskDetail = async ({
     return fetchLegacyTaskDetail(thread.legacy_task_id);
   }
 
-  const [messagesResponse, runEventsResponse, tokenUsageResponse] =
-    await Promise.all([
-      listTaskThreadMessages({
-        thread_id: id,
-        page: 1,
-        page_size: 50,
-      }),
-      listTaskThreadRunEvents({
-        thread_id: id,
-        page: 1,
-        page_size: 100,
-      }),
-      getTaskThreadTokenUsage({
-        thread_id: id,
-        page: 1,
-        page_size: 50,
-      }),
-    ]);
+  const [
+    messagesResponse,
+    runEventsResponse,
+    tokenUsageResponse,
+    artifactsResponse,
+  ] = await Promise.all([
+    listTaskThreadMessages({
+      thread_id: id,
+      page: 1,
+      page_size: 50,
+    }),
+    listTaskThreadRunEvents({
+      thread_id: id,
+      page: 1,
+      page_size: 100,
+    }),
+    getTaskThreadTokenUsage({
+      thread_id: id,
+      page: 1,
+      page_size: 50,
+    }),
+    listTaskThreadArtifacts({
+      thread_id: id,
+      page: 1,
+      page_size: 50,
+    }),
+  ]);
+  const rawRunEvents = runEventsResponse.data?.events ?? [];
+  const subagentRuns = await fetchTaskThreadSubagentRuns(
+    id,
+    getSubagentLifecycleByChildRunID(rawRunEvents),
+    getSubagentTimelineByChildRunID(rawRunEvents),
+  );
 
   return {
     task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
-    events: (runEventsResponse.data?.events ?? []).map(
-      mapTaskThreadRunEventToTaskEvent,
-    ),
+    artifacts: artifactsResponse.data?.artifacts ?? [],
+    events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
     ),
+    subagentRuns,
   };
 };

@@ -226,6 +226,33 @@ struct ExportSkillResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct ListSkillToolCandidatesRequest {
+    1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct SkillToolCandidate {
+    1: required string name
+    2: required string display_name
+    3: required string description
+    4: required string category
+    5: required string visibility
+    6: optional string source
+    7: optional string source_id
+    8: optional string source_name
+}
+
+struct ListSkillToolCandidatesData {
+    1: required list<SkillToolCandidate> tools
+}
+
+struct ListSkillToolCandidatesResponse {
+    1: optional ListSkillToolCandidatesData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 service WorkbenchSkillService {
     SkillResponse CreateSkill(1: UpsertSkillRequest request)(
         api.post="/api/workbench/skills",
@@ -243,8 +270,16 @@ service WorkbenchSkillService {
         api.get="/api/workbench/skills",
         api.category="workbench"
     )
+    ListSkillToolCandidatesResponse ListSkillToolCandidates(1: ListSkillToolCandidatesRequest request)(
+        api.get="/api/workbench/skills/tool_candidates",
+        api.category="workbench"
+    )
     SkillResponse GetSkill(1: GetSkillRequest request)(
         api.get="/api/workbench/skills/:skill_id",
+        api.category="workbench"
+    )
+    SkillResponse DeleteSkill(1: GetSkillRequest request)(
+        api.delete="/api/workbench/skills/:skill_id",
         api.category="workbench"
     )
     ListSkillVersionsResponse ListSkillVersions(1: ListSkillVersionsRequest request)(

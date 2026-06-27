@@ -20,6 +20,9 @@ import { createAPI } from './../../api/config';
 export enum SkillType {
   Script = 1,
   Workflow = 2,
+  DeerSkill = 3,
+  PublicSkill = 4,
+  CustomSkill = 5,
 }
 export interface Skill {
   id: string,
@@ -85,6 +88,84 @@ export interface ListSkillsResponse {
   code: number,
   msg: string,
 }
+export interface SkillVersion {
+  id: string,
+  skill_id: string,
+  version: string,
+  skill_md: string,
+  input_schema: string,
+  output_schema: string,
+  executor: string,
+  permissions: string,
+  created_at: number,
+}
+export interface ListSkillVersionsRequest {
+  skill_id: string,
+}
+export interface ListSkillVersionsData {
+  versions: SkillVersion[],
+}
+export interface ListSkillVersionsResponse {
+  data?: ListSkillVersionsData,
+  code: number,
+  msg: string,
+}
+export interface SkillVersionResponse {
+  data?: SkillVersion,
+  code: number,
+  msg: string,
+}
+export interface SkillResource {
+  id: string,
+  skill_id: string,
+  version_id: string,
+  path: string,
+  content_base64: string,
+  size: number,
+  sha256: string,
+  created_at: number,
+}
+export interface ListSkillVersionResourcesRequest {
+  skill_id: string,
+  version_id: string,
+}
+export interface ListSkillVersionResourcesData {
+  resources: SkillResource[],
+}
+export interface ListSkillVersionResourcesResponse {
+  data?: ListSkillVersionResourcesData,
+  code: number,
+  msg: string,
+}
+export interface UpdateSkillVersionResourceRequest {
+  skill_id: string,
+  version_id: string,
+  path: string,
+  content_base64: string,
+}
+export interface UpdateSkillVersionContentRequest {
+  skill_id: string,
+  version_id: string,
+  skill_md: string,
+}
+export interface ExportSkillVersionRequest {
+  skill_id: string,
+  version_id: string,
+}
+export interface ExportSkillVersionData {
+  file_name: string,
+  content_base64: string,
+  content_type: string,
+}
+export interface ExportSkillVersionResponse {
+  data?: ExportSkillVersionData,
+  code: number,
+  msg: string,
+}
+export interface RollbackSkillVersionRequest {
+  skill_id: string,
+  version_id: string,
+}
 export interface GetSkillRequest {
   skill_id: string
 }
@@ -107,6 +188,27 @@ export interface ExportSkillData {
 }
 export interface ExportSkillResponse {
   data?: ExportSkillData,
+  code: number,
+  msg: string,
+}
+export interface ListSkillToolCandidatesRequest {
+  space_id: string,
+}
+export interface SkillToolCandidate {
+  name: string,
+  display_name: string,
+  description: string,
+  category: string,
+  visibility: string,
+  source?: string,
+  source_id?: string,
+  source_name?: string,
+}
+export interface ListSkillToolCandidatesData {
+  tools: SkillToolCandidate[],
+}
+export interface ListSkillToolCandidatesResponse {
+  data?: ListSkillToolCandidatesData,
   code: number,
   msg: string,
 }
@@ -159,6 +261,18 @@ export const ListSkills = /*#__PURE__*/createAPI<ListSkillsRequest, ListSkillsRe
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });
+export const ListSkillToolCandidates = /*#__PURE__*/createAPI<ListSkillToolCandidatesRequest, ListSkillToolCandidatesResponse>({
+  "url": "/api/workbench/skills/tool_candidates",
+  "method": "GET",
+  "name": "ListSkillToolCandidates",
+  "reqType": "ListSkillToolCandidatesRequest",
+  "reqMapping": {
+    "query": ["space_id"]
+  },
+  "resType": "ListSkillToolCandidatesResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
 export const GetSkill = /*#__PURE__*/createAPI<GetSkillRequest, SkillResponse>({
   "url": "/api/workbench/skills/:skill_id",
   "method": "GET",
@@ -166,6 +280,92 @@ export const GetSkill = /*#__PURE__*/createAPI<GetSkillRequest, SkillResponse>({
   "reqType": "GetSkillRequest",
   "reqMapping": {
     "path": ["skill_id"]
+  },
+  "resType": "SkillResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const DeleteSkill = /*#__PURE__*/createAPI<GetSkillRequest, SkillResponse>({
+  "url": "/api/workbench/skills/:skill_id",
+  "method": "DELETE",
+  "name": "DeleteSkill",
+  "reqType": "GetSkillRequest",
+  "reqMapping": {
+    "path": ["skill_id"]
+  },
+  "resType": "SkillResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const ListSkillVersions = /*#__PURE__*/createAPI<ListSkillVersionsRequest, ListSkillVersionsResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions",
+  "method": "GET",
+  "name": "ListSkillVersions",
+  "reqType": "ListSkillVersionsRequest",
+  "reqMapping": {
+    "path": ["skill_id"]
+  },
+  "resType": "ListSkillVersionsResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const ListSkillVersionResources = /*#__PURE__*/createAPI<ListSkillVersionResourcesRequest, ListSkillVersionResourcesResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions/:version_id/resources",
+  "method": "GET",
+  "name": "ListSkillVersionResources",
+  "reqType": "ListSkillVersionResourcesRequest",
+  "reqMapping": {
+    "path": ["skill_id", "version_id"]
+  },
+  "resType": "ListSkillVersionResourcesResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const UpdateSkillVersionResource = /*#__PURE__*/createAPI<UpdateSkillVersionResourceRequest, SkillVersionResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions/:version_id/resources",
+  "method": "PUT",
+  "name": "UpdateSkillVersionResource",
+  "reqType": "UpdateSkillVersionResourceRequest",
+  "reqMapping": {
+    "path": ["skill_id", "version_id"],
+    "body": ["path", "content_base64"]
+  },
+  "resType": "SkillVersionResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const UpdateSkillVersionContent = /*#__PURE__*/createAPI<UpdateSkillVersionContentRequest, SkillVersionResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions/:version_id/content",
+  "method": "PUT",
+  "name": "UpdateSkillVersionContent",
+  "reqType": "UpdateSkillVersionContentRequest",
+  "reqMapping": {
+    "path": ["skill_id", "version_id"],
+    "body": ["skill_md"]
+  },
+  "resType": "SkillVersionResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const ExportSkillVersion = /*#__PURE__*/createAPI<ExportSkillVersionRequest, ExportSkillVersionResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions/:version_id/export",
+  "method": "GET",
+  "name": "ExportSkillVersion",
+  "reqType": "ExportSkillVersionRequest",
+  "reqMapping": {
+    "path": ["skill_id", "version_id"]
+  },
+  "resType": "ExportSkillVersionResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const RollbackSkillVersion = /*#__PURE__*/createAPI<RollbackSkillVersionRequest, SkillResponse>({
+  "url": "/api/workbench/skills/:skill_id/versions/:version_id/rollback",
+  "method": "POST",
+  "name": "RollbackSkillVersion",
+  "reqType": "RollbackSkillVersionRequest",
+  "reqMapping": {
+    "path": ["skill_id", "version_id"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",

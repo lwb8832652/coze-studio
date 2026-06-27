@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -298,9 +299,13 @@ func langGraphCheckpointResumeReadiness(checkpoint *appagentthread.CheckpointSum
 		return nil
 	}
 
+	metadata := langGraphCheckpointMetadata(checkpoint)
+	if strings.TrimSpace(checkpoint.RuntimeType) == string(appagentthread.RuntimeModeEinoADK) {
+		return langGraphADKCheckpointResumeReadiness(checkpoint, metadata)
+	}
+
 	values := langGraphCheckpointValues(checkpoint.ChannelValues)
 	next := langGraphCheckpointNext(checkpoint.PendingSends, values)
-	metadata := langGraphCheckpointMetadata(checkpoint)
 	status := langGraphStringValue(metadata["status"])
 	errorType := langGraphStringValue(metadata["error_type"])
 	reason := langGraphCheckpointResumeReason(metadata, status, next)
@@ -328,6 +333,68 @@ func langGraphCheckpointResumeReadiness(checkpoint *appagentthread.CheckpointSum
 		),
 		Metadata: metadata,
 	}
+}
+
+func langGraphADKCheckpointResumeReadiness(
+	checkpoint *appagentthread.CheckpointSummary,
+	metadata map[string]any,
+) *langgraphapi.CheckpointResumeReadiness {
+	reason := "interrupts_available"
+	resumable := checkpoint.RuntimeDeletedAt == 0
+	interruptIDs := []string{}
+	envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	if err != nil {
+		reason = "invalid_adk_checkpoint"
+		resumable = false
+	} else {
+		interruptIDs = langGraphADKInterruptIDs(envelope.Interrupts)
+		if len(interruptIDs) == 0 {
+			reason = "no_interrupts"
+			resumable = false
+		}
+	}
+	if checkpoint.RuntimeDeletedAt > 0 {
+		reason = "checkpoint_deleted"
+		resumable = false
+	}
+
+	resumeFrom := ""
+	if resumable {
+		resumeFrom = "interrupt"
+	}
+
+	return &langgraphapi.CheckpointResumeReadiness{
+		ThreadID:     strconv.FormatInt(checkpoint.ThreadID, 10),
+		RunID:        strconv.FormatInt(checkpoint.RunID, 10),
+		CheckpointID: strconv.FormatInt(checkpoint.CheckpointID, 10),
+		CheckpointNS: checkpoint.CheckpointNS,
+		Resumable:    resumable,
+		ResumeFrom:   resumeFrom,
+		Reason:       reason,
+		PendingSends: interruptIDs,
+		Config: langGraphThreadStateConfig(
+			checkpoint.ThreadID,
+			strconv.FormatInt(checkpoint.CheckpointID, 10),
+			checkpoint.CheckpointNS,
+		),
+		Metadata: metadata,
+	}
+}
+
+func langGraphADKInterruptIDs(interrupts map[string]appagentthread.ADKInterruptItem) []string {
+	ids := make([]string, 0, len(interrupts))
+	for key, item := range interrupts {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = strings.TrimSpace(key)
+		}
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+
+	return ids
 }
 
 func langGraphCheckpointResumeReason(metadata map[string]any, status string, pendingSends []string) string {

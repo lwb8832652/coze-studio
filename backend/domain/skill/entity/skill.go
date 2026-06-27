@@ -42,6 +42,7 @@ type Skill struct {
 	Permissions  string
 	CreatedAt    int64
 	UpdatedAt    int64
+	DeletedAt    int64
 }
 
 type SkillVersion struct {

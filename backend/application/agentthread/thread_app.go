@@ -88,9 +88,11 @@ func DomainRunToSummary(run *entity.Run) *RunSummary {
 	return &RunSummary{
 		RunID:             run.ID,
 		ThreadID:          run.ThreadID,
+		ParentRunID:       run.ParentRunID,
 		SpaceID:           run.SpaceID,
 		CreatorID:         run.CreatorID,
 		AssistantID:       run.AssistantID,
+		RunKind:           RunKind(run.RunKind),
 		Status:            RunStatus(run.Status),
 		Command:           run.Command,
 		Input:             run.Input,
@@ -138,6 +140,10 @@ func DomainCheckpointToSummary(checkpoint *entity.Checkpoint) *CheckpointSummary
 		RunID:              checkpoint.RunID,
 		ParentCheckpointID: checkpoint.ParentCheckpointID,
 		CheckpointNS:       checkpoint.CheckpointNS,
+		RuntimeType:        checkpoint.RuntimeType,
+		RuntimeKey:         checkpoint.RuntimeKey,
+		EnvelopeVersion:    checkpoint.EnvelopeVersion,
+		RuntimeDeletedAt:   checkpoint.RuntimeDeletedAt,
 		ChannelValues:      checkpoint.ChannelValues,
 		ChannelVersions:    checkpoint.ChannelVersions,
 		PendingSends:       checkpoint.PendingSends,
@@ -152,17 +158,171 @@ func DomainMemoryToSummary(memory *entity.Memory) *MemorySummary {
 	}
 
 	return &MemorySummary{
-		MemoryID:  memory.ID,
-		ThreadID:  memory.ThreadID,
-		RunID:     memory.RunID,
-		SpaceID:   memory.SpaceID,
-		Scope:     MemoryScope(memory.Scope),
-		Content:   memory.Content,
-		Metadata:  memory.Metadata,
-		Score:     memory.Score,
-		ExpiresAt: memory.ExpiresAt,
-		CreatedAt: memory.CreatedAt,
-		UpdatedAt: memory.UpdatedAt,
+		MemoryID:             memory.ID,
+		ThreadID:             memory.ThreadID,
+		RunID:                memory.RunID,
+		SpaceID:              memory.SpaceID,
+		Scope:                MemoryScope(memory.Scope),
+		Content:              memory.Content,
+		Metadata:             memory.Metadata,
+		Score:                memory.Score,
+		Confidence:           memory.Confidence,
+		SourceType:           memory.SourceType,
+		SourceID:             memory.SourceID,
+		CorrectionOfMemoryID: memory.CorrectionOfMemoryID,
+		CorrectedAt:          memory.CorrectedAt,
+		ExpiresAt:            memory.ExpiresAt,
+		CreatedAt:            memory.CreatedAt,
+		UpdatedAt:            memory.UpdatedAt,
+		DeletedAt:            memory.DeletedAt,
+	}
+}
+
+func DomainMemoryAuditEventToSummary(event *entity.MemoryAuditEvent) *MemoryAuditEventSummary {
+	if event == nil {
+		return nil
+	}
+
+	return &MemoryAuditEventSummary{
+		EventID:       event.ID,
+		ThreadID:      event.ThreadID,
+		RunID:         event.RunID,
+		SpaceID:       event.SpaceID,
+		MemoryID:      event.MemoryID,
+		ActorID:       event.ActorID,
+		EventType:     event.EventType,
+		Scope:         MemoryScope(event.Scope),
+		SourceType:    event.SourceType,
+		SourceID:      event.SourceID,
+		AffectedCount: event.AffectedCount,
+		CreatedAt:     event.CreatedAt,
+	}
+}
+
+func DomainGuardrailAuditEventToSummary(
+	event *entity.GuardrailAuditEvent,
+) *GuardrailAuditEventSummary {
+	if event == nil {
+		return nil
+	}
+
+	return &GuardrailAuditEventSummary{
+		EventID:    event.ID,
+		ThreadID:   event.ThreadID,
+		RunID:      event.RunID,
+		SpaceID:    event.SpaceID,
+		ActorID:    event.ActorID,
+		EventType:  event.EventType,
+		TargetType: event.TargetType,
+		TargetID:   event.TargetID,
+		Operation:  event.Operation,
+		Source:     event.Source,
+		Action:     event.Action,
+		FailMode:   event.FailMode,
+		Provider:   event.Provider,
+		ReasonCode: event.ReasonCode,
+		RuleIDs:    event.RuleIDs,
+		CreatedAt:  event.CreatedAt,
+	}
+}
+
+func DomainTranscriptSnapshotToSummary(
+	snapshot *entity.TranscriptSnapshot,
+) *TranscriptSnapshotSummary {
+	if snapshot == nil {
+		return nil
+	}
+	return &TranscriptSnapshotSummary{
+		SnapshotID:     snapshot.ID,
+		ThreadID:       snapshot.ThreadID,
+		RunID:          snapshot.RunID,
+		SpaceID:        snapshot.SpaceID,
+		Kind:           TranscriptKind(snapshot.Kind),
+		Digest:         snapshot.Digest,
+		IdempotencyKey: snapshot.IdempotencyKey,
+		MessageCount:   snapshot.MessageCount,
+		Messages:       snapshot.Messages,
+		Metadata:       snapshot.Metadata,
+		CreatedAt:      snapshot.CreatedAt,
+	}
+}
+
+func DomainMemoryFlushJobToSummary(
+	job *entity.MemoryFlushJob,
+) *MemoryFlushJobSummary {
+	if job == nil {
+		return nil
+	}
+	return &MemoryFlushJobSummary{
+		JobID:                job.ID,
+		ThreadID:             job.ThreadID,
+		RunID:                job.RunID,
+		SpaceID:              job.SpaceID,
+		UserID:               job.UserID,
+		AssistantID:          job.AssistantID,
+		TranscriptSnapshotID: job.TranscriptSnapshotID,
+		IdempotencyKey:       job.IdempotencyKey,
+		Status:               string(job.Status),
+		AttemptCount:         job.AttemptCount,
+		WorkerID:             job.WorkerID,
+		LastError:            job.LastError,
+		AvailableAt:          job.AvailableAt,
+		LeaseExpiresAt:       job.LeaseExpiresAt,
+		StartedAt:            job.StartedAt,
+		EndedAt:              job.EndedAt,
+		CreatedAt:            job.CreatedAt,
+		UpdatedAt:            job.UpdatedAt,
+	}
+}
+
+func DomainArtifactToSummary(artifact *entity.AgentArtifact) *ArtifactSummary {
+	if artifact == nil {
+		return nil
+	}
+	return &ArtifactSummary{
+		ArtifactID:   artifact.ID,
+		SpaceID:      artifact.SpaceID,
+		ThreadID:     artifact.ThreadID,
+		RunID:        artifact.RunID,
+		FileID:       artifact.FileID,
+		Title:        artifact.Title,
+		ArtifactType: artifact.ArtifactType,
+		VirtualPath:  artifact.VirtualPath,
+		ContentType:  artifact.ContentType,
+		SizeBytes:    artifact.SizeBytes,
+		PreviewMode:  ArtifactPreviewMode(artifact.PreviewMode),
+		Metadata:     artifact.Metadata,
+		CreatedAt:    artifact.CreatedAt,
+		UpdatedAt:    artifact.UpdatedAt,
+		DeletedAt:    artifact.DeletedAt,
+	}
+}
+
+func DomainArtifactScanJobToSummary(
+	job *entity.ArtifactScanJob,
+) *ArtifactScanJobSummary {
+	if job == nil {
+		return nil
+	}
+	return &ArtifactScanJobSummary{
+		JobID:          job.ID,
+		ThreadID:       job.ThreadID,
+		RunID:          job.RunID,
+		SpaceID:        job.SpaceID,
+		UserID:         job.UserID,
+		ArtifactID:     job.ArtifactID,
+		FileID:         job.FileID,
+		Scanner:        job.Scanner,
+		Status:         ArtifactScanJobStatus(job.Status),
+		WorkerID:       job.WorkerID,
+		AttemptCount:   job.AttemptCount,
+		LastError:      job.LastError,
+		AvailableAt:    job.AvailableAt,
+		LeaseExpiresAt: job.LeaseExpiresAt,
+		StartedAt:      job.StartedAt,
+		EndedAt:        job.EndedAt,
+		CreatedAt:      job.CreatedAt,
+		UpdatedAt:      job.UpdatedAt,
 	}
 }
 
@@ -209,6 +369,17 @@ func DomainTokenUsageAggregateToSummary(aggregate *entity.TokenUsageAggregate) *
 		SubagentTokens:   aggregate.SubagentTokens,
 		MiddlewareTokens: aggregate.MiddlewareTokens,
 		ToolTokens:       aggregate.ToolTokens,
+	}
+}
+
+func DomainRunTokenUsageAggregateToSummary(aggregate *entity.RunTokenUsageAggregate) *RunTokenUsageAggregateSummary {
+	if aggregate == nil {
+		return nil
+	}
+
+	return &RunTokenUsageAggregateSummary{
+		RunID:     aggregate.RunID,
+		Aggregate: DomainTokenUsageAggregateToSummary(aggregate.Aggregate),
 	}
 }
 

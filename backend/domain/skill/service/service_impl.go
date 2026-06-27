@@ -129,6 +129,27 @@ func (s *skillService) Update(ctx context.Context, skill *entity.Skill) (*entity
 	return skill, nil
 }
 
+func (s *skillService) Delete(ctx context.Context, id int64) (*entity.Skill, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if id <= 0 {
+		return nil, InvalidArgumentErrorf("skill id is required")
+	}
+	skill, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.components.Repo.Delete(ctx, id); err != nil {
+		return nil, err
+	}
+	deleted := *skill
+	deleted.Enabled = false
+	deleted.DeletedAt = time.Now().UnixMilli()
+
+	return &deleted, nil
+}
+
 func (s *skillService) Get(ctx context.Context, id int64) (*entity.Skill, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
@@ -160,6 +181,9 @@ func (s *skillService) ListVersions(ctx context.Context, skillID int64) ([]*enti
 	if skillID <= 0 {
 		return nil, InvalidArgumentErrorf("skill id is required")
 	}
+	if _, err := s.Get(ctx, skillID); err != nil {
+		return nil, err
+	}
 
 	return s.components.Repo.ListVersions(ctx, skillID)
 }
@@ -173,6 +197,9 @@ func (s *skillService) ListVersionResources(ctx context.Context, skillID, versio
 	}
 	if versionID <= 0 {
 		return nil, InvalidArgumentErrorf("version id is required")
+	}
+	if _, err := s.Get(ctx, skillID); err != nil {
+		return nil, err
 	}
 
 	return s.components.Repo.ListResources(ctx, skillID, versionID)

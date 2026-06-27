@@ -258,11 +258,19 @@ func (t *tosClient) GetObjectUrl(ctx context.Context, objectKey string, opts ...
 		expire = opt.Expire
 	}
 
+	query := make(map[string]string)
+	if opt.ResponseContentDisposition != "" {
+		query["response-content-disposition"] = opt.ResponseContentDisposition
+	}
+	if opt.ResponseContentType != "" {
+		query["response-content-type"] = opt.ResponseContentType
+	}
 	output, err := client.PreSignedURL(&tos.PreSignedURLInput{
 		HTTPMethod: enum.HttpMethodGet,
 		Expires:    expire,
 		Bucket:     bucketName,
 		Key:        objectKey,
+		Query:      query,
 	})
 	if err != nil {
 		return "", err

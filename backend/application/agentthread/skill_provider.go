@@ -132,6 +132,9 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 			Description: decl.Description,
 			Type:        decl.Type,
 			Version:     decl.Version,
+			Context:     decl.Context,
+			Agent:       decl.Agent,
+			Model:       decl.Model,
 			Body:        body,
 		})
 	}

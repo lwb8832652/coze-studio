@@ -24,6 +24,9 @@ import (
 type AgentCheckpoint struct {
 	ParentCheckpointID int64
 	CheckpointNS       string
+	RuntimeType        string
+	RuntimeKey         string
+	EnvelopeVersion    int32
 	ChannelValues      string
 	ChannelVersions    string
 	PendingSends       string
@@ -58,6 +61,9 @@ func (s *ThreadCheckpointSink) SaveCheckpoint(ctx context.Context, run *RunSumma
 		RunID:              run.RunID,
 		ParentCheckpointID: checkpoint.ParentCheckpointID,
 		CheckpointNS:       checkpoint.CheckpointNS,
+		RuntimeType:        checkpoint.RuntimeType,
+		RuntimeKey:         checkpoint.RuntimeKey,
+		EnvelopeVersion:    checkpoint.EnvelopeVersion,
 		ChannelValues:      checkpoint.ChannelValues,
 		ChannelVersions:    checkpoint.ChannelVersions,
 		PendingSends:       checkpoint.PendingSends,

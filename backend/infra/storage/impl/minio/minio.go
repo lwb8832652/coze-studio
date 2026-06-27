@@ -229,6 +229,15 @@ func (m *minioClient) GetObjectUrl(ctx context.Context, objectKey string, opts .
 	}
 
 	reqParams := make(url.Values)
+	if option.ResponseContentDisposition != "" {
+		reqParams.Set(
+			"response-content-disposition",
+			option.ResponseContentDisposition,
+		)
+	}
+	if option.ResponseContentType != "" {
+		reqParams.Set("response-content-type", option.ResponseContentType)
+	}
 	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucketName, objectKey, time.Duration(option.Expire)*time.Second, reqParams)
 	if err != nil {
 		return "", fmt.Errorf("GetObjectUrl failed: %v", err)

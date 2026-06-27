@@ -37,13 +37,31 @@ const (
 type RunStatus string
 
 const (
-	RunStatusPending   RunStatus = "pending"
-	RunStatusQueued    RunStatus = "queued"
-	RunStatusRunning   RunStatus = "running"
-	RunStatusSucceeded RunStatus = "succeeded"
-	RunStatusFailed    RunStatus = "failed"
-	RunStatusCanceled  RunStatus = "canceled"
+	RunStatusPending     RunStatus = "pending"
+	RunStatusQueued      RunStatus = "queued"
+	RunStatusRunning     RunStatus = "running"
+	RunStatusInterrupted RunStatus = "interrupted"
+	RunStatusSucceeded   RunStatus = "succeeded"
+	RunStatusFailed      RunStatus = "failed"
+	RunStatusCanceled    RunStatus = "canceled"
 )
+
+type RunKind string
+
+const (
+	RunKindTask     RunKind = "task"
+	RunKindSubagent RunKind = "subagent"
+)
+
+func DefaultRunKind(kind RunKind, parentRunID int64) RunKind {
+	if kind != "" {
+		return kind
+	}
+	if parentRunID > 0 {
+		return RunKindSubagent
+	}
+	return RunKindTask
+}
 
 type MessageRole string
 
@@ -60,6 +78,22 @@ const (
 	MemoryScopeThread   MemoryScope = "thread"
 	MemoryScopeRun      MemoryScope = "run"
 	MemoryScopeLongTerm MemoryScope = "long_term"
+)
+
+type TranscriptKind string
+
+const (
+	TranscriptKindSummaryInput TranscriptKind = "summary_input"
+	TranscriptKindTerminal     TranscriptKind = "terminal"
+)
+
+type MemoryFlushJobStatus string
+
+const (
+	MemoryFlushJobStatusPending    MemoryFlushJobStatus = "pending"
+	MemoryFlushJobStatusProcessing MemoryFlushJobStatus = "processing"
+	MemoryFlushJobStatusSucceeded  MemoryFlushJobStatus = "succeeded"
+	MemoryFlushJobStatusFailed     MemoryFlushJobStatus = "failed"
 )
 
 type TokenUsageSource string
@@ -89,9 +123,11 @@ type Thread struct {
 type Run struct {
 	ID                int64
 	ThreadID          int64
+	ParentRunID       int64
 	SpaceID           int64
 	CreatorID         int64
 	AssistantID       string
+	RunKind           RunKind
 	Status            RunStatus
 	Command           string
 	Input             string
@@ -137,6 +173,10 @@ type Checkpoint struct {
 	RunID              int64
 	ParentCheckpointID int64
 	CheckpointNS       string
+	RuntimeType        string
+	RuntimeKey         string
+	EnvelopeVersion    int32
+	RuntimeDeletedAt   int64
 	ChannelValues      string
 	ChannelVersions    string
 	PendingSends       string
@@ -145,17 +185,73 @@ type Checkpoint struct {
 }
 
 type Memory struct {
-	ID        int64
-	ThreadID  int64
-	RunID     int64
-	SpaceID   int64
-	Scope     MemoryScope
-	Content   string
-	Metadata  string
-	Score     float64
-	ExpiresAt int64
-	CreatedAt int64
-	UpdatedAt int64
+	ID                   int64
+	ThreadID             int64
+	RunID                int64
+	SpaceID              int64
+	Scope                MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+	CreatedAt            int64
+	UpdatedAt            int64
+	DeletedAt            int64
+}
+
+type MemoryAuditEvent struct {
+	ID            int64
+	ThreadID      int64
+	RunID         int64
+	SpaceID       int64
+	MemoryID      int64
+	ActorID       int64
+	EventType     string
+	Scope         MemoryScope
+	SourceType    string
+	SourceID      string
+	AffectedCount int64
+	CreatedAt     int64
+}
+
+type TranscriptSnapshot struct {
+	ID             int64
+	ThreadID       int64
+	RunID          int64
+	SpaceID        int64
+	Kind           TranscriptKind
+	Digest         string
+	IdempotencyKey string
+	MessageCount   int32
+	Messages       string
+	Metadata       string
+	CreatedAt      int64
+}
+
+type MemoryFlushJob struct {
+	ID                   int64
+	ThreadID             int64
+	RunID                int64
+	SpaceID              int64
+	UserID               int64
+	AssistantID          string
+	TranscriptSnapshotID int64
+	IdempotencyKey       string
+	Status               MemoryFlushJobStatus
+	AttemptCount         int32
+	WorkerID             string
+	LastError            string
+	AvailableAt          int64
+	LeaseExpiresAt       int64
+	StartedAt            int64
+	EndedAt              int64
+	CreatedAt            int64
+	UpdatedAt            int64
 }
 
 type TokenUsage struct {
@@ -190,4 +286,9 @@ type TokenUsageAggregate struct {
 	SubagentTokens   int64
 	MiddlewareTokens int64
 	ToolTokens       int64
+}
+
+type RunTokenUsageAggregate struct {
+	RunID     int64
+	Aggregate *TokenUsageAggregate
 }

@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"testing"
 
@@ -34,6 +35,31 @@ import (
 func TestIsClientErrorWrapsDomainClassification(t *testing.T) {
 	require.True(t, IsClientError(domain.InvalidArgumentErrorf("bad request")))
 	require.False(t, IsClientError(nil))
+}
+
+func TestDecodeSkillImportContentDecodesSkillArchiveEnvelope(t *testing.T) {
+	content, err := decodeSkillImportContent(
+		"weekly.skill",
+		"base64:"+base64.StdEncoding.EncodeToString([]byte("PK archive")),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, []byte("PK archive"), content)
+}
+
+func TestDecodeSkillImportContentKeepsTextDeclarations(t *testing.T) {
+	content, err := decodeSkillImportContent("SKILL.md", "# Weekly Report")
+
+	require.NoError(t, err)
+	require.Equal(t, []byte("# Weekly Report"), content)
+}
+
+func TestDecodeSkillImportContentRejectsRawSkillArchive(t *testing.T) {
+	_, err := decodeSkillImportContent("weekly.skill", "PK archive")
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "base64 encoding")
 }
 
 func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
@@ -204,6 +230,152 @@ func TestApplicationRollbackSkillVersionRestoresSkill(t *testing.T) {
 	require.Equal(t, "1.0.0", resp.Data.Version)
 }
 
+func TestApplicationDeleteSkillCallsDomainSoftDelete(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		deleted: &entity.Skill{
+			ID:           101,
+			SpaceID:      1,
+			Name:         "weekly-research",
+			Description:  "Research weekly market changes.",
+			Type:         entity.TypeCustomSkill,
+			Version:      "1.0.0",
+			Enabled:      false,
+			InputSchema:  `{}`,
+			OutputSchema: `{}`,
+			Executor:     `{}`,
+			Permissions:  `{}`,
+			CreatedAt:    1000,
+			UpdatedAt:    2000,
+			DeletedAt:    3000,
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.DeleteSkill(context.Background(), &skillapi.GetSkillRequest{
+		SkillID: 101,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(101), domainSVC.deletedSkillID)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Equal(t, int64(101), resp.Data.ID)
+	require.Equal(t, "weekly-research", resp.Data.Name)
+	require.False(t, resp.Data.Enabled)
+}
+
+func TestApplicationListSkillToolCandidatesReturnsRuntimeGrantOptions(t *testing.T) {
+	app := &ApplicationService{
+		ToolCandidateProvider: ToolCandidateProviderFunc(
+			func(_ context.Context, spaceID int64) ([]*skillapi.SkillToolCandidate, error) {
+				require.Equal(t, int64(1), spaceID)
+
+				return []*skillapi.SkillToolCandidate{
+					{
+						Name:        "mcp_100_search_docs",
+						DisplayName: "Search docs",
+						Description: "Search internal documentation through an approved MCP server.",
+						Category:    "mcp",
+						Visibility:  "static",
+						Source:      "mcp",
+						SourceID:    "100",
+						SourceName:  "docs-mcp",
+					},
+					{
+						Name:        "web_fetch",
+						DisplayName: "Duplicate web fetch",
+						Description: "This duplicate must not replace the builtin grant.",
+						Category:    "mcp",
+						Visibility:  "static",
+						Source:      "mcp",
+						SourceID:    "101",
+						SourceName:  "duplicate-mcp",
+					},
+					{
+						Name:        "9unsafe",
+						DisplayName: "Unsafe",
+						Description: "Unsafe tool names are filtered before they reach the UI.",
+					},
+					{
+						Name:        "mcp_102_empty_description",
+						DisplayName: "Empty description",
+						Description: "",
+					},
+				}, nil
+			},
+		),
+	}
+
+	resp, err := app.ListSkillToolCandidates(context.Background(), &skillapi.ListSkillToolCandidatesRequest{
+		SpaceID: 1,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(0), resp.Code)
+	require.Equal(t, "success", resp.Msg)
+	require.Len(t, resp.Data.Tools, 5)
+	require.Equal(t, []*skillapi.SkillToolCandidate{
+		{
+			Name:        "web_fetch",
+			DisplayName: "Web fetch",
+			Description: "Fetch bounded text content from an explicitly allowed web host.",
+			Category:    "web",
+			Visibility:  "static",
+			Source:      "builtin",
+		},
+		{
+			Name:        "web_search",
+			DisplayName: "Web search",
+			Description: "Search the web using a Coze-approved search backend.",
+			Category:    "web",
+			Visibility:  "static",
+			Source:      "builtin",
+		},
+		{
+			Name:        "ask_user_clarification",
+			DisplayName: "Ask user clarification",
+			Description: "Ask the user for missing information required to continue the task.",
+			Category:    "human_interaction",
+			Visibility:  "static",
+			Source:      "builtin",
+		},
+		{
+			Name:        "request_human_confirmation",
+			DisplayName: "Request human confirmation",
+			Description: "Ask the user to approve or reject a sensitive action before continuing.",
+			Category:    "human_interaction",
+			Visibility:  "static",
+			Source:      "builtin",
+		},
+		{
+			Name:        "mcp_100_search_docs",
+			DisplayName: "Search docs",
+			Description: "Search internal documentation through an approved MCP server.",
+			Category:    "mcp",
+			Visibility:  "static",
+			Source:      "mcp",
+			SourceID:    "100",
+			SourceName:  "docs-mcp",
+		},
+	}, resp.Data.Tools)
+}
+
+func TestApplicationListSkillToolCandidatesReturnsProviderErrors(t *testing.T) {
+	app := &ApplicationService{
+		ToolCandidateProvider: ToolCandidateProviderFunc(
+			func(context.Context, int64) ([]*skillapi.SkillToolCandidate, error) {
+				return nil, fmt.Errorf("tool registry unavailable")
+			},
+		),
+	}
+
+	_, err := app.ListSkillToolCandidates(context.Background(), &skillapi.ListSkillToolCandidatesRequest{
+		SpaceID: 1,
+	})
+
+	require.ErrorContains(t, err, "tool registry unavailable")
+}
+
 func TestApplicationUpdateSkillVersionResourceReturnsNewVersion(t *testing.T) {
 	domainSVC := &recordingSkillDomainService{
 		updatedResourceVersion: &entity.SkillVersion{
@@ -296,6 +468,7 @@ type recordingSkillDomainService struct {
 	rolledBack               *entity.Skill
 	updatedResourceVersion   *entity.SkillVersion
 	updatedContentVersion    *entity.SkillVersion
+	deleted                  *entity.Skill
 	listVersionsSkillID      int64
 	listResourcesSkillID     int64
 	listResourcesVersionID   int64
@@ -308,6 +481,7 @@ type recordingSkillDomainService struct {
 	updatedContentSkillID    int64
 	updatedContentVersionID  int64
 	updatedSkillMD           string
+	deletedSkillID           int64
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -325,6 +499,11 @@ func (s *recordingSkillDomainService) RollbackVersion(ctx context.Context, skill
 	s.rollbackSkillID = skillID
 	s.rollbackVersionID = versionID
 	return s.rolledBack, nil
+}
+
+func (s *recordingSkillDomainService) Delete(ctx context.Context, skillID int64) (*entity.Skill, error) {
+	s.deletedSkillID = skillID
+	return s.deleted, nil
 }
 
 func (s *recordingSkillDomainService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, path string, content []byte) (*entity.SkillVersion, error) {

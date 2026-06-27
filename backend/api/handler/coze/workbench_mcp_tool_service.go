@@ -62,6 +62,24 @@ func ListMCPToolServers(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// ListMCPToolRegistryEntries .
+// @router /api/workbench/mcp_tools/registry_entries [GET]
+func ListMCPToolRegistryEntries(ctx context.Context, c *app.RequestContext) {
+	var req toolapi.ListMCPToolRegistryEntriesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appmcptool.SVC.ListRegistryEntries(ctx, &req)
+	if err != nil {
+		workbenchMCPToolErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
 // GetMCPToolServer .
 // @router /api/workbench/mcp_tools/:server_id [GET]
 func GetMCPToolServer(ctx context.Context, c *app.RequestContext) {
@@ -72,6 +90,24 @@ func GetMCPToolServer(ctx context.Context, c *app.RequestContext) {
 	}
 
 	resp, err := appmcptool.SVC.GetServer(ctx, &req)
+	if err != nil {
+		workbenchMCPToolErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// DeleteMCPToolServer .
+// @router /api/workbench/mcp_tools/:server_id [DELETE]
+func DeleteMCPToolServer(ctx context.Context, c *app.RequestContext) {
+	var req toolapi.GetMCPToolServerRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appmcptool.SVC.DeleteServer(ctx, &req)
 	if err != nil {
 		workbenchMCPToolErrorResponse(ctx, c, err)
 		return

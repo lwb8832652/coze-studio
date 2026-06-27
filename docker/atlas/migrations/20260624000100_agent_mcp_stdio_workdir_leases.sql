@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS `agent_mcp_stdio_workdir_leases` (
+  `id` BIGINT NOT NULL,
+  `space_id` BIGINT NOT NULL,
+  `thread_id` BIGINT NOT NULL,
+  `run_id` BIGINT NOT NULL,
+  `server_id` BIGINT NOT NULL,
+  `runtime_tool_name` VARCHAR(128) NOT NULL,
+  `workdir` VARCHAR(1024) NOT NULL,
+  `status` VARCHAR(32) NOT NULL,
+  `worker_id` VARCHAR(128) NOT NULL DEFAULT '',
+  `lease_expires_at` BIGINT NOT NULL DEFAULT 0,
+  `released_at` BIGINT NOT NULL DEFAULT 0,
+  `last_error` TEXT NOT NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_space_status` (`space_id`, `status`, `updated_at`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_status_expires` (`status`, `lease_expires_at`, `created_at`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_thread_created` (`thread_id`, `created_at`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_run_created` (`run_id`, `created_at`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_server` (`server_id`),
+  KEY `idx_agent_mcp_stdio_workdir_leases_worker_status` (`worker_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

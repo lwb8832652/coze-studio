@@ -242,6 +242,39 @@ const getToolEventDisplay = ({
   return undefined;
 };
 
+const getPlanEventDisplay = (
+  eventType?: string,
+  payload?: Record<string, unknown>,
+): TaskEventDisplay | undefined => {
+  if (!eventType?.startsWith('plan.task.')) {
+    return undefined;
+  }
+
+  const subject = getString(payload, 'subject') ?? '未命名计划项';
+  const status = normalizeExecutionStatus(getString(payload, 'status'));
+  const activeForm = getString(payload, 'active_form');
+  const owner = getString(payload, 'owner');
+  const detail = [activeForm, owner ? `负责人：${owner}` : undefined]
+    .filter(Boolean)
+    .join(' · ');
+  const titleMap: Record<string, string> = {
+    'plan.task.created': `计划：${subject}`,
+    'plan.task.updated':
+      status === 'running' ? `执行计划：${subject}` : `更新计划：${subject}`,
+    'plan.task.completed': `完成计划：${subject}`,
+    'plan.task.deleted': `移除计划：${subject}`,
+  };
+
+  return {
+    title: titleMap[eventType] ?? `计划：${subject}`,
+    detail,
+    status: eventType === 'plan.task.deleted' ? 'neutral' : status,
+    runtime: 'Agent',
+    structured: true,
+    kind: 'step',
+  };
+};
+
 export const getTaskInputText = (input?: string) => getPayloadText(input);
 
 export const parseTaskResultPayload = (result?: string): TaskResultPayload => {
@@ -330,6 +363,12 @@ export const getTaskEventDisplay = (
 
   if (toolDisplay) {
     return toolDisplay;
+  }
+
+  const planDisplay = getPlanEventDisplay(eventType, parsed);
+
+  if (planDisplay) {
+    return planDisplay;
   }
 
   if (eventType?.startsWith('run.')) {

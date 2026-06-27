@@ -19,6 +19,7 @@ package agentthread
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -225,21 +226,313 @@ func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"error_message":"model failed"`)
 }
 
+func TestRunProcessorFailsSubagentRetryCommandBeforeExecutorSupport(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{"messages":[]}`,
+				Command:  `{"subagent_retry":{"schema":"coze.subagent_retry.v1","source_run_id":20,"parent_run_id":10}}`,
+				WorkerID: "worker-a",
+			},
+		},
+		failedRun: &entity.Run{
+			ID:           200,
+			ThreadID:     10,
+			Status:       entity.RunStatusFailed,
+			WorkerID:     "worker-a",
+			ErrorCode:    "subagent_retry_not_supported",
+			ErrorMessage: "subagent retry executor is not implemented",
+			EndedAt:      400,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	executed := false
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		executed = true
+
+		return &RunExecutionResult{Message: "should not execute"}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.False(t, executed)
+	require.Nil(t, domainSVC.appendReq)
+	require.Nil(t, domainSVC.completeRunReq)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Equal(t, int64(200), domainSVC.failRunReq.RunID)
+	require.Equal(t, entity.RunStatusRunning, domainSVC.failRunReq.From)
+	require.Equal(t, "worker-a", domainSVC.failRunReq.WorkerID)
+	require.Equal(t, "subagent_retry_not_supported", domainSVC.failRunReq.ErrorCode)
+	require.Equal(t, "subagent retry executor is not implemented", domainSVC.failRunReq.ErrorMessage)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		FailedRuns:    1,
+	}, result)
+	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"status":"failed"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_code":"subagent_retry_not_supported"`)
+	require.Contains(t, eventSink.events[1].Payload, `"error_message":"subagent retry executor is not implemented"`)
+	require.NotContains(t, eventSink.events[1].Payload, "source_run_id")
+	require.NotContains(t, eventSink.events[1].Payload, "parent_run_id")
+}
+
+func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{"messages":[]}`,
+				Command:  `{"subagent_retry":{"schema":"coze.subagent_retry.v1","source_run_id":20,"parent_run_id":10}}`,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "子智能体重试已完成",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	executor := &recordingSubagentRetryRunExecutor{
+		retryResult: &RunExecutionResult{
+			Message:  "子智能体重试已完成",
+			Metadata: `{"source":"subagent_retry_replay"}`,
+		},
+	}
+	processor := NewRunProcessor(app, executor, RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.False(t, executor.executeCalled)
+	require.True(t, executor.retryExecuteCalled)
+	require.Equal(t, int64(200), executor.retryRun.RunID)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Equal(t, int64(200), domainSVC.appendReq.RunID)
+	require.Equal(t, "子智能体重试已完成", domainSVC.appendReq.Content)
+	require.Equal(t, `{"source":"subagent_retry_replay"}`, domainSVC.appendReq.Metadata)
+	require.NotNil(t, domainSVC.completeRunReq)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		SucceededRuns: 1,
+	}, result)
+	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+}
+
+func TestRunProcessorMapsUnsupportedSubagentRetryExecutorToFixedFailure(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    `{"messages":[]}`,
+				Command:  `{"subagent_retry":{"schema":"coze.subagent_retry.v1","source_run_id":20,"parent_run_id":10}}`,
+				WorkerID: "worker-a",
+			},
+		},
+		failedRun: &entity.Run{
+			ID:           200,
+			ThreadID:     10,
+			Status:       entity.RunStatusFailed,
+			WorkerID:     "worker-a",
+			ErrorCode:    "subagent_retry_not_supported",
+			ErrorMessage: "subagent retry executor is not implemented",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, unsupportedSubagentRetryRunExecutor{}, RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Equal(t, "subagent_retry_not_supported", domainSVC.failRunReq.ErrorCode)
+	require.Equal(t, "subagent retry executor is not implemented", domainSVC.failRunReq.ErrorMessage)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   1,
+		ProcessedRuns: 1,
+		FailedRuns:    1,
+	}, result)
+	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"error_code":"subagent_retry_not_supported"`)
+	require.NotContains(t, eventSink.events[1].Payload, "executor_error")
+}
+
+func TestRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusRunning,
+			WorkerID: "worker-a",
+		}},
+		interruptedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusInterrupted,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunInterruptedError{
+			CheckpointKey: "coze-run-200",
+			Interrupts: []ADKInterruptItem{{
+				ID:          "approval",
+				Address:     "agent:lead;tool:approval",
+				IsRootCause: true,
+			}},
+		}
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.NotNil(t, domainSVC.interruptRunReq)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{"run.started", "run.interrupted"}, eventSink.eventTypes())
+}
+
+func TestRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusRunning,
+			WorkerID: "worker-a",
+		}},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunCanceledError{EventPersisted: true}
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{"run.started", "run.canceled"}, eventSink.eventTypes())
+}
+
 type recordingRunEventSink struct {
+	mu     sync.Mutex
 	events []RunEvent
 }
 
 func (s *recordingRunEventSink) EmitRunEvent(ctx context.Context, event RunEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.events = append(s.events, event)
 
 	return nil
 }
 
 func (s *recordingRunEventSink) eventTypes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	eventTypes := make([]string, 0, len(s.events))
 	for _, event := range s.events {
 		eventTypes = append(eventTypes, event.EventType)
 	}
 
 	return eventTypes
+}
+
+type recordingSubagentRetryRunExecutor struct {
+	executeCalled      bool
+	retryExecuteCalled bool
+	executeRun         *RunSummary
+	retryRun           *RunSummary
+	executeResult      *RunExecutionResult
+	retryResult        *RunExecutionResult
+	executeErr         error
+	retryErr           error
+}
+
+func (e *recordingSubagentRetryRunExecutor) Execute(
+	_ context.Context,
+	run *RunSummary,
+) (*RunExecutionResult, error) {
+	e.executeCalled = true
+	e.executeRun = run
+
+	return e.executeResult, e.executeErr
+}
+
+func (e *recordingSubagentRetryRunExecutor) ExecuteSubagentRetry(
+	_ context.Context,
+	run *RunSummary,
+) (*RunExecutionResult, error) {
+	e.retryExecuteCalled = true
+	e.retryRun = run
+
+	return e.retryResult, e.retryErr
+}
+
+type unsupportedSubagentRetryRunExecutor struct{}
+
+func (unsupportedSubagentRetryRunExecutor) Execute(
+	context.Context,
+	*RunSummary,
+) (*RunExecutionResult, error) {
+	return &RunExecutionResult{Message: "ordinary execution"}, nil
+}
+
+func (unsupportedSubagentRetryRunExecutor) ExecuteSubagentRetry(
+	context.Context,
+	*RunSummary,
+) (*RunExecutionResult, error) {
+	return nil, &SubagentRetryUnsupportedError{}
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
@@ -95,6 +96,42 @@ func (c *InMemoryCatalog) List(ctx context.Context, spaceID int64) ([]*toolapi.M
 	return servers, nil
 }
 
+func (c *InMemoryCatalog) Delete(ctx context.Context, serverID int64) error {
+	if c == nil {
+		return errors.New("mcp tool catalog is required")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.servers[serverID] == nil {
+		return ErrNotFound
+	}
+	delete(c.servers, serverID)
+
+	return nil
+}
+
+func (c *InMemoryCatalog) UpdateHealth(ctx context.Context, serverID int64, health MCPToolHealthSnapshot) error {
+	if c == nil {
+		return errors.New("mcp tool catalog is required")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	server := c.servers[serverID]
+	if server == nil {
+		return ErrNotFound
+	}
+	updated := cloneServer(server)
+	updated.HealthStatus = normalizeMCPToolHealthStatus(health.Status)
+	updated.HealthCheckedAt = health.CheckedAt
+	updated.HealthLatencyMs = health.LatencyMs
+	updated.HealthError = boundedMCPToolHealthError(health.Error)
+	c.servers[serverID] = updated
+
+	return nil
+}
+
 func cloneServers(servers []*toolapi.MCPToolServer) []*toolapi.MCPToolServer {
 	result := make([]*toolapi.MCPToolServer, 0, len(servers))
 	for _, server := range servers {
@@ -110,17 +147,21 @@ func cloneServer(server *toolapi.MCPToolServer) *toolapi.MCPToolServer {
 	}
 
 	return &toolapi.MCPToolServer{
-		ServerID:    server.ServerID,
-		SpaceID:     server.SpaceID,
-		Name:        server.Name,
-		Description: server.Description,
-		ServerType:  server.ServerType,
-		Enabled:     server.Enabled,
-		Config:      server.Config,
-		Auth:        server.Auth,
-		Tools:       cloneToolDefinitions(server.Tools),
-		CreatedAt:   server.CreatedAt,
-		UpdatedAt:   server.UpdatedAt,
+		ServerID:        server.ServerID,
+		SpaceID:         server.SpaceID,
+		Name:            server.Name,
+		Description:     server.Description,
+		ServerType:      server.ServerType,
+		Enabled:         server.Enabled,
+		Config:          server.Config,
+		Auth:            server.Auth,
+		Tools:           cloneToolDefinitions(server.Tools),
+		HealthStatus:    normalizeMCPToolHealthStatus(server.HealthStatus),
+		HealthCheckedAt: server.HealthCheckedAt,
+		HealthLatencyMs: server.HealthLatencyMs,
+		HealthError:     boundedMCPToolHealthError(server.HealthError),
+		CreatedAt:       server.CreatedAt,
+		UpdatedAt:       server.UpdatedAt,
 	}
 }
 
@@ -138,4 +179,22 @@ func cloneToolDefinitions(tools []*toolapi.MCPToolDefinition) []*toolapi.MCPTool
 	}
 
 	return result
+}
+
+func normalizeMCPToolHealthStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return mcpToolHealthStatusUnknown
+	}
+
+	return status
+}
+
+func boundedMCPToolHealthError(value string) string {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) <= 256 {
+		return value
+	}
+
+	return string([]rune(value)[:256])
 }

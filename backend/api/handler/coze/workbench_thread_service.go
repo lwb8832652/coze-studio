@@ -18,7 +18,10 @@ package coze
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -27,6 +30,7 @@ import (
 
 	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
@@ -175,11 +179,16 @@ func ListTaskThreadRuns(ctx context.Context, c *app.RequestContext) {
 		mapped := appagentthread.RunStatus(req.Status)
 		status = &mapped
 	}
+	var parentRunID *int64
+	if req.ParentRunID > 0 {
+		parentRunID = &req.ParentRunID
+	}
 	resp, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
-		ThreadID: req.ThreadID,
-		Status:   status,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		ThreadID:    req.ThreadID,
+		ParentRunID: parentRunID,
+		Status:      status,
+		Page:        req.Page,
+		PageSize:    req.PageSize,
 	})
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
@@ -236,11 +245,12 @@ func GetTaskThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 	}
 
 	usageReq := &appagentthread.GetTokenUsageRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Source:   appagentthread.TokenUsageSource(req.Source),
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		ThreadID:         req.ThreadID,
+		RunID:            req.RunID,
+		IncludeChildRuns: req.IncludeChildRuns,
+		Source:           appagentthread.TokenUsageSource(req.Source),
+		Page:             req.Page,
+		PageSize:         req.PageSize,
 	}
 
 	var resp *appagentthread.GetTokenUsageResponse
@@ -269,9 +279,696 @@ func GetTaskThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 		Code: 0,
 		Msg:  "success",
 		Data: &threadapi.GetTaskThreadTokenUsageData{
-			Usage:     taskThreadTokenUsagesToAPI(resp.Usage),
+			Usage:         taskThreadTokenUsagesToAPI(resp.Usage),
+			Total:         resp.Total,
+			Aggregate:     taskThreadTokenUsageAggregateToAPI(resp.Aggregate),
+			RunAggregates: taskThreadTokenUsageRunAggregatesToAPI(resp.RunAggregates),
+		},
+	})
+}
+
+// ListTaskThreadMemories .
+// @router /api/workbench/task_threads/:thread_id/memories [GET]
+func ListTaskThreadMemories(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadMemoriesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		req.Query = string(c.Query("query"))
+	}
+
+	resp, err := appagentthread.SVC.ListMemories(ctx, &appagentthread.ListMemoriesRequest{
+		ThreadID:       req.ThreadID,
+		ViewerID:       workbenchViewerIDFromCtx(ctx),
+		RunID:          req.RunID,
+		Scopes:         taskThreadMemoryScopes(req.Scope, req.Scopes),
+		Query:          req.Query,
+		IncludeExpired: req.IncludeExpired,
+		IncludeDeleted: req.IncludeDeleted,
+		Page:           req.Page,
+		PageSize:       req.PageSize,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadMemoriesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadMemoriesData{
+			Memories: taskThreadMemoriesToAPI(resp.Memories),
+			Total:    resp.Total,
+		},
+	})
+}
+
+// ExportTaskThreadMemories .
+// @router /api/workbench/task_threads/:thread_id/memories/export [GET]
+func ExportTaskThreadMemories(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ExportTaskThreadMemoriesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		req.Query = string(c.Query("query"))
+	}
+
+	resp, err := appagentthread.SVC.ExportMemories(ctx, &appagentthread.ExportMemoriesRequest{
+		ThreadID:       req.ThreadID,
+		ViewerID:       workbenchViewerIDFromCtx(ctx),
+		RunID:          req.RunID,
+		Scopes:         taskThreadMemoryScopes(req.Scope, req.Scopes),
+		Query:          req.Query,
+		IncludeExpired: req.IncludeExpired,
+		IncludeDeleted: req.IncludeDeleted,
+		Limit:          req.Limit,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ExportTaskThreadMemoriesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ExportTaskThreadMemoriesData{
+			Schema:     resp.Schema,
+			ThreadID:   resp.ThreadID,
+			ExportedAt: resp.ExportedAt,
+			Total:      resp.Total,
+			Memories:   taskThreadMemoriesToAPI(resp.Memories),
+		},
+	})
+}
+
+// ImportTaskThreadMemories .
+// @router /api/workbench/task_threads/:thread_id/memories/import [POST]
+func ImportTaskThreadMemories(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ImportTaskThreadMemoriesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	items := make([]appagentthread.ImportMemoryItem, 0, len(req.Memories))
+	for _, item := range req.Memories {
+		if item == nil {
+			continue
+		}
+		items = append(items, appagentthread.ImportMemoryItem{
+			RunID:                item.RunID,
+			Scope:                appagentthread.MemoryScope(item.Scope),
+			Content:              item.Content,
+			Metadata:             item.Metadata,
+			Score:                item.Score,
+			Confidence:           item.Confidence,
+			SourceType:           item.SourceType,
+			SourceID:             item.SourceID,
+			CorrectionOfMemoryID: item.CorrectionOfMemoryID,
+			CorrectedAt:          item.CorrectedAt,
+			ExpiresAt:            item.ExpiresAt,
+		})
+	}
+	resp, err := appagentthread.SVC.ImportMemories(ctx, &appagentthread.ImportMemoriesRequest{
+		ThreadID: req.ThreadID,
+		ActorID:  workbenchViewerIDFromCtx(ctx),
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		Memories: items,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ImportTaskThreadMemoriesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ImportTaskThreadMemoriesData{
+			Imported: resp.Imported,
+			Skipped:  resp.Skipped,
+			Memories: taskThreadMemoriesToAPI(resp.Memories),
+		},
+	})
+}
+
+// UpdateTaskThreadMemory .
+// @router /api/workbench/task_threads/:thread_id/memories/:memory_id [PUT]
+func UpdateTaskThreadMemory(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.UpdateTaskThreadMemoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.UpdateMemory(ctx, &appagentthread.UpdateMemoryRequest{
+		ThreadID:             req.ThreadID,
+		MemoryID:             req.MemoryID,
+		ActorID:              workbenchViewerIDFromCtx(ctx),
+		ViewerID:             workbenchViewerIDFromCtx(ctx),
+		RunID:                req.RunID,
+		Scope:                appagentthread.MemoryScope(req.Scope),
+		Content:              req.Content,
+		Metadata:             req.Metadata,
+		Score:                req.Score,
+		Confidence:           req.Confidence,
+		SourceType:           req.SourceType,
+		SourceID:             req.SourceID,
+		CorrectionOfMemoryID: req.CorrectionOfMemoryID,
+		CorrectedAt:          req.CorrectedAt,
+		ExpiresAt:            req.ExpiresAt,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Updated {
+		invalidParamRequestResponse(c, "memory not found")
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.UpdateTaskThreadMemoryResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.UpdateTaskThreadMemoryData{
+			Memory:  taskThreadMemoryToAPI(resp.Memory),
+			Updated: resp.Updated,
+		},
+	})
+}
+
+// DeleteTaskThreadMemory .
+// @router /api/workbench/task_threads/:thread_id/memories/:memory_id [DELETE]
+func DeleteTaskThreadMemory(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.DeleteTaskThreadMemoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.DeleteMemory(ctx, &appagentthread.DeleteMemoryRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		ActorID:  workbenchViewerIDFromCtx(ctx),
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Deleted {
+		invalidParamRequestResponse(c, "memory not found")
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.DeleteTaskThreadMemoryResponse{
+		Code: 0,
+		Msg:  "success",
+	})
+}
+
+// ClearTaskThreadMemories .
+// @router /api/workbench/task_threads/:thread_id/memories/clear [POST]
+func ClearTaskThreadMemories(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ClearTaskThreadMemoriesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ClearMemories(ctx, &appagentthread.ClearMemoriesRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Scopes:   taskThreadMemoryScopes("", req.Scopes),
+		ActorID:  workbenchViewerIDFromCtx(ctx),
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ClearTaskThreadMemoriesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ClearTaskThreadMemoriesData{
+			Deleted: resp.Deleted,
+		},
+	})
+}
+
+// RestoreTaskThreadMemory .
+// @router /api/workbench/task_threads/:thread_id/memories/:memory_id/restore [POST]
+func RestoreTaskThreadMemory(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.RestoreTaskThreadMemoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.RestoreMemory(ctx, &appagentthread.RestoreMemoryRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		ActorID:  workbenchViewerIDFromCtx(ctx),
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Restored {
+		invalidParamRequestResponse(c, "memory not found")
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.RestoreTaskThreadMemoryResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.RestoreTaskThreadMemoryData{
+			Memory:   taskThreadMemoryToAPI(resp.Memory),
+			Restored: resp.Restored,
+		},
+	})
+}
+
+// ListTaskThreadMemoryAuditEvents .
+// @router /api/workbench/task_threads/:thread_id/memories/audit_events [GET]
+func ListTaskThreadMemoryAuditEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadMemoryAuditEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ListMemoryAuditEvents(ctx, &appagentthread.ListMemoryAuditEventsRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadMemoryAuditEventsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadMemoryAuditEventsData{
+			Events: taskThreadMemoryAuditEventsToAPI(resp.Events),
+			Total:  resp.Total,
+		},
+	})
+}
+
+// ListTaskThreadGuardrailAuditEvents .
+// @router /api/workbench/task_threads/:thread_id/guardrail_audit_events [GET]
+func ListTaskThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadGuardrailAuditEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ListGuardrailAuditEvents(
+		ctx,
+		&appagentthread.ListGuardrailAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			ViewerID: workbenchViewerIDFromCtx(ctx),
+			Page:     req.Page,
+			PageSize: req.PageSize,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadGuardrailAuditEventsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadGuardrailAuditEventsData{
+			Events: taskThreadGuardrailAuditEventsToAPI(resp.Events),
+			Total:  resp.Total,
+		},
+	})
+}
+
+// ExportTaskThreadGuardrailAuditEvents .
+// @router /api/workbench/task_threads/:thread_id/guardrail_audit_events/export [GET]
+func ExportTaskThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ExportTaskThreadGuardrailAuditEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ExportGuardrailAuditEvents(
+		ctx,
+		&appagentthread.ExportGuardrailAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			ViewerID: workbenchViewerIDFromCtx(ctx),
+			Page:     req.Page,
+			PageSize: req.PageSize,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ExportTaskThreadGuardrailAuditEventsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ExportTaskThreadGuardrailAuditEventsData{
+			Schema:     resp.Schema,
+			ThreadID:   resp.ThreadID,
+			ExportedAt: resp.ExportedAt,
+			Page:       resp.Page,
+			PageSize:   resp.PageSize,
+			Total:      resp.Total,
+			Events:     taskThreadGuardrailAuditEventsToAPI(resp.Events),
+		},
+	})
+}
+
+// ListTaskThreadArtifacts .
+// @router /api/workbench/task_threads/:thread_id/artifacts [GET]
+func ListTaskThreadArtifacts(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadArtifactsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	var runID *int64
+	if req.RunID > 0 {
+		runID = &req.RunID
+	}
+	resp, err := appagentthread.SVC.ListArtifacts(ctx, &appagentthread.ListArtifactsRequest{
+		ThreadID:    req.ThreadID,
+		RunID:       runID,
+		DeletedOnly: req.DeletedOnly,
+		ViewerID:    workbenchViewerIDFromCtx(ctx),
+		Page:        req.Page,
+		PageSize:    req.PageSize,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadArtifactsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadArtifactsData{
+			Artifacts: taskThreadArtifactsToAPI(resp.Artifacts),
 			Total:     resp.Total,
-			Aggregate: taskThreadTokenUsageAggregateToAPI(resp.Aggregate),
+		},
+	})
+}
+
+// ListTaskThreadArtifactScanJobs .
+// @router /api/workbench/task_threads/:thread_id/artifact_scan_jobs [GET]
+func ListTaskThreadArtifactScanJobs(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadArtifactScanJobsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	var runID *int64
+	if req.RunID > 0 {
+		runID = &req.RunID
+	}
+	var artifactID *int64
+	if req.ArtifactID > 0 {
+		artifactID = &req.ArtifactID
+	}
+	resp, err := appagentthread.SVC.ListArtifactScanJobs(
+		ctx,
+		&appagentthread.ListArtifactScanJobsRequest{
+			ThreadID:   req.ThreadID,
+			RunID:      runID,
+			ArtifactID: artifactID,
+			Status:     req.Status,
+			Scanner:    req.Scanner,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+			Page:       req.Page,
+			PageSize:   req.PageSize,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadArtifactScanJobsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadArtifactScanJobsData{
+			Jobs:  taskThreadArtifactScanJobsToAPI(resp.Jobs),
+			Total: resp.Total,
+		},
+	})
+}
+
+// RetryTaskThreadArtifactScanJob .
+// @router /api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry [POST]
+func RetryTaskThreadArtifactScanJob(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.RetryTaskThreadArtifactScanJobRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.RetryArtifactScanJob(
+		ctx,
+		&appagentthread.RetryArtifactScanJobRequest{
+			ThreadID: req.ThreadID,
+			JobID:    req.JobID,
+			ViewerID: workbenchViewerIDFromCtx(ctx),
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.RetryTaskThreadArtifactScanJobResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.RetryTaskThreadArtifactScanJobData{
+			Job:     taskThreadArtifactScanJobToAPI(resp.Job),
+			Retried: resp.Retried,
+		},
+	})
+}
+
+// ReviewTaskThreadArtifactScan .
+// @router /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/scan_review [POST]
+func ReviewTaskThreadArtifactScan(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ReviewTaskThreadArtifactScanRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ReviewArtifactScan(
+		ctx,
+		&appagentthread.ReviewArtifactScanRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+			Decision:   req.Decision,
+			Reason:     req.Reason,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, appagentthread.ErrArtifactScanReviewDecisionInvalid) {
+			invalidParamRequestResponse(c, err.Error())
+			return
+		}
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Reviewed {
+		invalidParamRequestResponse(c, "artifact not found")
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ReviewTaskThreadArtifactScanResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ReviewTaskThreadArtifactScanData{
+			ArtifactID: resp.ArtifactID,
+			Decision:   resp.Decision,
+			ScanStatus: resp.ScanStatus,
+			Reviewed:   resp.Reviewed,
+		},
+	})
+}
+
+// GetTaskThreadArtifactContent .
+// @router /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content [GET]
+func GetTaskThreadArtifactContent(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.GetTaskThreadArtifactContentRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	mode := appagentthread.ArtifactContentMode(
+		strings.ToLower(strings.TrimSpace(req.Mode)),
+	)
+	if mode != appagentthread.ArtifactContentModeDownload {
+		mode = appagentthread.ArtifactContentModePreview
+	}
+	resp, err := appagentthread.SVC.ReadArtifactContent(
+		ctx,
+		&appagentthread.ReadArtifactContentRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			Mode:       mode,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.SetStatusCode(consts.StatusOK)
+	c.SetContentType(resp.ContentType)
+	c.Response.Header.Set(
+		"Content-Disposition",
+		taskThreadArtifactContentDisposition(resp.FileName, resp.Attachment),
+	)
+	c.Response.Header.Set("X-Content-Type-Options", "nosniff")
+	c.Response.SetBodyRaw(resp.Content)
+}
+
+// GetTaskThreadArtifactSignedURL .
+// @router /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url [GET]
+func GetTaskThreadArtifactSignedURL(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.GetTaskThreadArtifactSignedURLRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	mode := appagentthread.ArtifactContentMode(
+		strings.ToLower(strings.TrimSpace(req.Mode)),
+	)
+	if mode == "" {
+		mode = appagentthread.ArtifactContentModePreview
+	}
+	resp, err := appagentthread.SVC.CreateArtifactSignedURL(
+		ctx,
+		&appagentthread.CreateArtifactSignedURLRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			Mode:       mode,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+			TTLSeconds: req.TTLSeconds,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	artifactID := req.ArtifactID
+	if resp.Artifact != nil {
+		artifactID = resp.Artifact.ArtifactID
+	}
+	c.JSON(consts.StatusOK, &threadapi.GetTaskThreadArtifactSignedURLResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.GetTaskThreadArtifactSignedURLData{
+			ArtifactID:       artifactID,
+			URL:              resp.URL,
+			ExpiresInSeconds: resp.ExpiresInSeconds,
+			ContentType:      resp.ContentType,
+			PreviewMode:      string(resp.PreviewMode),
+		},
+	})
+}
+
+// DeleteTaskThreadArtifact .
+// @router /api/workbench/task_threads/:thread_id/artifacts/:artifact_id [DELETE]
+func DeleteTaskThreadArtifact(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.DeleteTaskThreadArtifactRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.DeleteArtifact(
+		ctx,
+		&appagentthread.DeleteArtifactRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Deleted {
+		invalidParamRequestResponse(c, "artifact not found")
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.DeleteTaskThreadArtifactResponse{
+		Code: 0,
+		Msg:  "success",
+	})
+}
+
+// RestoreTaskThreadArtifact .
+// @router /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/restore [POST]
+func RestoreTaskThreadArtifact(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.RestoreTaskThreadArtifactRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.RestoreArtifact(
+		ctx,
+		&appagentthread.RestoreArtifactRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if resp == nil || !resp.Restored {
+		invalidParamRequestResponse(c, "artifact not found")
+		return
+	}
+	artifactID := req.ArtifactID
+	if resp.Artifact != nil && resp.Artifact.ArtifactID > 0 {
+		artifactID = resp.Artifact.ArtifactID
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.RestoreTaskThreadArtifactResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.RestoreTaskThreadArtifactData{
+			ArtifactID: artifactID,
+			Restored:   resp.Restored,
 		},
 	})
 }
@@ -333,6 +1030,110 @@ func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// ResumeTaskThreadRun .
+// @router /api/workbench/task_threads/:thread_id/runs/:run_id/resume [POST]
+func ResumeTaskThreadRun(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ResumeTaskThreadRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if err := validateResumeTaskThreadRunRequest(req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ResumeHumanInteraction(ctx, &appagentthread.ResumeHumanInteractionRequest{
+		ThreadID:       req.ThreadID,
+		SourceRunID:    req.RunID,
+		InterruptID:    req.InterruptID,
+		IdempotencyKey: req.IdempotencyKey,
+		Response: appagentthread.HumanInteractionResponse{
+			Schema:        req.Response.Schema,
+			InteractionID: req.Response.InteractionID,
+			Kind:          appagentthread.HumanInteractionKind(req.Response.Kind),
+			Decision:      appagentthread.HumanInteractionDecision(req.Response.Decision),
+			Answer:        req.Response.Answer,
+			ChoiceID:      req.Response.ChoiceID,
+			Comment:       req.Response.Comment,
+			SubmittedBy:   req.Response.SubmittedBy,
+			SubmittedAt:   req.Response.SubmittedAt,
+			Source:        req.Response.Source,
+		},
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ResumeTaskThreadRunResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: taskThreadRunToAPI(resp.Run),
+	})
+}
+
+func validateResumeTaskThreadRunRequest(req threadapi.ResumeTaskThreadRunRequest) error {
+	if req.ThreadID <= 0 {
+		return strconv.ErrSyntax
+	}
+	if req.RunID <= 0 {
+		return strconv.ErrSyntax
+	}
+	if strings.TrimSpace(req.InterruptID) == "" {
+		return strconv.ErrSyntax
+	}
+	if strings.TrimSpace(req.Response.Schema) == "" ||
+		strings.TrimSpace(req.Response.InteractionID) == "" ||
+		strings.TrimSpace(req.Response.Kind) == "" ||
+		strings.TrimSpace(req.Response.Decision) == "" {
+		return strconv.ErrSyntax
+	}
+
+	return nil
+}
+
+// RetryTaskThreadSubagentRun .
+// @router /api/workbench/task_threads/:thread_id/runs/:run_id/retry [POST]
+func RetryTaskThreadSubagentRun(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.RetryTaskThreadSubagentRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if err := validateRetryTaskThreadSubagentRunRequest(req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.RetrySubagentRun(ctx, &appagentthread.RetrySubagentRunRequest{
+		ThreadID:       req.ThreadID,
+		SourceRunID:    req.RunID,
+		IdempotencyKey: req.IdempotencyKey,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.RetryTaskThreadSubagentRunResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: taskThreadRunToAPI(resp.Run),
+	})
+}
+
+func validateRetryTaskThreadSubagentRunRequest(req threadapi.RetryTaskThreadSubagentRunRequest) error {
+	if req.ThreadID <= 0 {
+		return strconv.ErrSyntax
+	}
+	if req.RunID <= 0 {
+		return strconv.ErrSyntax
+	}
+
+	return nil
+}
+
 func taskThreadsToAPI(threads []*appagentthread.ThreadSummary) []*threadapi.TaskThread {
 	result := make([]*threadapi.TaskThread, 0, len(threads))
 	for _, item := range threads {
@@ -378,6 +1179,102 @@ func taskThreadTokenUsagesToAPI(usages []*appagentthread.TokenUsageSummary) []*t
 	return result
 }
 
+func taskThreadTokenUsageRunAggregatesToAPI(aggregates []*appagentthread.RunTokenUsageAggregateSummary) []*threadapi.TaskThreadTokenUsageRunAggregate {
+	result := make([]*threadapi.TaskThreadTokenUsageRunAggregate, 0, len(aggregates))
+	for _, item := range aggregates {
+		if item == nil {
+			continue
+		}
+		result = append(result, &threadapi.TaskThreadTokenUsageRunAggregate{
+			RunID:     item.RunID,
+			Aggregate: taskThreadTokenUsageAggregateToAPI(item.Aggregate),
+		})
+	}
+
+	return result
+}
+
+func taskThreadArtifactsToAPI(artifacts []*appagentthread.ArtifactSummary) []*threadapi.TaskThreadArtifact {
+	result := make([]*threadapi.TaskThreadArtifact, 0, len(artifacts))
+	for _, item := range artifacts {
+		result = append(result, taskThreadArtifactToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadMemoriesToAPI(memories []*appagentthread.MemorySummary) []*threadapi.TaskThreadMemory {
+	result := make([]*threadapi.TaskThreadMemory, 0, len(memories))
+	for _, item := range memories {
+		result = append(result, taskThreadMemoryToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadMemoryAuditEventsToAPI(
+	events []*appagentthread.MemoryAuditEventSummary,
+) []*threadapi.TaskThreadMemoryAuditEvent {
+	result := make([]*threadapi.TaskThreadMemoryAuditEvent, 0, len(events))
+	for _, item := range events {
+		result = append(result, taskThreadMemoryAuditEventToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadGuardrailAuditEventsToAPI(
+	events []*appagentthread.GuardrailAuditEventSummary,
+) []*threadapi.TaskThreadGuardrailAuditEvent {
+	result := make([]*threadapi.TaskThreadGuardrailAuditEvent, 0, len(events))
+	for _, item := range events {
+		result = append(result, taskThreadGuardrailAuditEventToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadMemoryScopes(scope string, scopes []string) []appagentthread.MemoryScope {
+	values := make([]appagentthread.MemoryScope, 0, len(scopes)+1)
+	if strings.TrimSpace(scope) != "" {
+		values = append(values, appagentthread.MemoryScope(strings.TrimSpace(scope)))
+	}
+	for _, raw := range scopes {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		values = append(values, appagentthread.MemoryScope(strings.TrimSpace(raw)))
+	}
+
+	return values
+}
+
+func taskThreadArtifactScanJobsToAPI(
+	jobs []*appagentthread.ArtifactScanJobSummary,
+) []*threadapi.TaskThreadArtifactScanJob {
+	result := make([]*threadapi.TaskThreadArtifactScanJob, 0, len(jobs))
+	for _, item := range jobs {
+		if item == nil {
+			continue
+		}
+		result = append(result, taskThreadArtifactScanJobToAPI(item))
+	}
+
+	return result
+}
+
+func taskThreadArtifactContentDisposition(fileName string, attachment bool) string {
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		fileName = "artifact"
+	}
+	return disposition + "; filename*=UTF-8''" + url.PathEscape(fileName)
+}
+
 func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread {
 	if thread == nil {
 		return nil
@@ -399,22 +1296,163 @@ func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread
 	}
 }
 
+func taskThreadArtifactToAPI(artifact *appagentthread.ArtifactSummary) *threadapi.TaskThreadArtifact {
+	if artifact == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadArtifact{
+		ArtifactID:   artifact.ArtifactID,
+		ThreadID:     artifact.ThreadID,
+		RunID:        artifact.RunID,
+		FileID:       artifact.FileID,
+		Title:        artifact.Title,
+		ArtifactType: artifact.ArtifactType,
+		VirtualPath:  artifact.VirtualPath,
+		ContentType:  artifact.ContentType,
+		SizeBytes:    artifact.SizeBytes,
+		PreviewMode:  string(artifact.PreviewMode),
+		Metadata:     artifact.Metadata,
+		CreatedAt:    artifact.CreatedAt,
+		UpdatedAt:    artifact.UpdatedAt,
+		DeletedAt:    artifact.DeletedAt,
+	}
+}
+
+func taskThreadMemoryToAPI(memory *appagentthread.MemorySummary) *threadapi.TaskThreadMemory {
+	if memory == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadMemory{
+		MemoryID:             memory.MemoryID,
+		ThreadID:             memory.ThreadID,
+		RunID:                memory.RunID,
+		SpaceID:              memory.SpaceID,
+		Scope:                string(memory.Scope),
+		Content:              memory.Content,
+		Metadata:             memory.Metadata,
+		Score:                memory.Score,
+		Confidence:           memory.Confidence,
+		SourceType:           memory.SourceType,
+		SourceID:             memory.SourceID,
+		CorrectionOfMemoryID: memory.CorrectionOfMemoryID,
+		CorrectedAt:          memory.CorrectedAt,
+		ExpiresAt:            memory.ExpiresAt,
+		CreatedAt:            memory.CreatedAt,
+		UpdatedAt:            memory.UpdatedAt,
+		DeletedAt:            memory.DeletedAt,
+	}
+}
+
+func taskThreadMemoryAuditEventToAPI(
+	event *appagentthread.MemoryAuditEventSummary,
+) *threadapi.TaskThreadMemoryAuditEvent {
+	if event == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadMemoryAuditEvent{
+		EventID:       event.EventID,
+		ThreadID:      event.ThreadID,
+		RunID:         event.RunID,
+		SpaceID:       event.SpaceID,
+		MemoryID:      event.MemoryID,
+		ActorID:       event.ActorID,
+		EventType:     event.EventType,
+		Scope:         string(event.Scope),
+		SourceType:    event.SourceType,
+		SourceID:      event.SourceID,
+		AffectedCount: event.AffectedCount,
+		CreatedAt:     event.CreatedAt,
+	}
+}
+
+func taskThreadGuardrailAuditEventToAPI(
+	event *appagentthread.GuardrailAuditEventSummary,
+) *threadapi.TaskThreadGuardrailAuditEvent {
+	if event == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadGuardrailAuditEvent{
+		EventID:    event.EventID,
+		ThreadID:   event.ThreadID,
+		RunID:      event.RunID,
+		SpaceID:    event.SpaceID,
+		ActorID:    event.ActorID,
+		EventType:  event.EventType,
+		TargetType: event.TargetType,
+		TargetID:   event.TargetID,
+		Operation:  event.Operation,
+		Source:     event.Source,
+		Action:     event.Action,
+		FailMode:   event.FailMode,
+		Provider:   event.Provider,
+		ReasonCode: event.ReasonCode,
+		RuleIDs:    event.RuleIDs,
+		CreatedAt:  event.CreatedAt,
+	}
+}
+
+func taskThreadArtifactScanJobToAPI(
+	job *appagentthread.ArtifactScanJobSummary,
+) *threadapi.TaskThreadArtifactScanJob {
+	if job == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadArtifactScanJob{
+		JobID:          job.JobID,
+		ThreadID:       job.ThreadID,
+		RunID:          job.RunID,
+		SpaceID:        job.SpaceID,
+		UserID:         job.UserID,
+		ArtifactID:     job.ArtifactID,
+		FileID:         job.FileID,
+		Scanner:        job.Scanner,
+		Status:         string(job.Status),
+		WorkerID:       job.WorkerID,
+		AttemptCount:   job.AttemptCount,
+		LastError:      job.LastError,
+		AvailableAt:    job.AvailableAt,
+		LeaseExpiresAt: job.LeaseExpiresAt,
+		StartedAt:      job.StartedAt,
+		EndedAt:        job.EndedAt,
+		CreatedAt:      job.CreatedAt,
+		UpdatedAt:      job.UpdatedAt,
+	}
+}
+
 func taskThreadRunToAPI(run *appagentthread.RunSummary) *threadapi.TaskThreadRun {
 	if run == nil {
 		return nil
 	}
 
+	command := run.Command
+	input := run.Input
+	config := run.Config
+	runContext := run.Context
+	if run.RunKind == appagentthread.RunKindSubagent {
+		command = ""
+		input = ""
+		config = ""
+		runContext = ""
+	}
+
 	return &threadapi.TaskThreadRun{
 		RunID:             run.RunID,
 		ThreadID:          run.ThreadID,
+		ParentRunID:       run.ParentRunID,
 		SpaceID:           run.SpaceID,
 		CreatorID:         run.CreatorID,
 		AssistantID:       run.AssistantID,
+		RunKind:           string(run.RunKind),
 		Status:            string(run.Status),
-		Command:           run.Command,
-		Input:             run.Input,
-		Config:            run.Config,
-		Context:           run.Context,
+		Command:           command,
+		Input:             input,
+		Config:            config,
+		Context:           runContext,
 		Metadata:          run.Metadata,
 		StreamMode:        run.StreamMode,
 		MultitaskStrategy: run.MultitaskStrategy,
@@ -509,7 +1547,61 @@ func taskThreadMessageToAPI(message *appagentthread.MessageSummary) *threadapi.T
 }
 
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if errors.Is(err, appagentthread.ErrArtifactAccessDenied) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": consts.StatusForbidden,
+			"msg":  "artifact access denied",
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrMemoryAccessDenied) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": consts.StatusForbidden,
+			"msg":  "memory access denied",
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrGuardrailAuditAccessDenied) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": consts.StatusForbidden,
+			"msg":  "guardrail audit access denied",
+		})
+		return
+	}
+	var scanBlocked *appagentthread.ArtifactContentBlockedByScanError
+	if errors.As(err, &scanBlocked) {
+		c.JSON(consts.StatusConflict, map[string]any{
+			"code":   consts.StatusConflict,
+			"msg":    "artifact content blocked by scan policy",
+			"reason": scanBlocked.Reason,
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrArtifactScanJobRetryNotAllowed) {
+		c.JSON(consts.StatusConflict, map[string]any{
+			"code": consts.StatusConflict,
+			"msg":  "artifact scan job cannot be retried",
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrArtifactSignedURLNotSupported) {
+		c.JSON(consts.StatusConflict, map[string]any{
+			"code": consts.StatusConflict,
+			"msg":  "artifact signed url is not supported",
+		})
+		return
+	}
 	internalServerErrorResponse(ctx, c, err)
+}
+
+func workbenchViewerIDFromCtx(ctx context.Context) int64 {
+	if uid := ctxutil.GetUIDFromCtx(ctx); uid != nil {
+		return *uid
+	}
+	if apiKey := ctxutil.GetApiAuthFromCtx(ctx); apiKey != nil {
+		return apiKey.UserID
+	}
+	return 0
 }
 
 func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStreamWriter, req threadapi.StreamTaskThreadRunEventsRequest) {
@@ -620,6 +1712,7 @@ func writeDoneWhenRunTerminal(ctx context.Context, writer taskThreadRunEventStre
 func isTaskThreadRunTerminal(status appagentthread.RunStatus) bool {
 	return status == appagentthread.RunStatusSucceeded ||
 		status == appagentthread.RunStatusFailed ||
+		status == appagentthread.RunStatusInterrupted ||
 		status == appagentthread.RunStatusCanceled
 }
 

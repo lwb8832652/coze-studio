@@ -17,7 +17,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  deleteMCPToolServer,
   getMCPToolServer,
+  listMCPToolRegistryEntries,
   listMCPToolServers,
   testMCPToolCall,
   upsertMCPToolServer,
@@ -26,8 +28,10 @@ import {
 describe('tools service', () => {
   it('exports MCP tool configuration API clients', () => {
     expect(typeof listMCPToolServers).toBe('function');
+    expect(typeof listMCPToolRegistryEntries).toBe('function');
     expect(typeof upsertMCPToolServer).toBe('function');
     expect(typeof getMCPToolServer).toBe('function');
+    expect(typeof deleteMCPToolServer).toBe('function');
     expect(typeof testMCPToolCall).toBe('function');
   });
 });

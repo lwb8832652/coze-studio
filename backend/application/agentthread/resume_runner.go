@@ -19,6 +19,7 @@ package agentthread
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -50,11 +51,13 @@ type ResumeRunProcessor struct {
 }
 
 type ResumeRunProcessResult struct {
-	ClaimedRuns   int
-	ProcessedRuns int
-	SucceededRuns int
-	FailedRuns    int
-	ErroredRuns   int
+	ClaimedRuns     int
+	ProcessedRuns   int
+	InterruptedRuns int
+	CanceledRuns    int
+	SucceededRuns   int
+	FailedRuns      int
+	ErroredRuns     int
 }
 
 type ResumeRunExecutor interface {
@@ -75,30 +78,37 @@ type resumeRunPayload struct {
 	CheckpointID int64
 	CheckpointNS string
 	ResumeFrom   string
+	Targets      map[string]any
 }
 
 type resumeRunProcessOutcome string
 
 const (
-	resumeRunProcessSkipped   resumeRunProcessOutcome = "skipped"
-	resumeRunProcessSucceeded resumeRunProcessOutcome = "succeeded"
-	resumeRunProcessFailed    resumeRunProcessOutcome = "failed"
-	resumeRunProcessErrored   resumeRunProcessOutcome = "errored"
+	resumeRunProcessSkipped     resumeRunProcessOutcome = "skipped"
+	resumeRunProcessInterrupted resumeRunProcessOutcome = "interrupted"
+	resumeRunProcessCanceled    resumeRunProcessOutcome = "canceled"
+	resumeRunProcessSucceeded   resumeRunProcessOutcome = "succeeded"
+	resumeRunProcessFailed      resumeRunProcessOutcome = "failed"
+	resumeRunProcessErrored     resumeRunProcessOutcome = "errored"
 )
 
 type HarnessResumeInput struct {
-	ThreadID        int64
-	RunID           int64
-	SourceRunID     int64
-	CheckpointID    int64
-	CheckpointNS    string
-	ResumeFrom      string
-	ChannelValues   map[string]any
-	ChannelVersions map[string]any
-	Metadata        map[string]any
-	Messages        []map[string]any
-	PendingSteps    []AgentStep
-	State           AgentHarnessState
+	Runtime          RuntimeMode
+	RuntimeKey       string
+	ADKCheckpoint    *ADKCheckpointEnvelope
+	ADKResumeTargets map[string]any
+	ThreadID         int64
+	RunID            int64
+	SourceRunID      int64
+	CheckpointID     int64
+	CheckpointNS     string
+	ResumeFrom       string
+	ChannelValues    map[string]any
+	ChannelVersions  map[string]any
+	Metadata         map[string]any
+	Messages         []map[string]any
+	PendingSteps     []AgentStep
+	State            AgentHarnessState
 }
 
 func NewResumeRunProcessor(app *ApplicationService, opts ResumeRunProcessorOptions) *ResumeRunProcessor {
@@ -155,6 +165,12 @@ func (p *ResumeRunProcessor) ProcessQueuedResumeRunsWithResult(ctx context.Conte
 	for _, run := range claimed.Runs {
 		outcome, err := p.processResumeRun(ctx, run)
 		switch outcome {
+		case resumeRunProcessInterrupted:
+			result.ProcessedRuns++
+			result.InterruptedRuns++
+		case resumeRunProcessCanceled:
+			result.ProcessedRuns++
+			result.CanceledRuns++
 		case resumeRunProcessSucceeded:
 			result.ProcessedRuns++
 			result.SucceededRuns++
@@ -197,11 +213,7 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	if strings.TrimSpace(resume.CheckpointNS) == "" {
 		resume.CheckpointNS = checkpoint.CheckpointNS
 	}
-	if err := validateResumeCheckpoint(run, checkpoint); err != nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
-	}
-
-	resumeInput, err := loadHarnessResumeInput(run, resume, checkpoint)
+	resumeInput, err := loadResumeInput(run, resume, checkpoint)
 	if err != nil {
 		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
 	}
@@ -209,6 +221,26 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 
 	result, err := p.executor.Resume(ctx, run, resumeInput)
 	if err != nil {
+		var canceled *RunCanceledError
+		if errors.As(err, &canceled) {
+			p.emitResumeRunCanceled(ctx, run, resume)
+			return resumeRunProcessCanceled, nil
+		}
+		var interrupted *RunInterruptedError
+		if errors.As(err, &interrupted) {
+			if _, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
+				RunID:    run.RunID,
+				From:     RunStatusRunning,
+				WorkerID: p.workerID,
+			}); transitionErr != nil {
+				return resumeRunProcessErrored, transitionErr
+			}
+			if !interrupted.EventPersisted {
+				p.emitResumeRunInterrupted(ctx, run, resume, interrupted)
+			}
+
+			return resumeRunProcessInterrupted, nil
+		}
 		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunExecutorErrorCode, err.Error())
 	}
 
@@ -240,6 +272,35 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	return resumeRunProcessSucceeded, nil
 }
 
+func (p *ResumeRunProcessor) emitResumeRunCanceled(
+	ctx context.Context,
+	run *RunSummary,
+	resume resumeRunPayload,
+) {
+	payload := p.resumeRunEventPayload(resume, map[string]any{
+		"status":    string(RunStatusCanceled),
+		"worker_id": p.workerID,
+	})
+	p.emitRunEvent(ctx, run, "run.canceled", payload)
+}
+
+func (p *ResumeRunProcessor) emitResumeRunInterrupted(
+	ctx context.Context,
+	run *RunSummary,
+	resume resumeRunPayload,
+	interrupted *RunInterruptedError,
+) {
+	payload := p.resumeRunEventPayload(resume, map[string]any{
+		"status":    string(RunStatusInterrupted),
+		"worker_id": p.workerID,
+	})
+	if interrupted != nil {
+		payload["checkpoint_key"] = interrupted.CheckpointKey
+		payload["interrupts"] = interrupted.Interrupts
+	}
+	p.emitRunEvent(ctx, run, "run.interrupted", payload)
+}
+
 func parseResumeRunPayload(command string) (resumeRunPayload, error) {
 	payload := resumeRunPayload{}
 	if strings.TrimSpace(command) == "" {
@@ -259,6 +320,11 @@ func parseResumeRunPayload(command string) (resumeRunPayload, error) {
 	payload.CheckpointID = resumePayloadInt64(resume["checkpoint_id"])
 	payload.CheckpointNS = resumePayloadString(resume["checkpoint_ns"])
 	payload.ResumeFrom = resumePayloadString(resume["resume_from"])
+	targets, err := resumePayloadTargets(resume["targets"])
+	if err != nil {
+		return payload, err
+	}
+	payload.Targets = targets
 	if strings.TrimSpace(payload.ResumeFrom) == "" {
 		payload.ResumeFrom = "pending_sends"
 	}
@@ -269,18 +335,88 @@ func parseResumeRunPayload(command string) (resumeRunPayload, error) {
 	return payload, nil
 }
 
+func resumePayloadTargets(value any) (map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	targets, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("resume run command.resume.targets must be an object")
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]any, len(targets))
+	for key, target := range targets {
+		targetID := strings.TrimSpace(key)
+		if targetID == "" {
+			return nil, fmt.Errorf("resume run command.resume.targets contains empty target id")
+		}
+		out[targetID] = copyResumeValue(target)
+	}
+
+	return out, nil
+}
+
 func validateResumeCheckpoint(run *RunSummary, checkpoint *CheckpointSummary) error {
+	if run == nil {
+		return fmt.Errorf("resume run is required")
+	}
+	if checkpoint == nil {
+		return fmt.Errorf("checkpoint is missing")
+	}
 	if checkpoint.ThreadID != run.ThreadID {
 		return fmt.Errorf("checkpoint does not belong to resume run thread")
 	}
 	if strings.TrimSpace(checkpoint.ChannelValues) == "" || strings.TrimSpace(checkpoint.ChannelValues) == "{}" {
 		return fmt.Errorf("checkpoint channel values are missing")
 	}
-	if strings.TrimSpace(checkpoint.PendingSends) == "" || strings.TrimSpace(checkpoint.PendingSends) == "[]" {
+
+	mode, err := runtimeModeFromCheckpoint(checkpoint)
+	if err != nil {
+		return err
+	}
+	if mode == RuntimeModeEinoADK {
+		if checkpoint.RuntimeDeletedAt > 0 {
+			return fmt.Errorf("eino checkpoint is no longer active")
+		}
+		envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+		if err != nil {
+			return fmt.Errorf("decode eino checkpoint: %w", err)
+		}
+		if checkpoint.RuntimeKey != "" && checkpoint.RuntimeKey != envelope.RuntimeKey {
+			return fmt.Errorf("checkpoint runtime key does not match envelope")
+		}
+		if checkpoint.EnvelopeVersion != 0 &&
+			int(checkpoint.EnvelopeVersion) != envelope.EnvelopeVersion {
+			return fmt.Errorf("checkpoint envelope version does not match indexed version")
+		}
+
+		return nil
+	}
+
+	if strings.TrimSpace(checkpoint.PendingSends) == "" ||
+		strings.TrimSpace(checkpoint.PendingSends) == "[]" {
 		return fmt.Errorf("checkpoint pending sends are missing")
 	}
 
 	return nil
+}
+
+func loadResumeInput(
+	run *RunSummary,
+	resume resumeRunPayload,
+	checkpoint *CheckpointSummary,
+) (*HarnessResumeInput, error) {
+	mode, err := runtimeModeFromCheckpoint(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	if mode == RuntimeModeEinoADK {
+		return loadADKResumeInput(run, resume, checkpoint)
+	}
+
+	return loadHarnessResumeInput(run, resume, checkpoint)
 }
 
 func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint *CheckpointSummary) (*HarnessResumeInput, error) {
@@ -292,6 +428,13 @@ func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint
 	}
 	if err := validateResumeCheckpoint(run, checkpoint); err != nil {
 		return nil, err
+	}
+	mode, err := runtimeModeFromCheckpoint(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	if mode != RuntimeModeLegacy {
+		return nil, fmt.Errorf("checkpoint is not a legacy harness checkpoint")
 	}
 
 	channelValues, err := decodeResumeJSONMap(checkpoint.ChannelValues, "checkpoint channel values")
@@ -330,6 +473,7 @@ func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint
 	}
 
 	return &HarnessResumeInput{
+		Runtime:         RuntimeModeLegacy,
 		ThreadID:        run.ThreadID,
 		RunID:           run.RunID,
 		SourceRunID:     checkpoint.RunID,
@@ -343,6 +487,151 @@ func loadHarnessResumeInput(run *RunSummary, resume resumeRunPayload, checkpoint
 		PendingSteps:    pendingSteps,
 		State:           state,
 	}, nil
+}
+
+func loadADKResumeInput(
+	run *RunSummary,
+	resume resumeRunPayload,
+	checkpoint *CheckpointSummary,
+) (*HarnessResumeInput, error) {
+	if err := validateResumeCheckpoint(run, checkpoint); err != nil {
+		return nil, err
+	}
+	mode, err := runtimeModeFromCheckpoint(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	if mode != RuntimeModeEinoADK {
+		return nil, fmt.Errorf("checkpoint is not an eino adk checkpoint")
+	}
+
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	if err != nil {
+		return nil, fmt.Errorf("decode eino checkpoint: %w", err)
+	}
+	if envelope.RuntimeVersion != adkCheckpointRuntimeVersion {
+		return nil, fmt.Errorf(
+			"checkpoint runtime version %s is incompatible with %s",
+			envelope.RuntimeVersion,
+			adkCheckpointRuntimeVersion,
+		)
+	}
+	metadata, err := decodeResumeJSONMap(checkpoint.Metadata, "checkpoint metadata")
+	if err != nil {
+		return nil, err
+	}
+
+	checkpointNS := strings.TrimSpace(resume.CheckpointNS)
+	if checkpointNS == "" {
+		checkpointNS = checkpoint.CheckpointNS
+	}
+
+	targets, err := adkResumeTargetsFromPayload(envelope.Interrupts, resume.Targets)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HarnessResumeInput{
+		Runtime:          RuntimeModeEinoADK,
+		RuntimeKey:       envelope.RuntimeKey,
+		ADKCheckpoint:    &envelope,
+		ADKResumeTargets: targets,
+		ThreadID:         run.ThreadID,
+		RunID:            run.RunID,
+		SourceRunID:      checkpoint.RunID,
+		CheckpointID:     checkpoint.CheckpointID,
+		CheckpointNS:     checkpointNS,
+		ResumeFrom:       resumeDefaultString(resume.ResumeFrom, "interrupt"),
+		Metadata:         metadata,
+	}, nil
+}
+
+func adkResumeTargetsFromPayload(
+	interrupts map[string]ADKInterruptItem,
+	targets map[string]any,
+) (map[string]any, error) {
+	if len(targets) == 0 {
+		return adkResumeTargets(interrupts), nil
+	}
+
+	out := make(map[string]any, len(targets))
+	for targetID, data := range targets {
+		if _, ok := interrupts[targetID]; !ok {
+			return nil, fmt.Errorf("resume target %s is not present in checkpoint interrupts", targetID)
+		}
+		out[targetID] = copyResumeValue(data)
+	}
+
+	return out, nil
+}
+
+func adkResumeTargets(interrupts map[string]ADKInterruptItem) map[string]any {
+	if len(interrupts) == 0 {
+		return nil
+	}
+
+	targets := make(map[string]any, len(interrupts))
+	for key, item := range interrupts {
+		targetID := strings.TrimSpace(item.ID)
+		if targetID == "" {
+			targetID = strings.TrimSpace(key)
+		}
+		if targetID != "" {
+			targets[targetID] = nil
+		}
+	}
+
+	return targets
+}
+
+func runtimeModeFromCheckpoint(checkpoint *CheckpointSummary) (RuntimeMode, error) {
+	if checkpoint == nil {
+		return "", fmt.Errorf("checkpoint is missing")
+	}
+
+	indexedMode := RuntimeMode(strings.TrimSpace(checkpoint.RuntimeType))
+	if indexedMode == "" {
+		indexedMode = RuntimeModeLegacy
+	}
+
+	metadataMode := RuntimeMode("")
+	if strings.TrimSpace(checkpoint.Metadata) != "" {
+		var metadata struct {
+			Runtime string `json:"runtime"`
+		}
+		if err := json.Unmarshal([]byte(checkpoint.Metadata), &metadata); err != nil {
+			return "", fmt.Errorf("checkpoint metadata is invalid")
+		}
+		metadataMode = RuntimeMode(strings.TrimSpace(metadata.Runtime))
+	}
+	switch metadataMode {
+	case "", RuntimeModeLegacy, RuntimeModeEinoADK:
+	default:
+		if indexedMode == RuntimeModeLegacy {
+			metadataMode = ""
+		} else {
+			return "", fmt.Errorf("unsupported checkpoint metadata runtime: %s", metadataMode)
+		}
+	}
+
+	if metadataMode != "" && metadataMode != indexedMode {
+		if indexedMode == RuntimeModeLegacy && strings.TrimSpace(checkpoint.RuntimeKey) == "" {
+			indexedMode = metadataMode
+		} else {
+			return "", fmt.Errorf(
+				"checkpoint runtime metadata %s does not match indexed runtime %s",
+				metadataMode,
+				indexedMode,
+			)
+		}
+	}
+
+	switch indexedMode {
+	case RuntimeModeLegacy, RuntimeModeEinoADK:
+		return indexedMode, nil
+	default:
+		return "", fmt.Errorf("unsupported checkpoint runtime: %s", indexedMode)
+	}
 }
 
 func decodeResumeJSONMap(raw string, field string) (map[string]any, error) {
@@ -441,11 +730,16 @@ func resumeMemoryContext(value any) AgentMemoryContext {
 			continue
 		}
 		memory := AgentMemory{
-			ID:       resumePayloadString(memoryPayload["id"]),
-			Scope:    resumePayloadString(memoryPayload["scope"]),
-			Content:  resumePayloadString(memoryPayload["content"]),
-			Metadata: resumePayloadString(memoryPayload["metadata"]),
-			Score:    resumePayloadFloat64(memoryPayload["score"]),
+			ID:                   resumePayloadString(memoryPayload["id"]),
+			Scope:                resumePayloadString(memoryPayload["scope"]),
+			Content:              resumePayloadString(memoryPayload["content"]),
+			Metadata:             resumePayloadString(memoryPayload["metadata"]),
+			Score:                resumePayloadFloat64(memoryPayload["score"]),
+			Confidence:           resumePayloadFloat64(memoryPayload["confidence"]),
+			SourceType:           resumePayloadString(memoryPayload["source_type"]),
+			SourceID:             resumePayloadString(memoryPayload["source_id"]),
+			CorrectionOfMemoryID: int64(resumePayloadFloat64(memoryPayload["correction_of_memory_id"])),
+			CorrectedAt:          int64(resumePayloadFloat64(memoryPayload["corrected_at"])),
 		}
 		if strings.TrimSpace(memory.Content) == "" {
 			continue
@@ -478,6 +772,9 @@ func resumeSkillContext(value any) AgentSkillContext {
 			Description: strings.TrimSpace(resumePayloadString(skillPayload["description"])),
 			Type:        strings.TrimSpace(resumePayloadString(skillPayload["type"])),
 			Version:     strings.TrimSpace(resumePayloadString(skillPayload["version"])),
+			Context:     strings.TrimSpace(resumePayloadString(skillPayload["context"])),
+			Agent:       strings.TrimSpace(resumePayloadString(skillPayload["agent"])),
+			Model:       strings.TrimSpace(resumePayloadString(skillPayload["model"])),
 			Body:        strings.TrimSpace(resumePayloadString(skillPayload["body"])),
 		}
 		if skill.ID <= 0 || skill.Name == "" || skill.Body == "" {
@@ -537,10 +834,25 @@ func resumeMessagesByStepID(messages []map[string]any) map[string]string {
 func copyResumeMap(source map[string]any) map[string]any {
 	result := make(map[string]any, len(source))
 	for key, value := range source {
-		result[key] = value
+		result[key] = copyResumeValue(value)
 	}
 
 	return result
+}
+
+func copyResumeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return copyResumeMap(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = copyResumeValue(item)
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 func resumeStepType(value any) AgentStepType {

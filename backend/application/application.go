@@ -20,6 +20,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/middlewares/plantask"
+
 	"github.com/coze-dev/coze-studio/backend/application/permission"
 
 	"github.com/coze-dev/coze-studio/backend/application/agentthread"
@@ -76,6 +79,7 @@ import (
 	variablesImpl "github.com/coze-dev/coze-studio/backend/crossdomain/variables/impl"
 	crossworkflow "github.com/coze-dev/coze-studio/backend/crossdomain/workflow"
 	workflowImpl "github.com/coze-dev/coze-studio/backend/crossdomain/workflow/impl"
+	threadrepository "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	"github.com/coze-dev/coze-studio/backend/infra/checkpoint"
 	"github.com/coze-dev/coze-studio/backend/infra/document/progressbar"
 	progressBarImpl "github.com/coze-dev/coze-studio/backend/infra/document/progressbar/impl/progressbar"
@@ -151,18 +155,188 @@ func Init(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
-	task.NewWorker(primaryServices.taskSVC).Start(ctx)
-	agentRunExecutor := agentthread.NewApplicationHarnessExecutor(
-		primaryServices.agentThreadSVC,
-		agentthread.NewRuntimeSkillProvider(primaryServices.skillSVC.DomainSVC),
-	)
-	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
-	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
-
 	complexServices, err := initComplexServices(ctx, primaryServices)
 	if err != nil {
 		return fmt.Errorf("Init - initVitalServices failed, err: %v", err)
 	}
+	runtimePolicy, err := agentthread.RuntimePolicyFromEnv()
+	if err != nil {
+		return fmt.Errorf("Init - configure agent runtime policy: %w", err)
+	}
+	primaryServices.agentThreadSVC.RuntimePolicy = &runtimePolicy
+	task.NewWorker(primaryServices.taskSVC).Start(ctx)
+	runtimeSkillProvider := agentthread.NewRuntimeSkillProvider(
+		primaryServices.skillSVC.DomainSVC,
+	)
+	legacyAgentRunExecutor := agentthread.NewApplicationHarnessExecutor(
+		primaryServices.agentThreadSVC,
+		runtimeSkillProvider,
+	)
+	adkCancelRegistry := agentthread.NewADKCancelRegistry()
+	primaryServices.agentThreadSVC.ADKCancelRegistry = adkCancelRegistry
+	adkEventSink := agentthread.NewApplicationRunEventSink(
+		primaryServices.agentThreadSVC,
+	)
+	guardrailEnforcer, guardrailStatus := agentthread.NewGuardrailEnforcerFromEnv(
+		primaryServices.agentThreadSVC.GuardrailAuditRepository,
+		infra.IDGenSVC,
+	)
+	primaryServices.agentThreadSVC.GuardrailProviderStatus = guardrailStatus
+	adkRuntimeFileRegistry := agentthread.NewApplicationADKRuntimeFileRegistry(
+		primaryServices.agentThreadSVC,
+	)
+	adkOffloadBackendFactory := agentthread.ADKOffloadBackendFactoryFunc(
+		func(
+			_ context.Context,
+			run *agentthread.RunSummary,
+			limits agentthread.ADKOffloadLimits,
+		) (*agentthread.ADKOffloadBackend, error) {
+			return agentthread.NewADKOffloadBackend(
+				run,
+				infra.OSS,
+				adkRuntimeFileRegistry,
+				adkEventSink,
+				limits,
+			)
+		},
+	)
+	mcpRuntimeConfig, err := agentthread.ADKMCPRuntimeBootstrapConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("Init - configure agent mcp runtime: %w", err)
+	}
+	mcpWorkdirLeaseRepository := threadrepository.NewMCPRuntimeWorkdirLeaseRepository(
+		infra.DB,
+	)
+	mcpRuntimeAuditRecorder := agentthread.NewApplicationADKMCPRuntimeAuditRecorder(
+		agentthread.ApplicationADKMCPRuntimeAuditRecorderOptions{
+			Repository: threadrepository.NewMCPRuntimeAuditRepository(infra.DB),
+			IDGen:      infra.IDGenSVC,
+		},
+	)
+	mcpRuntimeHealthReporter := agentthread.ADKMCPRuntimeHealthReporterFunc(
+		func(
+			ctx context.Context,
+			report agentthread.ADKMCPRuntimeHealthReport,
+		) error {
+			return primaryServices.mcpToolSVC.RecordRuntimeHealth(
+				ctx,
+				mcptool.MCPRuntimeHealthReport{
+					ServerID:  report.ServerID,
+					Success:   report.Success,
+					ErrorCode: report.ErrorCode,
+					LatencyMs: report.LatencyMs,
+				},
+			)
+		},
+	)
+	mcpRuntimeOutputOffloader := agentthread.NewADKMCPRuntimeOutputOffloadBackendAdapter(
+		agentthread.ADKMCPRuntimeOutputOffloadBackendAdapterOptions{
+			BackendFactory: adkOffloadBackendFactory,
+		},
+	)
+	mcpRuntimeExecutor := agentthread.NewADKMCPRuntimeToolExecutorFromConfig(
+		agentthread.ADKMCPRuntimeBootstrapDependencies{
+			Resolver:        primaryServices.mcpToolSVC,
+			LeaseRepository: mcpWorkdirLeaseRepository,
+			IDGen:           infra.IDGenSVC,
+			EventSink:       adkEventSink,
+			AuditRecorder:   mcpRuntimeAuditRecorder,
+			HealthReporter:  mcpRuntimeHealthReporter,
+			OutputOffloader: mcpRuntimeOutputOffloader,
+			Config:          mcpRuntimeConfig,
+		},
+	)
+	adkContextStore := agentthread.NewApplicationADKContextStore(
+		primaryServices.agentThreadSVC,
+	)
+	adkPlanStore := agentthread.NewApplicationADKPlanStore(
+		primaryServices.agentThreadSVC,
+	)
+	adkAgentRunExecutor := agentthread.NewADKExecutor(
+		agentthread.NewApplicationADKAgentFactory(
+			nil,
+			agentthread.NewDefaultADKToolProviderWithSingleAgentSubagents(
+				complexServices.singleAgentSVC.DomainSVC,
+				agentthread.WithDefaultADKToolProviderMCPRegistry(
+					primaryServices.mcpToolSVC,
+				),
+				agentthread.WithDefaultADKToolProviderMCPExecutor(
+					mcpRuntimeExecutor,
+				),
+				agentthread.WithDefaultADKToolProviderEventSink(adkEventSink),
+				agentthread.WithDefaultADKToolProviderSubagentRunRecorder(
+					agentthread.NewApplicationADKSubagentRunRecorder(
+						primaryServices.agentThreadSVC,
+					),
+				),
+				agentthread.WithDefaultADKToolProviderGuardrailEnforcer(
+					guardrailEnforcer,
+				),
+			),
+			agentthread.NewADKMiddlewareAssembler(agentthread.ADKMiddlewareAssemblerOptions{
+				MemoryProvider: agentthread.NewThreadMemoryProvider(
+					primaryServices.agentThreadSVC,
+					32,
+				),
+				GuardrailEnforcer: guardrailEnforcer,
+				SkillProvider:     runtimeSkillProvider,
+				TranscriptStore:   adkContextStore,
+				MemoryFlushQueue:  adkContextStore,
+				EventSink:         adkEventSink,
+				PlanBackendFactory: agentthread.ADKPlanBackendFactoryFunc(
+					func(
+						_ context.Context,
+						run *agentthread.RunSummary,
+					) (plantask.Backend, error) {
+						return agentthread.NewADKPlanBackend(
+							run,
+							adkPlanStore,
+							adkEventSink,
+						)
+					},
+				),
+				OffloadBackendFactory: adkOffloadBackendFactory,
+			}),
+		),
+		adkEventSink,
+		func(run *agentthread.RunSummary) (adk.CheckPointStore, error) {
+			return agentthread.NewADKCheckpointStore(primaryServices.agentThreadSVC, run)
+		},
+		agentthread.NewThreadUsageCollector(primaryServices.agentThreadSVC),
+		agentthread.WithADKCancelRegistry(adkCancelRegistry),
+		agentthread.WithADKSubagentRetrySourceResolver(
+			agentthread.NewApplicationADKSubagentRetrySourceResolver(
+				primaryServices.agentThreadSVC,
+			),
+		),
+	)
+	agentRunExecutor := agentthread.NewRuntimeSelector(
+		legacyAgentRunExecutor,
+		adkAgentRunExecutor,
+		runtimePolicy,
+	)
+	agentResumeRunExecutor := agentthread.NewRuntimeResumeSelector(
+		legacyAgentRunExecutor,
+		adkAgentRunExecutor,
+		runtimePolicy,
+	)
+	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
+	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentResumeRunExecutor)
+	agentthread.StartArtifactScanWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
+	agentthread.StartGuardrailAuditArchiveWorkerFromEnv(
+		ctx,
+		primaryServices.agentThreadSVC.GuardrailAuditRepository,
+		primaryServices.infra.OSS,
+	)
+	agentthread.StartGuardrailAuditRetentionWorkerFromEnv(
+		ctx,
+		primaryServices.agentThreadSVC.GuardrailAuditRepository,
+		primaryServices.infra.OSS,
+	)
+	agentthread.StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnv(
+		ctx,
+		mcpWorkdirLeaseRepository,
+	)
 
 	// Initialize permission service first as it's required by other services
 	crosspermission.SetDefaultSVC(permissionImpl.InitDomainService(basicServices.permissionSVC.DomainSVC))
@@ -255,17 +429,19 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 
 	shortcutSVC := shortcutcmd.InitService(basicServices.infra.DB, basicServices.infra.IDGenSVC)
 	agentThreadSVC := agentthread.InitService(&agentthread.ServiceComponents{
-		DB:    basicServices.infra.DB,
-		IDGen: basicServices.infra.IDGenSVC,
-	})
-	skillSVC := skill.InitService(&skill.ServiceComponents{
-		DB:         basicServices.infra.DB,
-		IDGen:      basicServices.infra.IDGenSVC,
-		CodeRunner: basicServices.infra.CodeRunner,
+		DB:            basicServices.infra.DB,
+		IDGen:         basicServices.infra.IDGenSVC,
+		ObjectStorage: basicServices.infra.OSS,
 	})
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
-		Catalog: mcptool.NewInMemoryCatalog(),
+		Catalog: mcptool.NewMySQLCatalog(basicServices.infra.DB),
 		IDGen:   basicServices.infra.IDGenSVC,
+	})
+	skillSVC := skill.InitService(&skill.ServiceComponents{
+		DB:                    basicServices.infra.DB,
+		IDGen:                 basicServices.infra.IDGenSVC,
+		CodeRunner:            basicServices.infra.CodeRunner,
+		ToolCandidateProvider: mcpToolSVC,
 	})
 	taskSVC := task.InitService(&task.ServiceComponents{
 		DB:    basicServices.infra.DB,

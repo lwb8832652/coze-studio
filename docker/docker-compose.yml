@@ -382,6 +382,18 @@ services:
     networks:
       - coze-network
 
+  artifact-scanner:
+    image: ${AGENT_ARTIFACT_SCANNER_CLAMD_IMAGE:-clamav/clamav:stable}
+    container_name: coze-artifact-scanner
+    restart: unless-stopped
+    profiles: ['scanner']
+    expose:
+      - '3310'
+    volumes:
+      - ./data/clamav:/var/lib/clamav
+    networks:
+      - coze-network
+
   coze-server:
     # build:
     #   context: ../

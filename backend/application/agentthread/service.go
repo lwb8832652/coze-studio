@@ -18,17 +18,112 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/cloudwego/eino/adk"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
 var SVC = new(ApplicationService)
 
+var ErrArtifactScanReviewDecisionInvalid = errors.New(
+	"artifact scan review decision is invalid",
+)
+
+var ErrArtifactSignedURLNotSupported = errors.New(
+	"artifact signed url is not supported",
+)
+
 type ApplicationService struct {
-	ThreadSVC domainservice.ThreadService
+	ThreadSVC                domainservice.ThreadService
+	RuntimeFileSVC           domainservice.RuntimeFileService
+	PlanSVC                  domainservice.PlanService
+	ArtifactSVC              domainservice.ArtifactService
+	ADKCancelRegistry        *ADKCancelRegistry
+	RuntimePolicy            *RuntimePolicy
+	ArtifactObjectStorage    ArtifactObjectStorage
+	ArtifactAuthorizer       ArtifactAuthorizer
+	MemoryAuthorizer         MemoryAuthorizer
+	GuardrailAuditRepository domainrepo.GuardrailAuditRepository
+	GuardrailAuditAuthorizer GuardrailAuditAuthorizer
+	GuardrailProviderStatus  GuardrailProviderEnvStatus
+	ArtifactScanner          ArtifactContentScanner
+	ArtifactScannerStatus    ArtifactScannerEnvStatus
+	ArtifactScanReadPolicy   ArtifactScanReadPolicyConfig
+	ArtifactReviewClock      func() int64
+	ArtifactCleanupNowFunc   func() int64
+	MemoryExtractor          MemoryExtractor
 }
+
+type ArtifactObjectStorage interface {
+	GetObject(ctx context.Context, objectKey string) ([]byte, error)
+}
+
+type ArtifactObjectURLSigner interface {
+	GetObjectUrl(ctx context.Context, objectKey string, opts ...storage.GetOptFn) (string, error)
+}
+
+type ArtifactObjectDeleter interface {
+	DeleteObject(ctx context.Context, objectKey string) error
+}
+
+type ArtifactContentScanner interface {
+	ScanArtifact(ctx context.Context, req ArtifactScanRequest) (*ArtifactScanResult, error)
+}
+
+type ArtifactScanRequest struct {
+	SpaceID     int64
+	ThreadID    int64
+	RunID       int64
+	UserID      int64
+	ArtifactID  int64
+	FileID      int64
+	Scanner     string
+	ContentType string
+	SizeBytes   int64
+	Content     []byte
+}
+
+type ArtifactScanResult struct {
+	ScanStatus     string
+	ScannerVersion string
+	Reason         string
+}
+
+type artifactScanStatus string
+
+const (
+	artifactScanStatusUnknown     artifactScanStatus = "unknown"
+	artifactScanStatusClean       artifactScanStatus = "clean"
+	artifactScanStatusPending     artifactScanStatus = "pending"
+	artifactScanStatusFailed      artifactScanStatus = "failed"
+	artifactScanStatusBlocked     artifactScanStatus = "blocked"
+	artifactScanStatusInfected    artifactScanStatus = "infected"
+	artifactScanStatusQuarantined artifactScanStatus = "quarantined"
+)
+
+const artifactContentAccessedEvent = "artifact.content.accessed"
+const artifactContentBlockedEvent = "artifact.content.blocked"
+const artifactDeletedEvent = "artifact.deleted"
+const artifactCleanedEvent = "artifact.cleaned"
+const artifactRestoredEvent = "artifact.restored"
+const artifactScanCompletedEvent = "artifact.scan.completed"
+const artifactScanReviewedEvent = "artifact.scan.reviewed"
+const artifactScanJobRetryRequestedEvent = "artifact.scan_job.retry_requested"
+const defaultApplicationArtifactScanner = "default"
+const manualArtifactReviewScanner = "manual_review"
+const defaultArtifactScanRetryBackoffMillis = int64(60000)
 
 func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThreadRequest) (*CreateThreadResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
@@ -172,10 +267,19 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	if req == nil {
 		return nil, fmt.Errorf("create run request is required")
 	}
+	if s.RuntimePolicy != nil {
+		if _, err := s.RuntimePolicy.runtimeModeFromRun(&RunSummary{
+			Config: req.Config,
+		}); err != nil {
+			return nil, err
+		}
+	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
 		ThreadID:          req.ThreadID,
+		ParentRunID:       req.ParentRunID,
 		AssistantID:       req.AssistantID,
+		RunKind:           domainentity.RunKind(req.RunKind),
 		Status:            domainentity.RunStatus(req.Status),
 		Command:           req.Command,
 		Input:             req.Input,
@@ -232,10 +336,12 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 	}
 
 	runs, total, err := s.ThreadSVC.ListRuns(ctx, &domainservice.ListRunsRequest{
-		ThreadID: req.ThreadID,
-		Status:   status,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		ThreadID:         req.ThreadID,
+		ParentRunID:      req.ParentRunID,
+		IncludeChildRuns: req.IncludeChildRuns,
+		Status:           status,
+		Page:             req.Page,
+		PageSize:         req.PageSize,
 	})
 	if err != nil {
 		return nil, err
@@ -318,6 +424,9 @@ func (s *ApplicationService) CreateCheckpoint(ctx context.Context, req *CreateCh
 		RunID:              req.RunID,
 		ParentCheckpointID: req.ParentCheckpointID,
 		CheckpointNS:       req.CheckpointNS,
+		RuntimeType:        req.RuntimeType,
+		RuntimeKey:         req.RuntimeKey,
+		EnvelopeVersion:    req.EnvelopeVersion,
 		ChannelValues:      req.ChannelValues,
 		ChannelVersions:    req.ChannelVersions,
 		PendingSends:       req.PendingSends,
@@ -403,6 +512,55 @@ func (s *ApplicationService) GetLatestCheckpoint(ctx context.Context, req *GetLa
 	return &GetLatestCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
 }
 
+func (s *ApplicationService) GetLatestRuntimeCheckpoint(
+	ctx context.Context,
+	req *GetLatestRuntimeCheckpointRequest,
+) (*GetLatestRuntimeCheckpointResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get latest runtime checkpoint request is required")
+	}
+
+	checkpoint, err := s.ThreadSVC.GetLatestRuntimeCheckpoint(
+		ctx,
+		&domainservice.GetLatestRuntimeCheckpointRequest{
+			ThreadID:    req.ThreadID,
+			RunID:       req.RunID,
+			RuntimeType: req.RuntimeType,
+			RuntimeKey:  req.RuntimeKey,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &GetLatestRuntimeCheckpointResponse{
+		Checkpoint: DomainCheckpointToSummary(checkpoint),
+	}, nil
+}
+
+func (s *ApplicationService) DeleteRuntimeCheckpoint(
+	ctx context.Context,
+	req *DeleteRuntimeCheckpointRequest,
+) error {
+	if err := s.requireThreadSVC(); err != nil {
+		return err
+	}
+	if req == nil {
+		return fmt.Errorf("delete runtime checkpoint request is required")
+	}
+
+	return s.ThreadSVC.DeleteRuntimeCheckpoint(ctx, &domainservice.DeleteRuntimeCheckpointRequest{
+		ThreadID:    req.ThreadID,
+		RunID:       req.RunID,
+		RuntimeType: req.RuntimeType,
+		RuntimeKey:  req.RuntimeKey,
+		DeletedAt:   req.DeletedAt,
+	})
+}
+
 func (s *ApplicationService) RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*RememberMemoryResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -412,13 +570,18 @@ func (s *ApplicationService) RememberMemory(ctx context.Context, req *RememberMe
 	}
 
 	memory, err := s.ThreadSVC.RememberMemory(ctx, &domainservice.RememberMemoryRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     req.RunID,
-		Scope:     domainentity.MemoryScope(req.Scope),
-		Content:   req.Content,
-		Metadata:  req.Metadata,
-		Score:     req.Score,
-		ExpiresAt: req.ExpiresAt,
+		ThreadID:             req.ThreadID,
+		RunID:                req.RunID,
+		Scope:                domainentity.MemoryScope(req.Scope),
+		Content:              req.Content,
+		Metadata:             req.Metadata,
+		Score:                req.Score,
+		Confidence:           req.Confidence,
+		SourceType:           req.SourceType,
+		SourceID:             req.SourceID,
+		CorrectionOfMemoryID: req.CorrectionOfMemoryID,
+		CorrectedAt:          req.CorrectedAt,
+		ExpiresAt:            req.ExpiresAt,
 	})
 	if err != nil {
 		return nil, err
@@ -467,6 +630,497 @@ func (s *ApplicationService) RecallMemories(ctx context.Context, req *RecallMemo
 	return resp, nil
 }
 
+func (s *ApplicationService) ListMemories(ctx context.Context, req *ListMemoriesRequest) (*ListMemoriesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list memories request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+
+	scopes := make([]domainentity.MemoryScope, 0, len(req.Scopes))
+	for _, scope := range req.Scopes {
+		if scope == "" {
+			continue
+		}
+		scopes = append(scopes, domainentity.MemoryScope(scope))
+	}
+	memories, total, err := s.ThreadSVC.ListMemories(ctx, &domainservice.ListMemoriesRequest{
+		ThreadID:       req.ThreadID,
+		RunID:          req.RunID,
+		Scopes:         scopes,
+		Query:          req.Query,
+		IncludeExpired: req.IncludeExpired,
+		IncludeDeleted: req.IncludeDeleted,
+		Page:           req.Page,
+		PageSize:       req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListMemoriesResponse{
+		Memories: make([]*MemorySummary, 0, len(memories)),
+		Total:    total,
+	}
+	for _, memory := range memories {
+		resp.Memories = append(resp.Memories, DomainMemoryToSummary(memory))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ExportMemories(ctx context.Context, req *ExportMemoriesRequest) (*ExportMemoriesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("export memories request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationExport,
+	}); err != nil {
+		return nil, err
+	}
+
+	scopes := make([]domainentity.MemoryScope, 0, len(req.Scopes))
+	for _, scope := range req.Scopes {
+		if scope == "" {
+			continue
+		}
+		scopes = append(scopes, domainentity.MemoryScope(scope))
+	}
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	memories, total, err := s.ThreadSVC.ListMemories(ctx, &domainservice.ListMemoriesRequest{
+		ThreadID:       req.ThreadID,
+		RunID:          req.RunID,
+		Scopes:         scopes,
+		Query:          req.Query,
+		IncludeExpired: req.IncludeExpired,
+		IncludeDeleted: req.IncludeDeleted,
+		Page:           1,
+		PageSize:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ExportMemoriesResponse{
+		Schema:     MemoryExportSchema,
+		ThreadID:   req.ThreadID,
+		ExportedAt: time.Now().UnixMilli(),
+		Total:      total,
+		Memories:   make([]*MemorySummary, 0, len(memories)),
+	}
+	for _, memory := range memories {
+		resp.Memories = append(resp.Memories, DomainMemoryToSummary(memory))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ImportMemories(ctx context.Context, req *ImportMemoriesRequest) (*ImportMemoriesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("import memories request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationImport,
+	}); err != nil {
+		return nil, err
+	}
+
+	items := make([]domainservice.ImportMemoryItem, 0, len(req.Memories))
+	for _, item := range req.Memories {
+		items = append(items, domainservice.ImportMemoryItem{
+			RunID:                item.RunID,
+			Scope:                domainentity.MemoryScope(item.Scope),
+			Content:              item.Content,
+			Metadata:             item.Metadata,
+			Score:                item.Score,
+			Confidence:           item.Confidence,
+			SourceType:           item.SourceType,
+			SourceID:             item.SourceID,
+			CorrectionOfMemoryID: item.CorrectionOfMemoryID,
+			CorrectedAt:          item.CorrectedAt,
+			ExpiresAt:            item.ExpiresAt,
+		})
+	}
+	result, err := s.ThreadSVC.ImportMemories(ctx, &domainservice.ImportMemoriesRequest{
+		ThreadID: req.ThreadID,
+		ActorID:  req.ActorID,
+		Memories: items,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ImportMemoriesResponse{
+		Imported: result.Imported,
+		Skipped:  result.Skipped,
+		Memories: make([]*MemorySummary, 0, len(result.Memories)),
+	}
+	for _, memory := range result.Memories {
+		resp.Memories = append(resp.Memories, DomainMemoryToSummary(memory))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) UpdateMemory(ctx context.Context, req *UpdateMemoryRequest) (*UpdateMemoryResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("update memory request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		MemoryID:  req.MemoryID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationUpdate,
+	}); err != nil {
+		return nil, err
+	}
+
+	memory, updated, err := s.ThreadSVC.UpdateMemory(ctx, &domainservice.UpdateMemoryRequest{
+		ThreadID:             req.ThreadID,
+		MemoryID:             req.MemoryID,
+		ActorID:              req.ActorID,
+		RunID:                req.RunID,
+		Scope:                domainentity.MemoryScope(req.Scope),
+		Content:              req.Content,
+		Metadata:             req.Metadata,
+		Score:                req.Score,
+		Confidence:           req.Confidence,
+		SourceType:           req.SourceType,
+		SourceID:             req.SourceID,
+		CorrectionOfMemoryID: req.CorrectionOfMemoryID,
+		CorrectedAt:          req.CorrectedAt,
+		ExpiresAt:            req.ExpiresAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &UpdateMemoryResponse{
+		Memory:  DomainMemoryToSummary(memory),
+		Updated: updated,
+	}, nil
+}
+
+func (s *ApplicationService) DeleteMemory(ctx context.Context, req *DeleteMemoryRequest) (*DeleteMemoryResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("delete memory request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		MemoryID:  req.MemoryID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationDelete,
+	}); err != nil {
+		return nil, err
+	}
+	deleted, err := s.ThreadSVC.DeleteMemory(ctx, &domainservice.DeleteMemoryRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		ActorID:  req.ActorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &DeleteMemoryResponse{Deleted: deleted}, nil
+}
+
+func (s *ApplicationService) ClearMemories(ctx context.Context, req *ClearMemoriesRequest) (*ClearMemoriesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("clear memories request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationClear,
+	}); err != nil {
+		return nil, err
+	}
+	scopes := make([]domainentity.MemoryScope, 0, len(req.Scopes))
+	for _, scope := range req.Scopes {
+		if scope == "" {
+			continue
+		}
+		scopes = append(scopes, domainentity.MemoryScope(scope))
+	}
+	deleted, err := s.ThreadSVC.ClearMemories(ctx, &domainservice.ClearMemoriesRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		Scopes:   scopes,
+		ActorID:  req.ActorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ClearMemoriesResponse{Deleted: deleted}, nil
+}
+
+func (s *ApplicationService) RestoreMemory(ctx context.Context, req *RestoreMemoryRequest) (*RestoreMemoryResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("restore memory request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		MemoryID:  req.MemoryID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationRestore,
+	}); err != nil {
+		return nil, err
+	}
+	memory, restored, err := s.ThreadSVC.RestoreMemory(ctx, &domainservice.RestoreMemoryRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		ActorID:  req.ActorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &RestoreMemoryResponse{
+		Memory:   DomainMemoryToSummary(memory),
+		Restored: restored,
+	}, nil
+}
+
+func (s *ApplicationService) ListMemoryAuditEvents(
+	ctx context.Context,
+	req *ListMemoryAuditEventsRequest,
+) (*ListMemoryAuditEventsResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list memory audit events request is required")
+	}
+	if err := s.authorizeMemoryAccess(ctx, MemoryAccessRequest{
+		ThreadID:  req.ThreadID,
+		MemoryID:  req.MemoryID,
+		ViewerID:  req.ViewerID,
+		Operation: MemoryAccessOperationAudit,
+	}); err != nil {
+		return nil, err
+	}
+	events, total, err := s.ThreadSVC.ListMemoryAuditEvents(ctx, &domainservice.ListMemoryAuditEventsRequest{
+		ThreadID: req.ThreadID,
+		MemoryID: req.MemoryID,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListMemoryAuditEventsResponse{
+		Events: make([]*MemoryAuditEventSummary, 0, len(events)),
+		Total:  total,
+	}
+	for _, event := range events {
+		resp.Events = append(resp.Events, DomainMemoryAuditEventToSummary(event))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ListGuardrailAuditEvents(
+	ctx context.Context,
+	req *ListGuardrailAuditEventsRequest,
+) (*ListGuardrailAuditEventsResponse, error) {
+	if err := s.requireGuardrailAuditRepository(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list guardrail audit events request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, fmt.Errorf("thread id is required")
+	}
+	if req.RunID < 0 {
+		return nil, fmt.Errorf("run id is invalid")
+	}
+	if err := s.authorizeGuardrailAuditAccess(ctx, GuardrailAuditAccessRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		ViewerID:  req.ViewerID,
+		Operation: GuardrailAuditAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+
+	limit, offset := normalizeGuardrailAuditPage(req.Page, req.PageSize)
+	events, total, err := s.GuardrailAuditRepository.ListGuardrailAuditEvents(
+		ctx,
+		domainrepo.ListGuardrailAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Limit:    limit,
+			Offset:   offset,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListGuardrailAuditEventsResponse{
+		Events: make([]*GuardrailAuditEventSummary, 0, len(events)),
+		Total:  total,
+	}
+	for _, event := range events {
+		resp.Events = append(resp.Events, DomainGuardrailAuditEventToSummary(event))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ExportGuardrailAuditEvents(
+	ctx context.Context,
+	req *ExportGuardrailAuditEventsRequest,
+) (*ExportGuardrailAuditEventsResponse, error) {
+	if err := s.requireGuardrailAuditRepository(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("export guardrail audit events request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, fmt.Errorf("thread id is required")
+	}
+	if req.RunID < 0 {
+		return nil, fmt.Errorf("run id is invalid")
+	}
+	if err := s.authorizeGuardrailAuditAccess(ctx, GuardrailAuditAccessRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		ViewerID:  req.ViewerID,
+		Operation: GuardrailAuditAccessOperationExport,
+	}); err != nil {
+		return nil, err
+	}
+
+	page, pageSize, offset := normalizeGuardrailAuditExportPage(
+		req.Page,
+		req.PageSize,
+	)
+	events, total, err := s.GuardrailAuditRepository.ListGuardrailAuditEvents(
+		ctx,
+		domainrepo.ListGuardrailAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Limit:    pageSize,
+			Offset:   offset,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ExportGuardrailAuditEventsResponse{
+		Schema:     GuardrailAuditExportSchema,
+		ThreadID:   req.ThreadID,
+		ExportedAt: time.Now().UnixMilli(),
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      total,
+		Events:     make([]*GuardrailAuditEventSummary, 0, len(events)),
+	}
+	for _, event := range events {
+		resp.Events = append(resp.Events, DomainGuardrailAuditEventToSummary(event))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) PersistTranscriptSnapshot(
+	ctx context.Context,
+	req *PersistTranscriptSnapshotRequest,
+) (*PersistTranscriptSnapshotResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("persist transcript snapshot request is required")
+	}
+	snapshot, created, err := s.ThreadSVC.PersistTranscriptSnapshot(
+		ctx,
+		&domainservice.PersistTranscriptSnapshotRequest{
+			ThreadID:       req.ThreadID,
+			RunID:          req.RunID,
+			Kind:           domainentity.TranscriptKind(req.Kind),
+			Digest:         req.Digest,
+			IdempotencyKey: req.IdempotencyKey,
+			MessageCount:   req.MessageCount,
+			Messages:       req.Messages,
+			Metadata:       req.Metadata,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		return nil, fmt.Errorf(
+			"agent thread service returned empty transcript snapshot",
+		)
+	}
+	return &PersistTranscriptSnapshotResponse{
+		Snapshot: DomainTranscriptSnapshotToSummary(snapshot),
+		Created:  created,
+	}, nil
+}
+
+func (s *ApplicationService) EnqueueMemoryFlushJob(
+	ctx context.Context,
+	req *EnqueueMemoryFlushJobRequest,
+) (*EnqueueMemoryFlushJobResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("enqueue memory flush job request is required")
+	}
+	job, created, err := s.ThreadSVC.EnqueueMemoryFlushJob(
+		ctx,
+		&domainservice.EnqueueMemoryFlushJobRequest{
+			ThreadID:             req.ThreadID,
+			RunID:                req.RunID,
+			TranscriptSnapshotID: req.TranscriptSnapshotID,
+			IdempotencyKey:       req.IdempotencyKey,
+			AvailableAt:          req.AvailableAt,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, fmt.Errorf(
+			"agent thread service returned empty memory flush job",
+		)
+	}
+	return &EnqueueMemoryFlushJobResponse{
+		Job:     DomainMemoryFlushJobToSummary(job),
+		Created: created,
+	}, nil
+}
+
 func (s *ApplicationService) RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*RecordTokenUsageResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -510,17 +1164,18 @@ func (s *ApplicationService) GetRunTokenUsage(ctx context.Context, req *GetToken
 		return nil, fmt.Errorf("get run token usage request is required")
 	}
 
-	rows, total, aggregate, err := s.ThreadSVC.GetRunTokenUsage(ctx, &domainservice.GetRunTokenUsageRequest{
-		RunID:    req.RunID,
-		Source:   domainentity.TokenUsageSource(req.Source),
-		Page:     req.Page,
-		PageSize: req.PageSize,
+	rows, total, aggregate, runAggregates, err := s.ThreadSVC.GetRunTokenUsage(ctx, &domainservice.GetRunTokenUsageRequest{
+		RunID:            req.RunID,
+		IncludeChildRuns: req.IncludeChildRuns,
+		Source:           domainentity.TokenUsageSource(req.Source),
+		Page:             req.Page,
+		PageSize:         req.PageSize,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return tokenUsageResponse(rows, total, aggregate), nil
+	return tokenUsageResponse(rows, total, aggregate, runAggregates), nil
 }
 
 func (s *ApplicationService) GetThreadTokenUsage(ctx context.Context, req *GetTokenUsageRequest) (*GetTokenUsageResponse, error) {
@@ -541,17 +1196,1503 @@ func (s *ApplicationService) GetThreadTokenUsage(ctx context.Context, req *GetTo
 		return nil, err
 	}
 
-	return tokenUsageResponse(rows, total, aggregate), nil
+	return tokenUsageResponse(rows, total, aggregate, nil), nil
 }
 
-func tokenUsageResponse(rows []*domainentity.TokenUsage, total int64, aggregate *domainentity.TokenUsageAggregate) *GetTokenUsageResponse {
-	resp := &GetTokenUsageResponse{
-		Usage:     make([]*TokenUsageSummary, 0, len(rows)),
+func (s *ApplicationService) ListArtifacts(
+	ctx context.Context,
+	req *ListArtifactsRequest,
+) (*ListArtifactsResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list artifacts request is required")
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: ArtifactAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+	artifacts, total, err := s.ArtifactSVC.ListArtifacts(
+		ctx,
+		&domainservice.ListArtifactsRequest{
+			ThreadID:    req.ThreadID,
+			RunID:       req.RunID,
+			DeletedOnly: req.DeletedOnly,
+			Page:        req.Page,
+			PageSize:    req.PageSize,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListArtifactsResponse{
+		Artifacts: make([]*ArtifactSummary, 0, len(artifacts)),
 		Total:     total,
-		Aggregate: DomainTokenUsageAggregateToSummary(aggregate),
+	}
+	for _, artifact := range artifacts {
+		resp.Artifacts = append(resp.Artifacts, DomainArtifactToSummary(artifact))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ListArtifactScanJobs(
+	ctx context.Context,
+	req *ListArtifactScanJobsRequest,
+) (*ListArtifactScanJobsResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list artifact scan jobs request is required")
+	}
+	var artifactID int64
+	if req.ArtifactID != nil {
+		artifactID = *req.ArtifactID
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: artifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+
+	jobs, total, err := s.ArtifactSVC.ListArtifactScanJobs(
+		ctx,
+		&domainservice.ListArtifactScanJobsRequest{
+			ThreadID:   req.ThreadID,
+			RunID:      req.RunID,
+			ArtifactID: req.ArtifactID,
+			Status:     req.Status,
+			Scanner:    req.Scanner,
+			Page:       req.Page,
+			PageSize:   req.PageSize,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListArtifactScanJobsResponse{
+		Jobs:  make([]*ArtifactScanJobSummary, 0, len(jobs)),
+		Total: total,
+	}
+	for _, job := range jobs {
+		resp.Jobs = append(resp.Jobs, DomainArtifactScanJobToSummary(job))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) RetryArtifactScanJob(
+	ctx context.Context,
+	req *RetryArtifactScanJobRequest,
+) (*RetryArtifactScanJobResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("retry artifact scan job request is required")
+	}
+	if req.ThreadID <= 0 || req.JobID <= 0 {
+		return nil, fmt.Errorf("artifact scan job scope is required")
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:  req.ThreadID,
+		ViewerID:  req.ViewerID,
+		Operation: ArtifactAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+	now := time.Now().UnixMilli()
+	job, ok, err := s.ArtifactSVC.RequeueFailedArtifactScanJob(
+		ctx,
+		&domainservice.RequeueFailedArtifactScanJobRequest{
+			JobID:       req.JobID,
+			ThreadID:    req.ThreadID,
+			ErrorText:   "manual retry requested",
+			AvailableAt: now,
+			Now:         now,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrArtifactScanJobRetryNotAllowed
+	}
+	if err := s.auditArtifactScanJobRetryRequested(ctx, job); err != nil {
+		return nil, err
+	}
+	return &RetryArtifactScanJobResponse{
+		Job:     DomainArtifactScanJobToSummary(job),
+		Retried: true,
+	}, nil
+}
+
+func (s *ApplicationService) DeleteArtifact(
+	ctx context.Context,
+	req *DeleteArtifactRequest,
+) (*DeleteArtifactResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("delete artifact request is required")
+	}
+	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
+		return nil, fmt.Errorf("artifact scope is required")
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationDelete,
+	}); err != nil {
+		return nil, err
+	}
+	deletedAt := req.DeletedAt
+	if deletedAt <= 0 {
+		deletedAt = time.Now().UnixMilli()
+	}
+
+	artifact, deleted, err := s.ArtifactSVC.DeleteArtifact(
+		ctx,
+		&domainservice.DeleteArtifactRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			DeletedAt:  deletedAt,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if deleted {
+		if err := s.auditArtifactDeleted(ctx, artifact); err != nil {
+			return nil, err
+		}
+	}
+	return &DeleteArtifactResponse{Deleted: deleted}, nil
+}
+
+func (s *ApplicationService) RestoreArtifact(
+	ctx context.Context,
+	req *RestoreArtifactRequest,
+) (*RestoreArtifactResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("restore artifact request is required")
+	}
+	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
+		return nil, fmt.Errorf("artifact scope is required")
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationRestore,
+	}); err != nil {
+		return nil, err
+	}
+	restoredAt := req.RestoredAt
+	if restoredAt <= 0 {
+		restoredAt = time.Now().UnixMilli()
+	}
+
+	artifact, restored, err := s.ArtifactSVC.RestoreArtifact(
+		ctx,
+		&domainservice.RestoreArtifactRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			RestoredAt: restoredAt,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &RestoreArtifactResponse{Restored: restored}
+	if artifact != nil {
+		resp.Artifact = DomainArtifactToSummary(artifact)
+	}
+	if restored {
+		if err := s.auditArtifactRestored(ctx, artifact, restoredAt); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ProcessDeletedArtifactCleanup(
+	ctx context.Context,
+	req *ProcessDeletedArtifactCleanupRequest,
+) (*ProcessDeletedArtifactCleanupResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	deleter, ok := s.ArtifactObjectStorage.(ArtifactObjectDeleter)
+	if s.ArtifactObjectStorage == nil || !ok {
+		return nil, fmt.Errorf("artifact object storage deletion is not configured")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("process deleted artifact cleanup request is required")
+	}
+	now := s.artifactCleanupNow(req.NowMillis)
+	retentionMillis := req.RetentionMillis
+	if retentionMillis <= 0 {
+		retentionMillis = int64(7 * 24 * time.Hour / time.Millisecond)
+	}
+	cutoff := now - retentionMillis
+	if cutoff <= 0 {
+		return &ProcessDeletedArtifactCleanupResponse{}, nil
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	candidates, err := s.ArtifactSVC.ListDeletedArtifactCleanupCandidates(
+		ctx,
+		&domainservice.ListDeletedArtifactCleanupCandidatesRequest{
+			CutoffDeletedAt: cutoff,
+			Limit:           limit,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ProcessDeletedArtifactCleanupResponse{
+		Candidates: int32(len(candidates)),
+	}
+	for _, artifact := range candidates {
+		if artifact == nil {
+			resp.Skipped++
+			continue
+		}
+		objectURI := strings.TrimSpace(artifact.ObjectURI)
+		if objectURI == "" {
+			resp.Failed++
+			continue
+		}
+		deleteErr := deleter.DeleteObject(ctx, objectURI)
+		notFound := false
+		if deleteErr != nil {
+			if !errors.Is(deleteErr, storage.ErrObjectNotFound) {
+				resp.Failed++
+				continue
+			}
+			notFound = true
+			resp.NotFound++
+		}
+		marked, err := s.ArtifactSVC.MarkArtifactFileDeleted(
+			ctx,
+			&domainservice.MarkArtifactFileDeletedRequest{
+				FileID:    artifact.FileID,
+				ObjectURI: objectURI,
+				DeletedAt: now,
+			},
+		)
+		if err != nil {
+			resp.Failed++
+			continue
+		}
+		if !marked {
+			resp.Skipped++
+			continue
+		}
+		resp.Deleted++
+		if err := s.auditArtifactCleaned(ctx, artifact, now, notFound); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) RecordArtifactScanResult(
+	ctx context.Context,
+	req *RecordArtifactScanResultRequest,
+) (*RecordArtifactScanResultResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("record artifact scan result request is required")
+	}
+
+	artifact, updated, err := s.ArtifactSVC.UpdateArtifactScanResult(
+		ctx,
+		&domainservice.UpdateArtifactScanResultRequest{
+			ThreadID:       req.ThreadID,
+			ArtifactID:     req.ArtifactID,
+			ScanStatus:     req.ScanStatus,
+			Scanner:        req.Scanner,
+			ScannerVersion: req.ScannerVersion,
+			Reason:         req.Reason,
+			ScannedAt:      req.ScannedAt,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &RecordArtifactScanResultResponse{Updated: updated}
+	if artifact != nil {
+		resp.Artifact = DomainArtifactToSummary(artifact)
+	}
+	if updated {
+		if err := s.auditArtifactScanCompleted(ctx, artifact); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ReviewArtifactScan(
+	ctx context.Context,
+	req *ReviewArtifactScanRequest,
+) (*ReviewArtifactScanResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("review artifact scan request is required")
+	}
+	decision, scanStatus, defaultReason, err := normalizeArtifactScanReviewDecision(
+		req.Decision,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationReview,
+	}); err != nil {
+		return nil, err
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = defaultReason
+	}
+	reviewedAt := s.artifactReviewNow()
+	artifact, updated, err := s.ArtifactSVC.UpdateArtifactScanResult(
+		ctx,
+		&domainservice.UpdateArtifactScanResultRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			ScanStatus: scanStatus,
+			Scanner:    manualArtifactReviewScanner,
+			Reason:     reason,
+			ScannedAt:  reviewedAt,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ReviewArtifactScanResponse{
+		ArtifactID: req.ArtifactID,
+		Decision:   decision,
+		ScanStatus: scanStatus,
+		Reviewed:   updated,
+	}
+	if artifact != nil {
+		resp.ArtifactID = artifact.ID
+		if gotStatus := normalizeArtifactScanStatus(artifact.Metadata); gotStatus != artifactScanStatusUnknown {
+			resp.ScanStatus = string(gotStatus)
+		}
+	}
+	if updated {
+		if err := s.auditArtifactScanReviewed(ctx, artifact, decision, reviewedAt); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ProcessArtifactScanJobs(
+	ctx context.Context,
+	req *ProcessArtifactScanJobsRequest,
+) (*ProcessArtifactScanJobsResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if s.ArtifactObjectStorage == nil {
+		return nil, fmt.Errorf("artifact object storage is not configured")
+	}
+	if s.ArtifactScanner == nil {
+		return nil, fmt.Errorf("artifact content scanner is not configured")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("process artifact scan jobs request is required")
+	}
+	workerID := strings.TrimSpace(req.WorkerID)
+	if workerID == "" {
+		return nil, fmt.Errorf("worker id is required")
+	}
+	scannerName := strings.TrimSpace(req.Scanner)
+	if scannerName == "" {
+		scannerName = defaultApplicationArtifactScanner
+	}
+	maxAttempts := req.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	retryBackoffMillis := req.RetryBackoffMillis
+	if retryBackoffMillis <= 0 {
+		retryBackoffMillis = defaultArtifactScanRetryBackoffMillis
+	}
+
+	jobs, err := s.ArtifactSVC.ClaimArtifactScanJobs(
+		ctx,
+		&domainservice.ClaimArtifactScanJobsRequest{
+			Scanner:        scannerName,
+			WorkerID:       workerID,
+			Limit:          req.Limit,
+			LeaseTTLMillis: req.LeaseTTLMillis,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ProcessArtifactScanJobsResponse{Claimed: int32(len(jobs))}
+	for _, job := range jobs {
+		outcome, err := s.processArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			scannerName,
+			maxAttempts,
+			retryBackoffMillis,
+		)
+		if err != nil {
+			return nil, err
+		}
+		switch outcome {
+		case artifactScanJobProcessSucceeded:
+			resp.Succeeded++
+		case artifactScanJobProcessRetried:
+			resp.Retried++
+		case artifactScanJobProcessFailed:
+			resp.Failed++
+		default:
+			resp.Skipped++
+		}
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ReadArtifactContent(
+	ctx context.Context,
+	req *ReadArtifactContentRequest,
+) (*ReadArtifactContentResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	if s.ArtifactObjectStorage == nil {
+		return nil, fmt.Errorf("artifact object storage is not configured")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("read artifact content request is required")
+	}
+	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
+		return nil, fmt.Errorf("artifact scope is required")
+	}
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationRead,
+	}); err != nil {
+		return nil, err
+	}
+
+	artifact, err := s.ArtifactSVC.GetArtifact(ctx, &domainservice.GetArtifactRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if artifact == nil {
+		return nil, fmt.Errorf("artifact not found")
+	}
+	objectURI := strings.TrimSpace(artifact.ObjectURI)
+	if objectURI == "" {
+		return nil, fmt.Errorf("artifact object is not registered")
+	}
+	scanStatus := normalizeArtifactScanStatus(artifact.Metadata)
+	readPolicy := artifactScanReadPolicy(scanStatus, artifact, s.ArtifactScanReadPolicy)
+	if !readPolicy.Allowed {
+		if err := s.auditArtifactContentBlocked(ctx, req, artifact, readPolicy); err != nil {
+			return nil, err
+		}
+		return nil, &ArtifactContentBlockedByScanError{
+			ScanStatus: string(scanStatus),
+			Reason:     readPolicy.Reason,
+		}
+	}
+	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	if err != nil {
+		return nil, err
+	}
+
+	contentType := effectiveArtifactContentType(artifact.ContentType, content)
+	resp := &ReadArtifactContentResponse{
+		Artifact:    DomainArtifactToSummary(artifact),
+		Content:     content,
+		ContentType: contentType,
+		FileName:    artifactContentFileName(artifact),
+		Attachment:  shouldAttachArtifactContent(req.Mode, artifact, contentType),
+	}
+	if err := s.auditArtifactContentAccess(ctx, req, artifact, resp, scanStatus, readPolicy); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) CreateArtifactSignedURL(
+	ctx context.Context,
+	req *CreateArtifactSignedURLRequest,
+) (*CreateArtifactSignedURLResponse, error) {
+	if err := s.requireArtifactSVC(); err != nil {
+		return nil, err
+	}
+	signer, ok := s.ArtifactObjectStorage.(ArtifactObjectURLSigner)
+	if s.ArtifactObjectStorage == nil || !ok {
+		return nil, fmt.Errorf("artifact object storage signing is not configured")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("create artifact signed url request is required")
+	}
+	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
+		return nil, fmt.Errorf("artifact scope is required")
+	}
+	mode := normalizeArtifactContentMode(req.Mode)
+	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+		ViewerID:   req.ViewerID,
+		Operation:  ArtifactAccessOperationRead,
+	}); err != nil {
+		return nil, err
+	}
+
+	artifact, err := s.ArtifactSVC.GetArtifact(ctx, &domainservice.GetArtifactRequest{
+		ThreadID:   req.ThreadID,
+		ArtifactID: req.ArtifactID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if artifact == nil {
+		return nil, fmt.Errorf("artifact not found")
+	}
+	objectURI := strings.TrimSpace(artifact.ObjectURI)
+	if objectURI == "" {
+		return nil, fmt.Errorf("artifact object is not registered")
+	}
+	scanStatus := normalizeArtifactScanStatus(artifact.Metadata)
+	readPolicy := artifactScanReadPolicy(scanStatus, artifact, s.ArtifactScanReadPolicy)
+	if !readPolicy.Allowed {
+		if err := s.auditArtifactContentBlocked(ctx, &ReadArtifactContentRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			Mode:       mode,
+			ViewerID:   req.ViewerID,
+		}, artifact, readPolicy); err != nil {
+			return nil, err
+		}
+		return nil, &ArtifactContentBlockedByScanError{
+			ScanStatus: string(scanStatus),
+			Reason:     readPolicy.Reason,
+		}
+	}
+
+	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	if err != nil {
+		return nil, err
+	}
+	contentType := effectiveArtifactContentType(artifact.ContentType, content)
+	if mode == ArtifactContentModePreview &&
+		!canCreateArtifactSignedPreviewURL(artifact, contentType) {
+		return nil, ErrArtifactSignedURLNotSupported
+	}
+
+	expiresIn := normalizeArtifactSignedURLTTL(req.TTLSeconds)
+	signOpts := []storage.GetOptFn{storage.WithExpire(expiresIn)}
+	if mode == ArtifactContentModeDownload {
+		signOpts = append(
+			signOpts,
+			storage.WithResponseContentDisposition(
+				artifactContentDisposition(artifactContentFileName(artifact), true),
+			),
+			storage.WithResponseContentType(contentType),
+		)
+	}
+	signedURL, err := signer.GetObjectUrl(ctx, objectURI, signOpts...)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(signedURL) == "" {
+		return nil, fmt.Errorf("artifact signed url is empty")
+	}
+
+	return &CreateArtifactSignedURLResponse{
+		Artifact:         DomainArtifactToSummary(artifact),
+		URL:              signedURL,
+		ExpiresInSeconds: expiresIn,
+		ContentType:      contentType,
+		PreviewMode:      ArtifactPreviewMode(artifact.PreviewMode),
+	}, nil
+}
+
+type artifactScanJobProcessOutcome int
+
+const (
+	artifactScanJobProcessSkipped artifactScanJobProcessOutcome = iota
+	artifactScanJobProcessSucceeded
+	artifactScanJobProcessRetried
+	artifactScanJobProcessFailed
+)
+
+func (s *ApplicationService) processArtifactScanJob(
+	ctx context.Context,
+	job *domainentity.ArtifactScanJob,
+	workerID string,
+	defaultScanner string,
+	maxAttempts int32,
+	retryBackoffMillis int64,
+) (artifactScanJobProcessOutcome, error) {
+	if job == nil {
+		return artifactScanJobProcessSkipped, nil
+	}
+	artifact, err := s.ArtifactSVC.GetArtifact(
+		ctx,
+		&domainservice.GetArtifactRequest{
+			ThreadID:   job.ThreadID,
+			ArtifactID: job.ArtifactID,
+		},
+	)
+	if err != nil {
+		return artifactScanJobProcessSkipped, err
+	}
+	if artifact == nil {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan artifact missing",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	objectURI := strings.TrimSpace(artifact.ObjectURI)
+	if objectURI == "" {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan object missing",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
+	if err != nil {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan storage read failed",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	scannerName := strings.TrimSpace(job.Scanner)
+	if scannerName == "" {
+		scannerName = defaultScanner
+	}
+	result, err := s.ArtifactScanner.ScanArtifact(
+		ctx,
+		ArtifactScanRequest{
+			SpaceID:     artifact.SpaceID,
+			ThreadID:    artifact.ThreadID,
+			RunID:       artifact.RunID,
+			UserID:      artifact.UserID,
+			ArtifactID:  artifact.ID,
+			FileID:      artifact.FileID,
+			Scanner:     scannerName,
+			ContentType: artifact.ContentType,
+			SizeBytes:   artifact.SizeBytes,
+			Content:     content,
+		},
+	)
+	if err != nil {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan failed",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	if result == nil || strings.TrimSpace(result.ScanStatus) == "" {
+		return s.failClaimedArtifactScanJob(
+			ctx,
+			job,
+			workerID,
+			"artifact scan result invalid",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	scannedAt := time.Now().UnixMilli()
+
+	_, ok, err := s.ArtifactSVC.CompleteArtifactScanJob(
+		ctx,
+		&domainservice.CompleteArtifactScanJobRequest{
+			JobID:          job.ID,
+			WorkerID:       workerID,
+			ScanStatus:     result.ScanStatus,
+			ScannerVersion: result.ScannerVersion,
+			Reason:         result.Reason,
+			ScannedAt:      scannedAt,
+		},
+	)
+	if err != nil {
+		return artifactScanJobProcessSkipped, err
+	}
+	if !ok {
+		return artifactScanJobProcessSkipped, nil
+	}
+	if err := s.auditArtifactScanCompleted(
+		ctx,
+		artifactScanAuditArtifact(artifact, result, scannerName, scannedAt),
+	); err != nil {
+		return artifactScanJobProcessSkipped, err
+	}
+	return artifactScanJobProcessSucceeded, nil
+}
+
+func (s *ApplicationService) failClaimedArtifactScanJob(
+	ctx context.Context,
+	job *domainentity.ArtifactScanJob,
+	workerID string,
+	errorText string,
+	maxAttempts int32,
+	retryBackoffMillis int64,
+) (artifactScanJobProcessOutcome, error) {
+	if job == nil {
+		return artifactScanJobProcessSkipped, nil
+	}
+	if shouldRetryArtifactScanJob(job, maxAttempts) {
+		now := time.Now().UnixMilli()
+		_, ok, err := s.ArtifactSVC.RetryArtifactScanJob(
+			ctx,
+			&domainservice.RetryArtifactScanJobRequest{
+				JobID:       job.ID,
+				WorkerID:    workerID,
+				ErrorText:   errorText,
+				AvailableAt: now + retryBackoffMillis,
+				Now:         now,
+			},
+		)
+		if err != nil {
+			return artifactScanJobProcessSkipped, err
+		}
+		if !ok {
+			return artifactScanJobProcessSkipped, nil
+		}
+		return artifactScanJobProcessRetried, nil
+	}
+	_, ok, err := s.ArtifactSVC.FailArtifactScanJob(
+		ctx,
+		&domainservice.FailArtifactScanJobRequest{
+			JobID:     job.ID,
+			WorkerID:  workerID,
+			ErrorText: errorText,
+			EndedAt:   time.Now().UnixMilli(),
+		},
+	)
+	if err != nil {
+		return artifactScanJobProcessSkipped, err
+	}
+	if !ok {
+		return artifactScanJobProcessSkipped, nil
+	}
+	return artifactScanJobProcessFailed, nil
+}
+
+func shouldRetryArtifactScanJob(
+	job *domainentity.ArtifactScanJob,
+	maxAttempts int32,
+) bool {
+	return job != nil && maxAttempts > 1 && job.AttemptCount < maxAttempts
+}
+
+func artifactScanAuditArtifact(
+	artifact *domainentity.AgentArtifact,
+	result *ArtifactScanResult,
+	scanner string,
+	scannedAt int64,
+) *domainentity.AgentArtifact {
+	if artifact == nil {
+		return nil
+	}
+	cloned := *artifact
+	metadata := map[string]any{
+		"scan_status":     strings.TrimSpace(result.ScanStatus),
+		"scan_scanner":    strings.TrimSpace(scanner),
+		"scan_scanned_at": scannedAt,
+	}
+	if scannerVersion := strings.TrimSpace(result.ScannerVersion); scannerVersion != "" {
+		metadata["scan_scanner_version"] = scannerVersion
+	}
+	raw, err := json.Marshal(metadata)
+	if err == nil {
+		cloned.Metadata = string(raw)
+	}
+	return &cloned
+}
+
+func (s *ApplicationService) auditArtifactScanCompleted(
+	ctx context.Context,
+	artifact *domainentity.AgentArtifact,
+) error {
+	if s == nil || s.ThreadSVC == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	scanStatus, scanner, scannerVersion, scannedAt := artifactScanAuditFields(
+		artifact.Metadata,
+	)
+	payload, err := json.Marshal(struct {
+		Schema         string `json:"schema"`
+		ThreadID       int64  `json:"thread_id"`
+		RunID          int64  `json:"run_id"`
+		ArtifactID     int64  `json:"artifact_id"`
+		FileID         int64  `json:"file_id"`
+		ArtifactType   string `json:"artifact_type"`
+		ContentType    string `json:"content_type"`
+		SizeBytes      int64  `json:"size_bytes"`
+		ScanStatus     string `json:"scan_status"`
+		Scanner        string `json:"scanner,omitempty"`
+		ScannerVersion string `json:"scanner_version,omitempty"`
+		ScannedAt      int64  `json:"scanned_at"`
+	}{
+		Schema:         "coze.artifact_scan.v1",
+		ThreadID:       artifact.ThreadID,
+		RunID:          artifact.RunID,
+		ArtifactID:     artifact.ID,
+		FileID:         artifact.FileID,
+		ArtifactType:   artifact.ArtifactType,
+		ContentType:    artifact.ContentType,
+		SizeBytes:      artifact.SizeBytes,
+		ScanStatus:     scanStatus,
+		Scanner:        scanner,
+		ScannerVersion: scannerVersion,
+		ScannedAt:      scannedAt,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  artifact.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactScanCompletedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact scan result: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactScanReviewed(
+	ctx context.Context,
+	artifact *domainentity.AgentArtifact,
+	decision string,
+	reviewedAt int64,
+) error {
+	if s == nil || s.ThreadSVC == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	scanStatus, scanner, scannerVersion, scannedAt := artifactScanAuditFields(
+		artifact.Metadata,
+	)
+	if reviewedAt <= 0 {
+		reviewedAt = scannedAt
+	}
+	payload, err := json.Marshal(struct {
+		Schema         string `json:"schema"`
+		ThreadID       int64  `json:"thread_id"`
+		RunID          int64  `json:"run_id"`
+		ArtifactID     int64  `json:"artifact_id"`
+		FileID         int64  `json:"file_id"`
+		ArtifactType   string `json:"artifact_type"`
+		ContentType    string `json:"content_type"`
+		SizeBytes      int64  `json:"size_bytes"`
+		Decision       string `json:"decision"`
+		ScanStatus     string `json:"scan_status"`
+		Scanner        string `json:"scanner,omitempty"`
+		ScannerVersion string `json:"scanner_version,omitempty"`
+		ScannedAt      int64  `json:"scanned_at"`
+		ReviewedAt     int64  `json:"reviewed_at"`
+	}{
+		Schema:         "coze.artifact_scan_review.v1",
+		ThreadID:       artifact.ThreadID,
+		RunID:          artifact.RunID,
+		ArtifactID:     artifact.ID,
+		FileID:         artifact.FileID,
+		ArtifactType:   artifact.ArtifactType,
+		ContentType:    artifact.ContentType,
+		SizeBytes:      artifact.SizeBytes,
+		Decision:       decision,
+		ScanStatus:     scanStatus,
+		Scanner:        scanner,
+		ScannerVersion: scannerVersion,
+		ScannedAt:      scannedAt,
+		ReviewedAt:     reviewedAt,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  artifact.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactScanReviewedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact scan review: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactScanJobRetryRequested(
+	ctx context.Context,
+	job *domainentity.ArtifactScanJob,
+) error {
+	if s == nil || s.ThreadSVC == nil || job == nil || job.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema       string `json:"schema"`
+		JobID        int64  `json:"job_id"`
+		ThreadID     int64  `json:"thread_id"`
+		RunID        int64  `json:"run_id"`
+		ArtifactID   int64  `json:"artifact_id"`
+		FileID       int64  `json:"file_id"`
+		Scanner      string `json:"scanner,omitempty"`
+		Status       string `json:"status"`
+		AttemptCount int32  `json:"attempt_count"`
+		AvailableAt  int64  `json:"available_at"`
+	}{
+		Schema:       "coze.artifact_scan_job_retry_requested.v1",
+		JobID:        job.ID,
+		ThreadID:     job.ThreadID,
+		RunID:        job.RunID,
+		ArtifactID:   job.ArtifactID,
+		FileID:       job.FileID,
+		Scanner:      job.Scanner,
+		Status:       string(job.Status),
+		AttemptCount: job.AttemptCount,
+		AvailableAt:  job.AvailableAt,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  job.ThreadID,
+		RunID:     job.RunID,
+		EventType: artifactScanJobRetryRequestedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact scan job retry requested: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactDeleted(
+	ctx context.Context,
+	artifact *domainentity.AgentArtifact,
+) error {
+	if s == nil || s.ThreadSVC == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema       string `json:"schema"`
+		ThreadID     int64  `json:"thread_id"`
+		RunID        int64  `json:"run_id"`
+		ArtifactID   int64  `json:"artifact_id"`
+		FileID       int64  `json:"file_id"`
+		ArtifactType string `json:"artifact_type"`
+		ContentType  string `json:"content_type"`
+		SizeBytes    int64  `json:"size_bytes"`
+		DeletedAt    int64  `json:"deleted_at"`
+	}{
+		Schema:       "coze.artifact_deleted.v1",
+		ThreadID:     artifact.ThreadID,
+		RunID:        artifact.RunID,
+		ArtifactID:   artifact.ID,
+		FileID:       artifact.FileID,
+		ArtifactType: artifact.ArtifactType,
+		ContentType:  artifact.ContentType,
+		SizeBytes:    artifact.SizeBytes,
+		DeletedAt:    artifact.DeletedAt,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  artifact.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactDeletedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact delete: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactCleaned(
+	ctx context.Context,
+	artifact *domainentity.AgentArtifact,
+	cleanedAt int64,
+	notFound bool,
+) error {
+	if s == nil || s.ThreadSVC == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema       string `json:"schema"`
+		ThreadID     int64  `json:"thread_id"`
+		RunID        int64  `json:"run_id"`
+		ArtifactID   int64  `json:"artifact_id"`
+		FileID       int64  `json:"file_id"`
+		ArtifactType string `json:"artifact_type"`
+		ContentType  string `json:"content_type"`
+		SizeBytes    int64  `json:"size_bytes"`
+		DeletedAt    int64  `json:"deleted_at"`
+		CleanedAt    int64  `json:"cleaned_at"`
+		NotFound     bool   `json:"not_found,omitempty"`
+	}{
+		Schema:       "coze.artifact_cleaned.v1",
+		ThreadID:     artifact.ThreadID,
+		RunID:        artifact.RunID,
+		ArtifactID:   artifact.ID,
+		FileID:       artifact.FileID,
+		ArtifactType: artifact.ArtifactType,
+		ContentType:  artifact.ContentType,
+		SizeBytes:    artifact.SizeBytes,
+		DeletedAt:    artifact.DeletedAt,
+		CleanedAt:    cleanedAt,
+		NotFound:     notFound,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  artifact.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactCleanedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact cleanup: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactRestored(
+	ctx context.Context,
+	artifact *domainentity.AgentArtifact,
+	restoredAt int64,
+) error {
+	if s == nil || s.ThreadSVC == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema       string `json:"schema"`
+		ThreadID     int64  `json:"thread_id"`
+		RunID        int64  `json:"run_id"`
+		ArtifactID   int64  `json:"artifact_id"`
+		FileID       int64  `json:"file_id"`
+		ArtifactType string `json:"artifact_type"`
+		ContentType  string `json:"content_type"`
+		SizeBytes    int64  `json:"size_bytes"`
+		RestoredAt   int64  `json:"restored_at"`
+	}{
+		Schema:       "coze.artifact_restored.v1",
+		ThreadID:     artifact.ThreadID,
+		RunID:        artifact.RunID,
+		ArtifactID:   artifact.ID,
+		FileID:       artifact.FileID,
+		ArtifactType: artifact.ArtifactType,
+		ContentType:  artifact.ContentType,
+		SizeBytes:    artifact.SizeBytes,
+		RestoredAt:   restoredAt,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  artifact.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactRestoredEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact restore: %w", err)
+	}
+	return nil
+}
+
+func artifactScanAuditFields(metadata string) (string, string, string, int64) {
+	status := string(normalizeArtifactScanStatus(metadata))
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(metadata)), &raw); err != nil {
+		return status, "", "", 0
+	}
+	scanner := trimmedStringValue(raw["scan_scanner"])
+	scannerVersion := trimmedStringValue(raw["scan_scanner_version"])
+	return status, scanner, scannerVersion, int64NumberValue(raw["scan_scanned_at"])
+}
+
+func (s *ApplicationService) artifactReviewNow() int64 {
+	if s != nil && s.ArtifactReviewClock != nil {
+		if now := s.ArtifactReviewClock(); now > 0 {
+			return now
+		}
+	}
+	return time.Now().UnixMilli()
+}
+
+func (s *ApplicationService) artifactCleanupNow(reqNow int64) int64 {
+	if reqNow > 0 {
+		return reqNow
+	}
+	if s != nil && s.ArtifactCleanupNowFunc != nil {
+		if now := s.ArtifactCleanupNowFunc(); now > 0 {
+			return now
+		}
+	}
+	return time.Now().UnixMilli()
+}
+
+func normalizeArtifactScanReviewDecision(
+	decision string,
+) (string, string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "release":
+		return "release", string(artifactScanStatusClean), "manual release requested", nil
+	case "quarantine":
+		return "quarantine", string(artifactScanStatusQuarantined), "manual quarantine requested", nil
+	case "block":
+		return "block", string(artifactScanStatusBlocked), "manual block requested", nil
+	default:
+		return "", "", "", ErrArtifactScanReviewDecisionInvalid
+	}
+}
+
+func trimmedStringValue(value any) string {
+	raw, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(raw)
+}
+
+func int64NumberValue(value any) int64 {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed)
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case json.Number:
+		got, _ := typed.Int64()
+		return got
+	default:
+		return 0
+	}
+}
+
+func normalizeArtifactScanStatus(metadata string) artifactScanStatus {
+	trimmed := strings.TrimSpace(metadata)
+	if trimmed == "" {
+		return artifactScanStatusUnknown
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return artifactScanStatusUnknown
+	}
+	for _, key := range []string{"scan_status", "scanStatus"} {
+		value, ok := raw[key].(string)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case string(artifactScanStatusClean):
+			return artifactScanStatusClean
+		case string(artifactScanStatusPending):
+			return artifactScanStatusPending
+		case string(artifactScanStatusFailed):
+			return artifactScanStatusFailed
+		case string(artifactScanStatusBlocked):
+			return artifactScanStatusBlocked
+		case string(artifactScanStatusInfected):
+			return artifactScanStatusInfected
+		case string(artifactScanStatusQuarantined):
+			return artifactScanStatusQuarantined
+		default:
+			return artifactScanStatusUnknown
+		}
+	}
+	return artifactScanStatusUnknown
+}
+
+type artifactScanReadPolicyDecision struct {
+	Allowed  bool
+	Reason   string
+	Override bool
+	FailMode string
+}
+
+func (s *ApplicationService) auditArtifactContentAccess(
+	ctx context.Context,
+	req *ReadArtifactContentRequest,
+	artifact *domainentity.AgentArtifact,
+	resp *ReadArtifactContentResponse,
+	scanStatus artifactScanStatus,
+	policy artifactScanReadPolicyDecision,
+) error {
+	if s == nil || s.ThreadSVC == nil || req == nil || artifact == nil || resp == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema             string `json:"schema"`
+		ThreadID           int64  `json:"thread_id"`
+		RunID              int64  `json:"run_id"`
+		ArtifactID         int64  `json:"artifact_id"`
+		FileID             int64  `json:"file_id"`
+		Mode               string `json:"mode"`
+		PreviewMode        string `json:"preview_mode"`
+		ArtifactType       string `json:"artifact_type"`
+		ContentType        string `json:"content_type"`
+		SizeBytes          int64  `json:"size_bytes"`
+		Attachment         bool   `json:"attachment"`
+		ScanStatus         string `json:"scan_status"`
+		ScanPolicyMode     string `json:"scan_policy_mode,omitempty"`
+		ScanPolicyReason   string `json:"scan_policy_reason,omitempty"`
+		ScanPolicyOverride bool   `json:"scan_policy_override,omitempty"`
+	}{
+		Schema:             "coze.artifact_access.v1",
+		ThreadID:           req.ThreadID,
+		RunID:              artifact.RunID,
+		ArtifactID:         artifact.ID,
+		FileID:             artifact.FileID,
+		Mode:               string(normalizeArtifactContentMode(req.Mode)),
+		PreviewMode:        string(artifact.PreviewMode),
+		ArtifactType:       artifact.ArtifactType,
+		ContentType:        resp.ContentType,
+		SizeBytes:          artifact.SizeBytes,
+		Attachment:         resp.Attachment,
+		ScanStatus:         string(scanStatus),
+		ScanPolicyMode:     policy.FailMode,
+		ScanPolicyReason:   policy.Reason,
+		ScanPolicyOverride: policy.Override,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactContentAccessedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact content access: %w", err)
+	}
+	return nil
+}
+
+func (s *ApplicationService) auditArtifactContentBlocked(
+	ctx context.Context,
+	req *ReadArtifactContentRequest,
+	artifact *domainentity.AgentArtifact,
+	policy artifactScanReadPolicyDecision,
+) error {
+	if s == nil || s.ThreadSVC == nil || req == nil || artifact == nil || artifact.RunID <= 0 {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Schema       string `json:"schema"`
+		ThreadID     int64  `json:"thread_id"`
+		RunID        int64  `json:"run_id"`
+		ArtifactID   int64  `json:"artifact_id"`
+		FileID       int64  `json:"file_id"`
+		Mode         string `json:"mode"`
+		PreviewMode  string `json:"preview_mode"`
+		ArtifactType string `json:"artifact_type"`
+		ScanStatus   string `json:"scan_status"`
+		Reason       string `json:"reason"`
+	}{
+		Schema:       "coze.artifact_access_blocked.v1",
+		ThreadID:     req.ThreadID,
+		RunID:        artifact.RunID,
+		ArtifactID:   artifact.ID,
+		FileID:       artifact.FileID,
+		Mode:         string(normalizeArtifactContentMode(req.Mode)),
+		PreviewMode:  string(artifact.PreviewMode),
+		ArtifactType: artifact.ArtifactType,
+		ScanStatus:   string(normalizeArtifactScanStatus(artifact.Metadata)),
+		Reason:       policy.Reason,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     artifact.RunID,
+		EventType: artifactContentBlockedEvent,
+		Payload:   string(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("audit artifact content blocked: %w", err)
+	}
+	return nil
+}
+
+func normalizeArtifactContentMode(mode ArtifactContentMode) ArtifactContentMode {
+	if mode == ArtifactContentModeDownload {
+		return ArtifactContentModeDownload
+	}
+	return ArtifactContentModePreview
+}
+
+func shouldAttachArtifactContent(
+	mode ArtifactContentMode,
+	artifact *domainentity.AgentArtifact,
+	effectiveContentType string,
+) bool {
+	if mode == ArtifactContentModeDownload || artifact == nil {
+		return true
+	}
+	if artifact.PreviewMode == domainentity.AgentArtifactPreviewModeDownload ||
+		artifact.PreviewMode == domainentity.AgentArtifactPreviewModeUnsupported {
+		return true
+	}
+	if domainservice.DetermineArtifactPreviewMode(
+		artifact.ContentType,
+	) == domainentity.AgentArtifactPreviewModeDownload {
+		return true
+	}
+	return domainservice.DetermineArtifactPreviewMode(
+		effectiveContentType,
+	) == domainentity.AgentArtifactPreviewModeDownload
+}
+
+func normalizeArtifactSignedURLTTL(ttlSeconds int64) int64 {
+	const (
+		defaultTTLSeconds = int64(300)
+		minTTLSeconds     = int64(60)
+		maxTTLSeconds     = int64(3600)
+	)
+	if ttlSeconds <= 0 {
+		return defaultTTLSeconds
+	}
+	if ttlSeconds < minTTLSeconds {
+		return minTTLSeconds
+	}
+	if ttlSeconds > maxTTLSeconds {
+		return maxTTLSeconds
+	}
+	return ttlSeconds
+}
+
+func canCreateArtifactSignedPreviewURL(
+	artifact *domainentity.AgentArtifact,
+	effectiveContentType string,
+) bool {
+	if artifact == nil {
+		return false
+	}
+	storedMode := domainservice.DetermineArtifactPreviewMode(artifact.ContentType)
+	effectiveMode := domainservice.DetermineArtifactPreviewMode(effectiveContentType)
+	if storedMode != effectiveMode || storedMode == domainentity.AgentArtifactPreviewModeDownload {
+		return false
+	}
+	return artifact.PreviewMode == storedMode
+}
+
+func artifactContentDisposition(fileName string, attachment bool) string {
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		fileName = "artifact"
+	}
+	return disposition + "; filename*=UTF-8''" + url.PathEscape(fileName)
+}
+
+func effectiveArtifactContentType(storedContentType string, content []byte) string {
+	if len(content) > 0 {
+		return http.DetectContentType(content)
+	}
+	contentType := strings.TrimSpace(storedContentType)
+	if contentType == "" {
+		return "application/octet-stream"
+	}
+	return contentType
+}
+
+func artifactContentFileName(artifact *domainentity.AgentArtifact) string {
+	if artifact == nil {
+		return "artifact"
+	}
+	if title := strings.TrimSpace(artifact.Title); title != "" {
+		return title
+	}
+	if base := strings.TrimSpace(path.Base(artifact.VirtualPath)); base != "" &&
+		base != "." && base != "/" {
+		return base
+	}
+	return "artifact"
+}
+
+func tokenUsageResponse(
+	rows []*domainentity.TokenUsage,
+	total int64,
+	aggregate *domainentity.TokenUsageAggregate,
+	runAggregates []*domainentity.RunTokenUsageAggregate,
+) *GetTokenUsageResponse {
+	resp := &GetTokenUsageResponse{
+		Usage:         make([]*TokenUsageSummary, 0, len(rows)),
+		Total:         total,
+		Aggregate:     DomainTokenUsageAggregateToSummary(aggregate),
+		RunAggregates: make([]*RunTokenUsageAggregateSummary, 0, len(runAggregates)),
 	}
 	for _, usage := range rows {
 		resp.Usage = append(resp.Usage, DomainTokenUsageToSummary(usage))
+	}
+	for _, runAggregate := range runAggregates {
+		resp.RunAggregates = append(resp.RunAggregates, DomainRunTokenUsageAggregateToSummary(runAggregate))
 	}
 
 	return resp
@@ -617,6 +2758,14 @@ func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStat
 	return s.updateRunStatus(ctx, req, s.ThreadSVC.CompleteRun)
 }
 
+func (s *ApplicationService) InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+
+	return s.updateRunStatus(ctx, req, s.ThreadSVC.InterruptRun)
+}
+
 func (s *ApplicationService) FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -630,7 +2779,30 @@ func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatus
 		return nil, err
 	}
 
-	return s.updateRunStatus(ctx, req, s.ThreadSVC.CancelRun)
+	resp, err := s.updateRunStatus(ctx, req, s.ThreadSVC.CancelRun)
+	if err != nil {
+		return nil, err
+	}
+	s.cancelActiveADKRun(ctx, resp)
+
+	return resp, nil
+}
+
+func (s *ApplicationService) cancelActiveADKRun(ctx context.Context, resp *UpdateRunStatusResponse) {
+	if s == nil || s.ADKCancelRegistry == nil || resp == nil || resp.Run == nil {
+		return
+	}
+	mode, err := runtimeModeFromRun(resp.Run)
+	if err != nil || mode != RuntimeModeEinoADK {
+		return
+	}
+
+	_ = s.ADKCancelRegistry.Cancel(
+		ctx,
+		resp.Run.RunID,
+		adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
+		true,
+	)
 }
 
 func (s *ApplicationService) updateRunStatus(
@@ -672,4 +2844,54 @@ func (s *ApplicationService) requireThreadSVC() error {
 	}
 
 	return nil
+}
+
+func (s *ApplicationService) requireArtifactSVC() error {
+	if s == nil || s.ArtifactSVC == nil {
+		return fmt.Errorf("agent artifact service is not initialized")
+	}
+
+	return nil
+}
+
+func (s *ApplicationService) requireGuardrailAuditRepository() error {
+	if s == nil || s.GuardrailAuditRepository == nil {
+		return fmt.Errorf("guardrail audit repository is not initialized")
+	}
+
+	return nil
+}
+
+func normalizeGuardrailAuditPage(page, pageSize int32) (int32, int32) {
+	_, normalizedPageSize, offset := normalizeGuardrailAuditPageWithMax(
+		page,
+		pageSize,
+		20,
+		100,
+	)
+
+	return normalizedPageSize, offset
+}
+
+func normalizeGuardrailAuditExportPage(page, pageSize int32) (int32, int32, int32) {
+	return normalizeGuardrailAuditPageWithMax(page, pageSize, 100, 1000)
+}
+
+func normalizeGuardrailAuditPageWithMax(
+	page,
+	pageSize,
+	defaultPageSize,
+	maxPageSize int32,
+) (int32, int32, int32) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+
+	return page, pageSize, (page - 1) * pageSize
 }

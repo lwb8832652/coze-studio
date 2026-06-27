@@ -38,6 +38,8 @@ vi.mock('../service', () => ({
   retryTask: vi.fn(),
 }));
 
+import { getPendingHumanInteraction } from '../task-human-interaction';
+import { projectTaskExecutionEvents } from '../task-event-projection';
 import TasksPage from '../index';
 import {
   canCancelTask,
@@ -251,5 +253,225 @@ describe('TasksPage helpers', () => {
     expect(completed.status).toBe('completed');
     expect(failed.title).toBe('工具 search_web 调用失败');
     expect(failed.status).toBe('failed');
+  });
+
+  it('formats plan task events and keeps only the latest task state', () => {
+    const events = [
+      {
+        id: 'event-1',
+        task_id: 'task-1',
+        event_type: 'plan.task.created',
+        payload: JSON.stringify({
+          plan_task_id: '1',
+          subject: '运行测试',
+          status: 'pending',
+        }),
+        created_at: 1,
+      },
+      {
+        id: 'event-2',
+        task_id: 'task-1',
+        event_type: 'tool.completed',
+        payload: JSON.stringify({ tool_name: 'search_web' }),
+        created_at: 2,
+      },
+      {
+        id: 'event-3',
+        task_id: 'task-1',
+        event_type: 'plan.task.updated',
+        payload: JSON.stringify({
+          plan_task_id: '1',
+          subject: '运行测试',
+          status: 'in_progress',
+          active_form: '正在运行测试',
+        }),
+        created_at: 3,
+      },
+      {
+        id: 'event-4',
+        task_id: 'task-1',
+        event_type: 'plan.task.completed',
+        payload: JSON.stringify({
+          plan_task_id: '1',
+          subject: '运行测试',
+          status: 'completed',
+        }),
+        created_at: 4,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0].event.id).toBe('event-2');
+    expect(projected[1].event.id).toBe('event-4');
+    expect(projected[1].display.title).toBe('完成计划：运行测试');
+    expect(projected[1].display.status).toBe('completed');
+
+    expect(
+      getTaskEventDisplay(
+        'plan.task.deleted',
+        JSON.stringify({
+          plan_task_id: '2',
+          subject: '过期计划',
+          status: 'deleted',
+        }),
+      ),
+    ).toMatchObject({
+      title: '移除计划：过期计划',
+      status: 'neutral',
+      structured: true,
+    });
+  });
+
+  it('extracts latest pending clarification prompt', () => {
+    const pending = getPendingHumanInteraction([
+      {
+        id: 'event-1',
+        task_id: 'thread-1',
+        event_type: 'run.interrupted',
+        payload: JSON.stringify({
+          interrupts: {
+            items: [
+              {
+                id: 'interrupt-1',
+                is_root_cause: true,
+                info: {
+                  schema: 'coze.human_interaction.v1',
+                  interaction_id: 'hi_1',
+                  kind: 'clarification',
+                  question: '请选择时间范围',
+                  allow_free_text: true,
+                  required: true,
+                },
+              },
+            ],
+          },
+          human_interaction: {
+            schema: 'coze.human_interaction.v1',
+            interaction_id: 'hi_1',
+            kind: 'clarification',
+            question: '请选择时间范围',
+            allow_free_text: true,
+            required: true,
+          },
+        }),
+        created_at: 1,
+      },
+    ]);
+
+    expect(pending?.interruptId).toBe('interrupt-1');
+    expect(pending?.interactionId).toBe('hi_1');
+    expect(pending?.kind).toBe('clarification');
+    expect(pending?.prompt.question).toBe('请选择时间范围');
+  });
+
+  it('hides prompt after matching resolved event', () => {
+    const pending = getPendingHumanInteraction([
+      {
+        id: 'event-1',
+        task_id: 'thread-1',
+        event_type: 'run.interrupted',
+        payload: JSON.stringify({
+          interrupts: {
+            items: [
+              {
+                id: 'interrupt-1',
+                is_root_cause: true,
+                info: {
+                  schema: 'coze.human_interaction.v1',
+                  interaction_id: 'hi_1',
+                  kind: 'clarification',
+                  question: '请选择时间范围',
+                  allow_free_text: true,
+                  required: true,
+                },
+              },
+            ],
+          },
+          human_interaction: {
+            schema: 'coze.human_interaction.v1',
+            interaction_id: 'hi_1',
+            kind: 'clarification',
+            question: '请选择时间范围',
+            allow_free_text: true,
+            required: true,
+          },
+        }),
+        created_at: 1,
+      },
+      {
+        id: 'event-2',
+        task_id: 'thread-1',
+        event_type: 'human.interaction.resolved',
+        payload: JSON.stringify({
+          schema: 'coze.human_interaction_resolved.v1',
+          interrupt_id: 'interrupt-1',
+          interaction_id: 'hi_1',
+          kind: 'clarification',
+          decision: 'answered',
+        }),
+        created_at: 2,
+      },
+    ]);
+
+    expect(pending).toBeUndefined();
+  });
+
+  it('extracts confirmation decision metadata', () => {
+    const pending = getPendingHumanInteraction([
+      {
+        id: 'event-1',
+        task_id: 'thread-1',
+        event_type: 'run.interrupted',
+        payload: JSON.stringify({
+          interrupts: {
+            items: [
+              {
+                id: 'interrupt-1',
+                is_root_cause: true,
+                info: {
+                  schema: 'coze.human_interaction.v1',
+                  interaction_id: 'hi_1',
+                  kind: 'confirmation',
+                  title: '确认执行删除',
+                  summary: '将删除 3 条记录',
+                  action: 'delete_records',
+                  risk_level: 'high',
+                  default_decision: 'rejected',
+                  rejection_guidance: '可以改为导出后人工确认',
+                  consequences: ['记录将不可见'],
+                  affected_resources: ['customer:1'],
+                  required: true,
+                },
+              },
+            ],
+          },
+          human_interactions: [
+            {
+              schema: 'coze.human_interaction.v1',
+              interaction_id: 'hi_1',
+              kind: 'confirmation',
+              title: '确认执行删除',
+              summary: '将删除 3 条记录',
+              action: 'delete_records',
+              risk_level: 'high',
+              default_decision: 'rejected',
+              rejection_guidance: '可以改为导出后人工确认',
+              consequences: ['记录将不可见'],
+              affected_resources: ['customer:1'],
+              required: true,
+            },
+          ],
+        }),
+        created_at: 1,
+      },
+    ]);
+
+    expect(pending?.kind).toBe('confirmation');
+    expect(pending?.prompt.risk_level).toBe('high');
+    expect(pending?.prompt.action).toBe('delete_records');
+    expect(pending?.prompt.default_decision).toBe('rejected');
+    expect(pending?.prompt.consequences).toEqual(['记录将不可见']);
   });
 });

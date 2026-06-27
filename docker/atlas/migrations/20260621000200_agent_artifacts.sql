@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS `agent_artifacts` (
+  `id` BIGINT NOT NULL,
+  `space_id` BIGINT NOT NULL,
+  `user_id` BIGINT NOT NULL,
+  `thread_id` BIGINT NOT NULL,
+  `run_id` BIGINT NOT NULL,
+  `file_id` BIGINT NOT NULL,
+  `title` VARCHAR(255) NOT NULL DEFAULT '',
+  `artifact_type` VARCHAR(64) NOT NULL,
+  `virtual_path` VARCHAR(1024) NOT NULL,
+  `object_uri` VARCHAR(1024) NOT NULL,
+  `content_type` VARCHAR(255) NOT NULL DEFAULT '',
+  `size_bytes` BIGINT NOT NULL DEFAULT 0,
+  `preview_mode` VARCHAR(32) NOT NULL DEFAULT 'download',
+  `metadata` JSON NOT NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_agent_artifacts_file` (`file_id`),
+  KEY `idx_agent_artifacts_thread_created` (`thread_id`, `created_at`),
+  KEY `idx_agent_artifacts_run_created` (`run_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -514,7 +514,7 @@ func (d *dummyNodeWOptLoop) Invoke(ctx context.Context, in map[string]any, opts 
 	*d.callCount++
 	index := in["index"].(int64)
 	if in["resume_data"] == nil {
-		return nil, compose.NewInterruptAndRerunErr(fmt.Errorf("interrupt at %d", index))
+		return nil, compose.Interrupt(ctx, fmt.Sprintf("interrupt at %d", index))
 	}
 
 	out = make(map[string]any)

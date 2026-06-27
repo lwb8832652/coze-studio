@@ -44,7 +44,7 @@ func NewSkillRepository(db *gorm.DB, idGen idgen.IDGenerator) SkillRepository {
 
 type skillPO struct {
 	ID           int64          `gorm:"column:id;primaryKey"`
-	SpaceID      int64          `gorm:"column:space_id;index:idx_skills_space_type;index:idx_skills_space_enabled"`
+	SpaceID      int64          `gorm:"column:space_id;index:idx_skills_space_type;index:idx_skills_space_enabled;index:idx_skills_space_deleted"`
 	Name         string         `gorm:"column:name"`
 	Description  string         `gorm:"column:description"`
 	Type         string         `gorm:"column:type;index:idx_skills_space_type"`
@@ -56,6 +56,7 @@ type skillPO struct {
 	Permissions  datatypes.JSON `gorm:"column:permissions;type:json"`
 	CreatedAt    int64          `gorm:"column:created_at"`
 	UpdatedAt    int64          `gorm:"column:updated_at"`
+	DeletedAt    int64          `gorm:"column:deleted_at;index:idx_skills_space_deleted"`
 }
 
 func (skillPO) TableName() string {
@@ -155,7 +156,7 @@ func (r *skillRepository) Update(ctx context.Context, skill *entity.Skill) error
 
 	db := r.db.WithContext(ctx).
 		Model(&skillPO{}).
-		Where("id = ?", skill.ID).
+		Where("id = ? AND deleted_at = 0", skill.ID).
 		Updates(updates)
 	if db.Error != nil {
 		return db.Error
@@ -167,9 +168,31 @@ func (r *skillRepository) Update(ctx context.Context, skill *entity.Skill) error
 	return nil
 }
 
+func (r *skillRepository) Delete(ctx context.Context, id int64) error {
+	now := time.Now().UnixMilli()
+	db := r.db.WithContext(ctx).
+		Model(&skillPO{}).
+		Where("id = ? AND deleted_at = 0", id).
+		Updates(map[string]any{
+			"deleted_at": now,
+			"updated_at": now,
+			"enabled":    false,
+		})
+	if db.Error != nil {
+		return db.Error
+	}
+	if db.RowsAffected == 0 {
+		return fmt.Errorf("delete skill failed: skill %d not found", id)
+	}
+
+	return nil
+}
+
 func (r *skillRepository) Get(ctx context.Context, id int64) (*entity.Skill, error) {
 	var po skillPO
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&po).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND deleted_at = 0", id).
+		First(&po).Error; err != nil {
 		return nil, err
 	}
 
@@ -177,7 +200,7 @@ func (r *skillRepository) Get(ctx context.Context, id int64) (*entity.Skill, err
 }
 
 func (r *skillRepository) List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error) {
-	query := r.db.WithContext(ctx).Where("space_id = ?", spaceID)
+	query := r.db.WithContext(ctx).Where("space_id = ? AND deleted_at = 0", spaceID)
 	if typ != nil {
 		query = query.Where("type = ?", string(*typ))
 	}
@@ -327,6 +350,7 @@ func skillToPO(skill *entity.Skill) (*skillPO, error) {
 		Permissions:  permissions,
 		CreatedAt:    skill.CreatedAt,
 		UpdatedAt:    skill.UpdatedAt,
+		DeletedAt:    skill.DeletedAt,
 	}, nil
 }
 
@@ -345,6 +369,7 @@ func (po *skillPO) toEntity() *entity.Skill {
 		Permissions:  jsonToString(po.Permissions),
 		CreatedAt:    po.CreatedAt,
 		UpdatedAt:    po.UpdatedAt,
+		DeletedAt:    po.DeletedAt,
 	}
 }
 

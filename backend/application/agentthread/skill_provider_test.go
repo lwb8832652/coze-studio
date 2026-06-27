@@ -65,6 +65,9 @@ description: Research weekly changes.
 type: deer_skill
 version: 1.2.0
 enabled: true
+context: fork
+agent: research-agent
+model: reasoning-model
 ---
 # Weekly Research
 
@@ -90,6 +93,9 @@ Collect sources and produce a concise brief.
 	require.Equal(t, "weekly-research", skills[0].Name)
 	require.Equal(t, "deer_skill", skills[0].Type)
 	require.Equal(t, "1.2.0", skills[0].Version)
+	require.Equal(t, "fork", skills[0].Context)
+	require.Equal(t, "research-agent", skills[0].Agent)
+	require.Equal(t, "reasoning-model", skills[0].Model)
 	require.Contains(t, skills[0].Body, "Collect sources")
 	require.NotContains(t, skills[0].Body, "name: weekly-research")
 	require.Equal(t, []int64{101}, catalog.listVersionSkillIDs)

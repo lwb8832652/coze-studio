@@ -23,17 +23,21 @@ type MCPToolDefinition struct {
 }
 
 type MCPToolServer struct {
-	ServerID    int64                `json:"server_id,string"`
-	SpaceID     int64                `json:"space_id,string"`
-	Name        string               `json:"name"`
-	Description string               `json:"description"`
-	ServerType  string               `json:"server_type"`
-	Enabled     bool                 `json:"enabled"`
-	Config      string               `json:"config"`
-	Auth        string               `json:"auth"`
-	Tools       []*MCPToolDefinition `json:"tools"`
-	CreatedAt   int64                `json:"created_at"`
-	UpdatedAt   int64                `json:"updated_at"`
+	ServerID        int64                `json:"server_id,string"`
+	SpaceID         int64                `json:"space_id,string"`
+	Name            string               `json:"name"`
+	Description     string               `json:"description"`
+	ServerType      string               `json:"server_type"`
+	Enabled         bool                 `json:"enabled"`
+	Config          string               `json:"config"`
+	Auth            string               `json:"auth"`
+	Tools           []*MCPToolDefinition `json:"tools"`
+	HealthStatus    string               `json:"health_status"`
+	HealthCheckedAt int64                `json:"health_checked_at"`
+	HealthLatencyMs int64                `json:"health_latency_ms"`
+	HealthError     string               `json:"health_error"`
+	CreatedAt       int64                `json:"created_at"`
+	UpdatedAt       int64                `json:"updated_at"`
 }
 
 type UpsertMCPToolServerRequest struct {
@@ -52,6 +56,10 @@ type ListMCPToolServersRequest struct {
 	SpaceID int64 `query:"space_id,required"`
 }
 
+type ListMCPToolRegistryEntriesRequest struct {
+	SpaceID int64 `query:"space_id,required"`
+}
+
 type GetMCPToolServerRequest struct {
 	ServerID int64 `path:"server_id,required"`
 }
@@ -65,6 +73,27 @@ type TestMCPToolCallRequest struct {
 type ListMCPToolServersData struct {
 	Servers []*MCPToolServer `json:"servers"`
 	Total   int64            `json:"total"`
+}
+
+type MCPToolRegistryEntry struct {
+	Name            string `json:"name"`
+	Source          string `json:"source"`
+	Category        string `json:"category"`
+	Visibility      string `json:"visibility"`
+	ServerID        int64  `json:"server_id,string"`
+	ServerName      string `json:"server_name"`
+	ToolName        string `json:"tool_name"`
+	Description     string `json:"description"`
+	Enabled         bool   `json:"enabled"`
+	HealthStatus    string `json:"health_status"`
+	HealthCheckedAt int64  `json:"health_checked_at"`
+	HealthLatencyMs int64  `json:"health_latency_ms"`
+	HealthError     string `json:"health_error"`
+}
+
+type ListMCPToolRegistryEntriesData struct {
+	Tools []*MCPToolRegistryEntry `json:"tools"`
+	Total int64                   `json:"total"`
 }
 
 type TestMCPToolCallData struct {
@@ -83,6 +112,12 @@ type ListMCPToolServersResponse struct {
 	Data *ListMCPToolServersData `json:"data,omitempty"`
 	Code int64                   `json:"code"`
 	Msg  string                  `json:"msg"`
+}
+
+type ListMCPToolRegistryEntriesResponse struct {
+	Data *ListMCPToolRegistryEntriesData `json:"data,omitempty"`
+	Code int64                           `json:"code"`
+	Msg  string                          `json:"msg"`
 }
 
 type TestMCPToolCallResponse struct {

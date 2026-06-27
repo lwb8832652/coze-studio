@@ -30,12 +30,16 @@ func TestRegisterIncludesWorkbenchMCPToolRoutes(t *testing.T) {
 	Register(h)
 
 	list := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/mcp_tools?space_id=1", nil)
+	registryEntries := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/mcp_tools/registry_entries?space_id=1", nil)
 	create := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/mcp_tools", nil)
 	detail := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/mcp_tools/100", nil)
+	deleteServer := ut.PerformRequest(h.Engine, http.MethodDelete, "/api/workbench/mcp_tools/100", nil)
 	testCall := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/mcp_tools/100/test_call", nil)
 
 	require.NotEqual(t, http.StatusNotFound, list.Code)
+	require.NotEqual(t, http.StatusNotFound, registryEntries.Code)
 	require.NotEqual(t, http.StatusNotFound, create.Code)
 	require.NotEqual(t, http.StatusNotFound, detail.Code)
+	require.NotEqual(t, http.StatusNotFound, deleteServer.Code)
 	require.NotEqual(t, http.StatusNotFound, testCall.Code)
 }

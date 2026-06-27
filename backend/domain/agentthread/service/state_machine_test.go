@@ -30,11 +30,15 @@ func TestCanTransitionRunAllowsWorkerLifecycle(t *testing.T) {
 	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusSucceeded))
 	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusFailed))
 	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusCanceled))
+	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusInterrupted))
+	assert.True(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusQueued))
+	assert.True(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusCanceled))
 }
 
 func TestCanTransitionRunBlocksTerminalToRunning(t *testing.T) {
 	assert.False(t, CanTransitionRun(entity.RunStatusSucceeded, entity.RunStatusRunning))
 	assert.False(t, CanTransitionRun(entity.RunStatusFailed, entity.RunStatusRunning))
+	assert.False(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusSucceeded))
 }
 
 func TestEnsureRunTransitionReturnsClientError(t *testing.T) {

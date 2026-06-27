@@ -28,9 +28,14 @@ var allowedRunTransitions = map[entity.RunStatus]map[entity.RunStatus]bool{
 		entity.RunStatusCanceled: true,
 	},
 	entity.RunStatusRunning: {
-		entity.RunStatusSucceeded: true,
-		entity.RunStatusFailed:    true,
-		entity.RunStatusCanceled:  true,
+		entity.RunStatusInterrupted: true,
+		entity.RunStatusSucceeded:   true,
+		entity.RunStatusFailed:      true,
+		entity.RunStatusCanceled:    true,
+	},
+	entity.RunStatusInterrupted: {
+		entity.RunStatusQueued:   true,
+		entity.RunStatusCanceled: true,
 	},
 }
 

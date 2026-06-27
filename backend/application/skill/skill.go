@@ -36,18 +36,205 @@ import (
 var SVC = new(ApplicationService)
 
 type ApplicationService struct {
-	DomainSVC domain.SkillService
+	DomainSVC             domain.SkillService
+	ToolCandidateProvider ToolCandidateProvider
+}
+
+type ToolCandidateProvider interface {
+	ListSkillToolCandidates(ctx context.Context, spaceID int64) ([]*skillapi.SkillToolCandidate, error)
+}
+
+type ToolCandidateProviderFunc func(ctx context.Context, spaceID int64) ([]*skillapi.SkillToolCandidate, error)
+
+func (f ToolCandidateProviderFunc) ListSkillToolCandidates(ctx context.Context, spaceID int64) ([]*skillapi.SkillToolCandidate, error) {
+	if f == nil {
+		return nil, nil
+	}
+
+	return f(ctx, spaceID)
+}
+
+var defaultSkillToolCandidates = []*skillapi.SkillToolCandidate{
+	{
+		Name:        "web_fetch",
+		DisplayName: "Web fetch",
+		Description: "Fetch bounded text content from an explicitly allowed web host.",
+		Category:    "web",
+		Visibility:  "static",
+		Source:      "builtin",
+	},
+	{
+		Name:        "web_search",
+		DisplayName: "Web search",
+		Description: "Search the web using a Coze-approved search backend.",
+		Category:    "web",
+		Visibility:  "static",
+		Source:      "builtin",
+	},
+	{
+		Name:        "ask_user_clarification",
+		DisplayName: "Ask user clarification",
+		Description: "Ask the user for missing information required to continue the task.",
+		Category:    "human_interaction",
+		Visibility:  "static",
+		Source:      "builtin",
+	},
+	{
+		Name:        "request_human_confirmation",
+		DisplayName: "Request human confirmation",
+		Description: "Ask the user to approve or reject a sensitive action before continuing.",
+		Category:    "human_interaction",
+		Visibility:  "static",
+		Source:      "builtin",
+	},
+}
+
+func (s *ApplicationService) ListSkillToolCandidates(ctx context.Context, req *skillapi.ListSkillToolCandidatesRequest) (*skillapi.ListSkillToolCandidatesResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("list skill tool candidates request is required")
+	}
+	if req.SpaceID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("space id is required")
+	}
+
+	rawCandidates := make([]*skillapi.SkillToolCandidate, 0, len(defaultSkillToolCandidates))
+	rawCandidates = append(rawCandidates, defaultSkillToolCandidates...)
+	if s != nil && s.ToolCandidateProvider != nil {
+		provided, err := s.ToolCandidateProvider.ListSkillToolCandidates(ctx, req.SpaceID)
+		if err != nil {
+			return nil, err
+		}
+		rawCandidates = append(rawCandidates, provided...)
+	}
+	tools := normalizeSkillToolCandidates(rawCandidates)
+
+	return &skillapi.ListSkillToolCandidatesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &skillapi.ListSkillToolCandidatesData{Tools: tools},
+	}, nil
+}
+
+func normalizeSkillToolCandidates(candidates []*skillapi.SkillToolCandidate) []*skillapi.SkillToolCandidate {
+	seen := make(map[string]struct{}, len(candidates))
+	tools := make([]*skillapi.SkillToolCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		normalized, ok := normalizeSkillToolCandidate(candidate)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[normalized.Name]; exists {
+			continue
+		}
+		seen[normalized.Name] = struct{}{}
+		tools = append(tools, normalized)
+	}
+
+	return tools
+}
+
+func normalizeSkillToolCandidate(candidate *skillapi.SkillToolCandidate) (*skillapi.SkillToolCandidate, bool) {
+	if candidate == nil {
+		return nil, false
+	}
+	name := strings.TrimSpace(candidate.Name)
+	description := boundedTrim(candidate.Description, 512)
+	if !isSkillToolCandidateName(name) || description == "" {
+		return nil, false
+	}
+	displayName := boundedTrim(candidate.DisplayName, 128)
+	if displayName == "" {
+		displayName = name
+	}
+	category := boundedTrim(candidate.Category, 64)
+	if category == "" {
+		category = "runtime"
+	}
+	visibility := boundedTrim(candidate.Visibility, 64)
+	if visibility == "" {
+		visibility = "static"
+	}
+
+	return &skillapi.SkillToolCandidate{
+		Name:        name,
+		DisplayName: displayName,
+		Description: description,
+		Category:    category,
+		Visibility:  visibility,
+		Source:      boundedTrim(candidate.Source, 64),
+		SourceID:    boundedTrim(candidate.SourceID, 128),
+		SourceName:  boundedTrim(candidate.SourceName, 128),
+	}, true
+}
+
+func isSkillToolCandidateName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for index, char := range name {
+		switch {
+		case char >= 'a' && char <= 'z':
+		case char >= 'A' && char <= 'Z':
+		case char == '_':
+		case index > 0 && char >= '0' && char <= '9':
+		default:
+			return false
+		}
+		if index == 0 && char >= '0' && char <= '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func boundedTrim(value string, maxLength int) string {
+	value = strings.TrimSpace(value)
+	if maxLength <= 0 {
+		return value
+	}
+
+	runes := []rune(value)
+	if len(runes) <= maxLength {
+		return value
+	}
+
+	return string(runes[:maxLength])
 }
 
 func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.ImportSkillRequest) (*skillapi.SkillResponse, error) {
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
-	skill, err := s.DomainSVC.ImportDeclaration(ctx, req.SpaceID, req.FileName, []byte(req.Content))
+	content, err := decodeSkillImportContent(req.FileName, req.Content)
+	if err != nil {
+		return nil, err
+	}
+	skill, err := s.DomainSVC.ImportDeclaration(ctx, req.SpaceID, req.FileName, content)
 	if err != nil {
 		return nil, err
 	}
 	return skillResponse(skill)
+}
+
+func decodeSkillImportContent(fileName, content string) ([]byte, error) {
+	if !strings.EqualFold(path.Ext(strings.TrimSpace(fileName)), ".skill") {
+		return []byte(content), nil
+	}
+
+	const base64Prefix = "base64:"
+	if !strings.HasPrefix(content, base64Prefix) {
+		return nil, domain.InvalidArgumentErrorf("skill archive content must use base64 encoding")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(content, base64Prefix))
+	if err != nil {
+		return nil, domain.InvalidArgumentErrorf("invalid skill archive base64 content: %v", err)
+	}
+	if len(decoded) == 0 {
+		return nil, domain.InvalidArgumentErrorf("skill archive content is empty")
+	}
+
+	return decoded, nil
 }
 
 func (s *ApplicationService) CreateSkill(ctx context.Context, req *skillapi.UpsertSkillRequest) (*skillapi.SkillResponse, error) {
@@ -113,6 +300,23 @@ func (s *ApplicationService) GetSkill(ctx context.Context, req *skillapi.GetSkil
 		return nil, err
 	}
 	skill, err := s.DomainSVC.Get(ctx, req.SkillID)
+	if err != nil {
+		return nil, err
+	}
+	return skillResponse(skill)
+}
+
+func (s *ApplicationService) DeleteSkill(ctx context.Context, req *skillapi.GetSkillRequest) (*skillapi.SkillResponse, error) {
+	if err := s.requireDomainSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("delete skill request is required")
+	}
+	if req.SkillID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("skill id is required")
+	}
+	skill, err := s.DomainSVC.Delete(ctx, req.SkillID)
 	if err != nil {
 		return nil, err
 	}

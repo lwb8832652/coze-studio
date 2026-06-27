@@ -128,6 +128,46 @@ func GetSkill(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// DeleteSkill .
+// @router /api/workbench/skills/:skill_id [DELETE]
+func DeleteSkill(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req skillapi.GetSkillRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appskill.SVC.DeleteSkill(ctx, &req)
+	if err != nil {
+		workbenchSkillErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// ListSkillToolCandidates .
+// @router /api/workbench/skills/tool_candidates [GET]
+func ListSkillToolCandidates(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req skillapi.ListSkillToolCandidatesRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appskill.SVC.ListSkillToolCandidates(ctx, &req)
+	if err != nil {
+		workbenchSkillErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
 // ListSkillVersions .
 // @router /api/workbench/skills/:skill_id/versions [GET]
 func ListSkillVersions(ctx context.Context, c *app.RequestContext) {

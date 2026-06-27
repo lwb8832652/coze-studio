@@ -8,7 +8,7 @@
 
 当前 Coze Studio 已有 Workbench、任务、技能、资源、开发配置、任务触发器等页面和部分 Go 后端能力，但任务执行模型仍偏向 `chat_tasks` 的轻量任务记录。Deer-flow 的核心能力并不是单一页面，而是一套 Agent Harness：线程、运行、流式事件、checkpoint、技能、MCP、记忆、文件、artifact、token usage、sub-agent、sandbox、安全扫描和多入口 API。
 
-本设计只覆盖第一份主干 spec：Go 原生 Agent Harness runtime 与 LangGraph 兼容 API。它是后续 Skills/MCP/Security、Memory/Token/Artifacts/Settings、IM Channels 三份 spec 的依赖层。
+本设计只覆盖第一份主干 spec：Go 原生 Agent Harness runtime 与 LangGraph 兼容 API。它是后续 Skills/MCP/Security 和 Memory/Token/Artifacts/Settings 两份实施 spec 的依赖层。IM Channels 已于 2026-06-18 明确排除。
 
 用户已确认采用以下方向：
 
@@ -26,13 +26,13 @@
 5. 保留资源配置、开发配置既有能力，本设计只定义它们如何被 runtime 消费。
 6. 支持生产级 run 生命周期：排队、执行、取消、失败、超时、重连、join、checkpoint、resume、事件追踪。
 7. 支持生产级分布式部署：多后端实例、多 run worker、Redis 协调、MySQL 持久化、SSE 重连。
-8. 支持后续 Skills、MCP、Memory、IM Channels 无缝接入。
+8. 支持后续 Skills、MCP、Memory、Files、Artifacts 无缝接入。
 9. 为 token usage、observability、审计、安全扫描预留一等模型。
 
 ## 非目标
 
 1. 本 spec 不实现 Skills/MCP 的完整配置页面和安全扫描规则细节；它只定义 runtime 接口和集成点。
-2. 本 spec 不实现 IM Channels；它只定义 IM 将调用的 thread/run API 边界。
+2. 本 spec 不实现 IM Channels，且 IM Channels 不属于项目交付范围。
 3. 本 spec 不重做 Coze API 授权、账号设置、workspace 权限模型。
 4. 本 spec 不把 Deer-flow Python 代码直接复制进 Go 服务。
 5. 本 spec 不要求一次性迁移所有旧 `chat_tasks` 数据。
@@ -62,8 +62,6 @@ Coze Studio 现状：
 flowchart TB
   UI["Coze Frontend<br/>Workbench / Tasks / Skills / Tools / Settings"] --> API["Hertz API Gateway"]
   SDK["LangGraph SDK / External Client"] --> API
-  IM["IM Channel Gateway<br/>future spec"] --> API
-
   API --> Auth["Coze Auth / Space Permission"]
   API --> ThreadSvc["Thread Service"]
   API --> RunSvc["Run Service"]
@@ -90,7 +88,7 @@ flowchart TB
 
 1. `agent_threads` 和 `agent_runs` 是新运行时事实源。
 2. `chat_tasks` 只作为旧菜单兼容投影，不再承载完整 Agent runtime 语义。
-3. 所有 UI、IM、SDK 入口最终都走同一套 thread/run 服务。
+3. 所有 UI、SDK 和内部入口最终都走同一套 thread/run 服务。
 4. SSE 事件必须可持久化、可恢复、可重放。
 5. run 执行状态不能只存在内存中；多实例部署时必须可恢复。
 6. Go runtime 自己实现 LangGraph wire protocol 兼容，不尝试移植 LangGraph Python 内部。
@@ -101,12 +99,12 @@ flowchart TB
 | --- | --- | --- |
 | HTTP Gateway | CloudWeGo Hertz | 仓库既有框架，减少迁移成本 |
 | SSE | hertz-contrib/sse + 自研 Stream Hub | 仓库已有依赖，需要补可恢复事件模型 |
-| Agent Runtime | CloudWeGo Eino + 自研 Harness | Eino 适合 Go 模型、工具、graph 编排，但 LangGraph run 语义需自研 |
+| Agent Runtime | Eino ADK + Coze Runtime Adapter | Eino ADK 负责 Agent 执行算法；Coze 负责 thread/run、权限、持久化和 LangGraph 协议 |
 | 持久化 | MySQL + GORM/gen | 仓库既有 DAL 模式，适合 thread/run/checkpoint/event |
 | 活跃状态 | Redis | run lock、cursor、cancel signal、worker lease |
-| 异步任务 | NSQ | outbound IM、artifact 后处理、清理任务、低优先级后台任务 |
+| 异步任务 | NSQ | artifact 后处理、清理任务、低优先级后台任务 |
 | 文件和产物 | MinIO/S3 | 上传、workspace、artifact、导出报告 |
-| MCP Client | 官方 `modelcontextprotocol/go-sdk` 优先评估 | Go 原生 MCP client/server 基础，外层仍需安全治理 |
+| MCP Runtime | Eino-ext MCP Tool Adapter + Coze Client Layer | Eino 负责 Agent tool 适配；Coze 负责 transport、OAuth、secret、session、sandbox 和治理 |
 | Observability | OpenTelemetry + 本地审计表 | tracing、metrics、token usage、事件审计 |
 
 ## 模块边界
@@ -143,7 +141,7 @@ backend/api/handler/agent_harness/
 1. `domain/agent/harness/entity`：Thread、Run、RunEvent、Checkpoint、State、Command、Usage、ArtifactRef。
 2. `repository`：MySQL/Redis/MinIO 访问接口，不暴露 GORM 模型给 runtime。
 3. `service`：thread/run 状态机、权限校验后的业务方法。
-4. `runtime`：Eino 执行封装、tool call loop、sub-agent 调度、middleware pipeline。
+4. `runtime`：Eino ADK Adapter、事件/Checkpoint/取消转换和 Coze-owned middleware；不重复实现 Eino 已有 Agent loop。
 5. `scheduler`：run 排队、worker lease、取消、超时、重试。
 6. `stream`：SSE event hub、cursor、replay、client disconnect 策略。
 7. `langgraph`：LangGraph API JSON schema、stream event mapping、兼容测试辅助。
@@ -177,7 +175,7 @@ CREATE TABLE agent_threads (
 
 字段说明：
 
-1. `metadata` 保存 LangGraph thread metadata、workspace/source/channel 信息。
+1. `metadata` 保存 LangGraph thread metadata、workspace/source 信息。
 2. `values_snapshot` 保存最新可查询 state，避免每次从 event log 回放。
 3. `current_checkpoint_id` 指向最近 checkpoint。
 4. `source` 支持 `web`、`api`、`im`、`system`。
@@ -450,7 +448,7 @@ API 路由建议放在 `/api/agent` 下，同时保留 LangGraph 风格路径别
 | POST | `/api/runs/{run_id}/join` | 等待 run 完成 |
 | POST | `/api/runs/{run_id}/cancel` | 取消 run |
 
-Stateless run 用于外部 API、一次性执行和 IM 临时命令。生产默认仍建议绑定 thread，便于恢复、审计和记忆。
+Stateless run 用于外部 API 和一次性执行。生产默认仍建议绑定 thread，便于恢复、审计和记忆。
 
 ## SSE 协议
 
@@ -758,7 +756,7 @@ Run 响应中聚合：
 
 1. 用户层：任务详情页展示执行步骤、工具调用、artifact、最终回答、token usage。
 2. 运维层：metrics 和 tracing 展示 run latency、active runs、queue depth、error rate、provider latency。
-3. 审计层：内部事件表记录高风险工具、权限拒绝、安全拦截、IM 来源、API 来源。
+3. 审计层：内部事件表记录高风险工具、权限拒绝、安全拦截和 API/内部来源。
 
 关键 metrics：
 
@@ -810,8 +808,7 @@ Run 响应中聚合：
 1. `api-server`：Hertz API、SSE、短请求。
 2. `agent-worker`：执行 run，可水平扩容。
 3. `scheduler`：可以内嵌 worker，也可以单独进程；生产建议独立。
-4. `channel-worker`：后续 IM outbound 和 webhook 消息处理。
-5. `maintenance-worker`：checkpoint 清理、artifact 清理、projection 修复。
+4. `maintenance-worker`：checkpoint 清理、artifact 清理、projection 修复。
 
 单机开发：
 
@@ -977,12 +974,10 @@ Run 响应中聚合：
 
 ## 后续 Spec 依赖
 
-本 spec 完成后，继续写三份设计文档：
+本 spec 完成后，继续实施两份设计文档：
 
 1. `skills-mcp-security`：Skills 包格式、MCP 配置、工具注册、安全扫描、sandbox、OAuth、secret。
 2. `memory-token-artifacts-settings`：记忆模型、token 展示、artifact/upload/workspace、Agent 设置页。
-3. `im-channels`：Webhook、渠道适配、消息映射、卡片渲染、限流、幂等。
-
 这些 spec 必须依赖本设计中的 thread/run/event/checkpoint/runtime 接口，不再各自发明执行模型。
 
 ## 风险与缓解
@@ -1015,4 +1010,4 @@ Run 响应中聚合：
 
 采用 Go 原生 Agent Harness 是可行的，但必须把 LangGraph API、run 状态机、event log、checkpoint、stream hub 作为平台层先做稳。`chat_tasks` 继续保留为菜单兼容和旧数据投影，不能继续作为新 Agent runtime 的核心模型。
 
-本设计建议先实现 runtime/LangGraph 主干，再接 Skills/MCP/Security、Memory/Artifacts、IM Channels。这样每个后续模块都只需要对接统一 thread/run 接口，避免前后端和渠道各自维护一套执行语义。
+本设计建议先实现 runtime/LangGraph 主干，再接 Skills/MCP/Security 和 Memory/Artifacts。这样每个后续模块都只需要对接统一 thread/run 接口，避免各模块维护不同执行语义。

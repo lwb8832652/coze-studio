@@ -221,6 +221,362 @@ func TestLoadHarnessResumeInputConvertsCheckpointState(t *testing.T) {
 	require.True(t, input.PendingSteps[0].Final)
 }
 
+func TestLoadADKResumeInputRestoresEnvelopeWithoutLegacyPendingSends(t *testing.T) {
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1, 2, 3},
+		RunRevision:     4,
+		CreatedAt:       100,
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	input, err := loadADKResumeInput(
+		&RunSummary{RunID: 200, ThreadID: 10},
+		resumeRunPayload{CheckpointID: 503, CheckpointNS: "eino.adk"},
+		&CheckpointSummary{
+			CheckpointID:    503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues:   string(raw),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, RuntimeModeEinoADK, input.Runtime)
+	require.Equal(t, "checkpoint-1", input.RuntimeKey)
+	require.Equal(t, int64(199), input.SourceRunID)
+	require.Equal(t, []byte{1, 2, 3}, input.ADKCheckpoint.Checkpoint)
+}
+
+func TestParseResumeRunPayloadAcceptsTargets(t *testing.T) {
+	payload, err := parseResumeRunPayload(`{
+		"resume":{
+			"checkpoint_id":"503",
+			"checkpoint_ns":"eino.adk",
+			"resume_from":"interrupt",
+			"targets":{
+				"interrupt-1":{
+					"schema":"coze.human_interaction_response.v1",
+					"interaction_id":"hi_1",
+					"kind":"clarification",
+					"decision":"answered",
+					"answer":"最近 7 天"
+				}
+			}
+		}
+	}`)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(503), payload.CheckpointID)
+	require.Equal(t, "eino.adk", payload.CheckpointNS)
+	require.Equal(t, "interrupt", payload.ResumeFrom)
+	require.Contains(t, payload.Targets, "interrupt-1")
+	target, ok := payload.Targets["interrupt-1"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "hi_1", target["interaction_id"])
+	require.Equal(t, "最近 7 天", target["answer"])
+}
+
+func TestLoadADKResumeInputUsesCommandTargets(t *testing.T) {
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1, 2, 3},
+		Interrupts: map[string]ADKInterruptItem{
+			"interrupt-1": {
+				ID:          "interrupt-1",
+				Address:     "lead/tool/ask_user_clarification",
+				IsRootCause: true,
+			},
+		},
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	input, err := loadADKResumeInput(
+		&RunSummary{RunID: 200, ThreadID: 10},
+		resumeRunPayload{
+			CheckpointID: 503,
+			CheckpointNS: "eino.adk",
+			Targets: map[string]any{
+				"interrupt-1": map[string]any{
+					"schema":         humanInteractionResponseSchema,
+					"interaction_id": "hi_1",
+					"kind":           "clarification",
+					"decision":       "answered",
+					"answer":         "最近 7 天",
+				},
+			},
+		},
+		&CheckpointSummary{
+			CheckpointID:    503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues:   string(raw),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Contains(t, input.ADKResumeTargets, "interrupt-1")
+	target, ok := input.ADKResumeTargets["interrupt-1"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "hi_1", target["interaction_id"])
+	require.Equal(t, "最近 7 天", target["answer"])
+}
+
+func TestLoadADKResumeInputRejectsUnknownCommandTarget(t *testing.T) {
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1, 2, 3},
+		Interrupts: map[string]ADKInterruptItem{
+			"interrupt-1": {ID: "interrupt-1", Address: "lead/tool/approval"},
+		},
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	input, err := loadADKResumeInput(
+		&RunSummary{RunID: 200, ThreadID: 10},
+		resumeRunPayload{
+			CheckpointID: 503,
+			CheckpointNS: "eino.adk",
+			Targets: map[string]any{
+				"missing": map[string]any{"decision": "answered"},
+			},
+		},
+		&CheckpointSummary{
+			CheckpointID:    503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues:   string(raw),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+	)
+
+	require.Error(t, err)
+	require.Nil(t, input)
+	require.Contains(t, err.Error(), "resume target missing is not present in checkpoint interrupts")
+}
+
+func TestLoadADKResumeInputKeepsNilTargetsWhenCommandTargetsMissing(t *testing.T) {
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1, 2, 3},
+		Interrupts: map[string]ADKInterruptItem{
+			"interrupt-1": {ID: "interrupt-1", Address: "lead/tool/approval"},
+		},
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	input, err := loadADKResumeInput(
+		&RunSummary{RunID: 200, ThreadID: 10},
+		resumeRunPayload{CheckpointID: 503, CheckpointNS: "eino.adk"},
+		&CheckpointSummary{
+			CheckpointID:    503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues:   string(raw),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Contains(t, input.ADKResumeTargets, "interrupt-1")
+	require.Nil(t, input.ADKResumeTargets["interrupt-1"])
+}
+
+func TestRuntimeModeFromCheckpointIgnoresUnrelatedLegacyMetadataRuntime(t *testing.T) {
+	mode, err := runtimeModeFromCheckpoint(&CheckpointSummary{
+		RuntimeType: "legacy",
+		Metadata:    `{"runtime":"go","source":"checkpoint"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, RuntimeModeLegacy, mode)
+}
+
+func TestResumeRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusRunning,
+			WorkerID: "resume-worker-a",
+			Command:  `{"resume":{"checkpoint_id":"503"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, ADKCheckpointEnvelope{
+				EnvelopeVersion: 1,
+				Runtime:         string(RuntimeModeEinoADK),
+				RuntimeVersion:  "0.9.9",
+				RuntimeKey:      "checkpoint-1",
+				MessageType:     "schema.Message",
+				Checkpoint:      []byte{1},
+			}),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+		interruptedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusInterrupted,
+			WorkerID: "resume-worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+		Executor: ResumeRunExecutorFunc(func(
+			context.Context,
+			*RunSummary,
+			*HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			return nil, &RunInterruptedError{
+				CheckpointKey: "checkpoint-1",
+				Interrupts: []ADKInterruptItem{{
+					ID:          "approval",
+					Address:     "agent:lead;tool:approval",
+					IsRootCause: true,
+				}},
+			}
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.NotNil(t, domainSVC.interruptRunReq)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{
+		"run.resume.started",
+		"run.resume.loaded",
+		"run.interrupted",
+	}, eventSink.eventTypes())
+}
+
+func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusRunning,
+			WorkerID: "resume-worker-a",
+			Command:  `{"resume":{"checkpoint_id":"503"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, ADKCheckpointEnvelope{
+				EnvelopeVersion: 1,
+				Runtime:         string(RuntimeModeEinoADK),
+				RuntimeVersion:  "0.9.9",
+				RuntimeKey:      "checkpoint-1",
+				MessageType:     "schema.Message",
+				Checkpoint:      []byte{1},
+			}),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+		Executor: ResumeRunExecutorFunc(func(
+			context.Context,
+			*RunSummary,
+			*HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			return nil, &RunCanceledError{EventPersisted: true}
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{
+		"run.resume.started",
+		"run.resume.loaded",
+		"run.canceled",
+	}, eventSink.eventTypes())
+}
+
+func mustADKCheckpointEnvelopeJSON(t *testing.T, envelope ADKCheckpointEnvelope) string {
+	t.Helper()
+
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	return string(raw)
+}
+
 func TestResumeRunProcessorFailsRunWhenCheckpointIDIsMissing(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{

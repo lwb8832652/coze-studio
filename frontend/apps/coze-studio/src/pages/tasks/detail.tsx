@@ -15,9 +15,10 @@
  */
 
 import { useParams } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
+import { useUserInfo } from '@coze-arch/foundation-sdk';
 import {
   IconCozAsynchronousTask,
   IconCozBell,
@@ -31,17 +32,21 @@ import {
   type WorkbenchMode,
 } from '../workbench/components/types';
 import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
-import { useTaskThreadRunEventStream } from './task-run-event-stream';
-import { sendFollowUpMessage } from './task-follow-up';
+import { TaskSubagentRunsSection } from './task-subagent-runs-section';
+import { TaskMemorySection } from './task-memory-section';
+import { TaskHumanInterruptCard } from './task-human-interrupt-card';
+import { getPendingHumanInteraction } from './task-human-interaction';
+import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
+import { projectTaskExecutionEvents } from './task-event-projection';
 import {
-  fetchTaskDetail,
   type TaskDetailSource,
   type TaskDetailTokenUsage,
 } from './task-detail-loader';
+import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
+import { TaskArtifactsPanel } from './task-artifacts-panel';
 import {
   formatUpdatedTime,
   getLatestAnswerEventMessage,
-  getTaskEventDisplay,
   getTaskExecutionType,
   getTaskInputText,
   parseTaskResultPayload,
@@ -52,8 +57,6 @@ import {
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
-
-const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 
 const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
   threadId ? 'thread' : 'task';
@@ -67,9 +70,11 @@ const AssistantMark = () => (
 );
 
 const TaskTopBar = ({
+  artifactAction,
   task,
   tokenUsage,
 }: {
+  artifactAction?: ReactNode;
   task: ChatTask;
   tokenUsage?: TaskDetailTokenUsage;
 }) => (
@@ -84,6 +89,7 @@ const TaskTopBar = ({
     </div>
     <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
     <div className="flex-1" />
+    {artifactAction}
     <button type="button" className="coze-prototype-task-action">
       ☆ 收藏
     </button>
@@ -127,10 +133,7 @@ const TaskEventsSection = ({
   events: TaskEvent[];
   task: ChatTask;
 }) => {
-  const eventItems = events.map(event => ({
-    event,
-    display: getTaskEventDisplay(event.event_type, event.payload),
-  }));
+  const eventItems = projectTaskExecutionEvents(events);
   const hasStructuredItems = eventItems.some(item => item.display.structured);
   const visibleItems = hasStructuredItems
     ? eventItems.filter(item => item.display.structured)
@@ -340,110 +343,70 @@ const FollowUpComposer = ({
 
 const TaskDetailPage = () => {
   const { space_id, task_id, thread_id } = useParams();
+  const userInfo = useUserInfo();
   const taskDetailId = thread_id ?? task_id;
   const taskDetailSource = getTaskDetailSource(thread_id);
-  const [task, setTask] = useState<ChatTask | undefined>();
-  const [events, setEvents] = useState<TaskEvent[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [followUpValue, setFollowUpValue] = useState('');
-  const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>('Auto');
-  const [followUpLoading, setFollowUpLoading] = useState(false);
-  const [followUpError, setFollowUpError] = useState('');
-  useEffect(() => {
-    if (!taskDetailId) {
-      return;
-    }
-    let canceled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const loadTaskDetail = async (showLoading = false) => {
-      if (showLoading) {
-        setLoading(true);
-      }
-      setError('');
-      try {
-        const detail = await fetchTaskDetail({
-          id: taskDetailId,
-          source: taskDetailSource,
-        });
-        if (!canceled) {
-          setTask(detail.task);
-          setEvents(detail.events);
-          setTokenUsage(detail.tokenUsage);
-          if (detail.task && !isTaskTerminalStatus(detail.task.status)) {
-            timer = setTimeout(() => {
-              void loadTaskDetail();
-            }, TASK_DETAIL_POLLING_DELAY_MS);
-          }
-        }
-      } catch (err) {
-        if (!canceled) {
-          setError(err instanceof Error ? err.message : '加载任务详情失败');
-        }
-      } finally {
-        if (!canceled) {
-          setLoading(false);
-        }
-      }
-    };
-    void loadTaskDetail(true);
-    return () => {
-      canceled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-    };
-  }, [taskDetailId, taskDetailSource]);
-  useTaskThreadRunEventStream({
-    enabled: taskDetailSource === 'thread' && task?.id === taskDetailId,
-    setEvents,
-    threadId: taskDetailId,
+  const {
+    applyTaskDetail,
+    artifacts,
+    error,
+    events,
+    loading,
+    refreshArtifacts,
+    subagentRuns,
+    task,
+    tokenUsage,
+  } = useTaskDetailData({
+    taskDetailId,
+    taskDetailSource,
   });
-  const handleFollowUpSubmit = async (
-    payload: WorkbenchComposerSubmitPayload,
-  ) => {
-    if (!payload.message || followUpLoading) {
-      return;
-    }
-    if (!space_id || !taskDetailId) {
-      setFollowUpError('缺少任务上下文，无法继续追问');
-      return;
-    }
-    const isCanonicalThreadDetail =
-      taskDetailSource === 'thread' && task?.id === taskDetailId;
-    const activeTaskId = task?.id ?? taskDetailId;
-    setFollowUpLoading(true);
-    setFollowUpError('');
-    try {
-      await sendFollowUpMessage({
-        activeTaskId,
-        isCanonicalThreadDetail,
-        payload,
-        spaceId: space_id,
-        threadId: taskDetailId,
-      });
-
-      setFollowUpValue('');
-      const detail = await fetchTaskDetail({
-        id: taskDetailId,
-        source: taskDetailSource,
-      });
-      setTask(detail.task);
-      setEvents(detail.events);
-      setTokenUsage(detail.tokenUsage);
-    } catch (err) {
-      setFollowUpError(
-        err instanceof Error ? err.message : '继续追问失败，请稍后重试',
-      );
-    } finally {
-      setFollowUpLoading(false);
-    }
-  };
+  const pendingHumanInteraction = getPendingHumanInteraction(events);
+  const memoryReadOnly = Boolean(
+    taskDetailSource === 'thread' &&
+      task?.creator_id &&
+      userInfo?.user_id_str &&
+      task.creator_id !== userInfo.user_id_str,
+  );
+  const {
+    followUpError,
+    followUpLoading,
+    followUpMode,
+    followUpValue,
+    handleFollowUpSubmit,
+    handleHumanInteractionSubmit,
+    handleRetrySubagentRun,
+    humanInteractionError,
+    humanInteractionLoading,
+    retryingSubagentRunId,
+    setFollowUpMode,
+    setFollowUpValue,
+    subagentRetryError,
+  } = useTaskDetailActions({
+    applyTaskDetail,
+    pendingHumanInteraction,
+    spaceID: space_id,
+    task,
+    taskDetailId,
+    taskDetailSource,
+  });
 
   return (
     <main className="coze-prototype-page">
-      {task ? <TaskTopBar task={task} tokenUsage={tokenUsage} /> : null}
+      {task ? (
+        <TaskTopBar
+          artifactAction={
+            taskDetailSource === 'thread' ? (
+              <TaskArtifactsPanel
+                artifacts={artifacts}
+                onArtifactsChanged={refreshArtifacts}
+                threadId={taskDetailId}
+              />
+            ) : undefined
+          }
+          task={task}
+          tokenUsage={tokenUsage}
+        />
+      ) : null}
       <section className="coze-prototype-detail-inner">
         {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
         {error ? <div className="coze-prototype-error">{error}</div> : null}
@@ -456,6 +419,29 @@ const TaskDetailPage = () => {
             {events.length ||
             parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
               <TaskEventsSection events={events} task={task} />
+            ) : null}
+            <TaskSubagentRunsSection
+              subagentRuns={subagentRuns}
+              retryError={subagentRetryError}
+              retryingRunId={retryingSubagentRunId}
+              onRetrySubagentRun={handleRetrySubagentRun}
+            />
+            {taskDetailSource === 'thread' ? (
+              <TaskGuardrailAuditSection threadId={taskDetailId} />
+            ) : null}
+            {taskDetailSource === 'thread' ? (
+              <TaskMemorySection
+                readOnly={memoryReadOnly}
+                threadId={taskDetailId}
+              />
+            ) : null}
+            {pendingHumanInteraction ? (
+              <TaskHumanInterruptCard
+                pending={pendingHumanInteraction}
+                loading={humanInteractionLoading}
+                error={humanInteractionError}
+                onSubmit={handleHumanInteractionSubmit}
+              />
             ) : null}
             <TaskResultSection task={task} events={events} />
             <FollowUpComposer

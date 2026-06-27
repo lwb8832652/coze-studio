@@ -542,6 +542,40 @@ func TestHarnessExecutorWritesCanceledCheckpointWhenRunnerIsCanceled(t *testing.
 	require.Contains(t, checkpointSink.checkpoints[1].PendingSends, `"step_id":"step-canceled"`)
 }
 
+func TestHarnessInputMessagesPreservesMultimodalFields(t *testing.T) {
+	messages := harnessInputMessages(`{
+		"messages":[{
+			"role":"user",
+			"content":"",
+			"user_input_multi_content":[{
+				"type":"file_url",
+				"file":{
+					"url":"https://example.test/report.pdf",
+					"mime_type":"application/pdf",
+					"name":"report.pdf"
+				}
+			}]
+		}]
+	}`)
+
+	require.Len(t, messages, 1)
+	require.Equal(t, "user", messages[0]["role"])
+	parts, ok := messages[0]["user_input_multi_content"].([]any)
+	require.True(t, ok)
+	require.Len(t, parts, 1)
+	part, ok := parts[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file_url", part["type"])
+	file, ok := part["file"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "report.pdf", file["name"])
+	require.Equal(
+		t,
+		"https://example.test/report.pdf",
+		file["url"],
+	)
+}
+
 func TestHarnessExecutorWritesFailedCheckpointWhenMaxStepsExceeded(t *testing.T) {
 	planner := &recordingPlanner{
 		plan: &AgentPlan{Steps: []AgentStep{
@@ -631,6 +665,53 @@ func TestHarnessExecutorResumeRunsPendingStepWithoutPlanning(t *testing.T) {
 	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"status":"succeeded"`)
 }
 
+func TestHarnessExecutorPersistsInterruptedStepForResume(t *testing.T) {
+	planner := &recordingPlanner{
+		plan: &AgentPlan{Steps: []AgentStep{{
+			ID:    "clarify-1",
+			Type:  AgentStepTypeModel,
+			Name:  "clarify",
+			Final: true,
+		}}},
+	}
+	runner := &recordingStepRunner{
+		err: &RunInterruptedError{
+			Interrupts: []ADKInterruptItem{{
+				ID:          "clarification",
+				Address:     "agent:lead;step:clarify",
+				Info:        map[string]any{"question": "Which region?"},
+				IsRootCause: true,
+			}},
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	checkpointSink := &recordingCheckpointSink{nextID: 800}
+	executor := NewHarnessExecutor(planner, runner, HarnessExecutorOptions{
+		MaxSteps:       2,
+		EventSink:      eventSink,
+		CheckpointSink: checkpointSink,
+	})
+
+	result, err := executor.Execute(context.Background(), &RunSummary{
+		ThreadID: 9,
+		RunID:    18,
+		Input:    `{"message":"prepare report"}`,
+	})
+
+	require.Nil(t, result)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, err, &interrupted)
+	require.Equal(t, "801", interrupted.CheckpointKey)
+	require.Len(t, interrupted.Interrupts, 1)
+	require.False(t, interrupted.EventPersisted)
+	require.Equal(t, []string{"step.started"}, eventSink.eventTypes())
+	require.Len(t, checkpointSink.checkpoints, 2)
+	require.Equal(t, []string{"harness.initial", "harness.terminal"}, checkpointSink.namespaces())
+	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"status":"interrupted"`)
+	require.Contains(t, checkpointSink.checkpoints[1].Metadata, `"checkpoint_phase":"interrupt"`)
+	require.Contains(t, checkpointSink.checkpoints[1].PendingSends, `"step_id":"clarify-1"`)
+}
+
 func TestHarnessExecutorResumeWritesFailedCheckpointWhenPendingStepFails(t *testing.T) {
 	runner := &recordingStepRunner{err: errors.New("resume step failed")}
 	checkpointSink := &recordingCheckpointSink{nextID: 700}
@@ -672,6 +753,57 @@ func TestHarnessExecutorResumeWritesFailedCheckpointWhenPendingStepFails(t *test
 	require.Contains(t, checkpointSink.checkpoints[0].Metadata, `"error_type":"step_error"`)
 	require.Contains(t, checkpointSink.checkpoints[0].PendingSends, `"step_id":"step-2"`)
 	require.Contains(t, checkpointSink.checkpoints[0].PendingSends, `"step_id":"step-3"`)
+}
+
+func TestHarnessExecutorResumePersistsRepeatedInterrupt(t *testing.T) {
+	runner := &recordingStepRunner{
+		err: &RunInterruptedError{
+			Interrupts: []ADKInterruptItem{{
+				ID:          "clarification",
+				Address:     "agent:lead;step:clarify",
+				IsRootCause: true,
+			}},
+		},
+	}
+	checkpointSink := &recordingCheckpointSink{nextID: 850}
+	eventSink := &recordingRunEventSink{}
+	executor := NewHarnessExecutor(
+		&recordingPlanner{err: errors.New("planner should not run")},
+		runner,
+		HarnessExecutorOptions{
+			MaxSteps:       2,
+			EventSink:      eventSink,
+			CheckpointSink: checkpointSink,
+		},
+	)
+
+	result, err := executor.Resume(
+		context.Background(),
+		&RunSummary{ThreadID: 9, RunID: 19, Input: `{"message":"APAC"}`},
+		&HarnessResumeInput{
+			ThreadID:     9,
+			RunID:        19,
+			CheckpointID: 801,
+			CheckpointNS: "harness.terminal",
+			ResumeFrom:   "interrupt",
+			PendingSteps: []AgentStep{{
+				ID:    "clarify-1",
+				Type:  AgentStepTypeModel,
+				Name:  "clarify",
+				Final: true,
+			}},
+		},
+	)
+
+	require.Nil(t, result)
+	var interrupted *RunInterruptedError
+	require.ErrorAs(t, err, &interrupted)
+	require.Equal(t, "850", interrupted.CheckpointKey)
+	require.Equal(t, []string{"step.started"}, eventSink.eventTypes())
+	require.Len(t, checkpointSink.checkpoints, 1)
+	require.Equal(t, int64(801), checkpointSink.checkpoints[0].ParentCheckpointID)
+	require.Contains(t, checkpointSink.checkpoints[0].Metadata, `"status":"interrupted"`)
+	require.Contains(t, checkpointSink.checkpoints[0].PendingSends, `"step_id":"clarify-1"`)
 }
 
 func TestHarnessExecutorResumeRejectsInputForDifferentRun(t *testing.T) {

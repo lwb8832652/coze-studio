@@ -126,3 +126,30 @@ type RollbackSkillVersionRequest struct {
 	VersionID int64      `thrift:"version_id,2,required" json:"version_id,string,required" path:"version_id,required"`
 	Base      *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
 }
+
+type ListSkillToolCandidatesRequest struct {
+	SpaceID int64      `thrift:"space_id,1,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	Base    *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}
+
+type SkillToolCandidate struct {
+	Name        string `thrift:"name,1,required" form:"name,required" json:"name,required" query:"name,required"`
+	DisplayName string `thrift:"display_name,2,required" form:"display_name,required" json:"display_name,required" query:"display_name,required"`
+	Description string `thrift:"description,3,required" form:"description,required" json:"description,required" query:"description,required"`
+	Category    string `thrift:"category,4,required" form:"category,required" json:"category,required" query:"category,required"`
+	Visibility  string `thrift:"visibility,5,required" form:"visibility,required" json:"visibility,required" query:"visibility,required"`
+	Source      string `thrift:"source,6,optional" form:"source" json:"source,omitempty" query:"source"`
+	SourceID    string `thrift:"source_id,7,optional" form:"source_id" json:"source_id,omitempty" query:"source_id"`
+	SourceName  string `thrift:"source_name,8,optional" form:"source_name" json:"source_name,omitempty" query:"source_name"`
+}
+
+type ListSkillToolCandidatesData struct {
+	Tools []*SkillToolCandidate `thrift:"tools,1,required,list<SkillToolCandidate>" form:"tools,required" json:"tools,required" query:"tools,required"`
+}
+
+type ListSkillToolCandidatesResponse struct {
+	Data     *ListSkillToolCandidatesData `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64                        `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                       `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp               `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}

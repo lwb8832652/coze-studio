@@ -26,9 +26,10 @@ import (
 )
 
 type ServiceComponents struct {
-	DB         *gorm.DB
-	IDGen      idgen.IDGenerator
-	CodeRunner coderunner.Runner
+	DB                    *gorm.DB
+	IDGen                 idgen.IDGenerator
+	CodeRunner            coderunner.Runner
+	ToolCandidateProvider ToolCandidateProvider
 }
 
 func InitService(c *ServiceComponents) *ApplicationService {
@@ -39,5 +40,6 @@ func InitService(c *ServiceComponents) *ApplicationService {
 		ScriptRunner:   &domain.ScriptExecutor{Runner: c.CodeRunner},
 		WorkflowRunner: domain.UnsupportedExecutor{},
 	})
+	SVC.ToolCandidateProvider = c.ToolCandidateProvider
 	return SVC
 }

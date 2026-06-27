@@ -241,10 +241,20 @@ func (t *s3Client) GetObjectUrl(ctx context.Context, objectKey string, opts ...s
 		expire = opt.Expire
 	}
 
-	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(objectKey),
-	}, func(options *s3.PresignOptions) {
+	}
+	if opt.ResponseContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(
+			opt.ResponseContentDisposition,
+		)
+	}
+	if opt.ResponseContentType != "" {
+		input.ResponseContentType = aws.String(opt.ResponseContentType)
+	}
+
+	req, err := presignClient.PresignGetObject(ctx, input, func(options *s3.PresignOptions) {
 		options.Expires = time.Duration(expire) * time.Second
 	})
 	if err != nil {

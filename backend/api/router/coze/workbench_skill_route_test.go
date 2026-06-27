@@ -35,6 +35,8 @@ func TestRegisterIncludesWorkbenchSkillVersionRoutes(t *testing.T) {
 	updateContent := ut.PerformRequest(h.Engine, http.MethodPut, "/api/workbench/skills/100/versions/200/content", nil)
 	versionExport := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/100/versions/200/export", nil)
 	rollback := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/skills/100/versions/200/rollback", nil)
+	deleteSkill := ut.PerformRequest(h.Engine, http.MethodDelete, "/api/workbench/skills/100", nil)
+	toolCandidates := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/tool_candidates?space_id=1", nil)
 
 	require.NotEqual(t, http.StatusNotFound, versions.Code)
 	require.NotEqual(t, http.StatusNotFound, resources.Code)
@@ -42,4 +44,6 @@ func TestRegisterIncludesWorkbenchSkillVersionRoutes(t *testing.T) {
 	require.NotEqual(t, http.StatusNotFound, updateContent.Code)
 	require.NotEqual(t, http.StatusNotFound, versionExport.Code)
 	require.NotEqual(t, http.StatusNotFound, rollback.Code)
+	require.NotEqual(t, http.StatusNotFound, deleteSkill.Code)
+	require.NotEqual(t, http.StatusNotFound, toolCandidates.Code)
 }

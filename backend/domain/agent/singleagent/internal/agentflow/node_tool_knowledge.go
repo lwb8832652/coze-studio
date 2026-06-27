@@ -25,7 +25,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/eino-contrib/jsonschema"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
@@ -52,11 +52,11 @@ func newKnowledgeTool(ctx context.Context, conf *knowledgeConfig) (tool.Invokabl
 	}
 
 	customTagsFn := func(name string, t reflect.Type, tag reflect.StructTag,
-		schema *openapi3.Schema,
-	) error {
+		schema *jsonschema.Schema,
+	) {
 		// Process KnowledgeIDs field only
-		if name != "KnowledgeIDs" {
-			return nil
+		if name != "knowledge_ids" || t.Kind() != reflect.Slice {
+			return
 		}
 
 		// Build knowledge base description
@@ -65,11 +65,9 @@ func newKnowledgeTool(ctx context.Context, conf *knowledgeConfig) (tool.Invokabl
 			desc += fmt.Sprintf("- %d: %s - %s\n", k.ID, k.Name, k.Description)
 		}
 
-		schema.Type = openapi3.TypeArray
-		schema.Items = &openapi3.SchemaRef{
-			Value: &openapi3.Schema{
-				Type: openapi3.TypeInteger,
-			},
+		schema.Type = "array"
+		schema.Items = &jsonschema.Schema{
+			Type: "integer",
 		}
 		// Set field descriptions and enumeration values
 		schema.Description = desc
@@ -77,11 +75,9 @@ func newKnowledgeTool(ctx context.Context, conf *knowledgeConfig) (tool.Invokabl
 		for _, k := range conf.knowledgeInfos {
 			schema.Enum = append(schema.Enum, strconv.FormatInt(k.ID, 10))
 		}
-
-		return nil
 	}
 
-	return utils.InferTool(knowledgeToolName, knowledgeDesc, kl.Retrieve, utils.WithSchemaCustomizer(customTagsFn))
+	return utils.InferTool(knowledgeToolName, knowledgeDesc, kl.Retrieve, utils.WithSchemaModifier(customTagsFn))
 }
 
 type RetrieveRequest struct {

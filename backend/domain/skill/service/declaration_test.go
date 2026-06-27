@@ -104,6 +104,9 @@ func TestParseDeclarationSkillMarkdown(t *testing.T) {
 	content := []byte(`---
 name: weekly-research
 description: Research weekly market changes.
+context: fork_with_context
+agent: research-agent
+model: reasoning-model
 allowed-tools:
   - search
   - browser
@@ -122,9 +125,27 @@ Collect signals and write a short brief.
 	assert.Equal(t, "deer_skill", decl.Type)
 	assert.Equal(t, "1.0.0", decl.Version)
 	assert.True(t, decl.Enabled)
+	assert.Equal(t, "fork_with_context", decl.Context)
+	assert.Equal(t, "research-agent", decl.Agent)
+	assert.Equal(t, "reasoning-model", decl.Model)
 	assert.Equal(t, []string{"search", "browser"}, decl.Permissions.AllowedTools)
 	assert.Contains(t, decl.Body, "Collect signals")
 	assert.Equal(t, string(content), decl.SkillMD)
+}
+
+func TestParseDeclarationSkillMarkdownRejectsInvalidContext(t *testing.T) {
+	content := []byte(`---
+name: weekly-research
+description: Research weekly market changes.
+context: sidecar
+---
+Run the workflow.
+`)
+
+	decl, err := ParseDeclaration("SKILL.md", content)
+
+	require.ErrorContains(t, err, "skill context")
+	assert.Nil(t, decl)
 }
 
 func TestParseDeclarationSkillMarkdownRequiresFrontmatter(t *testing.T) {

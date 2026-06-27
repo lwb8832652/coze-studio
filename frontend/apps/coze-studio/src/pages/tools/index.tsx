@@ -14,19 +14,21 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
+import { type workbenchTool } from '@coze-studio/api-schema';
 import {
   IconCozMore,
   IconCozPlugin,
   IconCozPlus,
 } from '@coze-arch/coze-design/icons';
-import { type workbenchTool } from '@coze-studio/api-schema';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import {
+  deleteMCPToolServer,
   listMCPToolServers,
   testMCPToolCall,
   upsertMCPToolServer,
@@ -55,6 +57,19 @@ const getUpdatedText = (timestamp: number) => {
   }
 
   return new Date(timestamp).toLocaleDateString();
+};
+
+const getHealthStatusText = (server: MCPToolServer) => {
+  if (server.health_status === 'healthy') {
+    return server.health_latency_ms
+      ? `健康 ${server.health_latency_ms}ms`
+      : '健康';
+  }
+  if (server.health_status === 'unhealthy') {
+    return '异常';
+  }
+
+  return '未检查';
 };
 
 interface ToolsPageHeaderProps {
@@ -136,18 +151,22 @@ const ToolsToolbar = ({
 );
 
 interface ToolServerCardProps {
+  deleting: boolean;
   disabled: boolean;
   result?: string;
   running: boolean;
   server: MCPToolServer;
+  onDelete: (server: MCPToolServer) => void;
   onTestCall: (server: MCPToolServer) => void;
 }
 
 const ToolServerCard = ({
+  deleting,
   disabled,
   result,
   running,
   server,
+  onDelete,
   onTestCall,
 }: ToolServerCardProps) => {
   const firstTool = server.tools[0];
@@ -189,16 +208,30 @@ const ToolServerCard = ({
         <span className="coze-prototype-muted">
           更新于 {getUpdatedText(server.updated_at)}
         </span>
+        <span
+          className="coze-prototype-status-pill"
+          data-tone={server.health_status === 'healthy' ? 'success' : 'neutral'}
+        >
+          {getHealthStatusText(server)}
+        </span>
         {firstTool ? (
           <button
             type="button"
             className="coze-prototype-secondary-button h-[28px] px-[10px] text-[12px] disabled:opacity-50"
-            disabled={disabled}
+            disabled={disabled || deleting}
             onClick={() => onTestCall(server)}
           >
             {running ? '测试中' : `测试 ${firstTool.name}`}
           </button>
         ) : null}
+        <button
+          type="button"
+          className="coze-prototype-secondary-button h-[28px] px-[10px] text-[12px] text-[#d0292f] disabled:opacity-50"
+          disabled={disabled || deleting}
+          onClick={() => onDelete(server)}
+        >
+          {deleting ? '删除中' : '删除'}
+        </button>
         <IconCozMore className="text-[16px] text-[#747b8a]" />
       </div>
       {result ? (
@@ -211,18 +244,22 @@ const ToolServerCard = ({
 };
 
 interface ToolServerListProps {
+  deletingServerId: string;
   loading: boolean;
   servers: MCPToolServer[];
   testResults: Record<string, string>;
   testingServerId: string;
+  onDelete: (server: MCPToolServer) => void;
   onTestCall: (server: MCPToolServer) => void;
 }
 
 const ToolServerList = ({
+  deletingServerId,
   loading,
   servers,
   testResults,
   testingServerId,
+  onDelete,
   onTestCall,
 }: ToolServerListProps) => (
   <section className="mt-[20px]" aria-label="工具列表">
@@ -236,10 +273,12 @@ const ToolServerList = ({
       {servers.map(server => (
         <ToolServerCard
           key={server.server_id}
-          disabled={Boolean(testingServerId)}
+          deleting={deletingServerId === server.server_id}
+          disabled={Boolean(testingServerId || deletingServerId)}
           result={testResults[server.server_id]}
           running={testingServerId === server.server_id}
           server={server}
+          onDelete={onDelete}
           onTestCall={onTestCall}
         />
       ))}
@@ -261,26 +300,66 @@ const getVisibleServers = (servers: MCPToolServer[], keyword: string) => {
   );
 };
 
+interface DeleteMCPServerParams {
+  deletingServerId: string;
+  server: MCPToolServer;
+  testingServerId: string;
+  loadServers: () => Promise<void>;
+  setDeletingServerId: (value: string) => void;
+  setError: (value: string) => void;
+  setTestResults: Dispatch<SetStateAction<Record<string, string>>>;
+}
+
+const deleteMCPServer = async ({
+  deletingServerId,
+  server,
+  testingServerId,
+  loadServers,
+  setDeletingServerId,
+  setError,
+  setTestResults,
+}: DeleteMCPServerParams) => {
+  if (deletingServerId || testingServerId) {
+    return;
+  }
+  if (!window.confirm(`确认删除工具配置「${server.name}」吗？`)) {
+    return;
+  }
+
+  setDeletingServerId(server.server_id);
+  setError('');
+  try {
+    await deleteMCPToolServer({ server_id: server.server_id });
+    setTestResults(current => {
+      const { [server.server_id]: _staleResult, ...rest } = current;
+
+      return rest;
+    });
+    await loadServers();
+  } catch (err) {
+    setError(err instanceof Error ? err.message : '删除工具配置失败');
+  } finally {
+    setDeletingServerId('');
+  }
+};
+
 const ToolsPage = () => {
   const { space_id } = useParams();
   const [servers, setServers] = useState<MCPToolServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [deletingServerId, setDeletingServerId] = useState('');
   const [testingServerId, setTestingServerId] = useState('');
   const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [keyword, setKeyword] = useState('');
-
   const visibleServers = getVisibleServers(servers, keyword);
-
   const loadServers = async () => {
     if (!space_id) {
       return;
     }
-
     setLoading(true);
     setError('');
-
     try {
       const response = await listMCPToolServers({ space_id });
       setServers(response.data?.servers ?? []);
@@ -294,15 +373,12 @@ const ToolsPage = () => {
   useEffect(() => {
     void loadServers();
   }, [space_id]);
-
   const handleCreate = async () => {
     if (!space_id || creating) {
       return;
     }
-
     setCreating(true);
     setError('');
-
     try {
       await upsertMCPToolServer({
         space_id,
@@ -330,19 +406,15 @@ const ToolsPage = () => {
 
   const handleTestCall = async (server: MCPToolServer) => {
     const firstTool = server.tools[0];
-
     if (!firstTool || testingServerId) {
       return;
     }
-
     setTestingServerId(server.server_id);
     setError('');
     setTestResults(current => {
       const { [server.server_id]: _staleResult, ...rest } = current;
-
       return rest;
     });
-
     try {
       const response = await testMCPToolCall({
         server_id: server.server_id,
@@ -369,6 +441,17 @@ const ToolsPage = () => {
     }
   };
 
+  const handleDelete = (server: MCPToolServer) =>
+    deleteMCPServer({
+      deletingServerId,
+      server,
+      testingServerId,
+      loadServers,
+      setDeletingServerId,
+      setError,
+      setTestResults,
+    });
+
   return (
     <main className="coze-prototype-page">
       <WorkspacePageTopBar />
@@ -389,10 +472,12 @@ const ToolsPage = () => {
         {error ? <div className="coze-prototype-error">{error}</div> : null}
 
         <ToolServerList
+          deletingServerId={deletingServerId}
           loading={loading}
           servers={visibleServers}
           testResults={testResults}
           testingServerId={testingServerId}
+          onDelete={handleDelete}
           onTestCall={handleTestCall}
         />
       </section>

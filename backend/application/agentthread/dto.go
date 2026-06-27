@@ -60,15 +60,42 @@ const (
 	TokenUsageSourceTool       TokenUsageSource = "tool"
 )
 
+type ArtifactPreviewMode string
+
+const (
+	ArtifactPreviewModeText        ArtifactPreviewMode = "text"
+	ArtifactPreviewModeImage       ArtifactPreviewMode = "image"
+	ArtifactPreviewModePDF         ArtifactPreviewMode = "pdf"
+	ArtifactPreviewModeDownload    ArtifactPreviewMode = "download"
+	ArtifactPreviewModeUnsupported ArtifactPreviewMode = "unsupported"
+)
+
+type ArtifactScanJobStatus string
+
+const (
+	ArtifactScanJobStatusPending    ArtifactScanJobStatus = "pending"
+	ArtifactScanJobStatusProcessing ArtifactScanJobStatus = "processing"
+	ArtifactScanJobStatusSucceeded  ArtifactScanJobStatus = "succeeded"
+	ArtifactScanJobStatusFailed     ArtifactScanJobStatus = "failed"
+)
+
 type RunStatus string
 
 const (
-	RunStatusPending   RunStatus = "pending"
-	RunStatusQueued    RunStatus = "queued"
-	RunStatusRunning   RunStatus = "running"
-	RunStatusSucceeded RunStatus = "succeeded"
-	RunStatusFailed    RunStatus = "failed"
-	RunStatusCanceled  RunStatus = "canceled"
+	RunStatusPending     RunStatus = "pending"
+	RunStatusQueued      RunStatus = "queued"
+	RunStatusRunning     RunStatus = "running"
+	RunStatusInterrupted RunStatus = "interrupted"
+	RunStatusSucceeded   RunStatus = "succeeded"
+	RunStatusFailed      RunStatus = "failed"
+	RunStatusCanceled    RunStatus = "canceled"
+)
+
+type RunKind string
+
+const (
+	RunKindTask     RunKind = "task"
+	RunKindSubagent RunKind = "subagent"
 )
 
 type ThreadSummary struct {
@@ -99,10 +126,13 @@ type MessageSummary struct {
 
 type RunSummary struct {
 	RunID             int64
+	PlanScopeRunID    int64
 	ThreadID          int64
+	ParentRunID       int64
 	SpaceID           int64
 	CreatorID         int64
 	AssistantID       string
+	RunKind           RunKind
 	Status            RunStatus
 	Command           string
 	Input             string
@@ -138,6 +168,10 @@ type CheckpointSummary struct {
 	RunID              int64
 	ParentCheckpointID int64
 	CheckpointNS       string
+	RuntimeType        string
+	RuntimeKey         string
+	EnvelopeVersion    int32
+	RuntimeDeletedAt   int64
 	ChannelValues      string
 	ChannelVersions    string
 	PendingSends       string
@@ -146,17 +180,160 @@ type CheckpointSummary struct {
 }
 
 type MemorySummary struct {
-	MemoryID  int64
-	ThreadID  int64
-	RunID     int64
-	SpaceID   int64
-	Scope     MemoryScope
-	Content   string
-	Metadata  string
-	Score     float64
-	ExpiresAt int64
-	CreatedAt int64
-	UpdatedAt int64
+	MemoryID             int64
+	ThreadID             int64
+	RunID                int64
+	SpaceID              int64
+	Scope                MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+	CreatedAt            int64
+	UpdatedAt            int64
+	DeletedAt            int64
+}
+
+type MemoryAuditEventSummary struct {
+	EventID       int64
+	ThreadID      int64
+	RunID         int64
+	SpaceID       int64
+	MemoryID      int64
+	ActorID       int64
+	EventType     string
+	Scope         MemoryScope
+	SourceType    string
+	SourceID      string
+	AffectedCount int64
+	CreatedAt     int64
+}
+
+type GuardrailAuditEventSummary struct {
+	EventID    int64
+	ThreadID   int64
+	RunID      int64
+	SpaceID    int64
+	ActorID    int64
+	EventType  string
+	TargetType string
+	TargetID   string
+	Operation  string
+	Source     string
+	Action     string
+	FailMode   string
+	Provider   string
+	ReasonCode string
+	RuleIDs    string
+	CreatedAt  int64
+}
+
+const GuardrailAuditExportSchema = "coze.task_thread_guardrail_audit.export.v1"
+
+type ExportGuardrailAuditEventsRequest struct {
+	ThreadID int64
+	RunID    int64
+	ViewerID int64
+	Page     int32
+	PageSize int32
+}
+
+type ExportGuardrailAuditEventsResponse struct {
+	Schema     string
+	ThreadID   int64
+	ExportedAt int64
+	Page       int32
+	PageSize   int32
+	Total      int64
+	Events     []*GuardrailAuditEventSummary
+}
+
+const MemoryExportSchema = "coze.task_thread_memories.export.v1"
+
+type ExportMemoriesRequest struct {
+	ThreadID       int64
+	ViewerID       int64
+	RunID          int64
+	Scopes         []MemoryScope
+	Query          string
+	IncludeExpired bool
+	IncludeDeleted bool
+	Limit          int32
+}
+
+type ExportMemoriesResponse struct {
+	Schema     string
+	ThreadID   int64
+	ExportedAt int64
+	Total      int64
+	Memories   []*MemorySummary
+}
+
+type ImportMemoryItem struct {
+	RunID                int64
+	Scope                MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+}
+
+type ImportMemoriesRequest struct {
+	ThreadID int64
+	ActorID  int64
+	ViewerID int64
+	Memories []ImportMemoryItem
+}
+
+type ImportMemoriesResponse struct {
+	Imported int64
+	Skipped  int64
+	Memories []*MemorySummary
+}
+
+type TranscriptSnapshotSummary struct {
+	SnapshotID     int64
+	ThreadID       int64
+	RunID          int64
+	SpaceID        int64
+	Kind           TranscriptKind
+	Digest         string
+	IdempotencyKey string
+	MessageCount   int32
+	Messages       string
+	Metadata       string
+	CreatedAt      int64
+}
+
+type MemoryFlushJobSummary struct {
+	JobID                int64
+	ThreadID             int64
+	RunID                int64
+	SpaceID              int64
+	UserID               int64
+	AssistantID          string
+	TranscriptSnapshotID int64
+	IdempotencyKey       string
+	Status               string
+	AttemptCount         int32
+	WorkerID             string
+	LastError            string
+	AvailableAt          int64
+	LeaseExpiresAt       int64
+	StartedAt            int64
+	EndedAt              int64
+	CreatedAt            int64
+	UpdatedAt            int64
 }
 
 type TokenUsageSummary struct {
@@ -181,6 +358,45 @@ type TokenUsageSummary struct {
 	CreatedAt    int64
 }
 
+type ArtifactSummary struct {
+	ArtifactID   int64
+	SpaceID      int64
+	ThreadID     int64
+	RunID        int64
+	FileID       int64
+	Title        string
+	ArtifactType string
+	VirtualPath  string
+	ContentType  string
+	SizeBytes    int64
+	PreviewMode  ArtifactPreviewMode
+	Metadata     string
+	CreatedAt    int64
+	UpdatedAt    int64
+	DeletedAt    int64
+}
+
+type ArtifactScanJobSummary struct {
+	JobID          int64
+	ThreadID       int64
+	RunID          int64
+	SpaceID        int64
+	UserID         int64
+	ArtifactID     int64
+	FileID         int64
+	Scanner        string
+	Status         ArtifactScanJobStatus
+	WorkerID       string
+	AttemptCount   int32
+	LastError      string
+	AvailableAt    int64
+	LeaseExpiresAt int64
+	StartedAt      int64
+	EndedAt        int64
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
 type TokenUsageAggregateSummary struct {
 	InputTokens      int64
 	OutputTokens     int64
@@ -191,6 +407,11 @@ type TokenUsageAggregateSummary struct {
 	SubagentTokens   int64
 	MiddlewareTokens int64
 	ToolTokens       int64
+}
+
+type RunTokenUsageAggregateSummary struct {
+	RunID     int64
+	Aggregate *TokenUsageAggregateSummary
 }
 
 type CreateThreadRequest struct {
@@ -253,7 +474,9 @@ type ListMessagesResponse struct {
 
 type CreateRunRequest struct {
 	ThreadID          int64
+	ParentRunID       int64
 	AssistantID       string
+	RunKind           RunKind
 	Status            RunStatus
 	Command           string
 	Input             string
@@ -271,6 +494,28 @@ type CreateRunResponse struct {
 	Run *RunSummary
 }
 
+type ResumeHumanInteractionRequest struct {
+	ThreadID       int64
+	SourceRunID    int64
+	InterruptID    string
+	Response       HumanInteractionResponse
+	IdempotencyKey string
+}
+
+type ResumeHumanInteractionResponse struct {
+	Run *RunSummary
+}
+
+type RetrySubagentRunRequest struct {
+	ThreadID       int64
+	SourceRunID    int64
+	IdempotencyKey string
+}
+
+type RetrySubagentRunResponse struct {
+	Run *RunSummary
+}
+
 type GetRunRequest struct {
 	RunID int64
 }
@@ -280,10 +525,12 @@ type GetRunResponse struct {
 }
 
 type ListRunsRequest struct {
-	ThreadID int64
-	Status   *RunStatus
-	Page     int32
-	PageSize int32
+	ThreadID         int64
+	ParentRunID      *int64
+	IncludeChildRuns bool
+	Status           *RunStatus
+	Page             int32
+	PageSize         int32
 }
 
 type ListRunsResponse struct {
@@ -319,6 +566,9 @@ type CreateCheckpointRequest struct {
 	RunID              int64
 	ParentCheckpointID int64
 	CheckpointNS       string
+	RuntimeType        string
+	RuntimeKey         string
+	EnvelopeVersion    int32
 	ChannelValues      string
 	ChannelVersions    string
 	PendingSends       string
@@ -356,14 +606,38 @@ type GetLatestCheckpointResponse struct {
 	Checkpoint *CheckpointSummary
 }
 
+type GetLatestRuntimeCheckpointRequest struct {
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	RuntimeKey  string
+}
+
+type GetLatestRuntimeCheckpointResponse struct {
+	Checkpoint *CheckpointSummary
+}
+
+type DeleteRuntimeCheckpointRequest struct {
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	RuntimeKey  string
+	DeletedAt   int64
+}
+
 type RememberMemoryRequest struct {
-	ThreadID  int64
-	RunID     int64
-	Scope     MemoryScope
-	Content   string
-	Metadata  string
-	Score     float64
-	ExpiresAt int64
+	ThreadID             int64
+	RunID                int64
+	Scope                MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
 }
 
 type RememberMemoryResponse struct {
@@ -380,6 +654,136 @@ type RecallMemoriesRequest struct {
 type RecallMemoriesResponse struct {
 	Memories []*MemorySummary
 	Total    int64
+}
+
+type ListMemoriesRequest struct {
+	ThreadID       int64
+	ViewerID       int64
+	RunID          int64
+	Scopes         []MemoryScope
+	Query          string
+	IncludeExpired bool
+	IncludeDeleted bool
+	Page           int32
+	PageSize       int32
+}
+
+type ListMemoriesResponse struct {
+	Memories []*MemorySummary
+	Total    int64
+}
+
+type UpdateMemoryRequest struct {
+	ThreadID             int64
+	MemoryID             int64
+	ActorID              int64
+	ViewerID             int64
+	RunID                int64
+	Scope                MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+}
+
+type UpdateMemoryResponse struct {
+	Memory  *MemorySummary
+	Updated bool
+}
+
+type DeleteMemoryRequest struct {
+	ThreadID int64
+	MemoryID int64
+	ActorID  int64
+	ViewerID int64
+}
+
+type DeleteMemoryResponse struct {
+	Deleted bool
+}
+
+type ClearMemoriesRequest struct {
+	ThreadID int64
+	RunID    int64
+	Scopes   []MemoryScope
+	ActorID  int64
+	ViewerID int64
+}
+
+type ClearMemoriesResponse struct {
+	Deleted int64
+}
+
+type RestoreMemoryRequest struct {
+	ThreadID int64
+	MemoryID int64
+	ActorID  int64
+	ViewerID int64
+}
+
+type RestoreMemoryResponse struct {
+	Memory   *MemorySummary
+	Restored bool
+}
+
+type ListMemoryAuditEventsRequest struct {
+	ThreadID int64
+	MemoryID int64
+	ViewerID int64
+	Page     int32
+	PageSize int32
+}
+
+type ListMemoryAuditEventsResponse struct {
+	Events []*MemoryAuditEventSummary
+	Total  int64
+}
+
+type ListGuardrailAuditEventsRequest struct {
+	ThreadID int64
+	RunID    int64
+	ViewerID int64
+	Page     int32
+	PageSize int32
+}
+
+type ListGuardrailAuditEventsResponse struct {
+	Events []*GuardrailAuditEventSummary
+	Total  int64
+}
+
+type PersistTranscriptSnapshotRequest struct {
+	ThreadID       int64
+	RunID          int64
+	Kind           TranscriptKind
+	Digest         string
+	IdempotencyKey string
+	MessageCount   int32
+	Messages       string
+	Metadata       string
+}
+
+type PersistTranscriptSnapshotResponse struct {
+	Snapshot *TranscriptSnapshotSummary
+	Created  bool
+}
+
+type EnqueueMemoryFlushJobRequest struct {
+	ThreadID             int64
+	RunID                int64
+	TranscriptSnapshotID int64
+	IdempotencyKey       string
+	AvailableAt          int64
+}
+
+type EnqueueMemoryFlushJobResponse struct {
+	Job     *MemoryFlushJobSummary
+	Created bool
 }
 
 type RecordTokenUsageRequest struct {
@@ -405,17 +809,198 @@ type RecordTokenUsageResponse struct {
 }
 
 type GetTokenUsageRequest struct {
-	ThreadID int64
-	RunID    int64
-	Source   TokenUsageSource
-	Page     int32
-	PageSize int32
+	ThreadID         int64
+	RunID            int64
+	IncludeChildRuns bool
+	Source           TokenUsageSource
+	Page             int32
+	PageSize         int32
 }
 
 type GetTokenUsageResponse struct {
-	Usage     []*TokenUsageSummary
+	Usage         []*TokenUsageSummary
+	Total         int64
+	Aggregate     *TokenUsageAggregateSummary
+	RunAggregates []*RunTokenUsageAggregateSummary
+}
+
+type ListArtifactsRequest struct {
+	ThreadID    int64
+	RunID       *int64
+	DeletedOnly bool
+	ViewerID    int64
+	Page        int32
+	PageSize    int32
+}
+
+type ListArtifactsResponse struct {
+	Artifacts []*ArtifactSummary
 	Total     int64
-	Aggregate *TokenUsageAggregateSummary
+}
+
+type ListArtifactScanJobsRequest struct {
+	ThreadID   int64
+	RunID      *int64
+	ArtifactID *int64
+	Status     string
+	Scanner    string
+	ViewerID   int64
+	Page       int32
+	PageSize   int32
+}
+
+type ListArtifactScanJobsResponse struct {
+	Jobs  []*ArtifactScanJobSummary
+	Total int64
+}
+
+type RetryArtifactScanJobRequest struct {
+	ThreadID int64
+	JobID    int64
+	ViewerID int64
+}
+
+type RetryArtifactScanJobResponse struct {
+	Job     *ArtifactScanJobSummary
+	Retried bool
+}
+
+type ArtifactContentMode string
+
+const (
+	ArtifactContentModePreview  ArtifactContentMode = "preview"
+	ArtifactContentModeDownload ArtifactContentMode = "download"
+)
+
+type ReadArtifactContentRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	Mode       ArtifactContentMode
+	ViewerID   int64
+}
+
+type CreateArtifactSignedURLRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	Mode       ArtifactContentMode
+	ViewerID   int64
+	TTLSeconds int64
+}
+
+type CreateArtifactSignedURLResponse struct {
+	Artifact         *ArtifactSummary
+	URL              string
+	ExpiresInSeconds int64
+	ContentType      string
+	PreviewMode      ArtifactPreviewMode
+}
+
+type DeleteArtifactRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	ViewerID   int64
+	DeletedAt  int64
+}
+
+type DeleteArtifactResponse struct {
+	Deleted bool
+}
+
+type RestoreArtifactRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	ViewerID   int64
+	RestoredAt int64
+}
+
+type RestoreArtifactResponse struct {
+	Artifact *ArtifactSummary
+	Restored bool
+}
+
+type ProcessDeletedArtifactCleanupRequest struct {
+	RetentionMillis int64
+	NowMillis       int64
+	Limit           int32
+}
+
+type ProcessDeletedArtifactCleanupResponse struct {
+	Candidates int32
+	Deleted    int32
+	NotFound   int32
+	Failed     int32
+	Skipped    int32
+}
+
+type RecordArtifactScanResultRequest struct {
+	ThreadID       int64
+	ArtifactID     int64
+	ScanStatus     string
+	Scanner        string
+	ScannerVersion string
+	Reason         string
+	ScannedAt      int64
+}
+
+type RecordArtifactScanResultResponse struct {
+	Artifact *ArtifactSummary
+	Updated  bool
+}
+
+type ReviewArtifactScanRequest struct {
+	ThreadID   int64
+	ArtifactID int64
+	ViewerID   int64
+	Decision   string
+	Reason     string
+}
+
+type ReviewArtifactScanResponse struct {
+	ArtifactID int64
+	Decision   string
+	ScanStatus string
+	Reviewed   bool
+}
+
+type ProcessArtifactScanJobsRequest struct {
+	Scanner            string
+	WorkerID           string
+	Limit              int32
+	LeaseTTLMillis     int64
+	MaxAttempts        int32
+	RetryBackoffMillis int64
+}
+
+type ProcessArtifactScanJobsResponse struct {
+	Claimed   int32
+	Succeeded int32
+	Retried   int32
+	Failed    int32
+	Skipped   int32
+}
+
+type ProcessMemoryFlushJobsRequest struct {
+	WorkerID           string
+	Limit              int32
+	LeaseTTLMillis     int64
+	MaxAttempts        int32
+	RetryBackoffMillis int64
+}
+
+type ProcessMemoryFlushJobsResponse struct {
+	Claimed   int32
+	Succeeded int32
+	Retried   int32
+	Failed    int32
+	Skipped   int32
+}
+
+type ReadArtifactContentResponse struct {
+	Artifact    *ArtifactSummary
+	Content     []byte
+	ContentType string
+	FileName    string
+	Attachment  bool
 }
 
 type ClaimPendingRunsRequest struct {

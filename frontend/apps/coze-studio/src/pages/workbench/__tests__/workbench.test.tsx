@@ -28,6 +28,7 @@ const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
+const mockListSkills = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -39,11 +40,16 @@ vi.mock('../service', () => ({
   getWorkbenchLLMModels: mockGetTypeList,
 }));
 
+vi.mock('../../skill/service', () => ({
+  listSkills: mockListSkills,
+}));
+
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
 vi.mock('@coze-arch/coze-design', () => ({
   Button: ({
     'aria-label': ariaLabel,
     children,
+    className,
     disabled,
     icon,
     loading,
@@ -51,6 +57,7 @@ vi.mock('@coze-arch/coze-design', () => ({
   }: {
     'aria-label'?: string;
     children: ReactNode;
+    className?: string;
     disabled?: boolean;
     icon?: ReactNode;
     loading?: boolean;
@@ -59,6 +66,7 @@ vi.mock('@coze-arch/coze-design', () => ({
     <button
       type="button"
       aria-label={ariaLabel}
+      className={className}
       disabled={disabled}
       data-loading={loading}
       onClick={onClick}
@@ -66,6 +74,44 @@ vi.mock('@coze-arch/coze-design', () => ({
       {icon}
       {children}
     </button>
+  ),
+  Input: ({
+    'aria-label': ariaLabel,
+    className,
+    onChange,
+    placeholder,
+    prefix,
+    value,
+  }: {
+    'aria-label'?: string;
+    className?: string;
+    onChange?: (value: string) => void;
+    placeholder?: string;
+    prefix?: ReactNode;
+    value?: string;
+  }) => (
+    <label className={className}>
+      {prefix}
+      <input
+        aria-label={ariaLabel}
+        placeholder={placeholder}
+        value={value}
+        onChange={event => onChange?.(event.target.value)}
+      />
+    </label>
+  ),
+  Spin: () => <span>加载中...</span>,
+  Tabs: ({
+    tabBarExtraContent,
+    tabList,
+  }: {
+    tabBarExtraContent?: ReactNode;
+    tabList?: Array<{ itemKey: string; tab: ReactNode }>;
+  }) => (
+    <div>
+      {tabList?.map(item => <span key={item.itemKey}>{item.tab}</span>)}
+      {tabBarExtraContent}
+    </div>
   ),
   TextArea: ({
     'aria-label': ariaLabel,
@@ -97,8 +143,10 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozImage: () => <span />,
   IconCozLink: () => <span />,
   IconCozPlus: () => <span />,
+  IconCozPlugin: () => <span />,
   IconCozSearch: () => <span />,
   IconCozSendFill: () => <span />,
+  IconCozSetting: () => <span />,
   IconCozStar: () => <span />,
   IconCozUpload: () => <span />,
 }));
@@ -112,6 +160,30 @@ describe('WorkbenchPage', () => {
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
     mockGetTypeList.mockReset();
+    mockListSkills.mockReset();
+    mockListSkills.mockResolvedValue({
+      data: {
+        skills: [
+          {
+            id: 'skill-101',
+            space_id: 'space-1',
+            name: 'Research Skill',
+            description: 'Research from trusted sources',
+            type: 3,
+            version: '1.0.0',
+            enabled: true,
+            input_schema: '{}',
+            output_schema: '{}',
+            executor: '{}',
+            permissions: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
     mockGetTypeList.mockResolvedValue([
       {
         name: 'deepseek-v4-pro',
@@ -137,7 +209,7 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('Auto');
     expect(markup).toContain('Ask');
     expect(markup).toContain('Agent');
-    expect(markup).toContain('拓展 47');
+    expect(markup).toContain('aria-label="拓展"');
     expect(markup).toContain('公开模板 6268');
     expect(markup).toContain('我收藏的');
     expect(markup).toContain('我创建的');
@@ -159,7 +231,7 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('aria-pressed="false"');
   });
 
-  it('switches mode prompt and opens the resource and extension menus from the prototype', () => {
+  it('switches mode prompt and opens the resource and extension menus from the prototype', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -200,14 +272,19 @@ describe('WorkbenchPage', () => {
     const extensionButton = Array.from(
       container.querySelectorAll('button'),
     ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
-    act(() => {
+    await act(async () => {
       extensionButton.click();
+      await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('技能 27');
-    expect(container.textContent).toContain('MCP 20');
+    expect(container.textContent).toContain('技能 1');
+    expect(container.textContent).toContain('MCP 0');
     expect(container.textContent).toContain('已选择:');
-    expect(container.textContent).toContain('meego-guidelines');
+    expect(container.textContent).toContain('Research Skill');
+    expect(mockListSkills).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      enabled: true,
+    });
 
     const skillConfigButton = Array.from(
       container.querySelectorAll('button'),
@@ -282,7 +359,7 @@ describe('WorkbenchPage', () => {
       space_id: 'space-1',
       message: '帮我生成周报',
       mode: workbench.ChatMode.Auto,
-      enable_skills: expect.arrayContaining(['meego-guidelines']),
+      enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
@@ -414,12 +491,13 @@ describe('WorkbenchPage', () => {
     const extensionButton = Array.from(
       container.querySelectorAll('button'),
     ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
-    act(() => {
+    await act(async () => {
       extensionButton.click();
+      await Promise.resolve();
     });
 
     const skillButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('meego-guidelines'),
+      button => button.textContent?.includes('Research Skill'),
     ) as HTMLButtonElement;
     act(() => {
       skillButton.click();
@@ -447,7 +525,9 @@ describe('WorkbenchPage', () => {
       space_id: 'space-1',
       message: '执行选中的技能',
       mode: workbench.ChatMode.Auto,
-      enable_skills: expect.not.arrayContaining(['meego-guidelines']),
+      model_type: '100002',
+      model_name: 'deepseek-v4-pro',
+      enable_skills: ['skill-101'],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
@@ -528,7 +608,7 @@ describe('WorkbenchPage', () => {
       mode: workbench.ChatMode.Auto,
       model_type: '100003',
       model_name: 'gpt-4.1',
-      enable_skills: expect.arrayContaining(['meego-guidelines']),
+      enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],

@@ -8,7 +8,6 @@
 1. `docs/superpowers/specs/2026-06-13-runtime-langgraph-api-design.md`
 2. `docs/superpowers/specs/2026-06-13-skills-mcp-security-design.md`
 3. `docs/superpowers/specs/2026-06-13-memory-token-artifacts-settings-design.md`
-4. `docs/superpowers/specs/2026-06-13-im-channels-design.md`
 
 ## 背景
 
@@ -21,7 +20,7 @@
 5. 侧边栏底部 `我的任务` 拉取最近任务。
 6. 后端 `workbench/chat` 会创建 task，异步执行，并把流程写入 `task_events`。
 
-目标是完整复刻 Deer-flow 的 thread/chat runtime 能力，但用户可见菜单保留当前原型里的“任务”表达：新建任务、全部任务、我的任务、任务详情、执行流程、artifact、token usage、memory、IM channel 来源、settings 入口。这里的核心变化是内部事实源从旧 `ChatTask` 转为 `Thread-first`，不是把产品文案改成聊天工具。
+目标是完整复刻 Deer-flow 的 thread/chat runtime 能力，但用户可见菜单保留当前原型里的“任务”表达：新建任务、全部任务、我的任务、任务详情、执行流程、artifact、token usage、memory、settings 入口。这里的核心变化是内部事实源从旧 `ChatTask` 转为 `Thread-first`，不是把产品文案改成聊天工具。
 
 ## 目标
 
@@ -38,7 +37,7 @@
 
 ## 非目标
 
-1. 不在本设计中实现 Skills、Tools/MCP、Memory、Artifacts、IM Channels 的内部逻辑；只接入它们的页面入口和任务详情展示位。
+1. 不在本设计中实现 Skills、Tools/MCP、Memory、Artifacts 的内部逻辑；只接入它们的页面入口和任务详情展示位。
 2. 不删除旧 task 表和旧 API，避免历史链接和已有数据中断。
 3. 不改变资源配置和开发配置的业务逻辑。
 4. 不把新的 Agent Harness 继续建立在 `ChatTask` 表上。
@@ -72,8 +71,8 @@
 1. `/workspace/chats`：对话入口。
 2. `/workspace/chats/new`：新对话。
 3. `/workspace/chats/[thread_id]`：对话详情。
-4. `WorkspaceSidebar`：顶部 header，中间 chats/agents/channels/recent chats，底部 settings。
-5. `RecentChatList`：最近对话、重命名、分享、导出、删除、channel 来源。
+4. `WorkspaceSidebar`：顶部 header，中间 tasks/agents/recent tasks，底部 settings。
+5. `RecentChatList`：最近任务、重命名、分享、导出、删除。
 6. `ChatPage`：thread title、token usage、export、artifact trigger、message list、input box、todo list。
 7. `ChatBox`：聊天区和 artifact panel 可伸缩布局。
 8. `MessageList`：消息分组、token usage、artifact files、subtask card、reasoning。
@@ -104,7 +103,7 @@
 1. 主操作：`新建任务`。
 2. 工作：`全部任务`、`我的任务`。
 3. 配置：`技能`、`工具`、`资源配置`、`开发配置`。
-4. 设置：放到底部 settings menu，接 Memory、Token、Channels、About。
+4. 设置：放到底部 settings menu，接 Memory、Token、Files、About。
 
 ## 路由设计
 
@@ -196,7 +195,6 @@ frontend/apps/coze-studio/src/pages/chats/
 
 frontend/apps/coze-studio/src/components/workspace-sub-menu/
   workspace-recent-chat-list.tsx
-  workspace-channel-list.tsx
   workspace-settings-menu.tsx
 ```
 
@@ -236,7 +234,7 @@ frontend/apps/coze-studio/src/components/workspace-sub-menu/
 
 1. 任务搜索。
 2. 状态过滤：全部、运行中、已中断、失败、已归档。
-3. 来源过滤：Web、IM channel、API。
+3. 来源过滤：Web、API、内部任务。
 4. Agent 过滤。
 5. 收藏/置顶。
 6. 最近更新时间排序。
@@ -249,11 +247,10 @@ frontend/apps/coze-studio/src/components/workspace-sub-menu/
 2. last user message 摘要。
 3. last assistant message 摘要。
 4. status。
-5. channel source。
-6. model/agent。
-7. token total。
-8. artifact count。
-9. updated_at。
+5. model/agent。
+6. token total。
+7. artifact count。
+8. updated_at。
 
 ### 我的任务
 
@@ -263,9 +260,8 @@ sidebar 我的任务：
 2. 无限滚动加载更多。
 3. 支持 active 高亮。
 4. 支持重命名、分享、导出、删除。
-5. 支持 channel badge。
-6. 支持 running 状态点。
-7. 没有最近任务时隐藏或显示轻量空态。
+5. 支持 running 状态点。
+6. 没有最近任务时隐藏或显示轻量空态。
 
 ### 任务详情
 
@@ -309,7 +305,6 @@ Input box：
 5. model selector。
 6. skills/tools/resources switches。
 7. slash skill 提示。
-8. IM channel 来源 thread 中仍可继续 Web 追问。
 
 ## 后端事实模型
 
@@ -324,7 +319,6 @@ agent_token_usage
 agent_files
 agent_artifacts
 agent_memory_*
-agent_channel_*
 ```
 
 本设计新增 UI 辅助模型：
@@ -403,7 +397,7 @@ CREATE TABLE legacy_task_thread_refs (
 1. 对外前端可以使用 `/api/agent/threads` 包装层。
 2. 包装层内部调用或复用 `/api/threads`、`/runs/stream`、`/state`、`/history`。
 3. 保留 `/api/threads` 作为 LangGraph 兼容 API，不把 UI 专属字段塞进兼容协议。
-4. UI 需要的 pinned、archived、preview、channel badge 由 `/api/agent/threads` 聚合。
+4. UI 需要的 pinned、archived、preview 由 `/api/agent/threads` 聚合。
 
 Thread list response：
 
@@ -418,10 +412,7 @@ Thread list response：
       "agent_name": "Lead Agent",
       "last_user_message": "帮我分析订单异常",
       "last_assistant_message": "已完成分析并生成报告",
-      "channel_source": {
-        "type": "web",
-        "provider": ""
-      },
+      "source": "web",
       "pinned": false,
       "archived": false,
       "artifact_count": 2,
@@ -569,8 +560,7 @@ Legacy TaskStatus 映射：
 3. space admin 可按管理入口查看 space 级聚合，但默认不读用户私密消息明文。
 4. legacy task resolver 必须验证 task 所属 space 和用户权限。
 5. share link 需要单独权限策略，默认只复制内部链接。
-6. IM channel thread 打开时仍按 owner user 权限展示。
-7. 删除 thread 采用软删除或归档，物理清理由 cleanup job 执行。
+6. 删除 thread 采用软删除或归档，物理清理由 cleanup job 执行。
 
 ## 前端状态管理
 
@@ -617,8 +607,7 @@ Settings 菜单接入：
 5. 文件与产物：接 Artifacts spec。
 6. 技能：接 Skills spec。
 7. 工具：接 Tools/MCP spec。
-8. 通道：接 IM Channels spec。
-9. 关于：版本和诊断。
+8. 关于：版本和诊断。
 
 这里不新增 API 授权变更。
 
@@ -671,8 +660,7 @@ Settings 菜单接入：
 4. 旧 `/tasks/:task_id` linked 跳到 `/chats/:thread_id`。
 5. 未迁移旧 task 展示 read-only legacy detail。
 6. artifact 和 token usage 在详情展示。
-7. IM channel thread 带 channel badge。
-8. 删除当前 thread 后跳到下一条或 new。
+7. 删除当前 thread 后跳到下一条或 new。
 
 ### E2E
 
@@ -730,20 +718,18 @@ Settings 菜单接入：
 1. 新建任务能实时流式展示。
 2. 运行失败、停止、忙碌状态正确。
 
-### Phase 4：Artifacts、Token、Memory、Channel 展示接入
+### Phase 4：Artifacts、Token、Memory 展示接入
 
 交付：
 
 1. artifact panel。
 2. token usage indicator。
 3. memory/settings links。
-4. channel badge。
-5. export/share。
+4. export/share。
 
 验收：
 
 1. Deer-flow 关键体验完整。
-2. IM 和 Web thread 共用详情页。
 
 ### Phase 5：迁移和硬化
 
@@ -771,7 +757,7 @@ Settings 菜单接入：
 4. thread detail 刷新可恢复。
 5. active run 状态准确。
 6. stop/cancel 可用。
-7. artifact、token usage、channel badge 不阻塞主消息渲染。
+7. artifact、token usage 不阻塞主消息渲染。
 8. legacy task resolver 有权限校验。
 9. 未迁移 task 有 read-only fallback。
 10. 删除/归档是软操作。
@@ -794,4 +780,4 @@ Settings 菜单接入：
 
 工作台应从旧 `ChatTask-first` 调整为 `Thread-first`，但用户可见菜单继续保留原型中的任务方式。`新建任务`、`全部任务`、`我的任务`、`任务详情` 分别对应内部的 create thread、thread list、recent threads、thread detail，并通过 legacy route 和 task compatibility layer 保留旧链接。
 
-这样改造后，前四份 spec 中的 runtime、skills/tools、memory、token usage、artifacts、IM channels 都能自然挂在同一个 thread detail 能力上，同时产品侧仍保持“任务工作台”的表达，避免未来继续围绕旧 task 模型补丁式扩展。
+这样改造后，runtime、skills/tools、memory、token usage 和 artifacts 都能自然挂在同一个 thread detail 能力上，同时产品侧仍保持“任务工作台”的表达，避免未来继续围绕旧 task 模型补丁式扩展。

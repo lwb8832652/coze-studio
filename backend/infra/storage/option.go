@@ -23,9 +23,11 @@ import (
 type GetOptFn func(option *GetOption)
 
 type GetOption struct {
-	Expire      int64 //  seconds
-	WithURL     bool
-	WithTagging bool
+	Expire                     int64 // seconds
+	WithURL                    bool
+	WithTagging                bool
+	ResponseContentDisposition string
+	ResponseContentType        string
 }
 
 func WithExpire(expire int64) GetOptFn {
@@ -43,6 +45,18 @@ func WithURL(withURL bool) GetOptFn {
 func WithGetTagging(withTagging bool) GetOptFn {
 	return func(o *GetOption) {
 		o.WithTagging = withTagging
+	}
+}
+
+func WithResponseContentDisposition(v string) GetOptFn {
+	return func(o *GetOption) {
+		o.ResponseContentDisposition = v
+	}
+}
+
+func WithResponseContentType(v string) GetOptFn {
+	return func(o *GetOption) {
+		o.ResponseContentType = v
 	}
 }
 

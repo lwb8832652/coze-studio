@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS `agent_memory_audit_events` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `thread_id` BIGINT NOT NULL DEFAULT 0,
+  `run_id` BIGINT NOT NULL DEFAULT 0,
+  `space_id` BIGINT NOT NULL DEFAULT 0,
+  `memory_id` BIGINT NOT NULL DEFAULT 0,
+  `actor_id` BIGINT NOT NULL DEFAULT 0,
+  `event_type` VARCHAR(64) NOT NULL DEFAULT '',
+  `scope` VARCHAR(32) NOT NULL DEFAULT '',
+  `source_type` VARCHAR(64) NOT NULL DEFAULT '',
+  `source_id` VARCHAR(128) NOT NULL DEFAULT '',
+  `affected_count` BIGINT NOT NULL DEFAULT 0,
+  `created_at` BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_agent_memory_audit_thread_created` (`thread_id`, `created_at`),
+  KEY `idx_agent_memory_audit_run_created` (`run_id`, `created_at`),
+  KEY `idx_agent_memory_audit_space_created` (`space_id`, `created_at`),
+  KEY `idx_agent_memory_audit_memory_created` (`memory_id`, `created_at`),
+  KEY `idx_agent_memory_audit_actor_created` (`actor_id`, `created_at`),
+  KEY `idx_agent_memory_audit_event_created` (`event_type`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

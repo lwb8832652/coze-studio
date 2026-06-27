@@ -575,6 +575,17 @@ services:
     image: opencoze/opencoze:latest
     profiles: ['build-server']
 
+  artifact-scanner:
+    image: ${AGENT_ARTIFACT_SCANNER_CLAMD_IMAGE:-clamav/clamav:stable}
+    container_name: coze-artifact-scanner
+    profiles: ['scanner']
+    ports:
+      - '127.0.0.1:3310:3310'
+    volumes:
+      - ./data/clamav:/var/lib/clamav
+    networks:
+      - coze-network
+
 networks:
   coze-network:
     driver: bridge

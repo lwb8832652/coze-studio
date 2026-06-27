@@ -22,11 +22,13 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
 type ServiceComponents struct {
-	DB    *gorm.DB
-	IDGen idgen.IDGenerator
+	DB            *gorm.DB
+	IDGen         idgen.IDGenerator
+	ObjectStorage storage.Storage
 }
 
 func InitService(c *ServiceComponents) *ApplicationService {
@@ -35,10 +37,40 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	}
 
 	repo := repository.NewThreadRepository(c.DB)
+	guardrailAuditRepo := repository.NewGuardrailAuditRepository(c.DB)
 	SVC.ThreadSVC = domainservice.NewService(&domainservice.Components{
 		Repo:  repo,
 		IDGen: c.IDGen,
 	})
+	SVC.RuntimeFileSVC = domainservice.NewRuntimeFileService(
+		&domainservice.RuntimeFileComponents{
+			RunReader: repo,
+			FileRepo:  repository.NewRuntimeFileRepository(c.DB),
+			IDGen:     c.IDGen,
+		},
+	)
+	SVC.PlanSVC = domainservice.NewPlanService(
+		&domainservice.PlanComponents{
+			RunReader: repo,
+			PlanRepo:  repository.NewPlanRepository(c.DB),
+			IDGen:     c.IDGen,
+		},
+	)
+	SVC.ArtifactSVC = domainservice.NewArtifactService(
+		&domainservice.ArtifactComponents{
+			FileReader:   repository.NewRuntimeFileRepository(c.DB),
+			ArtifactRepo: repository.NewArtifactRepository(c.DB),
+			IDGen:        c.IDGen,
+		},
+	)
+	SVC.ArtifactObjectStorage = c.ObjectStorage
+	SVC.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(SVC.ThreadSVC)
+	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
+	SVC.GuardrailAuditRepository = guardrailAuditRepo
+	SVC.GuardrailAuditAuthorizer = NewThreadOwnerGuardrailAuditAuthorizer(SVC.ThreadSVC)
+	SVC.ArtifactScanner, SVC.ArtifactScannerStatus = NewArtifactContentScannerFromEnvWithStatus()
+	SVC.ArtifactScanReadPolicy = NewArtifactScanReadPolicyConfigFromEnv()
+	SVC.MemoryExtractor = NewModelMemoryExtractorFromEnv(NewThreadUsageCollector(SVC))
 
 	return SVC
 }

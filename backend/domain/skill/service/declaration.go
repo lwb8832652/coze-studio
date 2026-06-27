@@ -41,6 +41,9 @@ type Declaration struct {
 	Type         string                `json:"type" yaml:"type"`
 	Version      string                `json:"version" yaml:"version"`
 	Enabled      bool                  `json:"enabled" yaml:"enabled"`
+	Context      string                `json:"context,omitempty" yaml:"context,omitempty"`
+	Agent        string                `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Model        string                `json:"model,omitempty" yaml:"model,omitempty"`
 	InputSchema  map[string]any        `json:"input_schema" yaml:"input_schema"`
 	OutputSchema map[string]any        `json:"output_schema" yaml:"output_schema"`
 	Executor     ExecutorDeclaration   `json:"executor" yaml:"executor"`
@@ -79,6 +82,9 @@ type skillMarkdownFrontmatter struct {
 	Type              string         `yaml:"type"`
 	Version           string         `yaml:"version"`
 	Enabled           *bool          `yaml:"enabled"`
+	Context           string         `yaml:"context"`
+	Agent             string         `yaml:"agent"`
+	Model             string         `yaml:"model"`
 	InputSchema       map[string]any `yaml:"input_schema"`
 	OutputSchema      map[string]any `yaml:"output_schema"`
 	AllowedTools      []string       `yaml:"allowed-tools"`
@@ -320,6 +326,9 @@ func parseSkillMarkdown(content []byte) (*Declaration, error) {
 		Type:         firstNonEmpty(meta.Type, string(entity.TypeDeerSkill)),
 		Version:      firstNonEmpty(meta.Version, "1.0.0"),
 		Enabled:      enabled,
+		Context:      meta.Context,
+		Agent:        meta.Agent,
+		Model:        meta.Model,
 		InputSchema:  defaultObjectSchema(meta.InputSchema),
 		OutputSchema: defaultObjectSchema(meta.OutputSchema),
 		Permissions: PermissionDeclaration{
@@ -342,6 +351,9 @@ func ValidateDeclaration(decl *Declaration) error {
 	decl.Description = strings.TrimSpace(decl.Description)
 	decl.Type = strings.TrimSpace(decl.Type)
 	decl.Version = strings.TrimSpace(decl.Version)
+	decl.Context = strings.TrimSpace(decl.Context)
+	decl.Agent = strings.TrimSpace(decl.Agent)
+	decl.Model = strings.TrimSpace(decl.Model)
 	decl.Executor.Language = strings.TrimSpace(decl.Executor.Language)
 	decl.Executor.Entry = strings.TrimSpace(decl.Executor.Entry)
 	decl.Executor.Code = strings.TrimSpace(decl.Executor.Code)
@@ -373,6 +385,11 @@ func ValidateDeclaration(decl *Declaration) error {
 	case string(entity.TypeDeerSkill), string(entity.TypePublicSkill), string(entity.TypeCustomSkill):
 		if decl.Description == "" {
 			return fmt.Errorf("description is required")
+		}
+		switch decl.Context {
+		case "", "inline", "fork", "fork_with_context":
+		default:
+			return fmt.Errorf("skill context must be inline, fork, or fork_with_context")
 		}
 		if decl.Version == "" {
 			decl.Version = "1.0.0"

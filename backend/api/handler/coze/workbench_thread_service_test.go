@@ -21,9 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -32,6 +35,12 @@ import (
 
 	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
+	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 func TestListTaskThreadsHandlerReturnsAgentThreads(t *testing.T) {
@@ -93,6 +102,1360 @@ func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	require.Contains(t, body, `"content":"请分析客户反馈"`)
 	require.Contains(t, body, `"role":"assistant"`)
 	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
+}
+
+func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/memories/export", ExportTaskThreadMemories)
+	installAgentThreadTestService(t)
+	_, err := appagentthread.SVC.RememberMemory(context.Background(), &appagentthread.RememberMemoryRequest{
+		ThreadID:   1,
+		Scope:      appagentthread.MemoryScopeLongTerm,
+		Content:    "用户偏好中文摘要",
+		Metadata:   `{"origin":"manual"}`,
+		Score:      0.8,
+		Confidence: 0.9,
+		SourceType: "manual",
+		SourceID:   "memory-ui-1",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/memories/export?scope=long_term&limit=50",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"schema":"coze.task_thread_memories.export.v1"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"content":"用户偏好中文摘要"`)
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "checkpoint")
+}
+
+func TestImportTaskThreadMemoriesHandlerCreatesMemoriesAndAuditsActor(t *testing.T) {
+	h := server.Default()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/memories/import",
+		workbenchSessionMiddlewareForTest(99),
+		ImportTaskThreadMemories,
+	)
+	installAgentThreadTestService(t)
+	payload := []byte(`{
+		"memories": [
+			{
+				"scope": "thread",
+				"content": "导入后的记忆",
+				"metadata": "{\"origin\":\"file\"}",
+				"score": 0.75,
+				"confidence": 0.85,
+				"source_type": "import",
+				"source_id": "file-1"
+			}
+		]
+	}`)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/memories/import",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	respBody := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, respBody, `"code":0`)
+	require.Contains(t, respBody, `"imported":1`)
+	require.Contains(t, respBody, `"skipped":0`)
+	require.Contains(t, respBody, `"content":"导入后的记忆"`)
+
+	audits, err := appagentthread.SVC.ListMemoryAuditEvents(context.Background(), &appagentthread.ListMemoryAuditEventsRequest{
+		ThreadID: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, audits.Events, 1)
+	require.Equal(t, int64(99), audits.Events[0].ActorID)
+	require.Equal(t, "memory.imported", audits.Events[0].EventType)
+	require.Equal(t, int64(1), audits.Events[0].AffectedCount)
+}
+
+func TestListTaskThreadMemoriesHandlerPassesSessionViewerID(t *testing.T) {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(2))
+	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
+	installAgentThreadTestService(t)
+	authorizer := &recordingWorkbenchMemoryAuthorizer{}
+	appagentthread.SVC.MemoryAuthorizer = authorizer
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/memories?page=1&page_size=10",
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, appagentthread.MemoryAccessOperationList, authorizer.req.Operation)
+	require.Equal(t, int64(1), authorizer.req.ThreadID)
+	require.Equal(t, int64(2), authorizer.req.ViewerID)
+}
+
+func TestListTaskThreadMemoriesHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.MemoryAuthorizer = &recordingWorkbenchMemoryAuthorizer{
+		err: appagentthread.ErrMemoryAccessDenied,
+	}
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/memories?page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, body, "memory access denied")
+	require.NotContains(t, body, "internal server error")
+}
+
+func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
+		workbenchSessionMiddlewareForTest(2),
+		ListTaskThreadGuardrailAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	recorder := appagentthread.NewApplicationGuardrailAuditRecorder(
+		appagentthread.ApplicationGuardrailAuditRecorderOptions{
+			Repository: appagentthread.SVC.GuardrailAuditRepository,
+			IDGen:      &sequentialIDGen{next: 9101},
+			NowMillis:  func() int64 { return 4000 },
+		},
+	)
+	err := recorder.RecordGuardrailDecision(
+		context.Background(),
+		appagentthread.GuardrailRequest{
+			SpaceID:    1,
+			ThreadID:   1,
+			RunID:      2,
+			UserID:     2,
+			TargetType: appagentthread.GuardrailTargetToolCall,
+			TargetID:   "runtime_tool:search_docs",
+			Operation:  "invoke",
+			Source:     "adk_tool_wrapper",
+			FailMode:   appagentthread.GuardrailFailClosed,
+			Metadata: map[string]string{
+				"prompt": "secret prompt",
+			},
+		},
+		appagentthread.GuardrailDecision{
+			Action:     appagentthread.GuardrailActionConfirm,
+			Provider:   "scanner",
+			ReasonCode: "high_risk",
+			Message:    "review /mnt/raw/object sk-secret",
+			RuleIDs:    []string{"rule:high_risk"},
+			Metadata: map[string]string{
+				"tool_args": `{"q":"secret"}`,
+				"object":    "s3://bucket/raw",
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/guardrail_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"event_id":"9101"`)
+	require.Contains(t, body, `"event_type":"guardrail.decision.confirm"`)
+	require.Contains(t, body, `"target_type":"tool_call"`)
+	require.Contains(t, body, `"target_id":"runtime_tool:search_docs"`)
+	require.Contains(t, body, `"action":"confirm"`)
+	require.NotContains(t, body, "secret prompt")
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "sk-secret")
+	require.NotContains(t, body, "/mnt/raw")
+	require.NotContains(t, body, "s3://")
+}
+
+func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/guardrail_audit_events/export",
+		workbenchSessionMiddlewareForTest(2),
+		ExportTaskThreadGuardrailAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	recorder := appagentthread.NewApplicationGuardrailAuditRecorder(
+		appagentthread.ApplicationGuardrailAuditRecorderOptions{
+			Repository: appagentthread.SVC.GuardrailAuditRepository,
+			IDGen:      &sequentialIDGen{next: 9105},
+			NowMillis:  func() int64 { return 5000 },
+		},
+	)
+	err := recorder.RecordGuardrailDecision(
+		context.Background(),
+		appagentthread.GuardrailRequest{
+			SpaceID:    1,
+			ThreadID:   1,
+			RunID:      2,
+			UserID:     2,
+			TargetType: appagentthread.GuardrailTargetNetwork,
+			TargetID:   "web_fetch",
+			Operation:  "invoke",
+			Source:     "adk_runtime_tool",
+			FailMode:   appagentthread.GuardrailFailClosed,
+			Metadata: map[string]string{
+				"prompt": "secret prompt",
+			},
+		},
+		appagentthread.GuardrailDecision{
+			Action:     appagentthread.GuardrailActionDeny,
+			Provider:   "http_scanner",
+			ReasonCode: "network_review",
+			Message:    "deny /mnt/raw/object sk-secret",
+			RuleIDs:    []string{"url_review", "external_policy"},
+			Metadata: map[string]string{
+				"provider_raw": `{"decision":"deny","secret":"sk-secret"}`,
+				"tool_args":    `{"url":"s3://bucket/raw"}`,
+			},
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/guardrail_audit_events/export?run_id=2&page=1&page_size=50",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"schema":"coze.task_thread_guardrail_audit.export.v1"`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"page":1`)
+	require.Contains(t, body, `"page_size":50`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"event_id":"9105"`)
+	require.Contains(t, body, `"event_type":"guardrail.decision.deny"`)
+	require.Contains(t, body, `"target_type":"network"`)
+	require.Contains(t, body, `"target_id":"web_fetch"`)
+	require.Contains(t, body, `"action":"deny"`)
+	require.NotContains(t, body, "secret prompt")
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "provider_raw")
+	require.NotContains(t, body, "sk-secret")
+	require.NotContains(t, body, "/mnt/raw")
+	require.NotContains(t, body, "s3://")
+}
+
+func TestListTaskThreadGuardrailAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
+		workbenchSessionMiddlewareForTest(2),
+		ListTaskThreadGuardrailAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	authorizer := &recordingWorkbenchGuardrailAuditAuthorizer{}
+	appagentthread.SVC.GuardrailAuditAuthorizer = authorizer
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/guardrail_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, appagentthread.GuardrailAuditAccessOperationList, authorizer.req.Operation)
+	require.Equal(t, int64(1), authorizer.req.ThreadID)
+	require.Equal(t, int64(2), authorizer.req.ViewerID)
+}
+
+func TestListTaskThreadGuardrailAuditEventsHandlerMapsAuthorizationDeniedToForbidden(
+	t *testing.T,
+) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
+		ListTaskThreadGuardrailAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.GuardrailAuditAuthorizer = &recordingWorkbenchGuardrailAuditAuthorizer{
+		err: appagentthread.ErrGuardrailAuditAccessDenied,
+	}
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/guardrail_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, body, "guardrail audit access denied")
+	require.NotContains(t, body, "internal server error")
+}
+
+func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("a", 64) + ".txt"
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/" + fileName,
+			ObjectURI:   "agent-runtime/1/1/runs/2/tool-results/trunc/" + fileName,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   128,
+			Digest:      strings.Repeat("b", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	_, _, err = appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts?run_id=2&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"artifact_type":"report"`)
+	require.Contains(t, body, `"preview_mode":"text"`)
+	require.Contains(t, body, `"virtual_path":"/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/`)
+	require.NotContains(t, body, "agent-runtime/")
+}
+
+func TestListTaskThreadArtifactsHandlerReturnsDeletedArtifactsWhenRequested(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("c", 64) + ".txt"
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/" + fileName,
+			ObjectURI:   "agent-runtime/1/1/runs/2/tool-results/trunc/" + fileName,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   128,
+			Digest:      strings.Repeat("d", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, deleted, err := appagentthread.SVC.ArtifactSVC.DeleteArtifact(
+		context.Background(),
+		&domainservice.DeleteArtifactRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			DeletedAt:  1300,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, deleted)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts?deleted_only=true&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"artifact_id":"`+strconv.FormatInt(artifact.ID, 10)+`"`)
+	require.Contains(t, body, `"deleted_at":1300`)
+	require.NotContains(t, body, "agent-runtime/")
+}
+
+func TestListTaskThreadArtifactsHandlerPassesSessionViewerID(t *testing.T) {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(2))
+	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
+	installAgentThreadTestService(t)
+	authorizer := &recordingWorkbenchArtifactAuthorizer{}
+	appagentthread.SVC.ArtifactAuthorizer = authorizer
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts?page=1&page_size=10",
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, appagentthread.ArtifactAccessOperationList, authorizer.req.Operation)
+	require.Equal(t, int64(1), authorizer.req.ThreadID)
+	require.Equal(t, int64(2), authorizer.req.ViewerID)
+}
+
+func TestListTaskThreadArtifactsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.ArtifactAuthorizer = &recordingWorkbenchArtifactAuthorizer{
+		err: appagentthread.ErrArtifactAccessDenied,
+	}
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts?page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, body, "artifact access denied")
+	require.NotContains(t, body, "internal server error")
+}
+
+func TestListTaskThreadArtifactScanJobsHandlerReturnsSafeMetadata(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs",
+		ListTaskThreadArtifactScanJobs,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	runIDText := strconv.FormatInt(runResp.Run.RunID, 10)
+	fileName := strings.Repeat("c", 64) + ".txt"
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:            runResp.Run.RunID,
+			FileName:         fileName,
+			OriginalFileName: "secret.txt",
+			FileKind:         domainentity.AgentFileKindWorkspace,
+			VirtualPath:      "/mnt/user-data/workspace/.coze/tool-results/runs/" + runIDText + "/trunc/" + fileName,
+			ObjectURI:        "agent-runtime/1/1/runs/" + runIDText + "/tool-results/trunc/" + fileName,
+			ContentType:      "text/plain; charset=utf-8",
+			SizeBytes:        128,
+			Digest:           strings.Repeat("c", 64),
+			Metadata:         `{}`,
+		},
+	)
+	require.NoError(t, err)
+	_, _, err = appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	jobs, err := appagentthread.SVC.ArtifactSVC.ClaimArtifactScanJobs(
+		context.Background(),
+		&domainservice.ClaimArtifactScanJobsRequest{
+			Scanner:        "default",
+			WorkerID:       "scan-worker-a",
+			Limit:          1,
+			LeaseTTLMillis: 60000,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	_, ok, err := appagentthread.SVC.ArtifactSVC.FailArtifactScanJob(
+		context.Background(),
+		&domainservice.FailArtifactScanJobRequest{
+			JobID:     jobs[0].ID,
+			WorkerID:  "scan-worker-a",
+			ErrorText: "scanner unavailable",
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifact_scan_jobs?status=failed&scanner=default&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"status":"failed"`)
+	require.Contains(t, body, `"last_error":"scanner unavailable"`)
+	require.Contains(t, body, `"attempt_count":1`)
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+	require.NotContains(t, body, "secret.txt")
+}
+
+func TestRetryTaskThreadArtifactScanJobHandlerRequeuesFailedJob(t *testing.T) {
+	h := server.Default()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
+		RetryTaskThreadArtifactScanJob,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: 1,
+			Input:    `{"messages":[]}`,
+		},
+	)
+	require.NoError(t, err)
+	runIDText := strconv.FormatInt(runResp.Run.RunID, 10)
+	fileName := strings.Repeat("d", 64) + ".txt"
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:            runResp.Run.RunID,
+			FileName:         fileName,
+			OriginalFileName: "secret.txt",
+			FileKind:         domainentity.AgentFileKindWorkspace,
+			VirtualPath:      "/mnt/user-data/workspace/.coze/tool-results/runs/" + runIDText + "/trunc/" + fileName,
+			ObjectURI:        "agent-runtime/1/1/runs/" + runIDText + "/tool-results/trunc/" + fileName,
+			ContentType:      "text/plain; charset=utf-8",
+			SizeBytes:        128,
+			Digest:           strings.Repeat("d", 64),
+			Metadata:         `{}`,
+		},
+	)
+	require.NoError(t, err)
+	_, _, err = appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	jobs, err := appagentthread.SVC.ArtifactSVC.ClaimArtifactScanJobs(
+		context.Background(),
+		&domainservice.ClaimArtifactScanJobsRequest{
+			Scanner:        "default",
+			WorkerID:       "scan-worker-a",
+			Limit:          1,
+			LeaseTTLMillis: 60000,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	_, ok, err := appagentthread.SVC.ArtifactSVC.FailArtifactScanJob(
+		context.Background(),
+		&domainservice.FailArtifactScanJobRequest{
+			JobID:     jobs[0].ID,
+			WorkerID:  "scan-worker-a",
+			ErrorText: "scanner unavailable",
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/artifact_scan_jobs/"+
+			strconv.FormatInt(jobs[0].ID, 10)+"/retry",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"retried":true`)
+	require.Contains(t, body, `"status":"pending"`)
+	require.Contains(t, body, `"last_error":"manual retry requested"`)
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+	require.NotContains(t, body, "secret.txt")
+}
+
+func TestRetryTaskThreadArtifactScanJobHandlerReturnsConflictForNonFailedJob(t *testing.T) {
+	h := server.Default()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
+		RetryTaskThreadArtifactScanJob,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: 1,
+			Input:    `{"messages":[]}`,
+		},
+	)
+	require.NoError(t, err)
+	runIDText := strconv.FormatInt(runResp.Run.RunID, 10)
+	fileName := strings.Repeat("e", 64) + ".txt"
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/" + runIDText + "/trunc/" + fileName,
+			ObjectURI:   "agent-runtime/1/1/runs/" + runIDText + "/tool-results/trunc/" + fileName,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   128,
+			Digest:      strings.Repeat("e", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	_, _, err = appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	jobs, err := appagentthread.SVC.ArtifactSVC.ClaimArtifactScanJobs(
+		context.Background(),
+		&domainservice.ClaimArtifactScanJobsRequest{
+			Scanner:        "default",
+			WorkerID:       "scan-worker-a",
+			Limit:          1,
+			LeaseTTLMillis: 60000,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/artifact_scan_jobs/"+
+			strconv.FormatInt(jobs[0].ID, 10)+"/retry",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Contains(t, body, "artifact scan job cannot be retried")
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+}
+
+func TestGetTaskThreadArtifactContentHandlerReturnsBytesWithSafeHeaders(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
+		GetTaskThreadArtifactContent,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{},
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("a", 64) + ".txt"
+	objectURI := "agent-runtime/1/1/runs/2/tool-results/trunc/" + fileName
+	content := []byte("artifact body")
+	storage.objects[objectURI] = content
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/" + fileName,
+			ObjectURI:   objectURI,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   int64(len(content)),
+			Digest:      strings.Repeat("b", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "report.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "clean",
+			Scanner:    "test",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/content?mode=preview",
+		nil,
+	)
+	res := w.Result()
+
+	require.Equal(t, http.StatusOK, res.StatusCode())
+	require.Equal(t, content, res.Body())
+	require.Contains(t, string(res.Header.Peek("Content-Type")), "text/plain")
+	contentDisposition := string(res.Header.Peek("Content-Disposition"))
+	require.Contains(t, contentDisposition, "inline")
+	require.Contains(t, contentDisposition, "filename*=UTF-8''report.txt")
+	require.NotContains(t, contentDisposition, "agent-runtime/")
+	require.Equal(t, "nosniff", string(res.Header.Peek("X-Content-Type-Options")))
+}
+
+func TestGetTaskThreadArtifactSignedURLHandlerReturnsSafeReceipt(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
+		GetTaskThreadArtifactSignedURL,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects:   map[string][]byte{},
+		signedURL: "https://storage.example.test/signed/report.txt?token=abc",
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("e", 64) + ".txt"
+	objectURI := "agent-runtime/1/1/runs/2/tool-results/trunc/" + fileName
+	storage.objects[objectURI] = []byte("artifact body")
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/" + fileName,
+			ObjectURI:   objectURI,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   int64(len("artifact body")),
+			Digest:      strings.Repeat("f", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "report.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "clean",
+			Scanner:    "test",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+
+			strconv.FormatInt(artifact.ID, 10)+"/signed_url?mode=preview&ttl_seconds=99999",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"url":"https://storage.example.test/signed/report.txt?token=abc"`)
+	require.Contains(t, body, `"expires_in_seconds":3600`)
+	require.Contains(t, body, `"artifact_id":"`+strconv.FormatInt(artifact.ID, 10)+`"`)
+	require.NotContains(t, body, `"object_uri"`)
+	require.NotContains(t, body, objectURI)
+	require.Equal(t, objectURI, storage.signKey)
+	require.Equal(t, int64(3600), storage.signExpire)
+}
+
+func TestGetTaskThreadArtifactSignedURLHandlerCreatesDownloadReceipt(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
+		GetTaskThreadArtifactSignedURL,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects:   map[string][]byte{},
+		signedURL: "https://storage.example.test/signed/page.html?token=abc",
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("a", 64) + ".txt"
+	runID := strconv.FormatInt(runResp.Run.RunID, 10)
+	objectURI := "agent-runtime/1/1/runs/" + runID + "/tool-results/trunc/" + fileName
+	content := []byte("<!doctype html><html></html>")
+	storage.objects[objectURI] = content
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/" + runID + "/trunc/" + fileName,
+			ObjectURI:   objectURI,
+			ContentType: "text/html; charset=utf-8",
+			SizeBytes:   int64(len(content)),
+			Digest:      strings.Repeat("b", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "page.html",
+			ArtifactType: "html",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "clean",
+			Scanner:    "test",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+
+			strconv.FormatInt(artifact.ID, 10)+"/signed_url?mode=download&ttl_seconds=5",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"url":"https://storage.example.test/signed/page.html?token=abc"`)
+	require.Contains(t, body, `"expires_in_seconds":60`)
+	require.Contains(t, body, `"preview_mode":"download"`)
+	require.NotContains(t, body, objectURI)
+	require.Equal(t, objectURI, storage.signKey)
+	require.Equal(t, int64(60), storage.signExpire)
+	require.Equal(
+		t,
+		"attachment; filename*=UTF-8''page.html",
+		storage.signContentDisposition,
+	)
+	require.Equal(t, "text/html; charset=utf-8", storage.signContentType)
+}
+
+func TestGetTaskThreadArtifactContentHandlerUsesSniffedContentType(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
+		GetTaskThreadArtifactContent,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{},
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("c", 64) + ".txt"
+	runID := strconv.FormatInt(runResp.Run.RunID, 10)
+	objectURI := "agent-runtime/1/1/runs/" + runID + "/tool-results/trunc/" + fileName
+	content := []byte("<!doctype html><html><body>unsafe</body></html>")
+	storage.objects[objectURI] = content
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/" + runID + "/trunc/" + fileName,
+			ObjectURI:   objectURI,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   int64(len(content)),
+			Digest:      strings.Repeat("d", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "report.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "clean",
+			Scanner:    "test",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/content?mode=preview",
+		nil,
+	)
+	res := w.Result()
+
+	require.Equal(t, http.StatusOK, res.StatusCode())
+	require.Equal(t, content, res.Body())
+	require.Contains(t, string(res.Header.Peek("Content-Type")), "text/html")
+	require.Contains(t, string(res.Header.Peek("Content-Disposition")), "attachment")
+	require.Equal(t, "nosniff", string(res.Header.Peek("X-Content-Type-Options")))
+}
+
+func TestGetTaskThreadArtifactContentHandlerMapsScanBlockedToConflict(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
+		GetTaskThreadArtifactContent,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{},
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	runID := strconv.FormatInt(runResp.Run.RunID, 10)
+	fileName := strings.Repeat("e", 64) + ".txt"
+	objectURI := "agent-runtime/1/1/runs/" + runID + "/tool-results/trunc/" + fileName
+	storage.objects[objectURI] = []byte("blocked body")
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:            runResp.Run.RunID,
+			FileName:         fileName,
+			OriginalFileName: "secret.txt",
+			FileKind:         domainentity.AgentFileKindWorkspace,
+			VirtualPath:      "/mnt/user-data/workspace/.coze/tool-results/runs/" + runID + "/trunc/" + fileName,
+			ObjectURI:        objectURI,
+			ContentType:      "text/plain; charset=utf-8",
+			SizeBytes:        int64(len("blocked body")),
+			Digest:           strings.Repeat("e", 64),
+			Metadata:         `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "secret.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "blocked",
+			Scanner:    "test",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/content?mode=preview",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	require.Contains(t, body, `"msg":"artifact content blocked by scan policy"`)
+	require.Contains(t, body, `"reason":"scan_blocked"`)
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+	require.NotContains(t, body, "secret.txt")
+	require.NotContains(t, body, "blocked body")
+}
+
+func TestReviewTaskThreadArtifactScanHandlerReleasesBlockedArtifact(t *testing.T) {
+	h := server.Default()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/scan_review",
+		ReviewTaskThreadArtifactScan,
+	)
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
+		GetTaskThreadArtifactContent,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{},
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	runID := strconv.FormatInt(runResp.Run.RunID, 10)
+	fileName := strings.Repeat("a", 64) + ".txt"
+	objectURI := "agent-runtime/1/1/runs/" + runID + "/tool-results/trunc/" + fileName
+	content := []byte("released body")
+	storage.objects[objectURI] = content
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:            runResp.Run.RunID,
+			FileName:         fileName,
+			OriginalFileName: "manual-secret.txt",
+			FileKind:         domainentity.AgentFileKindWorkspace,
+			VirtualPath:      "/mnt/user-data/workspace/.coze/tool-results/runs/" + runID + "/trunc/" + fileName,
+			ObjectURI:        objectURI,
+			ContentType:      "text/plain; charset=utf-8",
+			SizeBytes:        int64(len(content)),
+			Digest:           strings.Repeat("a", 64),
+			Metadata:         `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "manual-secret.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordArtifactScanResult(
+		context.Background(),
+		&appagentthread.RecordArtifactScanResultRequest{
+			ThreadID:   1,
+			ArtifactID: artifact.ID,
+			ScanStatus: "blocked",
+			Scanner:    "test",
+			Reason:     "signature",
+			ScannedAt:  1,
+		},
+	)
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"decision": "release",
+		"reason":   "approved by security reviewer",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/scan_review",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"reviewed":true`)
+	require.Contains(t, body, `"decision":"release"`)
+	require.Contains(t, body, `"scan_status":"clean"`)
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+	require.NotContains(t, body, "manual-secret.txt")
+	require.NotContains(t, body, "released body")
+	require.NotContains(t, body, "approved by security reviewer")
+
+	contentResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/content?mode=preview",
+		nil,
+	)
+	require.Equal(t, http.StatusOK, contentResp.Code)
+	require.Equal(t, content, contentResp.Result().Body())
+
+	events, err := appagentthread.SVC.ListRunEvents(context.Background(), &appagentthread.ListRunEventsRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	var reviewEventPayload string
+	for _, event := range events.Events {
+		if event.EventType == "artifact.scan.reviewed" {
+			reviewEventPayload = event.Payload
+			break
+		}
+	}
+	require.NotEmpty(t, reviewEventPayload)
+	require.NotContains(t, reviewEventPayload, "agent-runtime/")
+	require.NotContains(t, reviewEventPayload, "/mnt/user-data")
+	require.NotContains(t, reviewEventPayload, "manual-secret.txt")
+	require.NotContains(t, reviewEventPayload, "approved by security reviewer")
+}
+
+func TestDeleteTaskThreadArtifactHandlerHidesArtifactFromList(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
+	h.DELETE(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id",
+		DeleteTaskThreadArtifact,
+	)
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/restore",
+		RestoreTaskThreadArtifact,
+	)
+	installAgentThreadTestService(t)
+	storage := &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{},
+	}
+	appagentthread.SVC.ArtifactObjectStorage = storage
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	fileName := strings.Repeat("e", 64) + ".txt"
+	runID := strconv.FormatInt(runResp.Run.RunID, 10)
+	objectURI := "agent-runtime/1/1/runs/" + runID + "/tool-results/trunc/" + fileName
+	storage.objects[objectURI] = []byte("artifact body")
+	fileResp, _, err := appagentthread.SVC.RuntimeFileSVC.RegisterRuntimeFile(
+		context.Background(),
+		&domainservice.RegisterRuntimeFileRequest{
+			RunID:       runResp.Run.RunID,
+			FileName:    fileName,
+			FileKind:    domainentity.AgentFileKindWorkspace,
+			VirtualPath: "/mnt/user-data/workspace/.coze/tool-results/runs/" + runID + "/trunc/" + fileName,
+			ObjectURI:   objectURI,
+			ContentType: "text/plain; charset=utf-8",
+			SizeBytes:   int64(len("artifact body")),
+			Digest:      strings.Repeat("f", 64),
+			Metadata:    `{}`,
+		},
+	)
+	require.NoError(t, err)
+	artifact, _, err := appagentthread.SVC.ArtifactSVC.RegisterArtifact(
+		context.Background(),
+		&domainservice.RegisterArtifactRequest{
+			SpaceID:      1,
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			FileID:       fileResp.ID,
+			Title:        "report.txt",
+			ArtifactType: "report",
+			Metadata:     `{"source":"test"}`,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodDelete,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10),
+		nil,
+	)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, string(w.Result().Body()), `"code":0`)
+
+	w = ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts",
+		nil,
+	)
+	body := string(w.Result().Body())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"total":0`)
+	require.NotContains(t, body, "report.txt")
+
+	w = ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/artifacts/"+strconv.FormatInt(artifact.ID, 10)+"/restore",
+		nil,
+	)
+	body = string(w.Result().Body())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"restored":true`)
+	require.Contains(t, body, `"artifact_id":"`+strconv.FormatInt(artifact.ID, 10)+`"`)
+	require.NotContains(t, body, "agent-runtime/")
+	require.NotContains(t, body, "/mnt/user-data")
+	require.NotContains(t, body, "report.txt")
+
+	w = ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/artifacts",
+		nil,
+	)
+	body = string(w.Result().Body())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, "report.txt")
+
+	events, err := appagentthread.SVC.ListRunEvents(context.Background(), &appagentthread.ListRunEventsRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Page:     1,
+		PageSize: 20,
+	})
+	require.NoError(t, err)
+	var restoredEventPayload string
+	for _, event := range events.Events {
+		if event.EventType == "artifact.restored" {
+			restoredEventPayload = event.Payload
+			break
+		}
+	}
+	require.NotEmpty(t, restoredEventPayload)
+	require.NotContains(t, restoredEventPayload, "agent-runtime/")
+	require.NotContains(t, restoredEventPayload, "/mnt/user-data")
+	require.NotContains(t, restoredEventPayload, "report.txt")
 }
 
 func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
@@ -171,6 +1534,178 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Equal(t, "thread-only-1-msg-1", resp.Runs[0].IdempotencyKey)
 }
 
+func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
+	subagent := taskThreadRunToAPI(&appagentthread.RunSummary{
+		RunID:       2001,
+		ThreadID:    1,
+		ParentRunID: 2,
+		AssistantID: "singleagent:1001",
+		RunKind:     appagentthread.RunKindSubagent,
+		Status:      appagentthread.RunStatusFailed,
+		Command:     `{"internal":"command"}`,
+		Input:       `{"schema":"coze.subagent_tool_call.v1","arguments":{"secret":"do not expose"}}`,
+		Config:      `{"agent_name":"researcher","prompt":"do not expose"}`,
+		Context:     `{"checkpoint":"do not expose"}`,
+		Metadata:    `{"subagent":{"name":"researcher"}}`,
+		ErrorCode:   "subagent_failed",
+	})
+
+	require.NotNil(t, subagent)
+	require.Equal(t, "subagent", subagent.RunKind)
+	require.Empty(t, subagent.Command)
+	require.Empty(t, subagent.Input)
+	require.Empty(t, subagent.Config)
+	require.Empty(t, subagent.Context)
+	require.Equal(t, `{"subagent":{"name":"researcher"}}`, subagent.Metadata)
+	require.Equal(t, "subagent_failed", subagent.ErrorCode)
+
+	task := taskThreadRunToAPI(&appagentthread.RunSummary{
+		RunID:   2,
+		RunKind: appagentthread.RunKindTask,
+		Command: `{"visible":"command"}`,
+		Input:   `{"messages":[{"role":"user","content":"visible"}]}`,
+		Config:  `{"runtime":"eino_adk"}`,
+		Context: `{"plan_scope_run_id":2}`,
+	})
+
+	require.Equal(t, `{"visible":"command"}`, task.Command)
+	require.Equal(t, `{"messages":[{"role":"user","content":"visible"}]}`, task.Input)
+	require.Equal(t, `{"runtime":"eino_adk"}`, task.Config)
+	require.Equal(t, `{"plan_scope_run_id":2}`, task.Context)
+}
+
+func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"interrupt_id":    "interrupt-1",
+		"idempotency_key": "resume-api-key",
+		"response": map[string]any{
+			"schema":         "coze.human_interaction_response.v1",
+			"interaction_id": "hi_1",
+			"kind":           "clarification",
+			"decision":       "answered",
+			"answer":         "最近 7 天",
+		},
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs/2/resume",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"status":"queued"`)
+	require.Contains(t, body, `"idempotency_key":"resume-api-key"`)
+
+	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Runs, 2)
+	require.Equal(t, sourceRunID, resp.Runs[1].RunID)
+	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Contains(t, resp.Runs[0].Command, `"interrupt-1"`)
+	require.Contains(t, resp.Runs[0].Command, `"answer":"最近 7 天"`)
+}
+
+func TestResumeTaskThreadRunHandlerRejectsInvalidPayload(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs/2/resume",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/retry", RetryTaskThreadSubagentRun)
+	installAgentThreadTestService(t)
+
+	parentResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		AssistantID: "lead-agent",
+		Status:      appagentthread.RunStatusQueued,
+		Input:       `{"messages":[{"role":"user","content":"拆解任务"}]}`,
+		Config:      `{"runtime":"eino_adk"}`,
+		Context:     `{"plan_scope_run_id":2}`,
+	})
+	require.NoError(t, err)
+	childResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		ParentRunID: parentResp.Run.RunID,
+		AssistantID: "singleagent:1001",
+		RunKind:     appagentthread.RunKindSubagent,
+		Status:      appagentthread.RunStatusRunning,
+		Input:       `{"messages":[]}`,
+		Metadata:    `{"subagent":{"name":"researcher"}}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:        childResp.Run.RunID,
+		From:         appagentthread.RunStatusRunning,
+		To:           appagentthread.RunStatusFailed,
+		ErrorCode:    "subagent_timeout",
+		ErrorMessage: "context deadline exceeded",
+	})
+	require.NoError(t, err)
+
+	payload, err := json.Marshal(map[string]any{
+		"idempotency_key": "retry-api-key",
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs/"+strconv.FormatInt(childResp.Run.RunID, 10)+"/retry",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"thread_id":"1"`)
+	require.Contains(t, body, `"parent_run_id":"0"`)
+	require.Contains(t, body, `"run_kind":"task"`)
+	require.Contains(t, body, `"status":"queued"`)
+	require.Contains(t, body, `"idempotency_key":"retry-api-key"`)
+	require.Contains(t, body, `subagent_retry`)
+
+	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), resp.Total)
+	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Equal(t, appagentthread.RunKindTask, resp.Runs[0].RunKind)
+	require.Zero(t, resp.Runs[0].ParentRunID)
+	require.Contains(t, resp.Runs[0].Command, `"source_run_id":`+strconv.FormatInt(childResp.Run.RunID, 10))
+}
+
 func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
@@ -196,6 +1731,45 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第二轮\"}]}"`)
 	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第一轮\"}]}"`)
+}
+
+func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
+	installAgentThreadTestService(t)
+
+	parentResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"拆解任务"}]}`,
+	})
+	require.NoError(t, err)
+	childResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		ParentRunID: parentResp.Run.RunID,
+		AssistantID: "singleagent:1001",
+		RunKind:     appagentthread.RunKindSubagent,
+		Status:      appagentthread.RunStatusRunning,
+		Input:       `{"messages":[]}`,
+		Metadata:    `{"subagent":{"name":"researcher"}}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/runs?parent_run_id="+strconv.FormatInt(parentResp.Run.RunID, 10)+"&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(childResp.Run.RunID, 10)+`"`)
+	require.Contains(t, body, `"parent_run_id":"`+strconv.FormatInt(parentResp.Run.RunID, 10)+`"`)
+	require.Contains(t, body, `"run_kind":"subagent"`)
+	require.Contains(t, body, `"status":"running"`)
+	require.NotContains(t, body, `"content\":\"拆解任务"`)
 }
 
 func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
@@ -283,6 +1857,77 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	require.Contains(t, body, `"tool_tokens":10`)
 }
 
+func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
+	installAgentThreadTestService(t)
+
+	parentResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"拆解任务"}]}`,
+	})
+	require.NoError(t, err)
+	childResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		ParentRunID: parentResp.Run.RunID,
+		AssistantID: "singleagent:1001",
+		RunKind:     appagentthread.RunKindSubagent,
+		Input:       `{"messages":[]}`,
+		Metadata:    `{"subagent":{"name":"researcher"}}`,
+	})
+	require.NoError(t, err)
+	siblingResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"独立任务"}]}`,
+	})
+	require.NoError(t, err)
+
+	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
+		RunID:       parentResp.Run.RunID,
+		Source:      appagentthread.TokenUsageSourceLeadAgent,
+		StepName:    "lead",
+		TotalTokens: 20,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
+		RunID:       childResp.Run.RunID,
+		Source:      appagentthread.TokenUsageSourceSubagent,
+		StepName:    "child",
+		TotalTokens: 10,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
+		RunID:       siblingResp.Run.RunID,
+		Source:      appagentthread.TokenUsageSourceLeadAgent,
+		StepName:    "sibling",
+		TotalTokens: 99,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/token_usage?run_id="+strconv.FormatInt(parentResp.Run.RunID, 10)+"&include_child_runs=true&page=1&page_size=10",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":2`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(parentResp.Run.RunID, 10)+`"`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(childResp.Run.RunID, 10)+`"`)
+	require.NotContains(t, body, `"run_id":"`+strconv.FormatInt(siblingResp.Run.RunID, 10)+`"`)
+	require.Contains(t, body, `"total_tokens":30`)
+	require.Contains(t, body, `"call_count":2`)
+	require.Contains(t, body, `"lead_agent_tokens":20`)
+	require.Contains(t, body, `"subagent_tokens":10`)
+	require.Contains(t, body, `"run_aggregates"`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(parentResp.Run.RunID, 10)+`","aggregate":{"input_tokens":0,"output_tokens":0,"total_tokens":20`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(childResp.Run.RunID, 10)+`","aggregate":{"input_tokens":0,"output_tokens":0,"total_tokens":10`)
+	require.NotContains(t, body, `"run_id":"`+strconv.FormatInt(siblingResp.Run.RunID, 10)+`","aggregate"`)
+}
+
 func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	installAgentThreadTestService(t)
 
@@ -336,15 +1981,37 @@ func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 
 func installAgentThreadTestService(t *testing.T) {
 	t.Helper()
-	prev := appagentthread.SVC.ThreadSVC
+	prevThreadSVC := appagentthread.SVC.ThreadSVC
+	prevRuntimeFileSVC := appagentthread.SVC.RuntimeFileSVC
+	prevPlanSVC := appagentthread.SVC.PlanSVC
+	prevArtifactSVC := appagentthread.SVC.ArtifactSVC
+	prevArtifactObjectStorage := appagentthread.SVC.ArtifactObjectStorage
+	prevArtifactAuthorizer := appagentthread.SVC.ArtifactAuthorizer
+	prevMemoryAuthorizer := appagentthread.SVC.MemoryAuthorizer
+	prevGuardrailAuditRepository := appagentthread.SVC.GuardrailAuditRepository
+	prevGuardrailAuditAuthorizer := appagentthread.SVC.GuardrailAuditAuthorizer
+	prevArtifactScannerStatus := appagentthread.SVC.ArtifactScannerStatus
+	prevArtifactReviewClock := appagentthread.SVC.ArtifactReviewClock
 	t.Cleanup(func() {
-		appagentthread.SVC.ThreadSVC = prev
+		appagentthread.SVC.ThreadSVC = prevThreadSVC
+		appagentthread.SVC.RuntimeFileSVC = prevRuntimeFileSVC
+		appagentthread.SVC.PlanSVC = prevPlanSVC
+		appagentthread.SVC.ArtifactSVC = prevArtifactSVC
+		appagentthread.SVC.ArtifactObjectStorage = prevArtifactObjectStorage
+		appagentthread.SVC.ArtifactAuthorizer = prevArtifactAuthorizer
+		appagentthread.SVC.MemoryAuthorizer = prevMemoryAuthorizer
+		appagentthread.SVC.GuardrailAuditRepository = prevGuardrailAuditRepository
+		appagentthread.SVC.GuardrailAuditAuthorizer = prevGuardrailAuditAuthorizer
+		appagentthread.SVC.ArtifactScannerStatus = prevArtifactScannerStatus
+		appagentthread.SVC.ArtifactReviewClock = prevArtifactReviewClock
 	})
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, migrateAgentThreadHandlerTableForTest(db))
 	appagentthread.InitService(&appagentthread.ServiceComponents{DB: db, IDGen: &sequentialIDGen{next: 1}})
+	appagentthread.SVC.ArtifactAuthorizer = nil
+	appagentthread.SVC.MemoryAuthorizer = nil
 	_, err = appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
 		SpaceID:      1,
 		UserID:       2,
@@ -354,6 +2021,158 @@ func installAgentThreadTestService(t *testing.T) {
 		Metadata:     `{"message":"hello"}`,
 	})
 	require.NoError(t, err)
+}
+
+func workbenchSessionMiddlewareForTest(userID int64) app.HandlerFunc {
+	return func(ctx context.Context, c *app.RequestContext) {
+		ctx = ctxcache.Init(ctx)
+		ctxcache.Store(ctx, consts.SessionDataKeyInCtx, &userentity.Session{
+			UserID: userID,
+		})
+		c.Next(ctx)
+	}
+}
+
+type recordingWorkbenchArtifactAuthorizer struct {
+	req appagentthread.ArtifactAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchArtifactAuthorizer) AuthorizeArtifactAccess(
+	_ context.Context,
+	req appagentthread.ArtifactAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type recordingWorkbenchMemoryAuthorizer struct {
+	req appagentthread.MemoryAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchMemoryAuthorizer) AuthorizeMemoryAccess(
+	_ context.Context,
+	req appagentthread.MemoryAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type recordingWorkbenchGuardrailAuditAuthorizer struct {
+	req appagentthread.GuardrailAuditAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchGuardrailAuditAuthorizer) AuthorizeGuardrailAuditAccess(
+	_ context.Context,
+	req appagentthread.GuardrailAuditAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type recordingWorkbenchArtifactStorage struct {
+	objects                map[string][]byte
+	signedURL              string
+	signKey                string
+	signExpire             int64
+	signContentDisposition string
+	signContentType        string
+}
+
+func (s *recordingWorkbenchArtifactStorage) GetObject(
+	_ context.Context,
+	objectKey string,
+) ([]byte, error) {
+	content := s.objects[objectKey]
+	return append([]byte(nil), content...), nil
+}
+
+func (s *recordingWorkbenchArtifactStorage) GetObjectUrl(
+	_ context.Context,
+	objectKey string,
+	opts ...storage.GetOptFn,
+) (string, error) {
+	s.signKey = objectKey
+	option := storage.GetOption{}
+	for _, opt := range opts {
+		opt(&option)
+	}
+	s.signExpire = option.Expire
+	s.signContentDisposition = option.ResponseContentDisposition
+	s.signContentType = option.ResponseContentType
+	return s.signedURL, nil
+}
+
+func createInterruptedHumanInteractionRun(t *testing.T) int64 {
+	t.Helper()
+	runID, _ := createInterruptedHumanInteractionRunWithCheckpoint(t)
+
+	return runID
+}
+
+func createInterruptedHumanInteractionRunWithCheckpoint(t *testing.T) (int64, int64) {
+	t.Helper()
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		AssistantID: "assistant-a",
+		Input:       `{"messages":[{"role":"user","content":"请分析周报"}]}`,
+		Config:      `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.InterruptRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+
+	envelope := appagentthread.ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         "eino_adk",
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1},
+		Interrupts: map[string]appagentthread.ADKInterruptItem{
+			"interrupt-1": {
+				ID:          "interrupt-1",
+				Address:     "lead/tool/ask_user_clarification",
+				IsRootCause: true,
+				Info: appagentthread.HumanInteractionPrompt{
+					Schema:        "coze.human_interaction.v1",
+					InteractionID: "hi_1",
+					Kind:          appagentthread.HumanInteractionKindClarification,
+					Question:      "请选择时间范围",
+					Required:      true,
+					AllowFreeText: true,
+				},
+			},
+		},
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "eino.adk",
+		RuntimeType:     "eino_adk",
+		RuntimeKey:      "checkpoint-1",
+		EnvelopeVersion: 1,
+		ChannelValues:   string(raw),
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+
+	return runResp.Run.RunID, checkpointResp.Checkpoint.CheckpointID
 }
 
 func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
@@ -384,9 +2203,11 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 		CREATE TABLE agent_runs (
 			id integer PRIMARY KEY,
 			thread_id integer,
+			parent_run_id integer DEFAULT 0,
 			space_id integer,
 			creator_id integer,
 			assistant_id text,
+			run_kind text DEFAULT 'task',
 			status text,
 			command json,
 			input json,
@@ -420,10 +2241,65 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			run_id integer,
 			parent_checkpoint_id integer,
 			checkpoint_ns text,
+			runtime_type text DEFAULT 'legacy',
+			runtime_key text DEFAULT '',
+			envelope_version integer DEFAULT 0,
+			runtime_deleted_at integer DEFAULT 0,
 			channel_values json,
 			channel_versions json,
 			pending_sends json,
 			metadata json,
+			created_at integer
+		);
+		CREATE TABLE agent_thread_memories (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			scope text,
+			content text,
+			metadata json,
+			score real,
+			confidence real,
+			source_type text,
+			source_id text,
+			correction_of_memory_id integer,
+			corrected_at integer,
+			expires_at integer,
+			created_at integer,
+			updated_at integer,
+			deleted_at integer DEFAULT 0
+		);
+		CREATE TABLE agent_memory_audit_events (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			memory_id integer,
+			actor_id integer,
+			event_type text,
+			scope text,
+			source_type text,
+			source_id text,
+			affected_count integer,
+			created_at integer
+		);
+		CREATE TABLE agent_guardrail_audit_events (
+			id integer PRIMARY KEY,
+			space_id integer,
+			thread_id integer,
+			run_id integer,
+			actor_id integer,
+			event_type text,
+			target_type text,
+			target_id text,
+			operation text,
+			source text,
+			action text,
+			fail_mode text,
+			provider text,
+			reason_code text,
+			rule_ids text,
 			created_at integer
 		);
 		CREATE TABLE agent_token_usage (
@@ -446,6 +2322,67 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			raw_usage json,
 			metadata json,
 			created_at integer
+		);
+		CREATE TABLE agent_files (
+			id integer PRIMARY KEY,
+			space_id integer,
+			user_id integer,
+			thread_id integer,
+			run_id integer,
+			file_name text,
+			original_file_name text DEFAULT '',
+			file_kind text,
+			virtual_path text,
+			object_uri text,
+			content_type text DEFAULT '',
+			size_bytes integer DEFAULT 0,
+			digest text DEFAULT '',
+			status text DEFAULT 'active',
+			metadata json,
+			created_at integer,
+			updated_at integer,
+			UNIQUE (run_id, virtual_path)
+		);
+		CREATE TABLE agent_artifacts (
+			id integer PRIMARY KEY,
+			space_id integer,
+			user_id integer,
+			thread_id integer,
+			run_id integer,
+			file_id integer UNIQUE,
+			title text DEFAULT '',
+			artifact_type text,
+			virtual_path text,
+			object_uri text,
+			content_type text DEFAULT '',
+			size_bytes integer DEFAULT 0,
+			preview_mode text DEFAULT 'download',
+			metadata json,
+			created_at integer,
+			updated_at integer,
+			deleted_at integer DEFAULT 0
+		);
+		CREATE TABLE agent_artifact_scan_jobs (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			user_id integer,
+			artifact_id integer,
+			file_id integer,
+			scanner text,
+			idempotency_key text,
+			status text,
+			worker_id text DEFAULT '',
+			attempt_count integer DEFAULT 0,
+			last_error text DEFAULT '',
+			available_at integer DEFAULT 0,
+			lease_expires_at integer DEFAULT 0,
+			started_at integer DEFAULT 0,
+			ended_at integer DEFAULT 0,
+			created_at integer,
+			updated_at integer,
+			UNIQUE (artifact_id, idempotency_key)
 		)
 	`).Error
 }
@@ -508,4 +2445,8 @@ func (g *sequentialIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64,
 	}
 
 	return ids, nil
+}
+
+func TestTaskThreadRunEventStreamStopsForInterruptedRun(t *testing.T) {
+	require.True(t, isTaskThreadRunTerminal(appagentthread.RunStatusInterrupted))
 }

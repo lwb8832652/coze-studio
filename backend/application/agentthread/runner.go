@@ -18,6 +18,8 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -25,8 +27,29 @@ import (
 const defaultRunProcessorWorkerID = "agent-harness"
 const defaultRunProcessorBatchSize int32 = 10
 
+const (
+	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
+	subagentRetryNotSupportedMessage = "subagent retry executor is not implemented"
+)
+
 type RunExecutor interface {
 	Execute(ctx context.Context, run *RunSummary) (*RunExecutionResult, error)
+}
+
+type SubagentRetryRunExecutor interface {
+	ExecuteSubagentRetry(ctx context.Context, run *RunSummary) (*RunExecutionResult, error)
+}
+
+type SubagentRetryUnsupportedError struct {
+	Message string
+}
+
+func (e *SubagentRetryUnsupportedError) Error() string {
+	if e == nil || strings.TrimSpace(e.Message) == "" {
+		return subagentRetryNotSupportedMessage
+	}
+
+	return e.Message
 }
 
 type RunExecutorFunc func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error)
@@ -59,20 +82,24 @@ type RunProcessor struct {
 }
 
 type RunProcessResult struct {
-	ClaimedRuns   int
-	ProcessedRuns int
-	SucceededRuns int
-	FailedRuns    int
-	ErroredRuns   int
+	ClaimedRuns     int
+	ProcessedRuns   int
+	InterruptedRuns int
+	CanceledRuns    int
+	SucceededRuns   int
+	FailedRuns      int
+	ErroredRuns     int
 }
 
 type runProcessOutcome string
 
 const (
-	runProcessSkipped   runProcessOutcome = "skipped"
-	runProcessSucceeded runProcessOutcome = "succeeded"
-	runProcessFailed    runProcessOutcome = "failed"
-	runProcessErrored   runProcessOutcome = "errored"
+	runProcessSkipped     runProcessOutcome = "skipped"
+	runProcessInterrupted runProcessOutcome = "interrupted"
+	runProcessCanceled    runProcessOutcome = "canceled"
+	runProcessSucceeded   runProcessOutcome = "succeeded"
+	runProcessFailed      runProcessOutcome = "failed"
+	runProcessErrored     runProcessOutcome = "errored"
 )
 
 func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProcessorOptions) *RunProcessor {
@@ -125,6 +152,12 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 	for _, run := range claimed.Runs {
 		outcome, err := p.processRun(ctx, run)
 		switch outcome {
+		case runProcessInterrupted:
+			result.ProcessedRuns++
+			result.InterruptedRuns++
+		case runProcessCanceled:
+			result.ProcessedRuns++
+			result.CanceledRuns++
 		case runProcessSucceeded:
 			result.ProcessedRuns++
 			result.SucceededRuns++
@@ -154,8 +187,55 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProc
 		"worker_id": p.workerID,
 	})
 
+	if isSubagentRetryCommand(run.Command) {
+		retryExecutor, ok := p.executor.(SubagentRetryRunExecutor)
+		if ok {
+			result, err := retryExecutor.ExecuteSubagentRetry(ctx, run)
+			if isSubagentRetryUnsupportedError(err) {
+				p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+
+				return runProcessFailed, p.failRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+			}
+
+			return p.finalizeRunExecution(ctx, run, result, err)
+		}
+		p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+
+		return runProcessFailed, p.failRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+	}
+
 	result, err := p.executor.Execute(ctx, run)
+
+	return p.finalizeRunExecution(ctx, run, result, err)
+}
+
+func (p *RunProcessor) finalizeRunExecution(
+	ctx context.Context,
+	run *RunSummary,
+	result *RunExecutionResult,
+	err error,
+) (runProcessOutcome, error) {
 	if err != nil {
+		var canceled *RunCanceledError
+		if errors.As(err, &canceled) {
+			p.emitRunCanceledEvent(ctx, run)
+			return runProcessCanceled, nil
+		}
+		var interrupted *RunInterruptedError
+		if errors.As(err, &interrupted) {
+			if _, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
+				RunID:    run.RunID,
+				From:     RunStatusRunning,
+				WorkerID: p.workerID,
+			}); transitionErr != nil {
+				return runProcessErrored, transitionErr
+			}
+			if !interrupted.EventPersisted {
+				p.emitRunInterruptedEvent(ctx, run, interrupted)
+			}
+
+			return runProcessInterrupted, nil
+		}
 		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
 
 		return runProcessFailed, p.failRun(ctx, run, "executor_error", err.Error())
@@ -194,6 +274,25 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProc
 	})
 
 	return runProcessSucceeded, nil
+}
+
+func (p *RunProcessor) emitRunCanceledEvent(ctx context.Context, run *RunSummary) {
+	p.emitRunEvent(ctx, run, "run.canceled", map[string]any{
+		"status":    string(RunStatusCanceled),
+		"worker_id": p.workerID,
+	})
+}
+
+func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSummary, interrupted *RunInterruptedError) {
+	payload := map[string]any{
+		"status":    string(RunStatusInterrupted),
+		"worker_id": p.workerID,
+	}
+	if interrupted != nil {
+		payload["checkpoint_key"] = interrupted.CheckpointKey
+		payload["interrupts"] = interrupted.Interrupts
+	}
+	p.emitRunEvent(ctx, run, "run.interrupted", payload)
 }
 
 func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) error {
@@ -244,4 +343,31 @@ func resultMetadata(result *RunExecutionResult) string {
 	}
 
 	return result.Metadata
+}
+
+func isSubagentRetryCommand(command string) bool {
+	if strings.TrimSpace(command) == "" {
+		return false
+	}
+
+	var payload struct {
+		SubagentRetry json.RawMessage `json:"subagent_retry"`
+	}
+	if err := json.Unmarshal([]byte(command), &payload); err != nil {
+		return false
+	}
+	if len(payload.SubagentRetry) == 0 {
+		return false
+	}
+
+	return strings.TrimSpace(string(payload.SubagentRetry)) != "null"
+}
+
+func isSubagentRetryUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var unsupported *SubagentRetryUnsupportedError
+
+	return errors.As(err, &unsupported)
 }

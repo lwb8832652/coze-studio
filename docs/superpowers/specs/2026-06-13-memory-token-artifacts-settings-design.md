@@ -703,8 +703,7 @@ Runtime 和 sandbox 之间需要同步：
 5. `文件与产物`：上传限制、artifact 保留、active content 安全策略说明。
 6. `技能`：跳转或嵌入 Skills 管理。
 7. `工具`：跳转或嵌入 Tools/MCP 管理。
-8. `通道`：预留给 IM Channels spec。
-9. `关于`：版本和诊断信息。
+8. `关于`：版本和诊断信息。
 
 ### agent_settings
 

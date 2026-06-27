@@ -106,6 +106,40 @@ func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
 	require.Contains(t, body, `"version":"1.0.0"`)
 }
 
+func TestDeleteSkillHandlerSoftDeletesSkill(t *testing.T) {
+	h := server.Default()
+	h.DELETE("/api/workbench/skills/:skill_id", DeleteSkill)
+	installSkillVersionTestService(t)
+
+	w := ut.PerformRequest(h.Engine, http.MethodDelete, "/api/workbench/skills/101", nil)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(101), domainSVC.deletedSkillID)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"name":"weekly-research"`)
+	require.Contains(t, body, `"enabled":false`)
+}
+
+func TestListSkillToolCandidatesHandlerReturnsSafeMetadata(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/skills/tool_candidates", ListSkillToolCandidates)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/tool_candidates?space_id=1", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"name":"web_fetch"`)
+	require.Contains(t, body, `"name":"web_search"`)
+	require.Contains(t, body, `"category":"web"`)
+	require.Contains(t, body, `"visibility":"static"`)
+	require.NotContains(t, body, "input_schema")
+	require.NotContains(t, body, "endpoint")
+	require.NotContains(t, body, "secret")
+}
+
 func TestUpdateSkillVersionResourceHandlerReturnsNewVersion(t *testing.T) {
 	h := server.Default()
 	h.PUT("/api/workbench/skills/:skill_id/versions/:version_id/resources", UpdateSkillVersionResource)
@@ -212,6 +246,22 @@ func installSkillVersionTestService(t *testing.T) {
 				Permissions:  `{"network":false}`,
 				CreatedAt:    3000,
 			},
+			deleted: &entity.Skill{
+				ID:           101,
+				SpaceID:      1,
+				Name:         "weekly-research",
+				Description:  "Research weekly market changes.",
+				Type:         entity.TypeCustomSkill,
+				Version:      "1.0.0",
+				Enabled:      false,
+				InputSchema:  `{}`,
+				OutputSchema: `{}`,
+				Executor:     `{}`,
+				Permissions:  `{}`,
+				CreatedAt:    1000,
+				UpdatedAt:    2000,
+				DeletedAt:    3000,
+			},
 			resources: []*entity.SkillResource{
 				{
 					ID:        301,
@@ -238,6 +288,7 @@ type skillVersionDomainService struct {
 	rolledBack               *entity.Skill
 	updatedResourceVersion   *entity.SkillVersion
 	updatedContentVersion    *entity.SkillVersion
+	deleted                  *entity.Skill
 	listVersionsSkillID      int64
 	listResourcesSkillID     int64
 	listResourcesVersionID   int64
@@ -250,6 +301,7 @@ type skillVersionDomainService struct {
 	updatedContentSkillID    int64
 	updatedContentVersionID  int64
 	updatedSkillMD           string
+	deletedSkillID           int64
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -267,6 +319,11 @@ func (s *skillVersionDomainService) RollbackVersion(ctx context.Context, skillID
 	s.rollbackSkillID = skillID
 	s.rollbackVersionID = versionID
 	return s.rolledBack, nil
+}
+
+func (s *skillVersionDomainService) Delete(ctx context.Context, skillID int64) (*entity.Skill, error) {
+	s.deletedSkillID = skillID
+	return s.deleted, nil
 }
 
 func (s *skillVersionDomainService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, path string, content []byte) (*entity.SkillVersion, error) {

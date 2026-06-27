@@ -4,17 +4,19 @@
 
 Macro Stage B replicates Deer-flow style skill configuration on top of the existing Coze Studio skill compatibility layer. This document tracks the backend slices completed so far. It does not add frontend pages, new menu behavior, MCP tool permissions, IM channels, or unrelated security scanning.
 
-Per the latest delivery decision, MCP and IM are moved out of the current first-stage scope and into Phase 2. Current Macro Stage B must not start MCP server configuration, MCP runtime transport, MCP permission hardening, IM inbound/outbound messages, IM channel binding, or IM channel UI.
+Per the latest delivery decision, MCP is moved out of the current first-stage
+scope and into a later production milestone. IM Channels are excluded from the
+project entirely. Current Macro Stage B must not start MCP server
+configuration, MCP runtime transport, or MCP permission hardening, and must not
+add any IM channel behavior.
 
-## Phase 2 Boundary
+## Later Milestone Boundary
 
-The following work is explicitly Phase 2:
+The following work is explicitly deferred to a later milestone:
 
 - MCP tool configuration backend and frontend.
 - MCP stdio/SSE/HTTP transports, OAuth, secret masking, health checks, and session pool.
 - MCP runtime invocation through Tool Registry.
-- IM channel configuration, inbound/outbound routing, channel-thread binding, and channel-specific run policies.
-- IM-related task detail badges, filters, and message handoff behavior.
 
 The current first-stage work can keep neutral data fields such as `source`, `enable_mcp`, or future extension points when they already exist, but it must not implement or expand MCP/IM behavior.
 
@@ -103,6 +105,24 @@ The current first-stage work can keep neutral data fields such as `source`, `ena
   - `PublicSkill`
   - `CustomSkill`
 - Keep existing Workbench skill API methods compatible.
+- Add the first complete Skills frontend management slice using the existing
+  Semi Design component system:
+  - `SideSheet` based version management
+  - version history selection
+  - `SKILL.md` editing
+  - version resource viewing and editing
+  - rollback and `.skill` archive export
+  - loading, success, and error states
+- Make `.skill` archive import binary-safe over the existing JSON API by using
+  a backward-compatible `base64:` content envelope for archive files while
+  preserving plain text import for `SKILL.md` and JSON declarations.
+- Replace the Workbench hard-coded skill presets with the enabled Skills
+  catalog for the active space:
+  - load enabled skills when the extension picker opens
+  - show real skill counts and source types
+  - support search and explicit selection
+  - pass selected skill IDs through the existing `enable_skills` run config
+  - keep the MCP tab empty until the production MCP stage begins
 
 ## Current Semantics
 
@@ -122,12 +142,20 @@ Until the next full thriftgo/hz generation pass, the new Workbench skill version
 
 ## Deferred Within Macro Stage B
 
-- Frontend skill list/detail/editor/test-run replication.
+- Skill create form and enabled-state management.
+- Slash skill discovery and activation in the task composer.
+- Workflow-backed skill test execution.
+- Final frontend visual and E2E acceptance with the full workspace dependency
+  installation.
 
-## Explicitly Deferred To Phase 2
+## Explicitly Deferred To A Later Milestone
 
 - MCP production permissions, server config, transports, runtime invocation, and tool page replication.
-- IM channels, channel-thread binding, inbound/outbound delivery, and channel UI integration.
+
+## Explicitly Out Of Scope
+
+- IM channels, external account binding, inbound/outbound delivery, channel
+  workers, channel settings, and channel-specific task UI.
 
 ## Explicitly Deferred To Later Macro Stages
 

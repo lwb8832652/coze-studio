@@ -4739,6 +4739,89 @@ table "workflow_version" {
     columns = [column.workflow_id, column.version]
   }
 }
+table "mcp_tool_servers" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "server_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "name" {
+    null = false
+    type = varchar(128)
+  }
+  column "description" {
+    null = false
+    type = varchar(512)
+  }
+  column "server_type" {
+    null = false
+    type = varchar(64)
+  }
+  column "enabled" {
+    null    = false
+    type    = tinyint(1)
+    default = 0
+  }
+  column "config" {
+    null = false
+    type = json
+  }
+  column "auth" {
+    null = false
+    type = json
+  }
+  column "tools" {
+    null = false
+    type = json
+  }
+  column "health_status" {
+    null    = false
+    type    = varchar(32)
+    default = "unknown"
+  }
+  column "health_checked_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "health_latency_ms" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "health_error" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  column "deleted_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  primary_key {
+    columns = [column.server_id]
+  }
+  index "idx_mcp_tool_servers_space_enabled" {
+    columns = [column.space_id, column.enabled, column.deleted_at]
+  }
+  index "idx_mcp_tool_servers_space_updated" {
+    columns = [column.space_id, column.updated_at]
+  }
+}
 table "skills" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"
@@ -4795,8 +4878,16 @@ table "skills" {
     null = false
     type = bigint
   }
+  column "deleted_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   primary_key {
     columns = [column.id]
+  }
+  index "idx_skills_space_deleted" {
+    columns = [column.space_id, column.deleted_at]
   }
   index "idx_skills_space_enabled" {
     columns = [column.space_id, column.enabled]
@@ -5096,6 +5187,11 @@ table "agent_runs" {
     null = false
     type = bigint
   }
+  column "parent_run_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   column "space_id" {
     null = false
     type = bigint
@@ -5108,6 +5204,11 @@ table "agent_runs" {
     null    = false
     type    = varchar(128)
     default = "default"
+  }
+  column "run_kind" {
+    null    = false
+    type    = varchar(32)
+    default = "task"
   }
   column "status" {
     null = false
@@ -5191,11 +5292,17 @@ table "agent_runs" {
   primary_key {
     columns = [column.id]
   }
+  index "idx_agent_runs_parent_created" {
+    columns = [column.parent_run_id, column.created_at]
+  }
   index "idx_agent_runs_space_status" {
     columns = [column.space_id, column.status]
   }
   index "idx_agent_runs_thread_created" {
     columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_runs_thread_kind" {
+    columns = [column.thread_id, column.run_kind, column.created_at]
   }
   index "uk_agent_runs_space_idempotency" {
     unique  = true
@@ -5264,6 +5371,26 @@ table "agent_checkpoints" {
     type    = varchar(128)
     default = ""
   }
+  column "runtime_type" {
+    null    = false
+    type    = varchar(32)
+    default = "legacy"
+  }
+  column "runtime_key" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "envelope_version" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "runtime_deleted_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   column "channel_values" {
     null = false
     type = json
@@ -5289,6 +5416,9 @@ table "agent_checkpoints" {
   }
   index "idx_agent_checkpoints_run_created" {
     columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_checkpoints_runtime_key" {
+    columns = [column.thread_id, column.run_id, column.runtime_type, column.runtime_key, column.created_at]
   }
   index "idx_agent_checkpoints_thread_created" {
     columns = [column.thread_id, column.created_at]
@@ -5331,7 +5461,304 @@ table "agent_thread_memories" {
     type    = double
     default = 0
   }
+  column "confidence" {
+    null    = false
+    type    = double
+    default = 0
+  }
+  column "source_type" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "source_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "source_key" {
+    null = true
+    type = varchar(256)
+    as {
+      expr = "case when ((`source_type` <> _utf8mb4'') and (`source_id` <> _utf8mb4'')) then concat(`source_type`,_utf8mb4':',`source_id`) else NULL end"
+      type = STORED
+    }
+  }
+  column "correction_of_memory_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "corrected_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   column "expires_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  column "deleted_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_thread_memories_deleted" {
+    columns = [column.deleted_at]
+  }
+  index "idx_agent_thread_memories_expires" {
+    columns = [column.expires_at]
+  }
+  index "idx_agent_thread_memories_correction" {
+    columns = [column.correction_of_memory_id]
+  }
+  index "idx_agent_thread_memories_source" {
+    columns = [column.source_type, column.source_id]
+  }
+  index "uk_agent_thread_memories_source_key" {
+    unique  = true
+    columns = [column.thread_id, column.source_key]
+  }
+  index "idx_agent_thread_memories_space_scope" {
+    columns = [column.space_id, column.scope]
+  }
+  index "idx_agent_thread_memories_thread_run_scope" {
+    columns = [column.thread_id, column.run_id, column.scope]
+  }
+  index "idx_agent_thread_memories_updated" {
+    columns = [column.updated_at]
+  }
+}
+table "agent_memory_audit_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null           = false
+    type           = bigint
+    auto_increment = true
+  }
+  column "thread_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "run_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "space_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "memory_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "actor_id" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "event_type" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "scope" {
+    null    = false
+    type    = varchar(32)
+    default = ""
+  }
+  column "source_type" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "source_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "affected_count" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_memory_audit_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_memory_audit_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_memory_audit_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_memory_audit_memory_created" {
+    columns = [column.memory_id, column.created_at]
+  }
+  index "idx_agent_memory_audit_actor_created" {
+    columns = [column.actor_id, column.created_at]
+  }
+  index "idx_agent_memory_audit_event_created" {
+    columns = [column.event_type, column.created_at]
+  }
+}
+table "agent_transcript_snapshots" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "kind" {
+    null = false
+    type = varchar(32)
+  }
+  column "digest" {
+    null = false
+    type = varchar(64)
+  }
+  column "idempotency_key" {
+    null = false
+    type = varchar(128)
+  }
+  column "message_count" {
+    null = false
+    type = int
+  }
+  column "messages" {
+    null = false
+    type = json
+  }
+  column "metadata" {
+    null = true
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_transcripts_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_transcripts_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_transcripts_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "uk_agent_transcripts_run_key" {
+    unique  = true
+    columns = [column.run_id, column.idempotency_key]
+  }
+}
+table "agent_memory_flush_jobs" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "user_id" {
+    null = false
+    type = bigint
+  }
+  column "assistant_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "transcript_snapshot_id" {
+    null = false
+    type = bigint
+  }
+  column "idempotency_key" {
+    null = false
+    type = varchar(128)
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "worker_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "attempt_count" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "last_error" {
+    null = false
+    type = text
+  }
+  column "available_at" {
+    null = false
+    type = bigint
+  }
+  column "lease_expires_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "started_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "ended_at" {
     null    = false
     type    = bigint
     default = 0
@@ -5347,17 +5774,679 @@ table "agent_thread_memories" {
   primary_key {
     columns = [column.id]
   }
-  index "idx_agent_thread_memories_expires" {
-    columns = [column.expires_at]
+  index "idx_agent_memory_flush_pending" {
+    columns = [column.status, column.available_at, column.created_at]
   }
-  index "idx_agent_thread_memories_space_scope" {
-    columns = [column.space_id, column.scope]
+  index "idx_agent_memory_flush_snapshot" {
+    columns = [column.transcript_snapshot_id]
   }
-  index "idx_agent_thread_memories_thread_run_scope" {
-    columns = [column.thread_id, column.run_id, column.scope]
+  index "idx_agent_memory_flush_space_created" {
+    columns = [column.space_id, column.created_at]
   }
-  index "idx_agent_thread_memories_updated" {
+  index "idx_agent_memory_flush_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_memory_flush_worker" {
+    columns = [column.worker_id]
+  }
+  index "uk_agent_memory_flush_run_key" {
+    unique  = true
+    columns = [column.run_id, column.idempotency_key]
+  }
+}
+table "agent_files" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "user_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "file_name" {
+    null = false
+    type = varchar(255)
+  }
+  column "original_file_name" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "file_kind" {
+    null = false
+    type = varchar(32)
+  }
+  column "virtual_path" {
+    null = false
+    type = varchar(1024)
+  }
+  column "object_uri" {
+    null = false
+    type = varchar(1024)
+  }
+  column "content_type" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "size_bytes" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "digest" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "status" {
+    null    = false
+    type    = varchar(32)
+    default = "active"
+  }
+  column "metadata" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_files_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_files_thread_kind" {
+    columns = [column.thread_id, column.file_kind]
+  }
+  index "uk_agent_files_run_path" {
+    unique  = true
+    columns = [column.run_id, column.virtual_path]
+  }
+}
+table "agent_artifacts" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "user_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "file_id" {
+    null = false
+    type = bigint
+  }
+  column "title" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "artifact_type" {
+    null = false
+    type = varchar(64)
+  }
+  column "virtual_path" {
+    null = false
+    type = varchar(1024)
+  }
+  column "object_uri" {
+    null = false
+    type = varchar(1024)
+  }
+  column "content_type" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "size_bytes" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "preview_mode" {
+    null    = false
+    type    = varchar(32)
+    default = "download"
+  }
+  column "metadata" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  column "deleted_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_artifacts_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_artifacts_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_artifacts_thread_active_created" {
+    columns = [column.thread_id, column.deleted_at, column.created_at]
+  }
+  index "idx_agent_artifacts_run_active_created" {
+    columns = [column.run_id, column.deleted_at, column.created_at]
+  }
+  index "uk_agent_artifacts_file" {
+    unique  = true
+    columns = [column.file_id]
+  }
+}
+table "agent_artifact_scan_jobs" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "user_id" {
+    null = false
+    type = bigint
+  }
+  column "artifact_id" {
+    null = false
+    type = bigint
+  }
+  column "file_id" {
+    null = false
+    type = bigint
+  }
+  column "scanner" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "idempotency_key" {
+    null = false
+    type = varchar(128)
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "attempt_count" {
+    null    = false
+    type    = int
+    default = 0
+  }
+  column "last_error" {
+    null = false
+    type = text
+  }
+  column "available_at" {
+    null = false
+    type = bigint
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_artifact_scan_jobs_pending" {
+    columns = [column.status, column.scanner, column.available_at, column.created_at]
+  }
+  index "idx_agent_artifact_scan_jobs_lease" {
+    columns = [column.status, column.scanner, column.lease_expires_at, column.created_at]
+  }
+  index "idx_agent_artifact_scan_jobs_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_artifact_scan_jobs_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_artifact_scan_jobs_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_artifact_scan_jobs_file" {
+    columns = [column.file_id]
+  }
+  index "uk_agent_artifact_scan_jobs_artifact_key" {
+    unique  = true
+    columns = [column.artifact_id, column.idempotency_key]
+  }
+}
+table "agent_mcp_stdio_workdir_leases" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "server_id" {
+    null = false
+    type = bigint
+  }
+  column "runtime_tool_name" {
+    null = false
+    type = varchar(128)
+  }
+  column "workdir" {
+    null = false
+    type = varchar(1024)
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "worker_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "lease_expires_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "released_at" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "last_error" {
+    null = false
+    type = text
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_space_status" {
+    columns = [column.space_id, column.status, column.updated_at]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_status_expires" {
+    columns = [column.status, column.lease_expires_at, column.created_at]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_server" {
+    columns = [column.server_id]
+  }
+  index "idx_agent_mcp_stdio_workdir_leases_worker_status" {
+    columns = [column.worker_id, column.status]
+  }
+}
+table "agent_mcp_runtime_audit_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "server_id" {
+    null = false
+    type = bigint
+  }
+  column "runtime_tool_name" {
+    null = false
+    type = varchar(128)
+  }
+  column "event_type" {
+    null = false
+    type = varchar(64)
+  }
+  column "error_code" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "elapsed_ms" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "output_bytes" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_mcp_runtime_audit_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_mcp_runtime_audit_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_mcp_runtime_audit_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_mcp_runtime_audit_server_created" {
+    columns = [column.server_id, column.created_at]
+  }
+  index "idx_agent_mcp_runtime_audit_event_created" {
+    columns = [column.event_type, column.created_at]
+  }
+}
+table "agent_guardrail_audit_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "actor_id" {
+    null = false
+    type = bigint
+  }
+  column "event_type" {
+    null = false
+    type = varchar(64)
+  }
+  column "target_type" {
+    null = false
+    type = varchar(32)
+  }
+  column "target_id" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "operation" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "source" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "action" {
+    null    = false
+    type    = varchar(16)
+    default = ""
+  }
+  column "fail_mode" {
+    null    = false
+    type    = varchar(16)
+    default = ""
+  }
+  column "provider" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "reason_code" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "rule_ids" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_guardrail_audit_space_created" {
+    columns = [column.space_id, column.created_at]
+  }
+  index "idx_agent_guardrail_audit_thread_created" {
+    columns = [column.thread_id, column.created_at]
+  }
+  index "idx_agent_guardrail_audit_run_created" {
+    columns = [column.run_id, column.created_at]
+  }
+  index "idx_agent_guardrail_audit_actor_created" {
+    columns = [column.actor_id, column.created_at]
+  }
+  index "idx_agent_guardrail_audit_event_created" {
+    columns = [column.event_type, column.created_at]
+  }
+  index "idx_agent_guardrail_audit_target_created" {
+    columns = [column.target_type, column.created_at]
+  }
+}
+table "agent_run_plans" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "thread_id" {
+    null = false
+    type = bigint
+  }
+  column "space_id" {
+    null = false
+    type = bigint
+  }
+  column "user_id" {
+    null = false
+    type = bigint
+  }
+  column "high_watermark" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "revision" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.run_id]
+  }
+  index "idx_agent_run_plans_space_updated" {
+    columns = [column.space_id, column.updated_at]
+  }
+  index "idx_agent_run_plans_thread_updated" {
+    columns = [column.thread_id, column.updated_at]
+  }
+}
+table "agent_run_plan_items" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = bigint
+  }
+  column "run_id" {
+    null = false
+    type = bigint
+  }
+  column "task_id" {
+    null = false
+    type = bigint
+  }
+  column "subject" {
+    null = false
+    type = varchar(512)
+  }
+  column "description" {
+    null = false
+    type = text
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "active_form" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+  column "owner" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "blocks" {
+    null = false
+    type = json
+  }
+  column "blocked_by" {
+    null = false
+    type = json
+  }
+  column "metadata" {
+    null = false
+    type = json
+  }
+  column "active" {
+    null    = false
+    type    = tinyint(1)
+    default = 1
+  }
+  column "version" {
+    null    = false
+    type    = bigint
+    default = 1
+  }
+  column "created_at" {
+    null = false
+    type = bigint
+  }
+  column "updated_at" {
+    null = false
+    type = bigint
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_agent_run_plan_items_active" {
+    columns = [column.run_id, column.active]
+  }
+  index "idx_agent_run_plan_items_updated" {
     columns = [column.updated_at]
+  }
+  index "uk_agent_run_plan_items_run_task" {
+    unique  = true
+    columns = [column.run_id, column.task_id]
   }
 }
 table "agent_token_usage" {
@@ -5446,6 +6535,14 @@ table "agent_token_usage" {
     null = true
     type = json
   }
+  column "usage_key" {
+    null = true
+    type = varchar(64)
+    as {
+      expr = "nullif(json_unquote(json_extract(`metadata`,_latin1'$.idempotency_key')),_utf8mb4'')"
+      type = STORED
+    }
+  }
   column "created_at" {
     null = false
     type = bigint
@@ -5464,6 +6561,10 @@ table "agent_token_usage" {
   }
   index "idx_agent_token_usage_thread_run" {
     columns = [column.thread_id, column.run_id]
+  }
+  index "uk_agent_token_usage_idempotency" {
+    unique  = true
+    columns = [column.run_id, column.usage_key]
   }
 }
 table "chat_task_attempts" {

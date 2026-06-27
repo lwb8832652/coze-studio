@@ -52,7 +52,9 @@ type AppendMessageRequest struct {
 
 type CreateRunRequest struct {
 	ThreadID          int64
+	ParentRunID       int64
 	AssistantID       string
+	RunKind           entity.RunKind
 	Status            entity.RunStatus
 	Command           string
 	Input             string
@@ -71,10 +73,12 @@ type GetRunRequest struct {
 }
 
 type ListRunsRequest struct {
-	ThreadID int64
-	Status   *entity.RunStatus
-	Page     int32
-	PageSize int32
+	ThreadID         int64
+	ParentRunID      *int64
+	IncludeChildRuns bool
+	Status           *entity.RunStatus
+	Page             int32
+	PageSize         int32
 }
 
 type AppendRunEventRequest struct {
@@ -89,6 +93,9 @@ type CreateCheckpointRequest struct {
 	RunID              int64
 	ParentCheckpointID int64
 	CheckpointNS       string
+	RuntimeType        string
+	RuntimeKey         string
+	EnvelopeVersion    int32
 	ChannelValues      string
 	ChannelVersions    string
 	PendingSends       string
@@ -109,14 +116,60 @@ type GetLatestCheckpointRequest struct {
 	ThreadID int64
 }
 
+type GetLatestRuntimeCheckpointRequest struct {
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	RuntimeKey  string
+}
+
+type DeleteRuntimeCheckpointRequest struct {
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	RuntimeKey  string
+	DeletedAt   int64
+}
+
 type RememberMemoryRequest struct {
-	ThreadID  int64
-	RunID     int64
-	Scope     entity.MemoryScope
-	Content   string
-	Metadata  string
-	Score     float64
-	ExpiresAt int64
+	ThreadID             int64
+	RunID                int64
+	Scope                entity.MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+}
+
+type ImportMemoryItem struct {
+	RunID                int64
+	Scope                entity.MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+}
+
+type ImportMemoriesRequest struct {
+	ThreadID int64
+	ActorID  int64
+	Memories []ImportMemoryItem
+}
+
+type ImportMemoriesResult struct {
+	Imported int64
+	Skipped  int64
+	Memories []*entity.Memory
 }
 
 type RecallMemoriesRequest struct {
@@ -124,6 +177,110 @@ type RecallMemoriesRequest struct {
 	RunID    int64
 	Scopes   []entity.MemoryScope
 	Limit    int32
+}
+
+type ListMemoriesRequest struct {
+	ThreadID       int64
+	RunID          int64
+	Scopes         []entity.MemoryScope
+	Query          string
+	IncludeExpired bool
+	IncludeDeleted bool
+	Page           int32
+	PageSize       int32
+}
+
+type UpdateMemoryRequest struct {
+	ThreadID             int64
+	MemoryID             int64
+	ActorID              int64
+	RunID                int64
+	Scope                entity.MemoryScope
+	Content              string
+	Metadata             string
+	Score                float64
+	Confidence           float64
+	SourceType           string
+	SourceID             string
+	CorrectionOfMemoryID int64
+	CorrectedAt          int64
+	ExpiresAt            int64
+}
+
+type DeleteMemoryRequest struct {
+	ThreadID int64
+	MemoryID int64
+	ActorID  int64
+}
+
+type ClearMemoriesRequest struct {
+	ThreadID int64
+	RunID    int64
+	Scopes   []entity.MemoryScope
+	ActorID  int64
+}
+
+type RestoreMemoryRequest struct {
+	ThreadID int64
+	MemoryID int64
+	ActorID  int64
+}
+
+type ListMemoryAuditEventsRequest struct {
+	ThreadID int64
+	MemoryID int64
+	Page     int32
+	PageSize int32
+}
+
+type PersistTranscriptSnapshotRequest struct {
+	ThreadID       int64
+	RunID          int64
+	Kind           entity.TranscriptKind
+	Digest         string
+	IdempotencyKey string
+	MessageCount   int32
+	Messages       string
+	Metadata       string
+}
+
+type GetTranscriptSnapshotRequest struct {
+	SnapshotID int64
+}
+
+type EnqueueMemoryFlushJobRequest struct {
+	ThreadID             int64
+	RunID                int64
+	TranscriptSnapshotID int64
+	IdempotencyKey       string
+	AvailableAt          int64
+}
+
+type ClaimMemoryFlushJobsRequest struct {
+	WorkerID       string
+	Limit          int32
+	LeaseTTLMillis int64
+}
+
+type CompleteMemoryFlushJobRequest struct {
+	JobID    int64
+	WorkerID string
+	Now      int64
+}
+
+type RetryMemoryFlushJobRequest struct {
+	JobID       int64
+	WorkerID    string
+	ErrorText   string
+	AvailableAt int64
+	Now         int64
+}
+
+type FailMemoryFlushJobRequest struct {
+	JobID     int64
+	WorkerID  string
+	ErrorText string
+	Now       int64
 }
 
 type RecordTokenUsageRequest struct {
@@ -145,10 +302,11 @@ type RecordTokenUsageRequest struct {
 }
 
 type GetRunTokenUsageRequest struct {
-	RunID    int64
-	Source   entity.TokenUsageSource
-	Page     int32
-	PageSize int32
+	RunID            int64
+	IncludeChildRuns bool
+	Source           entity.TokenUsageSource
+	Page             int32
+	PageSize         int32
 }
 
 type GetThreadTokenUsageRequest struct {
@@ -198,6 +356,7 @@ type ThreadService interface {
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
 	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
 	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)
+	GetRunByIdempotencyKey(ctx context.Context, spaceID int64, idempotencyKey string) (*entity.Run, error)
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
 	AppendRunEvent(ctx context.Context, req *AppendRunEventRequest) (*entity.RunEvent, error)
 	ListRunEvents(ctx context.Context, req *ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
@@ -205,13 +364,42 @@ type ThreadService interface {
 	GetCheckpoint(ctx context.Context, req *GetCheckpointRequest) (*entity.Checkpoint, error)
 	ListCheckpoints(ctx context.Context, req *ListCheckpointsRequest) ([]*entity.Checkpoint, int64, error)
 	GetLatestCheckpoint(ctx context.Context, req *GetLatestCheckpointRequest) (*entity.Checkpoint, error)
+	GetLatestRuntimeCheckpoint(
+		ctx context.Context,
+		req *GetLatestRuntimeCheckpointRequest,
+	) (*entity.Checkpoint, error)
+	DeleteRuntimeCheckpoint(ctx context.Context, req *DeleteRuntimeCheckpointRequest) error
 	RememberMemory(ctx context.Context, req *RememberMemoryRequest) (*entity.Memory, error)
+	ImportMemories(ctx context.Context, req *ImportMemoriesRequest) (*ImportMemoriesResult, error)
 	RecallMemories(ctx context.Context, req *RecallMemoriesRequest) ([]*entity.Memory, int64, error)
+	ListMemories(ctx context.Context, req *ListMemoriesRequest) ([]*entity.Memory, int64, error)
+	UpdateMemory(ctx context.Context, req *UpdateMemoryRequest) (*entity.Memory, bool, error)
+	DeleteMemory(ctx context.Context, req *DeleteMemoryRequest) (bool, error)
+	ClearMemories(ctx context.Context, req *ClearMemoriesRequest) (int64, error)
+	RestoreMemory(ctx context.Context, req *RestoreMemoryRequest) (*entity.Memory, bool, error)
+	ListMemoryAuditEvents(
+		ctx context.Context,
+		req *ListMemoryAuditEventsRequest,
+	) ([]*entity.MemoryAuditEvent, int64, error)
+	PersistTranscriptSnapshot(
+		ctx context.Context,
+		req *PersistTranscriptSnapshotRequest,
+	) (*entity.TranscriptSnapshot, bool, error)
+	GetTranscriptSnapshot(ctx context.Context, req *GetTranscriptSnapshotRequest) (*entity.TranscriptSnapshot, error)
+	EnqueueMemoryFlushJob(
+		ctx context.Context,
+		req *EnqueueMemoryFlushJobRequest,
+	) (*entity.MemoryFlushJob, bool, error)
+	ClaimMemoryFlushJobs(ctx context.Context, req *ClaimMemoryFlushJobsRequest) ([]*entity.MemoryFlushJob, error)
+	CompleteMemoryFlushJob(ctx context.Context, req *CompleteMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
+	RetryMemoryFlushJob(ctx context.Context, req *RetryMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
+	FailMemoryFlushJob(ctx context.Context, req *FailMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
 	RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest) (*entity.TokenUsage, error)
-	GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
+	GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, []*entity.RunTokenUsageAggregate, error)
 	GetThreadTokenUsage(ctx context.Context, req *GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
+	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

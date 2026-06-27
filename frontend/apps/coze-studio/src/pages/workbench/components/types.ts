@@ -57,21 +57,9 @@ export const WORKBENCH_MODE_SYMBOLS: Record<WorkbenchMode, string> = {
   Agent: 'A',
 };
 
-export const WORKBENCH_PRESET_SKILL_IDS = [
-  'meego-guidelines',
-  'aeolus-platform-analysis',
-  'coral-hive-metric-explorer',
-  'deepwiki',
-  'code-review',
-  'aime-toolkit',
-  'lark-wiki',
-  'lark-shared',
-  'lark-drive',
-] as const;
-
 export const createDefaultWorkbenchResourceSelection =
   (): WorkbenchResourceSelection => ({
-    enable_skills: [...WORKBENCH_PRESET_SKILL_IDS],
+    enable_skills: [],
     enable_mcp: [],
     enable_kbs: [],
     enable_databases: [],

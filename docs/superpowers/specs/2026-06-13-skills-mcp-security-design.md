@@ -32,7 +32,7 @@
 ## 非目标
 
 1. 本设计不重写 Coze 已有 Plugin/OpenAPI 插件开发后台，只把它接入统一工具注册。
-2. 本设计不实现 IM Channels，但工具权限和审计需要为 IM 来源预留 `source=im`。
+2. 本设计不实现 IM Channels；通用 `source` 字段只用于实际存在的 Web、API 和内部任务来源。
 3. 本设计不重做知识库、数据库资源配置页面，只定义它们作为工具被 runtime 使用的接口。
 4. 本设计不允许直接嵌入 Deer-flow Python runtime。
 5. 本设计不把 LLM 安全扫描作为唯一安全边界，规则扫描和 sandbox 仍是强制层。
@@ -106,8 +106,8 @@ flowchart TB
 
 | 能力 | 选择 | 说明 |
 | --- | --- | --- |
-| MCP Client | `modelcontextprotocol/go-sdk` 优先 | 封装在 `domain/agent/mcp/client` 内，避免业务层直接依赖 SDK 类型 |
-| MCP fallback | 自研 JSON-RPC adapter | 如果 SDK 对某个 transport 或 OAuth 场景不完整，用 adapter 补齐，不改变上层接口 |
+| MCP Agent Adapter | Eino-ext MCP Tool Adapter | 负责把 MCP tools 转为 Eino tools 并接入 ADK Agent 执行 |
+| MCP Client Lifecycle | Coze-owned client/session layer | 负责 stdio/SSE/streamable HTTP、OAuth、重连、缓存、健康和会话池；底层 SDK 类型不进入业务层 |
 | Archive 处理 | Go 标准库 `archive/zip` | 安装 `.skill` 包时自己实现路径、大小、软链和 UTF-8 校验 |
 | Frontmatter | `gopkg.in/yaml.v3` | 仓库已有依赖，严格解析白名单字段 |
 | Secret 加密 | 复用 Coze plugin encrypt 能力并抽象 SecretStore | 不把 MCP secret 明文写入业务表或日志 |
@@ -608,7 +608,7 @@ Tool Policy 按顺序收敛：
 4. Workbench `enable_*` 选择。
 5. activated skill 的 `allowed-tools`。
 6. runtime mode：Ask 不允许有副作用工具，Agent 允许受控工具。
-7. channel/source policy：IM 来源默认禁用高风险本地工具。
+7. source policy：API 和内部自动任务可以采用比交互式 Web 更严格的默认策略。
 8. security scanner 实时决策。
 
 决策：
