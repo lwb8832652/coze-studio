@@ -143,6 +143,66 @@ describe('TasksPage helpers', () => {
     container.remove();
   });
 
+  it('renders task list loading, empty, and error states', async () => {
+    const loadingContainer = document.createElement('div');
+    document.body.appendChild(loadingContainer);
+    let loadingRoot: Root | undefined;
+    let resolveThreads: (
+      value: Awaited<ReturnType<typeof mockListTaskThreads>>,
+    ) => void = () => undefined;
+    const pendingThreads = new Promise<
+      Awaited<ReturnType<typeof mockListTaskThreads>>
+    >(resolve => {
+      resolveThreads = resolve;
+    });
+    mockListTaskThreads.mockReturnValueOnce(pendingThreads);
+
+    act(() => {
+      loadingRoot = createRoot(loadingContainer);
+      loadingRoot.render(<TasksPage />);
+    });
+
+    expect(loadingContainer.textContent).toContain('加载中...');
+
+    await act(async () => {
+      resolveThreads({
+        data: {
+          threads: [],
+          total: 0,
+        },
+        code: 0,
+        msg: '',
+      });
+      await pendingThreads;
+      await Promise.resolve();
+    });
+
+    expect(loadingContainer.textContent).toContain('暂无任务');
+
+    act(() => {
+      loadingRoot?.unmount();
+    });
+    loadingContainer.remove();
+
+    const errorContainer = document.createElement('div');
+    document.body.appendChild(errorContainer);
+    let errorRoot: Root | undefined;
+    mockListTaskThreads.mockRejectedValueOnce(new Error('任务列表服务异常'));
+
+    await act(async () => {
+      errorRoot = createRoot(errorContainer);
+      errorRoot.render(<TasksPage />);
+      await Promise.resolve();
+    });
+
+    expect(errorContainer.textContent).toContain('任务列表服务异常');
+
+    act(() => {
+      errorRoot?.unmount();
+    });
+    errorContainer.remove();
+  });
+
   it('formats backend millisecond timestamps without converting from seconds', () => {
     const timestamp = 1717000300123;
 
