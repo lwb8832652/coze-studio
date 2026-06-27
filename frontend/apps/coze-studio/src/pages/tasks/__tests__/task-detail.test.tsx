@@ -63,6 +63,7 @@ const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockResumeTaskThreadRun = vi.hoisted(() => vi.fn());
+const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadSubagentRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
@@ -106,6 +107,7 @@ vi.mock('../service', () => ({
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThreadRun: mockCreateTaskThreadRun,
   resumeTaskThreadRun: mockResumeTaskThreadRun,
+  cancelTaskThreadRun: mockCancelTaskThreadRun,
   retryTaskThreadSubagentRun: mockRetryTaskThreadSubagentRun,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
@@ -384,6 +386,7 @@ describe('TaskDetailPage', () => {
     mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
     mockResumeTaskThreadRun.mockReset();
+    mockCancelTaskThreadRun.mockReset();
     mockRetryTaskThreadSubagentRun.mockReset();
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
@@ -487,6 +490,37 @@ describe('TaskDetailPage', () => {
         on_disconnect: 'continue',
         durability: 'async',
         idempotency_key: 'resume-key',
+        worker_id: '',
+        error_code: '',
+        error_message: '',
+        started_at: 0,
+        ended_at: 0,
+        created_at: 1717000400000,
+        updated_at: 1717000400000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCancelTaskThreadRun.mockResolvedValue({
+      data: {
+        run_id: 'run-cancel-1',
+        thread_id: 'thread-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        assistant_id: 'default',
+        parent_run_id: '0',
+        run_kind: 'task',
+        status: 'canceled',
+        command: '{}',
+        input: '{"messages":[]}',
+        config: '{}',
+        context: '{}',
+        metadata: '{}',
+        stream_mode: '["messages","updates"]',
+        multitask_strategy: 'enqueue',
+        on_disconnect: 'continue',
+        durability: 'async',
+        idempotency_key: 'cancel-key',
         worker_id: '',
         error_code: '',
         error_message: '',
@@ -2534,7 +2568,7 @@ describe('TaskDetailPage', () => {
             created_at: 1717000300000,
           },
         ],
-        total: 1,
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -2915,7 +2949,7 @@ describe('TaskDetailPage', () => {
             created_at: 1717000100000,
           },
         ],
-        total: 1,
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -2935,7 +2969,7 @@ describe('TaskDetailPage', () => {
             created_at: 1717000200000,
           },
         ],
-        total: 1,
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -2983,6 +3017,290 @@ describe('TaskDetailPage', () => {
       root?.unmount();
     });
     expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+    container.remove();
+  });
+
+  it('cancels the latest running canonical thread run from task detail', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-cancel-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-cancel-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '可取消任务',
+        status: 'running',
+        source: 'agent',
+        progress: 35,
+        last_user_message: '请分析客户反馈',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-cancel-1',
+            thread_id: 'thread-cancel-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'running',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000100000,
+            ended_at: 0,
+            created_at: 1717000100000,
+            updated_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-cancel-1',
+            thread_id: 'thread-cancel-1',
+            run_id: 'run-cancel-1',
+            event_type: 'step.started',
+            payload: JSON.stringify({
+              step_name: 'generate_answer',
+            }),
+            created_at: 1717000200000,
+          },
+          {
+            event_id: 'event-cancel-child-1',
+            thread_id: 'thread-cancel-1',
+            run_id: 'run-child-later-1',
+            event_type: 'step.completed',
+            payload: JSON.stringify({
+              step_name: 'child_work',
+            }),
+            created_at: 1717000250000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const cancelButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('取消任务'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      cancelButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCancelTaskThreadRun).toHaveBeenCalledWith({
+      thread_id: 'thread-cancel-1',
+      run_id: 'run-cancel-1',
+    });
+    expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('retries failed canonical thread runs without mutating historical runs', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-retry-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-retry-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '失败任务',
+        status: 'failed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请分析客户反馈',
+        last_agent_message: '执行失败',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-failed-1',
+            thread_id: 'thread-retry-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'failed',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: 'executor_error',
+            error_message: 'bounded failure',
+            started_at: 1717000100000,
+            ended_at: 1717000300000,
+            created_at: 1717000100000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-1',
+            thread_id: 'thread-retry-1',
+            run_id: 'run-failed-1',
+            role: 'user',
+            content: '请分析客户反馈',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-retry-1',
+            thread_id: 'thread-retry-1',
+            run_id: 'run-failed-1',
+            event_type: 'run.failed',
+            payload: JSON.stringify({
+              error_code: 'executor_error',
+              error_message: 'bounded failure',
+            }),
+            created_at: 1717000200000,
+          },
+          {
+            event_id: 'event-retry-child-1',
+            thread_id: 'thread-retry-1',
+            run_id: 'run-child-later-2',
+            event_type: 'step.failed',
+            payload: JSON.stringify({
+              error_message: 'child bounded failure',
+            }),
+            created_at: 1717000250000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const retryButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('重试任务'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      retryButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      thread_id: 'thread-retry-1',
+      input: expect.any(String),
+      config: expect.any(String),
+      metadata: expect.any(String),
+      idempotency_key: expect.any(String),
+    });
+    const retryRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    expect(JSON.parse(retryRequest.input)).toMatchObject({
+      messages: [
+        {
+          role: 'user',
+          content: '请分析客户反馈',
+        },
+      ],
+    });
+    expect(JSON.parse(retryRequest.config)).toMatchObject({
+      runtime: 'eino_adk',
+      mode: 'Auto',
+      token_usage: {
+        enabled: true,
+      },
+    });
+    expect(JSON.parse(retryRequest.metadata)).toMatchObject({
+      source: 'task_retry',
+      source_run_id: 'run-failed-1',
+    });
+    expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      root?.unmount();
+    });
     container.remove();
   });
 

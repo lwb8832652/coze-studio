@@ -25,6 +25,7 @@ import type {
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
 import type { PendingHumanInteraction } from './task-human-interaction';
 import { sendFollowUpMessage } from './task-follow-up';
+import { useTaskRunActions } from './task-run-actions-hook';
 import {
   fetchTaskDetail,
   type TaskDetail,
@@ -35,7 +36,6 @@ import {
 import {
   listTaskThreadArtifacts,
   resumeTaskThreadRun,
-  retryTaskThreadSubagentRun,
 } from './service';
 import { isTaskTerminalStatus } from './helpers';
 
@@ -56,6 +56,7 @@ export const useTaskDetailData = ({
   const [artifacts, setArtifacts] = useState<
     workbenchTask.TaskThreadArtifact[]
   >([]);
+  const [latestTaskRunID, setLatestTaskRunID] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
   const [loading, setLoading] = useState(false);
@@ -64,6 +65,7 @@ export const useTaskDetailData = ({
     setTask(detail.task);
     setEvents(detail.events);
     setArtifacts(detail.artifacts ?? []);
+    setLatestTaskRunID(detail.latestTaskRunID ?? '');
     setSubagentRuns(detail.subagentRuns ?? []);
     setTokenUsage(detail.tokenUsage);
   }, []);
@@ -134,6 +136,7 @@ export const useTaskDetailData = ({
     artifacts,
     error,
     events,
+    latestTaskRunID,
     loading,
     refreshArtifacts,
     subagentRuns,
@@ -163,8 +166,12 @@ export const useTaskDetailActions = ({
   const [followUpError, setFollowUpError] = useState('');
   const [humanInteractionLoading, setHumanInteractionLoading] = useState(false);
   const [humanInteractionError, setHumanInteractionError] = useState('');
-  const [retryingSubagentRunId, setRetryingSubagentRunId] = useState('');
-  const [subagentRetryError, setSubagentRetryError] = useState('');
+  const taskRunActions = useTaskRunActions({
+    applyTaskDetail,
+    task,
+    taskDetailId,
+    taskDetailSource,
+  });
 
   const handleFollowUpSubmit = async (
     payload: WorkbenchComposerSubmitPayload,
@@ -243,36 +250,6 @@ export const useTaskDetailActions = ({
     }
   };
 
-  const handleRetrySubagentRun = async (runId: string) => {
-    if (!runId || retryingSubagentRunId) {
-      return;
-    }
-    if (!taskDetailId || taskDetailSource !== 'thread') {
-      setSubagentRetryError('缺少任务恢复上下文，请刷新后重试');
-      return;
-    }
-
-    setRetryingSubagentRunId(runId);
-    setSubagentRetryError('');
-    try {
-      await retryTaskThreadSubagentRun({
-        thread_id: taskDetailId,
-        run_id: runId,
-      });
-      const detail = await fetchTaskDetail({
-        id: taskDetailId,
-        source: taskDetailSource,
-      });
-      applyTaskDetail(detail);
-    } catch (err) {
-      setSubagentRetryError(
-        err instanceof Error ? err.message : '重试子智能体失败，请稍后再试',
-      );
-    } finally {
-      setRetryingSubagentRunId('');
-    }
-  };
-
   return {
     followUpError,
     followUpLoading,
@@ -280,12 +257,10 @@ export const useTaskDetailActions = ({
     followUpValue,
     handleFollowUpSubmit,
     handleHumanInteractionSubmit,
-    handleRetrySubagentRun,
     humanInteractionError,
     humanInteractionLoading,
-    retryingSubagentRunId,
     setFollowUpMode,
     setFollowUpValue,
-    subagentRetryError,
+    ...taskRunActions,
   };
 };

@@ -433,6 +433,10 @@ export interface ResumeTaskThreadRunRequest {
   response: HumanInteractionResponse;
   idempotency_key?: string;
 }
+export interface CancelTaskThreadRunRequest {
+  thread_id: string;
+  run_id: string;
+}
 export interface RetryTaskThreadSubagentRunRequest {
   thread_id: string;
   run_id: string;
@@ -601,6 +605,11 @@ export interface CreateTaskThreadRunResponse {
   msg: string;
 }
 export interface ResumeTaskThreadRunResponse {
+  data?: TaskThreadRun;
+  code: number;
+  msg: string;
+}
+export interface CancelTaskThreadRunResponse {
   data?: TaskThreadRun;
   code: number;
   msg: string;
@@ -1039,6 +1048,21 @@ export const ResumeTaskThreadRun = /*#__PURE__*/ createAPI<
     body: ['interrupt_id', 'response', 'idempotency_key'],
   },
   resType: 'ResumeTaskThreadRunResponse',
+  schemaRoot: 'api://schemas/idl_workbench_task',
+  service: 'workbenchTask',
+});
+export const CancelTaskThreadRun = /*#__PURE__*/ createAPI<
+  CancelTaskThreadRunRequest,
+  CancelTaskThreadRunResponse
+>({
+  url: '/api/workbench/task_threads/:thread_id/runs/:run_id/cancel',
+  method: 'POST',
+  name: 'CancelTaskThreadRun',
+  reqType: 'CancelTaskThreadRunRequest',
+  reqMapping: {
+    path: ['thread_id', 'run_id'],
+  },
+  resType: 'CancelTaskThreadRunResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
   service: 'workbenchTask',
 });

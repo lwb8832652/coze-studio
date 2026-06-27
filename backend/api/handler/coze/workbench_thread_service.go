@@ -1093,6 +1093,55 @@ func validateResumeTaskThreadRunRequest(req threadapi.ResumeTaskThreadRunRequest
 	return nil
 }
 
+// CancelTaskThreadRun .
+// @router /api/workbench/task_threads/:thread_id/runs/:run_id/cancel [POST]
+func CancelTaskThreadRun(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.CancelTaskThreadRunRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if err := validateCancelTaskThreadRunRequest(req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	runResp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if runResp == nil || runResp.Run == nil || runResp.Run.ThreadID != req.ThreadID {
+		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
+		return
+	}
+
+	resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
+		RunID: req.RunID,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.CancelTaskThreadRunResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: taskThreadRunToAPI(resp.Run),
+	})
+}
+
+func validateCancelTaskThreadRunRequest(req threadapi.CancelTaskThreadRunRequest) error {
+	if req.ThreadID <= 0 {
+		return strconv.ErrSyntax
+	}
+	if req.RunID <= 0 {
+		return strconv.ErrSyntax
+	}
+
+	return nil
+}
+
 // RetryTaskThreadSubagentRun .
 // @router /api/workbench/task_threads/:thread_id/runs/:run_id/retry [POST]
 func RetryTaskThreadSubagentRun(ctx context.Context, c *app.RequestContext) {

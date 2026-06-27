@@ -38,6 +38,7 @@ import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import { getPendingHumanInteraction } from './task-human-interaction';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
 import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
+import { TaskRunActionBar } from './task-run-action-bar';
 import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type TaskDetailSource,
@@ -352,6 +353,7 @@ const TaskDetailPage = () => {
     artifacts,
     error,
     events,
+    latestTaskRunID,
     loading,
     refreshArtifacts,
     subagentRuns,
@@ -375,6 +377,8 @@ const TaskDetailPage = () => {
     followUpValue,
     handleFollowUpSubmit,
     handleHumanInteractionSubmit,
+    handleCancelTaskRun,
+    handleRetryTaskRun,
     handleRetrySubagentRun,
     humanInteractionError,
     humanInteractionLoading,
@@ -382,6 +386,8 @@ const TaskDetailPage = () => {
     setFollowUpMode,
     setFollowUpValue,
     subagentRetryError,
+    taskRunActionError,
+    taskRunActionLoading,
   } = useTaskDetailActions({
     applyTaskDetail,
     pendingHumanInteraction,
@@ -390,7 +396,6 @@ const TaskDetailPage = () => {
     taskDetailId,
     taskDetailSource,
   });
-
   return (
     <main className="coze-prototype-page">
       {task ? (
@@ -416,6 +421,15 @@ const TaskDetailPage = () => {
         ) : null}
         {task ? (
           <>
+            <TaskRunActionBar
+              task={task}
+              latestRunID={latestTaskRunID}
+              loading={taskRunActionLoading}
+              error={taskRunActionError}
+              taskDetailSource={taskDetailSource}
+              onCancelTaskRun={handleCancelTaskRun}
+              onRetryTaskRun={handleRetryTaskRun}
+            />
             <TaskConversation task={task} />
             {events.length ||
             parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (

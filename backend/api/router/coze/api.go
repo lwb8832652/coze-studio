@@ -475,6 +475,7 @@ func Register(r *server.Hertz) {
 			_task_threads.GET("/:thread_id/runs", coze.ListTaskThreadRuns)
 			_task_threads.POST("/:thread_id/runs", coze.CreateTaskThreadRun)
 			_task_threads.POST("/:thread_id/runs/:run_id/resume", coze.ResumeTaskThreadRun)
+			_task_threads.POST("/:thread_id/runs/:run_id/cancel", coze.CancelTaskThreadRun)
 			_task_threads.POST("/:thread_id/runs/:run_id/retry", coze.RetryTaskThreadSubagentRun)
 			_task_threads.GET("/:thread_id/run_events", coze.ListTaskThreadRunEvents)
 			_task_threads.GET("/:thread_id/run_events/stream", coze.StreamTaskThreadRunEvents)

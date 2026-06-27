@@ -30,6 +30,7 @@ import {
   getTask,
   getTaskThread,
   getTaskThreadTokenUsage,
+  listTaskThreadRuns,
   listTaskThreadArtifacts,
   listTaskEvents,
   listTaskThreadMessages,
@@ -56,6 +57,7 @@ export interface TaskDetail {
   task?: ChatTask;
   events: TaskEvent[];
   artifacts?: TaskThreadArtifact[];
+  latestTaskRunID?: string;
   tokenUsage?: TaskDetailTokenUsage;
   subagentRuns?: TaskDetailSubagentRun[];
 }
@@ -190,6 +192,7 @@ export const fetchTaskDetail = async ({
 
   const [
     messagesResponse,
+    topLevelRunsResponse,
     runEventsResponse,
     tokenUsageResponse,
     artifactsResponse,
@@ -198,6 +201,12 @@ export const fetchTaskDetail = async ({
       thread_id: id,
       page: 1,
       page_size: 50,
+    }),
+    listTaskThreadRuns({
+      thread_id: id,
+      parent_run_id: '0',
+      page: 1,
+      page_size: 1,
     }),
     listTaskThreadRunEvents({
       thread_id: id,
@@ -226,6 +235,7 @@ export const fetchTaskDetail = async ({
     task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
     artifacts: artifactsResponse.data?.artifacts ?? [],
     events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
+    latestTaskRunID: topLevelRunsResponse.data?.runs?.[0]?.run_id ?? '',
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
     ),

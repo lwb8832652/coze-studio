@@ -450,6 +450,11 @@ type ResumeTaskThreadRunRequest struct {
 	IdempotencyKey string                   `json:"idempotency_key,omitempty"`
 }
 
+type CancelTaskThreadRunRequest struct {
+	ThreadID int64 `path:"thread_id,required" json:"-"`
+	RunID    int64 `path:"run_id,required" json:"-"`
+}
+
 type RetryTaskThreadSubagentRunRequest struct {
 	ThreadID       int64  `path:"thread_id,required" json:"-"`
 	RunID          int64  `path:"run_id,required" json:"-"`
@@ -720,6 +725,12 @@ type CreateTaskThreadRunResponse struct {
 }
 
 type ResumeTaskThreadRunResponse struct {
+	Data *TaskThreadRun `json:"data,omitempty"`
+	Code int64          `json:"code"`
+	Msg  string         `json:"msg"`
+}
+
+type CancelTaskThreadRunResponse struct {
 	Data *TaskThreadRun `json:"data,omitempty"`
 	Code int64          `json:"code"`
 	Msg  string         `json:"msg"`
