@@ -131,7 +131,7 @@ Every implementation slice must update this document:
 | Subtask | Status | P0 Acceptance | Notes |
 | --- | --- | --- | --- |
 | 上线验收-Atlas migration 状态 | 待验收 | Local Atlas can inspect/apply pending migrations without drift. | Use local Atlas; do not rely on a remote binary. |
-| 上线验收-生成 API 合约 | 待验收 | IDL/generated Workbench clients are in sync after touched API changes. | Avoid hand-written fetch clients for generated endpoints. |
+| 上线验收-生成 API 合约 | 已完成 | IDL/generated Workbench clients are in sync after touched API changes. | Backfilled existing task-thread, run, token, artifact, resume, cancel, and retry contracts into `idl/workbench/task.thrift`; added api-schema contract coverage so task-thread generated clients cannot exist without thrift service methods. Verified with `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`. `rushx update` succeeds but currently rewrites unrelated generated files' formatting/license headers, so that generator-wide churn is excluded from P0 commits. |
 | 上线验收-后端单测 | 待验收 | Targeted backend package tests pass for touched code. | Record known unrelated failures separately. |
 | 上线验收-前端类型/单测 | 待验收 | Targeted app/package typecheck or unit tests pass for touched UI. | Use package-local commands when full Rush is too slow. |
 | 上线验收-桌面端任务冒烟 | 待开发 | Manual or automated browser path covers P0 task lifecycle. | Required before first P0 release candidate. |

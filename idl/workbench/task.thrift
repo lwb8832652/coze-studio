@@ -18,6 +18,7 @@ struct TaskEvent {
     3: required string event_type
     4: optional string payload
     5: required i64 created_at
+    6: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
 }
 
 struct ChatTask {
@@ -35,6 +36,124 @@ struct ChatTask {
     12: optional string error
     13: required i64 created_at
     14: required i64 updated_at
+}
+
+struct TaskThread {
+    1: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 legacy_task_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    4: required i64 creator_id (agw.js_conv="str", api.js_conv="true")
+    5: required string title
+    6: required string status
+    7: required string source
+    8: required i32 progress
+    9: required string last_user_message
+    10: required string last_agent_message
+    11: required i64 created_at
+    12: required i64 updated_at
+}
+
+struct TaskThreadMessage {
+    1: required i64 message_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    4: required string role
+    5: required string content
+    6: required string metadata
+    7: required i64 created_at
+}
+
+struct TaskThreadRun {
+    1: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 parent_run_id (agw.js_conv="str", api.js_conv="true")
+    4: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    5: required i64 creator_id (agw.js_conv="str", api.js_conv="true")
+    6: required string assistant_id
+    7: required string run_kind
+    8: required string status
+    9: required string command
+    10: required string input
+    11: required string config
+    12: required string context
+    13: required string metadata
+    14: required string stream_mode
+    15: required string multitask_strategy
+    16: required string on_disconnect
+    17: required string durability
+    18: required string idempotency_key
+    19: required string worker_id
+    20: required string error_code
+    21: required string error_message
+    22: required i64 started_at
+    23: required i64 ended_at
+    24: required i64 created_at
+    25: required i64 updated_at
+}
+
+struct TaskThreadRunEvent {
+    1: required i64 event_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    4: required string event_type
+    5: required string payload
+    6: required i64 created_at
+}
+
+struct TaskThreadTokenUsage {
+    1: required i64 usage_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    4: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    5: required string source
+    6: required string step_id
+    7: required i32 step_index
+    8: required string step_name
+    9: required string model_name
+    10: required string provider
+    11: required i64 input_tokens
+    12: required i64 output_tokens
+    13: required i64 total_tokens
+    14: required i64 cost_micros
+    15: required string currency
+    16: required bool estimated
+    17: required string raw_usage
+    18: required string metadata
+    19: required i64 created_at
+}
+
+struct TaskThreadTokenUsageAggregate {
+    1: required i64 input_tokens
+    2: required i64 output_tokens
+    3: required i64 total_tokens
+    4: required i64 cost_micros
+    5: required i64 call_count
+    6: required i64 lead_agent_tokens
+    7: required i64 subagent_tokens
+    8: required i64 middleware_tokens
+    9: required i64 tool_tokens
+}
+
+struct TaskThreadTokenUsageRunAggregate {
+    1: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    2: required TaskThreadTokenUsageAggregate aggregate
+}
+
+struct TaskThreadArtifact {
+    1: required i64 artifact_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    4: required string file_id
+    5: required string title
+    6: required string artifact_type
+    7: required string virtual_path
+    8: required string content_type
+    9: required i64 size_bytes
+    10: required string preview_mode
+    11: required string metadata
+    12: required i64 created_at
+    13: required i64 updated_at
+    14: required i64 deleted_at
 }
 
 struct CreateTaskRequest {
@@ -81,6 +200,261 @@ struct GetTaskRequest {
 
 struct GetTaskResponse {
     1: optional ChatTask data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadsRequest {
+    1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    2: optional string status
+    3: optional i32 page
+    4: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadsData {
+    1: required list<TaskThread> threads
+    2: required i64 total
+}
+
+struct ListTaskThreadsResponse {
+    1: optional ListTaskThreadsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct GetTaskThreadRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct GetTaskThreadResponse {
+    1: optional TaskThread data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadMessagesRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i32 page
+    3: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct AppendTaskThreadMessageRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
+    3: required string role
+    4: required string content
+    5: optional string metadata
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadRunsRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 parent_run_id (agw.js_conv="str", api.js_conv="true")
+    3: optional string status
+    4: optional i32 page
+    5: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadRunEventsRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
+    3: optional i32 page
+    4: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct GetTaskThreadTokenUsageRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
+    3: optional bool include_child_runs
+    4: optional string source
+    5: optional i32 page
+    6: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadArtifactsRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
+    3: optional bool deleted_only
+    4: optional i32 page
+    5: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct GetTaskThreadArtifactSignedURLRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 artifact_id (api.path="artifact_id", agw.js_conv="str", api.js_conv="true")
+    3: optional string mode
+    4: optional i32 ttl_seconds
+    255: optional base.Base Base (api.none="true")
+}
+
+struct CreateTaskThreadRunRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional string assistant_id
+    3: optional string command
+    4: required string input
+    5: optional string config
+    6: optional string context
+    7: optional string metadata
+    8: optional string stream_mode
+    9: optional string multitask_strategy
+    10: optional string on_disconnect
+    11: optional string durability
+    12: optional string idempotency_key
+    255: optional base.Base Base (api.none="true")
+}
+
+struct HumanInteractionResponse {
+    1: required string schema
+    2: required string interaction_id
+    3: required string kind
+    4: required string decision
+    5: optional string answer
+    6: optional string choice_id
+    7: optional string comment
+    8: optional string submitted_by
+    9: optional i64 submitted_at
+    10: optional string source
+}
+
+struct ResumeTaskThreadRunRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
+    3: required string interrupt_id
+    4: required HumanInteractionResponse response
+    5: optional string idempotency_key
+    255: optional base.Base Base (api.none="true")
+}
+
+struct CancelTaskThreadRunRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct RetryTaskThreadSubagentRunRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
+    3: optional string idempotency_key
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadMessagesData {
+    1: required list<TaskThreadMessage> messages
+    2: required i64 total
+}
+
+struct ListTaskThreadMessagesResponse {
+    1: optional ListTaskThreadMessagesData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct AppendTaskThreadMessageResponse {
+    1: optional TaskThreadMessage data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadRunsData {
+    1: required list<TaskThreadRun> runs
+    2: required i64 total
+}
+
+struct ListTaskThreadRunsResponse {
+    1: optional ListTaskThreadRunsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadRunEventsData {
+    1: required list<TaskThreadRunEvent> events
+    2: required i64 total
+}
+
+struct ListTaskThreadRunEventsResponse {
+    1: optional ListTaskThreadRunEventsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct GetTaskThreadTokenUsageData {
+    1: required list<TaskThreadTokenUsage> usage
+    2: required i64 total
+    3: required TaskThreadTokenUsageAggregate aggregate
+    4: optional list<TaskThreadTokenUsageRunAggregate> run_aggregates
+}
+
+struct GetTaskThreadTokenUsageResponse {
+    1: optional GetTaskThreadTokenUsageData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadArtifactsData {
+    1: required list<TaskThreadArtifact> artifacts
+    2: required i64 total
+}
+
+struct ListTaskThreadArtifactsResponse {
+    1: optional ListTaskThreadArtifactsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct GetTaskThreadArtifactSignedURLData {
+    1: required i64 artifact_id (agw.js_conv="str", api.js_conv="true")
+    2: required string url
+    3: required i64 expires_in_seconds
+    4: required string content_type
+    5: required string preview_mode
+}
+
+struct GetTaskThreadArtifactSignedURLResponse {
+    1: optional GetTaskThreadArtifactSignedURLData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct CreateTaskThreadRunResponse {
+    1: optional TaskThreadRun data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ResumeTaskThreadRunResponse {
+    1: optional TaskThreadRun data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct CancelTaskThreadRunResponse {
+    1: optional TaskThreadRun data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct RetryTaskThreadSubagentRunResponse {
+    1: optional TaskThreadRun data
     253: required i64 code
     254: required string msg
     255: optional base.BaseResp BaseResp (api.none="true")
@@ -391,16 +765,32 @@ service WorkbenchTaskService {
         api.get="/api/workbench/tasks/:task_id",
         api.category="workbench"
     )
-    GetTaskResponse CancelTask(1: GetTaskRequest request)(
-        api.post="/api/workbench/tasks/:task_id/cancel",
+    ListTaskThreadsResponse ListTaskThreads(1: ListTaskThreadsRequest request)(
+        api.get="/api/workbench/task_threads",
         api.category="workbench"
     )
-    GetTaskResponse RetryTask(1: GetTaskRequest request)(
-        api.post="/api/workbench/tasks/:task_id/retry",
+    GetTaskThreadResponse GetTaskThread(1: GetTaskThreadRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id",
         api.category="workbench"
     )
-    TaskEventsResponse ListTaskEvents(1: GetTaskRequest request)(
-        api.get="/api/workbench/tasks/:task_id/events",
+    ListTaskThreadMessagesResponse ListTaskThreadMessages(1: ListTaskThreadMessagesRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/messages",
+        api.category="workbench"
+    )
+    AppendTaskThreadMessageResponse AppendTaskThreadMessage(1: AppendTaskThreadMessageRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/messages",
+        api.category="workbench"
+    )
+    ListTaskThreadRunsResponse ListTaskThreadRuns(1: ListTaskThreadRunsRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/runs",
+        api.category="workbench"
+    )
+    ListTaskThreadRunEventsResponse ListTaskThreadRunEvents(1: ListTaskThreadRunEventsRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/run_events",
+        api.category="workbench"
+    )
+    GetTaskThreadTokenUsageResponse GetTaskThreadTokenUsage(1: GetTaskThreadTokenUsageRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/token_usage",
         api.category="workbench"
     )
     ListTaskThreadMemoriesResponse ListTaskThreadMemories(1: ListTaskThreadMemoriesRequest request)(
@@ -441,6 +831,42 @@ service WorkbenchTaskService {
     )
     ExportTaskThreadGuardrailAuditEventsResponse ExportTaskThreadGuardrailAuditEvents(1: ExportTaskThreadGuardrailAuditEventsRequest request)(
         api.get="/api/workbench/task_threads/:thread_id/guardrail_audit_events/export",
+        api.category="workbench"
+    )
+    ListTaskThreadArtifactsResponse ListTaskThreadArtifacts(1: ListTaskThreadArtifactsRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/artifacts",
+        api.category="workbench"
+    )
+    GetTaskThreadArtifactSignedURLResponse GetTaskThreadArtifactSignedURL(1: GetTaskThreadArtifactSignedURLRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
+        api.category="workbench"
+    )
+    CreateTaskThreadRunResponse CreateTaskThreadRun(1: CreateTaskThreadRunRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/runs",
+        api.category="workbench"
+    )
+    ResumeTaskThreadRunResponse ResumeTaskThreadRun(1: ResumeTaskThreadRunRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/runs/:run_id/resume",
+        api.category="workbench"
+    )
+    CancelTaskThreadRunResponse CancelTaskThreadRun(1: CancelTaskThreadRunRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/runs/:run_id/cancel",
+        api.category="workbench"
+    )
+    RetryTaskThreadSubagentRunResponse RetryTaskThreadSubagentRun(1: RetryTaskThreadSubagentRunRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/runs/:run_id/retry",
+        api.category="workbench"
+    )
+    GetTaskResponse CancelTask(1: GetTaskRequest request)(
+        api.post="/api/workbench/tasks/:task_id/cancel",
+        api.category="workbench"
+    )
+    GetTaskResponse RetryTask(1: GetTaskRequest request)(
+        api.post="/api/workbench/tasks/:task_id/retry",
+        api.category="workbench"
+    )
+    TaskEventsResponse ListTaskEvents(1: GetTaskRequest request)(
+        api.get="/api/workbench/tasks/:task_id/events",
         api.category="workbench"
     )
 }
