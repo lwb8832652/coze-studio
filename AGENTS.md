@@ -1246,6 +1246,12 @@ cd backend && go test ./...
   environment configuration; do not inject a real MCP executor until Coze-owned
   transport/session, authorization, OAuth/secret, stdio sandbox, audit,
   timeout, output-budget, and health gates are in place.
+- Task-detail tool event cards must stay metadata-only. Frontend event
+  projection may display a safe Eino tool name, lifecycle state, and generic
+  parameter/result presence text, but must hide raw details that mention tool
+  arguments, tool results, provider raw payloads, URLs, filenames, object
+  keys, checkpoints, credentials, or secret-adjacent values. Unsafe or
+  non-Eino-safe tool names must render as the generic `工具` label.
 - MCP runtime service boundary starts in M6.6. `ADKMCPRuntimeExecutor` is the
   Coze-owned service behind `ADKMCPRuntimeToolExecutor`; it resolves durable MCP
   server rows, validates active run space, server ID, raw configured tool name,

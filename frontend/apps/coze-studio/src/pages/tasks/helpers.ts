@@ -16,6 +16,11 @@
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
+import {
+  getSafeTaskToolDetail,
+  getSafeTaskToolName,
+} from './task-tool-event-safety';
+
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 
@@ -199,10 +204,11 @@ const getToolEventDisplay = ({
   }
 
   const toolName =
-    getString(payload, 'tool_name') ||
-    getString(payload, 'step_name') ||
-    getString(payload, 'step_id') ||
-    '工具';
+    getSafeTaskToolName(
+      getString(payload, 'tool_name') ||
+        getString(payload, 'step_name') ||
+        getString(payload, 'step_id'),
+    );
   const errorMessage = getString(payload, 'error_message');
   const argumentsPresent = getBoolean(payload, 'arguments_present');
   const resultPresent = getBoolean(payload, 'result_present');
@@ -216,7 +222,10 @@ const getToolEventDisplay = ({
     return {
       ...baseDisplay,
       title: `调用工具 ${toolName}`,
-      detail: detail ?? (argumentsPresent ? '参数已准备' : ''),
+      detail: getSafeTaskToolDetail(
+        detail,
+        argumentsPresent ? '参数已准备' : '',
+      ),
       status: 'running',
     };
   }
@@ -225,7 +234,10 @@ const getToolEventDisplay = ({
     return {
       ...baseDisplay,
       title: `工具 ${toolName} 调用完成`,
-      detail: detail ?? (resultPresent ? '已返回结果' : ''),
+      detail: getSafeTaskToolDetail(
+        detail,
+        resultPresent ? '已返回结果' : '',
+      ),
       status: 'completed',
     };
   }
@@ -234,7 +246,10 @@ const getToolEventDisplay = ({
     return {
       ...baseDisplay,
       title: `工具 ${toolName} 调用失败`,
-      detail: detail ?? errorMessage,
+      detail: getSafeTaskToolDetail(
+        detail ?? errorMessage,
+        '工具调用失败，详情已隐藏',
+      ),
       status: 'failed',
     };
   }

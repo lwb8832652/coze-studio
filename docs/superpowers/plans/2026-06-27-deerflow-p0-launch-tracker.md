@@ -107,7 +107,7 @@ Every implementation slice must update this document:
 | MCP-健康状态 | 已完成 | Health status is visible in tool settings or Runtime Doctor. | Runtime Doctor displays total/enabled/healthy/unhealthy/unknown MCP counts without config/auth details. |
 | MCP-Eino 工具调用 | 待验收 | Enabled MCP/tool entries can be invoked through Eino ADK tool path. | Tool policy allowlist must apply. |
 | Tools-基础 allowlist 策略 | 待验收 | Empty explicit allowlist denies that tool class; configured grants do not broaden child agent permissions. | Reuse `ADKToolPolicyProvider`. |
-| Tools-任务详情工具事件 | 待验收 | Tool events appear as safe task-detail cards. | No tool arguments/results in cards unless already reviewed as safe. |
+| Tools-任务详情工具事件 | 已完成 | Tool events appear as safe task-detail cards. | Hardened task-detail tool event projection so tool arguments/results, raw provider payloads, URLs, credentials, object identifiers, and unsafe tool names are hidden from cards. Verified with `rushx test -- src/pages/tasks/__tests__/tasks.test.tsx` and `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx`. |
 | Tools-复杂策略管理 UI | 延后(P1) | N/A | Record policy UI needs as P1, not P0. |
 | MCP-多 transport 深度管理 | 延后(P1) | N/A | P0 only needs the DeerFlow-visible minimum. |
 

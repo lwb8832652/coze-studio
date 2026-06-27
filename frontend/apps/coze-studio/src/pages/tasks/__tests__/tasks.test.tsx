@@ -255,6 +255,54 @@ describe('TasksPage helpers', () => {
     expect(failed.status).toBe('failed');
   });
 
+  it('hides unsafe tool event details from execution cards', () => {
+    const started = getTaskEventDisplay(
+      'tool.started',
+      JSON.stringify({
+        tool_name: 'api_key=tool-secret',
+        arguments_present: true,
+        tool_arguments: '{"url":"https://private.example.test/a"}',
+        detail: 'tool_arguments include bearer=secret-token',
+      }),
+    );
+    const completed = getTaskEventDisplay(
+      'tool.completed',
+      JSON.stringify({
+        tool_name: 'safe_search',
+        result_present: true,
+        result: '{"object_key":"bucket/private/result.json"}',
+        detail: 'provider_raw response https://private.example.test/result',
+      }),
+    );
+    const failed = getTaskEventDisplay(
+      'tool.failed',
+      JSON.stringify({
+        tool_name: 'safe_search',
+        error_message: 'tool failed with access_token=secret-token',
+      }),
+    );
+
+    const renderedText = [
+      started.title,
+      started.detail,
+      completed.title,
+      completed.detail,
+      failed.title,
+      failed.detail,
+    ].join(' ');
+
+    expect(started.title).toBe('调用工具 工具');
+    expect(started.detail).toBe('参数已准备');
+    expect(completed.detail).toBe('已返回结果');
+    expect(failed.detail).toBe('工具调用失败，详情已隐藏');
+    expect(renderedText).not.toContain('tool_arguments');
+    expect(renderedText).not.toContain('provider_raw');
+    expect(renderedText).not.toContain('private.example.test');
+    expect(renderedText).not.toContain('secret-token');
+    expect(renderedText).not.toContain('api_key');
+    expect(renderedText).not.toContain('object_key');
+  });
+
   it('formats plan task events and keeps only the latest task state', () => {
     const events = [
       {
