@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
 )
@@ -107,5 +108,87 @@ func TestADKModelReliabilityRetryConfigRejectsInvalidLimits(t *testing.T) {
 	})
 
 	require.ErrorContains(t, err, "model retry backoff_ms must be between 0 and 60000")
+	require.Nil(t, config)
+}
+
+func TestADKModelReliabilityFailoverConfigUsesCandidateModels(t *testing.T) {
+	backup := &flakyADKChatModel{
+		success: schema.AssistantMessage("backup", nil),
+	}
+	var requestedModelIDs []int64
+	provider := func(_ context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+		requestedModelIDs = append(requestedModelIDs, modelID)
+		if modelID == 2002 {
+			return backup, true, nil
+		}
+		return nil, false, nil
+	}
+
+	config, err := adkModelFailoverConfigFromRun(
+		&RunSummary{
+			Config: `{
+				"model_failover":{
+					"candidate_model_ids":[1001,2002,2002],
+					"max_retries":2,
+					"failover_empty_output":true,
+					"failover_finish_reasons":["length"]
+				}
+			}`,
+		},
+		provider,
+		1001,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	require.Equal(t, uint(1), config.MaxRetries)
+	require.True(t, config.ShouldFailover(context.Background(), nil, errors.New("provider failed")))
+	require.True(t, config.ShouldFailover(context.Background(), schema.AssistantMessage("", nil), nil))
+	require.True(t, config.ShouldFailover(context.Background(), &schema.Message{
+		Role:    schema.Assistant,
+		Content: "partial",
+		ResponseMeta: &schema.ResponseMeta{
+			FinishReason: "length",
+		},
+	}, nil))
+	require.False(t, config.ShouldFailover(context.Background(), &schema.Message{
+		Role:    schema.Assistant,
+		Content: "blocked",
+		ResponseMeta: &schema.ResponseMeta{
+			FinishReason: "content_filter",
+		},
+	}, nil))
+
+	failoverModel, messages, err := config.GetFailoverModel(
+		context.Background(),
+		&adk.FailoverContext[*schema.Message]{
+			FailoverAttempt: 1,
+			InputMessages: []*schema.Message{
+				schema.UserMessage("use backup"),
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Same(t, backup, failoverModel)
+	require.Nil(t, messages)
+	require.Equal(t, []int64{2002}, requestedModelIDs)
+}
+
+func TestADKModelReliabilityFailoverConfigRejectsInvalidLimits(t *testing.T) {
+	config, err := adkModelFailoverConfigFromRun(
+		&RunSummary{
+			Config: `{
+				"model_failover":{
+					"candidate_model_ids":[2002],
+					"max_retries":6
+				}
+			}`,
+		},
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return nil, false, nil
+		},
+		1001,
+	)
+
+	require.ErrorContains(t, err, "model failover max_retries must be between 1 and 5")
 	require.Nil(t, config)
 }

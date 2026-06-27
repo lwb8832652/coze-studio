@@ -183,43 +183,44 @@ func (f *ApplicationADKAgentFactory) Build(
 		return nil, fmt.Errorf("agent thread chat model is not configured")
 	}
 
-	modelCapabilities := ADKModelCapabilities{}
-	if capable, ok := chatModel.(ADKNativeToolSearchModel); ok {
-		modelCapabilities.NativeToolSearch = capable.SupportsNativeToolSearch()
-	}
-	if capable, ok := chatModel.(ADKProviderCapabilityModel); ok {
-		modelCapabilities = mergeADKModelCapabilities(
-			modelCapabilities,
-			capable.ADKProviderCapabilities(),
-		)
-	}
-	modelCapabilities = mergeADKModelCapabilities(
-		modelCapabilities,
-		adkBuiltInModelCapabilities(chatModel),
-	)
-	providerCapabilityConfig, err := adkProviderCapabilityConfigFromRun(
-		run,
-		modelCapabilities,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	options := modelExecutorOptions(cfg)
-	reasoningOptions, err := adkReasoningModelOptions(
+	chatModel, modelCapabilities, err := prepareADKChatModelForRun(
 		chatModel,
-		providerCapabilityConfig.Reasoning,
-		modelCapabilities,
+		run,
+		cfg,
 	)
 	if err != nil {
 		return nil, err
 	}
-	options = append(options, reasoningOptions...)
-	if len(options) > 0 {
-		chatModel = &optionedADKChatModel{
-			base:    chatModel,
-			options: options,
-		}
+	modelFailoverConfig, err := adkModelFailoverConfigFromRun(
+		run,
+		func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			candidateModel, candidateConfigured, candidateErr := provider(ctx, modelID)
+			if candidateErr != nil || !candidateConfigured || candidateModel == nil {
+				return candidateModel, candidateConfigured, candidateErr
+			}
+			candidateCapabilities := adkModelCapabilitiesFromChatModel(candidateModel)
+			if !adkModelCapabilitiesCover(candidateCapabilities, modelCapabilities) {
+				return nil, false, fmt.Errorf(
+					"agent thread failover model capabilities do not cover primary model",
+				)
+			}
+			candidateConfig := cfg
+			candidateConfig.ModelName = ""
+			candidateModel, _, candidateErr = prepareADKChatModelForRun(
+				candidateModel,
+				run,
+				candidateConfig,
+			)
+			if candidateErr != nil {
+				return nil, false, candidateErr
+			}
+
+			return candidateModel, true, nil
+		},
+		cfg.ModelID,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	var tools []tool.BaseTool
@@ -279,16 +280,86 @@ func (f *ApplicationADKAgentFactory) Build(
 				Tools: tools,
 			},
 		},
-		MaxIterations:    cfg.MaxIterations,
-		Middlewares:      bundle.Middlewares,
-		Handlers:         bundle.Handlers,
-		ModelRetryConfig: modelRetryConfig,
+		MaxIterations:       cfg.MaxIterations,
+		Middlewares:         bundle.Middlewares,
+		Handlers:            bundle.Handlers,
+		ModelRetryConfig:    modelRetryConfig,
+		ModelFailoverConfig: modelFailoverConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build eino adk chat model agent: %w", err)
 	}
 
 	return agent, nil
+}
+
+func prepareADKChatModelForRun(
+	chatModel model.BaseChatModel,
+	run *RunSummary,
+	cfg modelExecutorConfig,
+) (model.BaseChatModel, ADKModelCapabilities, error) {
+	modelCapabilities := adkModelCapabilitiesFromChatModel(chatModel)
+	providerCapabilityConfig, err := adkProviderCapabilityConfigFromRun(
+		run,
+		modelCapabilities,
+	)
+	if err != nil {
+		return nil, ADKModelCapabilities{}, err
+	}
+
+	options := modelExecutorOptions(cfg)
+	reasoningOptions, err := adkReasoningModelOptions(
+		chatModel,
+		providerCapabilityConfig.Reasoning,
+		modelCapabilities,
+	)
+	if err != nil {
+		return nil, ADKModelCapabilities{}, err
+	}
+	options = append(options, reasoningOptions...)
+	if len(options) > 0 {
+		chatModel = &optionedADKChatModel{
+			base:    chatModel,
+			options: options,
+		}
+	}
+
+	return chatModel, modelCapabilities, nil
+}
+
+func adkModelCapabilitiesFromChatModel(
+	chatModel model.BaseChatModel,
+) ADKModelCapabilities {
+	modelCapabilities := ADKModelCapabilities{}
+	if capable, ok := chatModel.(ADKNativeToolSearchModel); ok {
+		modelCapabilities.NativeToolSearch = capable.SupportsNativeToolSearch()
+	}
+	if capable, ok := chatModel.(ADKProviderCapabilityModel); ok {
+		modelCapabilities = mergeADKModelCapabilities(
+			modelCapabilities,
+			capable.ADKProviderCapabilities(),
+		)
+	}
+	modelCapabilities = mergeADKModelCapabilities(
+		modelCapabilities,
+		adkBuiltInModelCapabilities(chatModel),
+	)
+
+	return modelCapabilities
+}
+
+func adkModelCapabilitiesCover(
+	actual ADKModelCapabilities,
+	required ADKModelCapabilities,
+) bool {
+	return (!required.NativeToolSearch || actual.NativeToolSearch) &&
+		(!required.Thinking || actual.Thinking) &&
+		(!required.Reasoning || actual.Reasoning) &&
+		(!required.Vision || actual.Vision) &&
+		(!required.PDF || actual.PDF) &&
+		(!required.File || actual.File) &&
+		(!required.Audio || actual.Audio) &&
+		(!required.Video || actual.Video)
 }
 
 func mergeADKModelCapabilities(

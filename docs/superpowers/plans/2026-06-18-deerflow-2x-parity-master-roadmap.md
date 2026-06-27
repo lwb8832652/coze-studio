@@ -358,8 +358,17 @@ Progress evidence as of 2026-06-21:
   Eino `ModelRetryConfig` with bounded retry/backoff settings, pass-through for
   cancel/interrupt/control-flow errors, empty-output and selected finish-reason
   retry decisions, and `model.safety_finish` classification for safety/content
-  filter finish reasons. Real failover candidate selection remains open until
-  the Coze model catalog/provider policy boundary is available.
+  filter finish reasons.
+- [x] M2.13b complete: explicit run-configured model failover now uses Eino
+  `ModelFailoverConfig` with bounded `candidate_model_ids` / `candidateModelIds`
+  selection, de-duplication, primary-model exclusion, retry-exhaustion
+  handoff, empty-output and selected finish-reason failover decisions, and
+  cancellation/interrupt pass-through. Candidate models resolve through the
+  same Coze `ChatModelProvider` path as the primary model and reuse safe run
+  options without carrying the primary `model_name` override. Candidate
+  capabilities must cover the primary model's declared capabilities before
+  execution. Durable model catalog policy, quota, audit, and UI-managed
+  candidate settings remain future settings work.
 - [x] M2.14 complete: Coze-owned `semantic_loop` ADK middleware detects
   repeated Assistant tool-call plans and repeated Assistant text responses
   after model calls while keeping Eino `MaxIterations` as the hard execution
@@ -412,8 +421,8 @@ Progress evidence as of 2026-06-21:
 - [ ] M2.9b and later middleware capabilities remain open. General workspace
   tools, upload mounting, output promotion, user-visible `agent_artifacts`,
   preview/download APIs, MIME/security scanning, retention cleanup, shell, and
-  sandbox providers remain in M4. Failover candidate selection and
-  durable Web provider settings/UI also remain open.
+  sandbox providers remain in M4. Durable model/Web provider settings/UI also
+  remain open.
 
 Exit gate:
 

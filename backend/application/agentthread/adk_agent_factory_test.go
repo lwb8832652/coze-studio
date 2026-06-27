@@ -200,6 +200,143 @@ func TestADKAgentFactoryModelRetryExhaustionUsesEinoError(t *testing.T) {
 	require.Equal(t, 2, chatModel.calls)
 }
 
+func TestADKAgentFactoryConfiguresModelFailoverCandidates(t *testing.T) {
+	primary := &flakyADKChatModel{
+		failuresBeforeSuccess: 10,
+		success:               schema.AssistantMessage("unused", nil),
+	}
+	backup := &flakyADKChatModel{
+		success: schema.AssistantMessage("done from backup", nil),
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(_ context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			switch modelID {
+			case 1001:
+				return primary, true, nil
+			case 2002:
+				return backup, true, nil
+			default:
+				return nil, false, nil
+			}
+		},
+		nil,
+		nil,
+	)
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"model_id":1001,
+			"model_failover":{
+				"candidate_model_ids":[2002]
+			}
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("fail over")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, primary.calls)
+	require.Equal(t, 1, backup.calls)
+}
+
+func TestADKAgentFactoryFailoverAfterModelRetryExhaustion(t *testing.T) {
+	primary := &flakyADKChatModel{
+		failuresBeforeSuccess: 10,
+		success:               schema.AssistantMessage("unused", nil),
+	}
+	backup := &flakyADKChatModel{
+		success: schema.AssistantMessage("done after failover", nil),
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(_ context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			switch modelID {
+			case 1001:
+				return primary, true, nil
+			case 2002:
+				return backup, true, nil
+			default:
+				return nil, false, nil
+			}
+		},
+		nil,
+		nil,
+	)
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"model_id":1001,
+			"model_retry":{
+				"max_retries":1,
+				"backoff_ms":0
+			},
+			"model_failover":{
+				"candidate_model_ids":[2002]
+			}
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("retry then fail over")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 2, primary.calls)
+	require.Equal(t, 1, backup.calls)
+}
+
+func TestADKAgentFactoryFailoverCandidateRequiresCapabilityCoverage(t *testing.T) {
+	primary := &capabilityFlakyADKChatModel{
+		flakyADKChatModel: flakyADKChatModel{
+			failuresBeforeSuccess: 10,
+			success:               schema.AssistantMessage("unused", nil),
+		},
+		capabilities: ADKModelCapabilities{Vision: true},
+	}
+	backup := &flakyADKChatModel{
+		success: schema.AssistantMessage("should not run", nil),
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(_ context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			switch modelID {
+			case 1001:
+				return primary, true, nil
+			case 2002:
+				return backup, true, nil
+			default:
+				return nil, false, nil
+			}
+		},
+		nil,
+		nil,
+	)
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"model_id":1001,
+			"model_failover":{
+				"candidate_model_ids":[2002]
+			}
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("fail over safely")},
+	})
+
+	require.NotEmpty(t, events)
+	require.ErrorContains(
+		t,
+		events[len(events)-1].Err,
+		"failover model capabilities do not cover primary model",
+	)
+	require.Equal(t, 1, primary.calls)
+	require.Zero(t, backup.calls)
+}
+
 func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	chatModel := &providerCapabilityChatModel{
 		recordingChatModel: recordingChatModel{
@@ -523,6 +660,18 @@ type providerCapabilityChatModel struct {
 }
 
 func (m *providerCapabilityChatModel) ADKProviderCapabilities() ADKModelCapabilities {
+	if m == nil {
+		return ADKModelCapabilities{}
+	}
+	return m.capabilities
+}
+
+type capabilityFlakyADKChatModel struct {
+	flakyADKChatModel
+	capabilities ADKModelCapabilities
+}
+
+func (m *capabilityFlakyADKChatModel) ADKProviderCapabilities() ADKModelCapabilities {
 	if m == nil {
 		return ADKModelCapabilities{}
 	}

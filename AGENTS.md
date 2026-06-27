@@ -1626,9 +1626,17 @@ cd backend && go test ./...
   `modelRetry`). Keep `max_retries` bounded to 1-5 and `backoff_ms` bounded to
   0-60000. Do not retry context cancellation, ADK cancellation, interrupts,
   stream cancellation, or safety-classified finish reasons.
-- Do not wire model failover to a fake or implicit fallback. Real failover
-  requires a Coze-owned model-candidate provider that enforces model catalog,
-  credentials, tenant authorization, policy, quota, and audit.
+- Use Eino `ModelFailoverConfig` for model failover. Failover is disabled by
+  default and may be enabled only through explicit run config
+  (`model_failover` or `modelFailover`) with bounded, de-duplicated
+  `candidate_model_ids`. Candidate models must resolve through the same
+  Coze-owned `ChatModelProvider` path as the primary model and must not reuse
+  the primary `model_name` option to override the selected candidate. Candidate
+  capabilities must cover the primary model's declared capabilities before
+  execution; fail closed until durable model catalog policy can narrow
+  candidate selection per request. Do not wire a fake or implicit fallback.
+  Future durable model catalog settings must enforce tenant authorization,
+  provider policy, quota, and audit before emitting candidate IDs.
 - Safety/content-filter finish reasons are Coze event semantics. Map them to
   `model.safety_finish` with a bounded `finish_classification` payload while
   preserving the assistant text for transcript/checkpoint continuity.

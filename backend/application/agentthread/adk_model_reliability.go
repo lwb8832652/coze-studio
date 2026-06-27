@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
@@ -33,6 +34,7 @@ import (
 const (
 	adkModelRetryMaxRetriesLimit = 5
 	adkModelRetryMaxBackoffMS    = 60000
+	adkModelFailoverMaxRetries   = 5
 )
 
 func adkModelRetryConfigFromRun(run *RunSummary) (*adk.ModelRetryConfig, error) {
@@ -152,6 +154,173 @@ func adkModelRetryDecision(
 	return decision
 }
 
+func adkModelFailoverConfigFromRun(
+	run *RunSummary,
+	provider ChatModelProvider,
+	primaryModelID int64,
+) (*adk.ModelFailoverConfig[*schema.Message], error) {
+	if run == nil || strings.TrimSpace(run.Config) == "" {
+		return nil, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(run.Config), &payload); err != nil {
+		return nil, fmt.Errorf("decode adk model failover config: %w", err)
+	}
+	failoverConfig := firstConfigMap(payload, "model_failover", "modelFailover")
+	if failoverConfig == nil {
+		return nil, nil
+	}
+
+	candidateModelIDs, err := firstConfigInt64Slice(
+		failoverConfig,
+		"candidate_model_ids",
+		"candidateModelIds",
+		"candidateModelIDs",
+		"fallback_model_ids",
+		"fallbackModelIds",
+		"fallbackModelIDs",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("model failover candidate_model_ids is invalid: %w", err)
+	}
+	candidateModelIDs = normalizeADKModelFailoverCandidates(
+		candidateModelIDs,
+		primaryModelID,
+	)
+	if len(candidateModelIDs) == 0 {
+		return nil, nil
+	}
+
+	maxRetries := firstConfigInt64(
+		failoverConfig,
+		"max_retries",
+		"maxRetries",
+	)
+	if maxRetries == 0 {
+		maxRetries = int64(len(candidateModelIDs))
+	}
+	if maxRetries < 1 || maxRetries > adkModelFailoverMaxRetries {
+		return nil, fmt.Errorf(
+			"model failover max_retries must be between 1 and %d",
+			adkModelFailoverMaxRetries,
+		)
+	}
+	if maxRetries > int64(len(candidateModelIDs)) {
+		maxRetries = int64(len(candidateModelIDs))
+	}
+
+	if provider == nil {
+		provider = DefaultChatModelProvider
+	}
+	failoverEmptyOutput := firstConfigBool(
+		failoverConfig,
+		"failover_empty_output",
+		"failoverEmptyOutput",
+	)
+	failoverFinishReasons := newConfigStringSet(firstConfigStringSlice(
+		failoverConfig,
+		"failover_finish_reasons",
+		"failoverFinishReasons",
+	))
+
+	config := &adk.ModelFailoverConfig[*schema.Message]{
+		MaxRetries: uint(maxRetries),
+		ShouldFailover: func(
+			ctx context.Context,
+			outputMessage *schema.Message,
+			outputErr error,
+		) bool {
+			return adkModelFailoverDecision(
+				ctx,
+				outputMessage,
+				outputErr,
+				failoverEmptyOutput,
+				failoverFinishReasons,
+			)
+		},
+		GetFailoverModel: func(
+			ctx context.Context,
+			failoverCtx *adk.FailoverContext[*schema.Message],
+		) (model.BaseChatModel, []*schema.Message, error) {
+			if failoverCtx == nil || failoverCtx.FailoverAttempt == 0 {
+				return nil, nil, fmt.Errorf("model failover candidate is unavailable")
+			}
+			index := int(failoverCtx.FailoverAttempt) - 1
+			if index < 0 || index >= len(candidateModelIDs) {
+				return nil, nil, fmt.Errorf("model failover candidate is unavailable")
+			}
+			chatModel, configured, err := provider(ctx, candidateModelIDs[index])
+			if err != nil {
+				return nil, nil, fmt.Errorf("resolve agent thread failover model: %w", err)
+			}
+			if !configured || chatModel == nil {
+				return nil, nil, fmt.Errorf("agent thread failover model is not configured")
+			}
+
+			return chatModel, nil, nil
+		},
+	}
+
+	return config, nil
+}
+
+func adkModelFailoverDecision(
+	ctx context.Context,
+	outputMessage *schema.Message,
+	outputErr error,
+	failoverEmptyOutput bool,
+	failoverFinishReasons map[string]struct{},
+) bool {
+	if err := ctx.Err(); err != nil {
+		return false
+	}
+	if outputErr != nil {
+		var exhausted *adk.RetryExhaustedError
+		if errors.As(outputErr, &exhausted) &&
+			exhausted.LastErr != nil &&
+			shouldPassThroughADKModelRetryError(exhausted.LastErr) {
+			return false
+		}
+		if shouldPassThroughADKModelRetryError(outputErr) {
+			return false
+		}
+		return true
+	}
+
+	if failoverEmptyOutput && isADKEmptyAssistantOutput(outputMessage) {
+		return true
+	}
+	if outputMessage != nil && outputMessage.ResponseMeta != nil {
+		finishReason := normalizeADKFinishReason(outputMessage.ResponseMeta.FinishReason)
+		if _, ok := failoverFinishReasons[finishReason]; ok &&
+			!isADKSafetyFinishReason(finishReason) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeADKModelFailoverCandidates(
+	modelIDs []int64,
+	primaryModelID int64,
+) []int64 {
+	normalized := make([]int64, 0, len(modelIDs))
+	seen := map[int64]struct{}{}
+	for _, modelID := range modelIDs {
+		if modelID <= 0 || modelID == primaryModelID {
+			continue
+		}
+		if _, ok := seen[modelID]; ok {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		normalized = append(normalized, modelID)
+	}
+	return normalized
+}
+
 func shouldPassThroughADKModelRetryError(err error) bool {
 	if err == nil {
 		return true
@@ -254,6 +423,62 @@ func firstConfigStringSlice(payload map[string]any, keys ...string) []string {
 	}
 
 	return nil
+}
+
+func firstConfigInt64Slice(payload map[string]any, keys ...string) ([]int64, error) {
+	for _, key := range keys {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		return configInt64Slice(value)
+	}
+
+	return nil, nil
+}
+
+func configInt64Slice(value any) ([]int64, error) {
+	switch typed := value.(type) {
+	case []int64:
+		return typed, nil
+	case []int:
+		items := make([]int64, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, int64(item))
+		}
+		return items, nil
+	case []any:
+		items := make([]int64, 0, len(typed))
+		for _, item := range typed {
+			parsed, err := configInt64AllowZero(item)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, parsed)
+		}
+		return items, nil
+	case string:
+		parts := strings.Split(typed, ",")
+		items := make([]int64, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			parsed, err := configInt64AllowZero(part)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, parsed)
+		}
+		return items, nil
+	default:
+		parsed, err := configInt64AllowZero(value)
+		if err != nil {
+			return nil, err
+		}
+		return []int64{parsed}, nil
+	}
 }
 
 func normalizeConfigStringSlice(items []string) []string {
