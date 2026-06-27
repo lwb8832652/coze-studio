@@ -236,7 +236,12 @@ Browser smoke remains required before RC:
 
 ## Known P0 Issues
 
-- Full desktop browser smoke is still pending.
+- Full desktop browser smoke is still pending. API-level smoke has covered
+  canonical task creation and task-memory search, edit, delete, restore,
+  import, and export on the live local server, but the in-app browser
+  automation timed out while capturing DOM/screenshot state, so cancel/retry
+  and visual `任务记忆` panel confirmation still need a manual browser pass
+  before RC.
 - Atlas apply against the approved external debug DB target completed, and the
   follow-up dry-run reports `Schema is synced, no changes to be made`. The
   debug flow intentionally no longer pulls a MySQL dev image.

@@ -886,7 +886,7 @@ func (r *threadRepository) ListMemories(ctx context.Context, req ListMemoriesReq
 	if text := strings.TrimSpace(req.Query); text != "" {
 		pattern := "%" + escapeSQLLike(text) + "%"
 		query = query.Where(
-			"(content LIKE ? ESCAPE '\\' OR source_type LIKE ? ESCAPE '\\' OR source_id LIKE ? ESCAPE '\\')",
+			memorySearchLikeCondition(),
 			pattern,
 			pattern,
 			pattern,
@@ -3405,11 +3405,15 @@ func jsonToString(value datatypes.JSON) string {
 
 func escapeSQLLike(value string) string {
 	replacer := strings.NewReplacer(
-		`\`, `\\`,
-		`%`, `\%`,
-		`_`, `\_`,
+		`!`, `!!`,
+		`%`, `!%`,
+		`_`, `!_`,
 	)
 	return replacer.Replace(value)
+}
+
+func memorySearchLikeCondition() string {
+	return "(content LIKE ? ESCAPE '!' OR source_type LIKE ? ESCAPE '!' OR source_id LIKE ? ESCAPE '!')"
 }
 
 func stringPtrOrNil(value string) *string {

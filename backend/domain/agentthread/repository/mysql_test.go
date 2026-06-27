@@ -145,6 +145,14 @@ func TestThreadRepositoryRejectsInvalidMetadataJSON(t *testing.T) {
 	require.Contains(t, err.Error(), "metadata")
 }
 
+func TestMemorySearchLikeConditionUsesMySQLSafeEscape(t *testing.T) {
+	condition := memorySearchLikeCondition()
+
+	require.Contains(t, condition, "ESCAPE '!'")
+	require.NotContains(t, condition, `ESCAPE '\'`)
+	require.Equal(t, `100!%!_ready!! \ path`, escapeSQLLike(`100%_ready! \ path`))
+}
+
 func TestRuntimeFileRepositoryUpsertsByRunAndVirtualPath(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
