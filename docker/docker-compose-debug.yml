@@ -12,7 +12,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-opencoze}
       MYSQL_USER: ${MYSQL_USER:-coze}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-coze123}
-    profiles: ['middleware', 'mysql-setup', 'mysql']
+    profiles: ['local-mysql', 'mysql']
     env_file: *env_file
     ports:
       - '127.0.0.1:3306:3306'
@@ -111,8 +111,6 @@ services:
       minio-setup:
         condition: service_completed_successfully
       mysql-setup-schema:
-        condition: service_completed_successfully
-      mysql-setup-init-sql:
         condition: service_completed_successfully
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
@@ -500,23 +498,20 @@ services:
     container_name: coze-mysql-setup-schema
     profiles: ['middleware', 'mysql-setup', 'run-server']
     env_file: *env_file
-    depends_on:
-      mysql:
-        condition: service_healthy
     volumes:
       - ./atlas/opencoze_latest_schema.hcl:/opencoze_latest_schema.hcl
     entrypoint:
       - /bin/sh
       - -c
       - |
-        set -ex
-        TMP_ATLAS_URL="${ATLAS_URL}"
-        if [ "${MYSQL_HOST}" = "localhost" ] || [ "${MYSQL_HOST}" = "127.0.0.1" ]; then
+        set -e
+        TMP_ATLAS_URL="$${ATLAS_URL}"
+        if [ "$${MYSQL_HOST}" = "localhost" ] || [ "$${MYSQL_HOST}" = "127.0.0.1" ]; then
             echo "MYSQL_HOST is localhost or 127.0.0.1, replacing with docker network address"
-            TMP_ATLAS_URL="mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:${MYSQL_PORT}/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=True"
+            TMP_ATLAS_URL="mysql://$${MYSQL_USER}:$${MYSQL_PASSWORD}@mysql:$${MYSQL_PORT}/$${MYSQL_DATABASE}?charset=utf8mb4&parseTime=True"
         fi
 
-        echo "final atlas url: $${TMP_ATLAS_URL}"
+        echo "final atlas target: host=$${MYSQL_HOST} port=$${MYSQL_PORT} database=$${MYSQL_DATABASE}"
         for i in `seq 1 60`; do
              if atlas schema apply \
                  -u "$${TMP_ATLAS_URL}" \
@@ -536,16 +531,13 @@ services:
   mysql-setup-init-sql:
     image: mysql:8.4.5
     container_name: coze-mysql-setup-init-sql
-    profiles: ['middleware', 'mysql-setup', 'run-server', 'volcano-setup']
+    profiles: ['sql-init', 'volcano-setup']
     env_file: *env_file
-    depends_on:
-      mysql:
-        condition: service_healthy
     command:
       - /bin/sh
       - -c
       - |
-        set -ex
+        set -e
         for i in $$(seq 1 60); do
           DB_HOST="$${MYSQL_HOST}"
           if [ "$${MYSQL_HOST}" = "localhost" ] || [ "$${MYSQL_HOST}" = "127.0.0.1" ]; then

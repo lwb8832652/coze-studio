@@ -2351,7 +2351,8 @@ cd backend && go test ./...
 ## Database & Infrastructure
 
 ### Docker Services Stack
-- **Database**: MySQL 8.4.5
+- **Database**: MySQL-compatible server; this Codex worktree's debug path uses
+  an external MySQL endpoint from the ignored `docker/.env.debug` file.
 - **Cache**: Redis 8.0
 - **Search**: Elasticsearch 8.18.0 with SmartCN analyzer
 - **Vector DB**: Milvus v2.5.10 for embeddings
@@ -2373,6 +2374,29 @@ make sql_init
 # Atlas migration management
 make atlas-hash
 ```
+
+### Debug MySQL In This Worktree
+
+- Do not commit MySQL credentials or remote endpoint values. Keep them only in
+  the ignored `docker/.env.debug` file.
+- The debug compose `middleware` profile should not start the local
+  `mysql:8.4.5` database service or the MySQL-image init client by default.
+  `make middleware` / `make sync_db` should use `MYSQL_HOST`, `MYSQL_PORT`,
+  `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, and `ATLAS_URL` from
+  `docker/.env.debug`.
+- The local MySQL container is a manual fallback only. Start it explicitly with
+  the `local-mysql` or `mysql` profile if a future task intentionally needs a
+  disposable local database.
+- `make sql_init` uses a local `mysql` or `mariadb` client and the ignored
+  debug env file. Install a local client before importing seed SQL; do not
+  reintroduce the MySQL Docker image into the default middleware path.
+- `mysql-setup-schema` must not print full Atlas URLs because they include
+  credentials. Log only sanitized target metadata such as host, port, and
+  database name.
+- Avoid pasting full `docker compose config --env-file docker/.env.debug`
+  output into chat or logs. Compose resolves `env_file` values and can print
+  credentials. Use `config --services`, `--no-interpolate`, or targeted
+  non-secret checks instead.
 
 ### Atlas CLI In Codex Worktrees
 

@@ -130,12 +130,12 @@ Every implementation slice must update this document:
 
 | Subtask | Status | P0 Acceptance | Notes |
 | --- | --- | --- | --- |
-| 上线验收-Atlas migration 状态 | 待验收 | Local Atlas can inspect/apply pending migrations without drift. | Use local Atlas; do not rely on a remote binary. |
+| 上线验收-Atlas migration 状态 | 进行中 | Local Atlas can inspect/apply pending migrations without drift. | Local Atlas v0.35.0 `migrate validate` passes after regenerating `atlas.sum`. External MySQL inspect succeeds against the ignored debug env target. Full apply/dry-run remains a release-gate action because default debug no longer pulls a MySQL dev image. |
 | 上线验收-生成 API 合约 | 已完成 | IDL/generated Workbench clients are in sync after touched API changes. | Backfilled existing task-thread, run, token, artifact, resume, cancel, and retry contracts into `idl/workbench/task.thrift`; added api-schema contract coverage so task-thread generated clients cannot exist without thrift service methods. Verified with `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`. `rushx update` succeeds but currently rewrites unrelated generated files' formatting/license headers, so that generator-wide churn is excluded from P0 commits. |
 | 上线验收-后端单测 | 待验收 | Targeted backend package tests pass for touched code. | Record known unrelated failures separately. |
 | 上线验收-前端类型/单测 | 待验收 | Targeted app/package typecheck or unit tests pass for touched UI. | Use package-local commands when full Rush is too slow. |
 | 上线验收-桌面端任务冒烟 | 待开发 | Manual or automated browser path covers P0 task lifecycle. | Required before first P0 release candidate. |
-| 上线验收-部署配置清单 | 待开发 | Document required env vars, disabled defaults, middleware services, and rollback note. | Keep secrets out of docs. |
+| 上线验收-部署配置清单 | 进行中 | Document required env vars, disabled defaults, middleware services, and rollback note. | Debug middleware now reads external MySQL settings from ignored `docker/.env.debug`; default middleware no longer starts local `mysql:8.4.5` or the MySQL-image init client. Secrets stay out of tracked files. |
 | 上线验收-已知问题清单 | 待开发 | Known unrelated failures and deferred P1/P2 items are documented before release. | Prevent P0 from silently absorbing Phase 2 work. |
 
 ## P1 After P0

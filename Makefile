@@ -54,9 +54,19 @@ dump_db: env dump_sql_schema
 	@. $(ENV_FILE); \
 	bash $(DUMP_DB_SCRIPT)
 
-sql_init:
-	@echo "Init sql data..."
-	@docker compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) --profile mysql-setup up -d
+sql_init: env
+	@echo "Init sql data with local MySQL client..."
+	@. $(ENV_FILE); \
+	if command -v mysql >/dev/null 2>&1; then \
+		MYSQL_CLIENT=mysql; \
+	elif command -v mariadb >/dev/null 2>&1; then \
+		MYSQL_CLIENT=mariadb; \
+	else \
+		echo "mysql/mariadb client not found. Install a local client before running make sql_init."; \
+		exit 1; \
+	fi; \
+	MYSQL_PWD="$$MYSQL_PASSWORD" $$MYSQL_CLIENT -h "$$MYSQL_HOST" -P "$$MYSQL_PORT" -u "$$MYSQL_USER" "$$MYSQL_DATABASE" < $(MYSQL_SCHEMA); \
+	MYSQL_PWD="$$MYSQL_PASSWORD" $$MYSQL_CLIENT -h "$$MYSQL_HOST" -P "$$MYSQL_PORT" -u "$$MYSQL_USER" "$$MYSQL_DATABASE" < $(MYSQL_INIT_SQL)
 
 middleware:
 	@echo "Start middleware docker environment for opencoze app"
