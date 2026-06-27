@@ -1061,14 +1061,18 @@ cd backend && go test ./...
   tenant policy, scanner, or domain-policy substitute.
 - Runtime Doctor starts at `GET /api/workbench/runtime_doctor`. Keep this API
   read-only and metadata-only. The current foundation may summarize Eino ADK
-  runtime policy, Web Fetch/Web Search availability, and MCP server health
-  counts for a space. It must not expose MCP config/auth, web search endpoint
+  runtime policy, default model configuration readiness, Web Fetch/Web Search
+  availability, Skill catalog counts/safe enabled names, and MCP server health
+  counts for a space. Model checks should resolve the configured chat model
+  without invoking generation/streaming. Skill checks should use
+  `skills.runtime_catalog` and expose only bounded counts and sanitized names;
+  do not expose Skill schemas, executors, permissions, or prompt-like content.
+  It must not expose MCP config/auth, web search endpoint
   details, API keys, provider raw diagnostics, prompts, model input/output,
   tool arguments/results, URLs, filenames, object keys, checkpoint bytes, or
-  credentials. Frontend Runtime Doctor UI, model connectivity probes, Skill
-  checks, sandbox diagnostics, and provider capability deep checks are later
-  Runtime Doctor slices; add them through this same safe summary boundary
-  instead of creating separate diagnostic endpoints.
+  credentials. Memory checks, sandbox diagnostics, and provider capability
+  deep checks are later Runtime Doctor slices; add them through this same safe
+  summary boundary instead of creating separate diagnostic endpoints.
 - Use a Coze-backed `plantask.Backend` for durable task-plan state. Do not make
   DeepAgent `write_todos` and `plantask` independent systems of record; disable
   one when both would otherwise be exposed.

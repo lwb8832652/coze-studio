@@ -16,9 +16,9 @@
 
 import type { ReactNode } from 'react';
 
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -132,6 +132,18 @@ describe('TaskRuntimeDoctorSection', () => {
             message: 'Eino ADK runtime is enabled',
           },
           {
+            name: 'model.default',
+            category: 'model',
+            status: 'ready',
+            message: 'Workbench default chat model is configured',
+          },
+          {
+            name: 'skills.runtime_catalog',
+            category: 'skills',
+            status: 'ready',
+            message: '2 enabled / 3 total skills: research, writer',
+          },
+          {
             name: 'mcp_tools.runtime_health',
             category: 'mcp_tools',
             status: 'warning',
@@ -164,7 +176,13 @@ describe('TaskRuntimeDoctorSection', () => {
     expect(container.textContent).toContain('健康 1');
     expect(container.textContent).toContain('未知 2');
     expect(container.textContent).toContain('模型配置');
+    expect(container.textContent).toContain(
+      'Workbench default chat model is configured',
+    );
     expect(container.textContent).toContain('Skill 检查');
+    expect(container.textContent).toContain(
+      '2 enabled / 3 total skills: research, writer',
+    );
     expect(container.textContent).toContain('记忆检查');
     expect(container.textContent).toContain('后端深度检查待接入');
     expect(container.textContent).not.toContain('api_key');

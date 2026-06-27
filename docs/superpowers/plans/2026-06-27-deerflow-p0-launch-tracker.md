@@ -91,8 +91,8 @@ Every implementation slice must update this document:
 | 运行设置-前端聚合面板 | 待开发 | Settings UI can view/edit P0 runtime, model, reasoning, web, memory, Skill, and MCP toggles from one task-oriented surface. | Use Semi/Coze Design. |
 | Runtime Doctor-后端基础接口 | 已完成 | `GET /api/workbench/runtime_doctor` returns ADK runtime, Web, and MCP health summaries safely. | Recent backend slice completed this. |
 | Runtime Doctor-前端状态面板 | 已完成 | UI displays runtime, model config, Web, MCP, Skill, and memory status with refresh/error states. | Added task-detail panel with refresh/error states and safe pending cards for model/Skill/memory deep checks. Verified with `rushx test -- src/pages/tasks/__tests__/task-runtime-doctor-section.test.tsx src/pages/tasks/__tests__/tasks-service.test.ts src/pages/tasks/__tests__/task-detail.test.tsx` and `rushx lint` in `frontend/apps/coze-studio`. |
-| Runtime Doctor-模型连通性基础检查 | 待开发 | P0 shows whether configured model settings are present and usable enough to start a run. | Deep live provider capability matrix is P1. |
-| Runtime Doctor-Skill/MCP基础健康 | 待开发 | P0 shows enabled/disabled/error counts and safe names where already available. | Do not expose auth/config secrets. |
+| Runtime Doctor-模型连通性基础检查 | 已完成 | P0 shows whether configured model settings are present and usable enough to start a run. | Added backend `model.default` check that resolves the configured default chat model without invoking generation/streaming, converts provider errors/panics to bounded safe diagnostics, and renders through the existing task-detail Runtime Doctor panel. Verified with `go test ./application/workbench -run 'TestRuntimeDoctor(Model|Skill)' -count=1`, `go test ./api/handler/coze -run 'TestWorkbenchRuntimeDoctor' -count=1`, and `rushx test -- src/pages/tasks/__tests__/task-runtime-doctor-section.test.tsx`. Deep live provider capability matrix stays P1. |
+| Runtime Doctor-Skill/MCP基础健康 | 已完成 | P0 shows enabled/disabled/error counts and safe names where already available. | Added backend `skills.runtime_catalog` check with enabled/total counts and bounded sanitized enabled Skill names; uninitialized Skill service reports disabled, real list failures report error. Existing MCP health summary remains metadata-only. Verified with the Runtime Doctor backend, handler, and frontend tests above. |
 | Runtime Doctor-sandbox/shell深度诊断 | 延后(P1) | N/A | Keep shell/sandbox disabled or development-only until the boundary is closed. |
 
 ### 3. Skills / MCP / Tools 最小可用闭环
@@ -104,7 +104,7 @@ Every implementation slice must update this document:
 | Skills-Eino runtime 注入 | 待验收 | Enabled Skills can be loaded through Eino ADK middleware with safe policy boundaries. | Eino-first, no parallel custom executor. |
 | Skills-slash/渐进激活 | 待验收 | User-visible activation behavior matches DeerFlow enough for task workflows. | Browser smoke can be manual for P0. |
 | MCP-服务/工具目录配置 | 待验收 | User can configure and list MCP servers/tools with durable metadata and safe auth handling. | No raw secrets in responses. |
-| MCP-健康状态 | 待验收 | Health status is visible in tool settings or Runtime Doctor. | P0 can show summary counts first. |
+| MCP-健康状态 | 已完成 | Health status is visible in tool settings or Runtime Doctor. | Runtime Doctor displays total/enabled/healthy/unhealthy/unknown MCP counts without config/auth details. |
 | MCP-Eino 工具调用 | 待验收 | Enabled MCP/tool entries can be invoked through Eino ADK tool path. | Tool policy allowlist must apply. |
 | Tools-基础 allowlist 策略 | 待验收 | Empty explicit allowlist denies that tool class; configured grants do not broaden child agent permissions. | Reuse `ADKToolPolicyProvider`. |
 | Tools-任务详情工具事件 | 待验收 | Tool events appear as safe task-detail cards. | No tool arguments/results in cards unless already reviewed as safe. |

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,7 @@ import (
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
+	"github.com/coze-dev/coze-studio/backend/internal/testutil"
 )
 
 func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
@@ -38,7 +40,12 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	t.Setenv("AGENT_THREAD_WEB_SEARCH_ENDPOINT", "https://search.example.test/private/path")
 	t.Setenv("AGENT_THREAD_WEB_SEARCH_API_KEY", "secret-search-key")
 	installMCPToolTestService(t)
-	appworkbench.InitService(&appworkbench.ServiceComponents{MCPToolSVC: appmcptool.SVC})
+	appworkbench.InitService(&appworkbench.ServiceComponents{
+		MCPToolSVC: appmcptool.SVC,
+		ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return &testutil.UTChatModel{}, true, nil
+		},
+	})
 
 	_, err := appmcptool.SVC.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
@@ -82,6 +89,8 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	require.Contains(t, body, `"eino_adk_enabled":true`)
 	require.Contains(t, body, `"web_search"`)
 	require.Contains(t, body, `"configured":true`)
+	require.Contains(t, body, `"model.default"`)
+	require.Contains(t, body, `"skills.runtime_catalog"`)
 	require.Contains(t, body, `"mcp_tools"`)
 	require.Contains(t, body, `"total_servers":1`)
 	require.Contains(t, body, `"healthy_servers":1`)
@@ -100,6 +109,6 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(resp.Result().Body(), &decoded))
-	require.Equal(t, "ready", decoded.Data.Status)
+	require.Equal(t, "warning", decoded.Data.Status)
 	require.NotEmpty(t, decoded.Data.Checks)
 }
