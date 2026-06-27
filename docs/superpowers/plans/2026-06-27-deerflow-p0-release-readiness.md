@@ -228,7 +228,7 @@ Browser smoke remains required before RC:
 - create a new task;
 - observe stream/event timeline to one terminal state;
 - reopen and refresh task detail;
-- cancel an active run or retry a failed run;
+- click the visible cancel/retry controls and confirm the detail refreshes;
 - open `任务记忆`, search/edit/delete/restore/import/export;
 - confirm Runtime Doctor shows runtime, model, Web, MCP, Skill, and memory
   status without secrets;
@@ -237,11 +237,11 @@ Browser smoke remains required before RC:
 ## Known P0 Issues
 
 - Full desktop browser smoke is still pending. API-level smoke has covered
-  canonical task creation and task-memory search, edit, delete, restore,
-  import, and export on the live local server, but the in-app browser
-  automation timed out while capturing DOM/screenshot state, so cancel/retry
-  and visual `任务记忆` panel confirmation still need a manual browser pass
-  before RC.
+  canonical task creation, pending cancel, task-level retry metadata, and
+  task-memory search, edit, delete, restore, import, and export on the live
+  local server, but the in-app browser automation timed out while capturing
+  DOM/screenshot state, so the visible cancel/retry button path and visual
+  `任务记忆` panel confirmation still need a manual browser pass before RC.
 - Atlas apply against the approved external debug DB target completed, and the
   follow-up dry-run reports `Schema is synced, no changes to be made`. The
   debug flow intentionally no longer pulls a MySQL dev image.

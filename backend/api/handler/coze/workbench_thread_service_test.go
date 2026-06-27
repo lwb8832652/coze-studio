@@ -1736,6 +1736,41 @@ func TestCancelTaskThreadRunHandlerTransitionsRun(t *testing.T) {
 	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
 }
 
+func TestCancelTaskThreadRunHandlerCancelsPendingRun(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/cancel", CancelTaskThreadRun)
+	installAgentThreadTestService(t)
+
+	resp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		AssistantID: "lead-agent",
+		Input:       `{"messages":[{"role":"user","content":"取消排队任务"}]}`,
+		Config:      `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	runID := resp.Run.RunID
+	require.Equal(t, appagentthread.RunStatusPending, resp.Run.Status)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs/"+strconv.FormatInt(runID, 10)+"/cancel",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"run_id":"`+strconv.FormatInt(runID, 10)+`"`)
+	require.Contains(t, body, `"status":"canceled"`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{
+		RunID: runID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+}
+
 func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 	h := server.Default()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/retry", RetryTaskThreadSubagentRun)

@@ -1159,6 +1159,7 @@ func CancelTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
 		RunID: req.RunID,
+		From:  runResp.Run.Status,
 	})
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
