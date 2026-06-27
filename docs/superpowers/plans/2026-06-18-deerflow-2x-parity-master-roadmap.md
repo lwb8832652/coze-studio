@@ -48,6 +48,28 @@ inline. The default decision rule is: if a user cannot observe the difference
 in the DeerFlow-equivalent task, Agent, Skill, MCP/tool, memory, or token usage
 workflow, it is Phase 2.
 
+### P0 Launch Cutline
+
+The active execution plan is now the P0 launch tracker:
+
+- `docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md`
+
+Use that tracker as the task ledger before selecting implementation work. The
+master roadmap remains the full DeerFlow parity reference, but P0 intentionally
+narrows the first launchable release to:
+
+1. task conversation and task-detail lifecycle;
+2. Go-native Eino ADK execution stability and required runtime settings;
+3. minimal Skills, MCP, and tool configuration/invocation loop;
+4. task memory management and run/subagent token usage visibility;
+5. lightweight Runtime Doctor and release smoke checks.
+
+Any item outside that cutline must be marked `延后(P1)` or `延后(P2)` in the
+tracker instead of being implemented inline. Examples include full LangGraph
+compatibility suites beyond P0 task behavior, complex security scanning,
+policy administration UI, Prometheus/OpenTelemetry exporters, storage
+lifecycle, load/chaos gates, deep sandbox diagnostics, and full browser CI.
+
 ### Phase 1 Mainline Queue
 
 Use this queue when selecting the next task. Complete the earliest unfinished
@@ -2242,19 +2264,21 @@ Exit gate:
 
 ## Remaining Work Estimate
 
-With IM Channels excluded and M8 parked into Phase 2, the remaining scope is
+With IM Channels excluded and M8 parked into Phase 2, the current delivery
+estimate is managed by the P0 launch tracker. The first launchable cutline is
 approximately:
 
-- Phase 1: finish the DeerFlow parity milestone groups M0 through M7,
-  including task conversations/detail, runtime execution semantics, Agents,
-  Skills, MCP/tools, sandbox/files/artifacts where required for parity,
-  memory, token usage, and settings.
-- Phase 2: resume M8 production-hardening only after Phase 1 parity exits, or
-  earlier only for regression fixes that block Phase 1.
-- Recalculate task count after the next Phase 1 slice is selected, because the
-  active backlog should now be measured against DeerFlow-visible workflows
-  rather than all production-hardening ideas.
+- P0: 5 mainlines and about 10-14 implementation or verification slices:
+  task lifecycle, runtime/settings/Runtime Doctor, Skills/MCP/tools minimum
+  loop, memory/token validation, and release smoke checks.
+- P1: full parity polish after P0, including broader browser E2E, deeper
+  Runtime Doctor probes, full LangGraph compatibility suites, richer sandbox
+  and artifact behavior, policy controls, and usage/cost refinements.
+- P2: production-hardening and platform optimization such as complex scanners,
+  guardrail policy administration, observability exporters, storage lifecycle,
+  load/chaos gates, and expanded operator runbooks.
 
-These numbers should be recalculated after M2, M4, and M7 because ADK runtime
-semantics, sandbox/provisioner integration, MCP stdio isolation, and memory
-retrieval are the largest Phase 1 technical uncertainties.
+Recalculate counts inside
+`docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md` after each
+large mainline is completed. Do not use this master roadmap as a free-form
+task queue while P0 remains open.

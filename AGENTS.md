@@ -130,6 +130,30 @@ cd backend && go test ./...
 
 ### Agent Runtime Direction
 
+- Current active scope is the P0 launch cutline documented in
+  `docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md`. Treat
+  that file as the authoritative task ledger before selecting the next
+  implementation slice. The older full roadmap remains the long-term parity
+  reference, not a free-form active backlog while P0 is open.
+- Keep the P0 delivery goal narrow: ship one usable, production-shaped
+  DeerFlow-parity version quickly. Prioritize task lifecycle, Go-native Eino
+  ADK execution stability, runtime settings, lightweight Runtime Doctor,
+  minimal Skills/MCP/tools loop, task memory management, token usage display,
+  and release smoke checks.
+- Track work by large mainline and fine-grained subtask in the P0 tracker.
+  Status values must stay explicit: `已完成`, `待验收`, `进行中`, `待开发`,
+  `阻塞`, `延后(P1)`, or `延后(P2)`. Use concrete labels such as
+  `任务主流程闭环-新建任务入口` instead of broad buckets.
+- Before starting a development slice, update the selected subtask in the P0
+  tracker to `进行中` and record the intended verification. Before committing
+  a large mainline slice, update the same tracker with completed, pending,
+  blocked, or deferred subtasks and the verification evidence. This document
+  update is part of the deliverable, not optional cleanup.
+- Do not let P0 absorb deferred work. Full LangGraph compatibility suites,
+  complex security scanning, policy administration UI, deep sandbox
+  diagnostics, Prometheus/OpenTelemetry exporters, storage lifecycle,
+  load/chaos gates, and full browser CI are P1/P2 unless they directly fix a
+  P0 regression.
 - Active delivery priority is Phase 1 DeerFlow parity. First completely
   replicate DeerFlow 2.x task/conversation, execution flow, Agent, Skill, MCP
   tool, memory, token-usage, and settings capabilities in Coze Studio while
