@@ -122,8 +122,8 @@ Every implementation slice must update this document:
 | 任务记忆-权限只读态 | 已完成 | Non-owner read-only affordance disables write actions while backend remains authoritative. | UI is not the authority. |
 | 任务记忆-浏览器冒烟 | 待开发 | Browser smoke covers search, edit, delete, restore, import, export, and read-only display. | Full CI browser suite can be P1. |
 | 记忆抽取-worker 默认关闭 | 已完成 | Model-backed extractor can be configured but does not start accidentally without explicit env. | P0 may ship with extraction disabled. |
-| Token-运行级用量聚合 | 待验收 | Task detail can show run-level total token count and call count. | Missing usage means omit display, not zero cost. |
-| Token-子智能体用量聚合 | 待验收 | Child subagent cards can use grouped run aggregates without one request per child. | Keep provider/model label bounded. |
+| Token-运行级用量聚合 | 已完成 | Task detail can show run-level total token count and call count. | Existing task-detail loader maps `aggregate` into the top-bar `TaskTokenUsageIndicator` and omits missing/zero usage. Verified with `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx`. |
+| Token-子智能体用量聚合 | 已完成 | Child subagent cards can use grouped run aggregates without one request per child. | Existing subagent loader calls token usage once per parent with `include_child_runs=true`, maps `run_aggregates` by child `run_id`, displays bounded provider/model attribution and token/call metadata, and omits missing child usage. Verified with `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx`. |
 | Token-成本快照 | 延后(P1) | N/A | Only display cost when backend already provides safe positive cost and one currency. |
 
 ### 5. 上线验收和回归
