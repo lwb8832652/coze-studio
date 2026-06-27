@@ -1935,6 +1935,66 @@ func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
 	require.Contains(t, body, `"payload":"{\"status\":\"running\",\"worker_id\":\"worker-a\"}"`)
 }
 
+func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"执行工具"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "tool.completed",
+		Payload: `{
+			"role":"tool",
+			"tool_name":"search_web",
+			"tool_call_id":"call_123",
+			"content":"tool result sk-secret https://private.example/signed",
+			"reasoning_content":"hidden chain of thought",
+			"tool_calls":[{"id":"call_123","function":{"name":"search_web","arguments":"{\"url\":\"s3://bucket/raw\"}"}}],
+			"media":[{"url":"s3://bucket/raw.png"}],
+			"usage":{"prompt_tokens":10,"completion_tokens":5}
+		}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/run_events?page=1&page_size=10", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Events []struct {
+				EventType string `json:"event_type"`
+				Payload   string `json:"payload"`
+			} `json:"events"`
+			Total int64 `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Result().Body(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, int64(1), resp.Data.Total)
+	require.Len(t, resp.Data.Events, 1)
+	require.Equal(t, "tool.completed", resp.Data.Events[0].EventType)
+
+	payload := resp.Data.Events[0].Payload
+	require.JSONEq(t, `{"redacted":true,"role":"tool","tool_name":"search_web","tool_call_id":"call_123","result_present":true}`, payload)
+	require.NotContains(t, payload, "tool result")
+	require.NotContains(t, payload, "sk-secret")
+	require.NotContains(t, payload, "private.example")
+	require.NotContains(t, payload, "hidden chain of thought")
+	require.NotContains(t, payload, "tool_calls")
+	require.NotContains(t, payload, "arguments")
+	require.NotContains(t, payload, "s3://bucket/raw")
+	require.NotContains(t, payload, "prompt_tokens")
+	require.NotContains(t, payload, "completion_tokens")
+	require.NotContains(t, payload, "media")
+}
+
 func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)

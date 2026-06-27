@@ -224,6 +224,9 @@ go test -gcflags="all=-l -N" ./application/agentthread \
 go test -gcflags="all=-l -N" ./api/handler/coze \
   -run 'TestGetTaskThreadTokenUsageHandler(ReturnsRowsAndAggregate|CanIncludeChildRuns)' \
   -count=1
+go test -gcflags="all=-l -N" ./api/handler/coze \
+  -run 'Test(ListTaskThreadRunEventsHandler(RedactsUnsafePayload|ReturnsEvents)|StreamTaskThreadRunEventsWritesEventsAndDone|TaskThreadRunEventStreamStopsForInterruptedRun)' \
+  -count=1
 ```
 
 Browser smoke remains required before RC:

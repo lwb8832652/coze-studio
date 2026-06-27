@@ -45,6 +45,7 @@ const (
 	maxRunEventStreamIntervalMs     = int64(5000)
 	minRunEventStreamTimeoutMs      = int64(1)
 	maxRunEventStreamTimeoutMs      = int64(60000)
+	maxSafeRunEventPayloadStringLen = 128
 )
 
 type taskThreadRunEventStreamWriter interface {
@@ -1570,9 +1571,98 @@ func taskThreadRunEventToAPI(event *appagentthread.RunEventSummary) *threadapi.T
 		ThreadID:  event.ThreadID,
 		RunID:     event.RunID,
 		EventType: event.EventType,
-		Payload:   event.Payload,
+		Payload:   taskThreadRunEventPayloadToAPI(event.EventType, event.Payload),
 		CreatedAt: event.CreatedAt,
 	}
+}
+
+func taskThreadRunEventPayloadToAPI(eventType, payload string) string {
+	if !isUnsafeTaskThreadRunEventPayload(eventType) {
+		return payload
+	}
+
+	safePayload := map[string]any{
+		"redacted": true,
+	}
+	var rawPayload map[string]any
+	if err := sonic.UnmarshalString(payload, &rawPayload); err == nil {
+		copySafeRunEventString(rawPayload, safePayload, "role")
+		copySafeRunEventString(rawPayload, safePayload, "tool_name")
+		copySafeRunEventString(rawPayload, safePayload, "tool_call_id")
+		copySafeRunEventString(rawPayload, safePayload, "finish_reason")
+		copySafeRunEventString(rawPayload, safePayload, "status")
+		copySafeRunEventBool(rawPayload, safePayload, "arguments_present")
+		copySafeRunEventBool(rawPayload, safePayload, "result_present")
+
+		if eventType == "tool.completed" && safePayload["result_present"] == nil && hasSafeRunEventString(rawPayload, "content") {
+			safePayload["result_present"] = true
+		}
+	}
+
+	encoded, err := sonic.MarshalString(safePayload)
+	if err != nil {
+		return `{"redacted":true}`
+	}
+
+	return encoded
+}
+
+func isUnsafeTaskThreadRunEventPayload(eventType string) bool {
+	switch eventType {
+	case "message.completed",
+		"tool.completed",
+		"tool.failed",
+		"model.safety_finish",
+		"agent.output":
+		return true
+	default:
+		return false
+	}
+}
+
+func copySafeRunEventString(source, target map[string]any, key string) {
+	if value, ok := safeRunEventString(source[key]); ok {
+		target[key] = value
+	}
+}
+
+func copySafeRunEventBool(source, target map[string]any, key string) {
+	if value, ok := source[key].(bool); ok {
+		target[key] = value
+	}
+}
+
+func hasSafeRunEventString(source map[string]any, key string) bool {
+	_, ok := safeRunEventString(source[key])
+
+	return ok
+}
+
+func safeRunEventString(value any) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	text = strings.Map(func(item rune) rune {
+		if item < 0x20 || item == 0x7f {
+			return -1
+		}
+
+		return item
+	}, text)
+	if text == "" {
+		return "", false
+	}
+	runes := []rune(text)
+	if len(runes) > maxSafeRunEventPayloadStringLen {
+		text = string(runes[:maxSafeRunEventPayloadStringLen])
+	}
+
+	return text, true
 }
 
 func taskThreadTokenUsageToAPI(usage *appagentthread.TokenUsageSummary) *threadapi.TaskThreadTokenUsage {
