@@ -29,6 +29,7 @@ import (
 	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
+	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	apptask "github.com/coze-dev/coze-studio/backend/application/task"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
@@ -40,6 +41,7 @@ type ApplicationService struct {
 	skillSVC          *appskill.ApplicationService
 	taskSVC           *apptask.ApplicationService
 	agentThreadSVC    *appagentthread.ApplicationService
+	mcpToolSVC        *appmcptool.ApplicationService
 	taskApp           workbenchTaskApplication
 	knowledgeSVC      crossknowledge.Knowledge
 	agentRunSVC       agentrun.Run

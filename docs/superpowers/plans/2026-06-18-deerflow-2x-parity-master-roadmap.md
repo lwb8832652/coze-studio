@@ -243,7 +243,7 @@ Migration rules:
 | Feedback | run feedback and statistics | absent | run-level feedback API and task-detail interaction |
 | Suggestions | follow-up suggestions | absent | post-run suggestion generation and UI |
 | Web tools | search, fetch and HTTP tools | ADK Web Tool Catalog exposes policy-controlled `web_fetch` and backend-driven/env-backed HTTP `web_search`; Workbench can serialize per-run search/fetch settings | Durable provider settings/UI, scanner and domain policy |
-| Runtime doctor | provider and extension diagnostics | scattered configuration errors | model/MCP/sandbox/Skill connectivity and capability checks |
+| Runtime doctor | provider and extension diagnostics | backend read-only Runtime Doctor foundation returns ADK runtime, Web tool, and MCP health summaries | frontend panel plus model, Skill, sandbox, and provider capability deep checks |
 | Observability | tracing, run journal, structured metrics | logs and local counters | Phase 2 enhancement: OpenTelemetry traces, metrics, dashboards, runbook. Phase 1 keeps only the events and usage data visible in DeerFlow-equivalent workflows. |
 
 ## Milestone Order
@@ -432,6 +432,15 @@ Progress evidence as of 2026-06-21:
   and serializes bounded `web_tools.http` run config consumed by the existing
   ADK `web_fetch` backend. Durable Web provider settings, tenant policy,
   scanner/domain policy, and admin UI remain future settings work.
+- [x] M2.19 complete: Runtime Doctor backend foundation now exposes
+  `GET /api/workbench/runtime_doctor` with generated frontend API contracts.
+  The read-only response summarizes Eino ADK runtime policy, Web Fetch/Web
+  Search availability, and MCP server health counts for a space without
+  returning MCP config/auth, web search endpoint details, API keys, provider
+  raw diagnostics, prompts, model text, tool arguments/results, URLs, filenames,
+  object keys, or checkpoint bytes. Frontend Runtime Doctor UI, model
+  connectivity probes, Skill checks, sandbox diagnostics, and provider
+  capability deep checks remain later mainline Runtime Doctor work.
 - [ ] M2.9b and later middleware capabilities remain open. General workspace
   tools, upload mounting, output promotion, user-visible `agent_artifacts`,
   preview/download APIs, MIME/security scanning, retention cleanup, shell, and

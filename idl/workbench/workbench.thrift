@@ -50,9 +50,65 @@ struct WorkbenchChatResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct GetWorkbenchRuntimeDoctorRequest {
+    1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct RuntimeDoctorCheck {
+    1: required string name
+    2: required string category
+    3: required string status
+    4: optional string message
+}
+
+struct RuntimeDoctorRuntimeData {
+    1: required string default_mode
+    2: required bool eino_adk_enabled
+}
+
+struct RuntimeDoctorWebToolStatus {
+    1: required string status
+    2: required bool configured
+    3: optional string message
+}
+
+struct RuntimeDoctorWebToolsData {
+    1: required RuntimeDoctorWebToolStatus web_fetch
+    2: required RuntimeDoctorWebToolStatus web_search
+}
+
+struct RuntimeDoctorMCPToolsData {
+    1: required string status
+    2: required i64 total_servers
+    3: required i64 enabled_servers
+    4: required i64 healthy_servers
+    5: required i64 unhealthy_servers
+    6: required i64 unknown_servers
+}
+
+struct WorkbenchRuntimeDoctorData {
+    1: required string status
+    2: required RuntimeDoctorRuntimeData runtime
+    3: required RuntimeDoctorWebToolsData web_tools
+    4: required RuntimeDoctorMCPToolsData mcp_tools
+    5: required list<RuntimeDoctorCheck> checks
+}
+
+struct WorkbenchRuntimeDoctorResponse {
+    1: optional WorkbenchRuntimeDoctorData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 service WorkbenchChatService {
     WorkbenchChatResponse WorkbenchChat(1: WorkbenchChatRequest request)(
         api.post="/api/workbench/chat",
+        api.category="workbench"
+    )
+    WorkbenchRuntimeDoctorResponse GetWorkbenchRuntimeDoctor(1: GetWorkbenchRuntimeDoctorRequest request)(
+        api.get="/api/workbench/runtime_doctor",
         api.category="workbench"
     )
 }

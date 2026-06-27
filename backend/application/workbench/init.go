@@ -18,6 +18,7 @@ package workbench
 
 import (
 	"github.com/coze-dev/coze-studio/backend/application/agentthread"
+	"github.com/coze-dev/coze-studio/backend/application/mcptool"
 	"github.com/coze-dev/coze-studio/backend/application/skill"
 	"github.com/coze-dev/coze-studio/backend/application/task"
 	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
@@ -30,6 +31,7 @@ type ServiceComponents struct {
 	SkillSVC          *skill.ApplicationService
 	TaskSVC           *task.ApplicationService
 	AgentThreadSVC    *agentthread.ApplicationService
+	MCPToolSVC        *mcptool.ApplicationService
 	KnowledgeSVC      crossknowledge.Knowledge
 	AgentRunSVC       agentrun.Run
 	ChatModelProvider chatModelProvider
@@ -47,6 +49,9 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	}
 	if c.AgentThreadSVC != nil {
 		SVC.agentThreadSVC = c.AgentThreadSVC
+	}
+	if c.MCPToolSVC != nil {
+		SVC.mcpToolSVC = c.MCPToolSVC
 	}
 	if c.KnowledgeSVC != nil {
 		SVC.knowledgeSVC = c.KnowledgeSVC

@@ -1035,6 +1035,16 @@ cd backend && go test ./...
   again when the host list is cleared. This UI is a per-run convenience layer
   over the existing `ADKWebToolCatalog`, not a durable Web provider settings,
   tenant policy, scanner, or domain-policy substitute.
+- Runtime Doctor starts at `GET /api/workbench/runtime_doctor`. Keep this API
+  read-only and metadata-only. The current foundation may summarize Eino ADK
+  runtime policy, Web Fetch/Web Search availability, and MCP server health
+  counts for a space. It must not expose MCP config/auth, web search endpoint
+  details, API keys, provider raw diagnostics, prompts, model input/output,
+  tool arguments/results, URLs, filenames, object keys, checkpoint bytes, or
+  credentials. Frontend Runtime Doctor UI, model connectivity probes, Skill
+  checks, sandbox diagnostics, and provider capability deep checks are later
+  Runtime Doctor slices; add them through this same safe summary boundary
+  instead of creating separate diagnostic endpoints.
 - Use a Coze-backed `plantask.Backend` for durable task-plan state. Do not make
   DeepAgent `write_todos` and `plantask` independent systems of record; disable
   one when both would otherwise be exposed.

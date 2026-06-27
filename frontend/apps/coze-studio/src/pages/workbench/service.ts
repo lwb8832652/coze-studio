@@ -20,6 +20,7 @@ import { DeveloperApi } from '@coze-arch/bot-api';
 import { type WorkbenchLLMModel } from './components/types';
 
 export const sendWorkbenchChat = workbench.WorkbenchChat;
+export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 
 export const getWorkbenchLLMModels = async (
   spaceId: string,

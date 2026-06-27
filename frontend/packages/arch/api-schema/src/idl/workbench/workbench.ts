@@ -59,6 +59,48 @@ export interface WorkbenchChatResponse {
   code: number,
   msg: string,
 }
+export interface GetWorkbenchRuntimeDoctorRequest {
+  space_id: string,
+}
+export interface RuntimeDoctorCheck {
+  name: string,
+  category: string,
+  status: string,
+  message?: string,
+}
+export interface RuntimeDoctorRuntimeData {
+  default_mode: string,
+  eino_adk_enabled: boolean,
+}
+export interface RuntimeDoctorWebToolStatus {
+  status: string,
+  configured: boolean,
+  message?: string,
+}
+export interface RuntimeDoctorWebToolsData {
+  web_fetch: RuntimeDoctorWebToolStatus,
+  web_search: RuntimeDoctorWebToolStatus,
+}
+export interface RuntimeDoctorMCPToolsData {
+  status: string,
+  total_servers: number,
+  enabled_servers: number,
+  healthy_servers: number,
+  unhealthy_servers: number,
+  unknown_servers: number,
+}
+export interface WorkbenchRuntimeDoctorData {
+  status: string,
+  runtime: RuntimeDoctorRuntimeData,
+  web_tools: RuntimeDoctorWebToolsData,
+  mcp_tools: RuntimeDoctorMCPToolsData,
+  checks: RuntimeDoctorCheck[],
+}
+export interface WorkbenchRuntimeDoctorResponse {
+  data?: WorkbenchRuntimeDoctorData,
+  code: number,
+  msg: string,
+}
 export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, WorkbenchChatResponse>({
   "url": "/api/workbench/chat",
   "method": "POST",
@@ -82,6 +124,20 @@ export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, Workbe
     ]
   },
   "resType": "WorkbenchChatResponse",
+  "schemaRoot": "api://schemas/idl_workbench_workbench",
+  "service": "workbench"
+});
+export const GetWorkbenchRuntimeDoctor = /*#__PURE__*/createAPI<GetWorkbenchRuntimeDoctorRequest, WorkbenchRuntimeDoctorResponse>({
+  "url": "/api/workbench/runtime_doctor",
+  "method": "GET",
+  "name": "GetWorkbenchRuntimeDoctor",
+  "reqType": "GetWorkbenchRuntimeDoctorRequest",
+  "reqMapping": {
+    "query": [
+      "space_id"
+    ]
+  },
+  "resType": "WorkbenchRuntimeDoctorResponse",
   "schemaRoot": "api://schemas/idl_workbench_workbench",
   "service": "workbench"
 });

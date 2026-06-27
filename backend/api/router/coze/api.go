@@ -440,6 +440,7 @@ func Register(r *server.Hertz) {
 		{
 			_workbench := _api.Group("/workbench", _workbenchMw()...)
 			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)
+			_workbench.GET("/runtime_doctor", coze.GetWorkbenchRuntimeDoctor)
 			_workbench.GET("/skills", append(_listskillsMw(), coze.ListSkills)...)
 			_workbench.GET("/skills/tool_candidates", coze.ListSkillToolCandidates)
 			_skills := _workbench.Group("/skills", _skillsMw()...)

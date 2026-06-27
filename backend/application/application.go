@@ -458,6 +458,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		SkillSVC:       skillSVC,
 		TaskSVC:        taskSVC,
 		AgentThreadSVC: agentThreadSVC,
+		MCPToolSVC:     mcpToolSVC,
 	})
 
 	return &primaryServices{
