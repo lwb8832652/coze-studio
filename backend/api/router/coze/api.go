@@ -468,6 +468,7 @@ func Register(r *server.Hertz) {
 			_mcp_tools.POST("/:server_id/test_call", coze.TestMCPToolCall)
 			_workbench.GET("/tasks", append(_listtasksMw(), coze.ListTasks)...)
 			_workbench.GET("/task_threads", coze.ListTaskThreads)
+			_workbench.POST("/task_threads", coze.CreateTaskThread)
 			_task_threads := _workbench.Group("/task_threads")
 			_task_threads.GET("/:thread_id", coze.GetTaskThread)
 			_task_threads.GET("/:thread_id/messages", coze.ListTaskThreadMessages)

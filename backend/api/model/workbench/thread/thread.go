@@ -216,6 +216,22 @@ type ListTaskThreadsRequest struct {
 	PageSize int32  `query:"page_size"`
 }
 
+type CreateTaskThreadRequest struct {
+	SpaceID           int64  `json:"space_id,string,required"`
+	Message           string `json:"message,required"`
+	Title             string `json:"title,omitempty"`
+	AssistantID       string `json:"assistant_id,omitempty"`
+	Command           string `json:"command,omitempty"`
+	Config            string `json:"config,omitempty"`
+	Context           string `json:"context,omitempty"`
+	Metadata          string `json:"metadata,omitempty"`
+	StreamMode        string `json:"stream_mode,omitempty"`
+	MultitaskStrategy string `json:"multitask_strategy,omitempty"`
+	OnDisconnect      string `json:"on_disconnect,omitempty"`
+	Durability        string `json:"durability,omitempty"`
+	IdempotencyKey    string `json:"idempotency_key,omitempty"`
+}
+
 type GetTaskThreadRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 }
@@ -466,6 +482,12 @@ type ListTaskThreadsData struct {
 	Total   int64         `json:"total"`
 }
 
+type CreateTaskThreadData struct {
+	Thread  *TaskThread        `json:"thread,omitempty"`
+	Message *TaskThreadMessage `json:"message,omitempty"`
+	Run     *TaskThreadRun     `json:"run,omitempty"`
+}
+
 type ListTaskThreadMessagesData struct {
 	Messages []*TaskThreadMessage `json:"messages"`
 	Total    int64                `json:"total"`
@@ -580,6 +602,12 @@ type ListTaskThreadsResponse struct {
 	Data *ListTaskThreadsData `json:"data,omitempty"`
 	Code int64                `json:"code"`
 	Msg  string               `json:"msg"`
+}
+
+type CreateTaskThreadResponse struct {
+	Data *CreateTaskThreadData `json:"data,omitempty"`
+	Code int64                 `json:"code"`
+	Msg  string                `json:"msg"`
 }
 
 type GetTaskThreadResponse struct {

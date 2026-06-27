@@ -152,6 +152,123 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	return &CreateThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
 }
 
+func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTaskThreadRequest) (*CreateTaskThreadResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("create task thread request is required")
+	}
+
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		return nil, fmt.Errorf("task thread message is required")
+	}
+	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+		return nil, err
+	}
+
+	title := taskThreadTitle(req.Title, message)
+	threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
+		SpaceID:  req.SpaceID,
+		UserID:   req.UserID,
+		Title:    title,
+		Source:   ThreadSourceWeb,
+		Metadata: `{"source":"workbench_new_task"}`,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if threadResp == nil || threadResp.Thread == nil {
+		return nil, fmt.Errorf("agent thread service returned empty thread")
+	}
+
+	input, err := taskThreadRunInputFromMessage(message)
+	if err != nil {
+		return nil, err
+	}
+	runResp, err := s.CreateRun(ctx, &CreateRunRequest{
+		ThreadID:          threadResp.Thread.ThreadID,
+		AssistantID:       req.AssistantID,
+		RunKind:           RunKindTask,
+		Command:           req.Command,
+		Input:             input,
+		Config:            req.Config,
+		Context:           req.Context,
+		Metadata:          req.Metadata,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+		IdempotencyKey:    req.IdempotencyKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if runResp == nil || runResp.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty run")
+	}
+
+	messageResp, err := s.AppendMessage(ctx, &AppendMessageRequest{
+		ThreadID: threadResp.Thread.ThreadID,
+		RunID:    runResp.Run.RunID,
+		Role:     MessageRoleUser,
+		Content:  message,
+		Metadata: `{"source":"workbench_new_task"}`,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if messageResp == nil || messageResp.Message == nil {
+		return nil, fmt.Errorf("agent thread service returned empty message")
+	}
+
+	return &CreateTaskThreadResponse{
+		Thread:  threadResp.Thread,
+		Message: messageResp.Message,
+		Run:     runResp.Run,
+	}, nil
+}
+
+func taskThreadTitle(title, message string) string {
+	const maxTitleRunes = 80
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(message)
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxTitleRunes {
+		return trimmed
+	}
+
+	return string(runes[:maxTitleRunes])
+}
+
+func taskThreadRunInputFromMessage(message string) (string, error) {
+	payload := struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}{
+		Messages: []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}{
+			{
+				Role:    string(MessageRoleUser),
+				Content: message,
+			},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	return string(raw), nil
+}
+
 func (s *ApplicationService) GetThread(ctx context.Context, req *GetThreadRequest) (*GetThreadResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -267,12 +384,8 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	if req == nil {
 		return nil, fmt.Errorf("create run request is required")
 	}
-	if s.RuntimePolicy != nil {
-		if _, err := s.RuntimePolicy.runtimeModeFromRun(&RunSummary{
-			Config: req.Config,
-		}); err != nil {
-			return nil, err
-		}
+	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+		return nil, err
 	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
@@ -300,6 +413,16 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}
 
 	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) validateRunRuntimeConfig(config string) error {
+	if s.RuntimePolicy == nil {
+		return nil
+	}
+	_, err := s.RuntimePolicy.runtimeModeFromRun(&RunSummary{
+		Config: config,
+	})
+	return err
 }
 
 func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {

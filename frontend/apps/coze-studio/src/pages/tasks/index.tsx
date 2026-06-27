@@ -29,6 +29,7 @@ import { buildTaskThreadDetailPath } from '../chats/task-thread-routes';
 import { listTaskThreads } from './service';
 import {
   formatUpdatedTime,
+  getTaskThreadDetailId,
   type TaskStatusFilter,
 } from './helpers';
 
@@ -96,9 +97,6 @@ const filterTaskThreads = (
     return matchesKeyword && matchesStatus;
   });
 };
-
-const getTaskThreadDetailId = (task: TaskThread) =>
-  task.legacy_task_id || task.thread_id;
 
 const getStatusPillClassName = (status: string) => {
   const tone = getTaskThreadStatusTone(status);
@@ -374,7 +372,9 @@ const TasksPage = () => {
 
   const handleNavigate = (task: TaskThread) => {
     if (space_id) {
-      navigate(buildTaskThreadDetailPath(space_id, getTaskThreadDetailId(task)));
+      navigate(
+        buildTaskThreadDetailPath(space_id, getTaskThreadDetailId(task)),
+      );
     }
   };
 

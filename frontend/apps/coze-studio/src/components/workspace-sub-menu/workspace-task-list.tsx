@@ -23,13 +23,11 @@ import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import { Loading } from '@coze-arch/coze-design';
 
 import { listTaskThreads } from '../../pages/tasks/service';
+import { getTaskThreadDetailId } from '../../pages/tasks/helpers';
 import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
 type TaskThread = workbenchTask.TaskThread;
-
-const getTaskThreadDetailId = (task: TaskThread) =>
-  task.legacy_task_id || task.thread_id;
 
 export const WorkspaceTaskList = () => {
   const navigate = useNavigate();

@@ -36,6 +36,7 @@ import {
   listTaskThreadMessages,
   listTaskThreadRunEvents,
 } from './service';
+import { getTaskThreadDetailId } from './helpers';
 
 export type {
   TaskDetailSubagentRun,
@@ -122,7 +123,7 @@ const mapTaskThreadToTask = (
     thread.last_agent_message;
 
   return {
-    id: thread.legacy_task_id || thread.thread_id,
+    id: getTaskThreadDetailId(thread),
     space_id: thread.space_id,
     creator_id: thread.creator_id,
     title: thread.title,
@@ -186,8 +187,9 @@ export const fetchTaskDetail = async ({
     };
   }
 
-  if (thread.legacy_task_id) {
-    return fetchLegacyTaskDetail(thread.legacy_task_id);
+  const detailID = getTaskThreadDetailId(thread);
+  if (detailID !== thread.thread_id) {
+    return fetchLegacyTaskDetail(detailID);
   }
 
   const [

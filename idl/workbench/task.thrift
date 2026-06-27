@@ -225,6 +225,36 @@ struct ListTaskThreadsResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct CreateTaskThreadRequest {
+    1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    2: required string message
+    3: optional string title
+    4: optional string assistant_id
+    5: optional string command
+    6: optional string config
+    7: optional string context
+    8: optional string metadata
+    9: optional string stream_mode
+    10: optional string multitask_strategy
+    11: optional string on_disconnect
+    12: optional string durability
+    13: optional string idempotency_key
+    255: optional base.Base Base (api.none="true")
+}
+
+struct CreateTaskThreadData {
+    1: optional TaskThread thread
+    2: optional TaskThreadMessage message
+    3: optional TaskThreadRun run
+}
+
+struct CreateTaskThreadResponse {
+    1: optional CreateTaskThreadData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 struct GetTaskThreadRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
@@ -767,6 +797,10 @@ service WorkbenchTaskService {
     )
     ListTaskThreadsResponse ListTaskThreads(1: ListTaskThreadsRequest request)(
         api.get="/api/workbench/task_threads",
+        api.category="workbench"
+    )
+    CreateTaskThreadResponse CreateTaskThread(1: CreateTaskThreadRequest request)(
+        api.post="/api/workbench/task_threads",
         api.category="workbench"
     )
     GetTaskThreadResponse GetTaskThread(1: GetTaskThreadRequest request)(

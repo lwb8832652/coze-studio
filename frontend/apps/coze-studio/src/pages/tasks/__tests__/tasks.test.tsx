@@ -143,6 +143,57 @@ describe('TasksPage helpers', () => {
     container.remove();
   });
 
+  it('opens canonical thread id when legacy task id is zero string', async () => {
+    mockListTaskThreads.mockResolvedValueOnce({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-zero-legacy',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: 'Canonical 新建任务',
+            status: 'idle',
+            last_user_message: '请用一句话回复 smoke OK',
+            last_agent_message: '',
+            legacy_task_id: '0',
+            metadata: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TasksPage />);
+      await Promise.resolve();
+    });
+
+    const openButton = container.querySelector(
+      'button[aria-label="打开任务 Canonical 新建任务"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      openButton.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/thread-zero-legacy',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('renders task list loading, empty, and error states', async () => {
     const loadingContainer = document.createElement('div');
     document.body.appendChild(loadingContainer);

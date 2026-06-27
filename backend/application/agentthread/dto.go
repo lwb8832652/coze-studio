@@ -428,6 +428,29 @@ type CreateThreadResponse struct {
 	Thread *ThreadSummary
 }
 
+type CreateTaskThreadRequest struct {
+	SpaceID           int64
+	UserID            int64
+	Message           string
+	Title             string
+	AssistantID       string
+	Command           string
+	Config            string
+	Context           string
+	Metadata          string
+	StreamMode        string
+	MultitaskStrategy string
+	OnDisconnect      string
+	Durability        string
+	IdempotencyKey    string
+}
+
+type CreateTaskThreadResponse struct {
+	Thread  *ThreadSummary
+	Message *MessageSummary
+	Run     *RunSummary
+}
+
 type GetThreadRequest struct {
 	ThreadID int64
 }

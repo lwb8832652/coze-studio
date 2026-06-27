@@ -70,6 +70,40 @@ func TestApplicationCreateThreadReturnsTaskSummary(t *testing.T) {
 	require.Equal(t, ThreadSourceIM, resp.Thread.Source)
 }
 
+func TestApplicationCreateTaskThreadRejectsRuntimeBeforeThreadPersistence(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		created: &entity.Thread{
+			ID:        10,
+			SpaceID:   1,
+			CreatorID: 2,
+			Title:     "新建任务",
+			Status:    entity.ThreadStatusIdle,
+			Source:    entity.ThreadSourceWeb,
+		},
+	}
+	policy := RuntimePolicy{
+		DefaultMode:    RuntimeModeLegacy,
+		EinoADKEnabled: false,
+	}
+	app := &ApplicationService{
+		ThreadSVC:     domainSVC,
+		RuntimePolicy: &policy,
+	}
+
+	resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Message: "请用一句话回复：smoke OK",
+		Config:  `{"runtime":"eino_adk"}`,
+	})
+
+	require.Nil(t, resp)
+	require.ErrorContains(t, err, "eino adk runtime is disabled by server policy")
+	require.Nil(t, domainSVC.createReq)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
 func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		listed: []*entity.Thread{

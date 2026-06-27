@@ -31,10 +31,9 @@ import {
   buildTaskThreadDetailPath,
   buildTaskThreadListPath,
 } from '../chats/task-thread-routes';
-import { getWorkbenchLLMModels, sendWorkbenchChat } from './service';
+import { createTaskThread, getWorkbenchLLMModels } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
-  mapModeToChatMode,
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
@@ -251,27 +250,18 @@ const WorkbenchPage = () => {
     setError('');
 
     try {
-      const response = await sendWorkbenchChat({
+      const response = await createTaskThread({
         space_id,
         message: payload.message,
-        mode: mapModeToChatMode(payload.mode),
-        runtime_settings: stringifyWorkbenchRunConfig(payload),
-        ...(payload.modelType
-          ? {
-              model_type: String(payload.modelType),
-              model_name: payload.modelName,
-            }
-          : {}),
-        enable_skills: payload.enable_skills,
-        enable_mcp: payload.enable_mcp,
-        enable_kbs: payload.enable_kbs,
-        enable_databases: payload.enable_databases,
+        config: stringifyWorkbenchRunConfig(payload),
       });
 
       setValue('');
 
-      if (response?.data?.task?.id) {
-        navigate(buildTaskThreadDetailPath(space_id, response.data.task.id));
+      if (response?.data?.thread?.thread_id) {
+        navigate(
+          buildTaskThreadDetailPath(space_id, response.data.thread.thread_id),
+        );
 
         return;
       }

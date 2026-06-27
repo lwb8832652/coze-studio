@@ -1215,6 +1215,78 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('renders canonical thread summary when legacy task id is zero string', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-zero-legacy',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-zero-legacy',
+        legacy_task_id: '0',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Canonical 新建任务',
+        status: 'running',
+        source: 'web',
+        progress: 10,
+        last_user_message: '',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-zero-1',
+            thread_id: 'thread-zero-legacy',
+            run_id: 'run-zero-1',
+            role: 'user',
+            content: '请用一句话回复 smoke OK',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-zero-legacy',
+    });
+    expect(mockGetTask).not.toHaveBeenCalled();
+    expect(mockListTaskEvents).not.toHaveBeenCalled();
+    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
+      thread_id: 'thread-zero-legacy',
+      page: 1,
+      page_size: 50,
+    });
+    expect(container.textContent).toContain('Canonical 新建任务');
+    expect(container.textContent).toContain('请用一句话回复 smoke OK');
+    expect(container.textContent).not.toContain('Request failed');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('renders runtime doctor panel for canonical thread details', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

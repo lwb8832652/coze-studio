@@ -19,6 +19,7 @@ import { workbench, workbenchTask } from '@coze-studio/api-schema';
 export const listTasks = workbenchTask.ListTasks;
 export const getTask = workbenchTask.GetTask;
 export const listTaskThreads = workbenchTask.ListTaskThreads;
+export const createTaskThread = workbenchTask.CreateTaskThread;
 export const getTaskThread = workbenchTask.GetTaskThread;
 export const listTaskThreadMessages = workbenchTask.ListTaskThreadMessages;
 export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;

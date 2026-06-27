@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-import { workbench } from '@coze-studio/api-schema';
+import { workbench, workbenchTask } from '@coze-studio/api-schema';
 import { DeveloperApi } from '@coze-arch/bot-api';
 
 import { type WorkbenchLLMModel } from './components/types';
 
+export const createTaskThread = workbenchTask.CreateTaskThread;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 

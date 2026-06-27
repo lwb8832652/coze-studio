@@ -86,6 +86,47 @@ func ListTaskThreads(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+// CreateTaskThread .
+// @router /api/workbench/task_threads [POST]
+func CreateTaskThread(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.CreateTaskThreadRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{
+		SpaceID:           req.SpaceID,
+		UserID:            workbenchViewerIDFromCtx(ctx),
+		Message:           req.Message,
+		Title:             req.Title,
+		AssistantID:       req.AssistantID,
+		Command:           req.Command,
+		Config:            req.Config,
+		Context:           req.Context,
+		Metadata:          req.Metadata,
+		StreamMode:        req.StreamMode,
+		MultitaskStrategy: req.MultitaskStrategy,
+		OnDisconnect:      req.OnDisconnect,
+		Durability:        req.Durability,
+		IdempotencyKey:    req.IdempotencyKey,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.CreateTaskThreadResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.CreateTaskThreadData{
+			Thread:  taskThreadToAPI(resp.Thread),
+			Message: taskThreadMessageToAPI(resp.Message),
+			Run:     taskThreadRunToAPI(resp.Run),
+		},
+	})
+}
+
 // GetTaskThread .
 // @router /api/workbench/task_threads/:thread_id [GET]
 func GetTaskThread(ctx context.Context, c *app.RequestContext) {

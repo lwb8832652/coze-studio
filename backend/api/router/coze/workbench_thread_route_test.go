@@ -30,6 +30,7 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	Register(h)
 
 	list := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads?space_id=1", nil)
+	createThread := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads", nil)
 	detail := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
 	messages := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/messages", nil)
 	appendMessage := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads/1/messages", nil)
@@ -60,6 +61,7 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	restoreArtifact := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads/1/artifacts/2/restore", nil)
 
 	require.NotEqual(t, http.StatusNotFound, list.Code)
+	require.NotEqual(t, http.StatusNotFound, createThread.Code)
 	require.NotEqual(t, http.StatusNotFound, detail.Code)
 	require.NotEqual(t, http.StatusNotFound, messages.Code)
 	require.NotEqual(t, http.StatusNotFound, appendMessage.Code)

@@ -104,6 +104,61 @@ func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
 }
 
+func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/workbench/task_threads", workbenchSessionMiddlewareForTest(42), CreateTaskThread)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"space_id":        "9",
+		"message":         "请生成行动计划",
+		"config":          `{"runtime":"eino_adk"}`,
+		"metadata":        `{"source":"new_task"}`,
+		"stream_mode":     `["messages","updates"]`,
+		"idempotency_key": "new-task-1",
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"thread_id":"2"`)
+	require.Contains(t, body, `"creator_id":"42"`)
+	require.Contains(t, body, `"title":"请生成行动计划"`)
+	require.Contains(t, body, `"role":"user"`)
+	require.Contains(t, body, `"content":"请生成行动计划"`)
+	require.Contains(t, body, `"status":"pending"`)
+	require.Contains(t, body, `"config":"{\"runtime\":\"eino_adk\"}"`)
+	require.Contains(t, body, `"idempotency_key":"new-task-1"`)
+
+	messages, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
+		ThreadID: 2,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), messages.Total)
+	require.Equal(t, "请生成行动计划", messages.Messages[0].Content)
+
+	runs, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 2,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runs.Total)
+	require.Equal(t, runs.Runs[0].RunID, messages.Messages[0].RunID)
+	require.Equal(t, appagentthread.RunStatusPending, runs.Runs[0].Status)
+	require.Equal(t, appagentthread.RunKindTask, runs.Runs[0].RunKind)
+}
+
 func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/memories/export", ExportTaskThreadMemories)
@@ -2374,18 +2429,19 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			run_id integer,
 			file_name text,
 			original_file_name text DEFAULT '',
-			file_kind text,
-			virtual_path text,
-			object_uri text,
-			content_type text DEFAULT '',
+				file_kind text,
+				virtual_path text,
+				virtual_path_hash text DEFAULT '',
+				object_uri text,
+				content_type text DEFAULT '',
 			size_bytes integer DEFAULT 0,
 			digest text DEFAULT '',
 			status text DEFAULT 'active',
 			metadata json,
 			created_at integer,
 			updated_at integer,
-			UNIQUE (run_id, virtual_path)
-		);
+				UNIQUE (run_id, virtual_path_hash)
+			);
 		CREATE TABLE agent_artifacts (
 			id integer PRIMARY KEY,
 			space_id integer,

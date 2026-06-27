@@ -262,6 +262,31 @@ export interface ListTaskThreadsResponse {
   code: number;
   msg: string;
 }
+export interface CreateTaskThreadRequest {
+  space_id: string;
+  message: string;
+  title?: string;
+  assistant_id?: string;
+  command?: string;
+  config?: string;
+  context?: string;
+  metadata?: string;
+  stream_mode?: string;
+  multitask_strategy?: string;
+  on_disconnect?: string;
+  durability?: string;
+  idempotency_key?: string;
+}
+export interface CreateTaskThreadData {
+  thread?: TaskThread;
+  message?: TaskThreadMessage;
+  run?: TaskThreadRun;
+}
+export interface CreateTaskThreadResponse {
+  data?: CreateTaskThreadData;
+  code: number;
+  msg: string;
+}
 export interface GetTaskThreadRequest {
   thread_id: string;
 }
@@ -690,6 +715,35 @@ export const ListTaskThreads = /*#__PURE__*/ createAPI<
     query: ['space_id', 'status', 'page', 'page_size'],
   },
   resType: 'ListTaskThreadsResponse',
+  schemaRoot: 'api://schemas/idl_workbench_task',
+  service: 'workbenchTask',
+});
+export const CreateTaskThread = /*#__PURE__*/ createAPI<
+  CreateTaskThreadRequest,
+  CreateTaskThreadResponse
+>({
+  url: '/api/workbench/task_threads',
+  method: 'POST',
+  name: 'CreateTaskThread',
+  reqType: 'CreateTaskThreadRequest',
+  reqMapping: {
+    body: [
+      'space_id',
+      'message',
+      'title',
+      'assistant_id',
+      'command',
+      'config',
+      'context',
+      'metadata',
+      'stream_mode',
+      'multitask_strategy',
+      'on_disconnect',
+      'durability',
+      'idempotency_key',
+    ],
+  },
+  resType: 'CreateTaskThreadResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
   service: 'workbenchTask',
 });

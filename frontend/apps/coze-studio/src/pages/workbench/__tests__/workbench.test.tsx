@@ -20,13 +20,13 @@ import { vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import { workbench } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
-const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
+const mockCreateTaskThread = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
 
@@ -36,7 +36,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../service', () => ({
-  sendWorkbenchChat: mockSendWorkbenchChat,
+  createTaskThread: mockCreateTaskThread,
   getWorkbenchLLMModels: mockGetTypeList,
 }));
 
@@ -154,11 +154,68 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 
 import WorkbenchPage, { mapModeToChatMode } from '../index';
 
+const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
+  data: {
+    thread: {
+      thread_id: threadId,
+      legacy_task_id: '0',
+      space_id: 'space-1',
+      creator_id: 'user-1',
+      title,
+      status: 'running',
+      source: 'web',
+      progress: 0,
+      last_user_message: title,
+      last_agent_message: '',
+      created_at: 1717000000,
+      updated_at: 1717000000,
+    },
+    message: {
+      message_id: `${threadId}-message`,
+      thread_id: threadId,
+      run_id: `${threadId}-run`,
+      role: 'user',
+      content: title,
+      metadata: '{}',
+      created_at: 1717000000,
+    },
+    run: {
+      run_id: `${threadId}-run`,
+      thread_id: threadId,
+      parent_run_id: '0',
+      space_id: 'space-1',
+      creator_id: 'user-1',
+      assistant_id: 'default',
+      run_kind: 'task',
+      status: 'pending',
+      command: '{}',
+      input: '{}',
+      config: '{}',
+      context: '{}',
+      metadata: '{}',
+      stream_mode: '["messages","updates"]',
+      multitask_strategy: 'enqueue',
+      on_disconnect: 'continue',
+      durability: 'async',
+      idempotency_key: '',
+      worker_id: '',
+      error_code: '',
+      error_message: '',
+      started_at: 0,
+      ended_at: 0,
+      created_at: 1717000000,
+      updated_at: 1717000000,
+    },
+  },
+  code: 0,
+  msg: '',
+});
+
 describe('WorkbenchPage', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
     mockNavigate.mockReset();
-    mockSendWorkbenchChat.mockReset();
+    mockCreateTaskThread.mockReset();
     mockGetTypeList.mockReset();
     mockListSkills.mockReset();
     mockListSkills.mockResolvedValue({
@@ -314,23 +371,9 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        answer: '可以，我会处理这项任务。',
-        task: {
-          id: 'task-1',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '生成周报',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 35,
-          created_at: 1717000000,
-          updated_at: 1717000300,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-1', '生成周报'),
+    );
 
     act(() => {
       root = createRoot(container);
@@ -355,18 +398,13 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
       message: '帮我生成周报',
-      mode: workbench.ChatMode.Auto,
-      runtime_settings: expect.any(String),
-      enable_skills: [],
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
+      config: expect.any(String),
     });
     expect(
-      JSON.parse(mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings),
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
     ).toMatchObject({
       runtime: 'eino_adk',
       memory_retrieval: {
@@ -382,7 +420,7 @@ describe('WorkbenchPage', () => {
         enabled: true,
       },
     });
-    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/task-1');
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/thread-1');
 
     act(() => {
       root?.unmount();
@@ -395,11 +433,8 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        answer: '这是直接回答，不应该留在首页展示。',
-        route_target: workbench.RouteTarget.ChatDirect,
-      },
+    mockCreateTaskThread.mockResolvedValue({
+      data: {},
       code: 0,
       msg: '',
     });
@@ -443,7 +478,7 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockRejectedValue(new Error('chat failed'));
+    mockCreateTaskThread.mockRejectedValue(new Error('chat failed'));
 
     act(() => {
       root = createRoot(container);
@@ -484,22 +519,12 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-with-skill-selection',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '执行选中的技能',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 0,
-          created_at: 1717000000,
-          updated_at: 1717000000,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-skill-selection',
+        '执行选中的技能',
+      ),
+    );
 
     act(() => {
       root = createRoot(container);
@@ -539,17 +564,18 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
       message: '执行选中的技能',
-      mode: workbench.ChatMode.Auto,
-      model_type: '100002',
+      config: expect.any(String),
+    });
+    expect(
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+    ).toMatchObject({
+      mode: 'Auto',
+      model_type: 100002,
       model_name: 'deepseek-v4-pro',
-      runtime_settings: expect.any(String),
       enable_skills: ['skill-101'],
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
     });
 
     act(() => {
@@ -563,22 +589,12 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-with-model-selection',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '指定模型回答',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 0,
-          created_at: 1717000000,
-          updated_at: 1717000000,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-model-selection',
+        '指定模型回答',
+      ),
+    );
 
     await act(async () => {
       root = createRoot(container);
@@ -621,17 +637,17 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
       message: '指定模型回答',
-      mode: workbench.ChatMode.Auto,
-      model_type: '100003',
+      config: expect.any(String),
+    });
+    expect(
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+    ).toMatchObject({
+      mode: 'Auto',
+      model_type: 100003,
       model_name: 'gpt-4.1',
-      runtime_settings: expect.any(String),
-      enable_skills: [],
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
     });
 
     act(() => {
@@ -645,22 +661,9 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-with-model-failover',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '稳定执行',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 0,
-          created_at: 1717000000,
-          updated_at: 1717000000,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-with-model-failover', '稳定执行'),
+    );
 
     await act(async () => {
       root = createRoot(container);
@@ -705,7 +708,7 @@ describe('WorkbenchPage', () => {
     });
 
     const runtimeSettings = JSON.parse(
-      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
       model_retry: {
@@ -733,22 +736,12 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-with-runtime-aggregation',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '聚合运行设置',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 0,
-          created_at: 1717000000,
-          updated_at: 1717000000,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-runtime-aggregation',
+        '聚合运行设置',
+      ),
+    );
 
     await act(async () => {
       root = createRoot(container);
@@ -812,21 +805,14 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
       message: '聚合运行设置',
-      mode: workbench.ChatMode.Auto,
-      model_type: '100002',
-      model_name: 'deepseek-v4-pro',
-      runtime_settings: expect.any(String),
-      enable_skills: [],
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
+      config: expect.any(String),
     });
 
     const runtimeSettings = JSON.parse(
-      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
       reasoning_effort: 'high',
@@ -851,22 +837,9 @@ describe('WorkbenchPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-with-web-fetch',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '读取网页资料',
-          status: workbenchTask.TaskStatus.Running,
-          progress: 0,
-          created_at: 1717000000,
-          updated_at: 1717000000,
-        },
-      },
-      code: 0,
-      msg: '',
-    });
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-with-web-fetch', '读取网页资料'),
+    );
 
     await act(async () => {
       root = createRoot(container);
@@ -927,7 +900,7 @@ describe('WorkbenchPage', () => {
     });
 
     const runtimeSettings = JSON.parse(
-      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
       web_tools: {

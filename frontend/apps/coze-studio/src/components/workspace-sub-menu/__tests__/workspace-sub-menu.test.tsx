@@ -202,4 +202,58 @@ describe('Coze Studio WorkspaceSubMenu', () => {
     });
     container.remove();
   });
+
+  it('opens canonical recent task thread when legacy task id is zero string', async () => {
+    mockNavigate.mockReset();
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-zero-legacy',
+            legacy_task_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: 'Canonical 新建任务',
+            status: 'idle',
+            source: 'web',
+            progress: 0,
+            last_user_message: '请用一句话回复 smoke OK',
+            last_agent_message: '',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    const taskButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('Canonical 新建任务'),
+    ) as HTMLButtonElement;
+
+    act(() => {
+      taskButton.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/thread-zero-legacy',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
 });

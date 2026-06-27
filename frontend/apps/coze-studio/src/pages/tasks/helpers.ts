@@ -23,6 +23,7 @@ import {
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+type TaskThread = workbenchTask.TaskThread;
 
 export type TaskStatusFilter = 'all' | 'running' | 'succeeded' | 'failed';
 export type TaskExecutionType = 'Ark' | 'Agent';
@@ -51,6 +52,14 @@ export interface TaskResultPayload {
   executionType?: TaskExecutionType;
   retrievalSources: string[];
 }
+
+export const getTaskThreadDetailId = (
+  task: Pick<TaskThread, 'legacy_task_id' | 'thread_id'>,
+) => {
+  const legacyTaskID = task.legacy_task_id?.trim();
+
+  return legacyTaskID && legacyTaskID !== '0' ? legacyTaskID : task.thread_id;
+};
 
 const STATUS_TEXT_BY_KEY: Record<string, string> = {
   created: '任务已创建',
@@ -203,12 +212,11 @@ const getToolEventDisplay = ({
     return undefined;
   }
 
-  const toolName =
-    getSafeTaskToolName(
-      getString(payload, 'tool_name') ||
-        getString(payload, 'step_name') ||
-        getString(payload, 'step_id'),
-    );
+  const toolName = getSafeTaskToolName(
+    getString(payload, 'tool_name') ||
+      getString(payload, 'step_name') ||
+      getString(payload, 'step_id'),
+  );
   const errorMessage = getString(payload, 'error_message');
   const argumentsPresent = getBoolean(payload, 'arguments_present');
   const resultPresent = getBoolean(payload, 'result_present');
@@ -234,10 +242,7 @@ const getToolEventDisplay = ({
     return {
       ...baseDisplay,
       title: `工具 ${toolName} 调用完成`,
-      detail: getSafeTaskToolDetail(
-        detail,
-        resultPresent ? '已返回结果' : '',
-      ),
+      detail: getSafeTaskToolDetail(detail, resultPresent ? '已返回结果' : ''),
       status: 'completed',
     };
   }
