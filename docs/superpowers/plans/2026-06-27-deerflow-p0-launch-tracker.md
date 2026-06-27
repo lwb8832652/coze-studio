@@ -90,7 +90,7 @@ Every implementation slice must update this document:
 | 运行设置-Web Fetch/Search 配置 | 已完成 | Backend exposes durable web fetch/search settings for Workbench runtime config. | Do not expose secrets or raw endpoint details. |
 | 运行设置-前端聚合面板 | 待开发 | Settings UI can view/edit P0 runtime, model, reasoning, web, memory, Skill, and MCP toggles from one task-oriented surface. | Use Semi/Coze Design. |
 | Runtime Doctor-后端基础接口 | 已完成 | `GET /api/workbench/runtime_doctor` returns ADK runtime, Web, and MCP health summaries safely. | Recent backend slice completed this. |
-| Runtime Doctor-前端状态面板 | 待开发 | UI displays runtime, model config, Web, MCP, Skill, and memory status with refresh/error states. | This is the recommended next slice. |
+| Runtime Doctor-前端状态面板 | 已完成 | UI displays runtime, model config, Web, MCP, Skill, and memory status with refresh/error states. | Added task-detail panel with refresh/error states and safe pending cards for model/Skill/memory deep checks. Verified with `rushx test -- src/pages/tasks/__tests__/task-runtime-doctor-section.test.tsx src/pages/tasks/__tests__/tasks-service.test.ts src/pages/tasks/__tests__/task-detail.test.tsx` and `rushx lint` in `frontend/apps/coze-studio`. |
 | Runtime Doctor-模型连通性基础检查 | 待开发 | P0 shows whether configured model settings are present and usable enough to start a run. | Deep live provider capability matrix is P1. |
 | Runtime Doctor-Skill/MCP基础健康 | 待开发 | P0 shows enabled/disabled/error counts and safe names where already available. | Do not expose auth/config secrets. |
 | Runtime Doctor-sandbox/shell深度诊断 | 延后(P1) | N/A | Keep shell/sandbox disabled or development-only until the boundary is closed. |

@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { workbenchTask } from '@coze-studio/api-schema';
+import { workbench, workbenchTask } from '@coze-studio/api-schema';
 
 import {
   appendTaskThreadMessage,
@@ -44,6 +44,7 @@ import {
   listTaskThreadGuardrailAuditEvents,
   exportTaskThreadMemories,
   exportTaskThreadGuardrailAuditEvents,
+  getWorkbenchRuntimeDoctor,
   importTaskThreadMemories,
 } from '../service';
 
@@ -68,6 +69,7 @@ describe('task thread service', () => {
     expect(typeof exportTaskThreadMemories).toBe('function');
     expect(typeof exportTaskThreadGuardrailAuditEvents).toBe('function');
     expect(typeof importTaskThreadMemories).toBe('function');
+    expect(typeof getWorkbenchRuntimeDoctor).toBe('function');
     expect(typeof listTaskThreadArtifacts).toBe('function');
     expect(typeof listTaskThreadArtifactScanJobs).toBe('function');
     expect(typeof retryTaskThreadArtifactScanJob).toBe('function');
@@ -76,6 +78,17 @@ describe('task thread service', () => {
     expect(typeof getTaskThreadArtifactSignedURL).toBe('function');
     expect(typeof deleteTaskThreadArtifact).toBe('function');
     expect(typeof restoreTaskThreadArtifact).toBe('function');
+  });
+
+  it('exports Runtime Doctor client from generated workbench schema', () => {
+    expect(getWorkbenchRuntimeDoctor).toBe(workbench.GetWorkbenchRuntimeDoctor);
+    expect(getWorkbenchRuntimeDoctor.meta).toMatchObject({
+      method: 'GET',
+      reqMapping: {
+        query: ['space_id'],
+      },
+      url: '/api/workbench/runtime_doctor',
+    });
   });
 
   it('exports task memory clients from generated workbenchTask schema', () => {

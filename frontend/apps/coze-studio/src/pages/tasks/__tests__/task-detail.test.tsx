@@ -36,6 +36,7 @@ const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockListTaskThreadRuns = vi.hoisted(() => vi.fn());
 const mockListTaskThreadRunEvents = vi.hoisted(() => vi.fn());
 const mockGetTaskThreadTokenUsage = vi.hoisted(() => vi.fn());
+const mockGetWorkbenchRuntimeDoctor = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMemories = vi.hoisted(() => vi.fn());
 const mockListTaskThreadGuardrailAuditEvents = vi.hoisted(() => vi.fn());
 const mockExportTaskThreadGuardrailAuditEvents = vi.hoisted(() => vi.fn());
@@ -83,6 +84,7 @@ vi.mock('../service', () => ({
   listTaskThreadRuns: mockListTaskThreadRuns,
   listTaskThreadRunEvents: mockListTaskThreadRunEvents,
   getTaskThreadTokenUsage: mockGetTaskThreadTokenUsage,
+  getWorkbenchRuntimeDoctor: mockGetWorkbenchRuntimeDoctor,
   listTaskThreadMemories: mockListTaskThreadMemories,
   listTaskThreadGuardrailAuditEvents: mockListTaskThreadGuardrailAuditEvents,
   exportTaskThreadGuardrailAuditEvents:
@@ -361,6 +363,7 @@ describe('TaskDetailPage', () => {
     mockListTaskThreadRuns.mockReset();
     mockListTaskThreadRunEvents.mockReset();
     mockGetTaskThreadTokenUsage.mockReset();
+    mockGetWorkbenchRuntimeDoctor.mockReset();
     mockListTaskThreadMemories.mockReset();
     mockListTaskThreadGuardrailAuditEvents.mockReset();
     mockExportTaskThreadGuardrailAuditEvents.mockReset();
@@ -581,6 +584,45 @@ describe('TaskDetailPage', () => {
           middleware_tokens: 0,
           tool_tokens: 0,
         },
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetWorkbenchRuntimeDoctor.mockResolvedValue({
+      data: {
+        status: 'ready',
+        runtime: {
+          default_mode: 'eino_adk',
+          eino_adk_enabled: true,
+        },
+        web_tools: {
+          web_fetch: {
+            status: 'ready',
+            configured: true,
+            message: 'web_fetch is available',
+          },
+          web_search: {
+            status: 'disabled',
+            configured: false,
+            message: 'web_search backend is disabled',
+          },
+        },
+        mcp_tools: {
+          status: 'ready',
+          total_servers: 1,
+          enabled_servers: 1,
+          healthy_servers: 1,
+          unhealthy_servers: 0,
+          unknown_servers: 0,
+        },
+        checks: [
+          {
+            name: 'runtime.eino_adk',
+            category: 'runtime',
+            status: 'ready',
+            message: 'Eino ADK runtime is enabled',
+          },
+        ],
       },
       code: 0,
       msg: '',
@@ -1132,6 +1174,54 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).not.toContain('摘要里的旧用户消息');
     expect(container.textContent).not.toContain('摘要里的旧助手消息');
     expect(container.textContent).not.toContain('未找到任务');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders runtime doctor panel for canonical thread details', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-runtime-1',
+      thread_id: 'thread-runtime-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-runtime-1',
+        legacy_task_id: '',
+        space_id: 'space-runtime-1',
+        creator_id: 'user-1',
+        title: '运行诊断任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '检查运行配置',
+        last_agent_message: '运行配置检查完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetWorkbenchRuntimeDoctor).toHaveBeenCalledWith({
+      space_id: 'space-runtime-1',
+    });
+    expect(container.textContent).toContain('运行诊断');
+    expect(container.textContent).toContain('Eino ADK');
+    expect(container.textContent).toContain('MCP 工具');
+    expect(container.textContent).toContain('Skill 检查');
 
     act(() => {
       root?.unmount();

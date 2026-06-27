@@ -37,6 +37,7 @@ import { TaskMemorySection } from './task-memory-section';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import { getPendingHumanInteraction } from './task-human-interaction';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
+import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
 import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type TaskDetailSource,
@@ -426,6 +427,9 @@ const TaskDetailPage = () => {
               retryingRunId={retryingSubagentRunId}
               onRetrySubagentRun={handleRetrySubagentRun}
             />
+            {taskDetailSource === 'thread' ? (
+              <TaskRuntimeDoctorSection spaceId={space_id} />
+            ) : null}
             {taskDetailSource === 'thread' ? (
               <TaskGuardrailAuditSection threadId={taskDetailId} />
             ) : null}

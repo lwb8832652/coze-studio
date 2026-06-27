@@ -47,6 +47,7 @@ export const cancelTask = workbenchTask.CancelTask;
 export const retryTask = workbenchTask.RetryTask;
 export const listTaskEvents = workbenchTask.ListTaskEvents;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
+export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 export type TaskThreadMemory = workbenchTask.TaskThreadMemory;
 export type TaskThreadMemoryAuditEvent =
   workbenchTask.TaskThreadMemoryAuditEvent;
@@ -78,6 +79,8 @@ export type ImportTaskThreadMemoryItem =
   workbenchTask.ImportTaskThreadMemoryItem;
 export type ImportTaskThreadMemoriesResponse =
   workbenchTask.ImportTaskThreadMemoriesResponse;
+export type WorkbenchRuntimeDoctorData = workbench.WorkbenchRuntimeDoctorData;
+export type RuntimeDoctorCheck = workbench.RuntimeDoctorCheck;
 
 export const getTaskThreadRunEventsStreamURL = ({
   afterEventId,
