@@ -639,4 +639,92 @@ describe('WorkbenchPage', () => {
     });
     container.remove();
   });
+
+  it('sends model retry and failover runtime settings with a new task', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        task: {
+          id: 'task-with-model-failover',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '稳定执行',
+          status: workbenchTask.TaskStatus.Running,
+          progress: 0,
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const runtimeButton = container.querySelector(
+      'button[aria-label="运行设置"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      runtimeButton.click();
+    });
+
+    const retryButton = container.querySelector(
+      'button[aria-label="模型重试"]',
+    ) as HTMLButtonElement;
+    const failoverButton = container.querySelector(
+      'button[aria-label="模型切换"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      retryButton.click();
+      failoverButton.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '稳定执行' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const runtimeSettings = JSON.parse(
+      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+    );
+    expect(runtimeSettings).toMatchObject({
+      model_retry: {
+        max_retries: 1,
+        backoff_ms: 0,
+        retry_empty_output: true,
+        retry_finish_reasons: ['length'],
+      },
+      model_failover: {
+        candidate_model_ids: [100003],
+        max_retries: 1,
+        failover_empty_output: true,
+        failover_finish_reasons: ['length'],
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
 });

@@ -1637,6 +1637,12 @@ cd backend && go test ./...
   candidate selection per request. Do not wire a fake or implicit fallback.
   Future durable model catalog settings must enforce tenant authorization,
   provider policy, quota, and audit before emitting candidate IDs.
+- The Workbench runtime settings panel may serialize explicit `model_retry`
+  and `model_failover` run config for ad-hoc task runs. Keep these controls
+  disabled by default, omit disabled configs from `runtime_settings`, and derive
+  failover `candidate_model_ids` from the currently available model selector
+  options while excluding the primary model. This is not a durable model
+  catalog or tenant policy substitute.
 - Safety/content-filter finish reasons are Coze event semantics. Map them to
   `model.safety_finish` with a bounded `finish_classification` payload while
   preserving the assistant text for transcript/checkpoint continuity.

@@ -369,6 +369,13 @@ Progress evidence as of 2026-06-21:
   capabilities must cover the primary model's declared capabilities before
   execution. Durable model catalog policy, quota, audit, and UI-managed
   candidate settings remain future settings work.
+- [x] M2.13c complete: the Workbench runtime settings panel now exposes
+  disabled-by-default model retry and model failover toggles for ad-hoc task
+  runs. The frontend omits disabled configs from `runtime_settings`, derives
+  failover candidate IDs from the current model selector while excluding the
+  primary model, and serializes only bounded `model_retry` /
+  `model_failover` run config consumed by the ADK backend. Durable model
+  catalog/provider settings remain future settings work.
 - [x] M2.14 complete: Coze-owned `semantic_loop` ADK middleware detects
   repeated Assistant tool-call plans and repeated Assistant text responses
   after model calls while keeping Eino `MaxIterations` as the hard execution

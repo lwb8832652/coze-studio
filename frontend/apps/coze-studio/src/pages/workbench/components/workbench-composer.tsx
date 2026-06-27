@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import {
+  type Dispatch,
+  type SetStateAction,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 import {
   IconCozArrowDown,
@@ -26,12 +32,14 @@ import { Button, TextArea } from '@coze-arch/coze-design';
 import { ExtensionsPopover } from '../extensions-popover';
 import { WorkbenchRuntimeSettingsControl } from './workbench-runtime-settings-control';
 import {
-  cloneWorkbenchRuntimeSettings,
+  createWorkbenchSubmitPayload,
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
+  getWorkbenchFailoverCandidateModelIds,
   WORKBENCH_MODE_PROMPTS,
   WORKBENCH_MODE_SYMBOLS,
   WORKBENCH_MODES,
+  workbenchModelTypeToNumber,
   type WorkbenchLLMModel,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchComposerVariant,
@@ -51,6 +59,9 @@ const AT_RESOURCES = [
   'Meego 工作项',
   '空间文档库',
 ] as const;
+type WorkbenchRuntimeSettingsChange = Dispatch<
+  SetStateAction<WorkbenchRuntimeSettings>
+>;
 
 export interface WorkbenchComposerProps {
   value: string;
@@ -95,9 +106,6 @@ const AtMenu = ({ onClose }: { onClose: () => void }) => (
   </div>
 );
 
-const modelTypeToNumber = (model: WorkbenchLLMModel) =>
-  Number(model.model_type);
-
 const groupModelsByClass = (models: WorkbenchLLMModel[]) => {
   const groups: Array<{ name: string; models: WorkbenchLLMModel[] }> = [];
   const groupIndexes = new Map<string, number>();
@@ -135,7 +143,7 @@ const WorkbenchModelSelector = ({
   onChange: (model: WorkbenchLLMModel) => void;
 }) => {
   const selectedModel = models.find(
-    model => modelTypeToNumber(model) === value,
+    model => workbenchModelTypeToNumber(model) === value,
   );
   const modelGroups = useMemo(() => groupModelsByClass(models), [models]);
   const label = loading ? '模型加载中' : selectedModel?.name || '默认模型';
@@ -162,7 +170,7 @@ const WorkbenchModelSelector = ({
                 {group.name}
               </div>
               {group.models.map(model => {
-                const modelType = modelTypeToNumber(model);
+                const modelType = workbenchModelTypeToNumber(model);
 
                 return (
                   <button
@@ -205,7 +213,7 @@ const useWorkbenchModelSelection = ({
     number | undefined
   >();
   const selectedModel = models.find(
-    model => modelTypeToNumber(model) === selectedModelType,
+    model => workbenchModelTypeToNumber(model) === selectedModelType,
   );
 
   useEffect(() => {
@@ -228,12 +236,16 @@ const useWorkbenchModelSelection = ({
         setSelectedModelType(prevModelType => {
           if (
             prevModelType &&
-            nextModels.some(model => modelTypeToNumber(model) === prevModelType)
+            nextModels.some(
+              model => workbenchModelTypeToNumber(model) === prevModelType,
+            )
           ) {
             return prevModelType;
           }
 
-          return nextModels[0] ? modelTypeToNumber(nextModels[0]) : undefined;
+          return nextModels[0]
+            ? workbenchModelTypeToNumber(nextModels[0])
+            : undefined;
         });
       })
       .catch(() => {
@@ -261,33 +273,6 @@ const useWorkbenchModelSelection = ({
     setSelectedModelType,
   };
 };
-
-const createSubmitPayload = ({
-  message,
-  mode,
-  taskId,
-  selectedModel,
-  resourceSelection,
-  runtimeSettings,
-}: {
-  message: string;
-  mode: WorkbenchMode;
-  taskId?: string;
-  selectedModel?: WorkbenchLLMModel;
-  resourceSelection: WorkbenchResourceSelection;
-  runtimeSettings: WorkbenchRuntimeSettings;
-}): WorkbenchComposerSubmitPayload => ({
-  message,
-  mode,
-  taskId,
-  modelType: selectedModel ? modelTypeToNumber(selectedModel) : undefined,
-  modelName: selectedModel?.name,
-  runtimeSettings: cloneWorkbenchRuntimeSettings(runtimeSettings),
-  enable_skills: [...resourceSelection.enable_skills],
-  enable_mcp: [...resourceSelection.enable_mcp],
-  enable_kbs: [...resourceSelection.enable_kbs],
-  enable_databases: [...resourceSelection.enable_databases],
-});
 
 const WorkbenchComposerBody = ({
   value,
@@ -352,6 +337,7 @@ const WorkbenchComposerToolbar = ({
   resourceSelection,
   runtimeSettings,
   selectedModelType,
+  failoverCandidateCount,
   spaceId,
   onAtMenuOpenChange,
   onModelMenuOpenChange,
@@ -372,12 +358,13 @@ const WorkbenchComposerToolbar = ({
   resourceSelection: WorkbenchResourceSelection;
   runtimeSettings: WorkbenchRuntimeSettings;
   selectedModelType?: number;
+  failoverCandidateCount: number;
   spaceId?: string;
   onAtMenuOpenChange: (open: boolean) => void;
   onModelMenuOpenChange: (open: boolean) => void;
   onModeChange: (mode: WorkbenchMode) => void;
   onResourceSelectionChange: (selection: WorkbenchResourceSelection) => void;
-  onRuntimeSettingsChange: (settings: WorkbenchRuntimeSettings) => void;
+  onRuntimeSettingsChange: WorkbenchRuntimeSettingsChange;
   onSelectedModelTypeChange: (modelType: number) => void;
   onSubmit: () => void;
 }) => (
@@ -398,12 +385,13 @@ const WorkbenchComposerToolbar = ({
           open={modelMenuOpen}
           onOpenChange={onModelMenuOpenChange}
           onChange={model =>
-            onSelectedModelTypeChange(modelTypeToNumber(model))
+            onSelectedModelTypeChange(workbenchModelTypeToNumber(model))
           }
         />
       ) : null}
 
       <WorkbenchRuntimeSettingsControl
+        failoverCandidateCount={failoverCandidateCount}
         settings={runtimeSettings}
         onChange={onRuntimeSettingsChange}
       />
@@ -467,6 +455,10 @@ export const WorkbenchComposer = ({
     selectedModelType,
     setSelectedModelType,
   } = useWorkbenchModelSelection({ spaceId, modelLoader });
+  const failoverCandidateCount = getWorkbenchFailoverCandidateModelIds(
+    models,
+    selectedModelType,
+  ).length;
 
   useEffect(() => {
     setRuntimeSettings(prevSettings => ({
@@ -492,11 +484,12 @@ export const WorkbenchComposer = ({
     }
 
     onSubmit(
-      createSubmitPayload({
+      createWorkbenchSubmitPayload({
         message,
         mode,
         taskId,
         selectedModel,
+        models,
         resourceSelection,
         runtimeSettings,
       }),
@@ -529,6 +522,7 @@ export const WorkbenchComposer = ({
           resourceSelection={resourceSelection}
           runtimeSettings={runtimeSettings}
           selectedModelType={selectedModelType}
+          failoverCandidateCount={failoverCandidateCount}
           spaceId={spaceId}
           onAtMenuOpenChange={setAtMenuOpen}
           onModelMenuOpenChange={setModelMenuOpen}
