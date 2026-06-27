@@ -1597,8 +1597,8 @@ func taskThreadTokenUsageToAPI(usage *appagentthread.TokenUsageSummary) *threada
 		CostMicros:   usage.CostMicros,
 		Currency:     usage.Currency,
 		Estimated:    usage.Estimated,
-		RawUsage:     usage.RawUsage,
-		Metadata:     usage.Metadata,
+		RawUsage:     "",
+		Metadata:     "",
 		CreatedAt:    usage.CreatedAt,
 	}
 }

@@ -221,6 +221,9 @@ go test ./application/skill ./domain/skill/service ./domain/skill/repository ./a
 go test -gcflags="all=-l -N" ./application/agentthread \
   -run 'Test(ADKSkill|ADKMCP|ADKTool|DefaultADKTool|ADKSingleAgentToolGrant|ADKSubagentToolProvider)' \
   -count=1
+go test -gcflags="all=-l -N" ./api/handler/coze \
+  -run 'TestGetTaskThreadTokenUsageHandler(ReturnsRowsAndAggregate|CanIncludeChildRuns)' \
+  -count=1
 ```
 
 Browser smoke remains required before RC:

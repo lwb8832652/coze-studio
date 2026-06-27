@@ -1955,6 +1955,7 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 		OutputTokens: 8,
 		TotalTokens:  20,
 		RawUsage:     `{"prompt_tokens":12,"completion_tokens":8}`,
+		Metadata:     `{"provider_raw":"sk-secret","prompt":"raw prompt","tool_args":"{\"url\":\"s3://bucket/raw\"}"}`,
 	})
 	require.NoError(t, err)
 	_, err = appagentthread.SVC.RecordTokenUsage(context.Background(), &appagentthread.RecordTokenUsageRequest{
@@ -1988,6 +1989,13 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	require.Contains(t, body, `"call_count":2`)
 	require.Contains(t, body, `"lead_agent_tokens":20`)
 	require.Contains(t, body, `"tool_tokens":10`)
+	require.NotContains(t, body, "prompt_tokens")
+	require.NotContains(t, body, "completion_tokens")
+	require.NotContains(t, body, "provider_raw")
+	require.NotContains(t, body, "sk-secret")
+	require.NotContains(t, body, "raw prompt")
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "s3://bucket/raw")
 }
 
 func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
