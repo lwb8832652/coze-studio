@@ -1059,6 +1059,14 @@ cd backend && go test ./...
   again when the host list is cleared. This UI is a per-run convenience layer
   over the existing `ADKWebToolCatalog`, not a durable Web provider settings,
   tenant policy, scanner, or domain-policy substitute.
+- The same Workbench runtime settings panel is the P0 task-oriented aggregation
+  surface for per-run Eino ADK settings. It may expose memory recall presets,
+  model retry/failover, `reasoning_effort`, Web tools, Skill invocation, MCP
+  tools, and token-usage display. `reasoning_effort` is serialized only when
+  the user enables model reasoning. Skill and MCP runtime toggles must trim the
+  submitted `enable_skills` / `enable_mcp` arrays when disabled, while keeping
+  the selected IDs in bounded runtime settings for UI state. Do not create a
+  second runtime settings surface for P0 unless this panel becomes unusable.
 - Runtime Doctor starts at `GET /api/workbench/runtime_doctor`. Keep this API
   read-only and metadata-only. The current foundation may summarize Eino ADK
   runtime policy, default model configuration readiness, Web Fetch/Web Search

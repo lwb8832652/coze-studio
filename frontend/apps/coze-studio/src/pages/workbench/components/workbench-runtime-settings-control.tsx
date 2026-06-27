@@ -23,11 +23,39 @@ import {
 import { Input } from '@coze-arch/coze-design';
 import { IconCozSetting } from '@coze-arch/coze-design/icons';
 
-import type { WorkbenchRuntimeSettings } from './types';
+import type {
+  WorkbenchReasoningEffort,
+  WorkbenchRuntimeSettings,
+} from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- User-visible memory recall presets.
 const MEMORY_LIMIT_OPTIONS = [3, 5, 8] as const;
 const CANDIDATE_LIMIT_MULTIPLIER = 4;
+const REASONING_OPTIONS: Array<{
+  ariaLabel: string;
+  enabled: boolean;
+  effort: WorkbenchReasoningEffort;
+  label: string;
+}> = [
+  {
+    ariaLabel: '模型推理 关闭',
+    enabled: false,
+    effort: 'medium',
+    label: '关闭',
+  },
+  {
+    ariaLabel: '模型推理 中',
+    enabled: true,
+    effort: 'medium',
+    label: '中',
+  },
+  {
+    ariaLabel: '模型推理 高',
+    enabled: true,
+    effort: 'high',
+    label: '高',
+  },
+];
 type WorkbenchRuntimeSettingsChange = Dispatch<
   SetStateAction<WorkbenchRuntimeSettings>
 >;
@@ -108,6 +136,114 @@ const WorkbenchModelReliabilitySettingsRows = ({
     </div>
   </>
 );
+
+const WorkbenchReasoningSettingsRow = ({
+  settings,
+  update,
+}: {
+  settings: WorkbenchRuntimeSettings;
+  update: WorkbenchRuntimeSettingsUpdate;
+}) => (
+  <div className="chat-workbench-runtime-row">
+    <span>模型推理</span>
+    <div className="chat-workbench-runtime-options">
+      {REASONING_OPTIONS.map(option => {
+        const active =
+          settings.reasoning.enabled === option.enabled &&
+          (!option.enabled || settings.reasoning.effort === option.effort);
+
+        return (
+          <button
+            key={option.ariaLabel}
+            type="button"
+            aria-label={option.ariaLabel}
+            aria-pressed={active}
+            data-active={active}
+            onClick={() =>
+              update(current => ({
+                reasoning: {
+                  ...current.reasoning,
+                  enabled: option.enabled,
+                  effort: option.effort,
+                },
+              }))
+            }
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  </div>
+);
+
+const WorkbenchResourceRuntimeSettingsRows = ({
+  settings,
+  update,
+}: {
+  settings: WorkbenchRuntimeSettings;
+  update: WorkbenchRuntimeSettingsUpdate;
+}) => {
+  const skillCount = settings.skills.allowed_skills.length;
+  const mcpCount = settings.mcp_tools.allowed_tools.length;
+
+  return (
+    <>
+      <div className="chat-workbench-runtime-row">
+        <span>Skill</span>
+        <button
+          type="button"
+          aria-label="Skill 调用"
+          aria-pressed={settings.skills.enabled}
+          data-active={settings.skills.enabled}
+          disabled={skillCount === 0}
+          onClick={() =>
+            update(current => ({
+              skills: {
+                ...current.skills,
+                enabled:
+                  !current.skills.enabled &&
+                  current.skills.allowed_skills.length > 0,
+              },
+            }))
+          }
+        >
+          {skillCount > 0
+            ? [settings.skills.enabled ? '已开启' : '关闭', skillCount].join(
+                ' · ',
+              )
+            : '无可用'}
+        </button>
+      </div>
+      <div className="chat-workbench-runtime-row">
+        <span>MCP 工具</span>
+        <button
+          type="button"
+          aria-label="MCP 工具调用"
+          aria-pressed={settings.mcp_tools.enabled}
+          data-active={settings.mcp_tools.enabled}
+          disabled={mcpCount === 0}
+          onClick={() =>
+            update(current => ({
+              mcp_tools: {
+                ...current.mcp_tools,
+                enabled:
+                  !current.mcp_tools.enabled &&
+                  current.mcp_tools.allowed_tools.length > 0,
+              },
+            }))
+          }
+        >
+          {mcpCount > 0
+            ? [settings.mcp_tools.enabled ? '已开启' : '关闭', mcpCount].join(
+                ' · ',
+              )
+            : '无可用'}
+        </button>
+      </div>
+    </>
+  );
+};
 
 const WorkbenchWebToolSettingsRows = ({
   settings,
@@ -248,6 +384,7 @@ const WorkbenchRuntimeSettingsPanel = ({
         <span>运行内核</span>
         <strong>Eino ADK</strong>
       </div>
+      <WorkbenchReasoningSettingsRow settings={settings} update={update} />
       <div className="chat-workbench-runtime-row">
         <span>记忆检索</span>
         <div className="chat-workbench-runtime-options">
@@ -275,10 +412,10 @@ const WorkbenchRuntimeSettingsPanel = ({
           ))}
         </div>
       </div>
-      <div className="chat-workbench-runtime-row">
-        <span>MCP 工具</span>
-        <strong>{settings.mcp_tools.allowed_tools.length}</strong>
-      </div>
+      <WorkbenchResourceRuntimeSettingsRows
+        settings={settings}
+        update={update}
+      />
       <WorkbenchModelReliabilitySettingsRows
         failoverCandidateCount={failoverCandidateCount}
         settings={settings}

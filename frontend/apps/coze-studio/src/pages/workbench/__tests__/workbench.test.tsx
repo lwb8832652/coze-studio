@@ -728,6 +728,124 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
+  it('applies reasoning and resource toggles from the runtime settings panel', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockSendWorkbenchChat.mockResolvedValue({
+      data: {
+        task: {
+          id: 'task-with-runtime-aggregation',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '聚合运行设置',
+          status: workbenchTask.TaskStatus.Running,
+          progress: 0,
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
+    await act(async () => {
+      extensionButton.click();
+      await Promise.resolve();
+    });
+
+    const skillButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('Research Skill'),
+    ) as HTMLButtonElement;
+    act(() => {
+      skillButton.click();
+    });
+
+    const runtimeButton = container.querySelector(
+      'button[aria-label="运行设置"]',
+    ) as HTMLButtonElement;
+    act(() => {
+      runtimeButton.click();
+    });
+
+    const skillRuntimeButton = container.querySelector(
+      'button[aria-label="Skill 调用"]',
+    ) as HTMLButtonElement;
+    expect(skillRuntimeButton).toBeTruthy();
+    act(() => {
+      skillRuntimeButton.click();
+    });
+
+    const highReasoningButton = container.querySelector(
+      'button[aria-label="模型推理 高"]',
+    ) as HTMLButtonElement;
+    expect(highReasoningButton).toBeTruthy();
+    act(() => {
+      highReasoningButton.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '聚合运行设置' },
+      } as unknown as Event);
+    });
+
+    const sendButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('发送'),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '聚合运行设置',
+      mode: workbench.ChatMode.Auto,
+      model_type: '100002',
+      model_name: 'deepseek-v4-pro',
+      runtime_settings: expect.any(String),
+      enable_skills: [],
+      enable_mcp: [],
+      enable_kbs: [],
+      enable_databases: [],
+    });
+
+    const runtimeSettings = JSON.parse(
+      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+    );
+    expect(runtimeSettings).toMatchObject({
+      reasoning_effort: 'high',
+      skills: {
+        enabled: false,
+        allowed_skills: ['skill-101'],
+      },
+      mcp_tools: {
+        enabled: false,
+        allowed_tools: [],
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('sends web fetch runtime settings only after allowed hosts are configured', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

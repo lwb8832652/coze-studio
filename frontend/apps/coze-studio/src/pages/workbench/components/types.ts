@@ -30,14 +30,24 @@ export interface WorkbenchResourceSelection {
 }
 
 export type WorkbenchMemoryScope = 'thread' | 'run' | 'long_term';
+export type WorkbenchReasoningEffort = 'medium' | 'high';
 
 export interface WorkbenchRuntimeSettings {
   runtime: 'eino_adk';
+  reasoning: {
+    enabled: boolean;
+    effort: WorkbenchReasoningEffort;
+  };
   memory_retrieval: {
     limit: number;
     candidate_limit: number;
     scopes: WorkbenchMemoryScope[];
     min_confidence: number;
+  };
+  skills: {
+    enabled: boolean;
+    visibility: 'deferred';
+    allowed_skills: string[];
   };
   mcp_tools: {
     enabled: boolean;
@@ -151,11 +161,20 @@ export const createDefaultWorkbenchRuntimeSettings = (
   resourceSelection: WorkbenchResourceSelection = createDefaultWorkbenchResourceSelection(),
 ): WorkbenchRuntimeSettings => ({
   runtime: 'eino_adk',
+  reasoning: {
+    enabled: false,
+    effort: 'medium',
+  },
   memory_retrieval: {
     limit: 5,
     candidate_limit: 20,
     scopes: ['thread', 'long_term'],
     min_confidence: 0.2,
+  },
+  skills: {
+    enabled: resourceSelection.enable_skills.length > 0,
+    visibility: 'deferred',
+    allowed_skills: [...resourceSelection.enable_skills],
   },
   mcp_tools: {
     enabled: resourceSelection.enable_mcp.length > 0,
@@ -199,9 +218,16 @@ export const cloneWorkbenchRuntimeSettings = (
   settings: WorkbenchRuntimeSettings,
 ): WorkbenchRuntimeSettings => ({
   runtime: settings.runtime,
+  reasoning: {
+    ...settings.reasoning,
+  },
   memory_retrieval: {
     ...settings.memory_retrieval,
     scopes: [...settings.memory_retrieval.scopes],
+  },
+  skills: {
+    ...settings.skills,
+    allowed_skills: [...settings.skills.allowed_skills],
   },
   mcp_tools: {
     ...settings.mcp_tools,
@@ -246,6 +272,12 @@ export const createWorkbenchSubmitPayload = ({
     ? workbenchModelTypeToNumber(selectedModel)
     : undefined;
   const nextRuntimeSettings = cloneWorkbenchRuntimeSettings(runtimeSettings);
+  nextRuntimeSettings.skills.allowed_skills = [
+    ...resourceSelection.enable_skills,
+  ];
+  nextRuntimeSettings.mcp_tools.allowed_tools = [
+    ...resourceSelection.enable_mcp,
+  ];
 
   if (nextRuntimeSettings.model_failover.enabled) {
     const candidateModelIds = getWorkbenchFailoverCandidateModelIds(
@@ -269,8 +301,12 @@ export const createWorkbenchSubmitPayload = ({
     modelType,
     modelName: selectedModel?.name,
     runtimeSettings: nextRuntimeSettings,
-    enable_skills: [...resourceSelection.enable_skills],
-    enable_mcp: [...resourceSelection.enable_mcp],
+    enable_skills: nextRuntimeSettings.skills.enabled
+      ? [...resourceSelection.enable_skills]
+      : [],
+    enable_mcp: nextRuntimeSettings.mcp_tools.enabled
+      ? [...resourceSelection.enable_mcp]
+      : [],
     enable_kbs: [...resourceSelection.enable_kbs],
     enable_databases: [...resourceSelection.enable_databases],
   };
@@ -314,11 +350,15 @@ export const createWorkbenchRunConfig = (
     mode: payload.mode,
     model_type: payload.modelType,
     model_name: payload.modelName,
+    reasoning_effort: runtimeSettings.reasoning.enabled
+      ? runtimeSettings.reasoning.effort
+      : undefined,
     enable_skills: payload.enable_skills,
     enable_mcp: payload.enable_mcp,
     enable_kbs: payload.enable_kbs,
     enable_databases: payload.enable_databases,
     memory_retrieval: runtimeSettings.memory_retrieval,
+    skills: runtimeSettings.skills,
     mcp_tools: runtimeSettings.mcp_tools,
     web_tools: runtimeSettings.web_tools,
     model_retry: modelRetry,

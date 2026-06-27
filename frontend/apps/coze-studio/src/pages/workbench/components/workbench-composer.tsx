@@ -463,13 +463,18 @@ export const WorkbenchComposer = ({
   useEffect(() => {
     setRuntimeSettings(prevSettings => ({
       ...prevSettings,
+      skills: {
+        ...prevSettings.skills,
+        enabled: resourceSelection.enable_skills.length > 0,
+        allowed_skills: [...resourceSelection.enable_skills],
+      },
       mcp_tools: {
         ...prevSettings.mcp_tools,
         enabled: resourceSelection.enable_mcp.length > 0,
         allowed_tools: [...resourceSelection.enable_mcp],
       },
     }));
-  }, [resourceSelection.enable_mcp]);
+  }, [resourceSelection.enable_mcp, resourceSelection.enable_skills]);
 
   const handleValueChange = (nextValue: string) => {
     onValueChange(nextValue);
