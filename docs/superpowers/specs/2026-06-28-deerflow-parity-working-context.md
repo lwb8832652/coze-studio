@@ -86,7 +86,8 @@ The DeerFlow task-detail reference exposes these visible behaviors:
 - global token usage button/indicator;
 - export action for the thread;
 - artifact trigger and side panel;
-- collapsible thinking/reasoning block;
+- collapsible inline thinking/reasoning block; keep it visible as a DeerFlow
+  parity target instead of removing it as redundant UI;
 - rendered Mermaid diagrams, not raw fenced text;
 - per-message token usage;
 - bottom composer with mode/model controls, upload, submit/stop;

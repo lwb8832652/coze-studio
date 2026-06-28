@@ -33,12 +33,12 @@ import {
 } from '../workbench/components/types';
 import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
+import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
+import { TaskRunActionBar } from './task-run-action-bar';
 import { TaskMemorySection } from './task-memory-section';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import { getPendingHumanInteraction } from './task-human-interaction';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
-import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
-import { TaskRunActionBar } from './task-run-action-bar';
 import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type TaskDetailSource,
@@ -140,16 +140,30 @@ const TaskEventsSection = ({
   const visibleItems = hasStructuredItems
     ? eventItems.filter(item => item.display.structured)
     : eventItems;
-  const hasRunningItem = visibleItems.some(
+  const taskIsTerminal = isTaskTerminalStatus(task.status);
+  const displayItems = visibleItems.map(item => {
+    if (!taskIsTerminal || item.display.status !== 'running') {
+      return item;
+    }
+
+    return {
+      ...item,
+      display: {
+        ...item.display,
+        status: 'completed' as const,
+      },
+    };
+  });
+  const hasRunningItem = displayItems.some(
     item => item.display.status === 'running',
   );
   const shouldShowPendingStep =
     !isTaskTerminalStatus(task.status) && !hasRunningItem;
-  const doneCount = visibleItems.filter(
+  const doneCount = displayItems.filter(
     item => item.display.status === 'completed',
   ).length;
   const totalCount = Math.max(
-    visibleItems.length + (shouldShowPendingStep ? 1 : 0),
+    displayItems.length + (shouldShowPendingStep ? 1 : 0),
     1,
   );
 
@@ -165,7 +179,7 @@ const TaskEventsSection = ({
         </span>
       </div>
       <ol className="coze-prototype-execution-list">
-        {visibleItems.map(({ event, display }) => (
+        {displayItems.map(({ event, display }) => (
           <li
             key={event.id}
             className="coze-prototype-step"

@@ -18,6 +18,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { workbenchTask } from '../src';
+
 const taskThriftPath = new URL(
   '../../../../../idl/workbench/task.thrift',
   import.meta.url,
@@ -46,5 +48,16 @@ describe('workbench task api contract source', () => {
     for (const method of requiredMethods) {
       expect(source).toContain(`${method}(`);
     }
+  });
+
+  it('maps parent_run_id as a query parameter for child run listing', () => {
+    expect(workbenchTask.ListTaskThreadRuns.meta).toMatchObject({
+      method: 'GET',
+      reqMapping: {
+        path: ['thread_id'],
+        query: ['parent_run_id', 'status', 'page', 'page_size'],
+      },
+      url: '/api/workbench/task_threads/:thread_id/runs',
+    });
   });
 });

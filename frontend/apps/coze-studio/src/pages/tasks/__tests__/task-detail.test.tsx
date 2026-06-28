@@ -3137,6 +3137,145 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('uses latest canonical run terminal status to close stale thread detail state', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-stale-terminal-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-stale-terminal-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Mermaid 绘图任务',
+        status: 'created',
+        source: 'agent',
+        progress: 0,
+        last_user_message: '请绘制 Mermaid 图',
+        last_agent_message: '这是 Mermaid 图示说明。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-terminal-1',
+            thread_id: 'thread-stale-terminal-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'succeeded',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: 'agent-harness',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000100000,
+            ended_at: 1717000300000,
+            created_at: 1717000100000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-1',
+            thread_id: 'thread-stale-terminal-1',
+            run_id: 'run-terminal-1',
+            role: 'user',
+            content: '请绘制 Mermaid 图',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-1',
+            thread_id: 'thread-stale-terminal-1',
+            run_id: 'run-terminal-1',
+            role: 'assistant',
+            content: '这是 Mermaid 图示说明。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-run-started',
+            thread_id: 'thread-stale-terminal-1',
+            run_id: 'run-terminal-1',
+            event_type: 'run.started',
+            payload: JSON.stringify({
+              status: 'running',
+              worker_id: 'agent-harness',
+            }),
+            created_at: 1717000100000,
+          },
+          {
+            event_id: 'event-run-completed',
+            thread_id: 'thread-stale-terminal-1',
+            run_id: 'run-terminal-1',
+            event_type: 'run.completed',
+            payload: JSON.stringify({
+              status: 'succeeded',
+              worker_id: 'agent-harness',
+            }),
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('已完成');
+    expect(container.textContent).toContain('2/2 已完成 · 100%');
+    expect(container.textContent).not.toContain('取消任务');
+    expect(container.textContent).not.toContain('等待任务执行结果');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('cancels the latest running canonical thread run from task detail', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

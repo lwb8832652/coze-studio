@@ -92,6 +92,28 @@ const mapTaskThreadStatus = (status: string) => {
   }
 };
 
+const mapTaskThreadRunStatus = (status?: string) => {
+  switch (
+    String(status ?? '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case 'pending':
+    case 'queued':
+      return workbenchTask.TaskStatus.Queued;
+    case 'running':
+      return workbenchTask.TaskStatus.Running;
+    case 'succeeded':
+      return workbenchTask.TaskStatus.Succeeded;
+    case 'failed':
+      return workbenchTask.TaskStatus.Failed;
+    case 'canceled':
+      return workbenchTask.TaskStatus.Canceled;
+    default:
+      return undefined;
+  }
+};
+
 const getLatestThreadMessageContent = (
   messages: TaskThreadMessage[],
   role: string,
@@ -116,6 +138,7 @@ const getLatestThreadMessageContent = (
 const mapTaskThreadToTask = (
   thread: TaskThread,
   messages: TaskThreadMessage[] = [],
+  latestRun?: TaskThreadRun,
 ): ChatTask => {
   const executionType = getTaskThreadExecutionType(thread);
   const userMessage =
@@ -125,14 +148,20 @@ const mapTaskThreadToTask = (
   const assistantMessage =
     getLatestThreadMessageContent(messages, 'assistant') ||
     thread.last_agent_message;
+  const latestRunStatus = mapTaskThreadRunStatus(latestRun?.status);
+  const status = latestRunStatus ?? mapTaskThreadStatus(thread.status);
+  const progress =
+    status === workbenchTask.TaskStatus.Succeeded
+      ? 100
+      : Math.max(thread.progress, 0);
 
   return {
     id: thread.thread_id,
     space_id: thread.space_id,
     creator_id: thread.creator_id,
     title: thread.title,
-    status: mapTaskThreadStatus(thread.status),
-    progress: thread.progress,
+    status,
+    progress,
     input: JSON.stringify({
       message: userMessage,
       execution_type: executionType,
@@ -245,7 +274,11 @@ const fetchTaskThreadDetail = async (
   return {
     source: 'thread',
     threadId: thread.thread_id,
-    task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
+    task: mapTaskThreadToTask(
+      thread,
+      messagesResponse.data?.messages ?? [],
+      latestTopLevelRun,
+    ),
     artifacts: artifactsResponse.data?.artifacts ?? [],
     events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
     latestTaskRunID: latestTopLevelRun?.run_id ?? '',

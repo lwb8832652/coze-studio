@@ -804,7 +804,7 @@ export const ListTaskThreadRuns = /*#__PURE__*/ createAPI<
   reqType: 'ListTaskThreadRunsRequest',
   reqMapping: {
     path: ['thread_id'],
-    query: ['status', 'page', 'page_size'],
+    query: ['parent_run_id', 'status', 'page', 'page_size'],
   },
   resType: 'ListTaskThreadRunsResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
