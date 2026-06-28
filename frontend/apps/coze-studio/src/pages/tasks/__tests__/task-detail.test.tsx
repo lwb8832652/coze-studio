@@ -321,6 +321,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozArrowDown: () => <span />,
   IconCozAsynchronousTask: () => <span />,
   IconCozBell: () => <span />,
+  IconCozCode: () => <span />,
   IconCozCross: () => <span />,
   IconCozCopy: () => <span />,
   IconCozDocument: () => <span />,
@@ -986,13 +987,23 @@ describe('TaskDetailPage', () => {
         await Promise.resolve();
       });
 
-      const exportButton = container.querySelector(
-        'button[aria-label="导出任务为 Markdown"]',
+      const exportMenuButton = container.querySelector(
+        'button[aria-label="打开任务导出菜单"]',
       ) as HTMLButtonElement;
-      expect(exportButton).toBeTruthy();
+      expect(exportMenuButton).toBeTruthy();
 
       await act(async () => {
-        Simulate.click(exportButton);
+        Simulate.click(exportMenuButton);
+        await Promise.resolve();
+      });
+
+      const markdownExportButton = container.querySelector(
+        'button[aria-label="导出任务为 Markdown"]',
+      ) as HTMLButtonElement;
+      expect(markdownExportButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(markdownExportButton);
         await Promise.resolve();
       });
 
@@ -1000,13 +1011,171 @@ describe('TaskDetailPage', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:task-detail-export');
       const exportedText = await exportedBlob?.text();
       expect(exportedText).toContain('# 生成周报');
-      expect(exportedText).toContain('## 用户');
+      expect(exportedText).toContain('*Exported on ');
+      expect(exportedText).toContain(' · Created ');
+      expect(exportedText).toContain('## 🧑 User');
       expect(exportedText).toContain('请总结本周项目进展');
-      expect(exportedText).toContain('## 助手');
+      expect(exportedText).toContain('## 🤖 Assistant');
       expect(exportedText).toContain('本周完成了 UI 改造方案。');
+      expect(exportedText).not.toContain('状态');
+      expect(exportedText).not.toContain('Tokens');
       expect(exportedText).not.toContain('internal-file-key');
       expect(exportedText).not.toContain('hidden reasoning');
       expect(exportedText).not.toContain('secret tool result');
+    } finally {
+      URL.createObjectURL = previousCreateObjectURL;
+      URL.revokeObjectURL = previousRevokeObjectURL;
+      anchorClick.mockRestore();
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('exports task detail as safe visible JSON from the header menu', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    let exportedBlob: Blob | undefined;
+    const previousCreateObjectURL = URL.createObjectURL;
+    const previousRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      exportedBlob = blob;
+      return 'blob:task-detail-json-export';
+    });
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            content:
+              '请总结本周项目进展<uploaded_files>internal-file-key</uploaded_files>',
+            created_at: 1717000100000,
+            message_id: 'message-user-1',
+            metadata: '',
+            role: 'user',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+          {
+            content:
+              '本周完成了 UI 改造方案。\n<think>hidden reasoning</think>',
+            created_at: 1717000200000,
+            message_id: 'message-assistant-1',
+            metadata: '',
+            role: 'assistant',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+          {
+            content: 'secret tool result',
+            created_at: 1717000200000,
+            message_id: 'message-tool-1',
+            metadata: '',
+            role: 'tool',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+        ],
+        total: 3,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [],
+        total: 0,
+        aggregate: {
+          input_tokens: 1234,
+          output_tokens: 567,
+          total_tokens: 1801,
+          cost_micros: 0,
+          call_count: 2,
+          lead_agent_tokens: 1801,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const exportMenuButton = container.querySelector(
+        'button[aria-label="打开任务导出菜单"]',
+      ) as HTMLButtonElement;
+      expect(exportMenuButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(exportMenuButton);
+        await Promise.resolve();
+      });
+
+      const jsonExportButton = container.querySelector(
+        'button[aria-label="导出任务为 JSON"]',
+      ) as HTMLButtonElement;
+      expect(jsonExportButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(jsonExportButton);
+        await Promise.resolve();
+      });
+
+      expect(anchorClick).toHaveBeenCalled();
+      expect(revokeObjectURL).toHaveBeenCalledWith(
+        'blob:task-detail-json-export',
+      );
+      const exportedText = await exportedBlob?.text();
+      const exported = JSON.parse(exportedText ?? '{}') as {
+        exported_at?: string;
+        messages: Array<{ content: string; id?: string; type: string }>;
+        schema?: string;
+        thread_id: string;
+        title: string;
+        token_usage?: unknown;
+      };
+      const serializedExport = JSON.stringify(exported);
+
+      expect(exported.title).toBe('生成周报');
+      expect(exported.thread_id).toBe('thread-1');
+      expect(typeof exported.exported_at).toBe('string');
+      expect(exported.messages).toEqual([
+        {
+          type: 'human',
+          id: 'message-user-1',
+          content: '请总结本周项目进展',
+        },
+        {
+          type: 'ai',
+          id: 'message-assistant-1',
+          content: '本周完成了 UI 改造方案。',
+        },
+      ]);
+      expect(exported.schema).toBeUndefined();
+      expect(exported.token_usage).toBeUndefined();
+      expect(serializedExport).not.toContain('internal-file-key');
+      expect(serializedExport).not.toContain('hidden reasoning');
+      expect(serializedExport).not.toContain('secret tool result');
     } finally {
       URL.createObjectURL = previousCreateObjectURL;
       URL.revokeObjectURL = previousRevokeObjectURL;

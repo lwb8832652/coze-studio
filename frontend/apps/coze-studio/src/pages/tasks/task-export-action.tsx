@@ -15,29 +15,36 @@
  */
 
 import type { workbenchTask } from '@coze-studio/api-schema';
-import { IconCozDownload } from '@coze-arch/coze-design/icons';
-
-import type { TaskDetailTokenUsage } from './task-detail-loader';
 import {
-  getTaskInputText,
-  getTaskResultText,
-  getTaskStatusText,
-} from './helpers';
+  IconCozCode,
+  IconCozDocument,
+  IconCozDownload,
+} from '@coze-arch/coze-design/icons';
+import { Popover } from '@coze-arch/coze-design';
+
+import { getTaskInputText, getTaskResultText } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskExportFormat = 'markdown' | 'json';
+type TaskExportMessageType = 'human' | 'ai';
+
+interface ExportableTaskMessage {
+  content: string;
+  id?: string;
+  roleTitle: string;
+  type: TaskExportMessageType;
+}
 
 const INTERNAL_EXPORT_MARKERS = [
   /<think>[\s\S]*?<\/think>/gi,
   /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
   /<uploaded_files>[\s\S]*?<\/uploaded_files>/gi,
 ];
-
-const formatTokenCount = (value: number) =>
-  new Intl.NumberFormat('en-US').format(Math.max(0, value));
+const JSON_EXPORT_INDENT = 2;
 
 const formatTaskExportTime = (value?: number) =>
-  value && value > 0 ? new Date(value).toLocaleString() : '未知';
+  value && value > 0 ? new Date(value).toLocaleString() : 'Unknown';
 
 const sanitizeExportFilename = (name: string) =>
   name.replace(/[^\p{L}\p{N}_\- ]/gu, '').trim() || 'task';
@@ -51,21 +58,40 @@ const stripInternalExportMarkers = (value: string) =>
 const getRoleTitle = (role: string) => {
   switch (role) {
     case 'user':
-      return '用户';
+      return '🧑 User';
     case 'assistant':
-      return '助手';
+      return '🤖 Assistant';
     default:
       return '';
   }
 };
 
+const getRoleType = (role: string): TaskExportMessageType | undefined => {
+  switch (role) {
+    case 'user':
+      return 'human';
+    case 'assistant':
+      return 'ai';
+    default:
+      return undefined;
+  }
+};
+
 const getExportableMessages = (messages: TaskThreadMessage[]) =>
   messages
-    .map(message => ({
-      content: stripInternalExportMarkers(message.content),
-      role: getRoleTitle(message.role),
-    }))
-    .filter(message => message.role && message.content);
+    .map(message => {
+      const type = getRoleType(message.role);
+
+      return {
+        content: stripInternalExportMarkers(message.content),
+        id: message.message_id || undefined,
+        roleTitle: getRoleTitle(message.role),
+        type,
+      };
+    })
+    .filter((message): message is ExportableTaskMessage =>
+      Boolean(message.type && message.roleTitle && message.content),
+    );
 
 const getFallbackMessages = (task: ChatTask) => {
   const userText = stripInternalExportMarkers(
@@ -76,73 +102,121 @@ const getFallbackMessages = (task: ChatTask) => {
   );
 
   return [
-    userText ? { role: '用户', content: userText } : undefined,
-    assistantText ? { role: '助手', content: assistantText } : undefined,
-  ].filter((message): message is { role: string; content: string } =>
-    Boolean(message),
-  );
+    userText
+      ? {
+          content: userText,
+          roleTitle: getRoleTitle('user'),
+          type: 'human' as const,
+        }
+      : undefined,
+    assistantText
+      ? {
+          content: assistantText,
+          roleTitle: getRoleTitle('assistant'),
+          type: 'ai' as const,
+        }
+      : undefined,
+  ].filter((message): message is ExportableTaskMessage => Boolean(message));
 };
 
 const appendMetadata = ({
   lines,
   task,
-  tokenUsage,
 }: {
   lines: string[];
   task: ChatTask;
-  tokenUsage?: TaskDetailTokenUsage;
 }) => {
   lines.push(
-    `*导出于 ${new Date().toLocaleString()} · 创建 ${formatTaskExportTime(
+    `*Exported on ${new Date().toLocaleString()} · Created ${formatTaskExportTime(
       task.created_at,
     )}*`,
-    '',
-    `状态：${getTaskStatusText(task.status)}`,
   );
-
-  if (tokenUsage?.totalTokens) {
-    lines.push(
-      `Tokens：${formatTokenCount(tokenUsage.totalTokens)} · Input ${formatTokenCount(
-        tokenUsage.inputTokens,
-      )} · Output ${formatTokenCount(tokenUsage.outputTokens)}`,
-    );
-  }
 
   lines.push('', '---', '');
 };
 
-export const buildTaskMarkdownExport = ({
+const getVisibleExportMessages = ({
   messages,
   task,
-  tokenUsage,
 }: {
   messages?: TaskThreadMessage[];
   task: ChatTask;
-  tokenUsage?: TaskDetailTokenUsage;
-}) => {
-  const lines = [`# ${task.title}`, ''];
-  const visibleMessages = messages?.length
+}) =>
+  messages?.length
     ? getExportableMessages(messages)
     : getFallbackMessages(task);
 
-  appendMetadata({ lines, task, tokenUsage });
+export const buildTaskMarkdownExport = ({
+  messages,
+  task,
+}: {
+  messages?: TaskThreadMessage[];
+  task: ChatTask;
+}) => {
+  const lines = [`# ${task.title}`, ''];
+  const visibleMessages = getVisibleExportMessages({ messages, task });
+
+  appendMetadata({ lines, task });
 
   for (const message of visibleMessages) {
-    lines.push(`## ${message.role}`, '', message.content, '', '---', '');
+    lines.push(`## ${message.roleTitle}`, '', message.content, '', '---', '');
   }
 
   return `${lines.join('\n').trimEnd()}\n`;
 };
 
-const downloadTaskMarkdown = ({
+const resolveThreadID = ({
+  messages,
+  task,
+  threadId,
+}: {
+  messages?: TaskThreadMessage[];
+  task: ChatTask;
+  threadId?: string;
+}) =>
+  threadId ||
+  messages?.find(message => message.thread_id)?.thread_id ||
+  task.conversation_id ||
+  task.id;
+
+export const buildTaskJSONExport = ({
+  messages,
+  task,
+  threadId,
+}: {
+  messages?: TaskThreadMessage[];
+  task: ChatTask;
+  threadId?: string;
+}) => {
+  const visibleMessages = getVisibleExportMessages({ messages, task });
+
+  return `${JSON.stringify(
+    {
+      title: task.title,
+      thread_id: resolveThreadID({ messages, task, threadId }),
+      exported_at: new Date().toISOString(),
+      messages: visibleMessages.map(message => ({
+        type: message.type,
+        id: message.id,
+        content: message.content,
+      })),
+    },
+    null,
+    JSON_EXPORT_INDENT,
+  )}\n`;
+};
+
+const downloadTaskFile = ({
   content,
   fileName,
+  mimeType,
 }: {
   content: string;
   fileName: string;
+  mimeType: string;
 }) => {
   const blob = new Blob([content], {
-    type: 'text/markdown;charset=utf-8',
+    type: mimeType,
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -157,28 +231,68 @@ const downloadTaskMarkdown = ({
 export const TaskExportAction = ({
   messages,
   task,
-  tokenUsage,
+  threadId,
 }: {
   messages?: TaskThreadMessage[];
   task: ChatTask;
-  tokenUsage?: TaskDetailTokenUsage;
+  threadId?: string;
 }) => {
-  const handleExport = () => {
-    downloadTaskMarkdown({
-      content: buildTaskMarkdownExport({ messages, task, tokenUsage }),
-      fileName: `${sanitizeExportFilename(task.title)}.md`,
+  const handleExport = (format: TaskExportFormat) => {
+    if (format === 'markdown') {
+      downloadTaskFile({
+        content: buildTaskMarkdownExport({ messages, task }),
+        fileName: `${sanitizeExportFilename(task.title)}.md`,
+        mimeType: 'text/markdown;charset=utf-8',
+      });
+      return;
+    }
+
+    downloadTaskFile({
+      content: buildTaskJSONExport({ messages, task, threadId }),
+      fileName: `${sanitizeExportFilename(task.title)}.json`,
+      mimeType: 'application/json;charset=utf-8',
     });
   };
 
-  return (
-    <button
-      type="button"
-      aria-label="导出任务为 Markdown"
-      className="coze-prototype-task-action"
-      onClick={handleExport}
+  const menu = (
+    <div
+      className="coze-prototype-export-menu"
+      role="menu"
+      aria-label="任务导出格式"
     >
-      <IconCozDownload className="text-[14px]" />
-      导出
-    </button>
+      <button
+        type="button"
+        role="menuitem"
+        aria-label="导出任务为 Markdown"
+        className="coze-prototype-export-menu-item"
+        onClick={() => handleExport('markdown')}
+      >
+        <IconCozDocument className="text-[14px]" />
+        <span>Markdown</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        aria-label="导出任务为 JSON"
+        className="coze-prototype-export-menu-item"
+        onClick={() => handleExport('json')}
+      >
+        <IconCozCode className="text-[14px]" />
+        <span>JSON</span>
+      </button>
+    </div>
+  );
+
+  return (
+    <Popover content={menu} position="bottomRight" showArrow trigger="click">
+      <button
+        type="button"
+        aria-label="打开任务导出菜单"
+        className="coze-prototype-task-action"
+      >
+        <IconCozDownload className="text-[14px]" />
+        导出
+      </button>
+    </Popover>
   );
 };

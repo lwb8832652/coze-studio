@@ -47,11 +47,7 @@ export const TaskDetailHeader = ({
 }) => (
   <TaskTopBar
     exportAction={
-      <TaskExportAction
-        messages={messages}
-        task={task}
-        tokenUsage={tokenUsage}
-      />
+      <TaskExportAction messages={messages} task={task} threadId={threadId} />
     }
     inspectorAction={
       threadId ? (

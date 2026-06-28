@@ -68,7 +68,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | 追问/停止/重试 | bottom composer send/stop, run cancel/retry | follow-up, cancel, retry task run | 待验收 | 需要页面手动/自动对比。 |
 | Artifacts | header trigger + side panel + file links | Task artifacts panel | 待验收 | 需验证 UI、接口、文件预览。 |
 | 文档生成/预览 | Agent 生成文件后进入 Artifacts，可内联预览或安全下载 | 任务运行生成文档产物，任务详情可预览/下载 | 待验收 | 独立 `TD-DOC-*` case，不能只看 Artifacts 按钮存在。 |
-| 导出 | thread export action | 任务导出能力 | 待开发 | 当前任务详情尚未按 DeerFlow 导出入口完整对齐。 |
+| 导出 | thread export action | 任务导出能力 | 待验收 | 顶栏导出菜单已按 DeerFlow 提供 Markdown / JSON；需人工确认真实下载样例。 |
 | Token 用量 | global token button, per-turn usage | run aggregate indicator, child aggregate | 待验收 | per-message/per-turn 展示需对齐。 |
 | Skills | slash/progressive activation, Skills page/API | 技能配置 + Eino runtime loading | 待验收 | 重点验 task composer activation。 |
 | MCP/Tools | MCP settings, tool catalog, tool calls | 工具配置 + Eino MCP runtime | 待验收 | 重点验可见配置和 task-detail safe event。 |
@@ -206,7 +206,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-ART-002 | Artifact 预览 | 文件列表、图片/Markdown/链接可预览 | Coze 预览安全、权限和失败态清楚 | preview screenshot | content/signed_url response | artifact preview files/tests | 待验收 |
 | TD-ART-003 | Artifact 空态/错误态 | 无 artifact 时不干扰任务流 | Coze 空态/错误态边界清楚 | empty/error screenshot | 404/empty response | artifacts tests | 待验收 |
 | TD-EXP-001 | 导出入口 | Header export action | Coze 任务详情提供导出入口 | export button screenshot | export request/response | export service/component | 已完成 |
-| TD-EXP-002 | 导出内容 | 导出包含消息/图表/关键结果 | Coze 先导出用户可见 Markdown 并过滤思考/工具/内部标记；JSON 菜单另列后续项 | exported file sample | export payload | export tests | 待验收 |
+| TD-EXP-002 | 导出内容 | Markdown: `# title`、`Exported on...Created...`、`## 🧑 User` / `## 🤖 Assistant`；JSON: `title/thread_id/exported_at/messages(type/id/content)` | Coze 导出菜单提供 Markdown / JSON，默认只导出用户可见 user/assistant transcript，过滤思考、tool 消息和内部标记，不写入 token/status/schema | DeerFlow 用户提供导出样例；Coze 浏览器下载样例待人工确认 | 纯前端 Blob 下载，N/A | `task-export-action.tsx` + `task-detail.test.tsx` | 待验收 |
 | TD-TOKEN-001 | 全局 token | Header TokenUsageIndicator 可点击查看汇总 | Coze header 显示 run/thread aggregate，视觉保持 `Tokens + total` 紧凑 pill，点击后展示 Input/Output/Total 明细 | token screenshot + popover DOM | token_usage aggregate | token indicator tests | 已完成 |
 | TD-TOKEN-002 | 每轮 token | DeerFlow per-turn/per-step usage | Coze task detail 每条消息/步骤显示等价信息 | per-message usage screenshot | usage rows grouped by message/run | token usage files/tests | 待开发 |
 | TD-TOKEN-003 | active token | running 时可显示 pending/active usage | Coze running 时不显示误导性 0 | streaming token screenshot | include_active or event metadata | token loader | 差异待确认 |
@@ -341,8 +341,12 @@ Coze 目标页可见能力：
   signature/raw payload；当前缺真实 reasoning 样本浏览器截图，保持待验收。
 - `TD-HDR-003` / `TD-EXP-001`: Coze 顶栏已收敛为 `Tokens`、`导出`、`详情`
   主操作，移除顶栏 `产物 0` 和 `任务详情 › 状态` 面包屑式文案。
-- `TD-EXP-002`: Coze 已补用户可见 Markdown 导出，默认过滤思考、
-  tool 消息和内部标记；DeerFlow 的 JSON 二级导出菜单仍是后续对齐项。
+- `TD-EXP-002`: Coze 已按 DeerFlow 用户提供样例补齐导出二级菜单和
+  Markdown / JSON 两种格式。Markdown 使用 `# title`、`Exported on...Created...`
+  和 `## 🧑 User` / `## 🤖 Assistant` 结构；JSON 使用
+  `title/thread_id/exported_at/messages(type/id/content)`，默认过滤思考、
+  tool 消息、上传文件内部标记，不写入 Coze 自有 `schema`、`token_usage`
+  或任务状态字段。真实浏览器下载样例仍待人工确认。
 - `TD-TOKEN-002`: DeerFlow 有 assistant turn per-token 摘要，Coze 当前主要是
   header aggregate，需要补 per-message/per-turn 展示或明确折叠入口。
 - `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页本轮只看到
@@ -367,8 +371,9 @@ Coze 目标页可见能力：
   `Tokens + total` 紧凑 pill 展示聚合用量，并支持点击查看
   Input/Output/Total 明细；右侧主操作保留 `导出` 和 `详情`，不再显示
   `产物 0` 或 `任务详情 › 已完成`。
-- `TD-EXP-001` 已通过最近修复：任务详情顶栏提供 Markdown 导出入口；
-  `TD-EXP-002` 需要继续补 JSON 菜单、更多格式和文件级样例验收。
+- `TD-EXP-001` 已通过最近修复：任务详情顶栏提供 DeerFlow 风格导出入口。
+- `TD-EXP-002` 已代码对齐 DeerFlow 用户提供的 Markdown / JSON 导出样例，
+  仍需真实浏览器下载样例做人工验收。
 - `TD-MD-001` 和 `TD-MD-002` 已通过最近修复：Coze 任务详情能把
   `sequenceDiagram` 和 `flowchart` Mermaid fenced block 渲染为 SVG，并在
   每个图块右上提供 SVG 下载和 Mermaid 源码复制按钮。
