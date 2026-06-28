@@ -67,6 +67,13 @@ const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadSubagentRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
+const mockMermaidRender = vi.hoisted(() =>
+  vi.fn((id: string) =>
+    Promise.resolve({
+      svg: `<svg xmlns="http://www.w3.org/2000/svg" data-render-id="${id}" />`,
+    }),
+  ),
+);
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -315,6 +322,23 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
+/* eslint-disable @typescript-eslint/naming-convention -- Mock export mirrors bot-md-box component name. */
+vi.mock('@coze-arch/bot-md-box-adapter/lazy', () => ({
+  MdBoxLazy: ({ markDown }: { markDown: string }) => (
+    <div data-testid="task-md-box" data-markdown={markDown}>
+      {markDown}
+    </div>
+  ),
+}));
+/* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mock. */
+
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: vi.fn(),
+    render: mockMermaidRender,
+  },
+}));
+
 import TaskDetailPage from '../detail';
 
 class MockEventSource {
@@ -391,6 +415,7 @@ describe('TaskDetailPage', () => {
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
+    mockMermaidRender.mockClear();
     mockGetTask.mockResolvedValue({
       data: {
         id: 'task-1',
@@ -790,6 +815,80 @@ describe('TaskDetailPage', () => {
       container.querySelector('textarea[aria-label="任务描述"]'),
     ).toBeTruthy();
     expect(container.textContent).toContain('65%');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders Mermaid answer markdown through the markdown viewer', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const mermaidAnswer = [
+      '下面是两个图：',
+      '',
+      '```mermaid',
+      'sequenceDiagram',
+      '  User->>Agent: 需求',
+      '  Agent-->>User: 方案',
+      '```',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      '  A[输入] --> B[执行]',
+      '```',
+    ].join('\n');
+
+    mockGetTask.mockResolvedValue({
+      data: {
+        id: 'task-mermaid-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '绘制 Mermaid 图',
+        status: workbenchTask.TaskStatus.Succeeded,
+        progress: 100,
+        input: JSON.stringify({
+          message: '请绘制 Mermaid 图',
+          execution_type: 'Agent',
+        }),
+        result: JSON.stringify({
+          message: mermaidAnswer,
+          result_type: 'answer',
+          execution_type: 'Agent',
+        }),
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const markdownContent = container.querySelector(
+      '[data-testid="task-markdown-content"]',
+    );
+    const mdBox = container.querySelector('[data-testid="task-md-box"]');
+    const mermaidDiagrams = container.querySelectorAll(
+      '[data-testid="task-mermaid-diagram"]',
+    );
+
+    expect(markdownContent).toBeTruthy();
+    expect(mermaidDiagrams).toHaveLength(2);
+    expect(mdBox?.getAttribute('data-markdown')).toContain('下面是两个图');
+    expect(mdBox?.getAttribute('data-markdown')).not.toContain(
+      'sequenceDiagram',
+    );
+    expect(mdBox?.getAttribute('data-markdown')).not.toContain('flowchart TD');
+    expect(
+      container.querySelector('article[data-result-type="answer"] > p'),
+    ).toBeNull();
 
     act(() => {
       root?.unmount();

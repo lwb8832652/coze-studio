@@ -15,14 +15,9 @@
  */
 
 import { useParams } from 'react-router-dom';
-import type { ReactNode } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
-import {
-  IconCozAsynchronousTask,
-  IconCozBell,
-} from '@coze-arch/coze-design/icons';
 
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
@@ -31,19 +26,17 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
-import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
+import { TaskTopBar } from './task-top-bar';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
 import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
 import { TaskRunActionBar } from './task-run-action-bar';
 import { TaskMemorySection } from './task-memory-section';
+import { TaskMarkdownContent } from './task-markdown-content';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import { getPendingHumanInteraction } from './task-human-interaction';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
 import { projectTaskExecutionEvents } from './task-event-projection';
-import {
-  type TaskDetailSource,
-  type TaskDetailTokenUsage,
-} from './task-detail-loader';
+import { type TaskDetailSource } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 import {
@@ -53,7 +46,6 @@ import {
   getTaskInputText,
   parseTaskResultPayload,
   type TaskResultPayload,
-  getTaskStatusText,
   isTaskTerminalStatus,
 } from './helpers';
 
@@ -69,44 +61,6 @@ const AssistantMark = () => (
       <path d="M12 2 2 22h20L12 2zm0 6 6 12H6l6-12z" />
     </svg>
   </span>
-);
-
-const TaskTopBar = ({
-  artifactAction,
-  task,
-  tokenUsage,
-}: {
-  artifactAction?: ReactNode;
-  task: ChatTask;
-  tokenUsage?: TaskDetailTokenUsage;
-}) => (
-  <header className="coze-prototype-task-topbar">
-    <div className="coze-prototype-task-title-group">
-      <IconCozAsynchronousTask className="text-[16px]" />
-      <h1 className="coze-prototype-task-top-title">{task.title}</h1>
-      <span className="coze-prototype-top-muted">›</span>
-      <span className="coze-prototype-top-muted">
-        {getTaskStatusText(task.status)}
-      </span>
-    </div>
-    <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
-    <div className="flex-1" />
-    {artifactAction}
-    <button type="button" className="coze-prototype-task-action">
-      ☆ 收藏
-    </button>
-    <button type="button" className="coze-prototype-task-action">
-      分享
-    </button>
-    <button
-      type="button"
-      className="coze-prototype-icon-button"
-      aria-label="通知"
-    >
-      <IconCozBell className="text-[14px]" />
-    </button>
-    <div className="coze-prototype-avatar">wb</div>
-  </header>
 );
 
 const TaskConversation = ({ task }: { task: ChatTask }) => {
@@ -254,7 +208,9 @@ const TaskAnswer = ({
     <div className="coze-prototype-result-eyebrow">
       普通回答{result.executionType ? ` · ${result.executionType}` : ''}
     </div>
-    <p>{result.message || streamingMessage || task.error || '结果生成中'}</p>
+    <TaskMarkdownContent
+      value={result.message || streamingMessage || task.error || '结果生成中'}
+    />
     {result.retrievalSources.length ? (
       <div className="coze-prototype-result-sources">
         {result.retrievalSources.map(source => (
@@ -277,7 +233,7 @@ const TaskAgentResult = ({
     data-result-type="agent_trace"
   >
     <h2>Agent 最终结果</h2>
-    <p>{result.message || task.error || '结果生成中'}</p>
+    <TaskMarkdownContent value={result.message || task.error || '结果生成中'} />
   </article>
 );
 
@@ -290,7 +246,7 @@ const TaskReport = ({
 }) => (
   <article className="coze-prototype-report">
     <h2>{task.title}报告</h2>
-    <p>{result.message || task.error || '结果生成中'}</p>
+    <TaskMarkdownContent value={result.message || task.error || '结果生成中'} />
 
     <h3>一、任务输入</h3>
     <p>{getTaskInputText(task.input) || task.title}</p>
