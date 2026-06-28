@@ -149,6 +149,24 @@ cd backend && go test ./...
   a large mainline slice, update the same tracker with completed, pending,
   blocked, or deferred subtasks and the verification evidence. This document
   update is part of the deliverable, not optional cleanup.
+- Branch workflow for P0 delivery:
+  - Ongoing Codex development stays on the Codex development branch, currently
+    `codex/deerflow-parity-mainline`, unless the user explicitly chooses a
+    different development branch.
+  - `dev` is the test-environment validation branch, not the day-to-day Codex
+    development branch. Do not keep this Codex worktree checked out on `dev`,
+    because that prevents the user's local development tools from checking out
+    the same branch.
+  - Before promoting to test, finish the development slice, run the targeted
+    verification, commit the work, and provide the user with the commit/diff
+    summary for manual code review. Do not merge the development branch into
+    `dev` until the user has approved promotion or explicitly requested the
+    test promotion after review.
+  - Promotion to test means merging the current development branch into
+    `dev`, pushing `origin/dev`, and then switching this Codex worktree back to
+    the development branch. If `dev` is already checked out by another local
+    worktree, stop and report the conflicting worktree path instead of forcing
+    the checkout.
 - Do not let P0 absorb deferred work. Full LangGraph compatibility suites,
   complex security scanning, policy administration UI, deep sandbox
   diagnostics, Prometheus/OpenTelemetry exporters, storage lifecycle,
