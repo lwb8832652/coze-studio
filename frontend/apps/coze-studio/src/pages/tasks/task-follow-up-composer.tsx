@@ -46,6 +46,7 @@ export const TaskFollowUpComposer = ({
       loading={loading}
       error={error}
       variant="detail"
+      presentation="deerflow"
       taskId={taskId}
       onValueChange={onValueChange}
       onModeChange={onModeChange}

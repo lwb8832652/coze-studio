@@ -125,6 +125,7 @@ vi.mock('@coze-arch/coze-design', () => ({
   Button: ({
     'aria-label': ariaLabel,
     children,
+    className,
     disabled,
     icon,
     loading,
@@ -132,6 +133,7 @@ vi.mock('@coze-arch/coze-design', () => ({
   }: {
     'aria-label'?: string;
     children: ReactNode;
+    className?: string;
     disabled?: boolean;
     icon?: ReactNode;
     loading?: boolean;
@@ -140,6 +142,7 @@ vi.mock('@coze-arch/coze-design', () => ({
     <button
       type="button"
       aria-label={ariaLabel}
+      className={className}
       disabled={disabled}
       data-loading={loading}
       onClick={onClick}
@@ -438,6 +441,40 @@ const expectElementTextFragments = (
 ) => {
   expect(element).toBeTruthy();
   expectTextFragments(element?.textContent, fragments);
+};
+
+const expectDeerFlowTaskComposer = (
+  followUpComposer: Element | null | undefined,
+) => {
+  const composer = followUpComposer?.querySelector('.chat-workbench-composer');
+  const segmentedMode = followUpComposer?.querySelector('.chat-workbench-mode');
+  const deerflowMode = followUpComposer?.querySelector(
+    '.chat-workbench-deerflow-mode-trigger',
+  );
+  const sendButton = followUpComposer?.querySelector(
+    'button[aria-label="发送任务"]',
+  );
+  const modeButtonLabels = Array.from(
+    followUpComposer?.querySelectorAll('.chat-workbench-mode-button') ?? [],
+  ).map(button => button.textContent?.trim());
+
+  expect(composer?.getAttribute('data-composer-style')).toBe('deerflow');
+  expect(segmentedMode).toBeNull();
+  expect(deerflowMode?.textContent).toContain('Ultra');
+  expect(modeButtonLabels).not.toContain('Auto');
+  expect(modeButtonLabels).not.toContain('Ask');
+  expect(modeButtonLabels).not.toContain('Agent');
+  expect(followUpComposer?.textContent).toContain('默认模型');
+  expect(followUpComposer?.textContent).toContain('拓展');
+  expect(
+    followUpComposer?.querySelector('button[aria-label="添加上下文"]'),
+  ).toBeTruthy();
+  expect(
+    followUpComposer?.querySelector('button[aria-label="添加附件"]'),
+  ).toBeTruthy();
+  expect(sendButton?.classList.contains('chat-workbench-send-deerflow')).toBe(
+    true,
+  );
 };
 
 describe('TaskDetailPage', () => {
@@ -1519,6 +1556,7 @@ describe('TaskDetailPage', () => {
     expect(chatTranscript?.contains(followUpComposer)).toBe(false);
     expect(detailInner?.children[0]).toBe(detailScroll);
     expect(detailInner?.children[1]).toBe(followUpComposer);
+    expectDeerFlowTaskComposer(followUpComposer);
 
     act(() => {
       root?.unmount();

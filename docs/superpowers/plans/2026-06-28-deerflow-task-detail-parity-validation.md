@@ -107,7 +107,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | Event projection | `frontend/apps/coze-studio/src/pages/tasks/task-event-projection.ts` |
 | Markdown/Mermaid | `frontend/apps/coze-studio/src/pages/tasks/task-markdown-content.tsx` |
 | Top bar | `frontend/apps/coze-studio/src/pages/tasks/task-top-bar.tsx` |
-| Follow-up composer | `frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts` |
+| Follow-up composer | `frontend/apps/coze-studio/src/pages/tasks/task-follow-up-composer.tsx`, `frontend/apps/coze-studio/src/pages/workbench/components/workbench-composer.tsx`, `frontend/apps/coze-studio/src/pages/workbench/components/workbench-composer-controls.tsx` |
 | Run actions | `frontend/apps/coze-studio/src/pages/tasks/task-run-action-bar.tsx` |
 | Artifacts panel | `frontend/apps/coze-studio/src/pages/tasks/task-artifacts-panel.tsx` |
 | Artifact list item | `frontend/apps/coze-studio/src/pages/tasks/task-artifact-list-item.tsx` |
@@ -190,10 +190,10 @@ P0 只做 DeerFlow 可见主线能力对齐：
 
 | ID | 功能点 | DeerFlow 基线 | Coze 期望 | 前端证据 | 后端证据 | 代码证据 | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| TD-COMP-001 | 底部输入框 | 固定底部，未遮挡消息 | Coze task detail 底部追问输入体验对齐 | browser scroll metrics + DOM | N/A | `detail.tsx`, `workspace-prototype.less`, `task-detail.test.tsx` | 已完成 |
-| TD-COMP-002 | 模型选择 | model selector 可见且和上下文绑定 | Coze 运行设置/模型选择可修改 run config | model dropdown screenshot | run config request | settings control/service | 待验收 |
-| TD-COMP-003 | 模式选择 | flash/thinking/pro/ultra 或同等能力 | Coze Auto/模式和 reasoning 参数可用 | mode control screenshot | config payload | runtime settings | 待验收 |
-| TD-COMP-004 | Skill slash/渐进激活 | 输入 `/` 可筛选 Skill | Coze 技能选择/启用进入 run config | slash/select screenshot | enable_skills payload | workbench/task settings | 待验收 |
+| TD-COMP-001 | 底部输入框 | 固定底部，未遮挡消息；输入框左侧附件、模式，右侧模型、`@`、链接、圆形发送 | Coze task detail 使用 DeerFlow presentation：去掉 `Auto/Ask/Agent` 分段、隐藏运行设置按钮，保留 `拓展` 和 `@`，发送按钮改为 DeerFlow 绿色圆形图标 | browser scroll metrics + DOM + composer 截图 | N/A | `task-follow-up-composer.tsx`, `workbench-composer*.tsx`, `workspace-prototype.less`, `task-detail.test.tsx` | 待验收 |
+| TD-COMP-002 | 模型选择 | model selector 可见且和上下文绑定 | Coze task detail 当前显示模型 readout；完整模型下拉和运行配置绑定需继续验收 | model dropdown screenshot | run config request | model loader/settings control/service | 待验收 |
+| TD-COMP-003 | 模式选择 | 闪速/思考/Pro/Ultra 或同等能力 | Coze task detail 已改为 DeerFlow 风格模式触发器，默认 `Ultra`，不再露出 `Auto/Ask/Agent`；需补浏览器交互截图和 config payload | mode menu screenshot | config payload | `workbench-composer-controls.tsx`, `task-detail.test.tsx` | 待验收 |
+| TD-COMP-004 | Skill slash/渐进激活 | 输入 `/` 可筛选 Skill | Coze 保留 `拓展` Skill/MCP 选择和 `@` 上下文入口；`/` 筛选是否等价仍需对比 DeerFlow | slash/select screenshot | enable_skills payload | workbench/task settings | 待验收 |
 | TD-COMP-005 | MCP/tool 激活 | 可选择 MCP/tool，运行时调用 | Coze 工具配置进入 run config | tool selection screenshot | enable_mcp payload | tools/service/runtime | 待验收 |
 | TD-COMP-006 | 文件上传 | composer 支持附件并展示上传文件 | Coze 支持附件或明确 P1 差异 | upload screenshot | upload/artifact request | upload/artifact files | 差异待确认 |
 | TD-COMP-007 | 追问追加 | 已完成任务可继续追问并保留历史 | Coze append message + queued run + refresh | before/after screenshot | append/create-run request/response | follow-up service/tests | 待验收 |
@@ -324,8 +324,9 @@ Coze 目标页可见能力：
 - 完成态已收敛，不显示取消任务；执行流程显示 `2/2 已完成 · 100%`。
 - Mermaid 有两个 `data-testid="task-mermaid-diagram"`，状态均为 `ready`，
   SVG 数量为 2，raw fenced Mermaid 不可见。
-- 底部有追问 composer、Auto/Ask/Agent、拓展、运行设置、发送；修复后
-  composer 作为底部 dock，不再属于聊天记录滚动流。
+- 底部 composer 已作为 dock，不再属于聊天记录滚动流；最新代码已切到
+  DeerFlow presentation，去掉 `Auto/Ask/Agent` 分段和运行设置按钮，保留
+  `拓展`、`@`、链接和附件入口，发送按钮改为 DeerFlow 绿色圆形图标。
 - `运行诊断`、`安全审计`、`任务记忆` 已移入 header `详情` inspector，不再
   直接铺在聊天对话记录中。
 
@@ -334,8 +335,14 @@ Coze 目标页可见能力：
 - `TD-LAYOUT-001`: Coze 主内容仍需继续向 DeerFlow chat-like 详情收敛。
   `TD-LAYOUT-003` 已完成：运行诊断、安全审计、任务记忆移入 header
   `详情` inspector，聊天记录区保持纯净。
-- `TD-COMP-001`: 已完成。DeerFlow 和 Coze 均为页面不滚、消息区域内部
-  滚动、底部 composer 固定；后续只做视觉细节继续对齐。
+- `TD-COMP-001`: 布局和代码已完成，状态回到待验收。DeerFlow 和 Coze
+  均为页面不滚、消息区域内部滚动、底部 composer 固定；本轮进一步把
+  task detail composer 改成 DeerFlow presentation：去掉 `Auto/Ask/Agent`，
+  默认展示 `Ultra` 模式触发器，保留 `拓展` 和 `@`，发送按钮改为绿色圆形
+  图标。仍需用户人工浏览器验收最终视觉。
+- `TD-COMP-003`: 模式选择已代码对齐为 DeerFlow 风格菜单，但底层仍映射到
+  Coze `Auto` / `Ask` / `Agent` run mode，需在后续浏览器和请求 payload 中
+  确认是否足够等价。
 - `TD-MSG-005`: Coze 已补 inline `思考` 前端适配，从 ADK
   `message.completed` / answer payload 中提取 reasoning 并隐藏 provider
   signature/raw payload；当前缺真实 reasoning 样本浏览器截图，保持待验收。
@@ -351,8 +358,8 @@ Coze 目标页可见能力：
   `关闭`、`总览`、`每轮`、`调试` 显示方式，默认 `每轮`；assistant turn
   根据最新 `run_id` 展示 `Tokens / 输入 / 输出 / 总计` 汇总，敏感的
   provider/raw_usage/step_name 不进 UI。真实浏览器截图仍待人工确认。
-- `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页本轮只看到
-  `@` 和链接图标，需要单独验证附件上传是否存在和是否等价。
+- `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页已补同位
+  附件图标入口，但真实上传、文件列表和 run config 绑定仍需单独验证。
 - `TD-DOC-*`: 文档生成、登记、预览、下载、安全 fallback 已补 case，但本轮
   尚未跑标准文档生成提示词，需要下一步专项验证。
 
@@ -389,6 +396,10 @@ Coze 目标页可见能力：
   真实 reasoning 样本浏览器验收。
 - `TD-TOKEN-002` 每轮/每消息 token 显示已代码完成并通过详情页单测；
   待用户人工浏览器确认后再改为 `已完成`。
+- `TD-COMP-001/003` 本轮已补代码与单测：任务详情追问框使用 DeerFlow
+  presentation，去掉 `Auto/Ask/Agent` 分段，保留 `拓展`、`@`、附件/链接
+  入口，默认显示 `Ultra` 模式，发送按钮改为绿色圆形图标；下一步由用户
+  人工确认实际页面视觉。
 - `TD-DOC-*` 文档生成和预览已经纳入 P0 验收矩阵，后续必须按文档生成
   标准提示词做专项对比。
 - Runtime Doctor 是 Coze 运维增强，不作为 DeerFlow 视觉主线阻塞项；若影响
