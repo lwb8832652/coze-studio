@@ -2404,6 +2404,12 @@ make atlas-hash
   `make middleware` / `make sync_db` should use `MYSQL_HOST`, `MYSQL_PORT`,
   `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, and `ATLAS_URL` from
   `docker/.env.debug`.
+- `make env` also normalizes the non-secret P0 debug runtime switches in
+  `docker/.env.debug`: `AGENT_THREAD_RUNTIME_DEFAULT=eino_adk`,
+  `AGENT_THREAD_EINO_ADK_ENABLED=true`, and
+  `AGENT_THREAD_WORKER_ENABLED=true` with the default worker ID, batch size,
+  and interval. This is required for Workbench requests that send
+  `{"runtime":"eino_adk"}`.
 - The local MySQL container is a manual fallback only. Start it explicitly with
   the `local-mysql` or `mysql` profile if a future task intentionally needs a
   disposable local database.

@@ -27,6 +27,20 @@ env:
 		echo "Env file '$(ENV_FILE)' not found, using example env..."; \
 		cp ./docker/.env.debug.example $(ENV_FILE); \
 	fi
+	@tmp_file="$$(mktemp)"; \
+	grep -Ev '^(# Agent thread runtime for P0 debug validation|(export[[:space:]]+)?(AGENT_THREAD_RUNTIME_DEFAULT|AGENT_THREAD_EINO_ADK_ENABLED|AGENT_THREAD_WORKER_ENABLED|AGENT_THREAD_WORKER_ID|AGENT_THREAD_WORKER_BATCH_SIZE|AGENT_THREAD_WORKER_INTERVAL_MS)=)' "$(ENV_FILE)" > "$$tmp_file"; \
+	cat "$$tmp_file" > "$(ENV_FILE)"; \
+	rm -f "$$tmp_file"; \
+	{ \
+		echo ""; \
+		echo "# Agent thread runtime for P0 debug validation"; \
+		echo "export AGENT_THREAD_RUNTIME_DEFAULT=eino_adk"; \
+		echo "export AGENT_THREAD_EINO_ADK_ENABLED=true"; \
+		echo "export AGENT_THREAD_WORKER_ENABLED=true"; \
+		echo "export AGENT_THREAD_WORKER_ID=agent-run-worker"; \
+		echo "export AGENT_THREAD_WORKER_BATCH_SIZE=10"; \
+		echo "export AGENT_THREAD_WORKER_INTERVAL_MS=2000"; \
+	} >> "$(ENV_FILE)"
 
 fe:
 	@echo "Building frontend..."
