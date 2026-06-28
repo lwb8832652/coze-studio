@@ -49,6 +49,7 @@ type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadRun = workbenchTask.TaskThreadRun;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
 export type LoadedTaskDetailSource = 'task' | 'thread';
@@ -60,6 +61,7 @@ export interface TaskDetail {
   events: TaskEvent[];
   artifacts?: TaskThreadArtifact[];
   latestTaskRunID?: string;
+  latestTaskRunStatus?: string;
   threadId?: string;
   tokenUsage?: TaskDetailTokenUsage;
   subagentRuns?: TaskDetailSubagentRun[];
@@ -232,6 +234,8 @@ const fetchTaskThreadDetail = async (
     }),
   ]);
   const rawRunEvents = runEventsResponse.data?.events ?? [];
+  const latestTopLevelRun: TaskThreadRun | undefined =
+    topLevelRunsResponse.data?.runs?.[0];
   const subagentRuns = await fetchTaskThreadSubagentRuns(
     threadID,
     getSubagentLifecycleByChildRunID(rawRunEvents),
@@ -244,7 +248,8 @@ const fetchTaskThreadDetail = async (
     task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
     artifacts: artifactsResponse.data?.artifacts ?? [],
     events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
-    latestTaskRunID: topLevelRunsResponse.data?.runs?.[0]?.run_id ?? '',
+    latestTaskRunID: latestTopLevelRun?.run_id ?? '',
+    latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
     ),

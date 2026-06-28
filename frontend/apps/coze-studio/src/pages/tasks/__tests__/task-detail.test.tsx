@@ -16,7 +16,7 @@
 
 import type { ReactNode } from 'react';
 
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { workbench, workbenchTask } from '@coze-studio/api-schema';
@@ -755,6 +755,10 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('renders task data and execution events', async () => {
@@ -3653,9 +3657,42 @@ describe('TaskDetailPage', () => {
   });
 
   it('sends canonical thread follow-up messages through the message API', async () => {
+    vi.useFakeTimers();
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
+    const makeTopLevelRun = (status: string) => ({
+      run_id: 'run-followup-1',
+      thread_id: 'thread-only-1',
+      parent_run_id: '0',
+      space_id: 'space-1',
+      creator_id: 'user-1',
+      assistant_id: 'default',
+      run_kind: 'task',
+      status,
+      command: '{}',
+      input: '{"messages":[]}',
+      config: '{}',
+      context: '{}',
+      metadata: '{}',
+      stream_mode: '["messages","updates"]',
+      multitask_strategy: 'enqueue',
+      on_disconnect: 'continue',
+      durability: 'async',
+      idempotency_key: 'followup-key',
+      worker_id: 'agent-harness',
+      error_code: '',
+      error_message: '',
+      started_at: 1717000400000,
+      ended_at: status === 'succeeded' ? 1717000500000 : 0,
+      created_at: 1717000400000,
+      updated_at: status === 'succeeded' ? 1717000500000 : 1717000400000,
+    });
+    const latestRunResponses = [
+      makeTopLevelRun('succeeded'),
+      makeTopLevelRun('running'),
+      makeTopLevelRun('succeeded'),
+    ];
 
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
@@ -3679,7 +3716,47 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    mockListTaskThreadRuns.mockImplementation(({ page_size }) =>
+      Promise.resolve({
+        data: {
+          runs:
+            page_size === 1
+              ? [latestRunResponses.shift() ?? makeTopLevelRun('succeeded')]
+              : [],
+          total: page_size === 1 ? 1 : 0,
+        },
+        code: 0,
+        msg: '',
+      }),
+    );
     mockListTaskThreadMessages
+      .mockResolvedValueOnce({
+        data: {
+          messages: [
+            {
+              message_id: 'msg-1',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'user',
+              content: '请基于真实消息分析客户反馈',
+              metadata: '',
+              created_at: 1717000100000,
+            },
+            {
+              message_id: 'msg-2',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'assistant',
+              content: '真实消息显示响应速度最重要',
+              metadata: '',
+              created_at: 1717000200000,
+            },
+          ],
+          total: 2,
+        },
+        code: 0,
+        msg: '',
+      })
       .mockResolvedValueOnce({
         data: {
           messages: [
@@ -3742,6 +3819,51 @@ describe('TaskDetailPage', () => {
         },
         code: 0,
         msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          messages: [
+            {
+              message_id: 'msg-1',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'user',
+              content: '请基于真实消息分析客户反馈',
+              metadata: '',
+              created_at: 1717000100000,
+            },
+            {
+              message_id: 'msg-2',
+              thread_id: 'thread-only-1',
+              run_id: 'run-1',
+              role: 'assistant',
+              content: '真实消息显示响应速度最重要',
+              metadata: '',
+              created_at: 1717000200000,
+            },
+            {
+              message_id: 'msg-3',
+              thread_id: 'thread-only-1',
+              run_id: '',
+              role: 'user',
+              content: '请追加行动建议',
+              metadata: '',
+              created_at: 1717000400000,
+            },
+            {
+              message_id: 'msg-4',
+              thread_id: 'thread-only-1',
+              run_id: 'run-followup-1',
+              role: 'assistant',
+              content: '建议优先安排线上客服，并在 48 小时内复盘。',
+              metadata: '',
+              created_at: 1717000500000,
+            },
+          ],
+          total: 4,
+        },
+        code: 0,
+        msg: '',
       });
 
     await act(async () => {
@@ -3798,7 +3920,16 @@ describe('TaskDetailPage', () => {
       messages: [
         {
           role: 'user',
+          content: '请基于真实消息分析客户反馈',
+        },
+        {
+          role: 'assistant',
+          content: '真实消息显示响应速度最重要',
+        },
+        {
+          role: 'user',
           content: '请追加行动建议',
+          message_id: 'msg-appended-1',
         },
       ],
     });
@@ -3829,8 +3960,28 @@ describe('TaskDetailPage', () => {
     expect(runRequest.idempotency_key).toBe(
       'thread-only-1:msg-appended-1:followup',
     );
-    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(2);
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(3);
+    expect(mockListTaskThreadMessages).toHaveBeenNthCalledWith(2, {
+      thread_id: 'thread-only-1',
+      page: 1,
+      page_size: 50,
+    });
     expect(container.textContent).toContain('请追加行动建议');
+    expect(container.textContent).not.toContain(
+      '建议优先安排线上客服，并在 48 小时内复盘。',
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(4);
+    expect(container.textContent).toContain(
+      '建议优先安排线上客服，并在 48 小时内复盘。',
+    );
 
     act(() => {
       root?.unmount();

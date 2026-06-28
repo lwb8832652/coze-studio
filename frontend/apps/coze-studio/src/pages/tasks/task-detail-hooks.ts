@@ -44,10 +44,27 @@ type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
+const RUN_TERMINAL_STATUSES = new Set([
+  'succeeded',
+  'failed',
+  'canceled',
+  'interrupted',
+]);
 
 const getInitialLoadedSource = (
   source: TaskDetailSource,
 ): LoadedTaskDetailSource => (source === 'thread' ? 'thread' : 'task');
+
+const shouldPollTaskDetail = (detail: TaskDetail) => {
+  const latestRunStatus = String(detail.latestTaskRunStatus ?? '')
+    .trim()
+    .toLowerCase();
+  if (latestRunStatus) {
+    return !RUN_TERMINAL_STATUSES.has(latestRunStatus);
+  }
+
+  return Boolean(detail.task && !isTaskTerminalStatus(detail.task.status));
+};
 
 export const useTaskDetailData = ({
   taskDetailId,
@@ -69,6 +86,7 @@ export const useTaskDetailData = ({
   const [loadedThreadId, setLoadedThreadId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pollingVersion, setPollingVersion] = useState(0);
   const applyTaskDetail = useCallback((detail: TaskDetail) => {
     setLoadedTaskDetailSource(detail.source);
     setLoadedThreadId(detail.threadId ?? '');
@@ -78,6 +96,9 @@ export const useTaskDetailData = ({
     setLatestTaskRunID(detail.latestTaskRunID ?? '');
     setSubagentRuns(detail.subagentRuns ?? []);
     setTokenUsage(detail.tokenUsage);
+    if (shouldPollTaskDetail(detail)) {
+      setPollingVersion(version => version + 1);
+    }
   }, []);
   const refreshArtifacts = useCallback(async () => {
     if (!loadedThreadId || loadedTaskDetailSource !== 'thread') {
@@ -97,7 +118,6 @@ export const useTaskDetailData = ({
       return;
     }
     let canceled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const loadTaskDetail = async (showLoading = false) => {
       if (showLoading) {
         setLoading(true);
@@ -112,11 +132,6 @@ export const useTaskDetailData = ({
         });
         if (!canceled) {
           applyTaskDetail(detail);
-          if (detail.task && !isTaskTerminalStatus(detail.task.status)) {
-            timer = setTimeout(() => {
-              void loadTaskDetail();
-            }, TASK_DETAIL_POLLING_DELAY_MS);
-          }
         }
       } catch (err) {
         if (!canceled) {
@@ -131,11 +146,40 @@ export const useTaskDetailData = ({
     void loadTaskDetail(true);
     return () => {
       canceled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
     };
   }, [applyTaskDetail, taskDetailId, taskDetailSource]);
+
+  useEffect(() => {
+    if (!taskDetailId || pollingVersion <= 0) {
+      return;
+    }
+
+    let canceled = false;
+    const timer = setTimeout(() => {
+      const refreshTaskDetail = async () => {
+        setError('');
+        try {
+          const detail = await fetchTaskDetail({
+            id: taskDetailId,
+            source: taskDetailSource,
+          });
+          if (!canceled) {
+            applyTaskDetail(detail);
+          }
+        } catch (err) {
+          if (!canceled) {
+            setError(err instanceof Error ? err.message : '加载任务详情失败');
+          }
+        }
+      };
+      void refreshTaskDetail();
+    }, TASK_DETAIL_POLLING_DELAY_MS);
+
+    return () => {
+      canceled = true;
+      clearTimeout(timer);
+    };
+  }, [applyTaskDetail, pollingVersion, taskDetailId, taskDetailSource]);
 
   useTaskThreadRunEventStream({
     enabled: loadedTaskDetailSource === 'thread' && Boolean(loadedThreadId),

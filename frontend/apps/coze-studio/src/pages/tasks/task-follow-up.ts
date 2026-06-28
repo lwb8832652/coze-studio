@@ -22,24 +22,77 @@ import {
 import {
   appendTaskThreadMessage,
   createTaskThreadRun,
+  listTaskThreadMessages,
   sendWorkbenchChat,
 } from './service';
 
 const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
 
+interface ThreadRunInputMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  message_id?: string;
+}
+
+const normalizeThreadMessageForRunInput = (message: {
+  role?: string;
+  content?: string;
+  message_id?: string;
+}): ThreadRunInputMessage | undefined => {
+  const role = String(message.role ?? '')
+    .trim()
+    .toLowerCase();
+  if (role !== 'user' && role !== 'assistant') {
+    return undefined;
+  }
+
+  const content = String(message.content ?? '');
+  if (!content.trim()) {
+    return undefined;
+  }
+
+  return {
+    role,
+    content,
+    ...(message.message_id ? { message_id: message.message_id } : {}),
+  };
+};
+
 const getThreadFollowUpRunInput = (
   payload: WorkbenchComposerSubmitPayload,
   messageId: string,
-) =>
-  JSON.stringify({
-    messages: [
-      {
-        role: 'user',
-        content: payload.message,
-        message_id: messageId,
-      },
-    ],
+  historyMessages: Array<{
+    role?: string;
+    content?: string;
+    message_id?: string;
+  }> = [],
+) => {
+  const messages = historyMessages
+    .map(normalizeThreadMessageForRunInput)
+    .filter((message): message is ThreadRunInputMessage => Boolean(message));
+
+  messages.push(
+    {
+      role: 'user',
+      content: payload.message,
+      message_id: messageId,
+    },
+  );
+
+  return JSON.stringify({
+    messages,
   });
+};
+
+const listThreadFollowUpHistory = async (threadId: string) => {
+  const response = await listTaskThreadMessages({
+    thread_id: threadId,
+    page: 1,
+    page_size: 50,
+  });
+
+  return response.data?.messages ?? [];
+};
 
 const getThreadFollowUpRunMetadata = (
   payload: WorkbenchComposerSubmitPayload,
@@ -65,6 +118,7 @@ export const sendFollowUpMessage = async ({
   threadId: string;
 }) => {
   if (isCanonicalThreadDetail) {
+    const historyMessages = await listThreadFollowUpHistory(threadId);
     const appendResponse = await appendTaskThreadMessage({
       thread_id: threadId,
       role: 'user',
@@ -75,7 +129,11 @@ export const sendFollowUpMessage = async ({
 
     await createTaskThreadRun({
       thread_id: threadId,
-      input: getThreadFollowUpRunInput(payload, appendedMessageId),
+      input: getThreadFollowUpRunInput(
+        payload,
+        appendedMessageId,
+        historyMessages,
+      ),
       config: getThreadFollowUpMetadata(payload),
       metadata: getThreadFollowUpRunMetadata(payload, appendedMessageId),
       idempotency_key: `${threadId}:${appendedMessageId}:followup`,
