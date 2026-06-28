@@ -171,8 +171,8 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozDownload: () => <span />,
   IconCozHistory: () => <span />,
   IconCozImport: () => <span />,
+  IconCozMagnifier: () => <span />,
   IconCozRefresh: () => <span />,
-  IconCozSearch: () => <span />,
   IconCozTrashCan: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
