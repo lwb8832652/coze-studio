@@ -16,13 +16,13 @@
 
 import { useEffect, useState } from 'react';
 
+import { findSelectedWorkbenchModel } from './workbench-model-selector';
 import {
-  AtMenu,
   WorkbenchComposerBody,
   WorkbenchComposerToolbar,
-  findSelectedWorkbenchModel,
   type WorkbenchComposerPresentation,
 } from './workbench-composer-controls';
+import { AtMenu } from './workbench-composer-at-menu';
 import {
   createWorkbenchSubmitPayload,
   createDefaultWorkbenchResourceSelection,
@@ -34,6 +34,13 @@ import {
   type WorkbenchComposerVariant,
   type WorkbenchMode,
 } from './types';
+
+type WorkbenchComposerActiveOverlay =
+  | 'at'
+  | 'extensions'
+  | 'mode'
+  | 'model'
+  | null;
 
 export interface WorkbenchComposerProps {
   value: string;
@@ -136,15 +143,20 @@ export const WorkbenchComposer = ({
   onModeChange,
   onSubmit,
 }: WorkbenchComposerProps) => {
-  const [atMenuOpen, setAtMenuOpen] = useState(false);
+  const [activeOverlay, setActiveOverlay] =
+    useState<WorkbenchComposerActiveOverlay>(null);
   const [resourceSelection, setResourceSelection] = useState(
     createDefaultWorkbenchResourceSelection,
   );
   const [runtimeSettings, setRuntimeSettings] = useState(
     createDefaultWorkbenchRuntimeSettings,
   );
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const canSend = Boolean(value.trim()) && !loading;
+  const overlayPlacement = variant === 'detail' ? 'top' : 'bottom';
+  const atMenuOpen = activeOverlay === 'at';
+  const extensionsOpen = activeOverlay === 'extensions';
+  const modeMenuOpen = activeOverlay === 'mode';
+  const modelMenuOpen = activeOverlay === 'model';
   const {
     models,
     modelsLoading,
@@ -175,7 +187,11 @@ export const WorkbenchComposer = ({
 
   const handleValueChange = (nextValue: string) => {
     onValueChange(nextValue);
-    setAtMenuOpen(nextValue.endsWith('@'));
+    if (nextValue.endsWith('@')) {
+      setActiveOverlay('at');
+    } else if (activeOverlay === 'at') {
+      setActiveOverlay(null);
+    }
   };
 
   const handleSubmit = () => {
@@ -206,7 +222,12 @@ export const WorkbenchComposer = ({
         data-composer-style={presentation}
         aria-label="任务输入"
       >
-        {atMenuOpen ? <AtMenu onClose={() => setAtMenuOpen(false)} /> : null}
+        {atMenuOpen ? (
+          <AtMenu
+            placement={overlayPlacement}
+            onClose={() => setActiveOverlay(null)}
+          />
+        ) : null}
         <WorkbenchComposerBody
           value={value}
           mode={mode}
@@ -217,20 +238,29 @@ export const WorkbenchComposer = ({
         <WorkbenchComposerToolbar
           atMenuOpen={atMenuOpen}
           canSend={canSend}
+          extensionsOpen={extensionsOpen}
           loading={loading}
           modelLoader={modelLoader}
           modelMenuOpen={modelMenuOpen}
           models={models}
           modelsLoading={modelsLoading}
           mode={mode}
+          modeMenuOpen={modeMenuOpen}
+          overlayPlacement={overlayPlacement}
           presentation={presentation}
           resourceSelection={resourceSelection}
           runtimeSettings={runtimeSettings}
           selectedModelType={selectedModelType}
           failoverCandidateCount={failoverCandidateCount}
           spaceId={spaceId}
-          onAtMenuOpenChange={setAtMenuOpen}
-          onModelMenuOpenChange={setModelMenuOpen}
+          onAtMenuOpenChange={open => setActiveOverlay(open ? 'at' : null)}
+          onExtensionsOpenChange={open =>
+            setActiveOverlay(open ? 'extensions' : null)
+          }
+          onModelMenuOpenChange={open =>
+            setActiveOverlay(open ? 'model' : null)
+          }
+          onModeMenuOpenChange={open => setActiveOverlay(open ? 'mode' : null)}
           onModeChange={onModeChange}
           onResourceSelectionChange={setResourceSelection}
           onRuntimeSettingsChange={setRuntimeSettings}

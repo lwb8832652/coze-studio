@@ -19,7 +19,11 @@ import { useState, type ReactNode } from 'react';
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import {
+  workbench,
+  workbenchSkill,
+  workbenchTask,
+} from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,6 +71,8 @@ const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadSubagentRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
+const mockGetWorkbenchLLMModels = vi.hoisted(() => vi.fn());
+const mockListSkills = vi.hoisted(() => vi.fn());
 const mockMermaidRender = vi.hoisted(() =>
   vi.fn((id: string) =>
     Promise.resolve({
@@ -118,6 +124,14 @@ vi.mock('../service', () => ({
   retryTaskThreadSubagentRun: mockRetryTaskThreadSubagentRun,
   listTaskEvents: mockListTaskEvents,
   sendWorkbenchChat: mockSendWorkbenchChat,
+}));
+
+vi.mock('../../workbench/service', () => ({
+  getWorkbenchLLMModels: mockGetWorkbenchLLMModels,
+}));
+
+vi.mock('../../skill/service', () => ({
+  listSkills: mockListSkills,
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -296,6 +310,30 @@ vi.mock('@coze-arch/coze-design', () => ({
     children?: ReactNode;
     spinning?: boolean;
   }) => <div data-spinning={spinning}>{children}</div>,
+  Tabs: ({
+    activeKey,
+    tabBarExtraContent,
+    tabList,
+    onChange,
+  }: {
+    activeKey?: string;
+    tabBarExtraContent?: ReactNode;
+    tabList?: Array<{ itemKey: string; tab: ReactNode }>;
+    onChange?: (key: string) => void;
+  }) => (
+    <div data-active-key={activeKey}>
+      {tabList?.map(item => (
+        <button
+          key={item.itemKey}
+          type="button"
+          onClick={() => onChange?.(item.itemKey)}
+        >
+          {item.tab}
+        </button>
+      ))}
+      {tabBarExtraContent}
+    </div>
+  ),
   Tag: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
   TextArea: ({
     'aria-label': ariaLabel,
@@ -334,6 +372,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozImport: () => <span />,
   IconCozImage: () => <span />,
   IconCozLink: () => <span />,
+  IconCozLightbulb: () => <span>思考图标</span>,
   IconCozMagnifier: () => <span />,
   IconCozMicrophone: () => <span />,
   IconCozPlus: () => <span />,
@@ -454,24 +493,31 @@ const expectDeerFlowTaskComposer = (
   const sendButton = followUpComposer?.querySelector(
     'button[aria-label="发送任务"]',
   );
+  const attachmentButtons = followUpComposer?.querySelectorAll(
+    'button[aria-label="添加附件"]',
+  );
   const modeButtonLabels = Array.from(
     followUpComposer?.querySelectorAll('.chat-workbench-mode-button') ?? [],
   ).map(button => button.textContent?.trim());
 
   expect(composer?.getAttribute('data-composer-style')).toBe('deerflow');
   expect(segmentedMode).toBeNull();
-  expect(deerflowMode?.textContent).toContain('Ultra');
+  expect(deerflowMode?.textContent).toContain('Pro');
   expect(modeButtonLabels).not.toContain('Auto');
   expect(modeButtonLabels).not.toContain('Ask');
   expect(modeButtonLabels).not.toContain('Agent');
-  expect(followUpComposer?.textContent).toContain('默认模型');
+  expect(followUpComposer?.textContent).toContain('DeepSeek V4 Pro (Thinking)');
   expect(followUpComposer?.textContent).toContain('拓展');
+  expect(
+    followUpComposer?.querySelector('button[aria-label="拓展"]')?.textContent,
+  ).toBe('拓展');
+  expect(followUpComposer?.textContent).not.toContain('运行设置');
+  expect(sendButton?.textContent).not.toContain('发送');
+  expect(sendButton?.classList.contains('semi-button')).toBe(false);
   expect(
     followUpComposer?.querySelector('button[aria-label="添加上下文"]'),
   ).toBeTruthy();
-  expect(
-    followUpComposer?.querySelector('button[aria-label="添加附件"]'),
-  ).toBeTruthy();
+  expect(attachmentButtons).toHaveLength(1);
   expect(sendButton?.classList.contains('chat-workbench-send-deerflow')).toBe(
     true,
   );
@@ -520,7 +566,33 @@ describe('TaskDetailPage', () => {
     mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
+    mockGetWorkbenchLLMModels.mockReset();
+    mockListSkills.mockReset();
     mockMermaidRender.mockClear();
+    mockGetWorkbenchLLMModels.mockResolvedValue([
+      {
+        name: 'deepseek-v4-pro',
+        model_name: 'DeepSeek V4 Pro (Thinking)',
+        model_type: 100002,
+        model_class_name: 'DeepSeek',
+        endpoint_name: 'Thinking',
+      },
+    ]);
+    mockListSkills.mockResolvedValue({
+      data: {
+        skills: [
+          {
+            id: 'skill-1',
+            name: '架构图助手',
+            description: '生成架构图和时序图',
+            type: workbenchSkill.SkillType.DeerSkill,
+            enabled: true,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
     mockGetTask.mockResolvedValue({
       data: {
         id: 'task-1',
@@ -900,6 +972,8 @@ describe('TaskDetailPage', () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
@@ -946,6 +1020,8 @@ describe('TaskDetailPage', () => {
     await act(async () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
@@ -1387,6 +1463,8 @@ describe('TaskDetailPage', () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
@@ -1536,6 +1614,8 @@ describe('TaskDetailPage', () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     const detailInner = container.querySelector('.coze-prototype-detail-inner');
@@ -1557,6 +1637,76 @@ describe('TaskDetailPage', () => {
     expect(detailInner?.children[0]).toBe(detailScroll);
     expect(detailInner?.children[1]).toBe(followUpComposer);
     expectDeerFlowTaskComposer(followUpComposer);
+
+    const atButton = followUpComposer?.querySelector(
+      'button[aria-label="添加上下文"]',
+    );
+    await act(async () => {
+      Simulate.click(atButton!);
+      await Promise.resolve();
+    });
+    expect(
+      followUpComposer
+        ?.querySelector('.chat-workbench-at-menu')
+        ?.getAttribute('data-placement'),
+    ).toBe('top');
+
+    const deerflowMode = followUpComposer?.querySelector(
+      '.chat-workbench-deerflow-mode-trigger',
+    );
+    await act(async () => {
+      Simulate.click(deerflowMode!);
+      await Promise.resolve();
+    });
+    expect(
+      followUpComposer?.querySelector('.chat-workbench-at-menu'),
+    ).toBeNull();
+    expect(
+      followUpComposer
+        ?.querySelector('.chat-workbench-deerflow-mode-menu')
+        ?.getAttribute('data-placement'),
+    ).toBe('top');
+
+    const extensionsButton = followUpComposer?.querySelector(
+      'button[aria-label="拓展"]',
+    );
+    await act(async () => {
+      Simulate.click(extensionsButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      followUpComposer?.querySelector('.chat-workbench-deerflow-mode-menu'),
+    ).toBeNull();
+    expect(
+      followUpComposer
+        ?.querySelector('.chat-workbench-extensions')
+        ?.getAttribute('data-placement'),
+    ).toBe('top');
+    expect(
+      followUpComposer
+        ?.querySelector('.chat-workbench-extension-panel')
+        ?.getAttribute('data-placement'),
+    ).toBe('top');
+
+    const modelButton = followUpComposer?.querySelector(
+      'button[aria-label="选择模型"]',
+    );
+    await act(async () => {
+      Simulate.click(modelButton!);
+      await Promise.resolve();
+    });
+    expect(
+      followUpComposer?.querySelector('.chat-workbench-extension-panel'),
+    ).toBeNull();
+    expect(
+      followUpComposer
+        ?.querySelector('.chat-workbench-model-menu')
+        ?.getAttribute('data-placement'),
+    ).toBe('top');
+    expect(
+      followUpComposer?.querySelector('input[aria-label="搜索模型"]'),
+    ).toBeTruthy();
 
     act(() => {
       root?.unmount();
@@ -4934,8 +5084,8 @@ describe('TaskDetailPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
+    const sendButton = container.querySelector(
+      'button[aria-label="发送任务"]',
     ) as HTMLButtonElement;
 
     await act(async () => {
@@ -5299,8 +5449,8 @@ describe('TaskDetailPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
+    const sendButton = container.querySelector(
+      'button[aria-label="发送任务"]',
     ) as HTMLButtonElement;
 
     await act(async () => {
@@ -5314,6 +5464,8 @@ describe('TaskDetailPage', () => {
       task_id: 'task-1',
       message: '请补充风险项',
       mode: workbench.ChatMode.Auto,
+      model_type: '100002',
+      model_name: 'deepseek-v4-pro',
       runtime_settings: expect.any(String),
       enable_skills: [],
       enable_mcp: [],
@@ -5324,6 +5476,8 @@ describe('TaskDetailPage', () => {
       JSON.parse(mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings),
     ).toMatchObject({
       runtime: 'eino_adk',
+      model_type: 100002,
+      model_name: 'deepseek-v4-pro',
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,

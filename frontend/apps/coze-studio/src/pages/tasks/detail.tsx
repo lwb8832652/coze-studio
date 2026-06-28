@@ -418,6 +418,7 @@ const TaskDetailPage = () => {
             mode={followUpMode}
             loading={followUpLoading}
             error={followUpError}
+            spaceId={space_id}
             taskId={task?.id ?? activeTaskDetailId}
             onValueChange={setFollowUpValue}
             onModeChange={setFollowUpMode}

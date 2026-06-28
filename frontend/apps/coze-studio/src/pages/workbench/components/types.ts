@@ -89,6 +89,7 @@ export interface WorkbenchRuntimeSettings {
 
 export interface WorkbenchLLMModel {
   name?: string;
+  model_name?: string;
   model_type?: number | string;
   model_class_name?: string;
   endpoint_name?: string;
@@ -315,7 +316,7 @@ export const createWorkbenchSubmitPayload = ({
 export const createWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => {
-  const runtimeSettings = payload.runtimeSettings;
+  const { runtimeSettings } = payload;
   const modelRetry = runtimeSettings.model_retry.enabled
     ? {
         max_retries: runtimeSettings.model_retry.max_retries,

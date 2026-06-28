@@ -14,11 +14,16 @@
  * limitations under the License.
  */
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  type ReactNode,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 
 import {
-  IconCozArrowDown,
   IconCozLink,
+  IconCozLightbulb,
   IconCozSendFill,
   IconCozUpload,
 } from '@coze-arch/coze-design/icons';
@@ -26,6 +31,18 @@ import { Button, TextArea } from '@coze-arch/coze-design';
 
 import { ExtensionsPopover } from '../extensions-popover';
 import { WorkbenchRuntimeSettingsControl } from './workbench-runtime-settings-control';
+import {
+  findSelectedWorkbenchModel,
+  getWorkbenchModelFallbackName,
+  WorkbenchModelSelector,
+} from './workbench-model-selector';
+import {
+  DeerFlowArrowUpIcon,
+  DeerFlowGraduationIcon,
+  DeerFlowRocketIcon,
+  DeerFlowZapIcon,
+} from './workbench-deerflow-mode-icons';
+import type { WorkbenchComposerOverlayPlacement } from './workbench-composer-at-menu';
 import {
   WORKBENCH_MODE_PROMPTS,
   WORKBENCH_MODE_SYMBOLS,
@@ -37,19 +54,6 @@ import {
   type WorkbenchRuntimeSettings,
 } from './types';
 
-const AT_RESOURCE_NUMBER_WIDTH = 2;
-const AT_RESOURCES = [
-  '技能',
-  '代码仓库',
-  '仓库分支',
-  '代码文件夹',
-  '代码文件',
-  '用户',
-  '风神数据',
-  'Meego 工作项',
-  '空间文档库',
-] as const;
-
 export type WorkbenchComposerPresentation = 'default' | 'deerflow';
 type WorkbenchRuntimeSettingsChange = Dispatch<
   SetStateAction<WorkbenchRuntimeSettings>
@@ -58,12 +62,15 @@ type DeerFlowInputMode = 'flash' | 'thinking' | 'pro' | 'ultra';
 interface WorkbenchComposerToolbarProps {
   atMenuOpen: boolean;
   canSend: boolean;
+  extensionsOpen: boolean;
   loading: boolean;
   modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
   modelMenuOpen: boolean;
   models: WorkbenchLLMModel[];
   modelsLoading: boolean;
   mode: WorkbenchMode;
+  modeMenuOpen: boolean;
+  overlayPlacement: WorkbenchComposerOverlayPlacement;
   presentation: WorkbenchComposerPresentation;
   resourceSelection: WorkbenchResourceSelection;
   runtimeSettings: WorkbenchRuntimeSettings;
@@ -71,7 +78,9 @@ interface WorkbenchComposerToolbarProps {
   failoverCandidateCount: number;
   spaceId?: string;
   onAtMenuOpenChange: (open: boolean) => void;
+  onExtensionsOpenChange: (open: boolean) => void;
   onModelMenuOpenChange: (open: boolean) => void;
+  onModeMenuOpenChange: (open: boolean) => void;
   onModeChange: (mode: WorkbenchMode) => void;
   onResourceSelectionChange: (selection: WorkbenchResourceSelection) => void;
   onRuntimeSettingsChange: WorkbenchRuntimeSettingsChange;
@@ -81,7 +90,7 @@ interface WorkbenchComposerToolbarProps {
 
 const DEERFLOW_MODE_OPTIONS: Array<{
   description: string;
-  icon: string;
+  icon: ReactNode;
   label: string;
   value: DeerFlowInputMode;
   workbenchMode: WorkbenchMode;
@@ -89,160 +98,34 @@ const DEERFLOW_MODE_OPTIONS: Array<{
   {
     value: 'flash',
     label: '闪速',
-    icon: '⚡',
+    icon: <DeerFlowZapIcon />,
     description: '快速且高效的完成任务，但可能不够精准',
     workbenchMode: 'Auto',
   },
   {
     value: 'thinking',
     label: '思考',
-    icon: '◌',
+    icon: <IconCozLightbulb />,
     description: '思考后再行动，在时间与准确性之间取得平衡',
     workbenchMode: 'Ask',
   },
   {
     value: 'pro',
     label: 'Pro',
-    icon: '◇',
+    icon: <DeerFlowGraduationIcon />,
     description: '思考、计划再执行，获得更精准的结果，可能需要更多时间',
     workbenchMode: 'Agent',
   },
   {
     value: 'ultra',
     label: 'Ultra',
-    icon: '🚀',
+    icon: <DeerFlowRocketIcon />,
     description: '继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务',
     workbenchMode: 'Agent',
   },
 ];
 
-const defaultDeerFlowMode = 'ultra';
-
-export const findSelectedWorkbenchModel = (
-  models: WorkbenchLLMModel[],
-  value?: number,
-) => models.find(model => workbenchModelTypeToNumber(model) === value);
-
-export const AtMenu = ({ onClose }: { onClose: () => void }) => (
-  <div
-    className="chat-workbench-at-menu"
-    role="menu"
-    aria-label="@ 选择资源类型"
-  >
-    <div className="chat-workbench-at-menu-title">
-      <span>@</span>
-      选择资源类型
-    </div>
-    <div className="chat-workbench-at-menu-list">
-      {AT_RESOURCES.map((item, index) => (
-        <button key={item} type="button" role="menuitem" onClick={onClose}>
-          <span className="chat-workbench-at-menu-icon">
-            {String(index + 1).padStart(AT_RESOURCE_NUMBER_WIDTH, '0')}
-          </span>
-          <span>{item}</span>
-          <span aria-hidden="true">›</span>
-        </button>
-      ))}
-    </div>
-    <div className="chat-workbench-at-menu-footer">
-      <span>↑↓ 移动光标</span>
-      <span>↵ 选择条目</span>
-      <span>Esc 退出</span>
-    </div>
-  </div>
-);
-
-const groupModelsByClass = (models: WorkbenchLLMModel[]) => {
-  const groups: Array<{ name: string; models: WorkbenchLLMModel[] }> = [];
-  const groupIndexes = new Map<string, number>();
-
-  models.forEach(model => {
-    const groupName = model.model_class_name || '其他模型';
-    const existingIndex = groupIndexes.get(groupName);
-
-    if (existingIndex === undefined) {
-      groupIndexes.set(groupName, groups.length);
-      groups.push({ name: groupName, models: [model] });
-
-      return;
-    }
-
-    groups[existingIndex].models.push(model);
-  });
-
-  return groups;
-};
-
-const WorkbenchModelSelector = ({
-  loading,
-  models,
-  value,
-  open,
-  onOpenChange,
-  onChange,
-}: {
-  loading: boolean;
-  models: WorkbenchLLMModel[];
-  value?: number;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChange: (model: WorkbenchLLMModel) => void;
-}) => {
-  const selectedModel = findSelectedWorkbenchModel(models, value);
-  const modelGroups = useMemo(() => groupModelsByClass(models), [models]);
-  const label = loading ? '模型加载中' : selectedModel?.name || '默认模型';
-
-  return (
-    <div className="chat-workbench-model">
-      <button
-        type="button"
-        className="chat-workbench-model-trigger"
-        aria-label="选择模型"
-        aria-expanded={open}
-        disabled={loading || models.length === 0}
-        onClick={() => onOpenChange(!open)}
-      >
-        <span>{label}</span>
-        <IconCozArrowDown />
-      </button>
-
-      {open && models.length ? (
-        <div className="chat-workbench-model-menu" role="listbox">
-          {modelGroups.map(group => (
-            <div key={group.name} className="chat-workbench-model-group">
-              <div className="chat-workbench-model-group-title">
-                {group.name}
-              </div>
-              {group.models.map(model => {
-                const modelType = workbenchModelTypeToNumber(model);
-
-                return (
-                  <button
-                    key={`${modelType}-${model.name || 'model'}`}
-                    type="button"
-                    role="option"
-                    aria-selected={modelType === value}
-                    className="chat-workbench-model-option"
-                    data-active={modelType === value}
-                    onClick={() => {
-                      onChange(model);
-                      onOpenChange(false);
-                    }}
-                  >
-                    <span>{model.name || `模型 ${modelType}`}</span>
-                    {model.endpoint_name ? (
-                      <span>{model.endpoint_name}</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-};
+const defaultDeerFlowMode = 'pro';
 
 export const WorkbenchComposerBody = ({
   value,
@@ -305,11 +188,16 @@ const WorkbenchModeSelector = ({
 );
 
 const WorkbenchDeerFlowModeSelector = ({
+  open,
+  placement,
+  onOpenChange,
   onModeChange,
 }: {
+  open: boolean;
+  placement: WorkbenchComposerOverlayPlacement;
+  onOpenChange: (open: boolean) => void;
   onModeChange: (mode: WorkbenchMode) => void;
 }) => {
-  const [open, setOpen] = useState(false);
   const [deerflowMode, setDeerflowMode] =
     useState<DeerFlowInputMode>(defaultDeerFlowMode);
   const activeOption =
@@ -323,13 +211,17 @@ const WorkbenchDeerFlowModeSelector = ({
         className="chat-workbench-deerflow-mode-trigger"
         aria-label="选择模式"
         aria-expanded={open}
-        onClick={() => setOpen(value => !value)}
+        onClick={() => onOpenChange(!open)}
       >
         <span aria-hidden="true">{activeOption.icon}</span>
         <span>{activeOption.label}</span>
       </button>
       {open ? (
-        <div className="chat-workbench-deerflow-mode-menu" role="menu">
+        <div
+          className="chat-workbench-deerflow-mode-menu"
+          data-placement={placement}
+          role="menu"
+        >
           <div className="chat-workbench-deerflow-mode-title">模式</div>
           {DEERFLOW_MODE_OPTIONS.map(option => (
             <button
@@ -342,7 +234,7 @@ const WorkbenchDeerFlowModeSelector = ({
               onClick={() => {
                 setDeerflowMode(option.value);
                 onModeChange(option.workbenchMode);
-                setOpen(false);
+                onOpenChange(false);
               }}
             >
               <span className="chat-workbench-deerflow-mode-option-icon">
@@ -363,15 +255,55 @@ const WorkbenchDeerFlowModeSelector = ({
   );
 };
 
+const WorkbenchComposerSendButton = ({
+  canSend,
+  isDeerFlow,
+  loading,
+  onSubmit,
+}: {
+  canSend: boolean;
+  isDeerFlow: boolean;
+  loading: boolean;
+  onSubmit: () => void;
+}) =>
+  isDeerFlow ? (
+    <button
+      type="button"
+      aria-label="发送任务"
+      className="chat-workbench-send chat-workbench-send-deerflow"
+      disabled={!canSend || loading}
+      onClick={onSubmit}
+    >
+      <DeerFlowArrowUpIcon />
+    </button>
+  ) : (
+    <Button
+      aria-label="发送任务"
+      color="primary"
+      disabled={!canSend}
+      icon={<IconCozSendFill />}
+      loading={loading}
+      onClick={onSubmit}
+      className="chat-workbench-send"
+    >
+      <span className="chat-workbench-send-label">
+        {loading ? '发送中' : '发送'}
+      </span>
+    </Button>
+  );
+
 export const WorkbenchComposerToolbar = ({
   atMenuOpen,
   canSend,
+  extensionsOpen,
   loading,
   modelLoader,
   modelMenuOpen,
   models,
   modelsLoading,
   mode,
+  modeMenuOpen,
+  overlayPlacement,
   presentation,
   resourceSelection,
   runtimeSettings,
@@ -379,7 +311,9 @@ export const WorkbenchComposerToolbar = ({
   failoverCandidateCount,
   spaceId,
   onAtMenuOpenChange,
+  onExtensionsOpenChange,
   onModelMenuOpenChange,
+  onModeMenuOpenChange,
   onModeChange,
   onResourceSelectionChange,
   onRuntimeSettingsChange,
@@ -389,7 +323,9 @@ export const WorkbenchComposerToolbar = ({
   const isDeerFlow = presentation === 'deerflow';
   const modelLabel = modelsLoading
     ? '模型加载中'
-    : findSelectedWorkbenchModel(models, selectedModelType)?.name || '默认模型';
+    : getWorkbenchModelFallbackName(
+        findSelectedWorkbenchModel(models, selectedModelType),
+      );
   const modelSelector =
     spaceId && modelLoader ? (
       <WorkbenchModelSelector
@@ -397,6 +333,7 @@ export const WorkbenchComposerToolbar = ({
         models={models}
         value={selectedModelType}
         open={modelMenuOpen}
+        placement={overlayPlacement}
         onOpenChange={onModelMenuOpenChange}
         onChange={model =>
           onSelectedModelTypeChange(workbenchModelTypeToNumber(model))
@@ -406,21 +343,12 @@ export const WorkbenchComposerToolbar = ({
       <span className="chat-workbench-model-readout">{modelLabel}</span>
     );
   const sendButton = (
-    <Button
-      aria-label="发送任务"
-      color="primary"
-      disabled={!canSend}
-      icon={<IconCozSendFill />}
+    <WorkbenchComposerSendButton
+      canSend={canSend}
+      isDeerFlow={isDeerFlow}
       loading={loading}
-      onClick={onSubmit}
-      className={`chat-workbench-send${
-        isDeerFlow ? ' chat-workbench-send-deerflow' : ''
-      }`}
-    >
-      <span className="chat-workbench-send-label">
-        {loading ? '发送中' : '发送'}
-      </span>
-    </Button>
+      onSubmit={onSubmit}
+    />
   );
 
   if (isDeerFlow) {
@@ -434,10 +362,20 @@ export const WorkbenchComposerToolbar = ({
           >
             <IconCozUpload />
           </button>
-          <WorkbenchDeerFlowModeSelector onModeChange={onModeChange} />
+          <WorkbenchDeerFlowModeSelector
+            open={modeMenuOpen}
+            placement={overlayPlacement}
+            onOpenChange={onModeMenuOpenChange}
+            onModeChange={onModeChange}
+          />
           <ExtensionsPopover
+            open={extensionsOpen}
+            placement={overlayPlacement}
+            renderMask={false}
+            showSelectedCount={false}
             value={resourceSelection}
             onChange={onResourceSelectionChange}
+            onOpenChange={onExtensionsOpenChange}
           />
         </div>
 
@@ -451,9 +389,6 @@ export const WorkbenchComposerToolbar = ({
           >
             @
           </button>
-          <button type="button" aria-label="添加链接">
-            <IconCozLink />
-          </button>
           {sendButton}
         </div>
       </div>
@@ -466,6 +401,7 @@ export const WorkbenchComposerToolbar = ({
         <WorkbenchModeSelector mode={mode} onModeChange={onModeChange} />
 
         <ExtensionsPopover
+          placement={overlayPlacement}
           value={resourceSelection}
           onChange={onResourceSelectionChange}
         />

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getWorkbenchLLMModels } from '../workbench/service';
 import { WorkbenchComposer } from '../workbench/components/workbench-composer';
 import {
   type WorkbenchComposerSubmitPayload,
@@ -25,6 +26,7 @@ export const TaskFollowUpComposer = ({
   mode,
   loading,
   error,
+  spaceId,
   taskId,
   onValueChange,
   onModeChange,
@@ -34,6 +36,7 @@ export const TaskFollowUpComposer = ({
   mode: WorkbenchMode;
   loading: boolean;
   error?: string;
+  spaceId?: string;
   taskId?: string;
   onValueChange: (value: string) => void;
   onModeChange: (mode: WorkbenchMode) => void;
@@ -47,7 +50,9 @@ export const TaskFollowUpComposer = ({
       error={error}
       variant="detail"
       presentation="deerflow"
+      spaceId={spaceId}
       taskId={taskId}
+      modelLoader={getWorkbenchLLMModels}
       onValueChange={onValueChange}
       onModeChange={onModeChange}
       onSubmit={onSubmit}

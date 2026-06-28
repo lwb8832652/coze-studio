@@ -26,6 +26,7 @@ import {
 import { Button, Input, Spin, Tabs } from '@coze-arch/coze-design';
 
 import { listSkills } from '../skill/service';
+import type { WorkbenchComposerOverlayPlacement } from './components/workbench-composer-at-menu';
 import {
   createDefaultWorkbenchResourceSelection,
   type WorkbenchResourceSelection,
@@ -35,8 +36,13 @@ type Skill = workbenchSkill.Skill;
 type ExtensionTab = 'skills' | 'mcp';
 
 interface ExtensionsPopoverProps {
+  open?: boolean;
+  placement?: WorkbenchComposerOverlayPlacement;
+  renderMask?: boolean;
+  showSelectedCount?: boolean;
   value?: WorkbenchResourceSelection;
   onChange?: (value: WorkbenchResourceSelection) => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const defaultSelection = createDefaultWorkbenchResourceSelection();
@@ -170,6 +176,7 @@ const ExtensionList = ({
 
 interface ExtensionPanelProps extends ExtensionListProps {
   keyword: string;
+  placement: WorkbenchComposerOverlayPlacement;
   searchLabel: string;
   selectedCount: number;
   skillsCount: number;
@@ -183,12 +190,13 @@ const ExtensionPanel = ({
   onKeywordChange,
   onSkillConfigClick,
   onTabChange,
+  placement,
   searchLabel,
   selectedCount,
   skillsCount,
   ...listProps
 }: ExtensionPanelProps) => (
-  <div className="chat-workbench-extension-panel">
+  <div className="chat-workbench-extension-panel" data-placement={placement}>
     <Tabs
       className="chat-workbench-extension-tabs"
       type="line"
@@ -228,12 +236,17 @@ const ExtensionPanel = ({
 );
 
 export const ExtensionsPopover = ({
+  open,
+  placement = 'bottom',
+  renderMask = true,
+  showSelectedCount = true,
   value = defaultSelection,
   onChange,
+  onOpenChange,
 }: ExtensionsPopoverProps) => {
   const navigate = useNavigate();
   const { space_id } = useParams();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [tab, setTab] = useState<ExtensionTab>('skills');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -260,9 +273,11 @@ export const ExtensionsPopover = ({
     ...value.enable_databases,
   ].length;
   const searchLabel = tab === 'skills' ? '搜索技能' : '搜索 MCP';
+  const panelOpen = open ?? internalOpen;
+  const setPanelOpen = onOpenChange ?? setInternalOpen;
 
   useEffect(() => {
-    if (!open || tab !== 'skills' || !space_id) {
+    if (!panelOpen || tab !== 'skills' || !space_id) {
       return;
     }
 
@@ -293,7 +308,7 @@ export const ExtensionsPopover = ({
     return () => {
       canceled = true;
     };
-  }, [open, space_id, tab]);
+  }, [panelOpen, space_id, tab]);
 
   const handleResourceToggle = (resourceId: string) =>
     onChange?.(getNextResourceSelection(value, tab, resourceId));
@@ -305,30 +320,36 @@ export const ExtensionsPopover = ({
   };
 
   return (
-    <div className="chat-workbench-extensions">
+    <div className="chat-workbench-extensions" data-placement={placement}>
       <Button
         size="small"
-        theme="outline"
-        className="chat-workbench-extension"
+        theme={showSelectedCount ? 'outline' : 'borderless'}
+        type={showSelectedCount ? 'primary' : 'tertiary'}
+        className={`chat-workbench-extension${
+          showSelectedCount ? '' : ' chat-workbench-extension-deerflow'
+        }`}
         aria-label="拓展"
-        aria-expanded={open}
+        aria-expanded={panelOpen}
         icon={<IconCozArrowDown />}
         iconPosition="right"
-        onClick={() => setOpen(current => !current)}
+        onClick={() => setPanelOpen(!panelOpen)}
       >
         <span>拓展</span>
-        <span>{selectedCount}</span>
+        {showSelectedCount ? <span>{selectedCount}</span> : null}
       </Button>
 
-      {open ? (
+      {panelOpen ? (
         <>
-          <button
-            type="button"
-            className="chat-workbench-popover-mask"
-            aria-label="关闭拓展面板"
-            onClick={() => setOpen(false)}
-          />
+          {renderMask ? (
+            <button
+              type="button"
+              className="chat-workbench-popover-mask"
+              aria-label="关闭拓展面板"
+              onClick={() => setPanelOpen(false)}
+            />
+          ) : null}
           <ExtensionPanel
+            placement={placement}
             tab={tab}
             keyword={keyword}
             onKeywordChange={setKeyword}

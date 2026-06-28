@@ -142,6 +142,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozBell: () => <span />,
   IconCozImage: () => <span />,
   IconCozLink: () => <span />,
+  IconCozLightbulb: () => <span />,
   IconCozPlus: () => <span />,
   IconCozPlugin: () => <span />,
   IconCozSearch: () => <span />,
