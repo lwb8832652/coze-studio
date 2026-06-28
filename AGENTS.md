@@ -2395,8 +2395,10 @@ make atlas-hash
 
 ### Debug MySQL In This Worktree
 
-- Do not commit MySQL credentials or remote endpoint values. Keep them only in
-  the ignored `docker/.env.debug` file.
+- Do not commit MySQL passwords. Keep real credentials only in the ignored
+  `docker/.env.debug` file. The tracked `docker/.env.debug.example` may point
+  at the approved shared test MySQL host/port so new debug environments do not
+  default to local MySQL, but its password must stay a placeholder.
 - The debug compose `middleware` profile should not start the local
   `mysql:8.4.5` database service or the MySQL-image init client by default.
   `make middleware` / `make sync_db` should use `MYSQL_HOST`, `MYSQL_PORT`,
