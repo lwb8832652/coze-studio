@@ -17,9 +17,10 @@
 import { workbenchTask } from '@coze-studio/api-schema';
 
 import {
-  getSafeTaskToolDetail,
-  getSafeTaskToolName,
-} from './task-tool-event-safety';
+  getTaskReasoningContent,
+  stripTaskThinkingTags,
+} from './task-reasoning';
+export { getTaskEventDisplay, getTaskEventText } from './task-event-display';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
@@ -48,6 +49,7 @@ export interface TaskEventDisplay {
 
 export interface TaskResultPayload {
   message: string;
+  reasoning?: string;
   resultType: TaskResultType;
   executionType?: TaskExecutionType;
   retrievalSources: string[];
@@ -59,16 +61,6 @@ export const getTaskThreadDetailId = (
   const legacyTaskID = task.legacy_task_id?.trim();
 
   return legacyTaskID && legacyTaskID !== '0' ? legacyTaskID : task.thread_id;
-};
-
-const STATUS_TEXT_BY_KEY: Record<string, string> = {
-  created: '任务已创建',
-  queued: '任务已进入队列',
-  running: '任务运行中',
-  succeeded: '任务已完成',
-  failed: '任务失败',
-  canceling: '任务取消中',
-  canceled: '任务已取消',
 };
 
 const parseJSONObject = (
@@ -116,26 +108,6 @@ const getString = (
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 };
 
-const getNumber = (
-  payload: Record<string, unknown> | undefined,
-  key: string,
-) => {
-  const value = payload?.[key];
-
-  return typeof value === 'number' && Number.isFinite(value)
-    ? value
-    : undefined;
-};
-
-const getBoolean = (
-  payload: Record<string, unknown> | undefined,
-  key: string,
-) => {
-  const value = payload?.[key];
-
-  return typeof value === 'boolean' ? value : undefined;
-};
-
 const normalizeExecutionType = (
   value?: string,
 ): TaskExecutionType | undefined => {
@@ -173,136 +145,16 @@ const getStringArray = (
   );
 };
 
-const normalizeExecutionStatus = (value?: string): TaskExecutionStatus => {
-  switch (value) {
-    case 'completed':
-    case 'succeeded':
-    case 'success':
-    case 'done':
-      return 'completed';
-    case 'running':
-    case 'processing':
-      return 'running';
-    case 'failed':
-    case 'error':
-      return 'failed';
-    case 'pending':
-    case 'queued':
-    case 'created':
-      return 'pending';
-    default:
-      return 'neutral';
-  }
-};
-
-interface ToolEventDisplayInput {
-  eventType?: string;
-  payload?: Record<string, unknown>;
-  detail?: string;
-  runtime?: TaskExecutionType;
-}
-
-const getToolEventDisplay = ({
-  eventType,
-  payload,
-  detail,
-  runtime,
-}: ToolEventDisplayInput): TaskEventDisplay | undefined => {
-  if (!eventType?.startsWith('tool.')) {
-    return undefined;
-  }
-
-  const toolName = getSafeTaskToolName(
-    getString(payload, 'tool_name') ||
-      getString(payload, 'step_name') ||
-      getString(payload, 'step_id'),
-  );
-  const errorMessage = getString(payload, 'error_message');
-  const argumentsPresent = getBoolean(payload, 'arguments_present');
-  const resultPresent = getBoolean(payload, 'result_present');
-  const baseDisplay = {
-    runtime: runtime ?? 'Agent',
-    structured: true,
-    kind: 'step' as const,
-  };
-
-  if (eventType === 'tool.started') {
-    return {
-      ...baseDisplay,
-      title: `调用工具 ${toolName}`,
-      detail: getSafeTaskToolDetail(
-        detail,
-        argumentsPresent ? '参数已准备' : '',
-      ),
-      status: 'running',
-    };
-  }
-
-  if (eventType === 'tool.completed') {
-    return {
-      ...baseDisplay,
-      title: `工具 ${toolName} 调用完成`,
-      detail: getSafeTaskToolDetail(detail, resultPresent ? '已返回结果' : ''),
-      status: 'completed',
-    };
-  }
-
-  if (eventType === 'tool.failed') {
-    return {
-      ...baseDisplay,
-      title: `工具 ${toolName} 调用失败`,
-      detail: getSafeTaskToolDetail(
-        detail ?? errorMessage,
-        '工具调用失败，详情已隐藏',
-      ),
-      status: 'failed',
-    };
-  }
-
-  return undefined;
-};
-
-const getPlanEventDisplay = (
-  eventType?: string,
-  payload?: Record<string, unknown>,
-): TaskEventDisplay | undefined => {
-  if (!eventType?.startsWith('plan.task.')) {
-    return undefined;
-  }
-
-  const subject = getString(payload, 'subject') ?? '未命名计划项';
-  const status = normalizeExecutionStatus(getString(payload, 'status'));
-  const activeForm = getString(payload, 'active_form');
-  const owner = getString(payload, 'owner');
-  const detail = [activeForm, owner ? `负责人：${owner}` : undefined]
-    .filter(Boolean)
-    .join(' · ');
-  const titleMap: Record<string, string> = {
-    'plan.task.created': `计划：${subject}`,
-    'plan.task.updated':
-      status === 'running' ? `执行计划：${subject}` : `更新计划：${subject}`,
-    'plan.task.completed': `完成计划：${subject}`,
-    'plan.task.deleted': `移除计划：${subject}`,
-  };
-
-  return {
-    title: titleMap[eventType] ?? `计划：${subject}`,
-    detail,
-    status: eventType === 'plan.task.deleted' ? 'neutral' : status,
-    runtime: 'Agent',
-    structured: true,
-    kind: 'step',
-  };
-};
-
 export const getTaskInputText = (input?: string) => getPayloadText(input);
 
 export const parseTaskResultPayload = (result?: string): TaskResultPayload => {
   const parsed = parseJSONObject(result);
-  const message = getPayloadText(result);
+  const rawMessage = getPayloadText(result);
+  const reasoning = getTaskReasoningContent(parsed, rawMessage);
 
   return {
-    message,
+    message: stripTaskThinkingTags(rawMessage),
+    reasoning: reasoning || undefined,
     resultType: normalizeResultType(getString(parsed, 'result_type')),
     executionType: normalizeExecutionType(getString(parsed, 'execution_type')),
     retrievalSources: getStringArray(parsed, 'retrieval_sources'),
@@ -323,185 +175,74 @@ export const getTaskExecutionType = (input?: string): TaskExecutionType => {
   );
 };
 
-export const getTaskEventText = (eventType?: string, payload?: string) => {
-  const parsed = parseJSONObject(payload);
-
-  if (typeof parsed?.message === 'string') {
-    return parsed.message;
-  }
-
-  if (typeof parsed?.status === 'string') {
-    return STATUS_TEXT_BY_KEY[parsed.status] ?? parsed.status;
-  }
-
-  if (typeof parsed?.to === 'string') {
-    return STATUS_TEXT_BY_KEY[parsed.to] ?? `状态更新为 ${parsed.to}`;
-  }
-
-  return payload?.trim() || eventType || '任务事件';
-};
-
 export const getLatestAnswerEventMessage = (events: TaskEvent[]) => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
 
     if (
       event.event_type !== 'answer.delta' &&
-      event.event_type !== 'answer.completed'
+      event.event_type !== 'answer.completed' &&
+      event.event_type !== 'message.completed'
     ) {
       continue;
     }
 
-    const message = getString(parseJSONObject(event.payload), 'message');
+    const parsed = parseJSONObject(event.payload);
+    const role = getString(parsed, 'role');
+
+    if (
+      event.event_type === 'message.completed' &&
+      role &&
+      role !== 'assistant'
+    ) {
+      continue;
+    }
+
+    const message =
+      getString(parsed, 'message') ?? getString(parsed, 'content');
 
     if (message) {
-      return message;
+      return stripTaskThinkingTags(message);
     }
   }
 
   return '';
 };
 
-export const getTaskEventDisplay = (
-  eventType?: string,
-  payload?: string,
-): TaskEventDisplay => {
-  const parsed = parseJSONObject(payload);
-  const title = getString(parsed, 'title');
-  const detail = getString(parsed, 'detail');
-  const thought = getString(parsed, 'thought');
-  const runtime = normalizeExecutionType(getString(parsed, 'runtime'));
-  const progress = getNumber(parsed, 'progress');
-  const structured = Boolean(title || detail || thought || runtime || progress);
-  const status = normalizeExecutionStatus(getString(parsed, 'status'));
-  const toolDisplay = getToolEventDisplay({
-    eventType,
-    payload: parsed,
-    detail,
-    runtime,
-  });
+export const getLatestAnswerEventReasoning = (events: TaskEvent[]) => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
 
-  if (toolDisplay) {
-    return toolDisplay;
-  }
-
-  const planDisplay = getPlanEventDisplay(eventType, parsed);
-
-  if (planDisplay) {
-    return planDisplay;
-  }
-
-  if (eventType?.startsWith('run.')) {
-    const workerID = getString(parsed, 'worker_id');
-    const errorMessage = getString(parsed, 'error_message');
-    const runDisplayMap: Record<
-      string,
-      Pick<TaskEventDisplay, 'title' | 'status'>
-    > = {
-      'run.started': { title: '任务开始执行', status: 'running' },
-      'run.completed': { title: '任务执行完成', status: 'completed' },
-      'run.failed': { title: '任务执行失败', status: 'failed' },
-    };
-    const display = runDisplayMap[eventType] ?? {
-      title: getTaskEventText(eventType, payload),
-      status,
-    };
-
-    return {
-      ...display,
-      detail: detail ?? errorMessage ?? (workerID ? `Worker: ${workerID}` : ''),
-      runtime: runtime ?? 'Agent',
-      structured: true,
-      kind: 'step',
-    };
-  }
-
-  if (eventType?.startsWith('step.')) {
-    const stepName =
-      getString(parsed, 'step_name') ||
-      getString(parsed, 'step_id') ||
-      `步骤 ${(getNumber(parsed, 'step_index') ?? 0) + 1}`;
-    const stepType = getString(parsed, 'step_type');
-    const errorMessage = getString(parsed, 'error_message');
-    const final = getBoolean(parsed, 'final');
-
-    if (eventType === 'step.started') {
-      return {
-        title: `开始执行 ${stepName}`,
-        detail: detail ?? stepType,
-        status: 'running',
-        runtime: runtime ?? 'Agent',
-        structured: true,
-        kind: 'step',
-      };
+    if (
+      event.event_type !== 'answer.delta' &&
+      event.event_type !== 'answer.completed' &&
+      event.event_type !== 'message.completed'
+    ) {
+      continue;
     }
 
-    if (eventType === 'step.completed') {
-      return {
-        title: `完成 ${stepName}`,
-        detail: detail ?? (final ? '已产生最终回答' : stepType),
-        status: 'completed',
-        runtime: runtime ?? 'Agent',
-        structured: true,
-        kind: 'step',
-      };
+    const parsed = parseJSONObject(event.payload);
+    const role = getString(parsed, 'role');
+
+    if (
+      event.event_type === 'message.completed' &&
+      role &&
+      role !== 'assistant'
+    ) {
+      continue;
     }
 
-    if (eventType === 'step.failed') {
-      return {
-        title: `${stepName} 执行失败`,
-        detail: detail ?? errorMessage ?? stepType,
-        status: 'failed',
-        runtime: runtime ?? 'Agent',
-        structured: true,
-        kind: 'step',
-      };
+    const reasoning = getTaskReasoningContent(
+      parsed,
+      getString(parsed, 'message') ?? getString(parsed, 'content') ?? '',
+    );
+
+    if (reasoning) {
+      return reasoning;
     }
   }
 
-  if (eventType === 'agent.database_query') {
-    const databaseID = getString(parsed, 'database_id');
-    const sql = getString(parsed, 'sql');
-    const rowCount = getNumber(parsed, 'row_count');
-    const error = getString(parsed, 'error');
-    const queryDetail = [
-      databaseID ? `数据库: ${databaseID}` : undefined,
-      sql ? `SQL: ${sql}` : undefined,
-      typeof rowCount === 'number' ? `返回 ${rowCount} 行` : undefined,
-      error,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-
-    return {
-      title: title ?? '数据库查询',
-      detail: detail ?? queryDetail,
-      status,
-      runtime: 'Agent',
-      structured: true,
-      kind: 'step',
-    };
-  }
-
-  if (structured) {
-    return {
-      title: title ?? getTaskEventText(eventType, payload),
-      detail,
-      thought,
-      status,
-      runtime,
-      progress,
-      structured,
-      kind: thought ? 'thought' : 'step',
-    };
-  }
-
-  return {
-    title: getTaskEventText(eventType, payload),
-    status: 'completed',
-    structured: false,
-    kind: 'event',
-  };
+  return '';
 };
 
 export const getTaskStatusText = (status: workbenchTask.TaskStatus) => {

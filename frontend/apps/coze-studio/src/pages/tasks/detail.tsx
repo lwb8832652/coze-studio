@@ -27,6 +27,7 @@ import {
   type TaskRunActionLoading,
 } from './task-run-action-bar';
 import { TaskMarkdownContent } from './task-markdown-content';
+import { TaskInlineReasoning } from './task-inline-reasoning';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import {
   getPendingHumanInteraction,
@@ -43,6 +44,7 @@ import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
 import {
   formatUpdatedTime,
+  getLatestAnswerEventReasoning,
   getLatestAnswerEventMessage,
   getTaskExecutionType,
   getTaskInputText,
@@ -201,13 +203,16 @@ const TaskEventsSection = ({
 const TaskAnswer = ({
   task,
   result,
+  reasoning,
   streamingMessage,
 }: {
   task: ChatTask;
   result: TaskResultPayload;
+  reasoning?: string;
   streamingMessage?: string;
 }) => (
   <article className="coze-prototype-answer" data-result-type="answer">
+    <TaskInlineReasoning content={reasoning} />
     <TaskMarkdownContent
       value={result.message || streamingMessage || task.error || '结果生成中'}
     />
@@ -274,6 +279,7 @@ const TaskResultSection = ({
     <TaskAnswer
       task={task}
       result={result}
+      reasoning={getLatestAnswerEventReasoning(events) || result.reasoning}
       streamingMessage={getLatestAnswerEventMessage(events)}
     />
   );

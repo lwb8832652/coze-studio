@@ -3554,6 +3554,118 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('renders ADK reasoning content as an inline thinking block', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-reasoning-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-reasoning-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '解释方案',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请解释方案',
+        last_agent_message: '最终方案会先收敛主流程。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-1',
+            thread_id: 'thread-reasoning-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请解释方案',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-1',
+            thread_id: 'thread-reasoning-1',
+            run_id: 'run-1',
+            role: 'assistant',
+            content:
+              '最终方案会先收敛主流程。\n<think>不要直接展示原始标签</think>',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-message-1',
+            thread_id: 'thread-reasoning-1',
+            run_id: 'run-1',
+            event_type: 'message.completed',
+            payload: JSON.stringify({
+              role: 'assistant',
+              content: '最终方案会先收敛主流程。',
+              reasoning_content: '我先判断用户要的是 P0 收敛。',
+              reasoning_parts: [
+                {
+                  text: '再检查是否会偏移 DeerFlow 主线。',
+                  signature: 'provider-signature-should-stay-hidden',
+                },
+              ],
+            }),
+            created_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const thinkingBlock = container.querySelector(
+      '.coze-prototype-inline-reasoning',
+    );
+    expect(thinkingBlock).toBeTruthy();
+    expect(thinkingBlock?.textContent).toContain('思考');
+    expect(thinkingBlock?.textContent).toContain(
+      '我先判断用户要的是 P0 收敛。',
+    );
+    expect(thinkingBlock?.textContent).toContain(
+      '再检查是否会偏移 DeerFlow 主线。',
+    );
+    expect(container.textContent).toContain('最终方案会先收敛主流程。');
+    expect(container.textContent).not.toContain('<think>');
+    expect(container.textContent).not.toContain(
+      'provider-signature-should-stay-hidden',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('uses latest canonical run terminal status to close stale thread detail state', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

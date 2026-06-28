@@ -165,7 +165,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-MSG-002 | 助手消息 | assistant turn inline，Markdown 渲染 | Coze 已渲染 Markdown/Mermaid，并移除 `普通回答 · Agent/Ark` 结果标签 | screenshot | messages/answer payload | detail/markdown files | 已完成 |
 | TD-MSG-003 | 历史分页 | DeerFlow 可加载更多 history | Coze 任务历史刷新后完整可恢复 | load-more/reopen screenshot | messages pagination params/response | service/loader | 待验收 |
 | TD-MSG-004 | 流式中状态 | streaming indicator 和停止按钮同步 | Coze run_events 流式更新步骤和答案 | running screenshot/video if needed | SSE event samples | stream hook/event projection | 待验收 |
-| TD-MSG-005 | inline 思考块 | Reasoning trigger + collapsible content 保留 | Coze 保留 inline 思考块，不移除 | expanded/collapsed screenshot | event/message reasoning fields | DeerFlow reasoning, Coze event projection/detail | 待开发 |
+| TD-MSG-005 | inline 思考块 | Reasoning trigger + collapsible content 保留 | Coze 从 ADK `message.completed` / answer payload 的 `reasoning_content`、`reasoning_parts`、`<think>` 中提取 inline `思考` 折叠块，正文剥离原始 `<think>` 标签，provider signature/raw payload 不进 UI | 待补真实 reasoning 样本截图 | event/message reasoning fields | `task-reasoning.ts`, `task-inline-reasoning.tsx`, `task-event-display.ts`, `task-detail.test.tsx` | 待验收 |
 | TD-MSG-006 | 复制和反馈 | assistant turn 有复制/反馈操作 | Coze 至少有复制；反馈如不做则 P1 | hover/action screenshot | feedback API if present | message toolbar/action files | 差异待确认 |
 | TD-MSG-007 | 代码块/表格/链接 | Markdown 组件渲染稳定 | Coze Markdown 不破坏布局，链接安全打开 | markdown matrix screenshot | message body sample | markdown components/tests | 待验收 |
 | TD-MD-001 | Mermaid sequenceDiagram | DeerFlow 输出 SVG/图形，不显示 raw fence | Coze 渲染 sequenceDiagram SVG | screenshot + DOM svg count | assistant message content | markdown component test | 已完成 |
@@ -336,8 +336,9 @@ Coze 目标页可见能力：
   `详情` inspector，聊天记录区保持纯净。
 - `TD-COMP-001`: 已完成。DeerFlow 和 Coze 均为页面不滚、消息区域内部
   滚动、底部 composer 固定；后续只做视觉细节继续对齐。
-- `TD-MSG-005`: DeerFlow 有 inline `思考`，Coze 目标页当前未检测到 reasoning
-  展示信号，需要补齐或确认数据来源。
+- `TD-MSG-005`: Coze 已补 inline `思考` 前端适配，从 ADK
+  `message.completed` / answer payload 中提取 reasoning 并隐藏 provider
+  signature/raw payload；当前缺真实 reasoning 样本浏览器截图，保持待验收。
 - `TD-HDR-003` / `TD-EXP-001`: Coze 顶栏已收敛为 `Tokens`、`导出`、`详情`
   主操作，移除顶栏 `产物 0` 和 `任务详情 › 状态` 面包屑式文案。
 - `TD-EXP-002`: Coze 已补用户可见 Markdown 导出，默认过滤思考、
@@ -375,9 +376,10 @@ Coze 目标页可见能力：
   气泡、Markdown/Mermaid 渲染、底部 composer 停靠基本可用；助手消息已移除
   `普通回答 · Agent/Ark` 结果标签。
 - `TD-FLOW-001` 已按用户反馈修复：保留 `执行流程` 标题，并用轻量 feed
-  直接展示每一步做了什么。更深层的 DeerFlow `思考` 内容折叠和模型
-  reasoning 字段对齐继续归入 `TD-MSG-005`。
-- `TD-MSG-005` inline 思考块需要保留并对齐 DeerFlow。
+  直接展示每一步做了什么。
+- `TD-MSG-005` 已补代码与单测：inline `思考` 折叠块保留，正文隐藏
+  `<think>` 原始标签，`message.completed` 流程行只显示安全摘要；下一步补
+  真实 reasoning 样本浏览器验收。
 - `TD-TOKEN-002` 每轮/每消息 token 显示是 DeerFlow 可见能力，当前 Coze
   需要继续对齐。
 - `TD-DOC-*` 文档生成和预览已经纳入 P0 验收矩阵，后续必须按文档生成

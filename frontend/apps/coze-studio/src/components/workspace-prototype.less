@@ -1855,6 +1855,58 @@
   background: rgb(91 100 117 / 12%);
 }
 
+.coze-prototype-inline-reasoning {
+  overflow: hidden;
+
+  margin-bottom: 12px;
+
+  background: #f7f9fc;
+  border: 1px solid rgb(77 101 148 / 12%);
+  border-radius: 8px;
+}
+
+.coze-prototype-inline-reasoning summary {
+  cursor: pointer;
+
+  padding: 8px 10px;
+
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #444c5c;
+  list-style: none;
+}
+
+.coze-prototype-inline-reasoning summary::-webkit-details-marker {
+  display: none;
+}
+
+.coze-prototype-inline-reasoning summary::before {
+  content: '▸';
+
+  display: inline-block;
+
+  margin-right: 6px;
+
+  color: #747b8a;
+
+  transition: transform 0.16s ease;
+}
+
+.coze-prototype-inline-reasoning[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.coze-prototype-inline-reasoning-content {
+  padding: 0 10px 10px 24px;
+
+  font-size: 13px;
+  line-height: 21px;
+  color: #5f6675;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .coze-prototype-step-running {
   flex: 0 0 auto;
 
