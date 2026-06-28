@@ -62,6 +62,7 @@ export interface TaskDetail {
   artifacts?: TaskThreadArtifact[];
   latestTaskRunID?: string;
   latestTaskRunStatus?: string;
+  messages?: TaskThreadMessage[];
   threadId?: string;
   tokenUsage?: TaskDetailTokenUsage;
   subagentRuns?: TaskDetailSubagentRun[];
@@ -274,6 +275,7 @@ const fetchTaskThreadDetail = async (
   return {
     source: 'thread',
     threadId: thread.thread_id,
+    messages: messagesResponse.data?.messages ?? [],
     task: mapTaskThreadToTask(
       thread,
       messagesResponse.data?.messages ?? [],

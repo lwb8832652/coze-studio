@@ -155,7 +155,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-LAYOUT-003 | 对话记录纯净度 | 聊天记录区只承载用户消息、助手回复、inline 思考、工具/任务状态和产物引用 | 运行诊断、安全审计、任务记忆不得直接铺在聊天对话记录中；应进入 header action、侧栏 inspector、弹层或折叠二级面板 | main content DOM + inspector open DOM | N/A | `task-detail-inspector.tsx`, `detail.tsx`, `task-top-bar.tsx`, `task-detail.test.tsx` | 已完成 |
 | TD-HDR-001 | 标题 | Header 显示 thread title | Header 显示任务 title，不能只显示 ID | header 截图 | detail response title | loader/top-bar | 待验收 |
 | TD-HDR-002 | 状态和进度 | running/ready 状态清楚 | terminal run 显示 `已完成` 且无 stale running | screenshot/DOM | runs response latest top-level status | loader/detail tests | 已完成 |
-| TD-HDR-003 | Header actions | Token、导出、Artifacts 在右上 | Token、导出、Artifacts 对齐；导出若缺失标 P0 缺口 | action 区截图 | token/artifact/export APIs | top-bar/artifacts/export files | 待开发 |
+| TD-HDR-003 | Header actions | Token、导出、Artifacts 在右上 | 顶栏保留 DeerFlow 主线动作：Tokens、导出、详情；`产物` 不再占用顶栏 | action 区截图 | token/artifact/export APIs | top-bar/artifacts/export files | 待验收 |
 
 ### B. 消息流、思考和 Markdown
 
@@ -205,9 +205,9 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-ART-001 | Artifacts 入口 | Header ArtifactTrigger 打开 side panel | Coze 顶部/侧边 Artifacts 入口等价 | panel screenshot | list artifacts response | artifacts panel/files | 待验收 |
 | TD-ART-002 | Artifact 预览 | 文件列表、图片/Markdown/链接可预览 | Coze 预览安全、权限和失败态清楚 | preview screenshot | content/signed_url response | artifact preview files/tests | 待验收 |
 | TD-ART-003 | Artifact 空态/错误态 | 无 artifact 时不干扰任务流 | Coze 空态/错误态边界清楚 | empty/error screenshot | 404/empty response | artifacts tests | 待验收 |
-| TD-EXP-001 | 导出入口 | Header export action | Coze 任务详情提供导出入口 | export button screenshot | export request/response | export service/component | 待开发 |
-| TD-EXP-002 | 导出内容 | 导出包含消息/图表/关键结果 | Coze 导出内容等价且脱敏 | exported file sample | export payload | export tests | 待开发 |
-| TD-TOKEN-001 | 全局 token | Header TokenUsageIndicator | Coze header 显示 run/thread aggregate | token screenshot | token_usage aggregate | token indicator tests | 待验收 |
+| TD-EXP-001 | 导出入口 | Header export action | Coze 任务详情提供导出入口 | export button screenshot | export request/response | export service/component | 已完成 |
+| TD-EXP-002 | 导出内容 | 导出包含消息/图表/关键结果 | Coze 先导出用户可见 Markdown 并过滤思考/工具/内部标记；JSON 菜单另列后续项 | exported file sample | export payload | export tests | 待验收 |
+| TD-TOKEN-001 | 全局 token | Header TokenUsageIndicator 可点击查看汇总 | Coze header 显示 run/thread aggregate，视觉保持 `Tokens + total` 紧凑 pill，点击后展示 Input/Output/Total 明细 | token screenshot + popover DOM | token_usage aggregate | token indicator tests | 已完成 |
 | TD-TOKEN-002 | 每轮 token | DeerFlow per-turn/per-step usage | Coze task detail 每条消息/步骤显示等价信息 | per-message usage screenshot | usage rows grouped by message/run | token usage files/tests | 待开发 |
 | TD-TOKEN-003 | active token | running 时可显示 pending/active usage | Coze running 时不显示误导性 0 | streaming token screenshot | include_active or event metadata | token loader | 差异待确认 |
 | TD-MEM-001 | 记忆入口 | DeerFlow 运行时记忆/设置可见 | Coze `任务记忆` panel 在详情页可用 | memory panel screenshot | list memories response | memory section/tests | 待验收 |
@@ -338,8 +338,10 @@ Coze 目标页可见能力：
   滚动、底部 composer 固定；后续只做视觉细节继续对齐。
 - `TD-MSG-005`: DeerFlow 有 inline `思考`，Coze 目标页当前未检测到 reasoning
   展示信号，需要补齐或确认数据来源。
-- `TD-HDR-003` / `TD-EXP-001` / `TD-EXP-002`: DeerFlow header 有 thread
-  `导出`，Coze 当前可见的是安全审计导出和记忆导出，缺少任务/thread 导出。
+- `TD-HDR-003` / `TD-EXP-001`: Coze 顶栏已收敛为 `Tokens`、`导出`、`详情`
+  主操作，移除顶栏 `产物 0` 和 `任务详情 › 状态` 面包屑式文案。
+- `TD-EXP-002`: Coze 已补用户可见 Markdown 导出，默认过滤思考、
+  tool 消息和内部标记；DeerFlow 的 JSON 二级导出菜单仍是后续对齐项。
 - `TD-TOKEN-002`: DeerFlow 有 assistant turn per-token 摘要，Coze 当前主要是
   header aggregate，需要补 per-message/per-turn 展示或明确折叠入口。
 - `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页本轮只看到
@@ -360,10 +362,16 @@ Coze 目标页可见能力：
 
 - `TD-HDR-002` 和 `TD-RUN-006` 已通过最近修复：完成后的任务详情以最新
   top-level terminal run 驱动，不再错误显示运行中。
+- `TD-HDR-003` 和 `TD-TOKEN-001` 已通过最近修复：顶栏以 DeerFlow 风格的
+  `Tokens + total` 紧凑 pill 展示聚合用量，并支持点击查看
+  Input/Output/Total 明细；右侧主操作保留 `导出` 和 `详情`，不再显示
+  `产物 0` 或 `任务详情 › 已完成`。
+- `TD-EXP-001` 已通过最近修复：任务详情顶栏提供 Markdown 导出入口；
+  `TD-EXP-002` 需要继续补 JSON 菜单、更多格式和文件级样例验收。
 - `TD-MD-001` 和 `TD-MD-002` 已通过最近修复：Coze 任务详情能把
-  `sequenceDiagram` 和 `flowchart` Mermaid fenced block 渲染为 SVG。
+  `sequenceDiagram` 和 `flowchart` Mermaid fenced block 渲染为 SVG，并在
+  每个图块右上提供 SVG 下载和 Mermaid 源码复制按钮。
 - `TD-MSG-005` inline 思考块需要保留并对齐 DeerFlow。
-- `TD-EXP-001` / `TD-EXP-002` 是当前可见 P0 缺口，需要后续补齐。
 - `TD-TOKEN-002` 每轮/每消息 token 显示是 DeerFlow 可见能力，当前 Coze
   需要继续对齐。
 - `TD-DOC-*` 文档生成和预览已经纳入 P0 验收矩阵，后续必须按文档生成

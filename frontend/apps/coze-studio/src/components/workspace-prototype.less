@@ -1120,23 +1120,31 @@
 .coze-prototype-task-topbar {
   display: flex;
   flex: 0 0 auto;
-  gap: 12px;
+  gap: 16px;
   align-items: center;
+  justify-content: space-between;
 
-  height: 52px;
-  padding: 0 24px;
+  min-height: 56px;
+  padding: 8px 24px;
 
   border-bottom: 1px solid rgb(77 101 148 / 10%);
 }
 
 .coze-prototype-task-title-group {
   display: flex;
-  gap: 8px;
+  flex: 1 1 320px;
+  gap: 10px;
   align-items: center;
 
   min-width: 0;
 
   color: #232938;
+}
+
+.coze-prototype-task-title-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .coze-prototype-task-top-title {
@@ -1152,6 +1160,12 @@
   white-space: nowrap;
 }
 
+.coze-prototype-task-status-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .coze-prototype-top-muted {
   flex: 0 0 auto;
   font-size: 12px;
@@ -1159,25 +1173,69 @@
   color: #747b8a;
 }
 
-.coze-prototype-token-usage {
-  overflow: hidden;
-  display: inline-flex;
+.coze-prototype-task-topbar-actions {
+  display: flex;
   flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  justify-content: flex-end;
+
+  min-width: 0;
+}
+
+.coze-prototype-task-topbar-primary,
+.coze-prototype-task-topbar-secondary {
+  display: flex;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 
-  max-width: min(460px, 42vw);
-  height: 28px;
-  padding: 0 9px;
+  min-width: 0;
+}
 
+.coze-prototype-task-topbar-primary {
+  flex: 0 1 auto;
+}
+
+.coze-prototype-task-topbar-secondary {
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.coze-prototype-token-usage {
+  cursor: pointer;
+
+  overflow: hidden;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+
+  height: 30px;
+  padding: 0 10px;
+
+  font-family: inherit;
   font-size: 12px;
   line-height: 18px;
-  color: #2f4b7c;
+  color: #535b6b;
   white-space: nowrap;
 
-  background: #f4f8ff;
-  border: 1px solid rgb(64 112 204 / 18%);
-  border-radius: 6px;
+  background: rgb(255 255 255 / 72%);
+  border: 1px solid rgb(77 101 148 / 16%);
+  border-radius: 999px;
+}
+
+.coze-prototype-token-usage:hover,
+.coze-prototype-token-usage:focus-visible {
+  color: #232938;
+  border-color: rgb(77 101 148 / 28%);
+  box-shadow: 0 4px 14px rgb(37 45 58 / 8%);
+}
+
+.coze-prototype-token-usage:focus-visible {
+  outline: 2px solid rgb(79 90 255 / 22%);
+  outline-offset: 2px;
 }
 
 .coze-prototype-token-usage > span {
@@ -1185,6 +1243,54 @@
   flex: 0 1 auto;
   min-width: 0;
   text-overflow: ellipsis;
+}
+
+.coze-prototype-token-usage-count {
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  color: #232938;
+}
+
+.coze-prototype-token-usage-popover {
+  width: 184px;
+  padding: 4px 2px;
+}
+
+.coze-prototype-token-usage-popover-title {
+  margin-bottom: 8px;
+
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #232938;
+}
+
+.coze-prototype-token-usage-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.coze-prototype-token-usage-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.coze-prototype-token-usage-popover-row dt,
+.coze-prototype-token-usage-popover-row dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.coze-prototype-token-usage-popover-row dt {
+  color: #747b8a;
+}
+
+.coze-prototype-token-usage-popover-row dd {
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  color: #232938;
 }
 
 .coze-prototype-task-action {
@@ -2584,10 +2690,12 @@
 }
 
 .coze-prototype-mermaid {
+  position: relative;
+
   overflow: auto;
 
   margin: 12px 0;
-  padding: 12px;
+  padding: 34px 12px 12px;
 
   color: #444c5c;
 
@@ -2598,6 +2706,38 @@
 
 .coze-prototype-mermaid[data-status='ready'] {
   background: #fff;
+}
+
+.coze-prototype-mermaid-actions {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.coze-prototype-mermaid-action {
+  cursor: pointer;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 24px;
+  height: 24px;
+
+  color: #747b8a;
+
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+
+.coze-prototype-mermaid-action:hover {
+  color: #232938;
+  background: rgb(91 100 117 / 8%);
 }
 
 .coze-prototype-mermaid-svg {

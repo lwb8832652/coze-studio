@@ -21,12 +21,6 @@ import { useUserInfo } from '@coze-arch/foundation-sdk';
 
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
-import { WorkbenchComposer } from '../workbench/components/workbench-composer';
-import {
-  type WorkbenchComposerSubmitPayload,
-  type WorkbenchMode,
-} from '../workbench/components/types';
-import { TaskTopBar } from './task-top-bar';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
 import {
   TaskRunActionBar,
@@ -38,15 +32,15 @@ import {
   getPendingHumanInteraction,
   type PendingHumanInteraction,
 } from './task-human-interaction';
+import { TaskFollowUpComposer } from './task-follow-up-composer';
 import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type LoadedTaskDetailSource,
   type TaskDetailSource,
   type TaskDetailSubagentRun,
 } from './task-detail-loader';
-import { TaskDetailInspector } from './task-detail-inspector';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
-import { TaskArtifactsPanel } from './task-artifacts-panel';
+import { TaskDetailHeader } from './task-detail-header';
 import {
   formatUpdatedTime,
   getLatestAnswerEventMessage,
@@ -288,40 +282,6 @@ const TaskResultSection = ({
   );
 };
 
-const FollowUpComposer = ({
-  value,
-  mode,
-  loading,
-  error,
-  taskId,
-  onValueChange,
-  onModeChange,
-  onSubmit,
-}: {
-  value: string;
-  mode: WorkbenchMode;
-  loading: boolean;
-  error?: string;
-  taskId?: string;
-  onValueChange: (value: string) => void;
-  onModeChange: (mode: WorkbenchMode) => void;
-  onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
-}) => (
-  <section className="coze-prototype-followup">
-    <WorkbenchComposer
-      value={value}
-      mode={mode}
-      loading={loading}
-      error={error}
-      variant="detail"
-      taskId={taskId}
-      onValueChange={onValueChange}
-      onModeChange={onModeChange}
-      onSubmit={onSubmit}
-    />
-  </section>
-);
-
 const TaskTranscript = ({
   events,
   humanInteractionError,
@@ -409,6 +369,7 @@ const TaskDetailPage = () => {
     loadedTaskDetailSource,
     loadedThreadId,
     loading,
+    messages,
     refreshArtifacts,
     subagentRuns,
     task,
@@ -458,26 +419,16 @@ const TaskDetailPage = () => {
   return (
     <main className="coze-prototype-page coze-prototype-task-detail-page">
       {task ? (
-        <TaskTopBar
-          artifactAction={
-            activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
-              <TaskArtifactsPanel
-                artifacts={artifacts}
-                onArtifactsChanged={refreshArtifacts}
-                threadId={activeTaskDetailId}
-              />
-            ) : undefined
-          }
-          inspectorAction={
-            activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
-              <TaskDetailInspector
-                memoryReadOnly={memoryReadOnly}
-                spaceId={space_id}
-                threadId={activeTaskDetailId}
-              />
-            ) : undefined
-          }
+        <TaskDetailHeader
+          artifacts={artifacts}
+          memoryReadOnly={memoryReadOnly}
+          messages={messages}
+          onArtifactsChanged={refreshArtifacts}
+          spaceId={space_id}
           task={task}
+          threadId={
+            activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined
+          }
           tokenUsage={tokenUsage}
         />
       ) : null}
@@ -515,7 +466,7 @@ const TaskDetailPage = () => {
           ) : null}
         </section>
         {task ? (
-          <FollowUpComposer
+          <TaskFollowUpComposer
             value={followUpValue}
             mode={followUpMode}
             loading={followUpLoading}

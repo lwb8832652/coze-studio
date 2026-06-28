@@ -17,6 +17,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type mermaid from 'mermaid';
+import { IconCozCopy, IconCozDownload } from '@coze-arch/coze-design/icons';
 import { MdBoxLazy } from '@coze-arch/bot-md-box-adapter/lazy';
 
 type MermaidAPI = typeof mermaid;
@@ -89,17 +90,35 @@ const splitMarkdownByMermaid = (value: string): MarkdownSegment[] => {
 };
 
 const getSafeMermaidElement = (svg: string) => {
-  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
-  const element = parsed.documentElement;
+  const template = document.createElement('template');
+  template.innerHTML = svg.trim();
+  const element = template.content.querySelector('svg');
 
-  if (
-    parsed.querySelector('parsererror') ||
-    element.nodeName.toLowerCase() !== 'svg'
-  ) {
+  if (!element || element.nodeName.toLowerCase() !== 'svg') {
     throw new Error('invalid mermaid svg');
   }
 
-  return document.importNode(element, true);
+  return element.cloneNode(true);
+};
+
+const downloadMermaidSVG = ({
+  fileName,
+  svg,
+}: {
+  fileName: string;
+  svg: string;
+}) => {
+  const blob = new Blob([svg], {
+    type: 'image/svg+xml;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${fileName}.svg`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 };
 
 const TaskMermaidBlock = ({ source }: { source: string }) => {
@@ -110,11 +129,13 @@ const TaskMermaidBlock = ({ source }: { source: string }) => {
     [rawID],
   );
   const [status, setStatus] = useState<MermaidRenderStatus>('loading');
+  const [svg, setSVG] = useState('');
 
   useEffect(() => {
     let canceled = false;
 
     setStatus('loading');
+    setSVG('');
     containerRef.current?.replaceChildren();
 
     void getMermaidRuntime()
@@ -127,6 +148,7 @@ const TaskMermaidBlock = ({ source }: { source: string }) => {
         const svgElement = getSafeMermaidElement(result.svg);
         containerRef.current.replaceChildren(svgElement);
         result.bindFunctions?.(containerRef.current);
+        setSVG(result.svg);
         setStatus('ready');
       })
       .catch(() => {
@@ -143,12 +165,50 @@ const TaskMermaidBlock = ({ source }: { source: string }) => {
     };
   }, [renderID, source]);
 
+  const handleCopySource = () => {
+    void navigator.clipboard?.writeText(source);
+  };
+
+  const handleDownloadSVG = () => {
+    if (!svg) {
+      return;
+    }
+
+    downloadMermaidSVG({
+      fileName: renderID,
+      svg,
+    });
+  };
+
   return (
     <figure
       className="coze-prototype-mermaid"
       data-status={status}
       data-testid="task-mermaid-diagram"
     >
+      {status === 'ready' ? (
+        <div
+          className="coze-prototype-mermaid-actions"
+          aria-label="Mermaid 图表操作"
+        >
+          <button
+            type="button"
+            className="coze-prototype-mermaid-action"
+            aria-label="下载 Mermaid SVG"
+            onClick={handleDownloadSVG}
+          >
+            <IconCozDownload className="text-[14px]" />
+          </button>
+          <button
+            type="button"
+            className="coze-prototype-mermaid-action"
+            aria-label="复制 Mermaid 源码"
+            onClick={handleCopySource}
+          >
+            <IconCozCopy className="text-[14px]" />
+          </button>
+        </div>
+      ) : null}
       <div ref={containerRef} className="coze-prototype-mermaid-svg" />
       {status === 'loading' ? <figcaption>图表渲染中...</figcaption> : null}
       {status === 'error' ? (

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
@@ -70,7 +70,7 @@ const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockMermaidRender = vi.hoisted(() =>
   vi.fn((id: string) =>
     Promise.resolve({
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" data-render-id="${id}" />`,
+      svg: `<svg xmlns="http://www.w3.org/2000/svg" data-render-id="${id}"><g /></svg>`,
     }),
   ),
 );
@@ -248,6 +248,24 @@ vi.mock('@coze-arch/coze-design', () => ({
       </button>
     </span>
   ),
+  Popover: ({
+    children,
+    content,
+    trigger,
+  }: {
+    children?: ReactNode;
+    content?: ReactNode;
+    trigger?: string;
+  }) => {
+    const [visible, setVisible] = useState(trigger !== 'click');
+
+    return (
+      <span onClick={() => setVisible(value => !value)}>
+        {children}
+        {visible ? content : null}
+      </span>
+    );
+  },
   SideSheet: ({
     children,
     onCancel,
@@ -304,6 +322,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozAsynchronousTask: () => <span />,
   IconCozBell: () => <span />,
   IconCozCross: () => <span />,
+  IconCozCopy: () => <span />,
   IconCozDocument: () => <span />,
   IconCozDownload: () => <span />,
   IconCozEdit: () => <span />,
@@ -382,6 +401,22 @@ const openTaskDetailInspector = async (container: HTMLElement) => {
 
   await act(async () => {
     Simulate.click(detailButton!);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
+const openTaskArtifactsPanel = async (container: HTMLElement) => {
+  await openTaskDetailInspector(container);
+
+  const artifactsButton = Array.from(container.querySelectorAll('button')).find(
+    button => button.textContent?.trim().startsWith('产物 '),
+  );
+
+  expect(artifactsButton).toBeTruthy();
+
+  await act(async () => {
+    Simulate.click(artifactsButton!);
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -836,10 +871,167 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('groups task detail header actions away from the title area', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const titleGroup = container.querySelector(
+      '.coze-prototype-task-title-group',
+    );
+    const actions = container.querySelector(
+      '.coze-prototype-task-topbar-actions',
+    );
+
+    expect(titleGroup).toBeTruthy();
+    expect(actions).toBeTruthy();
+    expect(titleGroup?.textContent).toContain('生成周报');
+    expect(titleGroup?.textContent).not.toContain('任务详情');
+    expect(titleGroup?.textContent).not.toContain('运行中');
+    expect(actions?.textContent).toContain('导出');
+    expect(actions?.textContent).toContain('详情');
+    expect(actions?.textContent).toContain('☆ 收藏');
+    expect(actions?.textContent).not.toContain('产物');
+    expect(actions?.textContent).not.toContain('生成周报');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('exports task detail as safe visible Markdown from the header', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    let exportedBlob: Blob | undefined;
+    const previousCreateObjectURL = URL.createObjectURL;
+    const previousRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn((blob: Blob) => {
+      exportedBlob = blob;
+      return 'blob:task-detail-export';
+    });
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            content:
+              '请总结本周项目进展<uploaded_files>internal-file-key</uploaded_files>',
+            created_at: 1717000100000,
+            message_id: 'message-user-1',
+            metadata: '',
+            role: 'user',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+          {
+            content:
+              '本周完成了 UI 改造方案。\n<think>hidden reasoning</think>',
+            created_at: 1717000200000,
+            message_id: 'message-assistant-1',
+            metadata: '',
+            role: 'assistant',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+          {
+            content: 'secret tool result',
+            created_at: 1717000200000,
+            message_id: 'message-tool-1',
+            metadata: '',
+            role: 'tool',
+            run_id: 'run-1',
+            thread_id: 'thread-1',
+          },
+        ],
+        total: 3,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const exportButton = container.querySelector(
+        'button[aria-label="导出任务为 Markdown"]',
+      ) as HTMLButtonElement;
+      expect(exportButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(exportButton);
+        await Promise.resolve();
+      });
+
+      expect(anchorClick).toHaveBeenCalled();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:task-detail-export');
+      const exportedText = await exportedBlob?.text();
+      expect(exportedText).toContain('# 生成周报');
+      expect(exportedText).toContain('## 用户');
+      expect(exportedText).toContain('请总结本周项目进展');
+      expect(exportedText).toContain('## 助手');
+      expect(exportedText).toContain('本周完成了 UI 改造方案。');
+      expect(exportedText).not.toContain('internal-file-key');
+      expect(exportedText).not.toContain('hidden reasoning');
+      expect(exportedText).not.toContain('secret tool result');
+    } finally {
+      URL.createObjectURL = previousCreateObjectURL;
+      URL.revokeObjectURL = previousRevokeObjectURL;
+      anchorClick.mockRestore();
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('renders Mermaid answer markdown through the markdown viewer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
+    const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteText,
+      },
+    });
+    const previousCreateObjectURL = URL.createObjectURL;
+    const previousRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn().mockReturnValue('blob:mermaid-svg');
+    const revokeObjectURL = vi.fn();
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
     const mermaidAnswer = [
       '下面是两个图：',
       '',
@@ -879,35 +1071,76 @@ describe('TaskDetailPage', () => {
       msg: '',
     });
 
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-    });
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
 
-    const markdownContent = container.querySelector(
-      '[data-testid="task-markdown-content"]',
-    );
-    const mdBox = container.querySelector('[data-testid="task-md-box"]');
-    const mermaidDiagrams = container.querySelectorAll(
-      '[data-testid="task-mermaid-diagram"]',
-    );
+      const markdownContent = container.querySelector(
+        '[data-testid="task-markdown-content"]',
+      );
+      const mdBox = container.querySelector('[data-testid="task-md-box"]');
+      const mermaidDiagrams = container.querySelectorAll(
+        '[data-testid="task-mermaid-diagram"]',
+      );
+      const copyButtons = container.querySelectorAll(
+        'button[aria-label="复制 Mermaid 源码"]',
+      );
+      const downloadButtons = container.querySelectorAll(
+        'button[aria-label="下载 Mermaid SVG"]',
+      );
 
-    expect(markdownContent).toBeTruthy();
-    expect(mermaidDiagrams).toHaveLength(2);
-    expect(mdBox?.getAttribute('data-markdown')).toContain('下面是两个图');
-    expect(mdBox?.getAttribute('data-markdown')).not.toContain(
-      'sequenceDiagram',
-    );
-    expect(mdBox?.getAttribute('data-markdown')).not.toContain('flowchart TD');
-    expect(
-      container.querySelector('article[data-result-type="answer"] > p'),
-    ).toBeNull();
+      expect(markdownContent).toBeTruthy();
+      expect(mermaidDiagrams).toHaveLength(2);
+      expect(
+        Array.from(mermaidDiagrams).map(diagram =>
+          diagram.getAttribute('data-status'),
+        ),
+      ).toEqual(['ready', 'ready']);
+      expect(copyButtons).toHaveLength(2);
+      expect(downloadButtons).toHaveLength(2);
+      expect(mdBox?.getAttribute('data-markdown')).toContain('下面是两个图');
+      expect(mdBox?.getAttribute('data-markdown')).not.toContain(
+        'sequenceDiagram',
+      );
+      expect(mdBox?.getAttribute('data-markdown')).not.toContain(
+        'flowchart TD',
+      );
+      expect(
+        container.querySelector('article[data-result-type="answer"] > p'),
+      ).toBeNull();
 
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
+      await act(async () => {
+        Simulate.click(copyButtons[0]);
+        await Promise.resolve();
+      });
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        'sequenceDiagram\n  User->>Agent: 需求\n  Agent-->>User: 方案',
+      );
+
+      await act(async () => {
+        Simulate.click(downloadButtons[0]);
+        await Promise.resolve();
+      });
+      expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+      expect(anchorClick).toHaveBeenCalled();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:mermaid-svg');
+    } finally {
+      URL.createObjectURL = previousCreateObjectURL;
+      URL.revokeObjectURL = previousRevokeObjectURL;
+      anchorClick.mockRestore();
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
   });
 
   it('resolves canonical chat route params through task thread detail', async () => {
@@ -1646,10 +1879,34 @@ describe('TaskDetailPage', () => {
       page: 1,
       page_size: 50,
     });
-    expect(container.textContent).toContain('Token 1,801');
-    expect(container.textContent).toContain('In 1,234 / Out 567');
-    expect(container.textContent).toContain('Agent 1,500');
-    expect(container.textContent).toContain('Tool 301');
+    const tokenUsage = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsage).toBeTruthy();
+    expect(tokenUsage?.textContent).toContain('Tokens');
+    expect(tokenUsage?.textContent).toContain('1,801');
+    expect(tokenUsage?.getAttribute('title')).toBe(
+      'Input 1,234 · Output 567 · Total 1,801',
+    );
+    expect(container.textContent).not.toContain('Token 用量');
+
+    await act(async () => {
+      Simulate.click(tokenUsage!);
+      await Promise.resolve();
+    });
+
+    const tokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expect(tokenUsagePopover?.textContent).toContain('Token 用量');
+    expect(tokenUsagePopover?.textContent).toContain('Input');
+    expect(tokenUsagePopover?.textContent).toContain('1,234');
+    expect(tokenUsagePopover?.textContent).toContain('Output');
+    expect(tokenUsagePopover?.textContent).toContain('567');
+    expect(tokenUsagePopover?.textContent).toContain('Total');
+    expect(tokenUsagePopover?.textContent).toContain('1,801');
+    expect(container.textContent).not.toContain('Agent 1,500');
+    expect(container.textContent).not.toContain('Tool 301');
 
     act(() => {
       root?.unmount();
@@ -1844,21 +2101,12 @@ describe('TaskDetailPage', () => {
         page: 1,
         page_size: 50,
       });
-      expect(container.textContent).toContain('产物 5');
       expect(
-        container.querySelector('[data-testid="task-artifacts-open"]'),
-      ).toBeTruthy();
-      const artifactsButton = Array.from(
-        container.querySelectorAll('button'),
-      ).find(
-        button => button.textContent?.trim() === '产物 5',
-      ) as HTMLButtonElement;
-      expect(artifactsButton).toBeTruthy();
+        container.querySelector('.coze-prototype-task-topbar-actions')
+          ?.textContent,
+      ).not.toContain('产物');
 
-      await act(async () => {
-        Simulate.click(artifactsButton);
-        await Promise.resolve();
-      });
+      await openTaskArtifactsPanel(container);
 
       expect(container.textContent).toContain('任务产物');
       expect(container.textContent).toContain('report.txt');
@@ -2073,17 +2321,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const artifactsButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent?.trim() === '产物 1',
-    ) as HTMLButtonElement;
-    expect(artifactsButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(artifactsButton);
-      await Promise.resolve();
-    });
+    await openTaskArtifactsPanel(container);
 
     expect(container.textContent).toContain('obsolete.txt');
     const deleteButton = container.querySelector(
@@ -2205,17 +2443,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const artifactsButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent?.trim() === '产物 1',
-    ) as HTMLButtonElement;
-    expect(artifactsButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(artifactsButton);
-      await Promise.resolve();
-    });
+    await openTaskArtifactsPanel(container);
 
     const deleteButton = container.querySelector(
       'button[aria-label="删除 restore-me.txt"]',
@@ -2356,17 +2584,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const artifactsButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent?.trim() === '产物 0',
-    ) as HTMLButtonElement;
-    expect(artifactsButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(artifactsButton);
-      await Promise.resolve();
-    });
+    await openTaskArtifactsPanel(container);
 
     const deletedTab = Array.from(container.querySelectorAll('button')).find(
       button => button.textContent?.trim() === '已移除',
@@ -2499,17 +2717,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const artifactsButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent?.trim() === '产物 1',
-    ) as HTMLButtonElement;
-    expect(artifactsButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(artifactsButton);
-      await Promise.resolve();
-    });
+    await openTaskArtifactsPanel(container);
 
     expect(container.textContent).toContain('blocked.txt');
     expect(container.textContent).toContain('blocked');
@@ -2636,18 +2844,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const artifactsButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(
-      button => button.textContent?.trim() === '产物 0',
-    ) as HTMLButtonElement;
-    expect(artifactsButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(artifactsButton);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await openTaskArtifactsPanel(container);
 
     expect(mockListTaskThreadArtifactScanJobs).toHaveBeenCalledWith({
       thread_id: 'thread-scan-jobs-1',

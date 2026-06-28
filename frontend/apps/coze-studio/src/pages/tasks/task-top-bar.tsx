@@ -24,17 +24,16 @@ import {
 
 import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
 import type { TaskDetailTokenUsage } from './task-detail-loader';
-import { getTaskStatusText } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 
 export const TaskTopBar = ({
-  artifactAction,
+  exportAction,
   inspectorAction,
   task,
   tokenUsage,
 }: {
-  artifactAction?: ReactNode;
+  exportAction?: ReactNode;
   inspectorAction?: ReactNode;
   task: ChatTask;
   tokenUsage?: TaskDetailTokenUsage;
@@ -42,29 +41,35 @@ export const TaskTopBar = ({
   <header className="coze-prototype-task-topbar">
     <div className="coze-prototype-task-title-group">
       <IconCozAsynchronousTask className="text-[16px]" />
-      <h1 className="coze-prototype-task-top-title">{task.title}</h1>
-      <span className="coze-prototype-top-muted">›</span>
-      <span className="coze-prototype-top-muted">
-        {getTaskStatusText(task.status)}
-      </span>
+      <div className="coze-prototype-task-title-copy">
+        <h1 className="coze-prototype-task-top-title">{task.title}</h1>
+      </div>
     </div>
-    <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
-    <div className="flex-1" />
-    {inspectorAction}
-    {artifactAction}
-    <button type="button" className="coze-prototype-task-action">
-      ☆ 收藏
-    </button>
-    <button type="button" className="coze-prototype-task-action">
-      分享
-    </button>
-    <button
-      type="button"
-      className="coze-prototype-icon-button"
-      aria-label="通知"
-    >
-      <IconCozBell className="text-[14px]" />
-    </button>
-    <div className="coze-prototype-avatar">wb</div>
+    <div className="coze-prototype-task-topbar-actions">
+      <div className="coze-prototype-task-topbar-primary">
+        <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
+        {exportAction}
+        {inspectorAction}
+      </div>
+      <div
+        className="coze-prototype-task-topbar-secondary"
+        aria-label="任务辅助操作"
+      >
+        <button type="button" className="coze-prototype-task-action">
+          ☆ 收藏
+        </button>
+        <button type="button" className="coze-prototype-task-action">
+          分享
+        </button>
+        <button
+          type="button"
+          className="coze-prototype-icon-button"
+          aria-label="通知"
+        >
+          <IconCozBell className="text-[14px]" />
+        </button>
+        <div className="coze-prototype-avatar">wb</div>
+      </div>
+    </div>
   </header>
 );

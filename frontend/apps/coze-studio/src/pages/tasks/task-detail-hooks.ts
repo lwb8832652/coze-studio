@@ -23,9 +23,9 @@ import type {
   WorkbenchMode,
 } from '../workbench/components/types';
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
+import { useTaskRunActions } from './task-run-actions-hook';
 import type { PendingHumanInteraction } from './task-human-interaction';
 import { sendFollowUpMessage } from './task-follow-up';
-import { useTaskRunActions } from './task-run-actions-hook';
 import {
   fetchTaskDetail,
   type LoadedTaskDetailSource,
@@ -34,14 +34,12 @@ import {
   type TaskDetailSubagentRun,
   type TaskDetailTokenUsage,
 } from './task-detail-loader';
-import {
-  listTaskThreadArtifacts,
-  resumeTaskThreadRun,
-} from './service';
+import { listTaskThreadArtifacts, resumeTaskThreadRun } from './service';
 import { isTaskTerminalStatus } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 const RUN_TERMINAL_STATUSES = new Set([
@@ -75,6 +73,7 @@ export const useTaskDetailData = ({
 }) => {
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
+  const [messages, setMessages] = useState<TaskThreadMessage[]>([]);
   const [artifacts, setArtifacts] = useState<
     workbenchTask.TaskThreadArtifact[]
   >([]);
@@ -92,6 +91,7 @@ export const useTaskDetailData = ({
     setLoadedThreadId(detail.threadId ?? '');
     setTask(detail.task);
     setEvents(detail.events);
+    setMessages(detail.messages ?? []);
     setArtifacts(detail.artifacts ?? []);
     setLatestTaskRunID(detail.latestTaskRunID ?? '');
     setSubagentRuns(detail.subagentRuns ?? []);
@@ -192,6 +192,7 @@ export const useTaskDetailData = ({
     artifacts,
     error,
     events,
+    messages,
     latestTaskRunID,
     loadedTaskDetailSource,
     loadedThreadId,

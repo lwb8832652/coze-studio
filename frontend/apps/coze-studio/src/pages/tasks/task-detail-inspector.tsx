@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { SideSheet } from '@coze-arch/coze-design';
 
@@ -23,10 +23,12 @@ import { TaskMemorySection } from './task-memory-section';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
 
 export const TaskDetailInspector = ({
+  artifactAction,
   memoryReadOnly,
   spaceId,
   threadId,
 }: {
+  artifactAction?: ReactNode;
   memoryReadOnly: boolean;
   spaceId?: string;
   threadId: string;
@@ -49,6 +51,7 @@ export const TaskDetailInspector = ({
         onCancel={() => setVisible(false)}
       >
         <div className="coze-prototype-detail-inspector">
+          {artifactAction}
           <TaskRuntimeDoctorSection spaceId={spaceId} />
           <TaskGuardrailAuditSection threadId={threadId} />
           <TaskMemorySection readOnly={memoryReadOnly} threadId={threadId} />

@@ -14,10 +14,20 @@
  * limitations under the License.
  */
 
+import { Popover } from '@coze-arch/coze-design';
+
 import type { TaskDetailTokenUsage } from './task-detail-loader';
 
-const formatTokenCount = (value: number) =>
-  new Intl.NumberFormat('en-US').format(Math.max(0, value));
+const TOKEN_COMPACT_THRESHOLD = 10_000;
+const TOKEN_COMPACT_DIVISOR = 1000;
+
+const formatTokenCount = (value: number) => {
+  const safeValue = Math.max(0, value);
+
+  return safeValue < TOKEN_COMPACT_THRESHOLD
+    ? new Intl.NumberFormat('en-US').format(safeValue)
+    : `${(safeValue / TOKEN_COMPACT_DIVISOR).toFixed(1)}K`;
+};
 
 export const TaskTokenUsageIndicator = ({
   tokenUsage,
@@ -28,34 +38,60 @@ export const TaskTokenUsageIndicator = ({
     return null;
   }
 
-  const sourceItems = [
-    tokenUsage.leadAgentTokens > 0
-      ? `Agent ${formatTokenCount(tokenUsage.leadAgentTokens)}`
-      : '',
-    tokenUsage.subagentTokens > 0
-      ? `Subagent ${formatTokenCount(tokenUsage.subagentTokens)}`
-      : '',
-    tokenUsage.middlewareTokens > 0
-      ? `Middleware ${formatTokenCount(tokenUsage.middlewareTokens)}`
-      : '',
-    tokenUsage.toolTokens > 0
-      ? `Tool ${formatTokenCount(tokenUsage.toolTokens)}`
-      : '',
-  ].filter(Boolean);
+  const detailText = `Input ${formatTokenCount(
+    tokenUsage.inputTokens,
+  )} · Output ${formatTokenCount(tokenUsage.outputTokens)} · Total ${formatTokenCount(
+    tokenUsage.totalTokens,
+  )}`;
+  const usageRows = [
+    {
+      label: 'Input',
+      value: formatTokenCount(tokenUsage.inputTokens),
+    },
+    {
+      label: 'Output',
+      value: formatTokenCount(tokenUsage.outputTokens),
+    },
+    {
+      label: 'Total',
+      value: formatTokenCount(tokenUsage.totalTokens),
+    },
+  ];
+  const content = (
+    <div
+      className="coze-prototype-token-usage-popover"
+      data-testid="task-token-usage-popover"
+    >
+      <div className="coze-prototype-token-usage-popover-title">Token 用量</div>
+      <dl className="coze-prototype-token-usage-popover-list">
+        {usageRows.map(row => (
+          <div
+            key={row.label}
+            className="coze-prototype-token-usage-popover-row"
+          >
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 
   return (
-    <span
-      className="coze-prototype-token-usage"
-      aria-label={`Token ${formatTokenCount(tokenUsage.totalTokens)}`}
-    >
-      <span>Token {formatTokenCount(tokenUsage.totalTokens)}</span>
-      <span>
-        In {formatTokenCount(tokenUsage.inputTokens)} / Out{' '}
-        {formatTokenCount(tokenUsage.outputTokens)}
-      </span>
-      {sourceItems.map(item => (
-        <span key={item}>{item}</span>
-      ))}
-    </span>
+    <Popover content={content} position="bottomRight" showArrow trigger="click">
+      <button
+        type="button"
+        className="coze-prototype-token-usage"
+        aria-label={`查看 Token 用量，总计 ${formatTokenCount(
+          tokenUsage.totalTokens,
+        )}`}
+        title={detailText}
+      >
+        <span>Tokens</span>
+        <span className="coze-prototype-token-usage-count">
+          {formatTokenCount(tokenUsage.totalTokens)}
+        </span>
+      </button>
+    </Popover>
   );
 };
