@@ -61,7 +61,7 @@ type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 
 const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
-  threadId ? 'thread' : 'task';
+  threadId ? 'thread' : 'auto';
 
 const AssistantMark = () => (
   <span className="coze-prototype-assistant-mark" aria-hidden="true">
@@ -354,6 +354,8 @@ const TaskDetailPage = () => {
     error,
     events,
     latestTaskRunID,
+    loadedTaskDetailSource,
+    loadedThreadId,
     loading,
     refreshArtifacts,
     subagentRuns,
@@ -363,9 +365,14 @@ const TaskDetailPage = () => {
     taskDetailId,
     taskDetailSource,
   });
+  const activeTaskDetailSource = loadedTaskDetailSource;
+  const activeTaskDetailId =
+    activeTaskDetailSource === 'thread'
+      ? loadedThreadId || taskDetailId
+      : taskDetailId;
   const pendingHumanInteraction = getPendingHumanInteraction(events);
   const memoryReadOnly = Boolean(
-    taskDetailSource === 'thread' &&
+    activeTaskDetailSource === 'thread' &&
       task?.creator_id &&
       userInfo?.user_id_str &&
       task.creator_id !== userInfo.user_id_str,
@@ -393,19 +400,19 @@ const TaskDetailPage = () => {
     pendingHumanInteraction,
     spaceID: space_id,
     task,
-    taskDetailId,
-    taskDetailSource,
+    taskDetailId: activeTaskDetailId,
+    taskDetailSource: activeTaskDetailSource,
   });
   return (
     <main className="coze-prototype-page">
       {task ? (
         <TaskTopBar
           artifactAction={
-            taskDetailSource === 'thread' ? (
+            activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
               <TaskArtifactsPanel
                 artifacts={artifacts}
                 onArtifactsChanged={refreshArtifacts}
-                threadId={taskDetailId}
+                threadId={activeTaskDetailId}
               />
             ) : undefined
           }
@@ -426,7 +433,7 @@ const TaskDetailPage = () => {
               latestRunID={latestTaskRunID}
               loading={taskRunActionLoading}
               error={taskRunActionError}
-              taskDetailSource={taskDetailSource}
+              taskDetailSource={activeTaskDetailSource}
               onCancelTaskRun={handleCancelTaskRun}
               onRetryTaskRun={handleRetryTaskRun}
             />
@@ -441,16 +448,16 @@ const TaskDetailPage = () => {
               retryingRunId={retryingSubagentRunId}
               onRetrySubagentRun={handleRetrySubagentRun}
             />
-            {taskDetailSource === 'thread' ? (
+            {activeTaskDetailSource === 'thread' ? (
               <TaskRuntimeDoctorSection spaceId={space_id} />
             ) : null}
-            {taskDetailSource === 'thread' ? (
-              <TaskGuardrailAuditSection threadId={taskDetailId} />
+            {activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
+              <TaskGuardrailAuditSection threadId={activeTaskDetailId} />
             ) : null}
-            {taskDetailSource === 'thread' ? (
+            {activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
               <TaskMemorySection
                 readOnly={memoryReadOnly}
-                threadId={taskDetailId}
+                threadId={activeTaskDetailId}
               />
             ) : null}
             {pendingHumanInteraction ? (
@@ -467,7 +474,7 @@ const TaskDetailPage = () => {
               mode={followUpMode}
               loading={followUpLoading}
               error={followUpError}
-              taskId={task?.id ?? taskDetailId}
+              taskId={task?.id ?? activeTaskDetailId}
               onValueChange={setFollowUpValue}
               onModeChange={setFollowUpMode}
               onSubmit={handleFollowUpSubmit}

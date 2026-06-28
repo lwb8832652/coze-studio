@@ -420,7 +420,7 @@ describe('WorkbenchPage', () => {
         enabled: true,
       },
     });
-    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/thread-1');
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
 
     act(() => {
       root?.unmount();

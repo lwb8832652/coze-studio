@@ -28,6 +28,7 @@ import { sendFollowUpMessage } from './task-follow-up';
 import { useTaskRunActions } from './task-run-actions-hook';
 import {
   fetchTaskDetail,
+  type LoadedTaskDetailSource,
   type TaskDetail,
   type TaskDetailSource,
   type TaskDetailSubagentRun,
@@ -44,6 +45,10 @@ type TaskEvent = workbenchTask.TaskEvent;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 
+const getInitialLoadedSource = (
+  source: TaskDetailSource,
+): LoadedTaskDetailSource => (source === 'thread' ? 'thread' : 'task');
+
 export const useTaskDetailData = ({
   taskDetailId,
   taskDetailSource,
@@ -59,9 +64,14 @@ export const useTaskDetailData = ({
   const [latestTaskRunID, setLatestTaskRunID] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
+  const [loadedTaskDetailSource, setLoadedTaskDetailSource] =
+    useState<LoadedTaskDetailSource>(getInitialLoadedSource(taskDetailSource));
+  const [loadedThreadId, setLoadedThreadId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const applyTaskDetail = useCallback((detail: TaskDetail) => {
+    setLoadedTaskDetailSource(detail.source);
+    setLoadedThreadId(detail.threadId ?? '');
     setTask(detail.task);
     setEvents(detail.events);
     setArtifacts(detail.artifacts ?? []);
@@ -70,17 +80,17 @@ export const useTaskDetailData = ({
     setTokenUsage(detail.tokenUsage);
   }, []);
   const refreshArtifacts = useCallback(async () => {
-    if (!taskDetailId || taskDetailSource !== 'thread') {
+    if (!loadedThreadId || loadedTaskDetailSource !== 'thread') {
       return;
     }
 
     const response = await listTaskThreadArtifacts({
-      thread_id: taskDetailId,
+      thread_id: loadedThreadId,
       page: 1,
       page_size: 50,
     });
     setArtifacts(response.data?.artifacts ?? []);
-  }, [taskDetailId, taskDetailSource]);
+  }, [loadedTaskDetailSource, loadedThreadId]);
 
   useEffect(() => {
     if (!taskDetailId) {
@@ -91,6 +101,8 @@ export const useTaskDetailData = ({
     const loadTaskDetail = async (showLoading = false) => {
       if (showLoading) {
         setLoading(true);
+        setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
+        setLoadedThreadId(taskDetailSource === 'thread' ? taskDetailId : '');
       }
       setError('');
       try {
@@ -126,9 +138,9 @@ export const useTaskDetailData = ({
   }, [applyTaskDetail, taskDetailId, taskDetailSource]);
 
   useTaskThreadRunEventStream({
-    enabled: taskDetailSource === 'thread' && task?.id === taskDetailId,
+    enabled: loadedTaskDetailSource === 'thread' && Boolean(loadedThreadId),
     setEvents,
-    threadId: taskDetailId,
+    threadId: loadedThreadId,
   });
 
   return {
@@ -137,6 +149,8 @@ export const useTaskDetailData = ({
     error,
     events,
     latestTaskRunID,
+    loadedTaskDetailSource,
+    loadedThreadId,
     loading,
     refreshArtifacts,
     subagentRuns,
@@ -158,7 +172,7 @@ export const useTaskDetailActions = ({
   spaceID?: string;
   task?: ChatTask;
   taskDetailId?: string;
-  taskDetailSource: TaskDetailSource;
+  taskDetailSource: LoadedTaskDetailSource;
 }) => {
   const [followUpValue, setFollowUpValue] = useState('');
   const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>('Auto');
@@ -183,8 +197,7 @@ export const useTaskDetailActions = ({
       setFollowUpError('缺少任务上下文，无法继续追问');
       return;
     }
-    const isCanonicalThreadDetail =
-      taskDetailSource === 'thread' && task?.id === taskDetailId;
+    const isCanonicalThreadDetail = taskDetailSource === 'thread';
     const activeTaskId = task?.id ?? taskDetailId;
     setFollowUpLoading(true);
     setFollowUpError('');

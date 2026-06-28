@@ -27,8 +27,8 @@ import {
 import type { TaskRunActionLoading } from './task-run-action-bar';
 import {
   fetchTaskDetail,
+  type LoadedTaskDetailSource,
   type TaskDetail,
-  type TaskDetailSource,
 } from './task-detail-loader';
 import {
   cancelTaskThreadRun,
@@ -75,7 +75,7 @@ export const useTaskRunActions = ({
   applyTaskDetail: (detail: TaskDetail) => void;
   task?: ChatTask;
   taskDetailId?: string;
-  taskDetailSource: TaskDetailSource;
+  taskDetailSource: LoadedTaskDetailSource;
 }) => {
   const [taskRunActionLoading, setTaskRunActionLoading] =
     useState<TaskRunActionLoading>('');

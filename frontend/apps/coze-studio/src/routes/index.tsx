@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 
 import { SpaceSubModuleEnum } from '@coze-foundation/space-ui-adapter';
 import { GlobalError } from '@coze-foundation/layout';
@@ -53,6 +53,16 @@ import {
   TaskDetailPage,
   TasksPage,
 } from './async-components';
+
+const TaskThreadDetailRedirect = () => {
+  const { space_id, thread_id } = useParams();
+
+  if (!space_id || !thread_id) {
+    return <Navigate to="../chats" replace relative="path" />;
+  }
+
+  return <Navigate to={`/space/${space_id}/tasks/${thread_id}`} replace />;
+};
 
 export const router: ReturnType<typeof createBrowserRouter> =
   createBrowserRouter([
@@ -248,7 +258,7 @@ export const router: ReturnType<typeof createBrowserRouter> =
                 },
                 {
                   path: 'chats/:thread_id',
-                  Component: TaskDetailPage,
+                  Component: TaskThreadDetailRedirect,
                   loader: () => ({
                     subMenuKey: SPACE_SUB_MODULE.TASKS,
                   }),

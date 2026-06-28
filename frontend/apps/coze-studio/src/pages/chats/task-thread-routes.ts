@@ -26,7 +26,7 @@ export const buildNewTaskThreadPath = (spaceId: string) =>
   `/space/${spaceId}/${TASK_THREAD_ROUTES.new}`;
 
 export const buildTaskThreadDetailPath = (spaceId: string, threadId: string) =>
-  `/space/${spaceId}/chats/${threadId}`;
+  `/space/${spaceId}/tasks/${threadId}`;
 
 export const buildLegacyTaskDetailPath = (spaceId: string, taskId: string) =>
   `/space/${spaceId}/tasks/${taskId}`;

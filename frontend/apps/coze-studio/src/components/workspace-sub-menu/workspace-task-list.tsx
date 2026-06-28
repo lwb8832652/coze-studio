@@ -23,7 +23,6 @@ import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import { Loading } from '@coze-arch/coze-design';
 
 import { listTaskThreads } from '../../pages/tasks/service';
-import { getTaskThreadDetailId } from '../../pages/tasks/helpers';
 import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
@@ -99,12 +98,7 @@ export const WorkspaceTaskList = () => {
               className="coze-prototype-sidebar-task-row"
               onClick={() =>
                 spaceId &&
-                navigate(
-                  buildTaskThreadDetailPath(
-                    spaceId,
-                    getTaskThreadDetailId(task),
-                  ),
-                )
+                navigate(buildTaskThreadDetailPath(spaceId, task.thread_id))
               }
             >
               <span className="coze-prototype-task-icon">

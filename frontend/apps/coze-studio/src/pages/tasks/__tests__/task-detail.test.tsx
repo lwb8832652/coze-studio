@@ -561,24 +561,30 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockGetTaskThread.mockResolvedValue({
-      data: {
-        thread_id: 'thread-1',
-        legacy_task_id: 'task-legacy-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '生成周报',
-        status: 'running',
-        source: 'task',
-        progress: 65,
-        last_user_message: '请总结本周项目进展',
-        last_agent_message: '本周完成了 UI 改造方案。',
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
-      },
-      code: 0,
-      msg: '',
-    });
+    mockGetTaskThread.mockImplementation(
+      ({ thread_id }: { thread_id: string }) =>
+        Promise.resolve({
+          data:
+            thread_id === 'thread-1'
+              ? {
+                  thread_id: 'thread-1',
+                  legacy_task_id: 'task-legacy-1',
+                  space_id: 'space-1',
+                  creator_id: 'user-1',
+                  title: '生成周报',
+                  status: 'running',
+                  source: 'task',
+                  progress: 65,
+                  last_user_message: '请总结本周项目进展',
+                  last_agent_message: '本周完成了 UI 改造方案。',
+                  created_at: 1717000000000,
+                  updated_at: 1717000300000,
+                }
+              : undefined,
+          code: 0,
+          msg: '',
+        }),
+    );
     mockListTaskThreadMessages.mockResolvedValue({
       data: {
         messages: [],
@@ -787,7 +793,7 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('resolves canonical thread route params through legacy task detail during compatibility', async () => {
+  it('resolves canonical chat route params through task thread detail', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -804,10 +810,45 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
-    expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-legacy-1' });
-    expect(mockListTaskEvents).toHaveBeenCalledWith({
-      task_id: 'task-legacy-1',
+    expect(mockGetTask).not.toHaveBeenCalled();
+    expect(mockListTaskEvents).not.toHaveBeenCalled();
+    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      page: 1,
+      page_size: 50,
     });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('resolves task route params through task thread detail before legacy fallback', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      task_id: 'thread-1',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTask).not.toHaveBeenCalled();
+    expect(mockListTaskEvents).not.toHaveBeenCalled();
+    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      page: 1,
+      page_size: 50,
+    });
+    expect(container.textContent).toContain('生成周报');
 
     act(() => {
       root?.unmount();

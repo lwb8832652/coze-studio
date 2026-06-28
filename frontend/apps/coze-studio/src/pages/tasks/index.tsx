@@ -29,7 +29,6 @@ import { buildTaskThreadDetailPath } from '../chats/task-thread-routes';
 import { listTaskThreads } from './service';
 import {
   formatUpdatedTime,
-  getTaskThreadDetailId,
   type TaskStatusFilter,
 } from './helpers';
 
@@ -372,9 +371,7 @@ const TasksPage = () => {
 
   const handleNavigate = (task: TaskThread) => {
     if (space_id) {
-      navigate(
-        buildTaskThreadDetailPath(space_id, getTaskThreadDetailId(task)),
-      );
+      navigate(buildTaskThreadDetailPath(space_id, task.thread_id));
     }
   };
 

@@ -193,9 +193,7 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       taskButton.click();
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/task-legacy-1',
-    );
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
 
     act(() => {
       root?.unmount();
@@ -248,7 +246,7 @@ describe('Coze Studio WorkspaceSubMenu', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/thread-zero-legacy',
+      '/space/space-1/tasks/thread-zero-legacy',
     );
 
     act(() => {

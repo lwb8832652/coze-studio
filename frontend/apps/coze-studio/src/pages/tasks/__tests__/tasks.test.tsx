@@ -133,9 +133,7 @@ describe('TasksPage helpers', () => {
     act(() => {
       openButton.click();
     });
-    expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/task-legacy-1',
-    );
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
 
     act(() => {
       root?.unmount();
@@ -185,7 +183,7 @@ describe('TasksPage helpers', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/thread-zero-legacy',
+      '/space/space-1/tasks/thread-zero-legacy',
     );
 
     act(() => {

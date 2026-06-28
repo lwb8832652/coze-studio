@@ -36,7 +36,6 @@ import {
   listTaskThreadMessages,
   listTaskThreadRunEvents,
 } from './service';
-import { getTaskThreadDetailId } from './helpers';
 
 export type {
   TaskDetailSubagentRun,
@@ -52,13 +51,16 @@ type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
-export type TaskDetailSource = 'task' | 'thread';
+export type LoadedTaskDetailSource = 'task' | 'thread';
+export type TaskDetailSource = LoadedTaskDetailSource | 'auto';
 
 export interface TaskDetail {
+  source: LoadedTaskDetailSource;
   task?: ChatTask;
   events: TaskEvent[];
   artifacts?: TaskThreadArtifact[];
   latestTaskRunID?: string;
+  threadId?: string;
   tokenUsage?: TaskDetailTokenUsage;
   subagentRuns?: TaskDetailSubagentRun[];
 }
@@ -123,7 +125,7 @@ const mapTaskThreadToTask = (
     thread.last_agent_message;
 
   return {
-    id: getTaskThreadDetailId(thread),
+    id: thread.thread_id,
     space_id: thread.space_id,
     creator_id: thread.creator_id,
     title: thread.title,
@@ -161,8 +163,92 @@ const fetchLegacyTaskDetail = async (taskId: string): Promise<TaskDetail> => {
   ]);
 
   return {
+    source: 'task',
     task: taskResponse.data,
     events: eventsResponse.data?.events ?? [],
+  };
+};
+
+const getTaskThreadForDetail = async (
+  id: string,
+  { suppressNotFoundError = false } = {},
+) => {
+  try {
+    const threadResponse = await getTaskThread({ thread_id: id });
+
+    return threadResponse.data;
+  } catch (err) {
+    if (suppressNotFoundError) {
+      return undefined;
+    }
+
+    throw err;
+  }
+};
+
+const fetchTaskThreadDetail = async (
+  id: string,
+  { suppressNotFoundError = false } = {},
+): Promise<TaskDetail | undefined> => {
+  const thread = await getTaskThreadForDetail(id, { suppressNotFoundError });
+
+  if (!thread) {
+    return undefined;
+  }
+
+  const threadID = thread.thread_id;
+  const [
+    messagesResponse,
+    topLevelRunsResponse,
+    runEventsResponse,
+    tokenUsageResponse,
+    artifactsResponse,
+  ] = await Promise.all([
+    listTaskThreadMessages({
+      thread_id: threadID,
+      page: 1,
+      page_size: 50,
+    }),
+    listTaskThreadRuns({
+      thread_id: threadID,
+      parent_run_id: '0',
+      page: 1,
+      page_size: 1,
+    }),
+    listTaskThreadRunEvents({
+      thread_id: threadID,
+      page: 1,
+      page_size: 100,
+    }),
+    getTaskThreadTokenUsage({
+      thread_id: threadID,
+      page: 1,
+      page_size: 50,
+    }),
+    listTaskThreadArtifacts({
+      thread_id: threadID,
+      page: 1,
+      page_size: 50,
+    }),
+  ]);
+  const rawRunEvents = runEventsResponse.data?.events ?? [];
+  const subagentRuns = await fetchTaskThreadSubagentRuns(
+    threadID,
+    getSubagentLifecycleByChildRunID(rawRunEvents),
+    getSubagentTimelineByChildRunID(rawRunEvents),
+  );
+
+  return {
+    source: 'thread',
+    threadId: thread.thread_id,
+    task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
+    artifacts: artifactsResponse.data?.artifacts ?? [],
+    events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
+    latestTaskRunID: topLevelRunsResponse.data?.runs?.[0]?.run_id ?? '',
+    tokenUsage: mapTaskThreadTokenUsageAggregate(
+      tokenUsageResponse.data?.aggregate,
+    ),
+    subagentRuns,
   };
 };
 
@@ -177,70 +263,22 @@ export const fetchTaskDetail = async ({
     return fetchLegacyTaskDetail(id);
   }
 
-  const threadResponse = await getTaskThread({ thread_id: id });
-  const thread = threadResponse.data;
+  const threadDetail = await fetchTaskThreadDetail(id, {
+    suppressNotFoundError: source === 'auto',
+  });
 
-  if (!thread) {
-    return {
-      task: undefined,
-      events: [],
-    };
+  if (threadDetail) {
+    return threadDetail;
   }
 
-  const detailID = getTaskThreadDetailId(thread);
-  if (detailID !== thread.thread_id) {
-    return fetchLegacyTaskDetail(detailID);
+  if (source === 'auto') {
+    return fetchLegacyTaskDetail(id);
   }
-
-  const [
-    messagesResponse,
-    topLevelRunsResponse,
-    runEventsResponse,
-    tokenUsageResponse,
-    artifactsResponse,
-  ] = await Promise.all([
-    listTaskThreadMessages({
-      thread_id: id,
-      page: 1,
-      page_size: 50,
-    }),
-    listTaskThreadRuns({
-      thread_id: id,
-      parent_run_id: '0',
-      page: 1,
-      page_size: 1,
-    }),
-    listTaskThreadRunEvents({
-      thread_id: id,
-      page: 1,
-      page_size: 100,
-    }),
-    getTaskThreadTokenUsage({
-      thread_id: id,
-      page: 1,
-      page_size: 50,
-    }),
-    listTaskThreadArtifacts({
-      thread_id: id,
-      page: 1,
-      page_size: 50,
-    }),
-  ]);
-  const rawRunEvents = runEventsResponse.data?.events ?? [];
-  const subagentRuns = await fetchTaskThreadSubagentRuns(
-    id,
-    getSubagentLifecycleByChildRunID(rawRunEvents),
-    getSubagentTimelineByChildRunID(rawRunEvents),
-  );
 
   return {
-    task: mapTaskThreadToTask(thread, messagesResponse.data?.messages ?? []),
-    artifacts: artifactsResponse.data?.artifacts ?? [],
-    events: rawRunEvents.map(mapTaskThreadRunEventToTaskEvent),
-    latestTaskRunID: topLevelRunsResponse.data?.runs?.[0]?.run_id ?? '',
-    tokenUsage: mapTaskThreadTokenUsageAggregate(
-      tokenUsageResponse.data?.aggregate,
-    ),
-    subagentRuns,
+    source: 'thread',
+    threadId: id,
+    task: undefined,
+    events: [],
   };
 };

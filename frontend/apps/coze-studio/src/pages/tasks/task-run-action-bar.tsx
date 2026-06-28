@@ -16,7 +16,7 @@
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
-import type { TaskDetailSource } from './task-detail-loader';
+import type { LoadedTaskDetailSource } from './task-detail-loader';
 import { canCancelTask, canRetryTask } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
@@ -36,7 +36,7 @@ export const TaskRunActionBar = ({
   latestRunID: string;
   loading: TaskRunActionLoading;
   task: ChatTask;
-  taskDetailSource: TaskDetailSource;
+  taskDetailSource: LoadedTaskDetailSource;
   onCancelTaskRun: (runId: string) => void | Promise<void>;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
 }) => {
