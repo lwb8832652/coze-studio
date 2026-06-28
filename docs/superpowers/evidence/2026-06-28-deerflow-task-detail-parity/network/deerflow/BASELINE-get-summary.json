@@ -1,0 +1,18 @@
+[
+  {
+    "error": "XMLHttpRequest is not a constructor",
+    "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888"
+  },
+  {
+    "error": "XMLHttpRequest is not a constructor",
+    "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/messages?limit=20"
+  },
+  {
+    "error": "XMLHttpRequest is not a constructor",
+    "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/runs"
+  },
+  {
+    "error": "XMLHttpRequest is not a constructor",
+    "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/token-usage"
+  }
+]

@@ -1,0 +1,72 @@
+{
+  "bodyTextLength": 1150,
+  "buttons": [
+    "Toggle Sidebar",
+    "更多",
+    "设置和更多",
+    "Tokens 21.4K",
+    "导出",
+    "思考",
+    "Pro",
+    "DeepSeek V4 Pro (Thinking)"
+  ],
+  "counts": {
+    "buttons": 25,
+    "links": 6,
+    "mermaidContainers": 3,
+    "mermaidSvg": 9,
+    "svg": 35,
+    "textareas": 1
+  },
+  "featureSignals": {
+    "artifacts": true,
+    "export": true,
+    "flowchartTextVisible": false,
+    "rawFenceVisible": false,
+    "reasoning": true,
+    "sequenceTextVisible": false,
+    "token": true
+  },
+  "inputs": [
+    {
+      "ariaLabel": "Upload files",
+      "placeholder": "",
+      "tag": "input",
+      "type": "file"
+    },
+    {
+      "ariaLabel": "",
+      "placeholder": "今天我能为你做些什么？",
+      "tag": "textarea",
+      "type": ""
+    }
+  ],
+  "links": [
+    "新对话",
+    "对话",
+    "智能体",
+    "Mermaid Diagram Generation Guide",
+    "Mermaid 绘制时序图与架构图",
+    "你是什么模型"
+  ],
+  "title": "Mermaid 绘制时序图与架构图 - DeerFlow",
+  "url": "http://localhost:2026/workspace/chats/c155a732-f475-4cf9-aa49-13fd26b29888",
+  "apiResults": [
+    {
+      "error": "XMLHttpRequest is not a constructor",
+      "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888"
+    },
+    {
+      "error": "XMLHttpRequest is not a constructor",
+      "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/messages?limit=20"
+    },
+    {
+      "error": "XMLHttpRequest is not a constructor",
+      "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/runs"
+    },
+    {
+      "error": "XMLHttpRequest is not a constructor",
+      "path": "/api/threads/c155a732-f475-4cf9-aa49-13fd26b29888/token-usage"
+    }
+  ]
+}

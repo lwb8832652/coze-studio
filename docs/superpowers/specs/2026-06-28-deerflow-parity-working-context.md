@@ -10,6 +10,10 @@ The active delivery ledger is:
 
 - `docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md`
 
+The active DeerFlow task-detail validation ledger is:
+
+- `docs/superpowers/plans/2026-06-28-deerflow-task-detail-parity-validation.md`
+
 The full parity reference is:
 
 - `docs/superpowers/plans/2026-06-18-deerflow-2x-parity-master-roadmap.md`
@@ -18,6 +22,11 @@ Before starting implementation, update the relevant tracker row to `进行中`
 and record the intended verification. Before committing a completed mainline
 slice, update the same tracker with evidence, blocked follow-ups, and P1/P2
 deferrals.
+
+For task-detail parity work, add or select a validation case from the active
+validation ledger first, then implement and verify against that case. Browser
+screenshots, API samples, and comparison notes should be stored under
+`docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/`.
 
 ## Vocabulary
 

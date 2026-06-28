@@ -1,0 +1,130 @@
+{
+  "apiResults": [
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/messages?page=1&page_size=50"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/runs?parent_run_id=0"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/run_events?page=1&page_size=200"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/token_usage"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/artifacts?page=1&page_size=20"
+    },
+    {
+      "error": "fetch is not a function",
+      "path": "/api/workbench/task_threads/7656293553953308672/memories?page=1&page_size=20"
+    }
+  ],
+  "bodyTextLength": 2740,
+  "buttons": [
+    "你可以绘制时序图或架构图吗？请直接给出一个 Mermaid sequenceDiagram 和一个 flowchart 架构图，并说明如何继续修改。",
+    "帮我制定一份武汉3日游攻略",
+    "产物 0",
+    "☆ 收藏",
+    "分享",
+    "刷新",
+    "导出审计",
+    "搜索",
+    "导出记忆",
+    "导入记忆",
+    "已删除",
+    "清空",
+    "全部",
+    "线程",
+    "运行",
+    "长期",
+    "Auto",
+    "Ask",
+    "Agent",
+    "拓展 0",
+    "运行设置",
+    "@",
+    "发送"
+  ],
+  "counts": {
+    "buttons": 27,
+    "codeBlocks": 0,
+    "links": 0,
+    "mermaidContainers": 5,
+    "mermaidSvg": 0,
+    "svg": 29,
+    "textareas": 1
+  },
+  "featureSignals": {
+    "artifacts": true,
+    "completed": true,
+    "export": true,
+    "mcp": true,
+    "memory": true,
+    "mermaidText": true,
+    "reasoning": false,
+    "retry": true,
+    "running": false,
+    "skill": true,
+    "stop": false,
+    "token": true
+  },
+  "headings": [
+    "我的任务",
+    "你可以绘制时序图或架构图吗？请直接给出一个 Mermaid sequenceDiagram 和一个 flowchart 架构图，并说明如何继续修改。",
+    "执行流程",
+    "运行诊断",
+    "安全审计",
+    "任务记忆",
+    "Mermaid 时序图 (Sequence Diagram)",
+    "Mermaid 架构图 (Flowchart)",
+    "如何继续修改"
+  ],
+  "inputs": [
+    {
+      "ariaLabel": "搜索记忆",
+      "placeholder": "搜索内容、来源",
+      "tag": "input",
+      "type": "text",
+      "valueLength": 0
+    },
+    {
+      "ariaLabel": "任务描述",
+      "placeholder": "",
+      "tag": "textarea",
+      "type": "",
+      "valueLength": 0
+    }
+  ],
+  "label": "coze",
+  "links": [],
+  "title": "扣子",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7656293553953308672",
+  "mermaidStatus": {
+    "figures": [
+      {
+        "status": "ready",
+        "svgCount": 1,
+        "textPreview": "数据库 (MySQL)Redis 缓存认证服务API 网关前端 (SPA)数据库 (MySQL)Redis 缓存认证服务API 网关前端 (SPA)#task-mermaid-r0{font-family:\"trebuchet ms\",verdana,arial,sans-serif;font-size:16px;fi"
+      },
+      {
+        "status": "ready",
+        "svgCount": 1,
+        "textPreview": "#task-mermaid-r1{font-family:\"trebuchet ms\",verdana,arial,sans-serif;font-size:16px;fill:#333;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyfr"
+      }
+    ],
+    "flowchartTextVisible": true,
+    "rawFenceVisible": false,
+    "readySvgCount": 2,
+    "sequenceTextVisible": true
+  }
+}
