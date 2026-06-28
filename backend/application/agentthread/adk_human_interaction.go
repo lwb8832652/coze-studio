@@ -186,6 +186,7 @@ type defaultADKToolProviderOptions struct {
 	mcpExecutor       ADKMCPRuntimeToolExecutor
 	guardrailEnforcer ADKGuardrailEnforcer
 	webSearchBackend  ADKWebSearchBackend
+	artifactApp       *ApplicationService
 }
 
 func WithDefaultADKToolProviderEventSink(
@@ -233,6 +234,14 @@ func WithDefaultADKToolProviderWebSearchBackend(
 ) DefaultADKToolProviderOption {
 	return func(options *defaultADKToolProviderOptions) {
 		options.webSearchBackend = backend
+	}
+}
+
+func WithDefaultADKToolProviderArtifactApp(
+	app *ApplicationService,
+) DefaultADKToolProviderOption {
+	return func(options *defaultADKToolProviderOptions) {
+		options.artifactApp = app
 	}
 }
 
@@ -291,6 +300,9 @@ func newDefaultADKRuntimeToolProvider(
 		NewADKWebToolCatalog(ADKWebToolCatalogOptions{
 			SearchBackend: options.webSearchBackend,
 		}),
+	}
+	if options.artifactApp != nil {
+		catalogs = append(catalogs, NewADKArtifactToolCatalog(options.artifactApp))
 	}
 	if options.mcpRegistry != nil {
 		catalogs = append(

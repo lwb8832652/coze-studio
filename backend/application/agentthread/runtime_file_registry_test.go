@@ -101,8 +101,18 @@ func (s *recordingRuntimeFileService) RegisterRuntimeFile(
 	cloned := *req
 	s.req = &cloned
 	return &domainentity.AgentFile{
-		ID:        99,
-		ObjectURI: req.ObjectURI,
+		ID:               99,
+		RunID:            req.RunID,
+		FileName:         req.FileName,
+		OriginalFileName: req.OriginalFileName,
+		FileKind:         req.FileKind,
+		VirtualPath:      req.VirtualPath,
+		ObjectURI:        req.ObjectURI,
+		ContentType:      req.ContentType,
+		SizeBytes:        req.SizeBytes,
+		Digest:           req.Digest,
+		Status:           domainentity.AgentFileStatusActive,
+		Metadata:         req.Metadata,
 	}, true, nil
 }
 

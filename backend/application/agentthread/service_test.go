@@ -3641,6 +3641,7 @@ type recordingThreadService struct {
 
 type recordingArtifactService struct {
 	artifacts               []*entity.AgentArtifact
+	registered              *entity.AgentArtifact
 	got                     *entity.AgentArtifact
 	deleted                 *entity.AgentArtifact
 	deletedOK               bool
@@ -3662,6 +3663,7 @@ type recordingArtifactService struct {
 	cleanupCandidates       []*entity.AgentArtifact
 	markFileDeletedOK       bool
 	total                   int64
+	registerReq             *domainservice.RegisterArtifactRequest
 	listReq                 *domainservice.ListArtifactsRequest
 	listScanJobsReq         *domainservice.ListArtifactScanJobsRequest
 	cleanupReq              *domainservice.ListDeletedArtifactCleanupCandidatesRequest
@@ -3678,10 +3680,15 @@ type recordingArtifactService struct {
 }
 
 func (s *recordingArtifactService) RegisterArtifact(
-	context.Context,
-	*domainservice.RegisterArtifactRequest,
+	_ context.Context,
+	req *domainservice.RegisterArtifactRequest,
 ) (*entity.AgentArtifact, bool, error) {
-	return nil, false, nil
+	s.registerReq = req
+	if s.registered == nil {
+		return nil, false, nil
+	}
+	cloned := *s.registered
+	return &cloned, true, nil
 }
 
 func (s *recordingArtifactService) ListArtifacts(
@@ -3830,6 +3837,20 @@ type recordingArtifactObjectReader struct {
 	signContentType        string
 	deletedKeys            []string
 	deleteErr              error
+}
+
+func (r *recordingArtifactObjectReader) PutObject(
+	_ context.Context,
+	objectKey string,
+	content []byte,
+	_ ...storage.PutOptFn,
+) error {
+	r.key = objectKey
+	if r.objects == nil {
+		r.objects = map[string][]byte{}
+	}
+	r.objects[objectKey] = append([]byte(nil), content...)
+	return nil
 }
 
 func (r *recordingArtifactObjectReader) GetObject(

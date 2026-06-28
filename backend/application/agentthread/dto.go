@@ -861,6 +861,38 @@ type ListArtifactsResponse struct {
 	Total     int64
 }
 
+type OutputFileSummary struct {
+	FileID      int64
+	FileName    string
+	VirtualPath string
+	ContentType string
+	SizeBytes   int64
+	Digest      string
+}
+
+type WriteOutputFileRequest struct {
+	Run         *RunSummary
+	FilePath    string
+	Content     string
+	ContentType string
+}
+
+type WriteOutputFileResponse struct {
+	File    *OutputFileSummary
+	Created bool
+	Notice  string
+}
+
+type PresentOutputFilesRequest struct {
+	Run       *RunSummary
+	FilePaths []string
+}
+
+type PresentOutputFilesResponse struct {
+	Artifacts []*ArtifactSummary
+	Notice    string
+}
+
 type ListArtifactScanJobsRequest struct {
 	ThreadID   int64
 	RunID      *int64

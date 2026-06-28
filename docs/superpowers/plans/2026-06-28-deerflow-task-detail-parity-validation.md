@@ -224,8 +224,8 @@ P0 只做 DeerFlow 可见主线能力对齐：
 
 | ID | 功能点 | DeerFlow 基线 | Coze 期望 | 前端证据 | 后端证据 | 代码证据 | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| TD-DOC-001 | 文档生成触发 | Agent 接受文档生成提示后产出可识别文档或 artifact | Coze 任务运行生成文档型产物，不只在正文里输出普通文本 | prompt、完成态、Artifacts 数量截图 | run events + artifacts list，含 artifact_type/content_type/preview_mode | ADK output/offload + artifact registration files/tests | 待验收 |
-| TD-DOC-002 | 产物登记 | DeerFlow 生成文件能在 Artifacts 面板出现 | Coze 生成文件写入 `TaskThreadArtifact`，title/file_id/virtual_path/size/content_type 安全可读 | Artifacts 面板列表截图 | `GET /artifacts` 响应字段摘要 | `TaskThreadArtifact` IDL、handler、repository tests | 待验收 |
+| TD-DOC-001 | 文档生成触发 | Agent 接受文档生成提示后产出可识别文档或 artifact | Coze 任务运行生成文档型产物，不只在正文里输出普通文本；已补 ADK `write_file` 工具，只允许写 `/mnt/user-data/outputs/*` 并登记 output file，不混用顶栏任务导出 | prompt、完成态、Artifacts 数量截图待人工浏览器验证 | `write_file` tool result + artifacts list，含 artifact_type/content_type/preview_mode | `adk_artifact_tools.go`、`artifact_output.go`、runtime file service tests | 待验收 |
+| TD-DOC-002 | 产物登记 | DeerFlow 生成文件能在 Artifacts 面板出现 | Coze 生成文件写入 `TaskThreadArtifact`，title/file_id/virtual_path/size/content_type 安全可读；已补 ADK `present_files` 工具，只有显式 present 的 output file 才注册 artifact，内部 `.coze/tool-results` offload 不外显 | Artifacts 面板列表截图待人工浏览器验证 | `GET /artifacts` 响应字段摘要待采集；后端 `artifact.presented` 事件不含 object URI | `TaskThreadArtifact` service、runtime output registration、ADK artifact tool tests | 待验收 |
 | TD-DOC-003 | Markdown/plain text 预览 | 文本类文档可内联预览 | Coze Markdown/TXT/CSV 类文档可在任务详情安全预览，长文本可截断提示 | 预览打开截图 | `/content?mode=preview` content-type、truncated 摘要 | inline preview helpers/tests | 待验收 |
 | TD-DOC-004 | 表格预览 | CSV/表格内容有可读结构 | Coze CSV/表格预览显示列、行、截断状态，不撑破布局 | 表格预览截图 | content preview kind=table/columns/rows 摘要 | `task-artifact-inline-preview.tsx` tests | 待验收 |
 | TD-DOC-005 | PDF/Office 文档 | DeerFlow 对二进制文档提供打开/下载路径 | Coze PDF/DOCX/XLSX/PPTX 至少提供安全下载或签名 URL；若支持内嵌预览需记录 renderer | PDF/Office artifact 操作截图 | `/signed_url?mode=preview|download` 或 `/content?mode=download` 响应摘要 | signed-url/content service + backend handler tests | 待验收 |
@@ -360,8 +360,13 @@ Coze 目标页可见能力：
   provider/raw_usage/step_name 不进 UI。真实浏览器截图仍待人工确认。
 - `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页已补同位
   附件图标入口，但真实上传、文件列表和 run config 绑定仍需单独验证。
-- `TD-DOC-*`: 文档生成、登记、预览、下载、安全 fallback 已补 case，但本轮
-  尚未跑标准文档生成提示词，需要下一步专项验证。
+- `TD-DOC-001/002`: 已补后端代码与单测：ADK `write_file` 只写
+  `/mnt/user-data/outputs/*` 并登记 output file，`present_files` 显式把
+  output file 注册为 artifact，事件和工具返回不暴露 `agent-runtime`
+  object URI；标准文档生成提示词、Artifacts 面板截图和真实接口响应仍需
+  人工浏览器验收。
+- `TD-DOC-003~011`: 文档预览、下载、安全 fallback 已补 case，但仍需在
+  真实 artifact 样本上逐项验收。
 
 接口采集状态：
 

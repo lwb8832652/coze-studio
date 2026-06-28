@@ -97,6 +97,52 @@ func TestRuntimeFileServiceRegistersOwnedWorkspaceOffload(t *testing.T) {
 	require.Equal(t, file, repo.upserted)
 }
 
+func TestRuntimeFileServiceRegistersOwnedOutputFile(t *testing.T) {
+	repo := &recordingRuntimeFileRepo{
+		run: &entity.Run{
+			ID:        20,
+			ThreadID:  10,
+			SpaceID:   30,
+			CreatorID: 40,
+		},
+	}
+	svc := NewRuntimeFileService(&RuntimeFileComponents{
+		RunReader: repo,
+		FileRepo:  repo,
+		IDGen:     &sequenceIDGen{next: 50},
+	})
+
+	file, created, err := svc.RegisterRuntimeFile(
+		context.Background(),
+		&RegisterRuntimeFileRequest{
+			RunID:            20,
+			FileName:         "report.md",
+			OriginalFileName: "report.md",
+			FileKind:         entity.AgentFileKindOutput,
+			VirtualPath:      "/mnt/user-data/outputs/reports/report.md",
+			ObjectURI:        "agent-runtime/30/10/runs/20/outputs/reports/report.md",
+			ContentType:      "text/markdown; charset=utf-8",
+			SizeBytes:        128,
+			Digest:           runtimeFileTestDigest,
+			Metadata:         `{"purpose":"agent_output","source":"write_file"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Equal(t, int64(50), file.ID)
+	require.Equal(t, int64(10), file.ThreadID)
+	require.Equal(t, int64(30), file.SpaceID)
+	require.Equal(t, int64(40), file.UserID)
+	require.Equal(t, entity.AgentFileKindOutput, file.FileKind)
+	require.Equal(t, "/mnt/user-data/outputs/reports/report.md", file.VirtualPath)
+	require.Equal(t, "agent-runtime/30/10/runs/20/outputs/reports/report.md", file.ObjectURI)
+	require.Equal(t, entity.AgentFileStatusActive, file.Status)
+	require.NotZero(t, file.CreatedAt)
+	require.Equal(t, file.CreatedAt, file.UpdatedAt)
+	require.Equal(t, file, repo.upserted)
+}
+
 func runtimeFileTestEntity() *entity.AgentFile {
 	return &entity.AgentFile{
 		ID:          99,

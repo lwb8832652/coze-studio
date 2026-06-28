@@ -61,6 +61,17 @@ Every implementation slice must update this document:
 3. After verification: record the command or browser path in the acceptance
    notes for the touched mainline.
 
+## Recent Slice Notes
+
+- 2026-06-28 `TD-DOC-001/002`: code-complete backend DeerFlow-style
+  `write_file` + `present_files` chain. `write_file` writes only
+  `/mnt/user-data/outputs/*` files to object storage and registers
+  `AgentFileKindOutput`; `present_files` registers only those output files as
+  task artifacts and emits a content-free `artifact.presented` event. Internal
+  `.coze/tool-results` offload remains workspace-only and is not promoted to
+  artifacts. Verified with targeted backend tests; browser prompt/artifact panel
+  evidence remains manual验收.
+
 ## P0 Mainlines
 
 ### 1. 任务主流程闭环

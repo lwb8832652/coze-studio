@@ -279,6 +279,9 @@ func Init(ctx context.Context) (err error) {
 				agentthread.WithDefaultADKToolProviderWebSearchBackend(
 					webSearchBackend,
 				),
+				agentthread.WithDefaultADKToolProviderArtifactApp(
+					primaryServices.agentThreadSVC,
+				),
 			),
 			agentthread.NewADKMiddlewareAssembler(agentthread.ADKMiddlewareAssemblerOptions{
 				MemoryProvider: agentthread.NewThreadMemoryProvider(

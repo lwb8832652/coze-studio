@@ -32,6 +32,7 @@ import (
 )
 
 const RuntimeOffloadVirtualPathPrefix = "/mnt/user-data/workspace/.coze/tool-results/runs/"
+const RuntimeOutputVirtualPathPrefix = "/mnt/user-data/outputs/"
 
 var runtimeOffloadVirtualPathPattern = regexp.MustCompile(
 	`^/mnt/user-data/workspace/\.coze/tool-results/runs/([1-9][0-9]*)/(trunc|clear)/([0-9a-f]{64})\.txt$`,
@@ -39,6 +40,10 @@ var runtimeOffloadVirtualPathPattern = regexp.MustCompile(
 
 var runtimeOffloadObjectURIPattern = regexp.MustCompile(
 	`^agent-runtime/([1-9][0-9]*)/([1-9][0-9]*)/runs/([1-9][0-9]*)/tool-results/(trunc|clear)/([0-9a-f]{64})\.txt$`,
+)
+
+var runtimeOutputObjectURIPattern = regexp.MustCompile(
+	`^agent-runtime/([1-9][0-9]*)/([1-9][0-9]*)/runs/([1-9][0-9]*)/outputs/(.+)$`,
 )
 
 type RuntimeFileRunReader interface {
@@ -100,6 +105,19 @@ type runtimeOffloadObjectURI struct {
 	RunID    int64
 	Phase    string
 	FileName string
+}
+
+type runtimeOutputPath struct {
+	RelativePath string
+	FileName     string
+}
+
+type runtimeOutputObjectURI struct {
+	SpaceID      int64
+	ThreadID     int64
+	RunID        int64
+	RelativePath string
+	FileName     string
 }
 
 func NewRuntimeFileService(c *RuntimeFileComponents) RuntimeFileService {
@@ -192,6 +210,111 @@ func parseRuntimeOffloadObjectURI(value string) (runtimeOffloadObjectURI, error)
 	}, nil
 }
 
+func parseRuntimeOutputVirtualPath(value string) (runtimeOutputPath, error) {
+	if value == "" ||
+		strings.Contains(value, `\`) ||
+		strings.IndexFunc(value, func(r rune) bool {
+			return r < 0x20 || r == 0x7f
+		}) >= 0 ||
+		path.Clean(value) != value ||
+		!strings.HasPrefix(value, RuntimeOutputVirtualPathPrefix) {
+		return runtimeOutputPath{}, InvalidArgumentErrorf(
+			"runtime output virtual path is invalid",
+		)
+	}
+	relativePath := strings.TrimPrefix(value, RuntimeOutputVirtualPathPrefix)
+	normalized, err := normalizeRuntimeOutputRelativePath(relativePath)
+	if err != nil {
+		return runtimeOutputPath{}, err
+	}
+
+	return runtimeOutputPath{
+		RelativePath: normalized,
+		FileName:     path.Base(normalized),
+	}, nil
+}
+
+func parseRuntimeOutputObjectURI(value string) (runtimeOutputObjectURI, error) {
+	if value == "" ||
+		strings.Contains(value, "://") ||
+		strings.HasPrefix(value, "/") ||
+		strings.Contains(value, `\`) ||
+		strings.IndexFunc(value, func(r rune) bool {
+			return r < 0x20 || r == 0x7f
+		}) >= 0 ||
+		path.Clean(value) != value {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+	match := runtimeOutputObjectURIPattern.FindStringSubmatch(value)
+	if len(match) != 5 {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+	spaceID, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil || spaceID <= 0 {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+	threadID, err := strconv.ParseInt(match[2], 10, 64)
+	if err != nil || threadID <= 0 {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+	runID, err := strconv.ParseInt(match[3], 10, 64)
+	if err != nil || runID <= 0 {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+	relativePath, err := normalizeRuntimeOutputRelativePath(match[4])
+	if err != nil {
+		return runtimeOutputObjectURI{}, InvalidArgumentErrorf(
+			"runtime output object uri is invalid",
+		)
+	}
+
+	return runtimeOutputObjectURI{
+		SpaceID:      spaceID,
+		ThreadID:     threadID,
+		RunID:        runID,
+		RelativePath: relativePath,
+		FileName:     path.Base(relativePath),
+	}, nil
+}
+
+func normalizeRuntimeOutputRelativePath(value string) (string, error) {
+	relativePath := strings.TrimSpace(value)
+	if relativePath == "" ||
+		strings.HasPrefix(relativePath, "/") ||
+		strings.Contains(relativePath, `\`) ||
+		strings.IndexFunc(relativePath, func(r rune) bool {
+			return r < 0x20 || r == 0x7f
+		}) >= 0 ||
+		path.Clean(relativePath) != relativePath ||
+		relativePath == "." ||
+		relativePath == ".." ||
+		strings.HasPrefix(relativePath, "../") ||
+		strings.Contains(relativePath, "/../") {
+		return "", InvalidArgumentErrorf(
+			"runtime output relative path is invalid",
+		)
+	}
+	if base := path.Base(relativePath); base == "." ||
+		base == "/" ||
+		base == "" {
+		return "", InvalidArgumentErrorf(
+			"runtime output relative path is invalid",
+		)
+	}
+
+	return relativePath, nil
+}
+
 func (s *runtimeFileService) RegisterRuntimeFile(
 	ctx context.Context,
 	req *RegisterRuntimeFileRequest,
@@ -209,46 +332,79 @@ func (s *runtimeFileService) RegisterRuntimeFile(
 	if req.RunID <= 0 {
 		return nil, false, InvalidArgumentErrorf("run id is required")
 	}
-	if req.FileKind != entity.AgentFileKindWorkspace {
-		return nil, false, InvalidArgumentErrorf(
-			"runtime offload file kind must be workspace",
-		)
-	}
 	virtualPath := strings.TrimSpace(req.VirtualPath)
-	parsedPath, err := parseRuntimeOffloadVirtualPath(virtualPath)
-	if err != nil || parsedPath.RunID != req.RunID {
-		return nil, false, InvalidArgumentErrorf(
-			"runtime offload virtual path is invalid",
-		)
-	}
 	fileName := strings.TrimSpace(req.FileName)
-	if fileName == "" ||
-		parsedPath.FileName != fileName ||
-		path.Base(virtualPath) != fileName {
-		return nil, false, InvalidArgumentErrorf(
-			"runtime offload file name is invalid",
-		)
-	}
 	objectURI := strings.TrimSpace(req.ObjectURI)
-	parsedObjectURI, err := parseRuntimeOffloadObjectURI(objectURI)
-	if err != nil ||
-		parsedObjectURI.RunID != parsedPath.RunID ||
-		parsedObjectURI.Phase != parsedPath.Phase ||
-		parsedObjectURI.FileName != parsedPath.FileName {
+
+	var objectSpaceID int64
+	var objectThreadID int64
+	var objectRunID int64
+	switch req.FileKind {
+	case entity.AgentFileKindWorkspace:
+		parsedPath, err := parseRuntimeOffloadVirtualPath(virtualPath)
+		if err != nil || parsedPath.RunID != req.RunID {
+			return nil, false, InvalidArgumentErrorf(
+				"runtime offload virtual path is invalid",
+			)
+		}
+		if fileName == "" ||
+			parsedPath.FileName != fileName ||
+			path.Base(virtualPath) != fileName {
+			return nil, false, InvalidArgumentErrorf(
+				"runtime offload file name is invalid",
+			)
+		}
+		parsedObjectURI, err := parseRuntimeOffloadObjectURI(objectURI)
+		if err != nil ||
+			parsedObjectURI.RunID != parsedPath.RunID ||
+			parsedObjectURI.Phase != parsedPath.Phase ||
+			parsedObjectURI.FileName != parsedPath.FileName {
+			return nil, false, InvalidArgumentErrorf(
+				"runtime offload object uri is invalid",
+			)
+		}
+		objectSpaceID = parsedObjectURI.SpaceID
+		objectThreadID = parsedObjectURI.ThreadID
+		objectRunID = parsedObjectURI.RunID
+	case entity.AgentFileKindOutput:
+		parsedPath, err := parseRuntimeOutputVirtualPath(virtualPath)
+		if err != nil {
+			return nil, false, err
+		}
+		if fileName == "" ||
+			parsedPath.FileName != fileName ||
+			path.Base(virtualPath) != fileName {
+			return nil, false, InvalidArgumentErrorf(
+				"runtime output file name is invalid",
+			)
+		}
+		parsedObjectURI, err := parseRuntimeOutputObjectURI(objectURI)
+		if err != nil ||
+			parsedObjectURI.RunID != req.RunID ||
+			parsedObjectURI.RelativePath != parsedPath.RelativePath ||
+			parsedObjectURI.FileName != parsedPath.FileName {
+			return nil, false, InvalidArgumentErrorf(
+				"runtime output object uri is invalid",
+			)
+		}
+		objectSpaceID = parsedObjectURI.SpaceID
+		objectThreadID = parsedObjectURI.ThreadID
+		objectRunID = parsedObjectURI.RunID
+	default:
 		return nil, false, InvalidArgumentErrorf(
-			"runtime offload object uri is invalid",
+			"runtime file kind is invalid",
 		)
 	}
 	if req.SizeBytes <= 0 {
 		return nil, false, InvalidArgumentErrorf(
-			"runtime offload size must be positive",
+			"runtime file size must be positive",
 		)
 	}
 	digest := strings.TrimSpace(req.Digest)
 	decodedDigest, err := hex.DecodeString(digest)
 	if err != nil || len(decodedDigest) != 32 || strings.ToLower(digest) != digest {
 		return nil, false, InvalidArgumentErrorf(
-			"runtime offload digest must be lowercase sha256",
+			"runtime file digest must be lowercase sha256",
 		)
 	}
 	metadata := strings.TrimSpace(req.Metadata)
@@ -257,7 +413,7 @@ func (s *runtimeFileService) RegisterRuntimeFile(
 	}
 	if !json.Valid([]byte(metadata)) {
 		return nil, false, InvalidArgumentErrorf(
-			"runtime offload metadata must be valid json",
+			"runtime file metadata must be valid json",
 		)
 	}
 
@@ -266,13 +422,13 @@ func (s *runtimeFileService) RegisterRuntimeFile(
 		return nil, false, err
 	}
 	if run == nil || run.ID != req.RunID {
-		return nil, false, InvalidArgumentErrorf("runtime offload run is invalid")
+		return nil, false, InvalidArgumentErrorf("runtime file run is invalid")
 	}
-	if parsedObjectURI.SpaceID != run.SpaceID ||
-		parsedObjectURI.ThreadID != run.ThreadID ||
-		parsedObjectURI.RunID != run.ID {
+	if objectSpaceID != run.SpaceID ||
+		objectThreadID != run.ThreadID ||
+		objectRunID != run.ID {
 		return nil, false, InvalidArgumentErrorf(
-			"runtime offload object uri is invalid",
+			"runtime file object uri is invalid",
 		)
 	}
 	id, err := s.idGen.GenID(ctx)
@@ -319,11 +475,28 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 		return nil, InvalidArgumentErrorf("runtime file scope is required")
 	}
 	virtualPath := strings.TrimSpace(req.VirtualPath)
-	parsedPath, err := parseRuntimeOffloadVirtualPath(virtualPath)
-	if err != nil || parsedPath.RunID != req.RunID {
-		return nil, InvalidArgumentErrorf(
-			"runtime offload virtual path is invalid",
-		)
+	var expectedKind entity.AgentFileKind
+	var expectedFileName string
+	var expectedPhase string
+	var expectedOutputRelativePath string
+	if strings.HasPrefix(virtualPath, RuntimeOutputVirtualPathPrefix) {
+		parsedPath, err := parseRuntimeOutputVirtualPath(virtualPath)
+		if err != nil {
+			return nil, err
+		}
+		expectedKind = entity.AgentFileKindOutput
+		expectedFileName = parsedPath.FileName
+		expectedOutputRelativePath = parsedPath.RelativePath
+	} else {
+		parsedPath, err := parseRuntimeOffloadVirtualPath(virtualPath)
+		if err != nil || parsedPath.RunID != req.RunID {
+			return nil, InvalidArgumentErrorf(
+				"runtime offload virtual path is invalid",
+			)
+		}
+		expectedKind = entity.AgentFileKindWorkspace
+		expectedFileName = parsedPath.FileName
+		expectedPhase = parsedPath.Phase
 	}
 
 	file, err := s.fileRepo.GetRuntimeFile(ctx, req.RunID, virtualPath)
@@ -334,31 +507,48 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 		file.SpaceID != req.SpaceID ||
 		file.ThreadID != req.ThreadID ||
 		file.RunID != req.RunID ||
-		file.FileKind != entity.AgentFileKindWorkspace ||
+		file.FileKind != expectedKind ||
 		file.Status != entity.AgentFileStatusActive ||
 		file.VirtualPath != virtualPath ||
-		file.FileName != parsedPath.FileName {
+		file.FileName != expectedFileName {
 		return nil, InvalidArgumentErrorf(
-			"runtime offload file is invalid",
+			"runtime file is invalid",
 		)
 	}
 
-	parsedObjectURI, err := parseRuntimeOffloadObjectURI(
-		strings.TrimSpace(file.ObjectURI),
-	)
-	if err != nil ||
-		parsedObjectURI.SpaceID != req.SpaceID ||
-		parsedObjectURI.ThreadID != req.ThreadID ||
-		parsedObjectURI.RunID != req.RunID ||
-		parsedObjectURI.Phase != parsedPath.Phase ||
-		parsedObjectURI.FileName != parsedPath.FileName {
-		return nil, InvalidArgumentErrorf(
-			"runtime offload object uri is invalid",
+	switch expectedKind {
+	case entity.AgentFileKindWorkspace:
+		parsedObjectURI, err := parseRuntimeOffloadObjectURI(
+			strings.TrimSpace(file.ObjectURI),
 		)
+		if err != nil ||
+			parsedObjectURI.SpaceID != req.SpaceID ||
+			parsedObjectURI.ThreadID != req.ThreadID ||
+			parsedObjectURI.RunID != req.RunID ||
+			parsedObjectURI.Phase != expectedPhase ||
+			parsedObjectURI.FileName != expectedFileName {
+			return nil, InvalidArgumentErrorf(
+				"runtime offload object uri is invalid",
+			)
+		}
+	case entity.AgentFileKindOutput:
+		parsedObjectURI, err := parseRuntimeOutputObjectURI(
+			strings.TrimSpace(file.ObjectURI),
+		)
+		if err != nil ||
+			parsedObjectURI.SpaceID != req.SpaceID ||
+			parsedObjectURI.ThreadID != req.ThreadID ||
+			parsedObjectURI.RunID != req.RunID ||
+			parsedObjectURI.RelativePath != expectedOutputRelativePath ||
+			parsedObjectURI.FileName != expectedFileName {
+			return nil, InvalidArgumentErrorf(
+				"runtime output object uri is invalid",
+			)
+		}
 	}
 	if file.SizeBytes <= 0 {
 		return nil, InvalidArgumentErrorf(
-			"runtime offload size must be positive",
+			"runtime file size must be positive",
 		)
 	}
 	digest := strings.TrimSpace(file.Digest)
