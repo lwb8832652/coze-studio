@@ -152,7 +152,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-NAV-002 | 最近列表进入 | 侧边栏最近对话点开同一 thread | `我的任务` 点开同一 thread，不跳 agent legacy page | 点击前后 URL/标题截图 | list/detail 接口 thread id 一致 | Coze sidebar/list service | 待验收 |
 | TD-LAYOUT-001 | 整体布局 | 顶部 header、中间消息流、底部 composer、右侧/弹出 Artifacts | 保留任务命名，但布局信息密度和交互位置对齐 | desktop full-page screenshot | N/A | detail/top-bar/follow-up/artifacts files | 进行中 |
 | TD-LAYOUT-002 | 响应式 | DeerFlow 窄屏不遮挡消息和 composer | Coze 窄屏不重叠、不溢出 | 390px/768px 截图 | N/A | LESS/CSS and component layout | 待验收 |
-| TD-LAYOUT-003 | 对话记录纯净度 | 聊天记录区只承载用户消息、助手回复、inline 思考、工具/任务状态和产物引用 | 运行诊断、安全审计、任务记忆不得直接铺在聊天对话记录中；应进入 header action、侧栏 inspector、弹层或折叠二级面板 | main content screenshot + panel open screenshot | N/A | detail/top-bar/runtime-doctor/memory/guardrail files | 待开发 |
+| TD-LAYOUT-003 | 对话记录纯净度 | 聊天记录区只承载用户消息、助手回复、inline 思考、工具/任务状态和产物引用 | 运行诊断、安全审计、任务记忆不得直接铺在聊天对话记录中；应进入 header action、侧栏 inspector、弹层或折叠二级面板 | main content DOM + inspector open DOM | N/A | `task-detail-inspector.tsx`, `detail.tsx`, `task-top-bar.tsx`, `task-detail.test.tsx` | 已完成 |
 | TD-HDR-001 | 标题 | Header 显示 thread title | Header 显示任务 title，不能只显示 ID | header 截图 | detail response title | loader/top-bar | 待验收 |
 | TD-HDR-002 | 状态和进度 | running/ready 状态清楚 | terminal run 显示 `已完成` 且无 stale running | screenshot/DOM | runs response latest top-level status | loader/detail tests | 已完成 |
 | TD-HDR-003 | Header actions | Token、导出、Artifacts 在右上 | Token、导出、Artifacts 对齐；导出若缺失标 P0 缺口 | action 区截图 | token/artifact/export APIs | top-bar/artifacts/export files | 待开发 |
@@ -190,7 +190,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 
 | ID | 功能点 | DeerFlow 基线 | Coze 期望 | 前端证据 | 后端证据 | 代码证据 | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| TD-COMP-001 | 底部输入框 | 固定底部，未遮挡消息 | Coze task detail 底部追问输入体验对齐 | composer screenshot | N/A | follow-up/detail styles | 进行中 |
+| TD-COMP-001 | 底部输入框 | 固定底部，未遮挡消息 | Coze task detail 底部追问输入体验对齐 | browser scroll metrics + DOM | N/A | `detail.tsx`, `workspace-prototype.less`, `task-detail.test.tsx` | 已完成 |
 | TD-COMP-002 | 模型选择 | model selector 可见且和上下文绑定 | Coze 运行设置/模型选择可修改 run config | model dropdown screenshot | run config request | settings control/service | 待验收 |
 | TD-COMP-003 | 模式选择 | flash/thinking/pro/ultra 或同等能力 | Coze Auto/模式和 reasoning 参数可用 | mode control screenshot | config payload | runtime settings | 待验收 |
 | TD-COMP-004 | Skill slash/渐进激活 | 输入 `/` 可筛选 Skill | Coze 技能选择/启用进入 run config | slash/select screenshot | enable_skills payload | workbench/task settings | 待验收 |
@@ -324,16 +324,18 @@ Coze 目标页可见能力：
 - 完成态已收敛，不显示取消任务；执行流程显示 `2/2 已完成 · 100%`。
 - Mermaid 有两个 `data-testid="task-mermaid-diagram"`，状态均为 `ready`，
   SVG 数量为 2，raw fenced Mermaid 不可见。
-- 底部有追问 composer、Auto/Ask/Agent、拓展、运行设置、发送。
-- `运行诊断`、`安全审计`、`任务记忆` 当前直接铺在主内容流中，信息密度
-  与 DeerFlow chat-like 详情存在明显差异。
+- 底部有追问 composer、Auto/Ask/Agent、拓展、运行设置、发送；修复后
+  composer 作为底部 dock，不再属于聊天记录滚动流。
+- `运行诊断`、`安全审计`、`任务记忆` 已移入 header `详情` inspector，不再
+  直接铺在聊天对话记录中。
 
 首轮差异：
 
-- `TD-LAYOUT-001` / `TD-LAYOUT-003`: Coze 主内容更像任务仪表盘，DeerFlow
-  是聊天详情流。运行诊断、安全审计、任务记忆不应该显示在聊天对话记录中；
-  它们是 inspector/设置/管理能力，后续应折叠或移到 header action、侧栏、
-  弹层或二级面板，避免偏离主线。
+- `TD-LAYOUT-001`: Coze 主内容仍需继续向 DeerFlow chat-like 详情收敛。
+  `TD-LAYOUT-003` 已完成：运行诊断、安全审计、任务记忆移入 header
+  `详情` inspector，聊天记录区保持纯净。
+- `TD-COMP-001`: 已完成。DeerFlow 和 Coze 均为页面不滚、消息区域内部
+  滚动、底部 composer 固定；后续只做视觉细节继续对齐。
 - `TD-MSG-005`: DeerFlow 有 inline `思考`，Coze 目标页当前未检测到 reasoning
   展示信号，需要补齐或确认数据来源。
 - `TD-HDR-003` / `TD-EXP-001` / `TD-EXP-002`: DeerFlow header 有 thread

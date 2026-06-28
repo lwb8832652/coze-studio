@@ -336,6 +336,10 @@
   background: #fff;
 }
 
+.coze-prototype-task-detail-page {
+  overflow: hidden;
+}
+
 .coze-prototype-page-body {
   overflow: auto;
   flex: 1 1 auto;
@@ -1529,12 +1533,30 @@
 
 .coze-prototype-detail-inner {
   display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+
+  width: min(860px, calc(100% - 48px));
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.coze-prototype-detail-scroll {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 32px 0 24px;
+}
+
+.coze-prototype-chat-transcript,
+.coze-prototype-detail-inspector {
+  display: flex;
   flex-direction: column;
   gap: 24px;
+}
 
-  width: min(860px, 100%);
-  margin: 0 auto;
-  padding: 32px 24px 120px;
+.coze-prototype-detail-inspector {
+  padding: 4px 2px 24px;
 }
 
 .coze-prototype-user-bubble {
@@ -2688,9 +2710,8 @@
 }
 
 .coze-prototype-followup {
-  position: sticky;
-  bottom: 0;
-  padding: 24px 0 16px;
+  flex: 0 0 auto;
+  padding: 16px 0;
   background: linear-gradient(to top, #fff, #fff, transparent);
 }
 

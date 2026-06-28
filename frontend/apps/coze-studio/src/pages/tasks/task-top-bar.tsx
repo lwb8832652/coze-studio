@@ -30,10 +30,12 @@ type ChatTask = workbenchTask.ChatTask;
 
 export const TaskTopBar = ({
   artifactAction,
+  inspectorAction,
   task,
   tokenUsage,
 }: {
   artifactAction?: ReactNode;
+  inspectorAction?: ReactNode;
   task: ChatTask;
   tokenUsage?: TaskDetailTokenUsage;
 }) => (
@@ -48,6 +50,7 @@ export const TaskTopBar = ({
     </div>
     <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
     <div className="flex-1" />
+    {inspectorAction}
     {artifactAction}
     <button type="button" className="coze-prototype-task-action">
       ☆ 收藏

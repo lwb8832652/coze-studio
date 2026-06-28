@@ -373,6 +373,20 @@ class MockEventSource {
   }
 }
 
+const openTaskDetailInspector = async (container: HTMLElement) => {
+  const detailButton = Array.from(container.querySelectorAll('button')).find(
+    button => button.textContent?.includes('详情'),
+  );
+
+  expect(detailButton).toBeTruthy();
+
+  await act(async () => {
+    Simulate.click(detailButton!);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+
 describe('TaskDetailPage', () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, 'EventSource', {
@@ -975,6 +989,7 @@ describe('TaskDetailPage', () => {
       root.render(<TaskDetailPage />);
       await Promise.resolve();
     });
+    await openTaskDetailInspector(container);
 
     const findButton = (label: string) =>
       Array.from(container.querySelectorAll('button')).find(button =>
@@ -986,6 +1001,98 @@ describe('TaskDetailPage', () => {
     expect(findButton('导出记忆')?.disabled).toBe(false);
     expect(findButton('导入记忆')?.disabled).toBe(true);
     expect(findButton('清空')?.disabled).toBe(true);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('keeps diagnostics, guardrail audit, and task memory out of the chat transcript', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const chatTranscript = container.querySelector(
+      '[data-testid="task-chat-transcript"]',
+    );
+
+    expect(chatTranscript).toBeTruthy();
+    expect(chatTranscript?.textContent).toContain('请总结本周项目进展');
+    expect(chatTranscript?.textContent).toContain('本周完成了 UI 改造方案。');
+    expect(chatTranscript?.textContent).not.toContain('运行诊断');
+    expect(chatTranscript?.textContent).not.toContain('安全审计');
+    expect(chatTranscript?.textContent).not.toContain('任务记忆');
+    expect(container.textContent).not.toContain('Eino ADK');
+    expect(container.textContent).not.toContain('导出记忆');
+
+    const detailButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('详情'),
+    );
+    expect(detailButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(detailButton!);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('运行诊断');
+    expect(container.textContent).toContain('安全审计');
+    expect(container.textContent).toContain('任务记忆');
+    expect(container.textContent).toContain('Eino ADK');
+    expect(container.textContent).toContain('导出记忆');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('keeps the follow-up composer docked outside the scrollable chat transcript', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const detailInner = container.querySelector('.coze-prototype-detail-inner');
+    const detailScroll = container.querySelector(
+      '[data-testid="task-detail-scroll"]',
+    );
+    const chatTranscript = container.querySelector(
+      '[data-testid="task-chat-transcript"]',
+    );
+    const followUpComposer = container.querySelector(
+      '.coze-prototype-followup',
+    );
+
+    expect(detailInner).toBeTruthy();
+    expect(detailScroll).toBeTruthy();
+    expect(chatTranscript).toBeTruthy();
+    expect(followUpComposer).toBeTruthy();
+    expect(chatTranscript?.contains(followUpComposer)).toBe(false);
+    expect(detailInner?.children[0]).toBe(detailScroll);
+    expect(detailInner?.children[1]).toBe(followUpComposer);
 
     act(() => {
       root?.unmount();
@@ -1155,6 +1262,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await openTaskDetailInspector(container);
 
     expect(mockListTaskThreadGuardrailAuditEvents).toHaveBeenCalledWith({
       thread_id: 'thread-guardrail-1',
@@ -1464,6 +1572,7 @@ describe('TaskDetailPage', () => {
       root.render(<TaskDetailPage />);
       await Promise.resolve();
     });
+    await openTaskDetailInspector(container);
 
     expect(mockGetWorkbenchRuntimeDoctor).toHaveBeenCalledWith({
       space_id: 'space-runtime-1',

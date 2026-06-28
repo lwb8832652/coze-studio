@@ -28,15 +28,23 @@ import {
 } from '../workbench/components/types';
 import { TaskTopBar } from './task-top-bar';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
-import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
-import { TaskRunActionBar } from './task-run-action-bar';
-import { TaskMemorySection } from './task-memory-section';
+import {
+  TaskRunActionBar,
+  type TaskRunActionLoading,
+} from './task-run-action-bar';
 import { TaskMarkdownContent } from './task-markdown-content';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
-import { getPendingHumanInteraction } from './task-human-interaction';
-import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
+import {
+  getPendingHumanInteraction,
+  type PendingHumanInteraction,
+} from './task-human-interaction';
 import { projectTaskExecutionEvents } from './task-event-projection';
-import { type TaskDetailSource } from './task-detail-loader';
+import {
+  type LoadedTaskDetailSource,
+  type TaskDetailSource,
+  type TaskDetailSubagentRun,
+} from './task-detail-loader';
+import { TaskDetailInspector } from './task-detail-inspector';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 import {
@@ -51,6 +59,7 @@ import {
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+type HumanInteractionResponse = workbenchTask.HumanInteractionResponse;
 
 const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
   threadId ? 'thread' : 'auto';
@@ -313,6 +322,79 @@ const FollowUpComposer = ({
   </section>
 );
 
+const TaskTranscript = ({
+  events,
+  humanInteractionError,
+  humanInteractionLoading,
+  latestTaskRunID,
+  pendingHumanInteraction,
+  retryingSubagentRunId,
+  subagentRetryError,
+  subagentRuns,
+  task,
+  taskDetailSource,
+  taskRunActionError,
+  taskRunActionLoading,
+  onCancelTaskRun,
+  onHumanInteractionSubmit,
+  onRetrySubagentRun,
+  onRetryTaskRun,
+}: {
+  events: TaskEvent[];
+  humanInteractionError?: string;
+  humanInteractionLoading: boolean;
+  latestTaskRunID: string;
+  pendingHumanInteraction?: PendingHumanInteraction;
+  retryingSubagentRunId?: string;
+  subagentRetryError?: string;
+  subagentRuns: TaskDetailSubagentRun[];
+  task: ChatTask;
+  taskDetailSource: LoadedTaskDetailSource;
+  taskRunActionError?: string;
+  taskRunActionLoading: TaskRunActionLoading;
+  onCancelTaskRun: (runId: string) => void | Promise<void>;
+  onHumanInteractionSubmit: (
+    response: HumanInteractionResponse,
+  ) => void | Promise<void>;
+  onRetrySubagentRun: (runId: string) => void | Promise<void>;
+  onRetryTaskRun: (runId: string) => void | Promise<void>;
+}) => (
+  <section
+    className="coze-prototype-chat-transcript"
+    data-testid="task-chat-transcript"
+  >
+    <TaskRunActionBar
+      task={task}
+      latestRunID={latestTaskRunID}
+      loading={taskRunActionLoading}
+      error={taskRunActionError}
+      taskDetailSource={taskDetailSource}
+      onCancelTaskRun={onCancelTaskRun}
+      onRetryTaskRun={onRetryTaskRun}
+    />
+    <TaskConversation task={task} />
+    {events.length ||
+    parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
+      <TaskEventsSection events={events} task={task} />
+    ) : null}
+    <TaskSubagentRunsSection
+      subagentRuns={subagentRuns}
+      retryError={subagentRetryError}
+      retryingRunId={retryingSubagentRunId}
+      onRetrySubagentRun={onRetrySubagentRun}
+    />
+    {pendingHumanInteraction ? (
+      <TaskHumanInterruptCard
+        pending={pendingHumanInteraction}
+        loading={humanInteractionLoading}
+        error={humanInteractionError}
+        onSubmit={onHumanInteractionSubmit}
+      />
+    ) : null}
+    <TaskResultSection task={task} events={events} />
+  </section>
+);
+
 const TaskDetailPage = () => {
   const { space_id, task_id, thread_id } = useParams();
   const userInfo = useUserInfo();
@@ -374,7 +456,7 @@ const TaskDetailPage = () => {
     taskDetailSource: activeTaskDetailSource,
   });
   return (
-    <main className="coze-prototype-page">
+    <main className="coze-prototype-page coze-prototype-task-detail-page">
       {task ? (
         <TaskTopBar
           artifactAction={
@@ -386,70 +468,63 @@ const TaskDetailPage = () => {
               />
             ) : undefined
           }
+          inspectorAction={
+            activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
+              <TaskDetailInspector
+                memoryReadOnly={memoryReadOnly}
+                spaceId={space_id}
+                threadId={activeTaskDetailId}
+              />
+            ) : undefined
+          }
           task={task}
           tokenUsage={tokenUsage}
         />
       ) : null}
       <section className="coze-prototype-detail-inner">
-        {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
-        {error ? <div className="coze-prototype-error">{error}</div> : null}
-        {!loading && !error && !task ? (
-          <div className="coze-prototype-empty">未找到任务</div>
-        ) : null}
-        {task ? (
-          <>
-            <TaskRunActionBar
+        <section
+          className="coze-prototype-detail-scroll"
+          data-testid="task-detail-scroll"
+        >
+          {loading ? (
+            <div className="coze-prototype-empty">加载中...</div>
+          ) : null}
+          {error ? <div className="coze-prototype-error">{error}</div> : null}
+          {!loading && !error && !task ? (
+            <div className="coze-prototype-empty">未找到任务</div>
+          ) : null}
+          {task ? (
+            <TaskTranscript
+              events={events}
+              humanInteractionError={humanInteractionError}
+              humanInteractionLoading={humanInteractionLoading}
+              latestTaskRunID={latestTaskRunID}
+              pendingHumanInteraction={pendingHumanInteraction}
+              retryingSubagentRunId={retryingSubagentRunId}
+              subagentRetryError={subagentRetryError}
+              subagentRuns={subagentRuns}
               task={task}
-              latestRunID={latestTaskRunID}
-              loading={taskRunActionLoading}
-              error={taskRunActionError}
               taskDetailSource={activeTaskDetailSource}
+              taskRunActionError={taskRunActionError}
+              taskRunActionLoading={taskRunActionLoading}
               onCancelTaskRun={handleCancelTaskRun}
+              onHumanInteractionSubmit={handleHumanInteractionSubmit}
+              onRetrySubagentRun={handleRetrySubagentRun}
               onRetryTaskRun={handleRetryTaskRun}
             />
-            <TaskConversation task={task} />
-            {events.length ||
-            parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
-              <TaskEventsSection events={events} task={task} />
-            ) : null}
-            <TaskSubagentRunsSection
-              subagentRuns={subagentRuns}
-              retryError={subagentRetryError}
-              retryingRunId={retryingSubagentRunId}
-              onRetrySubagentRun={handleRetrySubagentRun}
-            />
-            {activeTaskDetailSource === 'thread' ? (
-              <TaskRuntimeDoctorSection spaceId={space_id} />
-            ) : null}
-            {activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
-              <TaskGuardrailAuditSection threadId={activeTaskDetailId} />
-            ) : null}
-            {activeTaskDetailSource === 'thread' && activeTaskDetailId ? (
-              <TaskMemorySection
-                readOnly={memoryReadOnly}
-                threadId={activeTaskDetailId}
-              />
-            ) : null}
-            {pendingHumanInteraction ? (
-              <TaskHumanInterruptCard
-                pending={pendingHumanInteraction}
-                loading={humanInteractionLoading}
-                error={humanInteractionError}
-                onSubmit={handleHumanInteractionSubmit}
-              />
-            ) : null}
-            <TaskResultSection task={task} events={events} />
-            <FollowUpComposer
-              value={followUpValue}
-              mode={followUpMode}
-              loading={followUpLoading}
-              error={followUpError}
-              taskId={task?.id ?? activeTaskDetailId}
-              onValueChange={setFollowUpValue}
-              onModeChange={setFollowUpMode}
-              onSubmit={handleFollowUpSubmit}
-            />
-          </>
+          ) : null}
+        </section>
+        {task ? (
+          <FollowUpComposer
+            value={followUpValue}
+            mode={followUpMode}
+            loading={followUpLoading}
+            error={followUpError}
+            taskId={task?.id ?? activeTaskDetailId}
+            onValueChange={setFollowUpValue}
+            onModeChange={setFollowUpMode}
+            onSubmit={handleFollowUpSubmit}
+          />
         ) : null}
       </section>
     </main>
