@@ -150,7 +150,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | TD-NAV-001 | 详情路由打开 | `/workspace/chats/:thread_id` 直接进入详情 | `/space/:space_id/tasks/:thread_id` 直接进入任务详情 | 两边 URL 截图，刷新后仍可用 | detail 接口 200 | 两边 page/router 文件 | 待验收 |
 | TD-NAV-002 | 最近列表进入 | 侧边栏最近对话点开同一 thread | `我的任务` 点开同一 thread，不跳 agent legacy page | 点击前后 URL/标题截图 | list/detail 接口 thread id 一致 | Coze sidebar/list service | 待验收 |
-| TD-LAYOUT-001 | 整体布局 | 顶部 header、中间消息流、底部 composer、右侧/弹出 Artifacts | 保留任务命名，但布局信息密度和交互位置对齐 | desktop full-page screenshot | N/A | detail/top-bar/follow-up/artifacts files | 进行中 |
+| TD-LAYOUT-001 | 整体布局 | 顶部 header、中间消息流、底部 composer、右侧/弹出 Artifacts | 保留任务命名；当前 header/composer 已接近，助手消息和执行流仍需继续对齐 DeerFlow chat-like 体验 | viewport screenshots | N/A | detail/top-bar/follow-up/artifacts files | 进行中 |
 | TD-LAYOUT-002 | 响应式 | DeerFlow 窄屏不遮挡消息和 composer | Coze 窄屏不重叠、不溢出 | 390px/768px 截图 | N/A | LESS/CSS and component layout | 待验收 |
 | TD-LAYOUT-003 | 对话记录纯净度 | 聊天记录区只承载用户消息、助手回复、inline 思考、工具/任务状态和产物引用 | 运行诊断、安全审计、任务记忆不得直接铺在聊天对话记录中；应进入 header action、侧栏 inspector、弹层或折叠二级面板 | main content DOM + inspector open DOM | N/A | `task-detail-inspector.tsx`, `detail.tsx`, `task-top-bar.tsx`, `task-detail.test.tsx` | 已完成 |
 | TD-HDR-001 | 标题 | Header 显示 thread title | Header 显示任务 title，不能只显示 ID | header 截图 | detail response title | loader/top-bar | 待验收 |
@@ -161,8 +161,8 @@ P0 只做 DeerFlow 可见主线能力对齐：
 
 | ID | 功能点 | DeerFlow 基线 | Coze 期望 | 前端证据 | 后端证据 | 代码证据 | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| TD-MSG-001 | 用户消息 | 用户 turn 右侧气泡/块，纯文本安全显示 | Coze 显示用户输入，不当 Markdown 执行 | message screenshot | messages API role/order | DeerFlow message item, Coze messages mapping | 待验收 |
-| TD-MSG-002 | 助手消息 | assistant turn inline，Markdown 渲染 | Coze 结果按消息流显示，不只像报告卡片 | screenshot | messages/answer payload | detail/markdown files | 进行中 |
+| TD-MSG-001 | 用户消息 | 用户 turn 右侧气泡/块，纯文本安全显示 | Coze 已显示用户输入气泡且未执行用户 Markdown，仍需补精确间距/avatar 对照 | message screenshot | messages API role/order | DeerFlow message item, Coze messages mapping | 待验收 |
+| TD-MSG-002 | 助手消息 | assistant turn inline，Markdown 渲染 | Coze 已渲染 Markdown/Mermaid，但仍显示 `普通回答 · Agent` 结果标签，需去结果卡片口吻 | screenshot | messages/answer payload | detail/markdown files | 进行中 |
 | TD-MSG-003 | 历史分页 | DeerFlow 可加载更多 history | Coze 任务历史刷新后完整可恢复 | load-more/reopen screenshot | messages pagination params/response | service/loader | 待验收 |
 | TD-MSG-004 | 流式中状态 | streaming indicator 和停止按钮同步 | Coze run_events 流式更新步骤和答案 | running screenshot/video if needed | SSE event samples | stream hook/event projection | 待验收 |
 | TD-MSG-005 | inline 思考块 | Reasoning trigger + collapsible content 保留 | Coze 保留 inline 思考块，不移除 | expanded/collapsed screenshot | event/message reasoning fields | DeerFlow reasoning, Coze event projection/detail | 待开发 |
@@ -182,7 +182,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-RUN-004 | 停止 | stop 按钮取消 active run | `取消任务` 只在 active run 显示，成功终止 | running -> canceled screenshot | cancel request/response | run action hook + handler tests | 待验收 |
 | TD-RUN-005 | 失败重试 | failed/canceled run 可 retry | `重试任务` 创建新 top-level retry run | failed/canceled screenshot | retry request/response metadata | retry hook + handler tests | 待验收 |
 | TD-RUN-006 | 终态收敛 | 完成后页面不再显示 running | Coze 最新 top-level terminal run 驱动 header/progress | completed screenshot | runs latest status | loader/detail tests | 已完成 |
-| TD-FLOW-001 | 步骤/时间线 | DeerFlow 可见思考/任务/工具进度 | Coze 显示安全执行流程，但不偏离主消息体验 | execution flow screenshot | events list | event projection tests | 待验收 |
+| TD-FLOW-001 | 步骤/时间线 | DeerFlow 可见思考/任务/工具进度 | Coze 当前显示完整 `执行流程` 卡片；需收敛为 DeerFlow 风格 inline/collapsible 思考或流程控件 | execution flow screenshot | events list | event projection tests | 进行中 |
 | TD-FLOW-002 | 工具事件 | tool 调用状态可读，不泄露敏感参数 | Coze tool card 隐藏 args/results/raw provider | tool event screenshot | redacted event response | safety tests | 待验收 |
 | TD-FLOW-003 | 子智能体事件 | subagent 状态清楚 | Coze 子智能体卡片只显示安全 metadata | subagent case screenshot | child run/events/token response | subagent files/tests | 待验收 |
 
@@ -371,6 +371,10 @@ Coze 目标页可见能力：
 - `TD-MD-001` 和 `TD-MD-002` 已通过最近修复：Coze 任务详情能把
   `sequenceDiagram` 和 `flowchart` Mermaid fenced block 渲染为 SVG，并在
   每个图块右上提供 SVG 下载和 Mermaid 源码复制按钮。
+- `TD-MSG-001/002` 和 `TD-LAYOUT-001` 已完成一轮浏览器对照：Coze 用户
+  气泡、Markdown/Mermaid 渲染、底部 composer 停靠基本可用；主要 P0 差异是
+  助手消息仍有 `普通回答 · Agent` 结果标签，且 `执行流程` 是大块卡片，
+  DeerFlow 则是 chat turn 内的 `思考` 折叠控件。
 - `TD-MSG-005` inline 思考块需要保留并对齐 DeerFlow。
 - `TD-TOKEN-002` 每轮/每消息 token 显示是 DeerFlow 可见能力，当前 Coze
   需要继续对齐。
