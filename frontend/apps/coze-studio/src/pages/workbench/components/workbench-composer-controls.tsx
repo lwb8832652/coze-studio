@@ -333,7 +333,6 @@ export const WorkbenchComposerToolbar = ({
         models={models}
         value={selectedModelType}
         open={modelMenuOpen}
-        placement={overlayPlacement}
         onOpenChange={onModelMenuOpenChange}
         onChange={model =>
           onSelectedModelTypeChange(workbenchModelTypeToNumber(model))

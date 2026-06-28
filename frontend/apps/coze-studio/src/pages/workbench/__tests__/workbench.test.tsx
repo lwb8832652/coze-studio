@@ -245,11 +245,13 @@ describe('WorkbenchPage', () => {
     mockGetTypeList.mockResolvedValue([
       {
         name: 'deepseek-v4-pro',
+        model_name: 'deepseek-v4-pro',
         model_type: 100002,
-        model_class_name: 'DeepSeek',
+        model_class_name: 'DeekSeek',
       },
       {
         name: 'gpt-4.1',
+        model_name: 'gpt-4.1',
         model_type: 100003,
         model_class_name: 'OpenAI',
       },
@@ -604,7 +606,8 @@ describe('WorkbenchPage', () => {
     });
 
     expect(mockGetTypeList).toHaveBeenCalledWith('space-1');
-    expect(container.textContent).toContain('deepseek-v4-pro');
+    expect(container.textContent).toContain('DeepSeek V4 Pro (Thinking)');
+    expect(container.textContent).not.toContain('Pro拓展deepseek-v4-pro');
 
     const selectorButton = container.querySelector(
       'button[aria-label="选择模型"]',
@@ -614,7 +617,7 @@ describe('WorkbenchPage', () => {
     });
 
     const modelButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('gpt-4.1'),
+      button => button.textContent?.includes('GPT 4.1'),
     ) as HTMLButtonElement;
     act(() => {
       modelButton.click();

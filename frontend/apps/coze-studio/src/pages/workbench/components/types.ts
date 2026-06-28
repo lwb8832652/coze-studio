@@ -88,6 +88,8 @@ export interface WorkbenchRuntimeSettings {
 }
 
 export interface WorkbenchLLMModel {
+  display_name?: string;
+  model?: string;
   name?: string;
   model_name?: string;
   model_type?: number | string;
@@ -300,7 +302,7 @@ export const createWorkbenchSubmitPayload = ({
     mode,
     taskId,
     modelType,
-    modelName: selectedModel?.name,
+    modelName: selectedModel?.model_name || selectedModel?.name,
     runtimeSettings: nextRuntimeSettings,
     enable_skills: nextRuntimeSettings.skills.enabled
       ? [...resourceSelection.enable_skills]

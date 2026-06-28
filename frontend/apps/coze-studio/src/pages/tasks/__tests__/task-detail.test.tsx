@@ -572,10 +572,9 @@ describe('TaskDetailPage', () => {
     mockGetWorkbenchLLMModels.mockResolvedValue([
       {
         name: 'deepseek-v4-pro',
-        model_name: 'DeepSeek V4 Pro (Thinking)',
+        model_name: 'deepseek-v4-pro',
         model_type: 100002,
-        model_class_name: 'DeepSeek',
-        endpoint_name: 'Thinking',
+        model_class_name: 'DeekSeek',
       },
     ]);
     mockListSkills.mockResolvedValue({
@@ -1701,9 +1700,14 @@ describe('TaskDetailPage', () => {
     ).toBeNull();
     expect(
       followUpComposer
+        ?.querySelector('.chat-workbench-model-dialog-mask')
+        ?.getAttribute('data-open'),
+    ).toBe('true');
+    expect(
+      followUpComposer
         ?.querySelector('.chat-workbench-model-menu')
-        ?.getAttribute('data-placement'),
-    ).toBe('top');
+        ?.getAttribute('role'),
+    ).toBe('dialog');
     expect(
       followUpComposer?.querySelector('input[aria-label="搜索模型"]'),
     ).toBeTruthy();
