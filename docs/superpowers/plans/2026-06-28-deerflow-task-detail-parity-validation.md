@@ -162,7 +162,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | ID | 功能点 | DeerFlow 基线 | Coze 期望 | 前端证据 | 后端证据 | 代码证据 | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | TD-MSG-001 | 用户消息 | 用户 turn 右侧气泡/块，纯文本安全显示 | Coze 已显示用户输入气泡且未执行用户 Markdown，仍需补精确间距/avatar 对照 | message screenshot | messages API role/order | DeerFlow message item, Coze messages mapping | 待验收 |
-| TD-MSG-002 | 助手消息 | assistant turn inline，Markdown 渲染 | Coze 已渲染 Markdown/Mermaid，但仍显示 `普通回答 · Agent` 结果标签，需去结果卡片口吻 | screenshot | messages/answer payload | detail/markdown files | 进行中 |
+| TD-MSG-002 | 助手消息 | assistant turn inline，Markdown 渲染 | Coze 已渲染 Markdown/Mermaid，并移除 `普通回答 · Agent/Ark` 结果标签 | screenshot | messages/answer payload | detail/markdown files | 已完成 |
 | TD-MSG-003 | 历史分页 | DeerFlow 可加载更多 history | Coze 任务历史刷新后完整可恢复 | load-more/reopen screenshot | messages pagination params/response | service/loader | 待验收 |
 | TD-MSG-004 | 流式中状态 | streaming indicator 和停止按钮同步 | Coze run_events 流式更新步骤和答案 | running screenshot/video if needed | SSE event samples | stream hook/event projection | 待验收 |
 | TD-MSG-005 | inline 思考块 | Reasoning trigger + collapsible content 保留 | Coze 保留 inline 思考块，不移除 | expanded/collapsed screenshot | event/message reasoning fields | DeerFlow reasoning, Coze event projection/detail | 待开发 |
@@ -182,7 +182,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-RUN-004 | 停止 | stop 按钮取消 active run | `取消任务` 只在 active run 显示，成功终止 | running -> canceled screenshot | cancel request/response | run action hook + handler tests | 待验收 |
 | TD-RUN-005 | 失败重试 | failed/canceled run 可 retry | `重试任务` 创建新 top-level retry run | failed/canceled screenshot | retry request/response metadata | retry hook + handler tests | 待验收 |
 | TD-RUN-006 | 终态收敛 | 完成后页面不再显示 running | Coze 最新 top-level terminal run 驱动 header/progress | completed screenshot | runs latest status | loader/detail tests | 已完成 |
-| TD-FLOW-001 | 步骤/时间线 | DeerFlow 可见思考/任务/工具进度 | Coze 当前显示完整 `执行流程` 卡片；需收敛为 DeerFlow 风格 inline/collapsible 思考或流程控件 | execution flow screenshot | events list | event projection tests | 进行中 |
+| TD-FLOW-001 | 步骤/时间线 | DeerFlow 可见思考/任务/工具进度 | Coze 保留 `执行流程` 标题，并以轻量 feed 展示每一步状态、标题、runtime、详情/思考和时间 | execution flow screenshot | events list | event projection tests | 已完成 |
 | TD-FLOW-002 | 工具事件 | tool 调用状态可读，不泄露敏感参数 | Coze tool card 隐藏 args/results/raw provider | tool event screenshot | redacted event response | safety tests | 待验收 |
 | TD-FLOW-003 | 子智能体事件 | subagent 状态清楚 | Coze 子智能体卡片只显示安全 metadata | subagent case screenshot | child run/events/token response | subagent files/tests | 待验收 |
 
@@ -372,9 +372,11 @@ Coze 目标页可见能力：
   `sequenceDiagram` 和 `flowchart` Mermaid fenced block 渲染为 SVG，并在
   每个图块右上提供 SVG 下载和 Mermaid 源码复制按钮。
 - `TD-MSG-001/002` 和 `TD-LAYOUT-001` 已完成一轮浏览器对照：Coze 用户
-  气泡、Markdown/Mermaid 渲染、底部 composer 停靠基本可用；主要 P0 差异是
-  助手消息仍有 `普通回答 · Agent` 结果标签，且 `执行流程` 是大块卡片，
-  DeerFlow 则是 chat turn 内的 `思考` 折叠控件。
+  气泡、Markdown/Mermaid 渲染、底部 composer 停靠基本可用；助手消息已移除
+  `普通回答 · Agent/Ark` 结果标签。
+- `TD-FLOW-001` 已按用户反馈修复：保留 `执行流程` 标题，并用轻量 feed
+  直接展示每一步做了什么。更深层的 DeerFlow `思考` 内容折叠和模型
+  reasoning 字段对齐继续归入 `TD-MSG-005`。
 - `TD-MSG-005` inline 思考块需要保留并对齐 DeerFlow。
 - `TD-TOKEN-002` 每轮/每消息 token 显示是 DeerFlow 可见能力，当前 Coze
   需要继续对齐。

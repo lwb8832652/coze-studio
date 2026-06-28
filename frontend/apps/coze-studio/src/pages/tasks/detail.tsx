@@ -125,21 +125,18 @@ const TaskEventsSection = ({
   );
 
   return (
-    <section className="coze-prototype-execution-panel">
-      <div className="coze-prototype-execution-header">
-        <span className="text-[14px] leading-[18px] text-[#747b8a]">⌄</span>
-        <h2 className="m-0 text-[13px] leading-[20px] font-[500] text-[#232938]">
-          执行流程
-        </h2>
+    <section className="coze-prototype-execution-feed coze-prototype-reasoning-panel">
+      <div className="coze-prototype-execution-feed-header">
+        <h2 className="coze-prototype-reasoning-title">执行流程</h2>
         <span className="coze-prototype-muted ml-auto">
           {doneCount}/{totalCount} 已完成 · {task.progress}%
         </span>
       </div>
-      <ol className="coze-prototype-execution-list">
+      <ol className="coze-prototype-execution-feed-list">
         {displayItems.map(({ event, display }) => (
           <li
             key={event.id}
-            className="coze-prototype-step"
+            className="coze-prototype-execution-feed-item coze-prototype-step"
             data-kind={display.kind}
             data-status={display.status}
           >
@@ -178,7 +175,10 @@ const TaskEventsSection = ({
           </li>
         ))}
         {shouldShowPendingStep ? (
-          <li className="coze-prototype-step" data-status="running">
+          <li
+            className="coze-prototype-execution-feed-item coze-prototype-step"
+            data-status="running"
+          >
             <span className="coze-prototype-step-running" />
             <span className="coze-prototype-step-content">
               <span className="coze-prototype-step-title">
@@ -208,9 +208,6 @@ const TaskAnswer = ({
   streamingMessage?: string;
 }) => (
   <article className="coze-prototype-answer" data-result-type="answer">
-    <div className="coze-prototype-result-eyebrow">
-      普通回答{result.executionType ? ` · ${result.executionType}` : ''}
-    </div>
     <TaskMarkdownContent
       value={result.message || streamingMessage || task.error || '结果生成中'}
     />

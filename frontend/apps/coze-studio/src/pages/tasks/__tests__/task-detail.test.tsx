@@ -857,6 +857,12 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('解析用户输入并确定执行路径');
     expect(container.textContent).toContain('我会先拆解目标，再组织报告结构。');
     expect(container.textContent).toContain('执行流程');
+    expect(
+      container.querySelector('.coze-prototype-reasoning-panel'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('.coze-prototype-execution-feed'),
+    ).toBeTruthy();
     expect(container.textContent).not.toContain(
       '{"message":"请总结本周项目进展"}',
     );
@@ -3513,6 +3519,12 @@ describe('TaskDetailPage', () => {
       '/api/workbench/task_threads/thread-only-1/run_events/stream',
     );
     expect(container.textContent).toContain('执行流程');
+    expect(
+      container.querySelector('.coze-prototype-reasoning-panel'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('.coze-prototype-execution-feed'),
+    ).toBeTruthy();
     expect(container.textContent).toContain('开始执行 generate_answer');
 
     act(() => {
@@ -4578,7 +4590,10 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain(
       'Ark 模式会直接使用模型生成普通回答。',
     );
-    expect(container.textContent).toContain('普通回答');
+    expect(container.textContent).not.toContain('普通回答 · Ark');
+    expect(
+      container.querySelector('.coze-prototype-result-eyebrow'),
+    ).toBeNull();
     expect(container.textContent).not.toContain('一、任务输入');
     expect(container.textContent).not.toContain('解释 Ark 模式报告');
 
