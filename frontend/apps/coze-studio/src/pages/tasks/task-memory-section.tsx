@@ -17,8 +17,8 @@
 import {
   IconCozDownload,
   IconCozImport,
+  IconCozMagnifier,
   IconCozRefresh,
-  IconCozSearch,
   IconCozTrashCan,
 } from '@coze-arch/coze-design/icons';
 import {
@@ -263,7 +263,7 @@ const MemoryToolbar = ({ state }: { state: TaskMemorySectionState }) => (
       onEnterPress={() => void state.loadMemories()}
     />
     <Button
-      icon={<IconCozSearch />}
+      icon={<IconCozMagnifier />}
       data-testid="task-memory-search-submit"
       loading={state.loading}
       size="small"
