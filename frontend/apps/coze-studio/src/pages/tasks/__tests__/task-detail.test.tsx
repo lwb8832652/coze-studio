@@ -2798,6 +2798,158 @@ describe('TaskDetailPage', () => {
     }
   });
 
+  it('renders generated document artifacts in the conversation without mixing them with thread export', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-doc-artifacts-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-doc-artifacts-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略文档',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成武汉3日游攻略文档',
+        last_agent_message: '文档已生成，请查看附件。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [
+          {
+            artifact_id: 'artifact-doc-1',
+            artifact_type: 'report',
+            content_type: 'text/markdown; charset=utf-8',
+            created_at: 1717000300000,
+            file_id: 'file-doc-1',
+            metadata: '{}',
+            preview_mode: 'text',
+            run_id: 'run-doc-1',
+            size_bytes: 4096,
+            thread_id: 'thread-doc-artifacts-1',
+            title: '武汉3日游攻略.md',
+            updated_at: 1717000300000,
+            virtual_path: '/mnt/user-data/outputs/武汉3日游攻略.md',
+          },
+          {
+            artifact_id: 'artifact-doc-2',
+            artifact_type: 'html',
+            content_type: 'text/html; charset=utf-8',
+            created_at: 1717000310000,
+            file_id: 'file-doc-2',
+            metadata: '{}',
+            preview_mode: 'download',
+            run_id: 'run-doc-1',
+            size_bytes: 2048,
+            thread_id: 'thread-doc-artifacts-1',
+            title: '交互版攻略.html',
+            updated_at: 1717000310000,
+            virtual_path: '/mnt/user-data/outputs/交互版攻略.html',
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockFetchTaskThreadArtifactContent.mockResolvedValue({
+      blob: new Blob(['# 武汉3日游攻略\n\n## 行程概览'], {
+        type: 'text/markdown',
+      }),
+      contentDisposition: "inline; filename*=UTF-8''wuhan.md",
+      contentType: 'text/markdown; charset=utf-8',
+    });
+    mockGetTaskThreadArtifactSignedURL.mockResolvedValue({
+      data: {
+        artifact_id: 'artifact-doc-2',
+        content_type: 'text/html; charset=utf-8',
+        expires_in_seconds: 300,
+        preview_mode: 'download',
+        url: 'https://storage.example.test/signed/guide.html?token=download',
+      },
+      code: 0,
+      msg: 'success',
+    });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const messageList = container.querySelector(
+        '[data-testid="task-artifact-message-list"]',
+      );
+      expect(messageList).toBeTruthy();
+      expect(messageList?.textContent).toContain('武汉3日游攻略.md');
+      expect(messageList?.textContent).toContain('交互版攻略.html');
+      expect(messageList?.textContent).toContain('Markdown');
+      expect(messageList?.textContent).toContain('HTML');
+
+      const previewButton = messageList?.querySelector(
+        'button[aria-label="预览文档 武汉3日游攻略.md"]',
+      ) as HTMLButtonElement;
+      const downloadButton = messageList?.querySelector(
+        'button[aria-label="下载文档 交互版攻略.html"]',
+      ) as HTMLButtonElement;
+      expect(previewButton).toBeTruthy();
+      expect(downloadButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(previewButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
+        artifact_id: 'artifact-doc-1',
+        mode: 'preview',
+        thread_id: 'thread-doc-artifacts-1',
+      });
+      expect(
+        container.querySelector('[data-testid="task-artifact-inline-preview"]'),
+      ).toBeTruthy();
+      expect(container.textContent).toContain('# 武汉3日游攻略');
+
+      await act(async () => {
+        Simulate.click(downloadButton);
+        await Promise.resolve();
+      });
+
+      expect(mockGetTaskThreadArtifactSignedURL).toHaveBeenCalledWith({
+        artifact_id: 'artifact-doc-2',
+        mode: 'download',
+        thread_id: 'thread-doc-artifacts-1',
+        ttl_seconds: 300,
+      });
+      expect(anchorClick).toHaveBeenCalled();
+      expect(container.textContent).toContain('导出');
+    } finally {
+      anchorClick.mockRestore();
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
   it('deletes a canonical thread artifact and refreshes the drawer list', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

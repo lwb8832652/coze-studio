@@ -49,6 +49,7 @@ import {
 } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
+import { TaskArtifactMessageList } from './task-artifact-message-list';
 import {
   formatUpdatedTime,
   getTaskExecutionType,
@@ -206,6 +207,7 @@ const TaskEventsSection = ({
 };
 
 const TaskTranscript = ({
+  artifacts,
   events,
   humanInteractionError,
   humanInteractionLoading,
@@ -226,6 +228,7 @@ const TaskTranscript = ({
   onRetrySubagentRun,
   onRetryTaskRun,
 }: {
+  artifacts: workbenchTask.TaskThreadArtifact[];
   events: TaskEvent[];
   humanInteractionError?: string;
   humanInteractionLoading: boolean;
@@ -286,6 +289,9 @@ const TaskTranscript = ({
       tokenUsage={tokenUsageByRunID?.[getLatestAssistantRunID(messages)]}
       tokenUsageViewMode={tokenUsageViewMode}
     />
+    {taskDetailSource === 'thread' ? (
+      <TaskArtifactMessageList artifacts={artifacts} threadId={task.id} />
+    ) : null}
   </section>
 );
 
@@ -390,6 +396,7 @@ const TaskDetailPage = () => {
           ) : null}
           {task ? (
             <TaskTranscript
+              artifacts={artifacts}
               events={events}
               humanInteractionError={humanInteractionError}
               humanInteractionLoading={humanInteractionLoading}

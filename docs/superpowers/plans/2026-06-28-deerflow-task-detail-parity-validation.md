@@ -235,7 +235,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-DOC-009 | 预览失败态 | DeerFlow 404/权限/过大有明确提示 | Coze 404、无权限、扫描阻断、过大/截断、格式不支持时显示 bounded error | error/unsupported screenshot | 404/403/413/scan blocked response 摘要 | panel/error tests | 待验收 |
 | TD-DOC-010 | 删除/恢复对预览影响 | DeerFlow 删除/不可见后不再可读 | Coze 隐藏/删除产物后列表不展示，恢复后可重新预览；底层安全策略不绕过 | delete/restore 前后截图 | delete/restore/list/content response 摘要 | artifact lifecycle tests | 待验收 |
 | TD-DOC-011 | 文档内容脱敏 | 预览不展示 secrets/raw tool/provider payload | Coze 预览和下载接口不得泄露 credentials、tool args/results、raw provider bodies、object keys | UI 检查截图 | redacted response sample | backend redaction/safety tests | 待验收 |
-| TD-DOC-012 | 导出与生成文档区分 | DeerFlow thread 导出和 artifact 文档下载是两个入口 | Coze 任务导出、记忆导出、文档下载三类入口文案和内容边界清楚 | header/panel action 截图 | export/download request summaries | top-bar/artifact/memory export files | 待开发 |
+| TD-DOC-012 | 导出与生成文档区分 | DeerFlow thread 导出和 artifact 文档下载是两个入口 | Coze 任务导出、记忆导出、文档下载三类入口文案和内容边界清楚；已对齐 DeerFlow `present_files` 体验，在对话流中展示生成文档文件卡，点击预览/下载继续走任务产物接口，不混用顶栏任务导出 | header/panel/action 截图；文件卡点击行为 | export/download request summaries；artifact signed_url/content 请求 | top-bar/artifact/message files | 待验收 |
 
 ### G. 设置、权限、安全和异常态
 
