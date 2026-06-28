@@ -23,20 +23,27 @@ import {
 } from '@coze-arch/coze-design/icons';
 
 import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
-import type { TaskDetailTokenUsage } from './task-detail-loader';
+import type {
+  TaskDetailTokenUsage,
+  TaskTokenUsageViewMode,
+} from './task-detail-loader';
 
 type ChatTask = workbenchTask.ChatTask;
 
 export const TaskTopBar = ({
   exportAction,
   inspectorAction,
+  onTokenUsageViewModeChange,
   task,
   tokenUsage,
+  tokenUsageViewMode,
 }: {
   exportAction?: ReactNode;
   inspectorAction?: ReactNode;
+  onTokenUsageViewModeChange?: (mode: TaskTokenUsageViewMode) => void;
   task: ChatTask;
   tokenUsage?: TaskDetailTokenUsage;
+  tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => (
   <header className="coze-prototype-task-topbar">
     <div className="coze-prototype-task-title-group">
@@ -47,7 +54,11 @@ export const TaskTopBar = ({
     </div>
     <div className="coze-prototype-task-topbar-actions">
       <div className="coze-prototype-task-topbar-primary">
-        <TaskTokenUsageIndicator tokenUsage={tokenUsage} />
+        <TaskTokenUsageIndicator
+          tokenUsage={tokenUsage}
+          viewMode={tokenUsageViewMode}
+          onViewModeChange={onTokenUsageViewModeChange}
+        />
         {exportAction}
         {inspectorAction}
       </div>

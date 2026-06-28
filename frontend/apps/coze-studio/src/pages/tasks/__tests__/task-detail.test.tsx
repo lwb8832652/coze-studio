@@ -423,12 +423,30 @@ const openTaskArtifactsPanel = async (container: HTMLElement) => {
   });
 };
 
+const expectTextFragments = (
+  text: string | null | undefined,
+  fragments: string[],
+) => {
+  for (const fragment of fragments) {
+    expect(text).toContain(fragment);
+  }
+};
+
+const expectElementTextFragments = (
+  element: Element | null | undefined,
+  fragments: string[],
+) => {
+  expect(element).toBeTruthy();
+  expectTextFragments(element?.textContent, fragments);
+};
+
 describe('TaskDetailPage', () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, 'EventSource', {
       configurable: true,
       value: MockEventSource,
     });
+    window.localStorage.removeItem('coze.task-detail.token-usage-view-mode');
     MockEventSource.instances = [];
     mockUseParams.mockReturnValue({ space_id: 'space-1', task_id: 'task-1' });
     mockUseUserInfo.mockReturnValue({ user_id_str: 'user-1' });
@@ -2058,10 +2076,9 @@ describe('TaskDetailPage', () => {
       'button.coze-prototype-token-usage',
     );
     expect(tokenUsage).toBeTruthy();
-    expect(tokenUsage?.textContent).toContain('Tokens');
-    expect(tokenUsage?.textContent).toContain('1,801');
+    expectTextFragments(tokenUsage?.textContent, ['Tokens', '1,801']);
     expect(tokenUsage?.getAttribute('title')).toBe(
-      'Input 1,234 · Output 567 · Total 1,801',
+      '输入 1,234 · 输出 567 · 总计 1,801',
     );
     expect(container.textContent).not.toContain('Token 用量');
 
@@ -2073,15 +2090,176 @@ describe('TaskDetailPage', () => {
     const tokenUsagePopover = container.querySelector(
       '[data-testid="task-token-usage-popover"]',
     );
-    expect(tokenUsagePopover?.textContent).toContain('Token 用量');
-    expect(tokenUsagePopover?.textContent).toContain('Input');
-    expect(tokenUsagePopover?.textContent).toContain('1,234');
-    expect(tokenUsagePopover?.textContent).toContain('Output');
-    expect(tokenUsagePopover?.textContent).toContain('567');
-    expect(tokenUsagePopover?.textContent).toContain('Total');
-    expect(tokenUsagePopover?.textContent).toContain('1,801');
+    expectElementTextFragments(tokenUsagePopover, [
+      'Token 用量',
+      '输入',
+      '1,234',
+      '输出',
+      '567',
+      '总计',
+      '1,801',
+      '显示方式',
+      '关闭',
+      '隐藏顶部和会话内',
+      '总览',
+      '只在顶部显示',
+      '每轮',
+      '为每轮 assistant 回复',
+      '调试',
+      '按步骤归类',
+      '顶部总量优先使用后端持久化的线程用量',
+    ]);
     expect(container.textContent).not.toContain('Agent 1,500');
     expect(container.textContent).not.toContain('Tool 301');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders assistant turn token usage from run-scoped usage rows', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-turn-token-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-turn-token-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '每轮 Token 统计',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计这一轮用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            content: '请统计这一轮用量',
+            created_at: 1717000100000,
+            message_id: 'message-user-token-1',
+            metadata: '',
+            role: 'user',
+            run_id: 'run-turn-token-1',
+            thread_id: 'thread-turn-token-1',
+          },
+          {
+            content: '统计完成',
+            created_at: 1717000200000,
+            message_id: 'message-assistant-token-1',
+            metadata: '',
+            role: 'assistant',
+            run_id: 'run-turn-token-1',
+            thread_id: 'thread-turn-token-1',
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-turn-1',
+            thread_id: 'thread-turn-token-1',
+            run_id: 'run-turn-token-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-secret',
+            step_index: 1,
+            step_name: 'secret model step',
+            model_name: 'secret-model-name',
+            provider: 'secret-provider',
+            input_tokens: 321,
+            output_tokens: 123,
+            total_tokens: 444,
+            cost_micros: 0,
+            currency: '',
+            estimated: false,
+            raw_usage: '{"prompt":"secret prompt"}',
+            metadata: '{"hidden":"metadata"}',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+        aggregate: {
+          input_tokens: 321,
+          output_tokens: 123,
+          total_tokens: 444,
+          cost_micros: 0,
+          call_count: 1,
+          lead_agent_tokens: 444,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const turnTokenUsage = container.querySelector(
+      '.coze-prototype-message-token-usage',
+    );
+    expectElementTextFragments(turnTokenUsage, [
+      'Tokens',
+      '输入',
+      '321',
+      '输出',
+      '123',
+      '总计',
+      '444',
+    ]);
+    expect(container.textContent).not.toContain('secret-provider');
+    expect(container.textContent).not.toContain('secret prompt');
+    expect(container.textContent).not.toContain('secret model step');
+
+    const tokenUsageButton = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsageButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(tokenUsageButton!);
+      await Promise.resolve();
+    });
+
+    const summaryModeButton = Array.from(
+      container.querySelectorAll('.coze-prototype-token-usage-mode-item'),
+    ).find(button => button.textContent?.includes('总览'));
+    expect(summaryModeButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(summaryModeButton as HTMLButtonElement);
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('.coze-prototype-message-token-usage'),
+    ).toBeNull();
+    expect(tokenUsageButton?.textContent).toContain('444');
 
     act(() => {
       root?.unmount();

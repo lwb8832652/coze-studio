@@ -18,6 +18,7 @@ import { workbenchTask } from '@coze-studio/api-schema';
 
 import {
   mapTaskThreadTokenUsageAggregate,
+  mapTaskThreadTokenUsageRowsByRunID,
   type TaskDetailTokenUsage,
 } from './task-detail-token-usage';
 import {
@@ -43,6 +44,7 @@ export type {
   TaskDetailSubagentTimelineItem,
 } from './task-detail-subagents';
 export type { TaskDetailTokenUsage } from './task-detail-token-usage';
+export type { TaskTokenUsageViewMode } from './task-detail-token-usage';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
@@ -65,6 +67,7 @@ export interface TaskDetail {
   messages?: TaskThreadMessage[];
   threadId?: string;
   tokenUsage?: TaskDetailTokenUsage;
+  tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>;
   subagentRuns?: TaskDetailSubagentRun[];
 }
 
@@ -287,6 +290,9 @@ const fetchTaskThreadDetail = async (
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
+    ),
+    tokenUsageByRunID: mapTaskThreadTokenUsageRowsByRunID(
+      tokenUsageResponse.data?.usage,
     ),
     subagentRuns,
   };

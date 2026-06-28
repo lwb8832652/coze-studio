@@ -18,7 +18,10 @@ import type { workbenchTask } from '@coze-studio/api-schema';
 
 import { TaskTopBar } from './task-top-bar';
 import { TaskExportAction } from './task-export-action';
-import type { TaskDetailTokenUsage } from './task-detail-loader';
+import type {
+  TaskDetailTokenUsage,
+  TaskTokenUsageViewMode,
+} from './task-detail-loader';
 import { TaskDetailInspector } from './task-detail-inspector';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 
@@ -31,24 +34,29 @@ export const TaskDetailHeader = ({
   memoryReadOnly,
   messages,
   onArtifactsChanged,
+  onTokenUsageViewModeChange,
   spaceId,
   task,
   threadId,
   tokenUsage,
+  tokenUsageViewMode,
 }: {
   artifacts: TaskThreadArtifact[];
   memoryReadOnly: boolean;
   messages: TaskThreadMessage[];
   onArtifactsChanged?: () => void | Promise<void>;
+  onTokenUsageViewModeChange?: (mode: TaskTokenUsageViewMode) => void;
   spaceId?: string;
   task: ChatTask;
   threadId?: string;
   tokenUsage?: TaskDetailTokenUsage;
+  tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => (
   <TaskTopBar
     exportAction={
       <TaskExportAction messages={messages} task={task} threadId={threadId} />
     }
+    onTokenUsageViewModeChange={onTokenUsageViewModeChange}
     inspectorAction={
       threadId ? (
         <TaskDetailInspector
@@ -67,5 +75,6 @@ export const TaskDetailHeader = ({
     }
     task={task}
     tokenUsage={tokenUsage}
+    tokenUsageViewMode={tokenUsageViewMode}
   />
 );

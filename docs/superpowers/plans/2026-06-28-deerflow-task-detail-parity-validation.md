@@ -69,7 +69,7 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | Artifacts | header trigger + side panel + file links | Task artifacts panel | 待验收 | 需验证 UI、接口、文件预览。 |
 | 文档生成/预览 | Agent 生成文件后进入 Artifacts，可内联预览或安全下载 | 任务运行生成文档产物，任务详情可预览/下载 | 待验收 | 独立 `TD-DOC-*` case，不能只看 Artifacts 按钮存在。 |
 | 导出 | thread export action | 任务导出能力 | 待验收 | 顶栏导出菜单已按 DeerFlow 提供 Markdown / JSON；需人工确认真实下载样例。 |
-| Token 用量 | global token button, per-turn usage | run aggregate indicator, child aggregate | 待验收 | per-message/per-turn 展示需对齐。 |
+| Token 用量 | global token button, per-turn usage | DeerFlow-style token popover + per-turn usage summary | 待验收 | 顶部弹层和每轮 assistant 汇总已代码对齐；待真实浏览器截图确认。 |
 | Skills | slash/progressive activation, Skills page/API | 技能配置 + Eino runtime loading | 待验收 | 重点验 task composer activation。 |
 | MCP/Tools | MCP settings, tool catalog, tool calls | 工具配置 + Eino MCP runtime | 待验收 | 重点验可见配置和 task-detail safe event。 |
 | 记忆 | runtime memory + settings | `任务记忆` panel + retrieval | 待验收 | Coze 管理面板更重，需确认 DeerFlow 可见等价。 |
@@ -207,8 +207,8 @@ P0 只做 DeerFlow 可见主线能力对齐：
 | TD-ART-003 | Artifact 空态/错误态 | 无 artifact 时不干扰任务流 | Coze 空态/错误态边界清楚 | empty/error screenshot | 404/empty response | artifacts tests | 待验收 |
 | TD-EXP-001 | 导出入口 | Header export action | Coze 任务详情提供导出入口 | export button screenshot | export request/response | export service/component | 已完成 |
 | TD-EXP-002 | 导出内容 | Markdown: `# title`、`Exported on...Created...`、`## 🧑 User` / `## 🤖 Assistant`；JSON: `title/thread_id/exported_at/messages(type/id/content)` | Coze 导出菜单提供 Markdown / JSON，默认只导出用户可见 user/assistant transcript，过滤思考、tool 消息和内部标记，不写入 token/status/schema | DeerFlow 用户提供导出样例；Coze 浏览器下载样例待人工确认 | 纯前端 Blob 下载，N/A | `task-export-action.tsx` + `task-detail.test.tsx` | 待验收 |
-| TD-TOKEN-001 | 全局 token | Header TokenUsageIndicator 可点击查看汇总 | Coze header 显示 run/thread aggregate，视觉保持 `Tokens + total` 紧凑 pill，点击后展示 Input/Output/Total 明细 | token screenshot + popover DOM | token_usage aggregate | token indicator tests | 已完成 |
-| TD-TOKEN-002 | 每轮 token | DeerFlow per-turn/per-step usage | Coze task detail 每条消息/步骤显示等价信息 | per-message usage screenshot | usage rows grouped by message/run | token usage files/tests | 待开发 |
+| TD-TOKEN-001 | 全局 token | Header TokenUsageIndicator 可点击查看汇总 | Coze header 显示 run/thread aggregate，视觉保持 `Tokens + total` 紧凑 pill，点击后按 DeerFlow 中文弹层展示 `输入`、`输出`、`总计` 和 `显示方式` | token screenshot + popover DOM | token_usage aggregate | `task-token-usage-indicator.tsx`, `task-detail.test.tsx` | 已完成 |
+| TD-TOKEN-002 | 每轮 token | DeerFlow per-turn/per-step usage | Coze task detail 按 assistant message 的 latest `run_id` 映射 run-scoped usage rows，默认 `每轮` 展示 `Tokens / 输入 / 输出 / 总计`，可在弹层切换 `关闭`、`总览`、`每轮`、`调试`，且不渲染 provider/raw_usage/step_name 等敏感字段 | per-message usage screenshot 待人工确认 | `/token_usage` rows grouped by `run_id` | `task-detail-token-usage.ts`, `task-message-token-usage.tsx`, `task-detail-loader.ts`, `task-detail.test.tsx` | 待验收 |
 | TD-TOKEN-003 | active token | running 时可显示 pending/active usage | Coze running 时不显示误导性 0 | streaming token screenshot | include_active or event metadata | token loader | 差异待确认 |
 | TD-MEM-001 | 记忆入口 | DeerFlow 运行时记忆/设置可见 | Coze `任务记忆` panel 在详情页可用 | memory panel screenshot | list memories response | memory section/tests | 待验收 |
 | TD-MEM-002 | 记忆管理 | 搜索/编辑/删除/恢复/导入导出 | Coze 管理能力可用且不泄露 raw metadata | CRUD screenshots | memory API request/response | memory tests | 待验收 |
@@ -347,8 +347,10 @@ Coze 目标页可见能力：
   `title/thread_id/exported_at/messages(type/id/content)`，默认过滤思考、
   tool 消息、上传文件内部标记，不写入 Coze 自有 `schema`、`token_usage`
   或任务状态字段。真实浏览器下载样例仍待人工确认。
-- `TD-TOKEN-002`: DeerFlow 有 assistant turn per-token 摘要，Coze 当前主要是
-  header aggregate，需要补 per-message/per-turn 展示或明确折叠入口。
+- `TD-TOKEN-002`: 已按 DeerFlow 补前端代码和单测：顶部 Token 弹层提供
+  `关闭`、`总览`、`每轮`、`调试` 显示方式，默认 `每轮`；assistant turn
+  根据最新 `run_id` 展示 `Tokens / 输入 / 输出 / 总计` 汇总，敏感的
+  provider/raw_usage/step_name 不进 UI。真实浏览器截图仍待人工确认。
 - `TD-COMP-006`: DeerFlow composer 有文件上传入口；Coze 目标页本轮只看到
   `@` 和链接图标，需要单独验证附件上传是否存在和是否等价。
 - `TD-DOC-*`: 文档生成、登记、预览、下载、安全 fallback 已补 case，但本轮
@@ -385,8 +387,8 @@ Coze 目标页可见能力：
 - `TD-MSG-005` 已补代码与单测：inline `思考` 折叠块保留，正文隐藏
   `<think>` 原始标签，`message.completed` 流程行只显示安全摘要；下一步补
   真实 reasoning 样本浏览器验收。
-- `TD-TOKEN-002` 每轮/每消息 token 显示是 DeerFlow 可见能力，当前 Coze
-  需要继续对齐。
+- `TD-TOKEN-002` 每轮/每消息 token 显示已代码完成并通过详情页单测；
+  待用户人工浏览器确认后再改为 `已完成`。
 - `TD-DOC-*` 文档生成和预览已经纳入 P0 验收矩阵，后续必须按文档生成
   标准提示词做专项对比。
 - Runtime Doctor 是 Coze 运维增强，不作为 DeerFlow 视觉主线阻塞项；若影响

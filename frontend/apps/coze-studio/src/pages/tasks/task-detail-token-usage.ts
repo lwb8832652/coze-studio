@@ -18,6 +18,9 @@ import type { workbenchTask } from '@coze-studio/api-schema';
 
 type TaskThreadTokenUsageAggregate =
   workbenchTask.TaskThreadTokenUsageAggregate;
+type TaskThreadTokenUsage = workbenchTask.TaskThreadTokenUsage;
+
+export type TaskTokenUsageViewMode = 'off' | 'summary' | 'per_turn' | 'debug';
 
 export interface TaskDetailTokenUsage {
   inputTokens: number;
@@ -31,6 +34,19 @@ export interface TaskDetailTokenUsage {
   middlewareTokens: number;
   toolTokens: number;
 }
+
+const emptyTaskDetailTokenUsage = (): TaskDetailTokenUsage => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  costMicros: 0,
+  currency: '',
+  callCount: 0,
+  leadAgentTokens: 0,
+  subagentTokens: 0,
+  middlewareTokens: 0,
+  toolTokens: 0,
+});
 
 export const mapTaskThreadTokenUsageAggregate = (
   aggregate?: TaskThreadTokenUsageAggregate,
@@ -51,4 +67,46 @@ export const mapTaskThreadTokenUsageAggregate = (
     middlewareTokens: aggregate.middleware_tokens,
     toolTokens: aggregate.tool_tokens,
   };
+};
+
+export const mapTaskThreadTokenUsageRowsByRunID = (
+  rows?: TaskThreadTokenUsage[],
+): Record<string, TaskDetailTokenUsage> => {
+  const usageByRunID: Record<string, TaskDetailTokenUsage> = {};
+
+  for (const row of rows ?? []) {
+    const runID = row.run_id?.trim();
+
+    if (!runID || row.total_tokens <= 0) {
+      continue;
+    }
+
+    const aggregate = usageByRunID[runID] ?? emptyTaskDetailTokenUsage();
+    aggregate.inputTokens += row.input_tokens;
+    aggregate.outputTokens += row.output_tokens;
+    aggregate.totalTokens += row.total_tokens;
+    aggregate.costMicros += row.cost_micros;
+    aggregate.callCount += 1;
+
+    switch (row.source) {
+      case 'lead_agent':
+        aggregate.leadAgentTokens += row.total_tokens;
+        break;
+      case 'subagent':
+        aggregate.subagentTokens += row.total_tokens;
+        break;
+      case 'middleware':
+        aggregate.middlewareTokens += row.total_tokens;
+        break;
+      case 'tool':
+        aggregate.toolTokens += row.total_tokens;
+        break;
+      default:
+        break;
+    }
+
+    usageByRunID[runID] = aggregate;
+  }
+
+  return usageByRunID;
 };

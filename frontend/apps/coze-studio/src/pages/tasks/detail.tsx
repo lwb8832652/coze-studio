@@ -15,6 +15,7 @@
  */
 
 import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
@@ -26,8 +27,12 @@ import {
   TaskRunActionBar,
   type TaskRunActionLoading,
 } from './task-run-action-bar';
-import { TaskMarkdownContent } from './task-markdown-content';
-import { TaskInlineReasoning } from './task-inline-reasoning';
+import { TaskResultSection } from './task-result-section';
+import {
+  getLatestAssistantRunID,
+  loadTaskTokenUsageViewMode,
+  saveTaskTokenUsageViewMode,
+} from './task-message-token-usage';
 import { TaskHumanInterruptCard } from './task-human-interrupt-card';
 import {
   getPendingHumanInteraction,
@@ -38,24 +43,24 @@ import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type LoadedTaskDetailSource,
   type TaskDetailSource,
+  type TaskDetailTokenUsage,
   type TaskDetailSubagentRun,
+  type TaskTokenUsageViewMode,
 } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
 import {
   formatUpdatedTime,
-  getLatestAnswerEventReasoning,
-  getLatestAnswerEventMessage,
   getTaskExecutionType,
   getTaskInputText,
   parseTaskResultPayload,
-  type TaskResultPayload,
   isTaskTerminalStatus,
 } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type HumanInteractionResponse = workbenchTask.HumanInteractionResponse;
+type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 
 const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
   threadId ? 'thread' : 'auto';
@@ -200,96 +205,12 @@ const TaskEventsSection = ({
   );
 };
 
-const TaskAnswer = ({
-  task,
-  result,
-  reasoning,
-  streamingMessage,
-}: {
-  task: ChatTask;
-  result: TaskResultPayload;
-  reasoning?: string;
-  streamingMessage?: string;
-}) => (
-  <article className="coze-prototype-answer" data-result-type="answer">
-    <TaskInlineReasoning content={reasoning} />
-    <TaskMarkdownContent
-      value={result.message || streamingMessage || task.error || '结果生成中'}
-    />
-    {result.retrievalSources.length ? (
-      <div className="coze-prototype-result-sources">
-        {result.retrievalSources.map(source => (
-          <span key={source}>{source}</span>
-        ))}
-      </div>
-    ) : null}
-  </article>
-);
-
-const TaskAgentResult = ({
-  task,
-  result,
-}: {
-  task: ChatTask;
-  result: TaskResultPayload;
-}) => (
-  <article
-    className="coze-prototype-agent-result"
-    data-result-type="agent_trace"
-  >
-    <h2>Agent 最终结果</h2>
-    <TaskMarkdownContent value={result.message || task.error || '结果生成中'} />
-  </article>
-);
-
-const TaskReport = ({
-  task,
-  result,
-}: {
-  task: ChatTask;
-  result: TaskResultPayload;
-}) => (
-  <article className="coze-prototype-report">
-    <h2>{task.title}报告</h2>
-    <TaskMarkdownContent value={result.message || task.error || '结果生成中'} />
-
-    <h3>一、任务输入</h3>
-    <p>{getTaskInputText(task.input) || task.title}</p>
-  </article>
-);
-
-const TaskResultSection = ({
-  task,
-  events,
-}: {
-  task: ChatTask;
-  events: TaskEvent[];
-}) => {
-  const result = parseTaskResultPayload(task.result);
-
-  if (result.resultType === 'report') {
-    return <TaskReport task={task} result={result} />;
-  }
-
-  if (result.resultType === 'agent_trace') {
-    return <TaskAgentResult task={task} result={result} />;
-  }
-
-  return (
-    <TaskAnswer
-      task={task}
-      result={result}
-      reasoning={getLatestAnswerEventReasoning(events) || result.reasoning}
-      streamingMessage={getLatestAnswerEventMessage(events)}
-    />
-  );
-};
-
 const TaskTranscript = ({
   events,
   humanInteractionError,
   humanInteractionLoading,
   latestTaskRunID,
+  messages,
   pendingHumanInteraction,
   retryingSubagentRunId,
   subagentRetryError,
@@ -298,6 +219,8 @@ const TaskTranscript = ({
   taskDetailSource,
   taskRunActionError,
   taskRunActionLoading,
+  tokenUsageByRunID,
+  tokenUsageViewMode,
   onCancelTaskRun,
   onHumanInteractionSubmit,
   onRetrySubagentRun,
@@ -307,6 +230,7 @@ const TaskTranscript = ({
   humanInteractionError?: string;
   humanInteractionLoading: boolean;
   latestTaskRunID: string;
+  messages: TaskThreadMessage[];
   pendingHumanInteraction?: PendingHumanInteraction;
   retryingSubagentRunId?: string;
   subagentRetryError?: string;
@@ -315,6 +239,8 @@ const TaskTranscript = ({
   taskDetailSource: LoadedTaskDetailSource;
   taskRunActionError?: string;
   taskRunActionLoading: TaskRunActionLoading;
+  tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>;
+  tokenUsageViewMode: TaskTokenUsageViewMode;
   onCancelTaskRun: (runId: string) => void | Promise<void>;
   onHumanInteractionSubmit: (
     response: HumanInteractionResponse,
@@ -354,7 +280,12 @@ const TaskTranscript = ({
         onSubmit={onHumanInteractionSubmit}
       />
     ) : null}
-    <TaskResultSection task={task} events={events} />
+    <TaskResultSection
+      task={task}
+      events={events}
+      tokenUsage={tokenUsageByRunID?.[getLatestAssistantRunID(messages)]}
+      tokenUsageViewMode={tokenUsageViewMode}
+    />
   </section>
 );
 
@@ -377,10 +308,18 @@ const TaskDetailPage = () => {
     subagentRuns,
     task,
     tokenUsage,
+    tokenUsageByRunID,
   } = useTaskDetailData({
     taskDetailId,
     taskDetailSource,
   });
+  const [tokenUsageViewMode, setTokenUsageViewMode] =
+    useState<TaskTokenUsageViewMode>(loadTaskTokenUsageViewMode);
+
+  useEffect(() => {
+    saveTaskTokenUsageViewMode(tokenUsageViewMode);
+  }, [tokenUsageViewMode]);
+
   const activeTaskDetailSource = loadedTaskDetailSource;
   const activeTaskDetailId =
     activeTaskDetailSource === 'thread'
@@ -427,12 +366,14 @@ const TaskDetailPage = () => {
           memoryReadOnly={memoryReadOnly}
           messages={messages}
           onArtifactsChanged={refreshArtifacts}
+          onTokenUsageViewModeChange={setTokenUsageViewMode}
           spaceId={space_id}
           task={task}
           threadId={
             activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined
           }
           tokenUsage={tokenUsage}
+          tokenUsageViewMode={tokenUsageViewMode}
         />
       ) : null}
       <section className="coze-prototype-detail-inner">
@@ -453,6 +394,7 @@ const TaskDetailPage = () => {
               humanInteractionError={humanInteractionError}
               humanInteractionLoading={humanInteractionLoading}
               latestTaskRunID={latestTaskRunID}
+              messages={messages}
               pendingHumanInteraction={pendingHumanInteraction}
               retryingSubagentRunId={retryingSubagentRunId}
               subagentRetryError={subagentRetryError}
@@ -461,6 +403,8 @@ const TaskDetailPage = () => {
               taskDetailSource={activeTaskDetailSource}
               taskRunActionError={taskRunActionError}
               taskRunActionLoading={taskRunActionLoading}
+              tokenUsageByRunID={tokenUsageByRunID}
+              tokenUsageViewMode={tokenUsageViewMode}
               onCancelTaskRun={handleCancelTaskRun}
               onHumanInteractionSubmit={handleHumanInteractionSubmit}
               onRetrySubagentRun={handleRetrySubagentRun}

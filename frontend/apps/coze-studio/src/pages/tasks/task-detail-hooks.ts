@@ -80,6 +80,9 @@ export const useTaskDetailData = ({
   const [latestTaskRunID, setLatestTaskRunID] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
+  const [tokenUsageByRunID, setTokenUsageByRunID] = useState<
+    Record<string, TaskDetailTokenUsage>
+  >({});
   const [loadedTaskDetailSource, setLoadedTaskDetailSource] =
     useState<LoadedTaskDetailSource>(getInitialLoadedSource(taskDetailSource));
   const [loadedThreadId, setLoadedThreadId] = useState('');
@@ -96,6 +99,7 @@ export const useTaskDetailData = ({
     setLatestTaskRunID(detail.latestTaskRunID ?? '');
     setSubagentRuns(detail.subagentRuns ?? []);
     setTokenUsage(detail.tokenUsage);
+    setTokenUsageByRunID(detail.tokenUsageByRunID ?? {});
     if (shouldPollTaskDetail(detail)) {
       setPollingVersion(version => version + 1);
     }
@@ -201,6 +205,7 @@ export const useTaskDetailData = ({
     subagentRuns,
     task,
     tokenUsage,
+    tokenUsageByRunID,
   };
 };
 
