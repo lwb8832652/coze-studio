@@ -459,6 +459,7 @@ func Register(r *server.Hertz) {
 			_skills0.PUT("/:id", append(_updateskillMw(), coze.UpdateSkill)...)
 			_skills0.DELETE("/:skill_id", coze.DeleteSkill)
 			_skills0.POST("/import", append(_importskillMw(), coze.ImportSkill)...)
+			_skills0.POST("/install", coze.InstallSkillFromArtifact)
 			_workbench.GET("/mcp_tools", coze.ListMCPToolServers)
 			_workbench.POST("/mcp_tools", coze.UpsertMCPToolServer)
 			_workbench.GET("/mcp_tools/registry_entries", coze.ListMCPToolRegistryEntries)

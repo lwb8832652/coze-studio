@@ -39,6 +39,7 @@ const (
 type ArtifactAccessRequest struct {
 	ThreadID   int64
 	ArtifactID int64
+	SpaceID    int64
 	ViewerID   int64
 	Operation  ArtifactAccessOperation
 }
@@ -72,11 +73,14 @@ func (a *ThreadOwnerArtifactAuthorizer) AuthorizeArtifactAccess(
 	if err != nil {
 		return err
 	}
-	if thread == nil || thread.CreatorID != req.ViewerID {
+	if thread == nil {
 		return ErrArtifactAccessDenied
 	}
+	if thread.CreatorID == req.ViewerID {
+		return nil
+	}
 
-	return nil
+	return ErrArtifactAccessDenied
 }
 
 func (s *ApplicationService) authorizeArtifactAccess(

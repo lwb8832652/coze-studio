@@ -19,21 +19,24 @@ import {
   IconCozDocument,
   IconCozDownload,
   IconCozEye,
+  IconCozPlugin,
   IconCozTrashCan,
 } from '@coze-arch/coze-design/icons';
 import { Button, Popconfirm, Tag } from '@coze-arch/coze-design';
 
 import {
+  artifactDisplayPath,
   artifactFileName,
   artifactScanStatus,
   canPreviewArtifact,
   formatArtifactSize,
+  isSkillArtifact,
   scanStatusColor,
 } from './task-artifacts-helpers';
 import type { ArtifactScanReviewDecision } from './service';
 
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
-export type ArtifactActionMode = 'preview' | 'download';
+export type ArtifactActionMode = 'preview' | 'download' | 'install_skill';
 
 interface ArtifactReviewActionButtonProps {
   activeAction: string;
@@ -147,6 +150,8 @@ export const TaskArtifactListItem = ({
   const actionLocked = Boolean(activeAction);
   const previewable = canPreviewArtifact(artifact);
   const scanStatus = artifactScanStatus(artifact);
+  const displayPath = artifactDisplayPath(artifact);
+  const skillArtifact = isSkillArtifact(artifact);
 
   return (
     <div
@@ -173,9 +178,9 @@ export const TaskArtifactListItem = ({
             <span>{formatArtifactSize(artifact.size_bytes)}</span>
             <span>{artifact.content_type || 'application/octet-stream'}</span>
           </div>
-          <div className="coze-prototype-artifact-path">
-            {artifact.virtual_path}
-          </div>
+          {displayPath ? (
+            <div className="coze-prototype-artifact-path">{displayPath}</div>
+          ) : null}
         </div>
       </div>
       <div className="coze-prototype-artifact-actions">
@@ -201,6 +206,22 @@ export const TaskArtifactListItem = ({
           scanStatus={scanStatus}
           onReviewArtifact={onReviewArtifact}
         />
+        {skillArtifact ? (
+          <Button
+            aria-label={`安装技能 ${artifactName}`}
+            disabled={
+              actionLocked &&
+              activeAction !== `install_skill:${artifact.artifact_id}`
+            }
+            icon={<IconCozPlugin />}
+            loading={activeAction === `install_skill:${artifact.artifact_id}`}
+            size="small"
+            theme="borderless"
+            onClick={() => void onArtifactAction(artifact, 'install_skill')}
+          >
+            安装
+          </Button>
+        ) : null}
         <Button
           aria-label={`下载 ${artifactName}`}
           disabled={

@@ -41,6 +41,10 @@ func NewService(c *Components) SkillService {
 }
 
 func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error) {
+	return s.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, entity.TypeDeerSkill)
+}
+
+func (s *skillService) ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
 	}
@@ -48,9 +52,12 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 		return nil, err
 	}
 
-	decl, err := ParseDeclaration(fileName, content)
+	decl, err := ParseDeclarationWithDefaultType(fileName, content, defaultType)
 	if err != nil {
 		return nil, InvalidArgumentErrorf("%v", err)
+	}
+	if err := s.rejectExistingInstalledCustomSkill(ctx, spaceID, decl); err != nil {
+		return nil, err
 	}
 
 	id, err := s.components.IDGen.GenID(ctx)
@@ -77,6 +84,33 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 	}
 
 	return skill, nil
+}
+
+func (s *skillService) rejectExistingInstalledCustomSkill(ctx context.Context, spaceID int64, decl *Declaration) error {
+	if decl == nil {
+		return nil
+	}
+	typ, err := declarationTypeToEntity(decl.Type)
+	if err != nil {
+		return err
+	}
+	if typ != entity.TypeCustomSkill {
+		return nil
+	}
+
+	items, err := s.components.Repo.List(ctx, spaceID, &typ, nil)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item == nil || item.DeletedAt != 0 || item.Type != typ {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.Name), strings.TrimSpace(decl.Name)) {
+			return InvalidArgumentErrorf("skill %q already exists", decl.Name)
+		}
+	}
+	return nil
 }
 
 func (s *skillService) Create(ctx context.Context, skill *entity.Skill) (*entity.Skill, error) {

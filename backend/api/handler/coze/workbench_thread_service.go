@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +47,12 @@ const (
 	minRunEventStreamTimeoutMs      = int64(1)
 	maxRunEventStreamTimeoutMs      = int64(60000)
 	maxSafeRunEventPayloadStringLen = 128
+	maxSafeRunEventReasoningLen     = 2048
+	maxSafeRunEventArgumentsJSONLen = 1024 * 1024
+	maxSafeRunEventToolCalls        = 8
 )
+
+var unsafeRunEventDisplayPattern = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|provider_raw|object[_-]?key|checkpoint|https?://|file://|s3://|oss://|cos://|minio://)`)
 
 type taskThreadRunEventStreamWriter interface {
 	WriteEvent(id, eventType string, data []byte) error
@@ -717,6 +723,7 @@ func ListTaskThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 		ThreadID:    req.ThreadID,
 		RunID:       runID,
 		DeletedOnly: req.DeletedOnly,
+		SpaceID:     req.SpaceID,
 		ViewerID:    workbenchViewerIDFromCtx(ctx),
 		Page:        req.Page,
 		PageSize:    req.PageSize,
@@ -759,6 +766,7 @@ func ListTaskThreadArtifactScanJobs(ctx context.Context, c *app.RequestContext) 
 			ThreadID:   req.ThreadID,
 			RunID:      runID,
 			ArtifactID: artifactID,
+			SpaceID:    req.SpaceID,
 			Status:     req.Status,
 			Scanner:    req.Scanner,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
@@ -795,6 +803,7 @@ func RetryTaskThreadArtifactScanJob(ctx context.Context, c *app.RequestContext) 
 		&appagentthread.RetryArtifactScanJobRequest{
 			ThreadID: req.ThreadID,
 			JobID:    req.JobID,
+			SpaceID:  req.SpaceID,
 			ViewerID: workbenchViewerIDFromCtx(ctx),
 		},
 	)
@@ -827,6 +836,7 @@ func ReviewTaskThreadArtifactScan(ctx context.Context, c *app.RequestContext) {
 		&appagentthread.ReviewArtifactScanRequest{
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 			Decision:   req.Decision,
 			Reason:     req.Reason,
@@ -878,6 +888,7 @@ func GetTaskThreadArtifactContent(ctx context.Context, c *app.RequestContext) {
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
 			Mode:       mode,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 		},
 	)
@@ -917,6 +928,7 @@ func GetTaskThreadArtifactSignedURL(ctx context.Context, c *app.RequestContext) 
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
 			Mode:       mode,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 			TTLSeconds: req.TTLSeconds,
 		},
@@ -957,6 +969,7 @@ func DeleteTaskThreadArtifact(ctx context.Context, c *app.RequestContext) {
 		&appagentthread.DeleteArtifactRequest{
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 		},
 	)
@@ -989,6 +1002,7 @@ func RestoreTaskThreadArtifact(ctx context.Context, c *app.RequestContext) {
 		&appagentthread.RestoreArtifactRequest{
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 		},
 	)
@@ -1594,6 +1608,11 @@ func taskThreadRunEventPayloadToAPI(eventType, payload string) string {
 		copySafeRunEventBool(rawPayload, safePayload, "arguments_present")
 		copySafeRunEventBool(rawPayload, safePayload, "result_present")
 
+		if eventType == "message.completed" {
+			copySafeRunEventReasoningString(rawPayload, safePayload, "reasoning_content")
+			copySafeRunEventMessageToolCalls(rawPayload, safePayload)
+		}
+
 		if eventType == "tool.completed" && safePayload["result_present"] == nil && hasSafeRunEventString(rawPayload, "content") {
 			safePayload["result_present"] = true
 		}
@@ -1626,10 +1645,170 @@ func copySafeRunEventString(source, target map[string]any, key string) {
 	}
 }
 
+func copySafeRunEventDisplayString(source, target map[string]any, key string) {
+	if value, ok := safeRunEventDisplayString(source[key]); ok {
+		target[key] = value
+	}
+}
+
+func copySafeRunEventReasoningString(source, target map[string]any, key string) {
+	if value, ok := safeRunEventDisplayStringWithLimit(source[key], maxSafeRunEventReasoningLen); ok {
+		target[key] = value
+	}
+}
+
 func copySafeRunEventBool(source, target map[string]any, key string) {
 	if value, ok := source[key].(bool); ok {
 		target[key] = value
 	}
+}
+
+func copySafeRunEventMessageToolCalls(source, target map[string]any) {
+	rawToolCalls, ok := source["tool_calls"].([]any)
+	if !ok || len(rawToolCalls) == 0 {
+		return
+	}
+
+	safeToolCalls := make([]map[string]any, 0, min(len(rawToolCalls), maxSafeRunEventToolCalls))
+	for _, rawToolCall := range rawToolCalls {
+		if len(safeToolCalls) >= maxSafeRunEventToolCalls {
+			break
+		}
+
+		toolCall, ok := rawToolCall.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		functionCall, _ := toolCall["function"].(map[string]any)
+		toolName, ok := safeRunEventToolName(firstRunEventValue(toolCall["name"], functionCall["name"]))
+		if !ok {
+			continue
+		}
+
+		safeFunctionCall := map[string]any{
+			"name": toolName,
+		}
+		if arguments := safeRunEventToolArguments(toolName, toolCall["args"], toolCall["arguments"], functionCall["arguments"]); len(arguments) > 0 {
+			if encodedArguments, err := sonic.MarshalString(arguments); err == nil {
+				safeFunctionCall["arguments"] = encodedArguments
+			}
+		}
+
+		safeToolCall := map[string]any{
+			"function": safeFunctionCall,
+		}
+		if id, ok := safeRunEventDisplayString(toolCall["id"]); ok {
+			safeToolCall["id"] = id
+		}
+		if callType, ok := safeRunEventDisplayString(toolCall["type"]); ok {
+			safeToolCall["type"] = callType
+		}
+		safeToolCalls = append(safeToolCalls, safeToolCall)
+	}
+
+	if len(safeToolCalls) > 0 {
+		target["tool_calls"] = safeToolCalls
+	}
+}
+
+func safeRunEventToolArguments(toolName string, values ...any) map[string]any {
+	for _, value := range values {
+		arguments, ok := runEventToolArgumentsObject(value)
+		if !ok {
+			continue
+		}
+
+		safeArguments := map[string]any{}
+		if toolName == "skill" {
+			if skill, ok := safeRunEventDisplayString(arguments["skill"]); ok {
+				safeArguments["skill"] = skill
+			}
+			if skillName, ok := safeRunEventDisplayString(arguments["skill_name"]); ok {
+				safeArguments["skill_name"] = skillName
+			}
+		}
+
+		if description, ok := safeRunEventDisplayString(arguments["description"]); ok {
+			safeArguments["description"] = description
+		}
+
+		for _, key := range []string{"path", "file_path", "filepath", "virtual_path", "output_path"} {
+			if path, ok := safeRunEventVirtualPath(arguments[key]); ok {
+				safeArguments[key] = path
+				break
+			}
+		}
+		if _, ok := safeArguments["path"]; !ok {
+			if path, ok := safeRunEventFirstVirtualPath(arguments["filepaths"]); ok {
+				safeArguments["path"] = path
+			}
+		}
+
+		if len(safeArguments) > 0 {
+			return safeArguments
+		}
+	}
+
+	return nil
+}
+
+func runEventToolArgumentsObject(value any) (map[string]any, bool) {
+	if value == nil {
+		return nil, false
+	}
+
+	if arguments, ok := value.(map[string]any); ok {
+		return arguments, true
+	}
+
+	text, ok := safeRunEventArgumentsJSONString(value)
+	if !ok {
+		return nil, false
+	}
+
+	var arguments map[string]any
+	if err := sonic.UnmarshalString(text, &arguments); err != nil {
+		return nil, false
+	}
+
+	return arguments, true
+}
+
+func safeRunEventArgumentsJSONString(value any) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	text = strings.Map(func(item rune) rune {
+		if item < 0x20 || item == 0x7f {
+			return -1
+		}
+
+		return item
+	}, text)
+	if text == "" {
+		return "", false
+	}
+	if len([]rune(text)) > maxSafeRunEventArgumentsJSONLen {
+		return "", false
+	}
+
+	return text, true
+}
+
+func firstRunEventValue(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+
+	return nil
 }
 
 func hasSafeRunEventString(source map[string]any, key string) bool {
@@ -1639,6 +1818,10 @@ func hasSafeRunEventString(source map[string]any, key string) bool {
 }
 
 func safeRunEventString(value any) (string, bool) {
+	return safeRunEventStringWithLimit(value, maxSafeRunEventPayloadStringLen)
+}
+
+func safeRunEventStringWithLimit(value any, limit int) (string, bool) {
 	text, ok := value.(string)
 	if !ok {
 		return "", false
@@ -1658,11 +1841,81 @@ func safeRunEventString(value any) (string, bool) {
 		return "", false
 	}
 	runes := []rune(text)
-	if len(runes) > maxSafeRunEventPayloadStringLen {
-		text = string(runes[:maxSafeRunEventPayloadStringLen])
+	if len(runes) > limit {
+		text = string(runes[:limit])
 	}
 
 	return text, true
+}
+
+func safeRunEventDisplayString(value any) (string, bool) {
+	return safeRunEventDisplayStringWithLimit(value, maxSafeRunEventPayloadStringLen)
+}
+
+func safeRunEventDisplayStringWithLimit(value any, limit int) (string, bool) {
+	text, ok := safeRunEventStringWithLimit(value, limit)
+	if !ok {
+		return "", false
+	}
+	if unsafeRunEventDisplayPattern.MatchString(text) {
+		return "", false
+	}
+
+	return text, true
+}
+
+func safeRunEventFirstVirtualPath(value any) (string, bool) {
+	values, ok := value.([]any)
+	if !ok {
+		return "", false
+	}
+	for _, value := range values {
+		if path, ok := safeRunEventVirtualPath(value); ok {
+			return path, true
+		}
+	}
+
+	return "", false
+}
+
+func safeRunEventVirtualPath(value any) (string, bool) {
+	text, ok := safeRunEventDisplayString(value)
+	if !ok {
+		return "", false
+	}
+	if !strings.HasPrefix(text, "/mnt/user-data/workspace/") && !strings.HasPrefix(text, "/mnt/user-data/outputs/") {
+		return "", false
+	}
+
+	return text, true
+}
+
+func safeRunEventToolName(value any) (string, bool) {
+	text, ok := safeRunEventDisplayString(value)
+	if !ok || len(text) > 64 {
+		return "", false
+	}
+	for index, char := range text {
+		if index == 0 {
+			if !isSafeRunEventToolNameFirstChar(char) {
+				return "", false
+			}
+			continue
+		}
+		if !isSafeRunEventToolNameChar(char) {
+			return "", false
+		}
+	}
+
+	return text, true
+}
+
+func isSafeRunEventToolNameFirstChar(char rune) bool {
+	return char == '_' || (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z')
+}
+
+func isSafeRunEventToolNameChar(char rune) bool {
+	return isSafeRunEventToolNameFirstChar(char) || (char >= '0' && char <= '9')
 }
 
 func taskThreadTokenUsageToAPI(usage *appagentthread.TokenUsageSummary) *threadapi.TaskThreadTokenUsage {

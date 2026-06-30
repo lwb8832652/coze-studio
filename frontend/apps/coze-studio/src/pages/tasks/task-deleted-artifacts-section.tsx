@@ -87,10 +87,12 @@ const DeletedArtifactListItem = ({
 
 export const TaskDeletedArtifactsSection = ({
   onArtifactsChanged,
+  spaceId,
   threadId,
   visible,
 }: {
   onArtifactsChanged?: () => void | Promise<void>;
+  spaceId?: string;
   threadId: string;
   visible: boolean;
 }) => {
@@ -117,6 +119,7 @@ export const TaskDeletedArtifactsSection = ({
     try {
       const response = await listTaskThreadArtifacts({
         thread_id: threadId,
+        space_id: spaceId,
         deleted_only: true,
         page: 1,
         page_size: DELETED_ARTIFACT_PAGE_SIZE,
@@ -128,7 +131,7 @@ export const TaskDeletedArtifactsSection = ({
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [spaceId, threadId]);
 
   useEffect(() => {
     if (visible) {
@@ -145,6 +148,7 @@ export const TaskDeletedArtifactsSection = ({
     try {
       await restoreTaskThreadArtifact({
         artifact_id: artifact.artifact_id,
+        space_id: spaceId,
         thread_id: threadId,
       });
       await onArtifactsChanged?.();

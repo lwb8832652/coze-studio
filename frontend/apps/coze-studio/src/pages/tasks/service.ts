@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import {
+  workbench,
+  workbenchSkill,
+  workbenchTask,
+} from '@coze-studio/api-schema';
 
 export const listTasks = workbenchTask.ListTasks;
 export const getTask = workbenchTask.GetTask;
@@ -50,6 +54,7 @@ export const retryTask = workbenchTask.RetryTask;
 export const listTaskEvents = workbenchTask.ListTaskEvents;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
+export const installSkillFromArtifact = workbenchSkill.InstallSkillFromArtifact;
 export type TaskThreadMemory = workbenchTask.TaskThreadMemory;
 export type TaskThreadMemoryAuditEvent =
   workbenchTask.TaskThreadMemoryAuditEvent;
@@ -193,12 +198,14 @@ export const listTaskThreadArtifactScanJobs = async ({
   page_size: pageSize,
   run_id: runID,
   scanner,
+  space_id: spaceID,
   status,
   thread_id: threadID,
 }: {
   thread_id: string;
   run_id?: string;
   artifact_id?: string;
+  space_id?: string;
   status?: string;
   scanner?: string;
   page?: number;
@@ -216,6 +223,9 @@ export const listTaskThreadArtifactScanJobs = async ({
   }
   if (scanner) {
     params.set('scanner', scanner);
+  }
+  if (spaceID) {
+    params.set('space_id', spaceID);
   }
   if (page) {
     params.set('page', String(page));
@@ -252,15 +262,24 @@ export const listTaskThreadArtifactScanJobs = async ({
 
 export const retryTaskThreadArtifactScanJob = async ({
   job_id: jobID,
+  space_id: spaceID,
   thread_id: threadID,
 }: {
   thread_id: string;
   job_id: string;
+  space_id?: string;
 }): Promise<RetryTaskThreadArtifactScanJobResponse> => {
+  const params = new URLSearchParams();
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
+  const query = params.toString();
   const response = await fetch(
     `/api/workbench/task_threads/${encodeURIComponent(
       threadID,
-    )}/artifact_scan_jobs/${encodeURIComponent(jobID)}/retry`,
+    )}/artifact_scan_jobs/${encodeURIComponent(jobID)}/retry${
+      query ? `?${query}` : ''
+    }`,
     {
       headers: {
         'x-requested-with': 'XMLHttpRequest',
@@ -286,10 +305,12 @@ export const reviewTaskThreadArtifactScan = async ({
   artifact_id: artifactID,
   decision,
   reason,
+  space_id: spaceID,
   thread_id: threadID,
 }: {
   thread_id: string;
   artifact_id: string;
+  space_id?: string;
   decision: ArtifactScanReviewDecision;
   reason?: string;
 }): Promise<ReviewTaskThreadArtifactScanResponse> => {
@@ -297,10 +318,17 @@ export const reviewTaskThreadArtifactScan = async ({
     reason && reason.trim()
       ? { decision, reason: reason.trim() }
       : { decision };
+  const params = new URLSearchParams();
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
+  const query = params.toString();
   const response = await fetch(
     `/api/workbench/task_threads/${encodeURIComponent(
       threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}/scan_review`,
+    )}/artifacts/${encodeURIComponent(artifactID)}/scan_review${
+      query ? `?${query}` : ''
+    }`,
     {
       body: JSON.stringify(body),
       headers: {
@@ -327,14 +355,19 @@ export const reviewTaskThreadArtifactScan = async ({
 export const fetchTaskThreadArtifactContent = async ({
   artifact_id: artifactID,
   mode,
+  space_id: spaceID,
   thread_id: threadID,
 }: {
   thread_id: string;
   artifact_id: string;
+  space_id?: string;
   mode: 'preview' | 'download';
 }): Promise<TaskThreadArtifactContentResponse> => {
   const params = new URLSearchParams();
   params.set('mode', mode);
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
   const response = await fetch(
     `/api/workbench/task_threads/${encodeURIComponent(
       threadID,
@@ -361,16 +394,21 @@ export const fetchTaskThreadArtifactContent = async ({
 export const getTaskThreadArtifactSignedURL = async ({
   artifact_id: artifactID,
   mode,
+  space_id: spaceID,
   thread_id: threadID,
   ttl_seconds: ttlSeconds,
 }: {
   thread_id: string;
   artifact_id: string;
+  space_id?: string;
   mode: 'preview' | 'download';
   ttl_seconds?: number;
 }): Promise<TaskThreadArtifactSignedURLResponse> => {
   const params = new URLSearchParams();
   params.set('mode', mode);
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
   if (ttlSeconds) {
     params.set('ttl_seconds', String(ttlSeconds));
   }
@@ -403,15 +441,22 @@ export const getTaskThreadArtifactSignedURL = async ({
 
 export const deleteTaskThreadArtifact = async ({
   artifact_id: artifactID,
+  space_id: spaceID,
   thread_id: threadID,
 }: {
   thread_id: string;
   artifact_id: string;
+  space_id?: string;
 }) => {
+  const params = new URLSearchParams();
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
+  const query = params.toString();
   const response = await fetch(
     `/api/workbench/task_threads/${encodeURIComponent(
       threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}`,
+    )}/artifacts/${encodeURIComponent(artifactID)}${query ? `?${query}` : ''}`,
     {
       headers: {
         'x-requested-with': 'XMLHttpRequest',
@@ -437,15 +482,24 @@ export const deleteTaskThreadArtifact = async ({
 
 export const restoreTaskThreadArtifact = async ({
   artifact_id: artifactID,
+  space_id: spaceID,
   thread_id: threadID,
 }: {
   thread_id: string;
   artifact_id: string;
+  space_id?: string;
 }): Promise<RestoreTaskThreadArtifactResponse> => {
+  const params = new URLSearchParams();
+  if (spaceID) {
+    params.set('space_id', spaceID);
+  }
+  const query = params.toString();
   const response = await fetch(
     `/api/workbench/task_threads/${encodeURIComponent(
       threadID,
-    )}/artifacts/${encodeURIComponent(artifactID)}/restore`,
+    )}/artifacts/${encodeURIComponent(artifactID)}/restore${
+      query ? `?${query}` : ''
+    }`,
     {
       headers: {
         'x-requested-with': 'XMLHttpRequest',

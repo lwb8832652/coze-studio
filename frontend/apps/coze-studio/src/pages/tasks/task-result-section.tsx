@@ -27,12 +27,25 @@ import {
   getLatestAnswerEventMessage,
   getLatestAnswerEventReasoning,
   getTaskInputText,
+  isTaskTerminalStatus,
   parseTaskResultPayload,
   type TaskResultPayload,
 } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+
+export const TaskStreamingIndicator = () => (
+  <div
+    className="coze-prototype-answer-loading"
+    data-testid="task-answer-loading"
+    aria-label="任务执行中"
+  >
+    <span />
+    <span />
+    <span />
+  </div>
+);
 
 const TaskAnswer = ({
   task,
@@ -48,25 +61,29 @@ const TaskAnswer = ({
   streamingMessage?: string;
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageViewMode: TaskTokenUsageViewMode;
-}) => (
-  <article className="coze-prototype-answer" data-result-type="answer">
-    <TaskInlineReasoning content={reasoning} />
-    <TaskMarkdownContent
-      value={result.message || streamingMessage || task.error || '结果生成中'}
-    />
-    <TaskMessageTokenUsage
-      tokenUsage={tokenUsage}
-      viewMode={tokenUsageViewMode}
-    />
-    {result.retrievalSources.length ? (
-      <div className="coze-prototype-result-sources">
-        {result.retrievalSources.map(source => (
-          <span key={source}>{source}</span>
-        ))}
-      </div>
-    ) : null}
-  </article>
-);
+}) => {
+  const isRunning = !isTaskTerminalStatus(task.status);
+  const answerMessage = result.message || streamingMessage || task.error;
+
+  return (
+    <article className="coze-prototype-answer" data-result-type="answer">
+      <TaskInlineReasoning content={reasoning} />
+      {answerMessage ? <TaskMarkdownContent value={answerMessage} /> : null}
+      {isRunning ? <TaskStreamingIndicator /> : null}
+      <TaskMessageTokenUsage
+        tokenUsage={tokenUsage}
+        viewMode={tokenUsageViewMode}
+      />
+      {result.retrievalSources.length ? (
+        <div className="coze-prototype-result-sources">
+          {result.retrievalSources.map(source => (
+            <span key={source}>{source}</span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+};
 
 const TaskAgentResult = ({
   task,

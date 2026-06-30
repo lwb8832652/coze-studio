@@ -17,6 +17,8 @@
 package agentthread
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -72,6 +74,61 @@ func TestApplicationWriteOutputFileStoresObjectAndRegistersOutputFile(
 	)
 	require.NotContains(t, resp.Notice, "agent-runtime")
 	require.Contains(t, resp.Notice, "/mnt/user-data/outputs/reports/report.md")
+}
+
+func TestApplicationCreateSkillPackageWritesInstallableSkillArchive(
+	t *testing.T,
+) {
+	runtimeFiles := &recordingRuntimeFileService{}
+	objectStorage := &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	app := &ApplicationService{
+		RuntimeFileSVC:        runtimeFiles,
+		ArtifactObjectStorage: objectStorage,
+	}
+	run := &RunSummary{
+		RunID:     20,
+		ThreadID:  10,
+		SpaceID:   30,
+		CreatorID: 40,
+	}
+
+	resp, err := app.CreateSkillPackage(context.Background(), &CreateSkillPackageRequest{
+		Run:       run,
+		SkillName: "travel-planner",
+		SkillMD: `---
+name: travel-planner
+description: Build concise travel plans.
+---
+
+# Travel Planner
+
+Ask for dates before drafting.
+`,
+		Resources: []SkillPackageResource{
+			{
+				Path:    "references/checklist.md",
+				Content: "# Checklist\n- dates\n- budget\n",
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.File)
+	require.Equal(t, "/mnt/user-data/outputs/travel-planner.skill", resp.File.VirtualPath)
+	require.Equal(t, "travel-planner.skill", runtimeFiles.req.FileName)
+	require.Equal(t, "application/vnd.coze.skill+zip", runtimeFiles.req.ContentType)
+	require.Contains(t, resp.Notice, "/mnt/user-data/outputs/travel-planner.skill")
+	require.Contains(t, resp.Notice, "present_files")
+	archiveBytes := objectStorage.objects[objectStorage.key]
+	reader, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	require.NoError(t, err)
+	names := make([]string, 0, len(reader.File))
+	for _, file := range reader.File {
+		names = append(names, file.Name)
+	}
+	require.Contains(t, names, "travel-planner/SKILL.md")
+	require.Contains(t, names, "travel-planner/references/checklist.md")
 }
 
 func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent(
@@ -269,5 +326,11 @@ func TestDefaultADKToolProviderCanWireArtifactTools(t *testing.T) {
 		context.Background(),
 		set.StaticTools,
 		"present_files",
+	))
+	require.NotNil(t, requireADKInvokableTool(
+		t,
+		context.Background(),
+		set.StaticTools,
+		"create_skill_package",
 	))
 }

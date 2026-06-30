@@ -1,0 +1,14 @@
+{
+  "thread_id": "7656428939404902400",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7656428939404902400",
+  "result": "failed_no_artifact",
+  "event_tool_names": {
+    "TaskCreate": 2,
+    "TaskUpdate": 4
+  },
+  "observations": [
+    "Run completed successfully",
+    "No write_file/present_files/tool artifact events observed",
+    "UI output instructs user to copy Markdown manually; no generated artifact card visible"
+  ]
+}

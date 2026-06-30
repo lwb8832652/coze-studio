@@ -377,6 +377,43 @@ func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thr
 	return po.toEntity(), nil
 }
 
+func (r *threadRepository) UpdateThreadTitle(
+	ctx context.Context,
+	req UpdateThreadTitleRequest,
+) (*entity.Thread, bool, error) {
+	if req.ThreadID <= 0 {
+		return nil, false, fmt.Errorf("thread id is required")
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return nil, false, fmt.Errorf("thread title is required")
+	}
+	updatedAt := req.UpdatedAt
+	if updatedAt <= 0 {
+		updatedAt = time.Now().UnixMilli()
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&threadPO{}).
+		Where("id = ?", req.ThreadID).
+		Updates(map[string]any{
+			"title":      title,
+			"updated_at": updatedAt,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+
+	thread, err := r.GetThread(ctx, req.ThreadID)
+	if err != nil {
+		return nil, false, err
+	}
+	return thread, true, nil
+}
+
 func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	page := req.Page
 	if page <= 0 {

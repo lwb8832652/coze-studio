@@ -253,6 +253,27 @@ struct ListSkillToolCandidatesResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct InstallSkillFromArtifactRequest {
+    1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 artifact_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct InstallSkillFromArtifactData {
+    1: required bool success
+    2: required string skill_name
+    3: required string message
+    4: optional Skill skill
+}
+
+struct InstallSkillFromArtifactResponse {
+    1: optional InstallSkillFromArtifactData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 service WorkbenchSkillService {
     SkillResponse CreateSkill(1: UpsertSkillRequest request)(
         api.post="/api/workbench/skills",
@@ -264,6 +285,10 @@ service WorkbenchSkillService {
     )
     SkillResponse ImportSkill(1: ImportSkillRequest request)(
         api.post="/api/workbench/skills/import",
+        api.category="workbench"
+    )
+    InstallSkillFromArtifactResponse InstallSkillFromArtifact(1: InstallSkillFromArtifactRequest request)(
+        api.post="/api/workbench/skills/install",
         api.category="workbench"
     )
     ListSkillsResponse ListSkills(1: ListSkillsRequest request)(

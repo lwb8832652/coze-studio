@@ -210,7 +210,13 @@ func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.Impo
 	if err != nil {
 		return nil, err
 	}
-	skill, err := s.DomainSVC.ImportDeclaration(ctx, req.SpaceID, req.FileName, content)
+	skill, err := s.DomainSVC.ImportDeclarationWithDefaultType(
+		ctx,
+		req.SpaceID,
+		req.FileName,
+		content,
+		entity.TypeCustomSkill,
+	)
 	if err != nil {
 		return nil, err
 	}

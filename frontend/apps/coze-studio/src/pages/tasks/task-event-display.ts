@@ -14,10 +14,7 @@
  * limitations under the License.
  */
 
-import {
-  getSafeTaskToolDetail,
-  getSafeTaskToolName,
-} from './task-tool-event-safety';
+import { getTaskToolEventDisplay } from './task-event-tool-display';
 import type {
   TaskEventDisplay,
   TaskExecutionStatus,
@@ -74,6 +71,19 @@ const getNumber = (
   return typeof value === 'number' && Number.isFinite(value)
     ? value
     : undefined;
+};
+
+const getStringArray = (
+  payload: Record<string, unknown> | undefined,
+  key: string,
+) => {
+  const value = payload?.[key];
+
+  return Array.isArray(value)
+    ? value
+        .map(item => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    : [];
 };
 
 const getBoolean = (
@@ -148,66 +158,6 @@ interface EventDisplayContext {
   structured: boolean;
 }
 
-const getToolEventDisplay = ({
-  detail,
-  eventType,
-  parsed,
-  runtime,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
-  if (!eventType?.startsWith('tool.')) {
-    return undefined;
-  }
-
-  const toolName = getSafeTaskToolName(
-    getString(parsed, 'tool_name') ||
-      getString(parsed, 'step_name') ||
-      getString(parsed, 'step_id'),
-  );
-  const errorMessage = getString(parsed, 'error_message');
-  const argumentsPresent = getBoolean(parsed, 'arguments_present');
-  const resultPresent = getBoolean(parsed, 'result_present');
-  const baseDisplay = {
-    runtime: runtime ?? 'Agent',
-    structured: true,
-    kind: 'step' as const,
-  };
-
-  if (eventType === 'tool.started') {
-    return {
-      ...baseDisplay,
-      title: `调用工具 ${toolName}`,
-      detail: getSafeTaskToolDetail(
-        detail,
-        argumentsPresent ? '参数已准备' : '',
-      ),
-      status: 'running',
-    };
-  }
-
-  if (eventType === 'tool.completed') {
-    return {
-      ...baseDisplay,
-      title: `工具 ${toolName} 调用完成`,
-      detail: getSafeTaskToolDetail(detail, resultPresent ? '已返回结果' : ''),
-      status: 'completed',
-    };
-  }
-
-  if (eventType === 'tool.failed') {
-    return {
-      ...baseDisplay,
-      title: `工具 ${toolName} 调用失败`,
-      detail: getSafeTaskToolDetail(
-        detail ?? errorMessage,
-        '工具调用失败，详情已隐藏',
-      ),
-      status: 'failed',
-    };
-  }
-
-  return undefined;
-};
-
 const getPlanEventDisplay = ({
   eventType,
   parsed,
@@ -253,15 +203,28 @@ const getMessageEventDisplay = ({
   }
 
   const role = getString(parsed, 'role');
-  const messageTitle = role === 'assistant' ? '回答生成完成' : '消息生成完成';
+  const reasoning =
+    getString(parsed, 'reasoning_content') ?? getString(parsed, 'reasoning');
+
+  if (role === 'assistant' && reasoning) {
+    return {
+      title: title ?? '思考',
+      thought: reasoning,
+      status: 'completed',
+      runtime: runtime ?? 'Agent',
+      structured: true,
+      kind: 'thought',
+    };
+  }
 
   return {
-    title: title ?? messageTitle,
+    title: title ?? (role === 'assistant' ? '回答生成完成' : '消息生成完成'),
     detail: detail ?? (role === 'assistant' ? '已产生最终回答' : ''),
     status: 'completed',
     runtime: runtime ?? 'Agent',
     structured: true,
     kind: 'step',
+    visibleInFlow: false,
   };
 };
 
@@ -296,6 +259,36 @@ const getRunEventDisplay = ({
     ...display,
     detail: detail ?? errorMessage ?? (workerID ? `Worker: ${workerID}` : ''),
     runtime: runtime ?? 'Agent',
+    structured: true,
+    kind: 'step',
+    visibleInFlow: false,
+  };
+};
+
+const getSkillLoadedEventDisplay = ({
+  eventType,
+  parsed,
+}: EventDisplayContext): TaskEventDisplay | undefined => {
+  if (eventType !== 'skills.loaded') {
+    return undefined;
+  }
+
+  const skillNames = getStringArray(parsed, 'skill_names');
+  const singleSkillName = getString(parsed, 'skill_name');
+  const names = [...skillNames, singleSkillName].filter(Boolean);
+  const skillCount = getNumber(parsed, 'skill_count') ?? names.length;
+  const title =
+    names.length === 1
+      ? `可用技能 “${names[0]}”`
+      : skillCount > 0
+        ? `可用技能目录 ${skillCount} 个`
+        : '可用技能目录';
+
+  return {
+    title,
+    detail: names.length > 1 ? names.slice(0, 3).join('、') : undefined,
+    status: 'completed',
+    runtime: 'Agent',
     structured: true,
     kind: 'step',
   };
@@ -388,6 +381,28 @@ const getDatabaseEventDisplay = ({
   };
 };
 
+const getInternalLifecycleEventDisplay = ({
+  eventType,
+  runtime,
+}: EventDisplayContext): TaskEventDisplay | undefined => {
+  if (
+    !eventType?.startsWith('context.') &&
+    !eventType?.startsWith('memory.update_') &&
+    !eventType?.startsWith('guardrail.')
+  ) {
+    return undefined;
+  }
+
+  return {
+    title: '内部状态已更新',
+    status: 'completed',
+    runtime: runtime ?? 'Agent',
+    structured: true,
+    kind: 'event',
+    visibleInFlow: false,
+  };
+};
+
 const getStructuredEventDisplay = ({
   detail,
   eventType,
@@ -422,7 +437,8 @@ export const getTaskEventDisplay = (
   const parsed = parseJSONObject(payload);
   const title = getString(parsed, 'title');
   const detail = getString(parsed, 'detail');
-  const thought = getString(parsed, 'thought');
+  const thought =
+    getString(parsed, 'thought') ?? getString(parsed, 'reasoning_content');
   const runtime = normalizeExecutionType(getString(parsed, 'runtime'));
   const progress = getNumber(parsed, 'progress');
   const structured = Boolean(title || detail || thought || runtime || progress);
@@ -441,12 +457,14 @@ export const getTaskEventDisplay = (
   };
 
   return (
-    getToolEventDisplay(context) ??
+    getTaskToolEventDisplay(context) ??
     getPlanEventDisplay(context) ??
     getMessageEventDisplay(context) ??
     getRunEventDisplay(context) ??
+    getSkillLoadedEventDisplay(context) ??
     getStepEventDisplay(context) ??
     getDatabaseEventDisplay(context) ??
+    getInternalLifecycleEventDisplay(context) ??
     getStructuredEventDisplay(context) ?? {
       title: getTaskEventText(eventType, payload),
       status: 'completed',

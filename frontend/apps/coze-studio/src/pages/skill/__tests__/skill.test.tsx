@@ -17,15 +17,15 @@
 import type { ReactNode } from 'react';
 
 import { vi } from 'vitest';
-import { act, Simulate } from 'react-dom/test-utils';
+import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { workbenchSkill } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
+const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
-const mockCreateSkill = vi.hoisted(() => vi.fn());
 const mockDeleteSkill = vi.hoisted(() => vi.fn());
 const mockTestRunSkill = vi.hoisted(() => vi.fn());
 const mockUpdateSkill = vi.hoisted(() => vi.fn());
@@ -34,6 +34,7 @@ const mockListSkillVersions = vi.hoisted(() => vi.fn());
 const mockListSkillVersionResources = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
   useParams: mockUseParams,
 }));
 
@@ -145,6 +146,28 @@ vi.mock('@coze-arch/coze-design', () => ({
       </aside>
     ) : null,
   Spin: () => <span>加载中...</span>,
+  Switch: ({
+    'aria-label': ariaLabel,
+    checked,
+    disabled,
+    loading,
+    onChange,
+  }: {
+    'aria-label'?: string;
+    checked?: boolean;
+    disabled?: boolean;
+    loading?: boolean;
+    onChange?: (checked: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      aria-checked={checked}
+      disabled={disabled || loading}
+      role="switch"
+      onClick={() => onChange?.(!checked)}
+    />
+  ),
   TabPane: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   Tabs: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   TextArea: ({
@@ -179,7 +202,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after component mocks. */
 
 vi.mock('../service', () => ({
-  createSkill: mockCreateSkill,
+  createSkill: vi.fn(),
   deleteSkill: mockDeleteSkill,
   importSkill: vi.fn(),
   exportSkillVersion: vi.fn(),
@@ -205,7 +228,7 @@ const skill = {
   space_id: 'space-1',
   name: 'Ping Skill',
   description: '',
-  type: workbenchSkill.SkillType.Script,
+  type: workbenchSkill.SkillType.DeerSkill,
   version: '1.0.0',
   enabled: true,
   input_schema: '{}',
@@ -219,7 +242,7 @@ const skill = {
 describe('SkillPage', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
-    mockCreateSkill.mockReset();
+    mockNavigate.mockReset();
     mockDeleteSkill.mockReset();
     mockUpdateSkill.mockReset();
     mockListSkillToolCandidates.mockReset();
@@ -231,17 +254,6 @@ describe('SkillPage', () => {
     mockTestRunSkill.mockReset();
     mockUpdateSkill.mockResolvedValue({
       data: { ...skill, enabled: false },
-      code: 0,
-      msg: '',
-    });
-    mockCreateSkill.mockResolvedValue({
-      data: {
-        ...skill,
-        id: 'skill-created-1',
-        name: 'Market Scan',
-        description: 'Track competitor news',
-        type: workbenchSkill.SkillType.CustomSkill,
-      },
       code: 0,
       msg: '',
     });
@@ -267,7 +279,7 @@ describe('SkillPage', () => {
     });
   });
 
-  it('renders the redesigned skill configuration structure', async () => {
+  it('renders the DeerFlow-style skill settings structure', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -278,24 +290,23 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('技能配置');
-    expect(container.textContent).toContain('Aime 专属助理准备好');
-    expect(container.textContent).toContain('去聊天专属助理');
+    expect(container.textContent).toContain('技能');
+    expect(container.textContent).not.toContain('Aime 专属助理准备好');
+    expect(container.textContent).not.toContain('去聊天专属助理');
     expect(container.textContent).toContain(
-      '集中管理工作空间内的全部技能,支持发布、订阅、调用与版本管理。',
+      '管理 Agent Skill 配置和启用状态。',
     );
-    expect(container.textContent).toContain('查看文档');
-    expect(container.textContent).toContain('全部技能');
-    expect(container.textContent).toContain('自定义');
     expect(container.textContent).toContain('公共');
-    expect(container.textContent).toContain('内置');
-    expect(container.textContent).toContain('脚本');
-    expect(container.textContent).toContain('工作流');
-    expect(container.textContent).toContain('创建技能');
-    expect(
-      container.querySelector('input[aria-label="搜索技能"]'),
-    ).toBeTruthy();
-    expect(container.textContent).toContain('已发布');
+    expect(container.textContent).toContain('自定义');
+    expect(container.textContent).toContain('新建技能');
+    expect(container.textContent).not.toContain('全部技能');
+    expect(container.textContent).not.toContain('内置');
+    expect(container.textContent).not.toContain('脚本');
+    expect(container.textContent).not.toContain('工作流');
+    expect(container.querySelector('input[aria-label="搜索技能"]')).toBeNull();
+    expect(container.textContent).not.toContain('试运行');
+    expect(container.textContent).not.toContain('删除');
+    expect(container.querySelector('[role="switch"]')).toBeTruthy();
 
     act(() => {
       root?.unmount();
@@ -303,33 +314,10 @@ describe('SkillPage', () => {
     container.remove();
   });
 
-  it('creates a custom skill from the basic creation form', async () => {
+  it('opens the DeerFlow skill creator task entry', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
-
-    mockListSkills
-      .mockResolvedValueOnce({
-        data: { skills: [skill] },
-        code: 0,
-        msg: '',
-      })
-      .mockResolvedValueOnce({
-        data: {
-          skills: [
-            skill,
-            {
-              ...skill,
-              id: 'skill-created-1',
-              name: 'Market Scan',
-              description: 'Track competitor news',
-              type: workbenchSkill.SkillType.CustomSkill,
-            },
-          ],
-        },
-        code: 0,
-        msg: '',
-      });
 
     await act(async () => {
       root = createRoot(container);
@@ -338,7 +326,7 @@ describe('SkillPage', () => {
     });
 
     const createButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent === '创建技能',
+      button => button.textContent === '新建技能',
     ) as HTMLButtonElement;
 
     await act(async () => {
@@ -346,52 +334,9 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    const nameInputElement = container.querySelector(
-      'input[aria-label="新技能名称"]',
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/new?mode=skill',
     );
-    const descriptionInputElement = container.querySelector(
-      'textarea[aria-label="新技能描述"]',
-    );
-
-    expect(nameInputElement).toBeTruthy();
-    expect(descriptionInputElement).toBeTruthy();
-    const nameInput = nameInputElement as HTMLInputElement;
-    const descriptionInput = descriptionInputElement as HTMLTextAreaElement;
-
-    await act(async () => {
-      Simulate.change(nameInput, {
-        target: { value: 'Market Scan' },
-      } as unknown as Event);
-      Simulate.change(descriptionInput, {
-        target: { value: 'Track competitor news' },
-      } as unknown as Event);
-      await Promise.resolve();
-    });
-
-    const submitButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent === '保存技能',
-    ) as HTMLButtonElement;
-    expect(submitButton).toBeTruthy();
-    expect(submitButton.disabled).toBe(false);
-
-    await act(async () => {
-      submitButton.click();
-      await Promise.resolve();
-    });
-
-    expect(mockCreateSkill).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      name: 'Market Scan',
-      description: 'Track competitor news',
-      type: workbenchSkill.SkillType.CustomSkill,
-      version: '1.0.0',
-      enabled: true,
-      input_schema: '{}',
-      output_schema: '{}',
-      executor: '{}',
-      permissions: '{"network":false,"allowed_tools":[]}',
-    });
-    expect(container.textContent).toContain('Market Scan');
 
     act(() => {
       root?.unmount();
@@ -399,7 +344,7 @@ describe('SkillPage', () => {
     container.remove();
   });
 
-  it('filters skills by custom public bootstrap and legacy categories', () => {
+  it('filters visible settings skills by public and custom DeerFlow categories', () => {
     const customSkill = {
       ...skill,
       id: 'skill-custom',
@@ -418,13 +363,25 @@ describe('SkillPage', () => {
       name: 'Bootstrap Research',
       type: workbenchSkill.SkillType.DeerSkill,
     };
+    const deerSkill = {
+      ...skill,
+      id: 'skill-deer',
+      name: 'DeerFlow Builtin',
+      type: workbenchSkill.SkillType.DeerSkill,
+    };
     const workflowSkill = {
       ...skill,
       id: 'skill-workflow',
       name: 'Workflow Skill',
       type: workbenchSkill.SkillType.Workflow,
     };
-    const skills = [customSkill, publicSkill, bootstrapSkill, workflowSkill];
+    const skills = [
+      customSkill,
+      publicSkill,
+      bootstrapSkill,
+      deerSkill,
+      workflowSkill,
+    ];
 
     expect(
       getVisibleSkills(skills, '', 'custom' as SkillTypeFilter).map(
@@ -435,17 +392,72 @@ describe('SkillPage', () => {
       getVisibleSkills(skills, '', 'public' as SkillTypeFilter).map(
         item => item.id,
       ),
-    ).toEqual(['skill-public']);
-    expect(
-      getVisibleSkills(skills, '', 'bootstrap' as SkillTypeFilter).map(
-        item => item.id,
-      ),
-    ).toEqual(['skill-bootstrap']);
-    expect(
-      getVisibleSkills(skills, '', 'workflow' as SkillTypeFilter).map(
-        item => item.id,
-      ),
-    ).toEqual(['skill-workflow']);
+    ).toEqual(['skill-public', 'skill-bootstrap', 'skill-deer']);
+  });
+
+  it('renders DeerFlow-style loading and empty states', async () => {
+    const loadingContainer = document.createElement('div');
+    document.body.appendChild(loadingContainer);
+    let loadingRoot: Root | undefined;
+    mockListSkills.mockImplementationOnce(() => new Promise(() => undefined));
+
+    await act(async () => {
+      loadingRoot = createRoot(loadingContainer);
+      loadingRoot.render(<SkillPage />);
+      await Promise.resolve();
+    });
+
+    expect(loadingContainer.textContent).toContain('加载中...');
+    expect(loadingContainer.querySelector('.coze-prototype-empty')).toBeNull();
+
+    act(() => {
+      loadingRoot?.unmount();
+    });
+    loadingContainer.remove();
+
+    const emptyContainer = document.createElement('div');
+    document.body.appendChild(emptyContainer);
+    let emptyRoot: Root | undefined;
+    mockListSkills.mockResolvedValueOnce({
+      data: { skills: [] },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      emptyRoot = createRoot(emptyContainer);
+      emptyRoot.render(<SkillPage />);
+      await Promise.resolve();
+    });
+
+    expect(emptyContainer.textContent).toContain('还没有技能');
+    expect(emptyContainer.textContent).toContain(
+      '将你的 Agent Skill 文件夹放在 DeerFlow 根目录下的 `/skills/custom` 文件夹中。',
+    );
+    expect(emptyContainer.textContent).toContain('创建你的第一个技能');
+    expect(emptyContainer.textContent).not.toContain('暂无技能');
+    expect(emptyContainer.querySelector('.coze-prototype-empty')).toBeNull();
+
+    const createFirstButton = Array.from(
+      emptyContainer.querySelectorAll('button'),
+    ).find(button => button.textContent === '创建你的第一个技能') as
+      | HTMLButtonElement
+      | undefined;
+    expect(createFirstButton).toBeTruthy();
+
+    await act(async () => {
+      createFirstButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/chats/new?mode=skill',
+    );
+
+    act(() => {
+      emptyRoot?.unmount();
+    });
+    emptyContainer.remove();
   });
 
   it('opens skill version management from the skill row', async () => {
@@ -459,8 +471,17 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    const manageButton = container.querySelector(
-      'button[aria-label="管理 Ping Skill"]',
+    const moreButton = container.querySelector(
+      'button[aria-label="更多 Ping Skill"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      moreButton.click();
+      await Promise.resolve();
+    });
+
+    const manageButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '版本管理',
     ) as HTMLButtonElement;
 
     await act(async () => {
@@ -503,8 +524,8 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    const disableButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent === '停用',
+    const disableButton = container.querySelector(
+      'button[role="switch"][aria-label="关闭 Ping Skill"]',
     ) as HTMLButtonElement;
 
     await act(async () => {
@@ -517,7 +538,7 @@ describe('SkillPage', () => {
       space_id: 'space-1',
       name: 'Ping Skill',
       description: '',
-      type: workbenchSkill.SkillType.Script,
+      type: workbenchSkill.SkillType.DeerSkill,
       version: '1.0.0',
       enabled: false,
       input_schema: '{}',
@@ -525,7 +546,11 @@ describe('SkillPage', () => {
       executor: '{}',
       permissions: '{}',
     });
-    expect(container.textContent).toContain('已停用');
+    expect(
+      container.querySelector(
+        'button[role="switch"][aria-label="开启 Ping Skill"]',
+      ),
+    ).toBeTruthy();
 
     act(() => {
       root?.unmount();
@@ -555,6 +580,15 @@ describe('SkillPage', () => {
     await act(async () => {
       root = createRoot(container);
       root.render(<SkillPage />);
+      await Promise.resolve();
+    });
+
+    const moreButton = container.querySelector(
+      'button[aria-label="更多 Ping Skill"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      moreButton.click();
       await Promise.resolve();
     });
 
@@ -594,6 +628,15 @@ describe('SkillPage', () => {
     await act(async () => {
       root = createRoot(container);
       root.render(<SkillPage />);
+      await Promise.resolve();
+    });
+
+    const moreButton = container.querySelector(
+      'button[aria-label="更多 Ping Skill"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      moreButton.click();
       await Promise.resolve();
     });
 

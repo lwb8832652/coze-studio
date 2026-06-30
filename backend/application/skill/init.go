@@ -34,12 +34,12 @@ type ServiceComponents struct {
 
 func InitService(c *ServiceComponents) *ApplicationService {
 	repo := repository.NewSkillRepository(c.DB, c.IDGen)
-	SVC.DomainSVC = domain.NewService(&domain.Components{
+	SVC.DomainSVC = newDeerFlowBuiltinSkillService(domain.NewService(&domain.Components{
 		Repo:           repo,
 		IDGen:          c.IDGen,
 		ScriptRunner:   &domain.ScriptExecutor{Runner: c.CodeRunner},
 		WorkflowRunner: domain.UnsupportedExecutor{},
-	})
+	}))
 	SVC.ToolCandidateProvider = c.ToolCandidateProvider
 	return SVC
 }

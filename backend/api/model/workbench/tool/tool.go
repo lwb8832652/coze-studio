@@ -84,6 +84,7 @@ type MCPToolRegistryEntry struct {
 	ServerName      string `json:"server_name"`
 	ToolName        string `json:"tool_name"`
 	Description     string `json:"description"`
+	InputSchema     string `json:"input_schema"`
 	Enabled         bool   `json:"enabled"`
 	HealthStatus    string `json:"health_status"`
 	HealthCheckedAt int64  `json:"health_checked_at"`

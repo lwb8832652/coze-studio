@@ -15,7 +15,11 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { workbench, workbenchTask } from '@coze-studio/api-schema';
+import {
+  workbench,
+  workbenchSkill,
+  workbenchTask,
+} from '@coze-studio/api-schema';
 
 import {
   appendTaskThreadMessage,
@@ -46,6 +50,7 @@ import {
   exportTaskThreadGuardrailAuditEvents,
   getWorkbenchRuntimeDoctor,
   importTaskThreadMemories,
+  installSkillFromArtifact,
 } from '../service';
 
 describe('task thread service', () => {
@@ -78,6 +83,7 @@ describe('task thread service', () => {
     expect(typeof getTaskThreadArtifactSignedURL).toBe('function');
     expect(typeof deleteTaskThreadArtifact).toBe('function');
     expect(typeof restoreTaskThreadArtifact).toBe('function');
+    expect(typeof installSkillFromArtifact).toBe('function');
   });
 
   it('exports Runtime Doctor client from generated workbench schema', () => {
@@ -88,6 +94,19 @@ describe('task thread service', () => {
         query: ['space_id'],
       },
       url: '/api/workbench/runtime_doctor',
+    });
+  });
+
+  it('exports .skill artifact install client from generated workbenchSkill schema', () => {
+    expect(installSkillFromArtifact).toBe(
+      workbenchSkill.InstallSkillFromArtifact,
+    );
+    expect(installSkillFromArtifact.meta).toMatchObject({
+      method: 'POST',
+      reqMapping: {
+        body: ['space_id', 'thread_id', 'artifact_id'],
+      },
+      url: '/api/workbench/skills/install',
     });
   });
 

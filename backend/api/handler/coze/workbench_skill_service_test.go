@@ -25,7 +25,10 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
 	domain "github.com/coze-dev/coze-studio/backend/domain/skill/service"
@@ -86,6 +89,39 @@ func TestExportSkillVersionHandlerReturnsArchive(t *testing.T) {
 	require.Contains(t, body, `"file_name":"skill_101_201.skill"`)
 	require.Contains(t, body, `"content_type":"application/zip"`)
 	require.Contains(t, body, `"content_base64":"`)
+}
+
+func TestInstallSkillFromArtifactHandlerImportsSkillArchive(t *testing.T) {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(2))
+	h.POST("/api/workbench/skills/install", InstallSkillFromArtifact)
+	installSkillVersionTestService(t)
+	installSkillArtifactTestService(t, []byte("skill archive bytes"))
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/skills/install",
+		&ut.Body{
+			Body: bytes.NewBufferString(
+				`{"space_id":"1","thread_id":"10","artifact_id":"100"}`,
+			),
+			Len: len(`{"space_id":"1","thread_id":"10","artifact_id":"100"}`),
+		},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, int64(1), domainSVC.importSpaceID)
+	require.Equal(t, "weekly-research.skill", domainSVC.importFileName)
+	require.Equal(t, []byte("skill archive bytes"), domainSVC.importContent)
+	require.Equal(t, entity.TypeCustomSkill, domainSVC.importDefaultType)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"success":true`)
+	require.Contains(t, body, `"skill_name":"weekly-research"`)
+	require.Contains(t, body, `"message":"Skill weekly-research installed"`)
 }
 
 func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
@@ -262,6 +298,21 @@ func installSkillVersionTestService(t *testing.T) {
 				UpdatedAt:    2000,
 				DeletedAt:    3000,
 			},
+			imported: &entity.Skill{
+				ID:           501,
+				SpaceID:      1,
+				Name:         "weekly-research",
+				Description:  "Research weekly market changes.",
+				Type:         entity.TypeCustomSkill,
+				Version:      "1.0.0",
+				Enabled:      true,
+				InputSchema:  `{}`,
+				OutputSchema: `{}`,
+				Executor:     `{}`,
+				Permissions:  `{}`,
+				CreatedAt:    1000,
+				UpdatedAt:    2000,
+			},
 			resources: []*entity.SkillResource{
 				{
 					ID:        301,
@@ -279,6 +330,60 @@ func installSkillVersionTestService(t *testing.T) {
 	t.Cleanup(func() {
 		appskill.SVC = previous
 	})
+}
+
+func installSkillArtifactTestService(t *testing.T, content []byte) {
+	t.Helper()
+	prevThreadSVC := appagentthread.SVC.ThreadSVC
+	prevRuntimeFileSVC := appagentthread.SVC.RuntimeFileSVC
+	prevPlanSVC := appagentthread.SVC.PlanSVC
+	prevArtifactSVC := appagentthread.SVC.ArtifactSVC
+	prevArtifactObjectStorage := appagentthread.SVC.ArtifactObjectStorage
+	prevArtifactAuthorizer := appagentthread.SVC.ArtifactAuthorizer
+	t.Cleanup(func() {
+		appagentthread.SVC.ThreadSVC = prevThreadSVC
+		appagentthread.SVC.RuntimeFileSVC = prevRuntimeFileSVC
+		appagentthread.SVC.PlanSVC = prevPlanSVC
+		appagentthread.SVC.ArtifactSVC = prevArtifactSVC
+		appagentthread.SVC.ArtifactObjectStorage = prevArtifactObjectStorage
+		appagentthread.SVC.ArtifactAuthorizer = prevArtifactAuthorizer
+	})
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, migrateAgentThreadHandlerTableForTest(db))
+	appagentthread.InitService(&appagentthread.ServiceComponents{
+		DB:    db,
+		IDGen: &sequentialIDGen{next: 1},
+	})
+	appagentthread.SVC.ArtifactAuthorizer = nil
+	appagentthread.SVC.ArtifactObjectStorage = &recordingWorkbenchArtifactStorage{
+		objects: map[string][]byte{"object://skill-archive": content},
+	}
+	require.NoError(t, db.Exec(`
+		INSERT INTO agent_runs (
+			id, thread_id, parent_run_id, space_id, creator_id, assistant_id,
+			run_kind, status, command, input, config, context, metadata,
+			stream_mode, multitask_strategy, on_disconnect, durability,
+			idempotency_key, worker_id, started_at, ended_at, created_at, updated_at
+		) VALUES (
+			20, 10, 0, 1, 2, 'assistant-a',
+			'task', 'succeeded', '{}', '{}', '{}', '{}', '{}',
+			'[]', '', '', '', '', '', 1000, 2000, 1000, 2000
+		)
+	`).Error)
+	require.NoError(t, db.Exec(`
+		INSERT INTO agent_artifacts (
+			id, space_id, user_id, thread_id, run_id, file_id, title,
+			artifact_type, virtual_path, object_uri, content_type, size_bytes,
+			preview_mode, metadata, created_at, updated_at
+		) VALUES (
+			100, 1, 2, 10, 20, 90, 'weekly-research.skill',
+			'skill', '/mnt/user-data/outputs/weekly-research.skill',
+			'object://skill-archive', 'application/zip', ?, 'download',
+			'{"scan_status":"clean"}', 1000, 1000
+		)
+	`, len(content)).Error)
 }
 
 type skillVersionDomainService struct {
@@ -302,6 +407,23 @@ type skillVersionDomainService struct {
 	updatedContentVersionID  int64
 	updatedSkillMD           string
 	deletedSkillID           int64
+	imported                 *entity.Skill
+	importSpaceID            int64
+	importFileName           string
+	importContent            []byte
+	importDefaultType        entity.Type
+}
+
+func (s *skillVersionDomainService) ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error) {
+	return s.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, entity.TypeDeerSkill)
+}
+
+func (s *skillVersionDomainService) ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error) {
+	s.importSpaceID = spaceID
+	s.importFileName = fileName
+	s.importContent = append([]byte(nil), content...)
+	s.importDefaultType = defaultType
+	return s.imported, nil
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {

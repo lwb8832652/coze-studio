@@ -14,14 +14,10 @@
  * limitations under the License.
  */
 
-import {
-  type Dispatch,
-  type SetStateAction,
-  useState,
-} from 'react';
+import { type Dispatch, type SetStateAction, useState } from 'react';
 
-import { Input } from '@coze-arch/coze-design';
 import { IconCozSetting } from '@coze-arch/coze-design/icons';
+import { Input } from '@coze-arch/coze-design';
 
 import type {
   WorkbenchReasoningEffort,
@@ -222,14 +218,11 @@ const WorkbenchResourceRuntimeSettingsRows = ({
           aria-label="MCP 工具调用"
           aria-pressed={settings.mcp_tools.enabled}
           data-active={settings.mcp_tools.enabled}
-          disabled={mcpCount === 0}
           onClick={() =>
             update(current => ({
               mcp_tools: {
                 ...current.mcp_tools,
-                enabled:
-                  !current.mcp_tools.enabled &&
-                  current.mcp_tools.allowed_tools.length > 0,
+                enabled: !current.mcp_tools.enabled,
               },
             }))
           }
@@ -238,7 +231,9 @@ const WorkbenchResourceRuntimeSettingsRows = ({
             ? [settings.mcp_tools.enabled ? '已开启' : '关闭', mcpCount].join(
                 ' · ',
               )
-            : '无可用'}
+            : settings.mcp_tools.enabled
+              ? '自动发现'
+              : '关闭'}
         </button>
       </div>
     </>

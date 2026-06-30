@@ -48,6 +48,9 @@ func WithADKSkillBackendGuardrail(
 			snapshot := *run
 			backend.run = &snapshot
 		}
+		if isNilADKGuardrailEnforcer(enforcer) {
+			return
+		}
 		backend.guardrailEnforcer = enforcer
 	}
 }
@@ -191,6 +194,13 @@ func (b *adkSkillBackend) Get(
 	}
 	name = strings.TrimSpace(name)
 	item, ok := b.skills[name]
+	if name == "" && len(b.skills) == 1 {
+		for fallbackName, fallback := range b.skills {
+			name = fallbackName
+			item = fallback
+			ok = true
+		}
+	}
 	if !ok {
 		return einoskill.Skill{}, fmt.Errorf("skill %s is not available", name)
 	}
@@ -244,4 +254,22 @@ func (b *adkSkillBackend) toolDescription() string {
 		return ""
 	}
 	return b.description
+}
+
+func adkSkillToolDescription(b *adkSkillBackend) string {
+	catalog := ""
+	if b != nil {
+		catalog = b.toolDescription()
+	}
+	return strings.TrimSpace(`Execute a selected task skill within the main conversation.
+
+How to invoke:
+- Use a JSON object with the required "skill" string field.
+- The "skill" value must exactly match one name from the available_skills catalog.
+- Example: {"skill":"skill-creator"}
+- Do not pass extra arguments in this tool call.
+- If the user selected only one skill and you decide to load it, use that listed skill name.
+
+Available skills catalog JSON:
+` + catalog)
 }

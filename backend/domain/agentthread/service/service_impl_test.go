@@ -126,6 +126,47 @@ func TestListThreadsRequiresRequest(t *testing.T) {
 	require.True(t, IsClientError(err))
 }
 
+func TestUpdateThreadTitleTrimsAndPersistsTitle(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 901}})
+	thread, err := svc.CreateThread(context.Background(), &CreateThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Title:   "请生成一份《武汉3日游攻略》正式文档",
+	})
+	require.NoError(t, err)
+
+	updated, ok, err := svc.UpdateThreadTitle(context.Background(), &UpdateThreadTitleRequest{
+		ThreadID:  thread.ID,
+		Title:     "  武汉3日游攻略  ",
+		UpdatedAt: 200,
+	})
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "武汉3日游攻略", updated.Title)
+	require.Equal(t, int64(200), updated.UpdatedAt)
+	require.Equal(t, thread.LastMessageAt, updated.LastMessageAt)
+	require.Equal(t, repository.UpdateThreadTitleRequest{
+		ThreadID:  thread.ID,
+		Title:     "武汉3日游攻略",
+		UpdatedAt: 200,
+	}, repo.lastUpdateThreadTitleReq)
+}
+
+func TestUpdateThreadTitleRequiresTitle(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 901}})
+
+	_, _, err := svc.UpdateThreadTitle(context.Background(), &UpdateThreadTitleRequest{
+		ThreadID: 1,
+		Title:    " ",
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+}
+
 func TestAppendMessageRequiresContentAndValidRole(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
@@ -1523,6 +1564,7 @@ type memoryRepo struct {
 	memoryFlushUpdated            bool
 	tokenUsages                   []*entity.TokenUsage
 	lastListReq                   repository.ListThreadsRequest
+	lastUpdateThreadTitleReq      repository.UpdateThreadTitleRequest
 	lastMessageListReq            repository.ListMessagesRequest
 	lastRunListReq                repository.ListRunsRequest
 	lastRunEventListReq           repository.ListRunEventsRequest
@@ -1577,6 +1619,24 @@ func (r *memoryRepo) GetThread(ctx context.Context, id int64) (*entity.Thread, e
 		return nil, fmt.Errorf("thread %d not found", id)
 	}
 	return cloneThread(thread), nil
+}
+
+func (r *memoryRepo) UpdateThreadTitle(
+	ctx context.Context,
+	req repository.UpdateThreadTitleRequest,
+) (*entity.Thread, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastUpdateThreadTitleReq = req
+	thread, ok := r.threads[req.ThreadID]
+	if !ok {
+		return nil, false, nil
+	}
+	cloned := cloneThread(thread)
+	cloned.Title = strings.TrimSpace(req.Title)
+	cloned.UpdatedAt = req.UpdatedAt
+	r.threads[req.ThreadID] = cloned
+	return cloneThread(cloned), true, nil
 }
 
 func (r *memoryRepo) ListThreads(ctx context.Context, req repository.ListThreadsRequest) ([]*entity.Thread, int64, error) {

@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,21 +31,38 @@ import (
 )
 
 const (
-	defaultRuntimeSkillLimit      = 20
-	defaultRuntimeSkillBodyBudget = 64 << 10
+	defaultRuntimeSkillLimit          = 32
+	defaultRuntimeSkillTotalBodyBytes = 384 << 10
+)
+
+var (
+	runtimeSlashSkillPattern = regexp.MustCompile(`^/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\s+|$)`)
+
+	reservedRuntimeSlashSkillNames = map[string]struct{}{
+		"bootstrap": {},
+		"help":      {},
+		"memory":    {},
+		"models":    {},
+		"new":       {},
+		"status":    {},
+	}
 )
 
 type RuntimeSkillProvider struct {
-	catalog    skilldomain.SkillService
-	limit      int
-	bodyBudget int
+	catalog skilldomain.SkillService
+	limit   int
+}
+
+type runtimeSkillSelectionConfig struct {
+	selectors    []string
+	constrained  bool
+	enforceLimit bool
 }
 
 func NewRuntimeSkillProvider(catalog skilldomain.SkillService) *RuntimeSkillProvider {
 	return &RuntimeSkillProvider{
-		catalog:    catalog,
-		limit:      defaultRuntimeSkillLimit,
-		bodyBudget: defaultRuntimeSkillBodyBudget,
+		catalog: catalog,
+		limit:   defaultRuntimeSkillLimit,
 	}
 }
 
@@ -58,11 +77,18 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 		return nil, nil
 	}
 
-	selectors, explicit, err := runtimeSkillSelectors(run.Config)
+	selection, err := runtimeSkillSelectionFromConfig(run.Config)
 	if err != nil {
 		return nil, err
 	}
-	if explicit && len(selectors) == 0 {
+	selectors := selection.selectors
+	constrained := selection.constrained
+	slashSelector, slashExplicit := runtimeSlashSkillSelector(run.Input)
+	if slashExplicit && !constrained {
+		selectors = []string{slashSelector}
+		constrained = true
+	}
+	if constrained && len(selectors) == 0 {
 		return []AgentSkill{}, nil
 	}
 
@@ -81,7 +107,7 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 		if skill == nil || !skill.Enabled || !isPromptSkillType(skill.Type) {
 			continue
 		}
-		if explicit {
+		if constrained {
 			id := strconv.FormatInt(skill.ID, 10)
 			_, nameMatched := selectorSet[skill.Name]
 			_, idMatched := selectorSet[id]
@@ -89,11 +115,14 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 				continue
 			}
 		}
+		if slashExplicit && skill.Name != slashSelector {
+			continue
+		}
 		selected = append(selected, skill)
 	}
 
 	if len(selected) > p.limit {
-		return nil, fmt.Errorf("enabled skill count %d exceeds runtime limit %d", len(selected), p.limit)
+		return nil, fmt.Errorf("selected skill count %d exceeds runtime limit %d", len(selected), p.limit)
 	}
 
 	sort.Slice(selected, func(i, j int) bool {
@@ -104,7 +133,7 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 	})
 
 	result := make([]AgentSkill, 0, len(selected))
-	bodyBytes := 0
+	totalBodyBytes := 0
 	for _, skill := range selected {
 		versions, err := p.catalog.ListVersions(ctx, skill.ID)
 		if err != nil {
@@ -122,9 +151,9 @@ func (p *RuntimeSkillProvider) Load(ctx context.Context, run *RunSummary) ([]Age
 		if body == "" {
 			return nil, fmt.Errorf("enabled skill %s has empty instructions", skill.Name)
 		}
-		bodyBytes += len(body)
-		if bodyBytes > p.bodyBudget {
-			return nil, fmt.Errorf("enabled skill instructions exceed runtime budget %d bytes", p.bodyBudget)
+		totalBodyBytes += len([]byte(body))
+		if totalBodyBytes > defaultRuntimeSkillTotalBodyBytes {
+			return nil, fmt.Errorf("skill catalog content exceeds runtime budget %d bytes", defaultRuntimeSkillTotalBodyBytes)
 		}
 		result = append(result, AgentSkill{
 			ID:          skill.ID,
@@ -169,16 +198,88 @@ func runtimeSkillSelectors(rawConfig string) ([]string, bool, error) {
 		return nil, false, nil
 	}
 
+	selectors, err := runtimeStringSelectorsFromValue(value, "run config enable_skills")
+	return selectors, true, err
+}
+
+func runtimeSkillSelectionFromConfig(
+	rawConfig string,
+) (runtimeSkillSelectionConfig, error) {
+	selectors, explicit, err := runtimeSkillSelectors(rawConfig)
+	if err != nil {
+		return runtimeSkillSelectionConfig{}, err
+	}
+	if explicit {
+		return runtimeSkillSelectionConfig{
+			selectors:    selectors,
+			constrained:  true,
+			enforceLimit: true,
+		}, nil
+	}
+
+	rawConfig = strings.TrimSpace(rawConfig)
+	if rawConfig == "" {
+		return runtimeSkillSelectionConfig{}, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rawConfig), &payload); err != nil {
+		return runtimeSkillSelectionConfig{}, fmt.Errorf("parse run config failed: %w", err)
+	}
+
+	rawSkills, ok := payload["skills"]
+	if !ok {
+		rawSkills, ok = payload["Skills"]
+	}
+	if !ok || rawSkills == nil {
+		return runtimeSkillSelectionConfig{}, nil
+	}
+
+	skills, ok := rawSkills.(map[string]any)
+	if !ok {
+		return runtimeSkillSelectionConfig{}, fmt.Errorf("run config skills must be an object")
+	}
+
+	if enabled, ok := skills["enabled"].(bool); ok && !enabled {
+		return runtimeSkillSelectionConfig{constrained: true}, nil
+	}
+
+	value, ok := skills["allowed_skills"]
+	if !ok {
+		value, ok = skills["allowedSkills"]
+	}
+	if !ok {
+		return runtimeSkillSelectionConfig{}, nil
+	}
+
+	allowedSelectors, err := runtimeStringSelectorsFromValue(
+		value,
+		"run config skills.allowed_skills",
+	)
+	if err != nil {
+		return runtimeSkillSelectionConfig{}, err
+	}
+	if len(allowedSelectors) == 0 {
+		return runtimeSkillSelectionConfig{}, nil
+	}
+
+	return runtimeSkillSelectionConfig{
+		selectors:   allowedSelectors,
+		constrained: true,
+	}, nil
+}
+
+func runtimeStringSelectorsFromValue(value any, fieldName string) ([]string, error) {
 	items, ok := value.([]any)
 	if !ok {
-		return nil, true, fmt.Errorf("run config enable_skills must be an array")
+		return nil, fmt.Errorf("%s must be an array", fieldName)
 	}
 	selectors := make([]string, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		selector, ok := item.(string)
 		if !ok {
-			return nil, true, fmt.Errorf("run config enable_skills items must be strings")
+			return nil, fmt.Errorf("%s items must be strings", fieldName)
 		}
 		selector = strings.TrimSpace(selector)
 		if selector == "" {
@@ -191,7 +292,101 @@ func runtimeSkillSelectors(rawConfig string) ([]string, bool, error) {
 		selectors = append(selectors, selector)
 	}
 
-	return selectors, true, nil
+	return selectors, nil
+}
+
+func runtimeSlashSkillSelector(rawInput string) (string, bool) {
+	reference, ok := runtimeSlashSkillReference(rawInput)
+	if !ok {
+		return "", false
+	}
+	return reference.name, true
+}
+
+type runtimeSlashSkillActivation struct {
+	name          string
+	remainingText string
+}
+
+func runtimeSlashSkillReference(rawInput string) (runtimeSlashSkillActivation, bool) {
+	content, ok := runtimeLatestUserInputText(rawInput)
+	if !ok {
+		return runtimeSlashSkillActivation{}, false
+	}
+
+	match := runtimeSlashSkillPattern.FindStringSubmatchIndex(content)
+	if len(match) != 4 {
+		return runtimeSlashSkillActivation{}, false
+	}
+	selector := content[match[2]:match[3]]
+	if _, reserved := reservedRuntimeSlashSkillNames[selector]; reserved {
+		return runtimeSlashSkillActivation{}, false
+	}
+	return runtimeSlashSkillActivation{
+		name:          selector,
+		remainingText: strings.TrimLeft(content[match[1]:], " \t\r\n"),
+	}, true
+}
+
+func runtimeLatestUserInputText(rawInput string) (string, bool) {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" {
+		return "", false
+	}
+
+	var payload struct {
+		Message  string `json:"message"`
+		Messages []struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(rawInput), &payload); err != nil {
+		return rawInput, true
+	}
+
+	for i := len(payload.Messages) - 1; i >= 0; i-- {
+		message := payload.Messages[i]
+		if strings.ToLower(strings.TrimSpace(message.Role)) != "user" {
+			continue
+		}
+		if text, ok := runtimeMessageContentText(message.Content); ok {
+			return text, true
+		}
+	}
+	if strings.TrimSpace(payload.Message) != "" {
+		return payload.Message, true
+	}
+	return "", false
+}
+
+func runtimeMessageContentText(content any) (string, bool) {
+	switch value := content.(type) {
+	case string:
+		return value, true
+	case []any:
+		var b strings.Builder
+		for _, item := range value {
+			part, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			text, ok := part["text"].(string)
+			if !ok || text == "" {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(text)
+		}
+		if b.Len() == 0 {
+			return "", false
+		}
+		return b.String(), true
+	default:
+		return "", false
+	}
 }
 
 func runWithSkillPrompt(run *RunSummary, skills AgentSkillContext) (*RunSummary, error) {
@@ -207,7 +402,7 @@ func runWithSkillPrompt(run *RunSummary, skills AgentSkillContext) (*RunSummary,
 		}
 	}
 	basePrompt := firstConfigString(payload, "system_prompt", "systemPrompt")
-	payload["system_prompt"] = joinSkillSystemPrompt(basePrompt, skills)
+	payload["system_prompt"] = joinSkillSystemPrompt(basePrompt, skills, run.Input)
 	delete(payload, "systemPrompt")
 	config, err := json.Marshal(payload)
 	if err != nil {
@@ -219,7 +414,7 @@ func runWithSkillPrompt(run *RunSummary, skills AgentSkillContext) (*RunSummary,
 	return &cloned, nil
 }
 
-func joinSkillSystemPrompt(basePrompt string, skills AgentSkillContext) string {
+func joinSkillSystemPrompt(basePrompt string, skills AgentSkillContext, rawInput string) string {
 	var b strings.Builder
 	if basePrompt = strings.TrimSpace(basePrompt); basePrompt != "" {
 		b.WriteString(basePrompt)
@@ -246,5 +441,33 @@ func joinSkillSystemPrompt(basePrompt string, skills AgentSkillContext) string {
 		b.WriteString("\n")
 	}
 
+	if activation, ok := runtimeMatchedSlashSkillActivation(rawInput, skills); ok {
+		b.WriteString("\n## Slash Skill Activation\n")
+		b.WriteString("The user explicitly activated the `")
+		b.WriteString(activation.name)
+		b.WriteString("` skill for this turn.\n")
+		b.WriteString("Treat the task text as:\n<user_request>\n")
+		if activation.remainingText == "" {
+			b.WriteString("No additional task text was provided after the slash skill command.")
+		} else {
+			b.WriteString(html.EscapeString(activation.remainingText))
+		}
+		b.WriteString("\n</user_request>\n")
+		b.WriteString("Follow this skill before choosing a general workflow.")
+	}
+
 	return strings.TrimSpace(b.String())
+}
+
+func runtimeMatchedSlashSkillActivation(rawInput string, skills AgentSkillContext) (runtimeSlashSkillActivation, bool) {
+	activation, ok := runtimeSlashSkillReference(rawInput)
+	if !ok {
+		return runtimeSlashSkillActivation{}, false
+	}
+	for _, skill := range skills.Items {
+		if skill.Name == activation.name {
+			return activation, true
+		}
+	}
+	return runtimeSlashSkillActivation{}, false
 }

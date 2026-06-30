@@ -425,7 +425,7 @@ func defaultADKMiddlewareBuilder(
 			if err != nil {
 				return nil, err
 			}
-			return einoskill.NewMiddleware(ctx, &einoskill.Config{
+			handler, err := einoskill.NewMiddleware(ctx, &einoskill.Config{
 				Backend: backend,
 				CustomSystemPrompt: func(
 					_ context.Context,
@@ -440,7 +440,7 @@ func defaultADKMiddlewareBuilder(
 					context.Context,
 					[]einoskill.FrontMatter,
 				) string {
-					return backend.toolDescription()
+					return adkSkillToolDescription(backend)
 				},
 				BuildContent: func(
 					_ context.Context,
@@ -450,6 +450,25 @@ func defaultADKMiddlewareBuilder(
 					return formatADKSkillContent(skill), nil
 				},
 			})
+			if err != nil {
+				return nil, err
+			}
+			middleware, err := newADKSelectedSkillMiddleware(
+				input.Run,
+				skillContext,
+				backend,
+				handler,
+			)
+			if err != nil {
+				return nil, err
+			}
+			emitSkillsLoadedRunEvent(
+				ctx,
+				options.EventSink,
+				input.Run,
+				skillContext,
+			)
+			return middleware, nil
 		}
 	case ADKMiddlewareToolSearch:
 		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {

@@ -38,6 +38,36 @@ vi.mock('../service', () => ({
   upsertMCPToolServer: mockUpsertMCPToolServer,
 }));
 
+vi.mock('@coze-arch/coze-design', () => {
+  const mockSwitchComponent = (
+    props: {
+      checked?: boolean;
+      disabled?: boolean;
+      loading?: boolean;
+      onChange?: (checked: boolean) => void;
+    } & Record<string, unknown>,
+  ) => {
+    const { checked, disabled, loading, onChange } = props;
+    const ariaLabel =
+      typeof props['aria-label'] === 'string' ? props['aria-label'] : undefined;
+
+    return (
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-checked={checked}
+        disabled={disabled || loading}
+        role="switch"
+        onClick={() => onChange?.(!checked)}
+      />
+    );
+  };
+
+  return {
+    ['Switch']: mockSwitchComponent,
+  };
+});
+
 import ToolsPage from '../index';
 
 const server = {
@@ -97,90 +127,65 @@ describe('ToolsPage', () => {
     });
   });
 
-  it('renders MCP tool servers from the backend', async () => {
+  it('renders DeerFlow-style MCP server settings from the backend', async () => {
     const { container, root } = await renderToolsPage();
 
     expect(mockListMCPToolServers).toHaveBeenCalledWith({
       space_id: 'space-1',
     });
     expect(container.textContent).toContain('工具');
-    expect(container.textContent).toContain('MCP 工具配置');
+    expect(container.textContent).toContain('管理 MCP 工具的配置和启用状态。');
     expect(container.textContent).toContain('browser-tools');
     expect(container.textContent).toContain('Browser automation tools');
-    expect(container.textContent).toContain('stdio');
-    expect(container.textContent).toContain('search');
-    expect(container.textContent).toContain('已启用');
-    expect(container.textContent).toContain('健康 12ms');
+    expect(container.textContent).not.toContain('全部工具');
+    expect(container.textContent).not.toContain('创建工具配置');
+    expect(container.textContent).not.toContain('测试 search');
+    expect(container.textContent).not.toContain('删除');
+    expect(container.querySelector('[role="switch"]')).toBeTruthy();
 
     cleanup(container, root);
   });
 
-  it('creates a default MCP server config for the current space', async () => {
+  it('toggles an MCP server enabled state through the existing config API', async () => {
     const { container, root } = await renderToolsPage();
 
-    const createButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('创建工具配置'),
+    const switchButton = container.querySelector(
+      'button[role="switch"][aria-label="关闭 browser-tools"]',
     ) as HTMLButtonElement;
 
     await act(async () => {
-      createButton.click();
+      switchButton.click();
       await Promise.resolve();
     });
 
     expect(mockUpsertMCPToolServer).toHaveBeenCalledWith(
       expect.objectContaining({
+        server_id: '100',
         space_id: 'space-1',
         name: 'browser-tools',
         server_type: 'stdio',
-        enabled: true,
+        enabled: false,
+        config: '{"command":"npx"}',
+        auth: '{"type":"none"}',
+        tools: server.tools,
       }),
     );
-
-    cleanup(container, root);
-  });
-
-  it('runs a test call against the first configured tool', async () => {
-    const { container, root } = await renderToolsPage();
-
-    const testButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('测试 search'),
-    ) as HTMLButtonElement;
-
-    await act(async () => {
-      testButton.click();
-      await Promise.resolve();
-    });
-
-    expect(mockTestMCPToolCall).toHaveBeenCalledWith({
-      server_id: '100',
-      tool_name: 'search',
-      arguments: '{"query":"coze studio"}',
-    });
-    expect(container.textContent).toContain('browser-tools');
-    expect(container.textContent).toContain('latency_ms');
-
-    cleanup(container, root);
-  });
-
-  it('deletes an MCP server after confirmation', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    const { container, root } = await renderToolsPage();
-
-    const deleteButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent === '删除',
-    ) as HTMLButtonElement;
-
-    await act(async () => {
-      deleteButton.click();
-      await Promise.resolve();
-    });
-
-    expect(mockDeleteMCPToolServer).toHaveBeenCalledWith({
-      server_id: '100',
-    });
     expect(mockListMCPToolServers).toHaveBeenCalledTimes(2);
 
-    confirmSpy.mockRestore();
+    cleanup(container, root);
+  });
+
+  it('shows backend business errors instead of a false empty state', async () => {
+    mockListMCPToolServers.mockResolvedValueOnce({
+      code: 401,
+      msg: 'missing session_key in cookie',
+    });
+
+    const { container, root } = await renderToolsPage();
+
+    expect(container.textContent).toContain('missing session_key in cookie');
+    expect(container.textContent).not.toContain('暂无 MCP 工具。');
+
     cleanup(container, root);
   });
 });

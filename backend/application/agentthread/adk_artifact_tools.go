@@ -25,6 +25,7 @@ import (
 
 const adkWriteFileToolName = "write_file"
 const adkPresentFilesToolName = "present_files"
+const adkCreateSkillPackageToolName = "create_skill_package"
 
 const adkWriteFileInputSchema = `{
   "type":"object",
@@ -57,6 +58,43 @@ const adkPresentFilesInputSchema = `{
   "required":["filepaths"]
 }`
 
+const adkCreateSkillPackageInputSchema = `{
+  "type":"object",
+  "properties":{
+    "skill_name":{
+      "type":"string",
+      "description":"Lower-kebab-case skill package name, for example travel-planner."
+    },
+    "skill_md":{
+      "type":"string",
+      "description":"Complete SKILL.md content, including YAML frontmatter name and description."
+    },
+    "output_path":{
+      "type":"string",
+      "description":"Optional absolute output path under /mnt/user-data/outputs ending with .skill. Defaults to /mnt/user-data/outputs/{skill_name}.skill."
+    },
+    "resources":{
+      "type":"array",
+      "description":"Optional bundled text resources to include in the skill archive.",
+      "items":{
+        "type":"object",
+        "properties":{
+          "path":{
+            "type":"string",
+            "description":"Relative path inside the skill folder, for example references/checklist.md."
+          },
+          "content":{
+            "type":"string",
+            "description":"Complete text content for this resource."
+          }
+        },
+        "required":["path","content"]
+      }
+    }
+  },
+  "required":["skill_name","skill_md"]
+}`
+
 type ADKArtifactToolCatalog struct {
 	app *ApplicationService
 }
@@ -69,6 +107,13 @@ type adkWriteFileInput struct {
 
 type adkPresentFilesInput struct {
 	FilePaths []string `json:"filepaths"`
+}
+
+type adkCreateSkillPackageInput struct {
+	SkillName  string                 `json:"skill_name"`
+	SkillMD    string                 `json:"skill_md"`
+	OutputPath string                 `json:"output_path"`
+	Resources  []SkillPackageResource `json:"resources"`
 }
 
 type adkArtifactToolInvoker struct {
@@ -99,6 +144,13 @@ func (c *ADKArtifactToolCatalog) LoadADKRuntimeTools(
 			Name:        adkPresentFilesToolName,
 			Description: "Present output files to the user as task artifacts. Only files under /mnt/user-data/outputs can be presented.",
 			InputSchema: adkPresentFilesInputSchema,
+			Visibility:  ADKRuntimeToolVisibilityStatic,
+			Invoker:     invoker,
+		},
+		{
+			Name:        adkCreateSkillPackageToolName,
+			Description: "Create an installable .skill package from SKILL.md and optional bundled text resources. Use this for skill-creator tasks, then call present_files with the returned .skill path.",
+			InputSchema: adkCreateSkillPackageInputSchema,
 			Visibility:  ADKRuntimeToolVisibilityStatic,
 			Invoker:     invoker,
 		},
@@ -139,6 +191,22 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 		resp, err := i.app.PresentOutputFiles(ctx, &PresentOutputFilesRequest{
 			Run:       call.Run,
 			FilePaths: input.FilePaths,
+		})
+		if err != nil {
+			return "", err
+		}
+		return resp.Notice, nil
+	case adkCreateSkillPackageToolName:
+		var input adkCreateSkillPackageInput
+		if err := json.Unmarshal([]byte(strings.TrimSpace(call.Arguments)), &input); err != nil {
+			return "", fmt.Errorf("create_skill_package arguments are invalid: %w", err)
+		}
+		resp, err := i.app.CreateSkillPackage(ctx, &CreateSkillPackageRequest{
+			Run:        call.Run,
+			SkillName:  input.SkillName,
+			SkillMD:    input.SkillMD,
+			OutputPath: input.OutputPath,
+			Resources:  input.Resources,
 		})
 		if err != nil {
 			return "", err

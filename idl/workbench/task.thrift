@@ -316,6 +316,7 @@ struct ListTaskThreadArtifactsRequest {
     3: optional bool deleted_only
     4: optional i32 page
     5: optional i32 page_size
+    6: optional i64 space_id (agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -324,6 +325,7 @@ struct GetTaskThreadArtifactSignedURLRequest {
     2: required i64 artifact_id (api.path="artifact_id", agw.js_conv="str", api.js_conv="true")
     3: optional string mode
     4: optional i32 ttl_seconds
+    5: optional i64 space_id (agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 

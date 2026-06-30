@@ -130,6 +130,15 @@ func TestADKHumanInteractionToolProviderAppendsBuiltins(t *testing.T) {
 	}, names)
 }
 
+func TestDefaultADKToolProviderIgnoresTypedNilGuardrailEnforcer(t *testing.T) {
+	var enforcer *GuardrailEnforcer
+	options := defaultADKToolProviderOptions{}
+
+	WithDefaultADKToolProviderGuardrailEnforcer(enforcer)(&options)
+
+	require.False(t, options.guardrailEnforcer != nil)
+}
+
 type namedTestTool struct {
 	name string
 }

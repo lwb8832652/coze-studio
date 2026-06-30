@@ -14,23 +14,15 @@
  * limitations under the License.
  */
 
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useState } from 'react';
 
 import type { workbenchSkill } from '@coze-studio/api-schema';
 
-import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import { SkillVersionPanel } from './skill-version-panel';
+import { useSkillListLoader, useSkillRunActions } from './skill-page-hooks';
 import {
-  useSkillCreateActions,
-  useSkillImportActions,
-  useSkillListLoader,
-  useSkillRunActions,
-} from './skill-page-hooks';
-import {
-  CreateSkillPanel,
-  ImportPanel,
   SkillList,
   SkillPageHeader,
   SkillToolbar,
@@ -42,96 +34,63 @@ type Skill = workbenchSkill.Skill;
 
 const SkillPage = () => {
   const { space_id } = useParams();
-  const [keyword, setKeyword] = useState('');
-  const [activeType, setActiveType] = useState<SkillTypeFilter>('all');
-  const [showCreatePanel, setShowCreatePanel] = useState(false);
-  const [showImportPanel, setShowImportPanel] = useState(false);
+  const navigate = useNavigate();
+  const [activeType, setActiveType] = useState<SkillTypeFilter>('public');
+  const [openActionsSkillId, setOpenActionsSkillId] = useState('');
   const [managedSkill, setManagedSkill] = useState<Skill>();
   const { error, loadSkills, loading, setError, skills } =
     useSkillListLoader(space_id);
-  const importActions = useSkillImportActions({
-    loadSkills,
-    setError,
-    spaceId: space_id,
-  });
-  const createActions = useSkillCreateActions({
-    loadSkills,
-    setError,
-    spaceId: space_id,
-  });
   const runActions = useSkillRunActions({
     loadSkills,
     setError,
   });
 
-  const visibleSkills = getVisibleSkills(skills, keyword, activeType);
+  const visibleSkills = getVisibleSkills(skills, '', activeType);
+  const openSkillCreator = () => {
+    setOpenActionsSkillId('');
+
+    if (!space_id) {
+      return;
+    }
+
+    navigate(`/space/${space_id}/chats/new?mode=skill`);
+  };
 
   return (
-    <main className="coze-prototype-page">
-      <WorkspacePageTopBar />
+    <main className="coze-prototype-page coze-prototype-skill-settings-page">
       <section className="coze-prototype-page-inner">
-        <SkillPageHeader
-          loading={loading}
-          spaceId={space_id}
-          onRefresh={loadSkills}
-        />
+        <SkillPageHeader />
         <SkillToolbar
           activeType={activeType}
-          keyword={keyword}
-          onActiveTypeChange={setActiveType}
-          onCreate={() => setShowCreatePanel(current => !current)}
-          onImport={() => setShowImportPanel(current => !current)}
-          onKeywordChange={setKeyword}
+          onActiveTypeChange={value => {
+            setActiveType(value);
+            setOpenActionsSkillId('');
+          }}
+          onCreate={openSkillCreator}
         />
 
         {error ? <div className="coze-prototype-error">{error}</div> : null}
 
-        {showCreatePanel ? (
-          <CreateSkillPanel
-            creating={createActions.creating}
-            description={createActions.description}
-            disabled={
-              !space_id ||
-              !createActions.name.trim() ||
-              !createActions.description.trim() ||
-              createActions.creating
-            }
-            name={createActions.name}
-            onCreate={createActions.handleCreate}
-            onDescriptionChange={createActions.setDescription}
-            onNameChange={createActions.setName}
-          />
-        ) : null}
-
-        {showImportPanel ? (
-          <ImportPanel
-            archiveLabel={importActions.archiveLabel}
-            content={importActions.content}
-            disabled={
-              !space_id ||
-              (!importActions.archiveContent &&
-                !importActions.content.trim()) ||
-              importActions.importing
-            }
-            fileName={importActions.fileName}
-            importing={importActions.importing}
-            onContentChange={importActions.handleContentChange}
-            onFileSelect={file => void importActions.handleImportFile(file)}
-            onFileNameChange={importActions.setFileName}
-            onImport={importActions.handleImport}
-          />
-        ) : null}
-
         <SkillList
           deletingSkillId={runActions.deletingSkillId}
           loading={loading}
+          openActionsSkillId={openActionsSkillId}
           runningSkillId={runActions.runningSkillId}
           skills={visibleSkills}
           testResults={runActions.testResults}
           updatingSkillId={runActions.updatingSkillId}
+          onCreate={openSkillCreator}
           onDelete={runActions.handleDeleteSkill}
-          onManage={setManagedSkill}
+          onManage={skill => {
+            setManagedSkill(skill);
+            setOpenActionsSkillId('');
+          }}
           onTestRun={runActions.handleTestRun}
+          onToggleActions={skill =>
+            setOpenActionsSkillId(current =>
+              current === skill.id ? '' : skill.id,
+            )
+          }
           onToggleEnabled={runActions.handleToggleEnabled}
         />
       </section>

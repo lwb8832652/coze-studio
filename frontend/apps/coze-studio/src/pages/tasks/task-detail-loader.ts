@@ -223,7 +223,10 @@ const getTaskThreadForDetail = async (
 
 const fetchTaskThreadDetail = async (
   id: string,
-  { suppressNotFoundError = false } = {},
+  {
+    spaceId,
+    suppressNotFoundError = false,
+  }: { spaceId?: string; suppressNotFoundError?: boolean } = {},
 ): Promise<TaskDetail | undefined> => {
   const thread = await getTaskThreadForDetail(id, { suppressNotFoundError });
 
@@ -262,6 +265,7 @@ const fetchTaskThreadDetail = async (
     }),
     listTaskThreadArtifacts({
       thread_id: threadID,
+      space_id: spaceId,
       page: 1,
       page_size: 50,
     }),
@@ -300,9 +304,11 @@ const fetchTaskThreadDetail = async (
 
 export const fetchTaskDetail = async ({
   id,
+  spaceId,
   source,
 }: {
   id: string;
+  spaceId?: string;
   source: TaskDetailSource;
 }): Promise<TaskDetail> => {
   if (source === 'task') {
@@ -310,6 +316,7 @@ export const fetchTaskDetail = async ({
   }
 
   const threadDetail = await fetchTaskThreadDetail(id, {
+    spaceId,
     suppressNotFoundError: source === 'auto',
   });
 

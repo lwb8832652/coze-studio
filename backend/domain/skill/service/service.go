@@ -26,6 +26,7 @@ import (
 
 type SkillService interface {
 	ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error)
+	ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error)
 	Create(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
 	Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
 	Delete(ctx context.Context, id int64) (*entity.Skill, error)

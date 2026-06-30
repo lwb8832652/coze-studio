@@ -153,3 +153,24 @@ type ListSkillToolCandidatesResponse struct {
 	Msg      string                       `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
 	BaseResp *base.BaseResp               `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
 }
+
+type InstallSkillFromArtifactRequest struct {
+	SpaceID    int64      `thrift:"space_id,1,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	ThreadID   int64      `thrift:"thread_id,2,required" form:"thread_id,required" json:"thread_id,string,required" query:"thread_id,required"`
+	ArtifactID int64      `thrift:"artifact_id,3,required" form:"artifact_id,required" json:"artifact_id,string,required" query:"artifact_id,required"`
+	Base       *base.Base `thrift:"Base,255,optional" json:"-" query:"-" form:"-"`
+}
+
+type InstallSkillFromArtifactData struct {
+	Success   bool   `thrift:"success,1,required" form:"success,required" json:"success,required" query:"success,required"`
+	SkillName string `thrift:"skill_name,2,required" form:"skill_name,required" json:"skill_name,required" query:"skill_name,required"`
+	Message   string `thrift:"message,3,required" form:"message,required" json:"message,required" query:"message,required"`
+	Skill     *Skill `thrift:"skill,4,optional" form:"skill" json:"skill,omitempty" query:"skill"`
+}
+
+type InstallSkillFromArtifactResponse struct {
+	Data     *InstallSkillFromArtifactData `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64                         `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                        `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp                `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}

@@ -15,27 +15,165 @@
  */
 
 import { useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { IconCozAsynchronousTask } from '@coze-arch/coze-design/icons';
 import { Loading } from '@coze-arch/coze-design';
 
+import {
+  WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+  type WorkspaceTaskThreadUpsertDetail,
+} from '../../pages/tasks/task-thread-events';
+import { getTaskThreadDisplayTitle } from '../../pages/tasks/task-display-title';
 import { listTaskThreads } from '../../pages/tasks/service';
 import { buildTaskThreadDetailPath } from '../../pages/chats/task-thread-routes';
 import { getWorkspaceTaskStatusMeta } from './workspace-task-status';
 
 type TaskThread = workbenchTask.TaskThread;
 
-export const WorkspaceTaskList = () => {
-  const navigate = useNavigate();
-  const spaceId = useSpaceStore(state => state.space.id);
+const RECENT_TASK_PAGE_SIZE = 20;
+
+const upsertTaskThread = (
+  tasks: TaskThread[],
+  task: WorkspaceTaskThreadUpsertDetail['thread'],
+  mode: WorkspaceTaskThreadUpsertDetail['mode'] = 'upsert',
+) => {
+  const existingTask = tasks.find(item => item.thread_id === task.thread_id);
+
+  if (mode === 'patch') {
+    if (!existingTask) {
+      return tasks;
+    }
+
+    return tasks.map(item =>
+      item.thread_id === task.thread_id ? { ...item, ...task } : item,
+    );
+  }
+
+  const nextTask = existingTask ? { ...existingTask, ...task } : task;
+
+  return [
+    nextTask as TaskThread,
+    ...tasks.filter(item => item.thread_id !== task.thread_id),
+  ];
+};
+
+const appendUniqueTaskThreads = (
+  current: TaskThread[],
+  incoming: TaskThread[],
+) => {
+  const existingIDs = new Set(current.map(task => task.thread_id));
+  const next = [...current];
+
+  incoming.forEach(task => {
+    if (!existingIDs.has(task.thread_id)) {
+      existingIDs.add(task.thread_id);
+      next.push(task);
+    }
+  });
+
+  return next;
+};
+
+const useTaskThreadInfiniteScroll = ({
+  hasMore,
+  listRef,
+  loadMoreTasks,
+  sentinelRef,
+}: {
+  hasMore: boolean;
+  listRef: RefObject<HTMLDivElement>;
+  loadMoreTasks: () => void;
+  sentinelRef: RefObject<HTMLDivElement>;
+}) => {
+  useEffect(() => {
+    const root = listRef.current;
+    const sentinel = sentinelRef.current;
+
+    if (
+      !root ||
+      !sentinel ||
+      !hasMore ||
+      typeof IntersectionObserver === 'undefined'
+    ) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          loadMoreTasks();
+        }
+      },
+      {
+        root,
+        rootMargin: '120px 0px 120px 0px',
+      },
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMore, listRef, loadMoreTasks, sentinelRef]);
+};
+
+const useWorkspaceTaskThreads = (spaceId?: string) => {
   const [tasks, setTasks] = useState<TaskThread[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const pageRef = useRef(1);
+  const loadingMoreRef = useRef(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const hasMore = tasks.length < total;
+
+  const loadMoreTasks = useCallback(async () => {
+    if (
+      !spaceId ||
+      loading ||
+      loadingMoreRef.current ||
+      tasks.length >= total
+    ) {
+      return;
+    }
+
+    const nextPage = pageRef.current + 1;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+
+    try {
+      const response = await listTaskThreads({
+        space_id: spaceId,
+        page: nextPage,
+        page_size: RECENT_TASK_PAGE_SIZE,
+      });
+      const nextThreads = response.data?.threads ?? [];
+      setTasks(current => appendUniqueTaskThreads(current, nextThreads));
+      setTotal(response.data?.total ?? tasks.length + nextThreads.length);
+      pageRef.current = nextPage;
+    } catch {
+      setTotal(current => Math.max(current, tasks.length));
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [loading, spaceId, tasks.length, total]);
 
   useEffect(() => {
     if (!spaceId) {
+      setTasks([]);
+      setTotal(0);
       return;
     }
 
@@ -47,15 +185,19 @@ export const WorkspaceTaskList = () => {
       try {
         const response = await listTaskThreads({
           space_id: spaceId,
-          page_size: 8,
+          page: 1,
+          page_size: RECENT_TASK_PAGE_SIZE,
         });
 
         if (!canceled) {
           setTasks(response.data?.threads ?? []);
+          setTotal(response.data?.total ?? response.data?.threads?.length ?? 0);
+          pageRef.current = 1;
         }
       } catch {
         if (!canceled) {
           setTasks([]);
+          setTotal(0);
         }
       } finally {
         if (!canceled) {
@@ -71,11 +213,136 @@ export const WorkspaceTaskList = () => {
     };
   }, [spaceId]);
 
+  useEffect(() => {
+    if (!spaceId) {
+      return;
+    }
+
+    const handleTaskThreadUpsert = (event: Event) => {
+      const { detail } = event as CustomEvent<WorkspaceTaskThreadUpsertDetail>;
+
+      if (!detail?.thread || detail.space_id !== spaceId) {
+        return;
+      }
+
+      const taskExists = tasks.some(
+        task => task.thread_id === detail.thread.thread_id,
+      );
+      setTasks(current =>
+        upsertTaskThread(current, detail.thread, detail.mode),
+      );
+      setTotal(current =>
+        taskExists || detail.mode === 'patch'
+          ? current
+          : Math.max(current + 1, tasks.length + 1),
+      );
+    };
+
+    window.addEventListener(
+      WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+      handleTaskThreadUpsert,
+    );
+
+    return () => {
+      window.removeEventListener(
+        WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+        handleTaskThreadUpsert,
+      );
+    };
+  }, [spaceId, tasks]);
+
+  useTaskThreadInfiniteScroll({
+    hasMore,
+    listRef,
+    loadMoreTasks,
+    sentinelRef,
+  });
+
+  return {
+    hasMore,
+    listRef,
+    loading,
+    loadingMore,
+    sentinelRef,
+    tasks,
+  };
+};
+
+const WorkspaceTaskRow = ({
+  onNavigate,
+  task,
+}: {
+  task: TaskThread;
+  onNavigate: (task: TaskThread) => void;
+}) => {
+  const statusMeta = getWorkspaceTaskStatusMeta(task.status);
+  const displayTitle = getTaskThreadDisplayTitle(task);
+
+  return (
+    <button
+      key={task.thread_id}
+      type="button"
+      className="coze-prototype-sidebar-task-row"
+      onClick={() => onNavigate(task)}
+    >
+      <span className="coze-prototype-task-icon">
+        <IconCozAsynchronousTask className="text-[13px]" />
+        <span className="coze-prototype-status-dot-wrap">
+          <span
+            className="coze-prototype-status-dot"
+            style={{ backgroundColor: statusMeta.color }}
+            aria-label={statusMeta.ariaLabel}
+            data-status-tone={statusMeta.tone}
+          />
+        </span>
+      </span>
+      <span className="coze-prototype-sidebar-task-name">{displayTitle}</span>
+    </button>
+  );
+};
+
+const WorkspaceTaskLoadMore = ({
+  loadingMore,
+  sentinelRef,
+}: {
+  loadingMore: boolean;
+  sentinelRef: RefObject<HTMLDivElement>;
+}) => (
+  <div
+    ref={sentinelRef}
+    className="coze-prototype-sidebar-load-more"
+    role={loadingMore ? 'status' : undefined}
+    aria-live="polite"
+  >
+    {loadingMore ? (
+      <>
+        <Loading loading={true} size="mini" />
+        <span>加载更多任务...</span>
+      </>
+    ) : null}
+  </div>
+);
+
+export const WorkspaceTaskList = () => {
+  const navigate = useNavigate();
+  const spaceId = useSpaceStore(state => state.space.id);
+  const { hasMore, listRef, loading, loadingMore, sentinelRef, tasks } =
+    useWorkspaceTaskThreads(spaceId);
+
+  const handleNavigate = useCallback(
+    (task: TaskThread) => {
+      if (spaceId) {
+        navigate(buildTaskThreadDetailPath(spaceId, task.thread_id));
+      }
+    },
+    [navigate, spaceId],
+  );
+
   return (
     <section className="flex h-full w-full flex-col" aria-label="我的任务">
       <h2 className="coze-prototype-sidebar-task-title">我的任务</h2>
 
-      {loading ? (
+      {loading && tasks.length === 0 ? (
         <div className="flex h-[120px] items-center justify-center">
           <Loading loading={true} size="mini" />
         </div>
@@ -87,37 +354,20 @@ export const WorkspaceTaskList = () => {
         </div>
       ) : null}
 
-      <div className="coze-prototype-sidebar-task-list">
-        {tasks.map(task => {
-          const statusMeta = getWorkspaceTaskStatusMeta(task.status);
-
-          return (
-            <button
-              key={task.thread_id}
-              type="button"
-              className="coze-prototype-sidebar-task-row"
-              onClick={() =>
-                spaceId &&
-                navigate(buildTaskThreadDetailPath(spaceId, task.thread_id))
-              }
-            >
-              <span className="coze-prototype-task-icon">
-                <IconCozAsynchronousTask className="text-[13px]" />
-                <span className="coze-prototype-status-dot-wrap">
-                  <span
-                    className="coze-prototype-status-dot"
-                    style={{ backgroundColor: statusMeta.color }}
-                    aria-label={statusMeta.ariaLabel}
-                    data-status-tone={statusMeta.tone}
-                  />
-                </span>
-              </span>
-              <span className="coze-prototype-sidebar-task-name">
-                {task.title}
-              </span>
-            </button>
-          );
-        })}
+      <div className="coze-prototype-sidebar-task-list" ref={listRef}>
+        {tasks.map(task => (
+          <WorkspaceTaskRow
+            key={task.thread_id}
+            task={task}
+            onNavigate={handleNavigate}
+          />
+        ))}
+        {hasMore ? (
+          <WorkspaceTaskLoadMore
+            loadingMore={loadingMore}
+            sentinelRef={sentinelRef}
+          />
+        ) : null}
       </div>
     </section>
   );

@@ -1995,6 +1995,94 @@ func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
 	require.NotContains(t, payload, "media")
 }
 
+func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T) {
+	arguments := `{"description":"创建武汉3日游攻略 Markdown 文档","file_path":"/mnt/user-data/workspace/武汉3日游攻略.md","content":"` + strings.Repeat("x", 5000) + `","url":"https://private.example/signed","api_key":"sk-secret"}`
+	reasoning := "Let me create the document in the workspace first. " + strings.Repeat("Keep the visible step summary detailed. ", 8)
+	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+		"role":"assistant",
+		"content":"final text should not be exposed through event payload",
+		"reasoning_content":`+strconv.Quote(reasoning)+`,
+		"tool_calls":[{
+			"id":"call_write_file",
+			"type":"function",
+			"function":{
+				"name":"write_file",
+				"arguments":`+strconv.Quote(arguments)+`
+			}
+		}],
+		"media":[{"url":"s3://bucket/raw.png"}],
+		"usage":{"prompt_tokens":10,"completion_tokens":5}
+	}`)
+
+	var got struct {
+		Redacted         bool   `json:"redacted"`
+		Role             string `json:"role"`
+		ReasoningContent string `json:"reasoning_content"`
+		ToolCalls        []struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(payload), &got))
+	require.True(t, got.Redacted)
+	require.Equal(t, "assistant", got.Role)
+	require.Equal(t, strings.TrimSpace(reasoning), got.ReasoningContent)
+	require.Len(t, got.ToolCalls, 1)
+	require.Equal(t, "call_write_file", got.ToolCalls[0].ID)
+	require.Equal(t, "function", got.ToolCalls[0].Type)
+	require.Equal(t, "write_file", got.ToolCalls[0].Function.Name)
+	var gotArguments map[string]string
+	require.NoError(t, json.Unmarshal([]byte(got.ToolCalls[0].Function.Arguments), &gotArguments))
+	require.Equal(t, map[string]string{
+		"description": "创建武汉3日游攻略 Markdown 文档",
+		"file_path":   "/mnt/user-data/workspace/武汉3日游攻略.md",
+	}, gotArguments)
+	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, strings.Repeat("x", 100))
+	require.NotContains(t, payload, "private.example")
+	require.NotContains(t, payload, "sk-secret")
+	require.NotContains(t, payload, "s3://bucket/raw")
+	require.NotContains(t, payload, "prompt_tokens")
+	require.NotContains(t, payload, "completion_tokens")
+	require.NotContains(t, payload, "media")
+}
+
+func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
+	arguments := `{"skill":"skill-creator","url":"https://private.example/signed","api_key":"sk-secret"}`
+	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+		"role":"assistant",
+		"content":"final text should not be exposed through event payload",
+		"tool_calls":[{
+			"id":"call_skill",
+			"type":"function",
+			"function":{
+				"name":"skill",
+				"arguments":`+strconv.Quote(arguments)+`
+			}
+		}]
+	}`)
+
+	require.JSONEq(t, `{
+		"redacted":true,
+		"role":"assistant",
+		"tool_calls":[{
+			"id":"call_skill",
+			"type":"function",
+			"function":{
+				"name":"skill",
+				"arguments":"{\"skill\":\"skill-creator\"}"
+			}
+		}]
+	}`, payload)
+	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "private.example")
+	require.NotContains(t, payload, "sk-secret")
+}
+
 func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)

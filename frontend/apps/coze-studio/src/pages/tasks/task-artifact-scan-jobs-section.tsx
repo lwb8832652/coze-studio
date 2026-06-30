@@ -28,9 +28,11 @@ import {
 const SCAN_JOB_PAGE_SIZE = 20;
 
 export const TaskArtifactScanJobsSection = ({
+  spaceId,
   threadId,
   visible,
 }: {
+  spaceId?: string;
   threadId: string;
   visible: boolean;
 }) => {
@@ -55,6 +57,7 @@ export const TaskArtifactScanJobsSection = ({
     try {
       const response = await listTaskThreadArtifactScanJobs({
         thread_id: threadId,
+        space_id: spaceId,
         page: 1,
         page_size: SCAN_JOB_PAGE_SIZE,
       });
@@ -67,7 +70,7 @@ export const TaskArtifactScanJobsSection = ({
     } finally {
       setScanJobsLoading(false);
     }
-  }, [threadId]);
+  }, [spaceId, threadId]);
 
   useEffect(() => {
     if (visible) {
@@ -85,6 +88,7 @@ export const TaskArtifactScanJobsSection = ({
       await retryTaskThreadArtifactScanJob({
         thread_id: threadId,
         job_id: job.job_id,
+        space_id: spaceId,
       });
       await loadScanJobs();
     } catch (err) {

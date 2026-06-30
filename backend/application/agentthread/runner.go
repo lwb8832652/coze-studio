@@ -65,6 +65,7 @@ func (f RunExecutorFunc) Execute(ctx context.Context, run *RunSummary) (*RunExec
 type RunExecutionResult struct {
 	Message  string
 	Metadata string
+	Title    string
 }
 
 type RunProcessorOptions struct {
@@ -260,6 +261,8 @@ func (p *RunProcessor) finalizeRunExecution(
 		return runProcessFailed, p.failRun(ctx, run, "append_message_failed", err.Error())
 	}
 
+	p.syncGeneratedThreadTitle(ctx, run, result)
+
 	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
 		RunID:    run.RunID,
 		From:     RunStatusRunning,
@@ -343,6 +346,159 @@ func resultMetadata(result *RunExecutionResult) string {
 	}
 
 	return result.Metadata
+}
+
+func resultTitle(result *RunExecutionResult) string {
+	if result == nil {
+		return ""
+	}
+
+	return result.Title
+}
+
+func (p *RunProcessor) syncGeneratedThreadTitle(
+	ctx context.Context,
+	run *RunSummary,
+	result *RunExecutionResult,
+) {
+	if p == nil || p.app == nil || run == nil {
+		return
+	}
+	if run.ParentRunID > 0 || run.RunKind == RunKindSubagent {
+		return
+	}
+
+	userMessage, ok := runtimeLatestUserInputText(run.Input)
+	if !ok {
+		return
+	}
+	userMessage = strings.TrimSpace(userMessage)
+	if userMessage == "" {
+		return
+	}
+	title := generatedThreadTitle(userMessage, resultTitle(result))
+	if title == "" {
+		return
+	}
+
+	threadResp, err := p.app.GetThread(ctx, &GetThreadRequest{ThreadID: run.ThreadID})
+	if err != nil || threadResp == nil || threadResp.Thread == nil {
+		return
+	}
+	currentTitle := strings.TrimSpace(threadResp.Thread.Title)
+	initialTitle := taskThreadTitle("", userMessage)
+	if currentTitle != "" && currentTitle != initialTitle {
+		return
+	}
+	if currentTitle == title {
+		return
+	}
+
+	resp, err := p.app.UpdateThreadTitle(ctx, &UpdateThreadTitleRequest{
+		ThreadID: run.ThreadID,
+		Title:    title,
+	})
+	if err != nil || resp == nil || !resp.Updated {
+		return
+	}
+	p.emitRunEvent(ctx, run, "context.thread_title_updated", map[string]any{
+		"thread_title": title,
+	})
+}
+
+func generatedThreadTitle(userMessage, explicitTitle string) string {
+	if title := normalizeGeneratedThreadTitle(explicitTitle); title != "" {
+		return title
+	}
+	if title := extractQuotedGeneratedThreadTitle(userMessage); title != "" {
+		return title
+	}
+
+	title := stripGeneratedThreadTitlePrefix(userMessage)
+	title = firstGeneratedThreadTitleSentence(title)
+	title = normalizeGeneratedThreadTitle(title)
+	if title == "" {
+		return ""
+	}
+
+	runes := []rune(title)
+	if len(runes) > 50 {
+		return string(runes[:50]) + "..."
+	}
+	return title
+}
+
+func extractQuotedGeneratedThreadTitle(text string) string {
+	for _, pair := range [][2]string{
+		{"《", "》"},
+		{"\"", "\""},
+		{"'", "'"},
+	} {
+		start := strings.Index(text, pair[0])
+		if start < 0 {
+			continue
+		}
+		remaining := text[start+len(pair[0]):]
+		end := strings.Index(remaining, pair[1])
+		if end <= 0 {
+			continue
+		}
+		if title := normalizeGeneratedThreadTitle(remaining[:end]); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+func stripGeneratedThreadTitlePrefix(text string) string {
+	title := strings.TrimSpace(text)
+	for _, prefix := range []string{
+		"请帮我生成一份",
+		"请帮我制定一份",
+		"请帮我创建一个",
+		"帮我生成一份",
+		"帮我制定一份",
+		"帮我创建一个",
+		"请生成一份",
+		"请制定一份",
+		"请创建一个",
+		"生成一份",
+		"制定一份",
+		"创建一个",
+		"帮我",
+		"请",
+	} {
+		if strings.HasPrefix(title, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(title, prefix))
+		}
+	}
+	return title
+}
+
+func firstGeneratedThreadTitleSentence(text string) string {
+	cut := len(text)
+	for _, sep := range []string{"，", "。", "；", "\n", ",", ".", ";", "并", "包含"} {
+		if idx := strings.Index(text, sep); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+	return text[:cut]
+}
+
+func normalizeGeneratedThreadTitle(title string) string {
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "\"'")
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "，。,.；;:：")
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	runes := []rune(title)
+	if len(runes) > 60 {
+		return string(runes[:60])
+	}
+	return title
 }
 
 func isSubagentRetryCommand(command string) bool {

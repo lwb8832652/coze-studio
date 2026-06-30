@@ -20,11 +20,16 @@ package coze
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
+	"path"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 )
 
@@ -86,6 +91,79 @@ func ImportSkill(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+// InstallSkillFromArtifact .
+// @router /api/workbench/skills/install [POST]
+func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req skillapi.InstallSkillFromArtifactRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	if req.SpaceID <= 0 {
+		invalidParamRequestResponse(c, "space id is required")
+		return
+	}
+	if req.ThreadID <= 0 || req.ArtifactID <= 0 {
+		invalidParamRequestResponse(c, "artifact scope is required")
+		return
+	}
+
+	artifactContent, err := appagentthread.SVC.ReadArtifactContent(
+		ctx,
+		&appagentthread.ReadArtifactContentRequest{
+			ThreadID:   req.ThreadID,
+			ArtifactID: req.ArtifactID,
+			Mode:       appagentthread.ArtifactContentModeDownload,
+			ViewerID:   workbenchViewerIDFromCtx(ctx),
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	fileName := strings.TrimSpace(artifactContent.FileName)
+	if !strings.EqualFold(path.Ext(fileName), ".skill") {
+		invalidParamRequestResponse(c, "only .skill artifacts can be installed")
+		return
+	}
+
+	imported, err := appskill.SVC.ImportSkill(ctx, &skillapi.ImportSkillRequest{
+		SpaceID:  req.SpaceID,
+		FileName: fileName,
+		Content: fmt.Sprintf(
+			"base64:%s",
+			base64.StdEncoding.EncodeToString(artifactContent.Content),
+		),
+	})
+	if err != nil {
+		workbenchSkillErrorResponse(ctx, c, err)
+		return
+	}
+
+	var skillName string
+	var skillData *skillapi.Skill
+	if imported != nil && imported.Data != nil {
+		skillData = imported.Data
+		skillName = imported.Data.Name
+	}
+	if skillName == "" {
+		skillName = strings.TrimSuffix(fileName, path.Ext(fileName))
+	}
+
+	c.JSON(consts.StatusOK, &skillapi.InstallSkillFromArtifactResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &skillapi.InstallSkillFromArtifactData{
+			Success:   true,
+			SkillName: skillName,
+			Message:   fmt.Sprintf("Skill %s installed", skillName),
+			Skill:     skillData,
+		},
+	})
 }
 
 // ListSkills .

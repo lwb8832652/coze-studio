@@ -110,6 +110,35 @@ func (s *threadService) GetThread(ctx context.Context, id int64) (*entity.Thread
 	return s.repo.GetThread(ctx, id)
 }
 
+func (s *threadService) UpdateThreadTitle(
+	ctx context.Context,
+	req *UpdateThreadTitleRequest,
+) (*entity.Thread, bool, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, false, err
+	}
+	if req == nil {
+		return nil, false, InvalidArgumentErrorf("update thread title request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, false, InvalidArgumentErrorf("thread id is required")
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return nil, false, InvalidArgumentErrorf("thread title is required")
+	}
+	updatedAt := req.UpdatedAt
+	if updatedAt <= 0 {
+		updatedAt = time.Now().UnixMilli()
+	}
+
+	return s.repo.UpdateThreadTitle(ctx, repository.UpdateThreadTitleRequest{
+		ThreadID:  req.ThreadID,
+		Title:     title,
+		UpdatedAt: updatedAt,
+	})
+}
+
 func (s *threadService) ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, 0, err

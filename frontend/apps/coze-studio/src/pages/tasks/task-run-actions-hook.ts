@@ -18,11 +18,12 @@ import { useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
-import type { WorkbenchComposerSubmitPayload } from '../workbench/components/types';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
+  DEFAULT_WORKBENCH_MODE,
   stringifyWorkbenchRunConfig,
+  type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import type { TaskRunActionLoading } from './task-run-action-bar';
 import {
@@ -46,7 +47,7 @@ const getTaskRetryPayload = (
 
   return {
     message,
-    mode: 'Auto',
+    mode: DEFAULT_WORKBENCH_MODE,
     runtimeSettings: createDefaultWorkbenchRuntimeSettings(resourceSelection),
     ...resourceSelection,
   };
@@ -68,11 +69,13 @@ const getTaskRetryMetadata = ({
 
 export const useTaskRunActions = ({
   applyTaskDetail,
+  spaceID,
   task,
   taskDetailId,
   taskDetailSource,
 }: {
   applyTaskDetail: (detail: TaskDetail) => void;
+  spaceID?: string;
   task?: ChatTask;
   taskDetailId?: string;
   taskDetailSource: LoadedTaskDetailSource;
@@ -101,6 +104,7 @@ export const useTaskRunActions = ({
       });
       const detail = await fetchTaskDetail({
         id: taskDetailId,
+        spaceId: spaceID,
         source: taskDetailSource,
       });
       applyTaskDetail(detail);
@@ -147,6 +151,7 @@ export const useTaskRunActions = ({
       });
       const detail = await fetchTaskDetail({
         id: taskDetailId,
+        spaceId: spaceID,
         source: taskDetailSource,
       });
       applyTaskDetail(detail);
@@ -177,6 +182,7 @@ export const useTaskRunActions = ({
       });
       const detail = await fetchTaskDetail({
         id: taskDetailId,
+        spaceId: spaceID,
         source: taskDetailSource,
       });
       applyTaskDetail(detail);

@@ -32,10 +32,12 @@ type ArtifactPanelMode = 'active' | 'deleted';
 export const TaskArtifactsPanel = ({
   artifacts,
   onArtifactsChanged,
+  spaceId,
   threadId,
 }: {
   artifacts: TaskThreadArtifact[];
   onArtifactsChanged?: () => void | Promise<void>;
+  spaceId?: string;
   threadId?: string;
 }) => {
   const [visible, setVisible] = useState(false);
@@ -50,7 +52,7 @@ export const TaskArtifactsPanel = ({
     handleReviewArtifact,
     inlinePreview,
     removedArtifact,
-  } = useTaskArtifactActions({ onArtifactsChanged, threadId });
+  } = useTaskArtifactActions({ onArtifactsChanged, spaceId, threadId });
   const sortedArtifacts = useMemo(
     () =>
       [...artifacts].sort(
@@ -111,6 +113,7 @@ export const TaskArtifactsPanel = ({
           {panelMode === 'active' ? (
             <>
               <TaskArtifactScanJobsSection
+                spaceId={spaceId}
                 threadId={threadId}
                 visible={visible}
               />
@@ -140,6 +143,7 @@ export const TaskArtifactsPanel = ({
             </>
           ) : (
             <TaskDeletedArtifactsSection
+              spaceId={spaceId}
               threadId={threadId}
               visible={visible}
               onArtifactsChanged={onArtifactsChanged}

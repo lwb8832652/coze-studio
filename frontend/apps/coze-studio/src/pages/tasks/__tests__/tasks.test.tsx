@@ -192,6 +192,128 @@ describe('TasksPage helpers', () => {
     container.remove();
   });
 
+  it('uses compact task display titles across all task rows and actions', async () => {
+    mockListTaskThreads.mockResolvedValueOnce({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-travel',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title:
+              '请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项，并生成一个可在产物面板预览和下载的 Markdown 或 PDF 文档。',
+            status: 'completed',
+            last_user_message:
+              '请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项',
+            last_agent_message: '',
+            legacy_task_id: '0',
+            metadata: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TasksPage />);
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('.coze-prototype-row-title')?.textContent,
+    ).toBe('武汉3日游攻略');
+    expect(
+      container.querySelector('button[aria-label="打开任务 武汉3日游攻略"]'),
+    ).toBeTruthy();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('patches existing task thread titles from workspace update events', async () => {
+    mockListTaskThreads.mockResolvedValueOnce({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-travel',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: '请帮我制定一份武汉3日游攻略，包含预算表和注意事项',
+            status: 'running',
+            last_user_message: '请帮我制定一份武汉3日游攻略',
+            last_agent_message: '',
+            legacy_task_id: '0',
+            metadata: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TasksPage />);
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            mode: 'patch',
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'thread-travel',
+              title: '武汉3日游攻略',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            mode: 'patch',
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'missing-thread',
+              title: '不应插入',
+            },
+          },
+        }),
+      );
+    });
+
+    const rowTitles = Array.from(
+      container.querySelectorAll('.coze-prototype-row-title'),
+    ).map(item => item.textContent);
+
+    expect(rowTitles).toEqual(['武汉3日游攻略']);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('renders task list loading, empty, and error states', async () => {
     const loadingContainer = document.createElement('div');
     document.body.appendChild(loadingContainer);
@@ -358,7 +480,7 @@ describe('TasksPage helpers', () => {
     expect(started.title).toBe('调用工具 search_web');
     expect(started.status).toBe('running');
     expect(started.structured).toBe(true);
-    expect(completed.title).toBe('工具 search_web 调用完成');
+    expect(completed.title).toBe('使用 “search_web” 工具');
     expect(completed.status).toBe('completed');
     expect(failed.title).toBe('工具 search_web 调用失败');
     expect(failed.status).toBe('failed');
@@ -402,7 +524,7 @@ describe('TasksPage helpers', () => {
 
     expect(started.title).toBe('调用工具 工具');
     expect(started.detail).toBe('参数已准备');
-    expect(completed.detail).toBe('已返回结果');
+    expect(completed.detail).toBe('');
     expect(failed.detail).toBe('工具调用失败，详情已隐藏');
     expect(renderedText).not.toContain('tool_arguments');
     expect(renderedText).not.toContain('provider_raw');
@@ -479,6 +601,290 @@ describe('TasksPage helpers', () => {
       status: 'neutral',
       structured: true,
     });
+  });
+
+  it('projects assistant tool_calls into DeerFlow-style execution steps', () => {
+    const events = [
+      {
+        id: 'event-assistant-tool-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          reasoning_content: 'Let me create the document in the workspace.',
+          tool_calls: [
+            {
+              id: 'call-write-file',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: JSON.stringify({
+                  description: '创建武汉3日游攻略 Markdown 文档',
+                  path: '/mnt/user-data/workspace/武汉3日游攻略.md',
+                }),
+              },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-result',
+        task_id: 'task-1',
+        event_type: 'tool.completed',
+        payload: JSON.stringify({
+          role: 'tool',
+          tool_name: 'write_file',
+          tool_call_id: 'call-write-file',
+          content: '{"ok":true}',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0].display.kind).toBe('thought');
+    expect(projected[0].display.thought).toBe(
+      'Let me create the document in the workspace.',
+    );
+    expect(projected[1].event.id).toBe('event-assistant-tool-call:tool-call-0');
+    expect(projected[1].display.title).toBe('创建武汉3日游攻略 Markdown 文档');
+    expect(projected[1].display.detail).toBe(
+      '/mnt/user-data/workspace/武汉3日游攻略.md',
+    );
+    expect(projected[1].display.status).toBe('completed');
+  });
+
+  it('shows selected skill name for skill tool-call execution steps', () => {
+    const events = [
+      {
+        id: 'event-assistant-skill-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-skill',
+              type: 'function',
+              function: {
+                name: 'skill',
+                arguments: JSON.stringify({
+                  skill: 'skill-creator',
+                }),
+              },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-result',
+        task_id: 'task-1',
+        event_type: 'tool.completed',
+        payload: JSON.stringify({
+          role: 'tool',
+          tool_name: 'skill',
+          tool_call_id: 'call-skill',
+          content: 'loaded',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].display.title).toBe('使用 “skill-creator” 技能');
+    expect(projected[0].display.status).toBe('completed');
+  });
+
+  it('keeps skill tool-call failures visible with selected skill names', () => {
+    const events = [
+      {
+        id: 'event-assistant-skill-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-skill',
+              type: 'function',
+              function: {
+                name: 'skill',
+                arguments: JSON.stringify({
+                  skill: 'skill-creator',
+                }),
+              },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-failed',
+        task_id: 'task-1',
+        event_type: 'tool.failed',
+        payload: JSON.stringify({
+          role: 'tool',
+          tool_name: 'skill',
+          skill_name: 'skill-creator',
+          tool_call_id: 'call-skill',
+          error_message: 'guardrail blocked load',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].display.title).toBe('“skill-creator” 技能加载失败');
+    expect(projected[0].display.status).toBe('failed');
+    expect(projected[0].display.detail).toBe('工具调用失败，详情已隐藏');
+  });
+
+  it('hides internal transcript and memory lifecycle events from the flow', () => {
+    const events = [
+      {
+        id: 'event-transcript',
+        task_id: 'task-1',
+        event_type: 'context.transcript_persisted',
+        payload: JSON.stringify({
+          kind: 'terminal',
+          digest: 'd3fd',
+          snapshot_id: 1,
+          message_count: 7,
+        }),
+        created_at: 8,
+      },
+      {
+        id: 'event-memory',
+        task_id: 'task-1',
+        event_type: 'memory.update_queued',
+        payload: JSON.stringify({
+          kind: 'terminal',
+          digest: 'd3fd',
+          snapshot_id: 1,
+          message_count: 7,
+        }),
+        created_at: 9,
+      },
+    ];
+
+    expect(projectTaskExecutionEvents(events)).toHaveLength(0);
+  });
+
+  it('falls back to loaded skill name for empty aggregate skill tool calls', () => {
+    const events = [
+      {
+        id: 'event-skills-loaded',
+        task_id: 'task-1',
+        event_type: 'skills.loaded',
+        payload: JSON.stringify({
+          skill_count: 1,
+          skill_names: ['skill-creator'],
+        }),
+        created_at: 4,
+      },
+      {
+        id: 'event-assistant-skill-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-skill',
+              type: 'function',
+              function: {
+                name: 'skill',
+                arguments: JSON.stringify({}),
+              },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-result',
+        task_id: 'task-1',
+        event_type: 'tool.completed',
+        payload: JSON.stringify({
+          role: 'tool',
+          tool_name: 'skill',
+          tool_call_id: 'call-skill',
+          content: 'loaded',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected.some(item => item.display.structured)).toBe(true);
+    expect(projected.at(-1)?.display.title).toBe('使用 “skill-creator” 技能');
+  });
+
+  it('renders skill catalog events as available-skill directory steps', () => {
+    const events = [
+      {
+        id: 'event-skills-loaded',
+        task_id: 'task-1',
+        event_type: 'skills.loaded',
+        payload: JSON.stringify({
+          skill_count: 22,
+          skill_ids: ['skill-1', 'skill-2', 'skill-3'],
+          skill_names: ['skill-creator', 'report-writer', 'slides-maker'],
+        }),
+        created_at: 4,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected[0].display.title).toBe('可用技能目录 22 个');
+    expect(projected[0].display.detail).toBe(
+      'skill-creator、report-writer、slides-maker',
+    );
+    expect(projected[0].display.title).not.toContain('加载');
+  });
+
+  it('renders single skill catalog events without implying full content preload', () => {
+    const events = [
+      {
+        id: 'event-skills-loaded',
+        task_id: 'task-1',
+        event_type: 'skills.loaded',
+        payload: JSON.stringify({
+          skill_count: 1,
+          skill_ids: ['skill-1'],
+          skill_names: ['skill-creator'],
+        }),
+        created_at: 4,
+      },
+      {
+        id: 'event-assistant-completed',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          content: '好的，让我们开始创建技能。',
+        }),
+        created_at: 5,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected[0].display.title).toBe('可用技能 “skill-creator”');
+    expect(projected[0].display.status).toBe('completed');
+    expect(projected[0].display.kind).toBe('step');
+    expect(projected[0].display.title).not.toContain('skill_names');
+    expect(projected[0].display.title).not.toContain('加载');
   });
 
   it('extracts latest pending clarification prompt', () => {

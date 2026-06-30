@@ -94,6 +94,107 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"status":"succeeded"`)
 }
 
+func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
+	userMessage := "请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "文档已生成",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "文档已生成"}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, int64(10), domainSVC.updateThreadTitleReq.ThreadID)
+	require.Equal(t, "武汉3日游攻略", domainSVC.updateThreadTitleReq.Title)
+	require.Equal(t, []string{"run.started", "context.thread_title_updated", "run.completed"}, eventSink.eventTypes())
+	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"武汉3日游攻略"`)
+}
+
+func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
+	input, err := taskThreadRunInputFromMessage("能把预算表导出成 Excel 吗？")
+	require.NoError(t, err)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: "武汉3日游攻略",
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       201,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       301,
+			ThreadID: 10,
+			RunID:    201,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "可以，我会整理预算表",
+		},
+		completedRun: &entity.Run{
+			ID:       201,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "可以，我会整理预算表"}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.Nil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+}
+
 func TestRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{

@@ -25,6 +25,7 @@ import (
 type ThreadRepository interface {
 	CreateThread(ctx context.Context, thread *entity.Thread) error
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
+	UpdateThreadTitle(ctx context.Context, req UpdateThreadTitleRequest) (*entity.Thread, bool, error)
 	ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error)
 	CreateMessage(ctx context.Context, message *entity.Message) error
 	ListMessages(ctx context.Context, req ListMessagesRequest) ([]*entity.Message, int64, error)
@@ -89,6 +90,12 @@ type ListThreadsRequest struct {
 	Status   *entity.ThreadStatus
 	Page     int32
 	PageSize int32
+}
+
+type UpdateThreadTitleRequest struct {
+	ThreadID  int64
+	Title     string
+	UpdatedAt int64
 }
 
 type ListMessagesRequest struct {

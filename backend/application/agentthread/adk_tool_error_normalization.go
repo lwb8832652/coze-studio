@@ -47,6 +47,10 @@ func (m *ADKToolErrorNormalizationMiddleware) WrapInvokableToolCall(
 		argumentsInJSON string,
 		opts ...tool.Option,
 	) (string, error) {
+		argumentsInJSON = normalizeADKToolCallArguments(
+			argumentsInJSON,
+			tCtx,
+		)
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
 			if shouldPassThroughADKToolError(err, tCtx) {
@@ -73,6 +77,10 @@ func (m *ADKToolErrorNormalizationMiddleware) WrapStreamableToolCall(
 		argumentsInJSON string,
 		opts ...tool.Option,
 	) (*schema.StreamReader[string], error) {
+		argumentsInJSON = normalizeADKToolCallArguments(
+			argumentsInJSON,
+			tCtx,
+		)
 		result, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
 			if shouldPassThroughADKToolError(err, tCtx) {
@@ -101,6 +109,10 @@ func (m *ADKToolErrorNormalizationMiddleware) WrapEnhancedInvokableToolCall(
 		toolArgument *schema.ToolArgument,
 		opts ...tool.Option,
 	) (*schema.ToolResult, error) {
+		toolArgument = normalizeADKEnhancedToolArgument(
+			toolArgument,
+			tCtx,
+		)
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
 			if shouldPassThroughADKToolError(err, tCtx) {
@@ -127,6 +139,10 @@ func (m *ADKToolErrorNormalizationMiddleware) WrapEnhancedStreamableToolCall(
 		toolArgument *schema.ToolArgument,
 		opts ...tool.Option,
 	) (*schema.StreamReader[*schema.ToolResult], error) {
+		toolArgument = normalizeADKEnhancedToolArgument(
+			toolArgument,
+			tCtx,
+		)
 		result, err := endpoint(ctx, toolArgument, opts...)
 		if err != nil {
 			if shouldPassThroughADKToolError(err, tCtx) {
@@ -143,6 +159,39 @@ func (m *ADKToolErrorNormalizationMiddleware) WrapEnhancedStreamableToolCall(
 
 		return result, nil
 	}, nil
+}
+
+func normalizeADKToolCallArguments(
+	argumentsInJSON string,
+	tCtx *adk.ToolContext,
+) string {
+	if adkToolContextName(tCtx) != "skill" {
+		return argumentsInJSON
+	}
+	if strings.TrimSpace(argumentsInJSON) != "" {
+		return argumentsInJSON
+	}
+
+	return `{}`
+}
+
+func normalizeADKEnhancedToolArgument(
+	toolArgument *schema.ToolArgument,
+	tCtx *adk.ToolContext,
+) *schema.ToolArgument {
+	if adkToolContextName(tCtx) != "skill" {
+		return toolArgument
+	}
+	if toolArgument == nil {
+		return &schema.ToolArgument{Text: `{}`}
+	}
+	if strings.TrimSpace(toolArgument.Text) != "" {
+		return toolArgument
+	}
+
+	cloned := *toolArgument
+	cloned.Text = `{}`
+	return &cloned
 }
 
 func newADKToolErrorToolResult(

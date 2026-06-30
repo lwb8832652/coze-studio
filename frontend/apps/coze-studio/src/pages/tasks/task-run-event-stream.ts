@@ -24,6 +24,11 @@ import { getTaskThreadRunEventsStreamURL } from './service';
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
+interface ThreadTitleUpdate {
+  threadId: string;
+  title: string;
+}
+
 const mergeTaskEvents = (current: TaskEvent[], incoming: TaskEvent[]) => {
   const eventsByID = new Map<string, TaskEvent>();
 
@@ -63,12 +68,49 @@ const parseTaskThreadRunEvent = (
   return undefined;
 };
 
+const parseEventPayload = (payload?: string): Record<string, unknown> => {
+  if (!payload?.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(payload);
+
+    return parsed && typeof parsed === 'object'
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const getThreadTitleUpdate = (
+  event: TaskThreadRunEvent,
+): ThreadTitleUpdate | undefined => {
+  if (event.event_type !== 'context.thread_title_updated') {
+    return undefined;
+  }
+
+  const payload = parseEventPayload(event.payload);
+  const title = String(payload.thread_title ?? payload.title ?? '').trim();
+  if (!title) {
+    return undefined;
+  }
+
+  return {
+    threadId: String(event.thread_id ?? ''),
+    title,
+  };
+};
+
 export const useTaskThreadRunEventStream = ({
   enabled,
+  onThreadTitleUpdated,
   setEvents,
   threadId,
 }: {
   enabled: boolean;
+  onThreadTitleUpdated?: (update: ThreadTitleUpdate) => void;
   setEvents: Dispatch<SetStateAction<TaskEvent[]>>;
   threadId?: string;
 }) => {
@@ -84,6 +126,11 @@ export const useTaskThreadRunEventStream = ({
       const runEvent = parseTaskThreadRunEvent(event);
       if (!runEvent) {
         return;
+      }
+
+      const titleUpdate = getThreadTitleUpdate(runEvent);
+      if (titleUpdate) {
+        onThreadTitleUpdated?.(titleUpdate);
       }
 
       setEvents(current =>
@@ -102,5 +149,5 @@ export const useTaskThreadRunEventStream = ({
       eventSource.removeEventListener('done', handleDone);
       eventSource.close();
     };
-  }, [enabled, setEvents, threadId]);
+  }, [enabled, onThreadTitleUpdated, setEvents, threadId]);
 };

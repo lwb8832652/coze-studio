@@ -44,6 +44,7 @@ export interface TaskEventDisplay {
   runtime?: TaskExecutionType;
   progress?: number;
   structured: boolean;
+  visibleInFlow?: boolean;
   kind: 'step' | 'thought' | 'event';
 }
 

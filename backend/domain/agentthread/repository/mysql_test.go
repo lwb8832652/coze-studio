@@ -66,6 +66,37 @@ func TestThreadRepositoryCreateAndGet(t *testing.T) {
 	require.Equal(t, int64(3), got.LastMessageAt)
 }
 
+func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID:            1,
+		SpaceID:       10,
+		CreatorID:     20,
+		Title:         "请生成一份《武汉3日游攻略》正式文档",
+		Status:        entity.ThreadStatusIdle,
+		Source:        entity.ThreadSourceWeb,
+		CreatedAt:     1,
+		UpdatedAt:     2,
+		LastMessageAt: 3,
+	}))
+
+	updated, ok, err := repo.UpdateThreadTitle(context.Background(), UpdateThreadTitleRequest{
+		ThreadID:  1,
+		Title:     "武汉3日游攻略",
+		UpdatedAt: 100,
+	})
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "武汉3日游攻略", updated.Title)
+	require.Equal(t, int64(100), updated.UpdatedAt)
+	require.Equal(t, int64(3), updated.LastMessageAt)
+}
+
 func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

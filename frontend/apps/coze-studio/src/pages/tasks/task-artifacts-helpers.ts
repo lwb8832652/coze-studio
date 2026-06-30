@@ -199,6 +199,32 @@ export const artifactFileName = (artifact: TaskThreadArtifact) => {
   return segments.at(-1) ?? 'artifact';
 };
 
+export const artifactFileExtension = (artifact: TaskThreadArtifact) => {
+  const fileName = artifactFileName(artifact).toLowerCase();
+  const extension = fileName.split('.').at(-1);
+  return extension && extension !== fileName ? extension : '';
+};
+
+export const isSkillArtifact = (artifact: TaskThreadArtifact) =>
+  artifactFileExtension(artifact) === 'skill';
+
+const SAFE_DISPLAY_PATH_PREFIXES = [
+  '/mnt/user-data/outputs/',
+  '/mnt/user-data/workspace/',
+];
+
+export const artifactDisplayPath = (artifact: TaskThreadArtifact) => {
+  const virtualPath = artifact.virtual_path.trim();
+
+  if (
+    SAFE_DISPLAY_PATH_PREFIXES.some(prefix => virtualPath.startsWith(prefix))
+  ) {
+    return virtualPath;
+  }
+
+  return '';
+};
+
 export const fileNameFromContentDisposition = (contentDisposition: string) => {
   const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
   if (encodedMatch?.[1]) {

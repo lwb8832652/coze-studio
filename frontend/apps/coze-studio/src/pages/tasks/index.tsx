@@ -26,16 +26,43 @@ import {
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import { buildTaskThreadDetailPath } from '../chats/task-thread-routes';
-import { listTaskThreads } from './service';
 import {
-  formatUpdatedTime,
-  type TaskStatusFilter,
-} from './helpers';
+  WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+  type WorkspaceTaskThreadUpsertDetail,
+} from './task-thread-events';
+import { getTaskThreadDisplayTitle } from './task-display-title';
+import { listTaskThreads } from './service';
+import { formatUpdatedTime, type TaskStatusFilter } from './helpers';
 
 type TaskThread = workbenchTask.TaskThread;
 
 const getTaskThreadDescription = (task: TaskThread) =>
   task.last_user_message || task.last_agent_message || task.title;
+
+const applyTaskThreadUpdate = (
+  tasks: TaskThread[],
+  thread: WorkspaceTaskThreadUpsertDetail['thread'],
+  mode: WorkspaceTaskThreadUpsertDetail['mode'] = 'upsert',
+) => {
+  const existingTask = tasks.find(task => task.thread_id === thread.thread_id);
+
+  if (mode === 'patch') {
+    if (!existingTask) {
+      return tasks;
+    }
+
+    return tasks.map(task =>
+      task.thread_id === thread.thread_id ? { ...task, ...thread } : task,
+    );
+  }
+
+  const nextTask = existingTask ? { ...existingTask, ...thread } : thread;
+
+  return [
+    nextTask as TaskThread,
+    ...tasks.filter(task => task.thread_id !== thread.thread_id),
+  ];
+};
 
 const getTaskThreadStatusText = (status: string) => {
   const statusMap: Record<string, string> = {
@@ -77,9 +104,11 @@ const filterTaskThreads = (
   const normalizedKeyword = keyword.trim().toLowerCase();
 
   return tasks.filter(task => {
+    const displayTitle = getTaskThreadDisplayTitle(task);
     const readableMessage = getTaskThreadDescription(task).toLowerCase();
     const matchesKeyword = normalizedKeyword
-      ? task.title.toLowerCase().includes(normalizedKeyword) ||
+      ? displayTitle.toLowerCase().includes(normalizedKeyword) ||
+        task.title.toLowerCase().includes(normalizedKeyword) ||
         readableMessage.includes(normalizedKeyword)
       : true;
     const matchesStatus =
@@ -222,13 +251,14 @@ const TaskRow = ({
 }: TaskRowProps) => {
   const statusPill = getStatusPillClassName(task.status);
   const description = getTaskThreadDescription(task);
+  const displayTitle = getTaskThreadDisplayTitle(task);
 
   return (
     <article className="coze-prototype-row">
       <button
         type="button"
         className="coze-prototype-task-icon mt-[2px]"
-        aria-label={`打开任务 ${task.title}`}
+        aria-label={`打开任务 ${displayTitle}`}
         onClick={() => onNavigate(task)}
       >
         <IconCozAsynchronousTask className="text-[13px]" />
@@ -247,7 +277,7 @@ const TaskRow = ({
         className="coze-prototype-row-main border-0 bg-transparent p-0 text-left cursor-pointer"
         onClick={() => onNavigate(task)}
       >
-        <span className="coze-prototype-row-title">{task.title}</span>
+        <span className="coze-prototype-row-title">{displayTitle}</span>
         <span className="coze-prototype-row-desc">{description}</span>
       </button>
       <div className="coze-prototype-row-actions">
@@ -359,6 +389,36 @@ const TasksPage = () => {
 
   useEffect(() => {
     void loadTasks();
+  }, [space_id]);
+
+  useEffect(() => {
+    if (!space_id) {
+      return;
+    }
+
+    const handleTaskThreadUpsert = (event: Event) => {
+      const { detail } = event as CustomEvent<WorkspaceTaskThreadUpsertDetail>;
+
+      if (!detail?.thread || detail.space_id !== space_id) {
+        return;
+      }
+
+      setTasks(current =>
+        applyTaskThreadUpdate(current, detail.thread, detail.mode),
+      );
+    };
+
+    window.addEventListener(
+      WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+      handleTaskThreadUpsert,
+    );
+
+    return () => {
+      window.removeEventListener(
+        WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+        handleTaskThreadUpsert,
+      );
+    };
   }, [space_id]);
 
   const toggleFavorite = (taskId: string) => {

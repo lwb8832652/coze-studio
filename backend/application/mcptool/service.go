@@ -56,8 +56,9 @@ type MCPRuntimeHealthReport struct {
 }
 
 type Components struct {
-	Catalog Catalog
-	IDGen   idgen.IDGenerator
+	Catalog                     Catalog
+	IDGen                       idgen.IDGenerator
+	DefaultDeerFlowMCPConfigRaw []byte
 }
 
 type ApplicationService struct {
@@ -166,6 +167,9 @@ func (s *ApplicationService) ListServers(ctx context.Context, req *toolapi.ListM
 	if req == nil || req.SpaceID <= 0 {
 		return nil, InvalidArgumentErrorf("space_id is required")
 	}
+	if err := s.ensureDefaultDeerFlowMCPServers(ctx, req.SpaceID); err != nil {
+		return nil, err
+	}
 
 	servers, err := s.components.Catalog.List(ctx, req.SpaceID)
 	if err != nil {
@@ -188,6 +192,9 @@ func (s *ApplicationService) ListSkillToolCandidates(ctx context.Context, spaceI
 	}
 	if spaceID <= 0 {
 		return nil, InvalidArgumentErrorf("space_id is required")
+	}
+	if err := s.ensureDefaultDeerFlowMCPServers(ctx, spaceID); err != nil {
+		return nil, err
 	}
 
 	servers, err := s.components.Catalog.List(ctx, spaceID)
@@ -237,6 +244,9 @@ func (s *ApplicationService) ListMCPToolRegistryEntries(ctx context.Context, spa
 	}
 	if spaceID <= 0 {
 		return nil, InvalidArgumentErrorf("space_id is required")
+	}
+	if err := s.ensureDefaultDeerFlowMCPServers(ctx, spaceID); err != nil {
+		return nil, err
 	}
 
 	servers, err := s.components.Catalog.List(ctx, spaceID)
@@ -650,7 +660,12 @@ func isMCPAuthSensitiveKey(key string) bool {
 		"private_key", "credential", "credentials":
 		return true
 	default:
-		return false
+		return strings.Contains(normalized, "token") ||
+			strings.Contains(normalized, "secret") ||
+			strings.Contains(normalized, "password") ||
+			strings.Contains(normalized, "api_key") ||
+			strings.Contains(normalized, "apikey") ||
+			strings.Contains(normalized, "credential")
 	}
 }
 
@@ -731,6 +746,7 @@ func mcpToolToRegistryEntry(server *toolapi.MCPToolServer, item *toolapi.MCPTool
 		ServerName:      strings.TrimSpace(server.Name),
 		ToolName:        toolName,
 		Description:     description,
+		InputSchema:     strings.TrimSpace(item.InputSchema),
 		Enabled:         server.Enabled,
 		HealthStatus:    normalizeMCPToolHealthStatus(server.HealthStatus),
 		HealthCheckedAt: server.HealthCheckedAt,

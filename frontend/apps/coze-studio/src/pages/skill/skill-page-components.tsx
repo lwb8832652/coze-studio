@@ -18,46 +18,35 @@ import { workbenchSkill } from '@coze-studio/api-schema';
 import {
   IconCozMore,
   IconCozPlus,
-  IconCozSetting,
   IconCozUpload,
 } from '@coze-arch/coze-design/icons';
 import {
   Button,
-  ButtonGroup,
   IconButton,
   Input,
+  Switch,
   TextArea,
   Upload,
 } from '@coze-arch/coze-design';
 
 type Skill = workbenchSkill.Skill;
 
-export type SkillTypeFilter =
-  | 'all'
-  | 'bootstrap'
-  | 'custom'
-  | 'public'
-  | 'script'
-  | 'workflow';
+export type SkillTypeFilter = 'custom' | 'public';
 
 const SKILL_TYPE_FILTERS: Array<{ label: string; value: SkillTypeFilter }> = [
-  { label: '全部技能', value: 'all' },
-  { label: '自定义', value: 'custom' },
   { label: '公共', value: 'public' },
-  { label: '内置', value: 'bootstrap' },
-  { label: '脚本', value: 'script' },
-  { label: '工作流', value: 'workflow' },
+  { label: '自定义', value: 'custom' },
 ];
 
 const SKILL_TYPE_FILTER_MAP: Record<
-  Exclude<SkillTypeFilter, 'all'>,
-  workbenchSkill.SkillType
+  SkillTypeFilter,
+  workbenchSkill.SkillType[]
 > = {
-  bootstrap: workbenchSkill.SkillType.DeerSkill,
-  custom: workbenchSkill.SkillType.CustomSkill,
-  public: workbenchSkill.SkillType.PublicSkill,
-  script: workbenchSkill.SkillType.Script,
-  workflow: workbenchSkill.SkillType.Workflow,
+  custom: [workbenchSkill.SkillType.CustomSkill],
+  public: [
+    workbenchSkill.SkillType.DeerSkill,
+    workbenchSkill.SkillType.PublicSkill,
+  ],
 };
 
 export const getVisibleSkills = (
@@ -72,8 +61,7 @@ export const getVisibleSkills = (
       ? skill.name.toLowerCase().includes(normalizedKeyword) ||
         skill.description?.toLowerCase().includes(normalizedKeyword)
       : true;
-    const matchesType =
-      activeType === 'all' || skill.type === SKILL_TYPE_FILTER_MAP[activeType];
+    const matchesType = SKILL_TYPE_FILTER_MAP[activeType].includes(skill.type);
 
     return matchesKeyword && matchesType;
   });
@@ -223,6 +211,7 @@ export const CreateSkillPanel = ({
 );
 
 interface SkillCardProps {
+  actionsOpen: boolean;
   deleting: boolean;
   disabled: boolean;
   result?: string;
@@ -232,10 +221,12 @@ interface SkillCardProps {
   onManage: (skill: Skill) => void;
   onDelete: (skill: Skill) => void;
   onTestRun: (skill: Skill) => void;
+  onToggleActions: (skill: Skill) => void;
   onToggleEnabled: (skill: Skill) => void;
 }
 
 const SkillCard = ({
+  actionsOpen,
   deleting,
   disabled,
   result,
@@ -245,74 +236,67 @@ const SkillCard = ({
   onDelete,
   onManage,
   onTestRun,
+  onToggleActions,
   onToggleEnabled,
 }: SkillCardProps) => (
-  <article className="coze-prototype-row">
-    <div className="coze-prototype-skill-icon">
-      <IconCozSetting className="text-[14px]" />
-    </div>
+  <article className="coze-prototype-skill-settings-item">
     <div className="coze-prototype-row-main">
       <div className="flex min-w-0 items-center gap-[8px]">
-        <h2 className="m-0 truncate text-[14px] leading-[20px] font-[400] text-[#232938]">
+        <h2 className="m-0 truncate text-[14px] leading-[20px] font-[500] text-[#18181b]">
           {skill.name}
         </h2>
-        <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-[#2a9e06]" />
-        <span className="coze-prototype-tag">
-          {getSkillTypeText(skill.type)}
-        </span>
-        <span className="coze-prototype-tag">v{skill.version}</span>
       </div>
       <div className="coze-prototype-row-desc mt-[4px]">
         {skill.description || '暂无技能描述'}
       </div>
     </div>
-    <div className="coze-prototype-row-actions mt-[4px]">
-      <span className="coze-prototype-status-pill" data-tone="success">
-        <span
-          className="coze-prototype-status-dot"
-          style={{ backgroundColor: '#2a9e06' }}
-        />
-        {skill.enabled ? '已发布' : '已停用'}
-      </span>
-      <span className="coze-prototype-muted">
-        上架于 {getSkillUpdatedText(skill.updated_at)}
-      </span>
-      <Button
+    <div className="coze-prototype-skill-settings-actions">
+      <Switch
         size="small"
-        theme="outline"
-        loading={running}
-        disabled={disabled || updating || deleting}
-        onClick={() => onTestRun(skill)}
-      >
-        试运行
-      </Button>
-      <Button
-        size="small"
-        theme="outline"
+        checked={skill.enabled}
         loading={updating}
         disabled={disabled || running || deleting}
-        onClick={() => onToggleEnabled(skill)}
-      >
-        {skill.enabled ? '停用' : '启用'}
-      </Button>
-      <Button
-        size="small"
-        theme="outline"
-        type="danger"
-        loading={deleting}
-        disabled={disabled || running || updating}
-        onClick={() => onDelete(skill)}
-      >
-        删除
-      </Button>
+        aria-label={`${skill.enabled ? '关闭' : '开启'} ${skill.name}`}
+        onChange={() => onToggleEnabled(skill)}
+      />
       <IconButton
         size="small"
         theme="borderless"
         icon={<IconCozMore className="text-[16px] text-[#747b8a]" />}
-        aria-label={`管理 ${skill.name}`}
-        onClick={() => onManage(skill)}
+        aria-label={`更多 ${skill.name}`}
+        onClick={() => onToggleActions(skill)}
       />
     </div>
+    {actionsOpen ? (
+      <div className="coze-prototype-skill-action-menu">
+        <Button size="small" theme="borderless" onClick={() => onManage(skill)}>
+          版本管理
+        </Button>
+        <Button
+          size="small"
+          theme="borderless"
+          loading={running}
+          disabled={disabled || updating || deleting}
+          onClick={() => onTestRun(skill)}
+        >
+          试运行
+        </Button>
+        <Button
+          size="small"
+          theme="borderless"
+          type="danger"
+          loading={deleting}
+          disabled={disabled || running || updating}
+          onClick={() => onDelete(skill)}
+        >
+          删除
+        </Button>
+        <span className="coze-prototype-skill-menu-meta">
+          {getSkillTypeText(skill.type)} · v{skill.version} ·{' '}
+          {getSkillUpdatedText(skill.updated_at)}
+        </span>
+      </div>
+    ) : null}
     {result ? (
       <pre className="mt-[10px] max-w-full overflow-auto rounded-[6px] bg-[#f7f7fa] px-[10px] py-[8px] text-[13px] leading-[20px] coz-fg-primary">
         {result}
@@ -325,144 +309,140 @@ interface SkillListProps {
   deletingSkillId: string;
   loading: boolean;
   runningSkillId: string;
+  openActionsSkillId: string;
   skills: Skill[];
   testResults: Record<string, string>;
   updatingSkillId: string;
+  onCreate: () => void;
   onDelete: (skill: Skill) => void;
   onManage: (skill: Skill) => void;
   onTestRun: (skill: Skill) => void;
+  onToggleActions: (skill: Skill) => void;
   onToggleEnabled: (skill: Skill) => void;
 }
 
 export const SkillList = ({
   deletingSkillId,
   loading,
+  openActionsSkillId,
   runningSkillId,
   skills,
   testResults,
   updatingSkillId,
+  onCreate,
   onDelete,
   onManage,
   onTestRun,
+  onToggleActions,
   onToggleEnabled,
-}: SkillListProps) => (
-  <section className="mt-[20px]" aria-label="技能列表">
-    {loading ? <div className="coze-prototype-empty">加载中...</div> : null}
-    {!loading && skills.length === 0 ? (
-      <div className="coze-prototype-empty">暂无技能</div>
-    ) : null}
-
-    <div className="coze-prototype-list">
-      {skills.map(skill => (
-        <SkillCard
-          key={skill.id}
-          deleting={deletingSkillId === skill.id}
-          disabled={Boolean(
-            runningSkillId || updatingSkillId || deletingSkillId,
-          )}
-          result={testResults[skill.id]}
-          running={runningSkillId === skill.id}
-          skill={skill}
-          updating={updatingSkillId === skill.id}
-          onDelete={onDelete}
-          onManage={onManage}
-          onTestRun={onTestRun}
-          onToggleEnabled={onToggleEnabled}
-        />
-      ))}
-    </div>
-  </section>
-);
-
-interface SkillPageHeaderProps {
-  loading: boolean;
-  spaceId?: string;
-  onRefresh: () => void;
-}
-
-export const SkillPageHeader = ({
-  loading,
-  spaceId,
-  onRefresh,
-}: SkillPageHeaderProps) => (
-  <div className="text-center">
-    <h1 className="coze-prototype-page-title">技能配置</h1>
-    <p className="coze-prototype-page-subtitle">
-      集中管理工作空间内的全部技能,支持发布、订阅、调用与版本管理。
-      <Button
-        size="small"
-        theme="borderless"
-        className="coze-prototype-link-button"
+}: SkillListProps) => {
+  if (loading) {
+    return (
+      <section
+        className="coze-prototype-skill-settings-list"
+        aria-label="技能列表"
       >
-        查看文档
-      </Button>
-    </p>
-    <Button
-      theme="borderless"
-      className="sr-only"
-      disabled={loading || !spaceId}
-      onClick={onRefresh}
+        <div className="coze-prototype-skill-settings-loading">加载中...</div>
+      </section>
+    );
+  }
+
+  if (skills.length === 0) {
+    return (
+      <section
+        className="coze-prototype-skill-settings-list"
+        aria-label="技能列表"
+      >
+        <div className="coze-prototype-skill-settings-empty">
+          <div className="coze-prototype-skill-settings-empty-icon">
+            <IconCozPlus className="text-[18px]" />
+          </div>
+          <div className="coze-prototype-skill-settings-empty-title">
+            还没有技能
+          </div>
+          <p>
+            将你的 Agent Skill 文件夹放在 DeerFlow 根目录下的 `/skills/custom`
+            文件夹中。
+          </p>
+          <Button size="small" theme="solid" onClick={onCreate}>
+            创建你的第一个技能
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      className="coze-prototype-skill-settings-list"
+      aria-label="技能列表"
     >
-      刷新
-    </Button>
+      <div className="coze-prototype-list">
+        {skills.map(skill => (
+          <SkillCard
+            key={skill.id}
+            actionsOpen={openActionsSkillId === skill.id}
+            deleting={deletingSkillId === skill.id}
+            disabled={Boolean(
+              runningSkillId || updatingSkillId || deletingSkillId,
+            )}
+            result={testResults[skill.id]}
+            running={runningSkillId === skill.id}
+            skill={skill}
+            updating={updatingSkillId === skill.id}
+            onDelete={onDelete}
+            onManage={onManage}
+            onTestRun={onTestRun}
+            onToggleActions={onToggleActions}
+            onToggleEnabled={onToggleEnabled}
+          />
+        ))}
+      </div>
+    </section>
+  );
+};
+
+export const SkillPageHeader = () => (
+  <div className="coze-prototype-skill-settings-header">
+    <h1>技能</h1>
+    <p>管理 Agent Skill 配置和启用状态。</p>
   </div>
 );
 
 interface SkillToolbarProps {
   activeType: SkillTypeFilter;
-  keyword: string;
   onActiveTypeChange: (value: SkillTypeFilter) => void;
   onCreate: () => void;
-  onImport: () => void;
-  onKeywordChange: (value: string) => void;
 }
 
 export const SkillToolbar = ({
   activeType,
-  keyword,
   onActiveTypeChange,
   onCreate,
-  onImport,
-  onKeywordChange,
 }: SkillToolbarProps) => (
-  <section className="coze-prototype-toolbar">
-    <ButtonGroup size="small" className="coze-prototype-skill-filter">
+  <section className="coze-prototype-skill-settings-toolbar">
+    <div className="coze-prototype-skill-settings-tabs" role="tablist">
       {SKILL_TYPE_FILTERS.map(item => (
-        <Button
+        <button
           key={item.value}
-          theme={activeType === item.value ? 'light' : 'borderless'}
+          type="button"
+          role="tab"
+          aria-selected={activeType === item.value}
           data-active={activeType === item.value}
           onClick={() => onActiveTypeChange(item.value)}
         >
           {item.label}
-        </Button>
+        </button>
       ))}
-    </ButtonGroup>
+    </div>
     <div className="flex-1" />
-    <Input
-      size="small"
-      className="coze-prototype-skill-search"
-      aria-label="搜索技能"
-      value={keyword}
-      prefix={<span aria-hidden="true">⌕</span>}
-      onChange={onKeywordChange}
-      placeholder="搜索技能"
-    />
-    <Button
-      size="small"
-      theme="outline"
-      icon={<IconCozUpload className="text-[14px]" />}
-      onClick={onImport}
-    >
-      导入技能
-    </Button>
     <Button
       size="small"
       theme="solid"
       icon={<IconCozPlus className="text-[14px]" />}
       onClick={onCreate}
     >
-      创建技能
+      新建技能
     </Button>
   </section>
 );

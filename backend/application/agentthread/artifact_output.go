@@ -17,6 +17,8 @@
 package agentthread
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +26,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
@@ -35,6 +38,11 @@ const outputFileWrittenSchema = "coze.output_file_written.v1"
 const artifactPresentedSchema = "coze.artifact_presented.v1"
 const artifactPresentedEvent = "artifact.presented"
 const maxOutputFileWriteBytes = defaultADKMaxOffloadBytes
+const skillPackageContentType = "application/vnd.coze.skill+zip"
+const maxSkillPackageResources = 64
+const maxSkillPackageResourceBytes = 256 << 10
+
+var skillPackageNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 type ArtifactObjectWriter interface {
 	PutObject(
@@ -49,6 +57,25 @@ func (s *ApplicationService) WriteOutputFile(
 	ctx context.Context,
 	req *WriteOutputFileRequest,
 ) (*WriteOutputFileResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("write output file request is required")
+	}
+	return s.writeOutputFileBytes(
+		ctx,
+		req.Run,
+		req.FilePath,
+		[]byte(req.Content),
+		req.ContentType,
+	)
+}
+
+func (s *ApplicationService) writeOutputFileBytes(
+	ctx context.Context,
+	run *RunSummary,
+	filePath string,
+	content []byte,
+	requestedContentType string,
+) (*WriteOutputFileResponse, error) {
 	if s == nil || s.RuntimeFileSVC == nil {
 		return nil, fmt.Errorf("agent runtime file service is not initialized")
 	}
@@ -56,22 +83,21 @@ func (s *ApplicationService) WriteOutputFile(
 	if s.ArtifactObjectStorage == nil || !ok {
 		return nil, fmt.Errorf("artifact object storage writer is not initialized")
 	}
-	if req == nil || req.Run == nil {
+	if run == nil {
 		return nil, fmt.Errorf("write output file request is required")
 	}
-	if req.Run.RunID <= 0 || req.Run.ThreadID <= 0 || req.Run.SpaceID <= 0 {
+	if run.RunID <= 0 || run.ThreadID <= 0 || run.SpaceID <= 0 {
 		return nil, fmt.Errorf("write output file run scope is invalid")
 	}
-	virtualPath, relativePath, err := normalizeOutputVirtualPath(req.FilePath)
+	virtualPath, relativePath, err := normalizeOutputVirtualPath(filePath)
 	if err != nil {
 		return nil, err
 	}
-	content := []byte(req.Content)
 	if len(content) == 0 || len(content) > maxOutputFileWriteBytes {
 		return nil, fmt.Errorf("write output file content size is invalid")
 	}
-	contentType := outputContentType(req.ContentType, virtualPath, content)
-	objectKey := outputObjectKey(req.Run, relativePath)
+	contentType := outputContentType(requestedContentType, virtualPath, content)
+	objectKey := outputObjectKey(run, relativePath)
 	if err := writer.PutObject(
 		ctx,
 		objectKey,
@@ -91,7 +117,7 @@ func (s *ApplicationService) WriteOutputFile(
 	file, created, err := s.RuntimeFileSVC.RegisterRuntimeFile(
 		ctx,
 		&domainservice.RegisterRuntimeFileRequest{
-			RunID:            req.Run.RunID,
+			RunID:            run.RunID,
 			FileName:         path.Base(relativePath),
 			OriginalFileName: path.Base(relativePath),
 			FileKind:         domainentity.AgentFileKindOutput,
@@ -127,6 +153,150 @@ func (s *ApplicationService) WriteOutputFile(
 		Created: created,
 		Notice:  notice,
 	}, nil
+}
+
+func (s *ApplicationService) CreateSkillPackage(
+	ctx context.Context,
+	req *CreateSkillPackageRequest,
+) (*CreateSkillPackageResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("create skill package request is required")
+	}
+	skillName := strings.TrimSpace(req.SkillName)
+	if !skillPackageNamePattern.MatchString(skillName) {
+		return nil, fmt.Errorf("skill package name must be lower kebab case")
+	}
+	skillMD := strings.TrimSpace(req.SkillMD)
+	if skillMD == "" || len(skillMD) > maxOutputFileWriteBytes {
+		return nil, fmt.Errorf("skill package SKILL.md content size is invalid")
+	}
+	if len(req.Resources) > maxSkillPackageResources {
+		return nil, fmt.Errorf("skill package resource count exceeds limit")
+	}
+
+	archiveBytes, err := buildSkillPackageArchive(skillName, skillMD, req.Resources)
+	if err != nil {
+		return nil, err
+	}
+	outputPath := strings.TrimSpace(req.OutputPath)
+	if outputPath == "" {
+		outputPath = "/mnt/user-data/outputs/" + skillName + ".skill"
+	}
+	if !strings.EqualFold(path.Ext(outputPath), ".skill") {
+		return nil, fmt.Errorf("skill package output path must end with .skill")
+	}
+	resp, err := s.writeOutputFileBytes(
+		ctx,
+		req.Run,
+		outputPath,
+		archiveBytes,
+		skillPackageContentType,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	notice := resp.Notice
+	if resp.File != nil {
+		notice = encodeRunEventPayload(ctx, map[string]any{
+			"schema":       outputFileWrittenSchema,
+			"file_id":      resp.File.FileID,
+			"file_path":    resp.File.VirtualPath,
+			"file_name":    resp.File.FileName,
+			"content_type": resp.File.ContentType,
+			"size_bytes":   resp.File.SizeBytes,
+			"digest":       resp.File.Digest,
+			"next":         "call present_files with file_path so the user can install this .skill artifact",
+		})
+	}
+	return &CreateSkillPackageResponse{
+		File:    resp.File,
+		Created: resp.Created,
+		Notice:  notice,
+	}, nil
+}
+
+func buildSkillPackageArchive(
+	skillName string,
+	skillMD string,
+	resources []SkillPackageResource,
+) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	if err := writeSkillPackageZipFile(
+		writer,
+		path.Join(skillName, "SKILL.md"),
+		[]byte(strings.TrimSpace(skillMD)+"\n"),
+	); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	seen := map[string]struct{}{"SKILL.md": {}}
+	for _, resource := range resources {
+		resourcePath, err := normalizeSkillPackageResourcePath(resource.Path)
+		if err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+		if _, ok := seen[strings.ToLower(resourcePath)]; ok {
+			_ = writer.Close()
+			return nil, fmt.Errorf("duplicate skill package resource: %s", resourcePath)
+		}
+		seen[strings.ToLower(resourcePath)] = struct{}{}
+		content := []byte(resource.Content)
+		if len(content) == 0 || len(content) > maxSkillPackageResourceBytes {
+			_ = writer.Close()
+			return nil, fmt.Errorf("skill package resource content size is invalid: %s", resourcePath)
+		}
+		if err := writeSkillPackageZipFile(
+			writer,
+			path.Join(skillName, resourcePath),
+			content,
+		); err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	if buf.Len() > maxOutputFileWriteBytes {
+		return nil, fmt.Errorf("skill package archive exceeds output size limit")
+	}
+	return buf.Bytes(), nil
+}
+
+func writeSkillPackageZipFile(
+	writer *zip.Writer,
+	name string,
+	content []byte,
+) error {
+	header := &zip.FileHeader{
+		Name:   name,
+		Method: zip.Deflate,
+	}
+	itemWriter, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = itemWriter.Write(content)
+	return err
+}
+
+func normalizeSkillPackageResourcePath(value string) (string, error) {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if trimmed == "" || strings.HasPrefix(trimmed, "/") {
+		return "", fmt.Errorf("skill package resource path is invalid")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." ||
+		strings.HasPrefix(cleaned, "../") ||
+		cleaned == ".." ||
+		strings.EqualFold(cleaned, "SKILL.md") ||
+		strings.Contains(cleaned, "\x00") {
+		return "", fmt.Errorf("skill package resource path is invalid")
+	}
+	return cleaned, nil
 }
 
 func (s *ApplicationService) PresentOutputFiles(

@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  artifactDisplayPath,
   artifactPreviewFamily,
   artifactInlinePreviewKind,
   buildArtifactInlinePreview,
@@ -141,5 +142,25 @@ describe('task artifact preview helpers', () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it('keeps internal object storage paths out of artifact display paths', () => {
+    expect(
+      artifactDisplayPath(
+        artifactWithPreview({
+          contentType: 'text/markdown',
+          previewMode: 'text',
+        }),
+      ),
+    ).toBe('/mnt/user-data/outputs/artifact');
+    expect(
+      artifactDisplayPath({
+        ...artifactWithPreview({
+          contentType: 'text/markdown',
+          previewMode: 'text',
+        }),
+        virtual_path: 'agent-runtime://objects/private.md?token=secret',
+      }),
+    ).toBe('');
   });
 });

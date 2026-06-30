@@ -418,12 +418,14 @@ export interface ListTaskThreadArtifactsRequest {
   deleted_only?: boolean;
   page?: number;
   page_size?: number;
+  space_id?: string;
 }
 export interface GetTaskThreadArtifactSignedURLRequest {
   thread_id: string;
   artifact_id: string;
   mode?: string;
   ttl_seconds?: number;
+  space_id?: string;
 }
 export interface CreateTaskThreadRunRequest {
   thread_id: string;
@@ -1039,7 +1041,7 @@ export const ListTaskThreadArtifacts = /*#__PURE__*/ createAPI<
   reqType: 'ListTaskThreadArtifactsRequest',
   reqMapping: {
     path: ['thread_id'],
-    query: ['run_id', 'deleted_only', 'page', 'page_size'],
+    query: ['run_id', 'deleted_only', 'page', 'page_size', 'space_id'],
   },
   resType: 'ListTaskThreadArtifactsResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
@@ -1055,7 +1057,7 @@ export const GetTaskThreadArtifactSignedURL = /*#__PURE__*/ createAPI<
   reqType: 'GetTaskThreadArtifactSignedURLRequest',
   reqMapping: {
     path: ['thread_id', 'artifact_id'],
-    query: ['mode', 'ttl_seconds'],
+    query: ['mode', 'ttl_seconds', 'space_id'],
   },
   resType: 'GetTaskThreadArtifactSignedURLResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',

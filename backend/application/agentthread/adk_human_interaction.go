@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -225,7 +226,24 @@ func WithDefaultADKToolProviderGuardrailEnforcer(
 	enforcer ADKGuardrailEnforcer,
 ) DefaultADKToolProviderOption {
 	return func(options *defaultADKToolProviderOptions) {
+		if isNilADKGuardrailEnforcer(enforcer) {
+			return
+		}
 		options.guardrailEnforcer = enforcer
+	}
+}
+
+func isNilADKGuardrailEnforcer(enforcer ADKGuardrailEnforcer) bool {
+	if enforcer == nil {
+		return true
+	}
+	value := reflect.ValueOf(enforcer)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
 }
 

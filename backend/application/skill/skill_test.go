@@ -62,6 +62,38 @@ func TestDecodeSkillImportContentRejectsRawSkillArchive(t *testing.T) {
 	require.ErrorContains(t, err, "base64 encoding")
 }
 
+func TestApplicationImportSkillUsesCustomDefaultType(t *testing.T) {
+	domainSVC := &recordingSkillDomainService{
+		imported: &entity.Skill{
+			ID:           101,
+			SpaceID:      1,
+			Name:         "weekly-research",
+			Description:  "Research weekly market changes.",
+			Type:         entity.TypeCustomSkill,
+			Version:      "1.0.0",
+			Enabled:      true,
+			InputSchema:  `{}`,
+			OutputSchema: `{}`,
+			Executor:     `{}`,
+			Permissions:  `{}`,
+		},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.ImportSkill(context.Background(), &skillapi.ImportSkillRequest{
+		SpaceID:  1,
+		FileName: "weekly-research.skill",
+		Content:  "base64:" + base64.StdEncoding.EncodeToString([]byte("skill archive")),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), domainSVC.importSpaceID)
+	require.Equal(t, "weekly-research.skill", domainSVC.importFileName)
+	require.Equal(t, []byte("skill archive"), domainSVC.importContent)
+	require.Equal(t, entity.TypeCustomSkill, domainSVC.importDefaultType)
+	require.Equal(t, skillapi.SkillType_CustomSkill, resp.Data.Type)
+}
+
 func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
 	domainSVC := &recordingSkillDomainService{
 		versions: []*entity.SkillVersion{
@@ -482,6 +514,19 @@ type recordingSkillDomainService struct {
 	updatedContentVersionID  int64
 	updatedSkillMD           string
 	deletedSkillID           int64
+	imported                 *entity.Skill
+	importSpaceID            int64
+	importFileName           string
+	importContent            []byte
+	importDefaultType        entity.Type
+}
+
+func (s *recordingSkillDomainService) ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error) {
+	s.importSpaceID = spaceID
+	s.importFileName = fileName
+	s.importContent = append([]byte(nil), content...)
+	s.importDefaultType = defaultType
+	return s.imported, nil
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {

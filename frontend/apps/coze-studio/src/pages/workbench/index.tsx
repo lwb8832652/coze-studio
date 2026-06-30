@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 
 import {
@@ -27,6 +27,7 @@ import {
 
 import './index.less';
 
+import { emitWorkspaceTaskThreadUpsert } from '../tasks/task-thread-events';
 import {
   buildTaskThreadDetailPath,
   buildTaskThreadListPath,
@@ -34,6 +35,7 @@ import {
 import { createTaskThread, getWorkbenchLLMModels } from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
+  DEFAULT_WORKBENCH_MODE,
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
@@ -42,6 +44,42 @@ import {
 export { mapModeToChatMode } from './components/types';
 
 const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as const;
+
+const CREATE_SKILL_TITLE = '✨ 创建你自己的 Agent SKill ✨';
+const CREATE_SKILL_DESCRIPTION =
+  '创建你的 Agent Skill 来释放 DeerFlow 的潜力。通过自定义技能，DeerFlow\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。';
+const CREATE_SKILL_NAME = 'skill-creator';
+const CREATE_SKILL_PROMPT =
+  '我们一起用 skill-creator 技能来创建一个技能吧。第一步请先直接问我：想创建什么技能、用于什么场景、希望它输出什么；在我说明具体技能前，不要创建文件或生成 .skill 包。等需求确认后，再按 skill-creator 流程创建并生成可安装的 .skill 产物。';
+
+const appendUnique = (values: string[], value: string) =>
+  values.includes(value) ? values : [...values, value];
+
+const activateSkillCreator = (
+  payload: WorkbenchComposerSubmitPayload,
+): WorkbenchComposerSubmitPayload => {
+  const enableSkills = appendUnique(
+    payload.enable_skills ?? [],
+    CREATE_SKILL_NAME,
+  );
+  const allowedSkills = appendUnique(
+    payload.runtimeSettings.skills.allowed_skills,
+    CREATE_SKILL_NAME,
+  );
+
+  return {
+    ...payload,
+    enable_skills: enableSkills,
+    runtimeSettings: {
+      ...payload.runtimeSettings,
+      skills: {
+        ...payload.runtimeSettings.skills,
+        enabled: true,
+        allowed_skills: allowedSkills,
+      },
+    },
+  };
+};
 
 const TEMPLATE_CARDS = [
   {
@@ -128,13 +166,24 @@ const WorkbenchTopbar = () => (
   </header>
 );
 
-const WorkbenchTitle = () => (
-  <header className="chat-workbench-header">
-    <h1 aria-label="欢迎来到 刘文波 的工作空间">
-      欢迎来到 <span>刘文波 的工作空间</span>
-    </h1>
-  </header>
-);
+const WorkbenchTitle = ({ skillMode }: { skillMode: boolean }) => {
+  if (skillMode) {
+    return (
+      <header className="chat-workbench-header" data-mode="skill">
+        <h1>{CREATE_SKILL_TITLE}</h1>
+        <p>{CREATE_SKILL_DESCRIPTION}</p>
+      </header>
+    );
+  }
+
+  return (
+    <header className="chat-workbench-header">
+      <h1 aria-label="欢迎来到 刘文波 的工作空间">
+        欢迎来到 <span>刘文波 的工作空间</span>
+      </h1>
+    </header>
+  );
+};
 
 const WorkbenchTemplateSection = ({
   onTemplateSelect,
@@ -230,8 +279,12 @@ const WorkbenchTemplateSection = ({
 const WorkbenchPage = () => {
   const { space_id } = useParams();
   const navigate = useNavigate();
-  const [value, setValue] = useState('');
-  const [mode, setMode] = useState<WorkbenchMode>('Auto');
+  const [searchParams] = useSearchParams();
+  const isSkillCreationMode = searchParams.get('mode') === 'skill';
+  const [value, setValue] = useState(
+    isSkillCreationMode ? CREATE_SKILL_PROMPT : '',
+  );
+  const [mode, setMode] = useState<WorkbenchMode>(DEFAULT_WORKBENCH_MODE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -250,15 +303,22 @@ const WorkbenchPage = () => {
     setError('');
 
     try {
+      const submitPayload = isSkillCreationMode
+        ? activateSkillCreator(payload)
+        : payload;
       const response = await createTaskThread({
         space_id,
-        message: payload.message,
-        config: stringifyWorkbenchRunConfig(payload),
+        message: submitPayload.message,
+        config: stringifyWorkbenchRunConfig(submitPayload),
       });
 
       setValue('');
 
       if (response?.data?.thread?.thread_id) {
+        emitWorkspaceTaskThreadUpsert({
+          space_id,
+          thread: response.data.thread,
+        });
         navigate(
           buildTaskThreadDetailPath(space_id, response.data.thread.thread_id),
         );
@@ -279,13 +339,14 @@ const WorkbenchPage = () => {
       <WorkbenchTopbar />
 
       <section className="chat-workbench-shell" aria-label="Chat 工作台">
-        <WorkbenchTitle />
+        <WorkbenchTitle skillMode={isSkillCreationMode} />
 
         <WorkbenchComposer
           value={value}
           mode={mode}
           loading={loading}
           error={error}
+          presentation="deerflow"
           spaceId={space_id}
           modelLoader={getWorkbenchLLMModels}
           onValueChange={setValue}
@@ -293,7 +354,9 @@ const WorkbenchPage = () => {
           onSubmit={handleSend}
         />
 
-        <WorkbenchTemplateSection onTemplateSelect={setValue} />
+        {isSkillCreationMode ? null : (
+          <WorkbenchTemplateSection onTemplateSelect={setValue} />
+        )}
       </section>
     </main>
   );

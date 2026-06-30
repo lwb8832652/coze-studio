@@ -444,8 +444,9 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		ObjectStorage: basicServices.infra.OSS,
 	})
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
-		Catalog: mcptool.NewMySQLCatalog(basicServices.infra.DB),
-		IDGen:   basicServices.infra.IDGenSVC,
+		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB),
+		IDGen:                       basicServices.infra.IDGenSVC,
+		DefaultDeerFlowMCPConfigRaw: mcptool.DefaultDeerFlowMCPConfigRaw(),
 	})
 	skillSVC := skill.InitService(&skill.ServiceComponents{
 		DB:                    basicServices.infra.DB,

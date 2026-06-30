@@ -14,11 +14,17 @@
  * limitations under the License.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
-import { IconCozCross } from '@coze-arch/coze-design/icons';
+import {
+  IconCozCode,
+  IconCozCopy,
+  IconCozCross,
+  IconCozEye,
+} from '@coze-arch/coze-design/icons';
 import { Button, Table } from '@coze-arch/coze-design';
 
+import { TaskMarkdownContent } from './task-markdown-content';
 import type { ArtifactInlinePreview } from './task-artifacts-helpers';
 
 interface ArtifactPreviewBaseState {
@@ -41,6 +47,7 @@ export type ArtifactInlinePreviewState =
   | ArtifactContentPreviewState
   | ArtifactImagePreviewState;
 
+// eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps preview branches together.
 export const TaskArtifactInlinePreview = ({
   inlinePreview,
   onClose,
@@ -49,10 +56,22 @@ export const TaskArtifactInlinePreview = ({
   onClose: () => void;
 }) => {
   const { contentType, name } = inlinePreview;
+  const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<'code' | 'preview'>('preview');
   const contentPreview =
     inlinePreview.previewRenderer === 'content'
       ? inlinePreview.preview
       : undefined;
+  const isMarkdownPreview =
+    contentPreview?.kind === 'markdown' ||
+    (contentPreview?.kind === 'text' &&
+      (contentType.toLowerCase().includes('markdown') ||
+        name.toLowerCase().endsWith('.md') ||
+        name.toLowerCase().endsWith('.markdown')));
+  const canSwitchView = Boolean(
+    (contentPreview?.kind === 'text' || contentPreview?.kind === 'markdown') &&
+      contentPreview.text,
+  );
   const tableColumns = useMemo(
     () =>
       contentPreview?.columns?.map(column => ({
@@ -66,6 +85,17 @@ export const TaskArtifactInlinePreview = ({
       })) ?? [],
     [contentPreview?.columns],
   );
+  const handleCopy = async () => {
+    const text = contentPreview?.text;
+
+    if (!text) {
+      return;
+    }
+
+    await navigator.clipboard?.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
 
   return (
     <section
@@ -76,24 +106,64 @@ export const TaskArtifactInlinePreview = ({
       <div className="coze-prototype-artifact-preview-header">
         <div className="coze-prototype-artifact-preview-heading">
           <span className="coze-prototype-artifact-preview-title">{name}</span>
-          <div className="coze-prototype-artifact-preview-meta">
-            <span>{contentType || 'text/plain'}</span>
-            <span>
-              {inlinePreview.previewRenderer === 'image'
-                ? 'image'
-                : contentPreview?.kind}
-            </span>
-            {contentPreview?.truncated ? <span>已截断</span> : null}
-          </div>
         </div>
-        <Button
-          aria-label={`关闭预览 ${name}`}
-          icon={<IconCozCross />}
-          size="small"
-          theme="borderless"
-          onClick={onClose}
-        />
+        {canSwitchView ? (
+          <div
+            className="coze-prototype-artifact-preview-switch"
+            role="tablist"
+            aria-label="产物查看方式"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-label="查看源码"
+              aria-selected={viewMode === 'code'}
+              data-active={viewMode === 'code'}
+              onClick={() => setViewMode('code')}
+            >
+              <IconCozCode />
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-label="预览产物"
+              aria-selected={viewMode === 'preview'}
+              data-active={viewMode === 'preview'}
+              onClick={() => setViewMode('preview')}
+            >
+              <IconCozEye />
+            </button>
+          </div>
+        ) : (
+          <div aria-hidden="true" />
+        )}
+        <div className="coze-prototype-artifact-preview-actions">
+          {contentPreview?.text ? (
+            <Button
+              aria-label={copied ? `已复制文档 ${name}` : `复制文档 ${name}`}
+              icon={<IconCozCopy />}
+              size="small"
+              theme="borderless"
+              onClick={() => void handleCopy()}
+            />
+          ) : null}
+          <Button
+            aria-label={`关闭预览 ${name}`}
+            icon={<IconCozCross />}
+            size="small"
+            theme="borderless"
+            onClick={onClose}
+          />
+        </div>
       </div>
+      {contentPreview?.truncated ? (
+        <div
+          className="coze-prototype-artifact-preview-truncated"
+          data-testid="task-artifact-inline-preview-truncated"
+        >
+          内容较长，当前仅展示部分预览，下载文件可查看完整内容。
+        </div>
+      ) : null}
       {inlinePreview.previewRenderer === 'image' ? (
         <img
           alt={name}
@@ -114,6 +184,15 @@ export const TaskArtifactInlinePreview = ({
           size="small"
           scroll={{ x: 'max-content', y: 260 }}
         />
+      ) : isMarkdownPreview &&
+        contentPreview?.text &&
+        viewMode === 'preview' ? (
+        <div
+          className="coze-prototype-artifact-preview-markdown"
+          data-testid="task-artifact-inline-preview-markdown"
+        >
+          <TaskMarkdownContent value={contentPreview.text} />
+        </div>
       ) : (
         <pre className="coze-prototype-artifact-preview-text">
           <span data-testid="task-artifact-inline-preview-text">

@@ -212,6 +212,22 @@ export interface ListSkillToolCandidatesResponse {
   code: number,
   msg: string,
 }
+export interface InstallSkillFromArtifactRequest {
+  space_id: string,
+  thread_id: string,
+  artifact_id: string,
+}
+export interface InstallSkillFromArtifactData {
+  success: boolean,
+  skill_name: string,
+  message: string,
+  skill?: Skill,
+}
+export interface InstallSkillFromArtifactResponse {
+  data?: InstallSkillFromArtifactData,
+  code: number,
+  msg: string,
+}
 export const CreateSkill = /*#__PURE__*/createAPI<UpsertSkillRequest, SkillResponse>({
   "url": "/api/workbench/skills",
   "method": "POST",
@@ -246,6 +262,18 @@ export const ImportSkill = /*#__PURE__*/createAPI<ImportSkillRequest, SkillRespo
     "body": ["space_id", "file_name", "content"]
   },
   "resType": "SkillResponse",
+  "schemaRoot": "api://schemas/idl_workbench_skill",
+  "service": "workbenchSkill"
+});
+export const InstallSkillFromArtifact = /*#__PURE__*/createAPI<InstallSkillFromArtifactRequest, InstallSkillFromArtifactResponse>({
+  "url": "/api/workbench/skills/install",
+  "method": "POST",
+  "name": "InstallSkillFromArtifact",
+  "reqType": "InstallSkillFromArtifactRequest",
+  "reqMapping": {
+    "body": ["space_id", "thread_id", "artifact_id"]
+  },
+  "resType": "InstallSkillFromArtifactResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
   "service": "workbenchSkill"
 });

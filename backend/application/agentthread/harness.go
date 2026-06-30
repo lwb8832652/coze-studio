@@ -1067,7 +1067,14 @@ func (e *HarnessExecutor) emitMemoryRecalledEvent(ctx context.Context, run *RunS
 }
 
 func (e *HarnessExecutor) emitSkillsLoadedEvent(ctx context.Context, run *RunSummary, skills AgentSkillContext) {
+	emitSkillsLoadedRunEvent(ctx, e.eventSink, run, skills)
+}
+
+func emitSkillsLoadedRunEvent(ctx context.Context, sink RunEventSink, run *RunSummary, skills AgentSkillContext) {
 	if len(skills.Items) == 0 {
+		return
+	}
+	if run == nil {
 		return
 	}
 
@@ -1078,7 +1085,7 @@ func (e *HarnessExecutor) emitSkillsLoadedEvent(ctx context.Context, run *RunSum
 		names = append(names, item.Name)
 	}
 
-	emitRunEvent(ctx, e.eventSink, RunEvent{
+	emitRunEvent(ctx, sink, RunEvent{
 		ThreadID:  run.ThreadID,
 		RunID:     run.RunID,
 		EventType: "skills.loaded",

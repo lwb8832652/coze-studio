@@ -302,7 +302,7 @@ func TestWorkbenchMCPToolHandlersListRegistryEntries(t *testing.T) {
 	require.Contains(t, body, `"name":"mcp_100_search_docs"`)
 	require.Contains(t, body, `"tool_name":"search-docs"`)
 	require.Contains(t, body, `"health_status":"healthy"`)
-	require.NotContains(t, body, "input_schema")
+	require.Contains(t, body, `"input_schema"`)
 	require.NotContains(t, body, "secret-token")
 	require.NotContains(t, body, `"command"`)
 	require.NotContains(t, body, "coze studio")

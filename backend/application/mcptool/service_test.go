@@ -340,6 +340,207 @@ func TestApplicationServiceMasksMCPAuthAndPreservesMaskedSecrets(t *testing.T) {
 	)
 }
 
+func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
+	catalog := NewInMemoryCatalog()
+	svc := NewApplicationService(&Components{
+		Catalog: catalog,
+		IDGen:   &sequentialIDGen{next: 100},
+	})
+
+	_, err := svc.ImportDeerFlowExtensionsConfig(
+		context.Background(),
+		1,
+		[]byte(`{
+			"mcpServers": {
+				"github": {
+					"enabled": true,
+					"type": "stdio",
+					"command": "npx",
+					"args": ["-y", "@modelcontextprotocol/server-github"],
+					"env": {"GITHUB_TOKEN": "raw-secret-token"},
+					"description": "GitHub MCP server for repository operations"
+				},
+				"postgres": {
+					"enabled": false,
+					"type": "stdio",
+					"command": "npx",
+					"args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
+					"env": {},
+					"description": "PostgreSQL database access"
+				},
+				"openmeteo": {
+					"enabled": true,
+					"type": "stdio",
+					"command": "npx",
+					"args": ["-y", "-p", "open-meteo-mcp-server", "open-meteo-mcp-server"],
+					"env": {},
+					"description": "Open-Meteo MCP server for weather forecast queries"
+				},
+				"weather": {
+					"enabled": true,
+					"type": "stdio",
+					"command": "node",
+					"args": ["-e", "process.exit(0)"],
+					"env": {},
+					"description": "Weather MCP server for local weather queries"
+				}
+			},
+			"skills": {}
+		}`),
+	)
+
+	require.NoError(t, err)
+	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	require.NoError(t, err)
+	require.Len(t, listed.Data.Servers, 4)
+
+	serversByName := map[string]*toolapi.MCPToolServer{}
+	for _, server := range listed.Data.Servers {
+		serversByName[server.Name] = server
+	}
+
+	github := serversByName["github"]
+	require.NotNil(t, github)
+	require.Equal(t, "stdio", github.ServerType)
+	require.True(t, github.Enabled)
+	require.Len(t, github.Tools, 26)
+	require.Contains(t, toolNames(github.Tools), "search_repositories")
+	require.Contains(t, toolNames(github.Tools), "create_or_update_file")
+	require.Contains(t, toolNames(github.Tools), "get_pull_request_reviews")
+	searchRepositories := toolByName(github.Tools, "search_repositories")
+	require.NotNil(t, searchRepositories)
+	require.Equal(t, "Search for GitHub repositories", searchRepositories.Description)
+	require.JSONEq(t,
+		`{
+			"type":"object",
+			"properties":{
+				"query":{"type":"string"},
+				"page":{"type":"number"},
+				"perPage":{"type":"number"}
+			},
+			"required":["query"]
+		}`,
+		searchRepositories.InputSchema,
+	)
+	require.JSONEq(t,
+		`{"command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{},"auth_env":{"GITHUB_TOKEN":"env.GITHUB_TOKEN"}}`,
+		github.Config,
+	)
+	require.JSONEq(t, `{"env":{"GITHUB_TOKEN":"********"}}`, github.Auth)
+	require.NotContains(t, github.Config, "raw-secret-token")
+	require.NotContains(t, github.Auth, "raw-secret-token")
+
+	stored, err := catalog.Get(context.Background(), github.ServerID)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"env":{"GITHUB_TOKEN":"raw-secret-token"}}`, stored.Auth)
+
+	postgres := serversByName["postgres"]
+	require.NotNil(t, postgres)
+	require.False(t, postgres.Enabled)
+	require.Len(t, postgres.Tools, 1)
+	require.Equal(t, "query", postgres.Tools[0].Name)
+	require.Equal(t, "Run a read-only SQL query", postgres.Tools[0].Description)
+	require.JSONEq(t,
+		`{"type":"object","properties":{"sql":{"type":"string"}},"required":["sql"]}`,
+		postgres.Tools[0].InputSchema,
+	)
+	require.JSONEq(t,
+		`{"command":"npx","args":["-y","@modelcontextprotocol/server-postgres","postgresql://localhost/mydb"],"env":{}}`,
+		postgres.Config,
+	)
+	require.JSONEq(t, `{}`, postgres.Auth)
+
+	openmeteo := serversByName["openmeteo"]
+	require.NotNil(t, openmeteo)
+	require.True(t, openmeteo.Enabled)
+	require.Len(t, openmeteo.Tools, 2)
+	require.Contains(t, toolNames(openmeteo.Tools), "geocoding")
+	require.Contains(t, toolNames(openmeteo.Tools), "weather_forecast")
+	geocoding := toolByName(openmeteo.Tools, "geocoding")
+	require.NotNil(t, geocoding)
+	require.Equal(t, "Search locations and return coordinates using Open-Meteo geocoding", geocoding.Description)
+	require.JSONEq(t,
+		`{"type":"object","properties":{"name":{"type":"string"},"count":{"type":"number"},"language":{"type":"string"},"countryCode":{"type":"string"}},"required":["name"]}`,
+		geocoding.InputSchema,
+	)
+	require.JSONEq(t,
+		`{"command":"npx","args":["-y","-p","open-meteo-mcp-server","open-meteo-mcp-server"],"env":{}}`,
+		openmeteo.Config,
+	)
+	require.JSONEq(t, `{}`, openmeteo.Auth)
+
+	weather := serversByName["weather"]
+	require.NotNil(t, weather)
+	require.True(t, weather.Enabled)
+	require.Len(t, weather.Tools, 1)
+	require.Equal(t, "get_weather", weather.Tools[0].Name)
+	require.Equal(t, "Get current weather for a city", weather.Tools[0].Description)
+	require.JSONEq(t,
+		`{"type":"object","properties":{"city":{"type":"string"},"unit":{"type":"string"}},"required":["city"]}`,
+		weather.Tools[0].InputSchema,
+	)
+	require.JSONEq(t,
+		`{"command":"node","args":["-e","process.exit(0)"],"env":{}}`,
+		weather.Config,
+	)
+	require.JSONEq(t, `{}`, weather.Auth)
+
+	registry, err := svc.ListMCPToolRegistryEntries(context.Background(), 1)
+	require.NoError(t, err)
+	require.Contains(t, registryNames(registry), "mcp_100_search_repositories")
+	require.Contains(t, registryNames(registry), "mcp_101_geocoding")
+	require.Contains(t, registryNames(registry), "mcp_101_weather_forecast")
+	require.NotContains(t, registryNames(registry), "mcp_102_query")
+	require.Contains(t, registryNames(registry), "mcp_103_get_weather")
+}
+
+func TestApplicationServiceSeedsDefaultDeerFlowMCPServersOnFirstList(t *testing.T) {
+	svc := NewApplicationService(&Components{
+		Catalog:                     NewInMemoryCatalog(),
+		IDGen:                       &sequentialIDGen{next: 100},
+		DefaultDeerFlowMCPConfigRaw: DefaultDeerFlowMCPConfigRaw(),
+	})
+
+	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	require.NoError(t, err)
+	require.Len(t, listed.Data.Servers, 4)
+	serversByName := map[string]*toolapi.MCPToolServer{}
+	for _, server := range listed.Data.Servers {
+		serversByName[server.Name] = server
+	}
+	require.Len(t, serversByName["github"].Tools, 26)
+	require.Len(t, serversByName["openmeteo"].Tools, 2)
+	require.Len(t, serversByName["postgres"].Tools, 1)
+	require.Len(t, serversByName["weather"].Tools, 1)
+
+	listedAgain, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	require.NoError(t, err)
+	require.Len(t, listedAgain.Data.Servers, 4)
+	require.Equal(t, listed.Data.Servers, listedAgain.Data.Servers)
+}
+
+func TestApplicationServiceSeedsDefaultDeerFlowMCPServersForRegistry(t *testing.T) {
+	svc := NewApplicationService(&Components{
+		Catalog:                     NewInMemoryCatalog(),
+		IDGen:                       &sequentialIDGen{next: 100},
+		DefaultDeerFlowMCPConfigRaw: DefaultDeerFlowMCPConfigRaw(),
+	})
+
+	entries, err := svc.ListMCPToolRegistryEntries(context.Background(), 1)
+
+	require.NoError(t, err)
+	names := registryNames(entries)
+	require.Contains(t, names, "mcp_100_search_repositories")
+	require.Contains(t, names, "mcp_101_geocoding")
+	require.Contains(t, names, "mcp_101_weather_forecast")
+	require.Contains(t, names, "mcp_102_query")
+	require.Contains(t, names, "mcp_103_get_weather")
+
+	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	require.NoError(t, err)
+	require.Len(t, listed.Data.Servers, 4)
+}
+
 func TestApplicationServiceDeletesMCPServer(t *testing.T) {
 	svc := NewApplicationService(&Components{
 		Catalog: NewInMemoryCatalog(),
@@ -440,6 +641,7 @@ func TestApplicationServiceListsMCPToolRegistryEntries(t *testing.T) {
 			ServerName:      "docs-mcp",
 			ToolName:        "search-docs",
 			Description:     "Search internal documentation.",
+			InputSchema:     `{"type":"object","properties":{"query":{"type":"string"}}}`,
 			Enabled:         true,
 			HealthStatus:    "healthy",
 			HealthCheckedAt: resp.Data.Tools[0].HealthCheckedAt,
@@ -509,4 +711,39 @@ func (g *sequentialIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64,
 	}
 
 	return ids, nil
+}
+
+func toolNames(tools []*toolapi.MCPToolDefinition) []string {
+	names := make([]string, 0, len(tools))
+	for _, item := range tools {
+		if item != nil {
+			names = append(names, item.Name)
+		}
+	}
+
+	return names
+}
+
+func toolByName(
+	tools []*toolapi.MCPToolDefinition,
+	name string,
+) *toolapi.MCPToolDefinition {
+	for _, item := range tools {
+		if item != nil && item.Name == name {
+			return item
+		}
+	}
+
+	return nil
+}
+
+func registryNames(entries []*toolapi.MCPToolRegistryEntry) []string {
+	names := make([]string, 0, len(entries))
+	for _, item := range entries {
+		if item != nil {
+			names = append(names, item.Name)
+		}
+	}
+
+	return names
 }

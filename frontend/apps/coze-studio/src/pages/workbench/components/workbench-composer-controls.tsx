@@ -15,8 +15,8 @@
  */
 
 import {
+  type KeyboardEventHandler,
   type ReactNode,
-  useState,
   type Dispatch,
   type SetStateAction,
 } from 'react';
@@ -40,10 +40,14 @@ import {
   DeerFlowArrowUpIcon,
   DeerFlowGraduationIcon,
   DeerFlowRocketIcon,
+  DeerFlowStopIcon,
   DeerFlowZapIcon,
 } from './workbench-deerflow-mode-icons';
 import type { WorkbenchComposerOverlayPlacement } from './workbench-composer-at-menu';
 import {
+  DEFAULT_WORKBENCH_MODE,
+  WORKBENCH_MODE_DESCRIPTIONS,
+  WORKBENCH_MODE_LABELS,
   WORKBENCH_MODE_PROMPTS,
   WORKBENCH_MODE_SYMBOLS,
   WORKBENCH_MODES,
@@ -58,7 +62,6 @@ export type WorkbenchComposerPresentation = 'default' | 'deerflow';
 type WorkbenchRuntimeSettingsChange = Dispatch<
   SetStateAction<WorkbenchRuntimeSettings>
 >;
-type DeerFlowInputMode = 'flash' | 'thinking' | 'pro' | 'ultra';
 interface WorkbenchComposerToolbarProps {
   atMenuOpen: boolean;
   canSend: boolean;
@@ -75,6 +78,8 @@ interface WorkbenchComposerToolbarProps {
   resourceSelection: WorkbenchResourceSelection;
   runtimeSettings: WorkbenchRuntimeSettings;
   selectedModelType?: number;
+  stopLoading?: boolean;
+  stopMode?: boolean;
   failoverCandidateCount: number;
   spaceId?: string;
   onAtMenuOpenChange: (open: boolean) => void;
@@ -89,65 +94,104 @@ interface WorkbenchComposerToolbarProps {
 }
 
 const DEERFLOW_MODE_OPTIONS: Array<{
-  description: string;
   icon: ReactNode;
-  label: string;
-  value: DeerFlowInputMode;
-  workbenchMode: WorkbenchMode;
+  value: WorkbenchMode;
 }> = [
   {
     value: 'flash',
-    label: '闪速',
     icon: <DeerFlowZapIcon />,
-    description: '快速且高效的完成任务，但可能不够精准',
-    workbenchMode: 'Auto',
   },
   {
     value: 'thinking',
-    label: '思考',
     icon: <IconCozLightbulb />,
-    description: '思考后再行动，在时间与准确性之间取得平衡',
-    workbenchMode: 'Ask',
   },
   {
     value: 'pro',
-    label: 'Pro',
     icon: <DeerFlowGraduationIcon />,
-    description: '思考、计划再执行，获得更精准的结果，可能需要更多时间',
-    workbenchMode: 'Agent',
   },
   {
     value: 'ultra',
-    label: 'Ultra',
     icon: <DeerFlowRocketIcon />,
-    description: '继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务',
-    workbenchMode: 'Agent',
   },
 ];
-
-const defaultDeerFlowMode = 'pro';
 
 export const WorkbenchComposerBody = ({
   value,
   mode,
   presentation,
+  showSkillSuggestions,
+  skillSuggestionPlacement = 'top',
+  skillSuggestionIndex,
+  skillSuggestions,
   onChange,
+  onSkillSuggestionApply,
+  onSkillSuggestionIndexChange,
+  onSkillSuggestionKeyDown,
+  onTextareaBlur,
+  onTextareaFocus,
 }: {
   value: string;
   mode: WorkbenchMode;
   presentation: WorkbenchComposerPresentation;
+  showSkillSuggestions?: boolean;
+  skillSuggestionPlacement?: WorkbenchComposerOverlayPlacement;
+  skillSuggestionIndex?: number;
+  skillSuggestions?: Array<{ description?: string; id: string; name: string }>;
   onChange: (value: string) => void;
+  onSkillSuggestionApply?: (skill: { id: string; name: string }) => void;
+  onSkillSuggestionIndexChange?: (index: number) => void;
+  onSkillSuggestionKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  onTextareaBlur?: () => void;
+  onTextareaFocus?: () => void;
 }) => {
   const isDeerFlow = presentation === 'deerflow';
 
   return (
     <div className="chat-workbench-composer-body">
+      {showSkillSuggestions && skillSuggestions?.length ? (
+        <div
+          aria-label="Skill suggestions"
+          className="chat-workbench-skill-suggestions"
+          data-placement={skillSuggestionPlacement}
+          role="listbox"
+        >
+          {skillSuggestions.map((skill, index) => {
+            const selected = index === skillSuggestionIndex;
+
+            return (
+              <button
+                aria-selected={selected}
+                className="chat-workbench-skill-suggestion"
+                data-selected={selected}
+                key={skill.id || skill.name}
+                role="option"
+                type="button"
+                onClick={() => onSkillSuggestionApply?.(skill)}
+                onMouseDown={event => event.preventDefault()}
+                onMouseEnter={() => onSkillSuggestionIndexChange?.(index)}
+              >
+                <span className="chat-workbench-skill-suggestion-name">
+                  /{skill.name}
+                </span>
+                {skill.description ? (
+                  <span className="chat-workbench-skill-suggestion-desc">
+                    {skill.description}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <TextArea
         aria-label="任务描述"
         autosize={false}
         rows={3}
         value={value}
+        onBlur={onTextareaBlur}
         onChange={onChange}
+        onFocus={onTextareaFocus}
+        onKeyDown={onSkillSuggestionKeyDown}
         placeholder={isDeerFlow ? '今天想做什么？' : ''}
         className="chat-workbench-input"
       />
@@ -188,20 +232,23 @@ const WorkbenchModeSelector = ({
 );
 
 const WorkbenchDeerFlowModeSelector = ({
+  mode,
   open,
   placement,
   onOpenChange,
   onModeChange,
 }: {
+  mode: WorkbenchMode;
   open: boolean;
   placement: WorkbenchComposerOverlayPlacement;
   onOpenChange: (open: boolean) => void;
   onModeChange: (mode: WorkbenchMode) => void;
 }) => {
-  const [deerflowMode, setDeerflowMode] =
-    useState<DeerFlowInputMode>(defaultDeerFlowMode);
   const activeOption =
-    DEERFLOW_MODE_OPTIONS.find(option => option.value === deerflowMode) ??
+    DEERFLOW_MODE_OPTIONS.find(option => option.value === mode) ??
+    DEERFLOW_MODE_OPTIONS.find(
+      option => option.value === DEFAULT_WORKBENCH_MODE,
+    ) ??
     DEERFLOW_MODE_OPTIONS[0];
 
   return (
@@ -214,7 +261,7 @@ const WorkbenchDeerFlowModeSelector = ({
         onClick={() => onOpenChange(!open)}
       >
         <span aria-hidden="true">{activeOption.icon}</span>
-        <span>{activeOption.label}</span>
+        <span>{WORKBENCH_MODE_LABELS[activeOption.value]}</span>
       </button>
       {open ? (
         <div
@@ -228,12 +275,11 @@ const WorkbenchDeerFlowModeSelector = ({
               key={option.value}
               type="button"
               role="menuitemradio"
-              aria-checked={option.value === deerflowMode}
+              aria-checked={option.value === mode}
               className="chat-workbench-deerflow-mode-option"
-              data-active={option.value === deerflowMode}
+              data-active={option.value === mode}
               onClick={() => {
-                setDeerflowMode(option.value);
-                onModeChange(option.workbenchMode);
+                onModeChange(option.value);
                 onOpenChange(false);
               }}
             >
@@ -241,11 +287,11 @@ const WorkbenchDeerFlowModeSelector = ({
                 {option.icon}
               </span>
               <span className="chat-workbench-deerflow-mode-option-copy">
-                <span>{option.label}</span>
-                <span>{option.description}</span>
+                <span>{WORKBENCH_MODE_LABELS[option.value]}</span>
+                <span>{WORKBENCH_MODE_DESCRIPTIONS[option.value]}</span>
               </span>
               <span className="chat-workbench-deerflow-mode-option-check">
-                {option.value === deerflowMode ? '✓' : ''}
+                {option.value === mode ? '✓' : ''}
               </span>
             </button>
           ))}
@@ -259,22 +305,27 @@ const WorkbenchComposerSendButton = ({
   canSend,
   isDeerFlow,
   loading,
+  stopLoading,
+  stopMode,
   onSubmit,
 }: {
   canSend: boolean;
   isDeerFlow: boolean;
   loading: boolean;
+  stopLoading?: boolean;
+  stopMode?: boolean;
   onSubmit: () => void;
 }) =>
   isDeerFlow ? (
     <button
       type="button"
-      aria-label="发送任务"
+      aria-label={stopMode ? '停止任务' : '发送任务'}
       className="chat-workbench-send chat-workbench-send-deerflow"
-      disabled={!canSend || loading}
+      data-status={stopMode ? 'streaming' : 'ready'}
+      disabled={stopMode ? stopLoading : !canSend || loading}
       onClick={onSubmit}
     >
-      <DeerFlowArrowUpIcon />
+      {stopMode ? <DeerFlowStopIcon /> : <DeerFlowArrowUpIcon />}
     </button>
   ) : (
     <Button
@@ -308,6 +359,8 @@ export const WorkbenchComposerToolbar = ({
   resourceSelection,
   runtimeSettings,
   selectedModelType,
+  stopLoading,
+  stopMode,
   failoverCandidateCount,
   spaceId,
   onAtMenuOpenChange,
@@ -346,6 +399,8 @@ export const WorkbenchComposerToolbar = ({
       canSend={canSend}
       isDeerFlow={isDeerFlow}
       loading={loading}
+      stopLoading={stopLoading}
+      stopMode={stopMode}
       onSubmit={onSubmit}
     />
   );
@@ -362,6 +417,7 @@ export const WorkbenchComposerToolbar = ({
             <IconCozUpload />
           </button>
           <WorkbenchDeerFlowModeSelector
+            mode={mode}
             open={modeMenuOpen}
             placement={overlayPlacement}
             onOpenChange={onModeMenuOpenChange}
@@ -373,7 +429,9 @@ export const WorkbenchComposerToolbar = ({
             renderMask={false}
             showSelectedCount={false}
             value={resourceSelection}
+            settings={runtimeSettings}
             onChange={onResourceSelectionChange}
+            onSettingsChange={onRuntimeSettingsChange}
             onOpenChange={onExtensionsOpenChange}
           />
         </div>
@@ -402,7 +460,9 @@ export const WorkbenchComposerToolbar = ({
         <ExtensionsPopover
           placement={overlayPlacement}
           value={resourceSelection}
+          settings={runtimeSettings}
           onChange={onResourceSelectionChange}
+          onSettingsChange={onRuntimeSettingsChange}
         />
 
         {spaceId && modelLoader ? modelSelector : null}

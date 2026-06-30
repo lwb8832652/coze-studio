@@ -29,6 +29,20 @@ const mockUseSpaceStore = vi.hoisted(() =>
   ),
 );
 
+let latestIntersectionCallback:
+  | ((entries: Array<Partial<IntersectionObserverEntry>>) => void)
+  | undefined;
+
+class MockIntersectionObserver {
+  observe = vi.fn();
+  disconnect = vi.fn();
+
+  constructor(callback: IntersectionObserverCallback) {
+    latestIntersectionCallback = entries =>
+      callback(entries as IntersectionObserverEntry[], this as never);
+  }
+}
+
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }));
@@ -63,6 +77,15 @@ import { WorkspaceTaskList } from '../workspace-task-list';
 import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
+  beforeEach(() => {
+    latestIntersectionCallback = undefined;
+    Object.defineProperty(globalThis, 'IntersectionObserver', {
+      configurable: true,
+      writable: true,
+      value: MockIntersectionObserver,
+    });
+  });
+
   it('defines the Figma workspace navigation structure', () => {
     const labels = WORKSPACE_MENU_META.map(item => item.label);
     const paths = WORKSPACE_MENU_META.map(item => item.path);
@@ -181,7 +204,8 @@ describe('Coze Studio WorkspaceSubMenu', () => {
 
     expect(mockListTaskThreads).toHaveBeenCalledWith({
       space_id: 'space-1',
-      page_size: 8,
+      page: 1,
+      page_size: 20,
     });
     expect(container.textContent).toContain('整理周报');
 
@@ -194,6 +218,295 @@ describe('Coze Studio WorkspaceSubMenu', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('loads more recent tasks when the sidebar reaches the bottom', async () => {
+    const firstPageThreads = Array.from({ length: 20 }, (_, index) => ({
+      thread_id: `thread-${index + 1}`,
+      legacy_task_id: '0',
+      space_id: 'space-1',
+      creator_id: 'user-1',
+      title: `任务 ${index + 1}`,
+      status: 'completed',
+      source: 'task',
+      progress: 100,
+      last_user_message: '',
+      last_agent_message: '',
+      created_at: 1717000000000 - index,
+      updated_at: 1717000300000 - index,
+    }));
+    let resolveNextPage: (
+      value: Awaited<ReturnType<typeof mockListTaskThreads>>,
+    ) => void = () => undefined;
+    const nextPageRequest = new Promise<
+      Awaited<ReturnType<typeof mockListTaskThreads>>
+    >(resolve => {
+      resolveNextPage = resolve;
+    });
+    mockListTaskThreads
+      .mockResolvedValueOnce({
+        data: {
+          threads: firstPageThreads,
+          total: 21,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockReturnValueOnce(nextPageRequest);
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    expect(mockListTaskThreads).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      page: 1,
+      page_size: 20,
+    });
+
+    await act(async () => {
+      latestIntersectionCallback?.([{ isIntersecting: true }]);
+      await Promise.resolve();
+    });
+
+    expect(mockListTaskThreads).toHaveBeenLastCalledWith({
+      space_id: 'space-1',
+      page: 2,
+      page_size: 20,
+    });
+    expect(container.textContent).toContain('加载更多任务');
+
+    await act(async () => {
+      resolveNextPage({
+        data: {
+          threads: [
+            {
+              thread_id: 'thread-21',
+              legacy_task_id: '0',
+              space_id: 'space-1',
+              creator_id: 'user-1',
+              title: '任务 21',
+              status: 'completed',
+              source: 'task',
+              progress: 100,
+              last_user_message: '',
+              last_agent_message: '',
+              created_at: 1716999999999,
+              updated_at: 1717000299999,
+            },
+          ],
+          total: 21,
+        },
+        code: 0,
+        msg: '',
+      });
+      await nextPageRequest;
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('任务 21');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('uses the same compact display title for sidebar task history', async () => {
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-travel',
+            legacy_task_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title:
+              '请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项，并生成一个可在产物面板预览和下载的 Markdown 或 PDF 文档。',
+            status: 'completed',
+            source: 'task',
+            progress: 100,
+            last_user_message: '请生成一份《武汉3日游攻略》正式文档',
+            last_agent_message: '',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('.coze-prototype-sidebar-task-name')?.textContent,
+    ).toBe('武汉3日游攻略');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('prepends a newly created task thread without waiting for a page refresh', async () => {
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-old',
+            legacy_task_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: '旧任务',
+            status: 'completed',
+            source: 'task',
+            progress: 100,
+            last_user_message: '',
+            last_agent_message: '',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'thread-new',
+              legacy_task_id: '0',
+              space_id: 'space-1',
+              creator_id: 'user-1',
+              title: '新任务',
+              status: 'running',
+              source: 'task',
+              progress: 0,
+              last_user_message: '',
+              last_agent_message: '',
+              created_at: 1717000400000,
+              updated_at: 1717000400000,
+            },
+          },
+        }),
+      );
+    });
+
+    const taskNames = Array.from(
+      container.querySelectorAll('.coze-prototype-sidebar-task-name'),
+    ).map(item => item.textContent);
+
+    expect(taskNames).toEqual(['新任务', '旧任务']);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('patches an existing recent task title without inserting a partial task', async () => {
+    mockListTaskThreads.mockResolvedValue({
+      data: {
+        threads: [
+          {
+            thread_id: 'thread-travel',
+            legacy_task_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            title: '请生成一份《武汉3日游攻略》正式文档',
+            status: 'running',
+            source: 'task',
+            progress: 50,
+            last_user_message: '',
+            last_agent_message: '',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            mode: 'patch',
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'thread-travel',
+              title: '武汉3日游攻略',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            mode: 'patch',
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'missing-thread',
+              title: '不应插入',
+            },
+          },
+        }),
+      );
+    });
+
+    const taskNames = Array.from(
+      container.querySelectorAll('.coze-prototype-sidebar-task-name'),
+    ).map(item => item.textContent);
+
+    expect(taskNames).toEqual(['武汉3日游攻略']);
 
     act(() => {
       root?.unmount();

@@ -330,6 +330,7 @@ type ListTaskThreadArtifactsRequest struct {
 	ThreadID    int64 `path:"thread_id,required"`
 	RunID       int64 `query:"run_id"`
 	DeletedOnly bool  `query:"deleted_only"`
+	SpaceID     int64 `query:"space_id"`
 	Page        int32 `query:"page"`
 	PageSize    int32 `query:"page_size"`
 }
@@ -338,6 +339,7 @@ type ListTaskThreadArtifactScanJobsRequest struct {
 	ThreadID   int64  `path:"thread_id,required"`
 	RunID      int64  `query:"run_id"`
 	ArtifactID int64  `query:"artifact_id"`
+	SpaceID    int64  `query:"space_id"`
 	Status     string `query:"status"`
 	Scanner    string `query:"scanner"`
 	Page       int32  `query:"page"`
@@ -347,11 +349,13 @@ type ListTaskThreadArtifactScanJobsRequest struct {
 type RetryTaskThreadArtifactScanJobRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	JobID    int64 `path:"job_id,required"`
+	SpaceID  int64 `query:"space_id"`
 }
 
 type ReviewTaskThreadArtifactScanRequest struct {
 	ThreadID   int64  `path:"thread_id,required"`
 	ArtifactID int64  `path:"artifact_id,required"`
+	SpaceID    int64  `query:"space_id"`
 	Decision   string `json:"decision"`
 	Reason     string `json:"reason"`
 }
@@ -359,12 +363,14 @@ type ReviewTaskThreadArtifactScanRequest struct {
 type GetTaskThreadArtifactContentRequest struct {
 	ThreadID   int64  `path:"thread_id,required"`
 	ArtifactID int64  `path:"artifact_id,required"`
+	SpaceID    int64  `query:"space_id"`
 	Mode       string `query:"mode"`
 }
 
 type GetTaskThreadArtifactSignedURLRequest struct {
 	ThreadID   int64  `path:"thread_id,required"`
 	ArtifactID int64  `path:"artifact_id,required"`
+	SpaceID    int64  `query:"space_id"`
 	Mode       string `query:"mode"`
 	TTLSeconds int64  `query:"ttl_seconds"`
 }
@@ -372,11 +378,13 @@ type GetTaskThreadArtifactSignedURLRequest struct {
 type DeleteTaskThreadArtifactRequest struct {
 	ThreadID   int64 `path:"thread_id,required"`
 	ArtifactID int64 `path:"artifact_id,required"`
+	SpaceID    int64 `query:"space_id"`
 }
 
 type RestoreTaskThreadArtifactRequest struct {
 	ThreadID   int64 `path:"thread_id,required"`
 	ArtifactID int64 `path:"artifact_id,required"`
+	SpaceID    int64 `query:"space_id"`
 }
 
 type UpdateTaskThreadMemoryRequest struct {

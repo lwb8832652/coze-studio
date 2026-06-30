@@ -459,6 +459,16 @@ type GetThreadResponse struct {
 	Thread *ThreadSummary
 }
 
+type UpdateThreadTitleRequest struct {
+	ThreadID int64
+	Title    string
+}
+
+type UpdateThreadTitleResponse struct {
+	Thread  *ThreadSummary
+	Updated bool
+}
+
 type ListThreadsRequest struct {
 	SpaceID  int64
 	UserID   int64
@@ -851,6 +861,7 @@ type ListArtifactsRequest struct {
 	ThreadID    int64
 	RunID       *int64
 	DeletedOnly bool
+	SpaceID     int64
 	ViewerID    int64
 	Page        int32
 	PageSize    int32
@@ -883,6 +894,25 @@ type WriteOutputFileResponse struct {
 	Notice  string
 }
 
+type SkillPackageResource struct {
+	Path    string
+	Content string
+}
+
+type CreateSkillPackageRequest struct {
+	Run        *RunSummary
+	SkillName  string
+	SkillMD    string
+	OutputPath string
+	Resources  []SkillPackageResource
+}
+
+type CreateSkillPackageResponse struct {
+	File    *OutputFileSummary
+	Created bool
+	Notice  string
+}
+
 type PresentOutputFilesRequest struct {
 	Run       *RunSummary
 	FilePaths []string
@@ -899,6 +929,7 @@ type ListArtifactScanJobsRequest struct {
 	ArtifactID *int64
 	Status     string
 	Scanner    string
+	SpaceID    int64
 	ViewerID   int64
 	Page       int32
 	PageSize   int32
@@ -912,6 +943,7 @@ type ListArtifactScanJobsResponse struct {
 type RetryArtifactScanJobRequest struct {
 	ThreadID int64
 	JobID    int64
+	SpaceID  int64
 	ViewerID int64
 }
 
@@ -931,6 +963,7 @@ type ReadArtifactContentRequest struct {
 	ThreadID   int64
 	ArtifactID int64
 	Mode       ArtifactContentMode
+	SpaceID    int64
 	ViewerID   int64
 }
 
@@ -938,6 +971,7 @@ type CreateArtifactSignedURLRequest struct {
 	ThreadID   int64
 	ArtifactID int64
 	Mode       ArtifactContentMode
+	SpaceID    int64
 	ViewerID   int64
 	TTLSeconds int64
 }
@@ -953,6 +987,7 @@ type CreateArtifactSignedURLResponse struct {
 type DeleteArtifactRequest struct {
 	ThreadID   int64
 	ArtifactID int64
+	SpaceID    int64
 	ViewerID   int64
 	DeletedAt  int64
 }
@@ -964,6 +999,7 @@ type DeleteArtifactResponse struct {
 type RestoreArtifactRequest struct {
 	ThreadID   int64
 	ArtifactID int64
+	SpaceID    int64
 	ViewerID   int64
 	RestoredAt int64
 }
@@ -1005,6 +1041,7 @@ type RecordArtifactScanResultResponse struct {
 type ReviewArtifactScanRequest struct {
 	ThreadID   int64
 	ArtifactID int64
+	SpaceID    int64
 	ViewerID   int64
 	Decision   string
 	Reason     string

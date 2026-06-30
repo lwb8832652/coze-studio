@@ -16,21 +16,23 @@
 
 import { workbench } from '@coze-studio/api-schema';
 
-export const WORKBENCH_MODES = ['Auto', 'Ask', 'Agent'] as const;
+export const WORKBENCH_MODES = ['flash', 'thinking', 'pro', 'ultra'] as const;
 
 export type WorkbenchMode = (typeof WORKBENCH_MODES)[number];
+export type WorkbenchLegacyMode = 'Auto' | 'Ask' | 'Agent';
 
 export type WorkbenchComposerVariant = 'home' | 'detail';
 
 export interface WorkbenchResourceSelection {
   enable_skills: string[];
+  explicit_enable_skills: string[];
   enable_mcp: string[];
   enable_kbs: string[];
   enable_databases: string[];
 }
 
 export type WorkbenchMemoryScope = 'thread' | 'run' | 'long_term';
-export type WorkbenchReasoningEffort = 'medium' | 'high';
+export type WorkbenchReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 
 export interface WorkbenchRuntimeSettings {
   runtime: 'eino_adk';
@@ -98,7 +100,11 @@ export interface WorkbenchLLMModel {
 }
 
 export interface WorkbenchComposerSubmitPayload
-  extends WorkbenchResourceSelection {
+  extends Omit<
+    WorkbenchResourceSelection,
+    'enable_skills' | 'explicit_enable_skills'
+  > {
+  enable_skills?: string[];
   message: string;
   mode: WorkbenchMode;
   taskId?: string;
@@ -117,16 +123,34 @@ export interface CreateWorkbenchSubmitPayloadInput {
   runtimeSettings: WorkbenchRuntimeSettings;
 }
 
+export const DEFAULT_WORKBENCH_MODE: WorkbenchMode = 'pro';
+
 export const WORKBENCH_MODE_PROMPTS: Record<WorkbenchMode, string> = {
-  Auto: 'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
-  Ask: 'Hi,我会以最快的方式自动响应,为你提供高效且清晰的专业答案~',
-  Agent: 'Hi,我会充分思考并灵活使用多种工具,帮你搞定复杂问题~',
+  flash: 'Hi,我会快速完成任务,尽量给你直接结果~',
+  thinking: 'Hi,我会先思考再行动,在速度和准确性之间取得平衡~',
+  pro: 'Hi,我会先计划再执行,帮你获得更精准的结果~',
+  ultra: 'Hi,我会用更强的多步骤处理方式,帮你完成复杂任务~',
 };
 
 export const WORKBENCH_MODE_SYMBOLS: Record<WorkbenchMode, string> = {
-  Auto: '✦',
-  Ask: '?',
-  Agent: 'A',
+  flash: '↯',
+  thinking: '?',
+  pro: 'P',
+  ultra: 'U',
+};
+
+export const WORKBENCH_MODE_LABELS: Record<WorkbenchMode, string> = {
+  flash: '闪速',
+  thinking: '思考',
+  pro: 'Pro',
+  ultra: 'Ultra',
+};
+
+export const WORKBENCH_MODE_DESCRIPTIONS: Record<WorkbenchMode, string> = {
+  flash: '快速且高效的完成任务，但可能不够精准',
+  thinking: '思考后再行动，在时间与准确性之间取得平衡',
+  pro: '思考、计划再执行，获得更精准的结果，可能需要更多时间',
+  ultra: '继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务',
 };
 
 export const workbenchModelTypeToNumber = (model: WorkbenchLLMModel) =>
@@ -155,6 +179,7 @@ export const getWorkbenchFailoverCandidateModelIds = (
 export const createDefaultWorkbenchResourceSelection =
   (): WorkbenchResourceSelection => ({
     enable_skills: [],
+    explicit_enable_skills: [],
     enable_mcp: [],
     enable_kbs: [],
     enable_databases: [],
@@ -175,12 +200,12 @@ export const createDefaultWorkbenchRuntimeSettings = (
     min_confidence: 0.2,
   },
   skills: {
-    enabled: resourceSelection.enable_skills.length > 0,
+    enabled: true,
     visibility: 'deferred',
     allowed_skills: [...resourceSelection.enable_skills],
   },
   mcp_tools: {
-    enabled: resourceSelection.enable_mcp.length > 0,
+    enabled: true,
     visibility: 'deferred',
     allowed_tools: [...resourceSelection.enable_mcp],
   },
@@ -297,6 +322,13 @@ export const createWorkbenchSubmitPayload = ({
     );
   }
 
+  const explicitSkills = [...resourceSelection.explicit_enable_skills];
+  const enableSkills = nextRuntimeSettings.skills.enabled
+    ? explicitSkills.length > 0
+      ? explicitSkills
+      : undefined
+    : [];
+
   return {
     message,
     mode,
@@ -304,9 +336,7 @@ export const createWorkbenchSubmitPayload = ({
     modelType,
     modelName: selectedModel?.model_name || selectedModel?.name,
     runtimeSettings: nextRuntimeSettings,
-    enable_skills: nextRuntimeSettings.skills.enabled
-      ? [...resourceSelection.enable_skills]
-      : [],
+    enable_skills: enableSkills,
     enable_mcp: nextRuntimeSettings.mcp_tools.enabled
       ? [...resourceSelection.enable_mcp]
       : [],
@@ -319,6 +349,7 @@ export const createWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => {
   const { runtimeSettings } = payload;
+  const modeRuntimeContext = getWorkbenchModeRuntimeContext(payload.mode);
   const modelRetry = runtimeSettings.model_retry.enabled
     ? {
         max_retries: runtimeSettings.model_retry.max_retries,
@@ -347,22 +378,35 @@ export const createWorkbenchRunConfig = (
           ],
         }
       : undefined;
+  const mcpTools = {
+    ...runtimeSettings.mcp_tools,
+    allowed_tools:
+      runtimeSettings.mcp_tools.enabled &&
+      runtimeSettings.mcp_tools.allowed_tools.length === 0
+        ? undefined
+        : runtimeSettings.mcp_tools.allowed_tools,
+  };
 
   return {
     runtime: runtimeSettings.runtime,
     mode: payload.mode,
     model_type: payload.modelType,
     model_name: payload.modelName,
-    reasoning_effort: runtimeSettings.reasoning.enabled
-      ? runtimeSettings.reasoning.effort
-      : undefined,
+    thinking_enabled: modeRuntimeContext.thinking_enabled,
+    is_plan_mode: modeRuntimeContext.is_plan_mode,
+    subagent_enabled: modeRuntimeContext.subagent_enabled,
+    ...(runtimeSettings.reasoning.enabled
+      ? {
+          reasoning_effort: runtimeSettings.reasoning.effort,
+        }
+      : {}),
     enable_skills: payload.enable_skills,
     enable_mcp: payload.enable_mcp,
     enable_kbs: payload.enable_kbs,
     enable_databases: payload.enable_databases,
     memory_retrieval: runtimeSettings.memory_retrieval,
     skills: runtimeSettings.skills,
-    mcp_tools: runtimeSettings.mcp_tools,
+    mcp_tools: mcpTools,
     web_tools: runtimeSettings.web_tools,
     model_retry: modelRetry,
     model_failover: modelFailover,
@@ -374,8 +418,23 @@ export const stringifyWorkbenchRunConfig = (
   payload: WorkbenchComposerSubmitPayload,
 ) => JSON.stringify(createWorkbenchRunConfig(payload));
 
-export const mapModeToChatMode = (mode: WorkbenchMode): workbench.ChatMode => {
-  const modeMap: Record<WorkbenchMode, workbench.ChatMode> = {
+export const getWorkbenchModeRuntimeContext = (mode: WorkbenchMode) => ({
+  thinking_enabled: mode !== 'flash',
+  is_plan_mode: mode === 'pro' || mode === 'ultra',
+  subagent_enabled: mode === 'ultra',
+});
+
+export const mapModeToChatMode = (
+  mode: WorkbenchMode | WorkbenchLegacyMode,
+): workbench.ChatMode => {
+  const modeMap: Record<
+    WorkbenchMode | WorkbenchLegacyMode,
+    workbench.ChatMode
+  > = {
+    flash: workbench.ChatMode.Auto,
+    thinking: workbench.ChatMode.Ask,
+    pro: workbench.ChatMode.Agent,
+    ultra: workbench.ChatMode.Agent,
     Auto: workbench.ChatMode.Auto,
     Ask: workbench.ChatMode.Ask,
     Agent: workbench.ChatMode.Agent,

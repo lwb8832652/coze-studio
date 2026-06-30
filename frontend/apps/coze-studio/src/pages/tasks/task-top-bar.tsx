@@ -31,6 +31,7 @@ import type {
 type ChatTask = workbenchTask.ChatTask;
 
 export const TaskTopBar = ({
+  displayTitle,
   exportAction,
   inspectorAction,
   onTokenUsageViewModeChange,
@@ -38,6 +39,7 @@ export const TaskTopBar = ({
   tokenUsage,
   tokenUsageViewMode,
 }: {
+  displayTitle?: string;
   exportAction?: ReactNode;
   inspectorAction?: ReactNode;
   onTokenUsageViewModeChange?: (mode: TaskTokenUsageViewMode) => void;
@@ -49,7 +51,9 @@ export const TaskTopBar = ({
     <div className="coze-prototype-task-title-group">
       <IconCozAsynchronousTask className="text-[16px]" />
       <div className="coze-prototype-task-title-copy">
-        <h1 className="coze-prototype-task-top-title">{task.title}</h1>
+        <h1 className="coze-prototype-task-top-title">
+          {displayTitle || task.title}
+        </h1>
       </div>
     </div>
     <div className="coze-prototype-task-topbar-actions">

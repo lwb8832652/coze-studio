@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
 import { vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
@@ -25,14 +25,19 @@ import { workbench } from '@coze-studio/api-schema';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
+const mockUseSearchParams = vi.hoisted(() =>
+  vi.fn(() => [new URLSearchParams(), vi.fn()]),
+);
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCreateTaskThread = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
+const mockListMCPToolRegistryEntries = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
   useParams: mockUseParams,
+  useSearchParams: mockUseSearchParams,
 }));
 
 vi.mock('../service', () => ({
@@ -42,6 +47,10 @@ vi.mock('../service', () => ({
 
 vi.mock('../../skill/service', () => ({
   listSkills: mockListSkills,
+}));
+
+vi.mock('../../tools/service', () => ({
+  listMCPToolRegistryEntries: mockListMCPToolRegistryEntries,
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -102,27 +111,43 @@ vi.mock('@coze-arch/coze-design', () => ({
   ),
   Spin: () => <span>加载中...</span>,
   Tabs: ({
+    onChange,
     tabBarExtraContent,
     tabList,
   }: {
+    onChange?: (key: string) => void;
     tabBarExtraContent?: ReactNode;
     tabList?: Array<{ itemKey: string; tab: ReactNode }>;
   }) => (
     <div>
-      {tabList?.map(item => <span key={item.itemKey}>{item.tab}</span>)}
+      {tabList?.map(item => (
+        <button
+          key={item.itemKey}
+          type="button"
+          onClick={() => onChange?.(item.itemKey)}
+        >
+          {item.tab}
+        </button>
+      ))}
       {tabBarExtraContent}
     </div>
   ),
   TextArea: ({
     'aria-label': ariaLabel,
     className,
+    onBlur,
     onChange,
+    onFocus,
+    onKeyDown,
     placeholder,
     value,
   }: {
     'aria-label'?: string;
     className?: string;
+    onBlur?: () => void;
     onChange?: (value: string) => void;
+    onFocus?: () => void;
+    onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
     placeholder?: string;
     value?: string;
   }) => (
@@ -131,7 +156,10 @@ vi.mock('@coze-arch/coze-design', () => ({
       className={className}
       placeholder={placeholder}
       value={value}
+      onBlur={onBlur}
       onChange={event => onChange?.(event.target.value)}
+      onFocus={onFocus}
+      onKeyDown={onKeyDown}
     />
   ),
 }));
@@ -154,6 +182,11 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
 import WorkbenchPage, { mapModeToChatMode } from '../index';
+import {
+  createDefaultWorkbenchResourceSelection,
+  createDefaultWorkbenchRuntimeSettings,
+  createWorkbenchRunConfig,
+} from '../components/types';
 
 const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
   data: {
@@ -212,9 +245,21 @@ const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
   msg: '',
 });
 
+const getSendButton = (container: HTMLElement) => {
+  const sendButton = container.querySelector(
+    'button[aria-label="发送任务"]',
+  ) as HTMLButtonElement | null;
+
+  expect(sendButton).toBeTruthy();
+
+  return sendButton!;
+};
+
 describe('WorkbenchPage', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
+    mockUseSearchParams.mockReturnValue([new URLSearchParams(), vi.fn()]);
     mockNavigate.mockReset();
     mockCreateTaskThread.mockReset();
     mockGetTypeList.mockReset();
@@ -242,6 +287,64 @@ describe('WorkbenchPage', () => {
       code: 0,
       msg: '',
     });
+    mockListMCPToolRegistryEntries.mockReset();
+    mockListMCPToolRegistryEntries.mockResolvedValue({
+      data: {
+        tools: [
+          {
+            name: 'mcp_7656806170115440640_search_repositories',
+            source: 'mcp',
+            category: 'mcp',
+            visibility: 'deferred',
+            server_id: '7656806170115440640',
+            server_name: 'github',
+            tool_name: 'search_repositories',
+            description: 'Search for GitHub repositories',
+            input_schema: '{"type":"object"}',
+            enabled: true,
+            health_status: 'unknown',
+            health_checked_at: 0,
+            health_latency_ms: 0,
+            health_error: '',
+          },
+          {
+            name: 'mcp_7656806170115440640_create_issue',
+            source: 'mcp',
+            category: 'mcp',
+            visibility: 'deferred',
+            server_id: '7656806170115440640',
+            server_name: 'github',
+            tool_name: 'create_issue',
+            description: 'Create a GitHub issue',
+            input_schema: '{"type":"object"}',
+            enabled: true,
+            health_status: 'unknown',
+            health_checked_at: 0,
+            health_latency_ms: 0,
+            health_error: '',
+          },
+          {
+            name: 'mcp_7656806170694254592_query',
+            source: 'mcp',
+            category: 'mcp',
+            visibility: 'deferred',
+            server_id: '7656806170694254592',
+            server_name: 'postgres',
+            tool_name: 'query',
+            description: 'Run a read-only SQL query',
+            input_schema: '{"type":"object"}',
+            enabled: true,
+            health_status: 'unknown',
+            health_checked_at: 0,
+            health_latency_ms: 0,
+            health_error: '',
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
     mockGetTypeList.mockResolvedValue([
       {
         name: 'deepseek-v4-pro',
@@ -264,11 +367,15 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('欢迎来到 刘文波 的工作空间');
     expect(markup).toContain('Aime 专属助理准备好,先聊聊吧~');
     expect(markup).toContain('去聊天专属助理');
-    expect(markup).toContain('Hi,我会根据你的任务特性,自动匹配最佳的处理方式~');
     expect(markup).toContain('aria-label="任务描述"');
-    expect(markup).toContain('Auto');
-    expect(markup).toContain('Ask');
-    expect(markup).toContain('Agent');
+    expect(markup).toContain('data-composer-style="deerflow"');
+    expect(markup).toContain('placeholder="今天想做什么？"');
+    expect(markup).toContain('chat-workbench-deerflow-mode-trigger');
+    expect(markup).toContain('chat-workbench-send-deerflow');
+    expect(markup).toContain('Pro');
+    expect(markup).not.toContain('Auto');
+    expect(markup).not.toContain('Ask');
+    expect(markup).not.toContain('Agent');
     expect(markup).toContain('aria-label="拓展"');
     expect(markup).toContain('公开模板 6268');
     expect(markup).toContain('我收藏的');
@@ -287,11 +394,79 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('服务端');
     expect(markup).toContain('官方');
     expect(markup).toContain('aria-label="发送任务"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).toContain('aria-pressed="false"');
+    expect(markup).not.toContain('aria-pressed="true"');
+    expect(markup).not.toContain('aria-pressed="false"');
   });
 
-  it('switches mode prompt and opens the resource and extension menus from the prototype', async () => {
+  it('renders DeerFlow skill-creator mode from the new skill entry', () => {
+    mockUseSearchParams.mockReturnValue([
+      new URLSearchParams('mode=skill'),
+      vi.fn(),
+    ]);
+
+    const markup = renderToStaticMarkup(<WorkbenchPage />);
+
+    expect(markup).toContain('✨ 创建你自己的 Agent SKill ✨');
+    expect(markup).toContain('创建你的 Agent Skill 来释放 DeerFlow 的潜力。');
+    expect(markup).toContain('第一步请先直接问我');
+    expect(markup).toContain('想创建什么技能');
+    expect(markup).toContain('不要创建文件或生成 .skill 包');
+    expect(markup).toContain('.skill');
+    expect(markup).not.toContain('create_skill_package');
+    expect(markup).not.toContain('present_files');
+    expect(markup).not.toContain('公开模板 6268');
+  });
+
+  it('activates skill-creator when sending from DeerFlow skill-creator mode', async () => {
+    mockUseSearchParams.mockReturnValue([
+      new URLSearchParams('mode=skill'),
+      vi.fn(),
+    ]);
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-skill-creator-mode',
+        '创建一个技能',
+      ),
+    );
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: expect.stringContaining('skill-creator'),
+      config: expect.any(String),
+    });
+    expect(
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+    ).toMatchObject({
+      enable_skills: ['skill-creator'],
+      skills: {
+        enabled: true,
+        allowed_skills: ['skill-creator'],
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('opens DeerFlow mode, resource, and extension menus from the prototype', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -301,20 +476,18 @@ describe('WorkbenchPage', () => {
       root.render(<WorkbenchPage />);
     });
 
-    expect(container.textContent).toContain(
-      'Hi,我会根据你的任务特性,自动匹配最佳的处理方式~',
-    );
+    expect(container.textContent).toContain('Pro');
 
-    const askButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent === 'Ask',
+    const modeButton = container.querySelector(
+      '.chat-workbench-deerflow-mode-trigger',
     ) as HTMLButtonElement;
     act(() => {
-      askButton.click();
+      modeButton.click();
     });
 
-    expect(container.textContent).toContain(
-      'Hi,我会以最快的方式自动响应,为你提供高效且清晰的专业答案~',
-    );
+    expect(container.textContent).toContain('闪速');
+    expect(container.textContent).toContain('思考');
+    expect(container.textContent).toContain('Ultra');
 
     const resourceButton = container.querySelector(
       'button[aria-label="添加上下文"]',
@@ -335,15 +508,20 @@ describe('WorkbenchPage', () => {
     await act(async () => {
       extensionButton.click();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(container.textContent).toContain('技能 1');
-    expect(container.textContent).toContain('MCP 0');
-    expect(container.textContent).toContain('已选择:');
+    expect(container.textContent).toContain('MCP 2');
+    expect(container.textContent).toContain('已启用 3/3');
+    expect(container.textContent).not.toContain('已选择:');
     expect(container.textContent).toContain('Research Skill');
     expect(mockListSkills).toHaveBeenCalledWith({
       space_id: 'space-1',
       enabled: true,
+    });
+    expect(mockListMCPToolRegistryEntries).toHaveBeenCalledWith({
+      space_id: 'space-1',
     });
 
     const skillConfigButton = Array.from(
@@ -363,10 +541,332 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
+  it('keeps long skill titles readable without crowding extension controls', async () => {
+    const longSkillName =
+      'super-long-custom-skill-title-for-cross-team-acceptance-meeting-note-generation';
+    mockListSkills.mockResolvedValueOnce({
+      data: {
+        skills: [
+          {
+            id: 'skill-long-title',
+            space_id: 'space-1',
+            name: longSkillName,
+            description: 'Long skill title layout regression fixture',
+            type: 3,
+            version: '1.0.0',
+            enabled: true,
+            input_schema: '{}',
+            output_schema: '{}',
+            executor: '{}',
+            permissions: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
+    await act(async () => {
+      extensionButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const skillName = container.querySelector(
+      '.chat-workbench-extension-name',
+    ) as HTMLElement | null;
+    const skillItem = container.querySelector(
+      '.chat-workbench-extension-item',
+    ) as HTMLElement | null;
+
+    expect(skillName?.textContent).toBe(longSkillName);
+    expect(skillName?.getAttribute('title')).toBe(longSkillName);
+    expect(skillItem?.textContent).toContain('Deer');
+    expect(skillItem?.textContent).toContain('✓');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('shows DeerFlow slash skill suggestions and inserts the selected skill prefix', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockListSkills.mockResolvedValueOnce({
+      data: {
+        skills: [
+          {
+            id: 'skill-weekly-research',
+            space_id: 'space-1',
+            name: 'weekly-research',
+            description: 'Research from trusted sources',
+            type: 3,
+            version: '1.0.0',
+            enabled: true,
+            input_schema: '{}',
+            output_schema: '{}',
+            executor: '{}',
+            permissions: '{}',
+            created_at: 1717000000000,
+            updated_at: 1717000300000,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      Simulate.focus(textarea);
+      Simulate.change(textarea, {
+        target: { value: '/wee' },
+      } as unknown as Event);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const suggestions = container.querySelector(
+      '[aria-label="Skill suggestions"]',
+    );
+    expect(suggestions).toBeTruthy();
+    expect(suggestions?.getAttribute('data-placement')).toBe('bottom');
+    expect(suggestions?.textContent).toContain('/weekly-research');
+    expect(suggestions?.textContent).toContain('Research from trusted sources');
+    expect(mockListSkills).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      enabled: true,
+    });
+
+    const option = suggestions?.querySelector(
+      'button[role="option"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      Simulate.click(option);
+      await Promise.resolve();
+    });
+
+    expect(textarea.value).toBe('/weekly-research ');
+
+    act(() => {
+      Simulate.change(textarea, {
+        target: {
+          value: '/weekly-research collect market changes',
+        },
+      } as unknown as Event);
+    });
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-slash-skill',
+        '/weekly-research collect market changes',
+      ),
+    );
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '/weekly-research collect market changes',
+      config: expect.any(String),
+    });
+    const slashRunConfig = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(slashRunConfig).toMatchObject({
+      skills: {
+        enabled: true,
+        allowed_skills: [],
+      },
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(slashRunConfig, 'enable_skills'),
+    ).toBe(false);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('maps local mode names to generated chat modes', () => {
-    expect(mapModeToChatMode('Auto')).toBe(workbench.ChatMode.Auto);
-    expect(mapModeToChatMode('Ask')).toBe(workbench.ChatMode.Ask);
-    expect(mapModeToChatMode('Agent')).toBe(workbench.ChatMode.Agent);
+    expect(mapModeToChatMode('flash')).toBe(workbench.ChatMode.Auto);
+    expect(mapModeToChatMode('thinking')).toBe(workbench.ChatMode.Ask);
+    expect(mapModeToChatMode('pro')).toBe(workbench.ChatMode.Agent);
+    expect(mapModeToChatMode('ultra')).toBe(workbench.ChatMode.Agent);
+  });
+
+  it('serializes DeerFlow mode runtime context for every mode', () => {
+    const resourceSelection = createDefaultWorkbenchResourceSelection();
+    const runtimeSettings =
+      createDefaultWorkbenchRuntimeSettings(resourceSelection);
+
+    [
+      [
+        'flash',
+        {
+          thinking_enabled: false,
+          is_plan_mode: false,
+          subagent_enabled: false,
+        },
+      ],
+      [
+        'thinking',
+        {
+          thinking_enabled: true,
+          is_plan_mode: false,
+          subagent_enabled: false,
+        },
+      ],
+      [
+        'pro',
+        {
+          thinking_enabled: true,
+          is_plan_mode: true,
+          subagent_enabled: false,
+        },
+      ],
+      [
+        'ultra',
+        {
+          thinking_enabled: true,
+          is_plan_mode: true,
+          subagent_enabled: true,
+        },
+      ],
+    ].forEach(([mode, expectedContext]) => {
+      const runConfig = createWorkbenchRunConfig({
+        message: '验证模式上下文',
+        mode,
+        runtimeSettings,
+        ...resourceSelection,
+      });
+
+      expect(runConfig).toMatchObject({
+        mode,
+        ...expectedContext,
+      });
+      expect(
+        Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
+      ).toBe(false);
+    });
+  });
+
+  it('serializes reasoning effort only when runtime reasoning is explicitly enabled', () => {
+    const resourceSelection = createDefaultWorkbenchResourceSelection();
+    const runtimeSettings =
+      createDefaultWorkbenchRuntimeSettings(resourceSelection);
+    runtimeSettings.reasoning.enabled = true;
+    runtimeSettings.reasoning.effort = 'high';
+
+    expect(
+      createWorkbenchRunConfig({
+        message: '验证显式推理强度',
+        mode: 'pro',
+        runtimeSettings,
+        ...resourceSelection,
+      }),
+    ).toMatchObject({
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
+      reasoning_effort: 'high',
+    });
+  });
+
+  it('switches DeerFlow mode from the composer and sends the selected runtime context', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-ultra-mode', '验证 Ultra 模式'),
+    );
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const modeButton = container.querySelector(
+      '.chat-workbench-deerflow-mode-trigger',
+    ) as HTMLButtonElement;
+    act(() => {
+      modeButton.click();
+    });
+
+    const ultraButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('Ultra'),
+    ) as HTMLButtonElement;
+    expect(ultraButton).toBeTruthy();
+    act(() => {
+      ultraButton.click();
+    });
+    expect(modeButton.textContent).toContain('Ultra');
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '验证 Ultra 模式' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const runConfig = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(runConfig).toMatchObject({
+      mode: 'ultra',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: true,
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
+    ).toBe(false);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 
   it('navigates to the task execution page after send returns a task', async () => {
@@ -392,9 +892,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -406,10 +904,15 @@ describe('WorkbenchPage', () => {
       message: '帮我生成周报',
       config: expect.any(String),
     });
-    expect(
-      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
-    ).toMatchObject({
+    const defaultRunConfig = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(defaultRunConfig).toMatchObject({
       runtime: 'eino_adk',
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -422,9 +925,77 @@ describe('WorkbenchPage', () => {
       token_usage: {
         enabled: true,
       },
+      skills: {
+        enabled: true,
+        allowed_skills: [],
+      },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        defaultRunConfig,
+        'reasoning_effort',
+      ),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(defaultRunConfig, 'enable_skills'),
+    ).toBe(false);
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
 
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('announces the newly created task thread before navigating to detail', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-created-now', '即时显示任务'),
+    );
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '即时显示任务' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const upsertEvent = dispatchSpy.mock.calls
+      .map(([event]) => event)
+      .find(event => event.type === 'coze:workspace-task-thread-upsert') as
+      | CustomEvent
+      | undefined;
+
+    expect(upsertEvent?.detail).toMatchObject({
+      space_id: 'space-1',
+      thread: {
+        thread_id: 'thread-created-now',
+        title: '即时显示任务',
+      },
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/tasks/thread-created-now',
+    );
+
+    dispatchSpy.mockRestore();
     act(() => {
       root?.unmount();
     });
@@ -456,9 +1027,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -497,9 +1066,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -517,15 +1084,15 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('passes updated skill selections in the chat request', async () => {
+  it('can disable default skill usage from the extension menu', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockCreateTaskThread.mockResolvedValue(
       buildCreateTaskThreadResponse(
-        'thread-with-skill-selection',
-        '执行选中的技能',
+        'thread-with-disabled-skill',
+        '关闭默认技能',
       ),
     );
 
@@ -539,6 +1106,7 @@ describe('WorkbenchPage', () => {
     ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
     await act(async () => {
       extensionButton.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
@@ -554,13 +1122,11 @@ describe('WorkbenchPage', () => {
     ) as HTMLTextAreaElement;
     act(() => {
       Simulate.change(textarea, {
-        target: { value: '执行选中的技能' },
+        target: { value: '关闭默认技能' },
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -569,16 +1135,334 @@ describe('WorkbenchPage', () => {
 
     expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
-      message: '执行选中的技能',
+      message: '关闭默认技能',
       config: expect.any(String),
     });
     expect(
       JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
     ).toMatchObject({
-      mode: 'Auto',
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       model_type: 100002,
       model_name: 'deepseek-v4-pro',
+      enable_skills: [],
+      skills: {
+        enabled: false,
+        allowed_skills: [],
+      },
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+        'reasoning_effort',
+      ),
+    ).toBe(false);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('can exclude default MCP tools while keeping MCP auto usage enabled', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-mcp-selection',
+        '用 GitHub MCP 搜索 Coze 仓库',
+      ),
+    );
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
+    await act(async () => {
+      extensionButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const mcpTabButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('MCP'),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      mcpTabButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockListMCPToolRegistryEntries).toHaveBeenCalledWith({
+      space_id: 'space-1',
+    });
+    expect(container.textContent).toContain('github');
+    expect(container.textContent).not.toContain('search_repositories');
+
+    const mcpToolButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('github'),
+    ) as HTMLButtonElement;
+    act(() => {
+      mcpToolButton.click();
+    });
+    expect(container.textContent).toContain('已启用 2/3');
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '用 GitHub MCP 搜索 Coze 仓库' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '用 GitHub MCP 搜索 Coze 仓库',
+      config: expect.any(String),
+    });
+
+    expect(
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+    ).toMatchObject({
+      enable_mcp: ['mcp_7656806170694254592_query'],
+      mcp_tools: {
+        enabled: true,
+        allowed_tools: ['mcp_7656806170694254592_query'],
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('persists extension usage switches across composer remounts', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const extensionButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.includes('拓展')) as HTMLButtonElement;
+    await act(async () => {
+      extensionButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const mcpTabButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('MCP'),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      mcpTabButton.click();
+      await Promise.resolve();
+    });
+
+    const mcpToolButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('github'),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      mcpToolButton.click();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-persisted-extension-usage',
+        '复用刷新前的拓展开关',
+      ),
+    );
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '复用刷新前的拓展开关' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const runtimeSettings = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(runtimeSettings).toMatchObject({
+      mcp_tools: {
+        enabled: true,
+        allowed_tools: ['mcp_7656806170694254592_query'],
+      },
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('enables MCP auto-discovery without manual tool selection', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-auto-mcp',
+        '用 GitHub MCP 搜索 Coze 仓库',
+      ),
+    );
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '用 GitHub MCP 搜索 Coze 仓库' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    const runtimeSettings = JSON.parse(
+      mockCreateTaskThread.mock.calls[0]?.[0].config,
+    );
+    expect(runtimeSettings).toMatchObject({
+      enable_mcp: [],
+      mcp_tools: {
+        enabled: true,
+      },
+    });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        runtimeSettings.mcp_tools,
+        'allowed_tools',
+      ),
+    ).toBe(false);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('passes skills selected from the at menu in the chat request', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse(
+        'thread-with-at-skill-selection',
+        '用选择的技能创建总结能力',
+      ),
+    );
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const atButton = container.querySelector(
+      'button[aria-label="添加上下文"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      atButton.click();
+      await Promise.resolve();
+    });
+
+    const skillTypeButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent?.trim() === '01技能›') as
+      | HTMLButtonElement
+      | undefined;
+    expect(skillTypeButton).toBeTruthy();
+
+    await act(async () => {
+      skillTypeButton?.click();
+      await Promise.resolve();
+    });
+
+    const skillButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.includes('Research Skill'),
+    ) as HTMLButtonElement;
+    expect(skillButton).toBeTruthy();
+
+    act(() => {
+      skillButton.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '用选择的技能创建总结能力' },
+      } as unknown as Event);
+    });
+
+    const sendButton = getSendButton(container);
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '用选择的技能创建总结能力',
+      config: expect.any(String),
+    });
+    expect(
+      JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+    ).toMatchObject({
       enable_skills: ['skill-101'],
+      skills: {
+        enabled: true,
+        allowed_skills: ['skill-101'],
+      },
     });
 
     act(() => {
@@ -632,9 +1516,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -649,10 +1531,19 @@ describe('WorkbenchPage', () => {
     expect(
       JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
     ).toMatchObject({
-      mode: 'Auto',
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       model_type: 100003,
       model_name: 'gpt-4.1',
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        JSON.parse(mockCreateTaskThread.mock.calls[0]?.[0].config),
+        'reasoning_effort',
+      ),
+    ).toBe(false);
 
     act(() => {
       root?.unmount();
@@ -660,13 +1551,13 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('sends model retry and failover runtime settings with a new task', async () => {
+  it('hides runtime settings in the DeerFlow home composer and sends safe defaults', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockCreateTaskThread.mockResolvedValue(
-      buildCreateTaskThreadResponse('thread-with-model-failover', '稳定执行'),
+      buildCreateTaskThreadResponse('thread-with-runtime-defaults', '稳定执行'),
     );
 
     await act(async () => {
@@ -675,23 +1566,7 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeButton = container.querySelector(
-      'button[aria-label="运行设置"]',
-    ) as HTMLButtonElement;
-    act(() => {
-      runtimeButton.click();
-    });
-
-    const retryButton = container.querySelector(
-      'button[aria-label="模型重试"]',
-    ) as HTMLButtonElement;
-    const failoverButton = container.querySelector(
-      'button[aria-label="模型切换"]',
-    ) as HTMLButtonElement;
-    act(() => {
-      retryButton.click();
-      failoverButton.click();
-    });
+    expect(container.querySelector('button[aria-label="运行设置"]')).toBeNull();
 
     const textarea = container.querySelector(
       'textarea[aria-label="任务描述"]',
@@ -702,9 +1577,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -715,19 +1588,19 @@ describe('WorkbenchPage', () => {
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
-      model_retry: {
-        max_retries: 1,
-        backoff_ms: 0,
-        retry_empty_output: true,
-        retry_finish_reasons: ['length'],
+      web_tools: {
+        enabled: false,
+        http: {
+          enabled: false,
+          allowed_hosts: [],
+        },
       },
-      model_failover: {
-        candidate_model_ids: [100003],
-        max_retries: 1,
-        failover_empty_output: true,
-        failover_finish_reasons: ['length'],
+      token_usage: {
+        enabled: true,
       },
     });
+    expect(runtimeSettings.model_retry).toBeUndefined();
+    expect(runtimeSettings.model_failover).toBeUndefined();
 
     act(() => {
       root?.unmount();
@@ -735,7 +1608,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('applies reasoning and resource toggles from the runtime settings panel', async () => {
+  it('sends DeerFlow extension defaults without the legacy runtime panel', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -759,37 +1632,10 @@ describe('WorkbenchPage', () => {
     await act(async () => {
       extensionButton.click();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
-    const skillButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('Research Skill'),
-    ) as HTMLButtonElement;
-    act(() => {
-      skillButton.click();
-    });
-
-    const runtimeButton = container.querySelector(
-      'button[aria-label="运行设置"]',
-    ) as HTMLButtonElement;
-    act(() => {
-      runtimeButton.click();
-    });
-
-    const skillRuntimeButton = container.querySelector(
-      'button[aria-label="Skill 调用"]',
-    ) as HTMLButtonElement;
-    expect(skillRuntimeButton).toBeTruthy();
-    act(() => {
-      skillRuntimeButton.click();
-    });
-
-    const highReasoningButton = container.querySelector(
-      'button[aria-label="模型推理 高"]',
-    ) as HTMLButtonElement;
-    expect(highReasoningButton).toBeTruthy();
-    act(() => {
-      highReasoningButton.click();
-    });
+    expect(container.querySelector('button[aria-label="运行设置"]')).toBeNull();
 
     const textarea = container.querySelector(
       'textarea[aria-label="任务描述"]',
@@ -800,9 +1646,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -819,16 +1663,27 @@ describe('WorkbenchPage', () => {
       mockCreateTaskThread.mock.calls[0]?.[0].config,
     );
     expect(runtimeSettings).toMatchObject({
-      reasoning_effort: 'high',
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       skills: {
-        enabled: false,
-        allowed_skills: ['skill-101'],
+        enabled: true,
+        allowed_skills: [],
       },
       mcp_tools: {
-        enabled: false,
-        allowed_tools: [],
+        enabled: true,
       },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        runtimeSettings.mcp_tools,
+        'allowed_tools',
+      ),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(runtimeSettings, 'reasoning_effort'),
+    ).toBe(false);
 
     act(() => {
       root?.unmount();
@@ -836,7 +1691,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('sends web fetch runtime settings only after allowed hosts are configured', async () => {
+  it('keeps web fetch disabled from the DeerFlow home composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -851,39 +1706,11 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    const runtimeButton = container.querySelector(
-      'button[aria-label="运行设置"]',
-    ) as HTMLButtonElement;
-    act(() => {
-      runtimeButton.click();
-    });
-
-    const fetchButton = container.querySelector(
-      'button[aria-label="网页读取"]',
-    ) as HTMLButtonElement;
-    expect(fetchButton.disabled).toBe(true);
-
-    const allowedHostsInput = container.querySelector(
-      'input[aria-label="网页读取允许域名"]',
-    ) as HTMLInputElement;
-    act(() => {
-      Simulate.change(allowedHostsInput, {
-        target: { value: 'example.com,' },
-      } as unknown as Event);
-    });
-    expect(allowedHostsInput.value).toBe('example.com,');
-
-    expect(fetchButton.disabled).toBe(false);
-
-    act(() => {
-      Simulate.change(allowedHostsInput, {
-        target: { value: ' example.com, docs.example.com, ' },
-      } as unknown as Event);
-    });
-
-    act(() => {
-      fetchButton.click();
-    });
+    expect(container.querySelector('button[aria-label="运行设置"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="网页读取"]')).toBeNull();
+    expect(
+      container.querySelector('input[aria-label="网页读取允许域名"]'),
+    ).toBeNull();
 
     const textarea = container.querySelector(
       'textarea[aria-label="任务描述"]',
@@ -894,9 +1721,7 @@ describe('WorkbenchPage', () => {
       } as unknown as Event);
     });
 
-    const sendButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('发送'),
-    ) as HTMLButtonElement;
+    const sendButton = getSendButton(container);
 
     await act(async () => {
       sendButton.click();
@@ -908,10 +1733,10 @@ describe('WorkbenchPage', () => {
     );
     expect(runtimeSettings).toMatchObject({
       web_tools: {
-        enabled: true,
+        enabled: false,
         http: {
-          enabled: true,
-          allowed_hosts: ['example.com', 'docs.example.com'],
+          enabled: false,
+          allowed_hosts: [],
           timeout_ms: 10000,
           max_response_bytes: 262144,
         },

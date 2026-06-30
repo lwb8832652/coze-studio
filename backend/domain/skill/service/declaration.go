@@ -99,6 +99,10 @@ const (
 )
 
 func ParseDeclaration(fileName string, content []byte) (*Declaration, error) {
+	return ParseDeclarationWithDefaultType(fileName, content, entity.TypeDeerSkill)
+}
+
+func ParseDeclarationWithDefaultType(fileName string, content []byte, defaultType entity.Type) (*Declaration, error) {
 	decl := &Declaration{}
 	lowerFileName := strings.ToLower(fileName)
 	baseFileName := filepath.Base(lowerFileName)
@@ -128,6 +132,9 @@ func ParseDeclaration(fileName string, content []byte) (*Declaration, error) {
 		return nil, fmt.Errorf("unsupported declaration file extension: %s", fileName)
 	}
 
+	if strings.TrimSpace(decl.Type) == "" {
+		decl.Type = string(defaultType)
+	}
 	if err := ValidateDeclaration(decl); err != nil {
 		return nil, err
 	}
@@ -323,7 +330,7 @@ func parseSkillMarkdown(content []byte) (*Declaration, error) {
 		ID:           firstNonEmpty(meta.ID, meta.Name),
 		Name:         meta.Name,
 		Description:  meta.Description,
-		Type:         firstNonEmpty(meta.Type, string(entity.TypeDeerSkill)),
+		Type:         meta.Type,
 		Version:      firstNonEmpty(meta.Version, "1.0.0"),
 		Enabled:      enabled,
 		Context:      meta.Context,

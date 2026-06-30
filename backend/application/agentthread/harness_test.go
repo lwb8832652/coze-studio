@@ -900,6 +900,44 @@ func TestModelStepRunnerInjectsSkillInstructionsIntoSystemPrompt(t *testing.T) {
 	require.Contains(t, systemPrompt, "Collect sources and produce a concise brief.")
 }
 
+func TestModelStepRunnerMarksSlashActivatedSkillInSystemPrompt(t *testing.T) {
+	executor := &recordingRunExecutor{
+		result: &RunExecutionResult{Message: "完成", Metadata: `{"source":"model"}`},
+	}
+	runner := NewModelStepRunner(executor)
+	run := &RunSummary{
+		RunID:  19,
+		Input:  `{"messages":[{"role":"user","content":"/weekly-research collect market changes"}]}`,
+		Config: `{}`,
+	}
+
+	_, err := runner.RunStep(context.Background(), run, AgentStep{
+		ID:   "model-1",
+		Type: AgentStepTypeModel,
+	}, AgentHarnessState{
+		Skills: AgentSkillContext{Items: []AgentSkill{
+			{
+				ID:          101,
+				Name:        "weekly-research",
+				Description: "Research weekly changes.",
+				Type:        "deer_skill",
+				Version:     "1.2.0",
+				Body:        "Collect sources and produce a concise brief.",
+			},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, executor.run)
+	var config map[string]any
+	require.NoError(t, json.Unmarshal([]byte(executor.run.Config), &config))
+	systemPrompt := config["system_prompt"].(string)
+	require.Contains(t, systemPrompt, "## Slash Skill Activation")
+	require.Contains(t, systemPrompt, "explicitly activated the `weekly-research` skill")
+	require.Contains(t, systemPrompt, "<user_request>\ncollect market changes\n</user_request>")
+	require.Contains(t, systemPrompt, "Follow this skill before choosing a general workflow")
+}
+
 func TestNewApplicationHarnessExecutorConfiguresDurableSinks(t *testing.T) {
 	skillProvider := &recordingSkillProvider{}
 	executor := NewApplicationHarnessExecutor(&ApplicationService{ThreadSVC: &recordingThreadService{}}, skillProvider)

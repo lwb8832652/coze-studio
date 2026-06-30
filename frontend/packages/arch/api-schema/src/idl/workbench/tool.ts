@@ -84,6 +84,7 @@ export interface MCPToolRegistryEntry {
   server_name: string;
   tool_name: string;
   description: string;
+  input_schema: string;
   enabled: boolean;
   health_status: string;
   health_checked_at: number;

@@ -102,6 +102,96 @@ allowed-tools:
 	require.NotContains(t, repo.versions[101][0].SkillMD, "Use concise bullets")
 }
 
+func TestServiceImportsSkillArchiveWithCustomDefaultType(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+---
+# Weekly Research
+`,
+	})
+
+	skill, err := svc.ImportDeclarationWithDefaultType(
+		context.Background(),
+		1,
+		"weekly-research.skill",
+		content,
+		entity.TypeCustomSkill,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, entity.TypeCustomSkill, skill.Type)
+	require.Equal(t, "weekly-research", skill.Name)
+}
+
+func TestServiceImportCustomSkillArchiveRejectsExistingCustomSkill(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[100] = &entity.Skill{
+		ID:           100,
+		SpaceID:      1,
+		Name:         "weekly-research",
+		Description:  "Existing custom skill.",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+---
+# Weekly Research
+`,
+	})
+
+	_, err := svc.ImportDeclarationWithDefaultType(
+		context.Background(),
+		1,
+		"weekly-research.skill",
+		content,
+		entity.TypeCustomSkill,
+	)
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "already exists")
+	require.Nil(t, repo.items[101])
+	require.Empty(t, repo.versions[101])
+}
+
+func TestServiceImportDeclarationDefaultTypeDoesNotOverrideExplicitType(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})
+	content := buildSkillArchive(t, map[string]string{
+		"weekly-research/SKILL.md": `---
+name: weekly-research
+description: Research weekly market changes.
+type: public_skill
+---
+# Weekly Research
+`,
+	})
+
+	skill, err := svc.ImportDeclarationWithDefaultType(
+		context.Background(),
+		1,
+		"weekly-research.skill",
+		content,
+		entity.TypeCustomSkill,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, entity.TypePublicSkill, skill.Type)
+}
+
 func TestServiceImportsSkillArchivePersistsResources(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 101}})

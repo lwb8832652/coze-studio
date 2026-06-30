@@ -190,6 +190,7 @@ func adkMCPRuntimeToolDefinitionFromEntry(
 	return &ADKRuntimeToolDefinition{
 		Name:        name,
 		Description: description,
+		InputSchema: strings.TrimSpace(entry.InputSchema),
 		Visibility:  config.Visibility,
 		Invoker: adkMCPRuntimeToolInvoker{
 			name:     name,

@@ -124,6 +124,37 @@ func TestADKSkillBackendGuardrailAllowsMetadataOnlySkillLoad(t *testing.T) {
 	require.Empty(t, enforcer.requests[0].Metadata)
 }
 
+func TestADKSkillBackendIgnoresTypedNilGuardrailEnforcer(t *testing.T) {
+	var enforcer *GuardrailEnforcer
+	backend, err := newADKSkillBackend(
+		[]AgentSkill{{
+			ID:          1,
+			Name:        "research",
+			Description: "Research.",
+			Body:        "Use research instructions.",
+		}},
+		ADKContextBudget{
+			SkillCatalogTokens: 200,
+			SkillContentTokens: 200,
+		},
+		WithADKSkillBackendGuardrail(
+			&RunSummary{
+				RunID:     20,
+				ThreadID:  10,
+				SpaceID:   30,
+				CreatorID: 40,
+			},
+			enforcer,
+		),
+	)
+	require.NoError(t, err)
+
+	got, err := backend.Get(context.Background(), "research")
+
+	require.NoError(t, err)
+	require.Equal(t, "Use research instructions.", got.Content)
+}
+
 func TestADKSkillBackendGuardrailBlocksBeforeReturningContent(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -339,6 +370,13 @@ func TestADKSkillMiddlewareLoadsInstructionsProgressively(t *testing.T) {
 		Context:     "inline",
 		Version:     "1.2.0",
 		Body:        skillBody,
+	}, {
+		ID:          2,
+		Name:        "other-skill",
+		Description: "Another skill.",
+		Context:     "inline",
+		Version:     "1.0.0",
+		Body:        "Other skill instructions.",
 	}}}
 	chatModel := &progressiveSkillChatModel{skillBody: skillBody}
 	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
@@ -374,6 +412,154 @@ func TestADKSkillMiddlewareLoadsInstructionsProgressively(t *testing.T) {
 	require.False(t, messagesContain(chatModel.inputs[0], skillBody))
 	require.True(t, toolDescriptionsContain(chatModel.options[0].Tools, "weekly-research"))
 	require.True(t, messagesContain(chatModel.inputs[1], skillBody))
+}
+
+func TestADKSkillMiddlewarePreloadsSingleExplicitInlineSkill(t *testing.T) {
+	const skillBody = "Ask the user what the new skill should do."
+	provider := &recordingSkillProvider{skills: []AgentSkill{{
+		ID:          1,
+		Name:        "skill-creator",
+		Description: "Create a new skill.",
+		Context:     "inline",
+		Body:        skillBody,
+	}}}
+	enforcer := &recordingADKGuardrailEnforcer{
+		result: GuardrailEnforcementResult{
+			Allowed:  true,
+			Decision: GuardrailDecision{Action: GuardrailActionAllow},
+		},
+	}
+	chatModel := &preloadedSkillChatModel{skillBody: skillBody}
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		SkillProvider:     provider,
+		GuardrailEnforcer: enforcer,
+	})
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID:     20,
+			ThreadID:  10,
+			SpaceID:   7,
+			CreatorID: 40,
+			Config:    `{"enable_skills":["skill-creator"]}`,
+		},
+		Model: chatModel,
+	})
+	require.NoError(t, err)
+	agent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name:        "lead",
+		Description: "single explicit skill preload test",
+		Model:       chatModel,
+		Handlers:    bundle.Handlers,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{
+			schema.UserMessage("use skill-creator"),
+		},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, provider.calls)
+	require.Equal(t, 1, chatModel.calls)
+	require.True(t, messagesContain(chatModel.inputs[0], skillBody))
+	require.False(t, toolDescriptionsContain(chatModel.options[0].Tools, "skill-creator"))
+	require.Len(t, enforcer.requests, 1)
+	require.Equal(t, GuardrailRequest{
+		SpaceID:    7,
+		ThreadID:   10,
+		RunID:      20,
+		UserID:     40,
+		TargetType: GuardrailTargetSkill,
+		TargetID:   "skill-creator",
+		Operation:  "load",
+		Source:     "adk_skill_backend",
+		FailMode:   GuardrailFailClosed,
+	}, enforcer.requests[0])
+}
+
+func TestADKSkillMiddlewarePreloadsSlashActivatedInlineSkill(t *testing.T) {
+	const skillBody = "Ask the user what the new skill should do."
+	provider := &recordingSkillProvider{skills: []AgentSkill{{
+		ID:          1,
+		Name:        "skill-creator",
+		Description: "Create a new skill.",
+		Context:     "inline",
+		Body:        skillBody,
+	}}}
+	chatModel := &preloadedSkillChatModel{skillBody: skillBody}
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		SkillProvider: provider,
+	})
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID:   20,
+			SpaceID: 7,
+			Input:   `{"messages":[{"role":"user","content":"/skill-creator 创建一个会议纪要技能"}]}`,
+			Config:  `{}`,
+		},
+		Model: chatModel,
+	})
+	require.NoError(t, err)
+	agent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name:        "lead",
+		Description: "slash activated skill preload test",
+		Model:       chatModel,
+		Handlers:    bundle.Handlers,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{
+			schema.UserMessage("/skill-creator 创建一个会议纪要技能"),
+		},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 1, provider.calls)
+	require.Equal(t, 1, chatModel.calls)
+	require.True(t, messagesContain(chatModel.inputs[0], skillBody))
+	require.False(t, toolDescriptionsContain(chatModel.options[0].Tools, "skill-creator"))
+}
+
+func TestADKSkillMiddlewareEmitsLoadedEventWithoutSkillContent(t *testing.T) {
+	const skillBody = "Do not expose these detailed skill instructions."
+	provider := &recordingSkillProvider{skills: []AgentSkill{{
+		ID:          101,
+		Name:        "skill-creator",
+		Description: "Create a new skill.",
+		Context:     "inline",
+		Body:        skillBody,
+	}}}
+	eventSink := &recordingRunEventSink{}
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		SkillProvider: provider,
+		EventSink:     eventSink,
+	})
+
+	_, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID:    20,
+			ThreadID: 10,
+			SpaceID:  7,
+			Config:   `{"enable_skills":["skill-creator"]}`,
+		},
+		Model: &preloadedSkillChatModel{skillBody: skillBody},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"skills.loaded"}, eventSink.eventTypes())
+	require.Len(t, eventSink.events, 1)
+	require.Equal(t, int64(10), eventSink.events[0].ThreadID)
+	require.Equal(t, int64(20), eventSink.events[0].RunID)
+	require.JSONEq(t, `{
+		"skill_count": 1,
+		"skill_ids": ["101"],
+		"skill_names": ["skill-creator"]
+	}`, eventSink.events[0].Payload)
+	require.NotContains(t, eventSink.events[0].Payload, skillBody)
 }
 
 func TestADKSkillMiddlewarePassesGuardrailEnforcerToBackend(t *testing.T) {
@@ -428,6 +614,47 @@ func TestADKSkillMiddlewarePassesGuardrailEnforcerToBackend(t *testing.T) {
 	require.NoError(t, events[len(events)-1].Err)
 	require.Len(t, enforcer.requests, 1)
 	require.Equal(t, "guarded-research", enforcer.requests[0].TargetID)
+}
+
+func TestADKSkillMiddlewareDefaultsSingleSelectedSkillWhenModelOmitsArgument(t *testing.T) {
+	const skillBody = "Ask the user what the new skill should do."
+	provider := &recordingSkillProvider{skills: []AgentSkill{{
+		ID:          1,
+		Name:        "skill-creator",
+		Description: "Create a new skill.",
+		Context:     "inline",
+		Body:        skillBody,
+	}}}
+	chatModel := &emptySkillArgumentChatModel{skillBody: skillBody}
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		SkillProvider: provider,
+	})
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID:   20,
+			SpaceID: 7,
+		},
+		Model: chatModel,
+	})
+	require.NoError(t, err)
+	agent, err := adk.NewChatModelAgent(context.Background(), &adk.ChatModelAgentConfig{
+		Name:        "lead",
+		Description: "single skill fallback test",
+		Model:       chatModel,
+		Handlers:    bundle.Handlers,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{
+			schema.UserMessage("use skill-creator"),
+		},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, 2, chatModel.calls)
+	require.True(t, messagesContain(chatModel.inputs[1], skillBody))
 }
 
 func TestADKSkillMiddlewareRejectsForkUntilAgentHubIsConfigured(t *testing.T) {
@@ -521,6 +748,38 @@ type forkSkillChatModel struct {
 	calls int
 }
 
+type preloadedSkillChatModel struct {
+	skillBody string
+	inputs    [][]*schema.Message
+	options   []*model.Options
+	calls     int
+}
+
+func (m *preloadedSkillChatModel) Generate(
+	_ context.Context,
+	input []*schema.Message,
+	options ...model.Option,
+) (*schema.Message, error) {
+	m.calls++
+	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
+	m.options = append(m.options, model.GetCommonOptions(nil, options...))
+	if m.calls > 1 {
+		return nil, fmt.Errorf("unexpected model call %d", m.calls)
+	}
+	if !messagesContain(input, m.skillBody) {
+		return nil, fmt.Errorf("skill body was not preloaded")
+	}
+	return schema.AssistantMessage("which skill do you want to create?", nil), nil
+}
+
+func (m *preloadedSkillChatModel) Stream(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	return nil, fmt.Errorf("stream is not implemented")
+}
+
 func (m *forkSkillChatModel) Generate(
 	context.Context,
 	[]*schema.Message,
@@ -541,6 +800,54 @@ func (m *forkSkillChatModel) Generate(
 }
 
 func (m *forkSkillChatModel) Stream(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	return nil, fmt.Errorf("stream is not implemented")
+}
+
+type emptySkillArgumentChatModel struct {
+	skillBody string
+	inputs    [][]*schema.Message
+	calls     int
+}
+
+func (m *emptySkillArgumentChatModel) Generate(
+	_ context.Context,
+	input []*schema.Message,
+	options ...model.Option,
+) (*schema.Message, error) {
+	m.calls++
+	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
+	switch m.calls {
+	case 1:
+		common := model.GetCommonOptions(nil, options...)
+		if !toolDescriptionsContain(common.Tools, "skill-creator") {
+			return nil, fmt.Errorf("skill-creator was not listed in tool descriptions")
+		}
+		if !toolDescriptionsContain(common.Tools, `"skill"`) {
+			return nil, fmt.Errorf("skill tool parameter contract was not listed")
+		}
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID:   "call-skill",
+			Type: "function",
+			Function: schema.FunctionCall{
+				Name:      "skill",
+				Arguments: "",
+			},
+		}}), nil
+	case 2:
+		if !messagesContain(input, m.skillBody) {
+			return nil, fmt.Errorf("skill body was not loaded")
+		}
+		return schema.AssistantMessage("which skill do you want to create?", nil), nil
+	default:
+		return nil, fmt.Errorf("unexpected model call %d", m.calls)
+	}
+}
+
+func (m *emptySkillArgumentChatModel) Stream(
 	context.Context,
 	[]*schema.Message,
 	...model.Option,

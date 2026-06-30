@@ -56,6 +56,7 @@ const mockExportTaskThreadMemories = vi.hoisted(() => vi.fn());
 const mockImportTaskThreadMemories = vi.hoisted(() => vi.fn());
 const mockFetchTaskThreadArtifactContent = vi.hoisted(() => vi.fn());
 const mockGetTaskThreadArtifactSignedURL = vi.hoisted(() => vi.fn());
+const mockInstallSkillFromArtifact = vi.hoisted(() => vi.fn());
 const mockDeleteTaskThreadArtifact = vi.hoisted(() => vi.fn());
 const mockRestoreTaskThreadArtifact = vi.hoisted(() => vi.fn());
 const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
@@ -115,6 +116,7 @@ vi.mock('../service', () => ({
   reviewTaskThreadArtifactScan: mockReviewTaskThreadArtifactScan,
   fetchTaskThreadArtifactContent: mockFetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL: mockGetTaskThreadArtifactSignedURL,
+  installSkillFromArtifact: mockInstallSkillFromArtifact,
   deleteTaskThreadArtifact: mockDeleteTaskThreadArtifact,
   restoreTaskThreadArtifact: mockRestoreTaskThreadArtifact,
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
@@ -224,13 +226,17 @@ vi.mock('@coze-arch/coze-design', () => ({
     </div>
   ),
   Table: ({
+    'data-testid': dataTestId,
+    className,
     columns = [],
     dataSource = [],
   }: {
+    'data-testid'?: string;
+    className?: string;
     columns?: Array<{ dataIndex?: string; title?: ReactNode }>;
     dataSource?: Array<Record<string, ReactNode>>;
   }) => (
-    <table>
+    <table className={className} data-testid={dataTestId}>
       <thead>
         <tr>
           {columns.map((column, index) => (
@@ -376,6 +382,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozMagnifier: () => <span />,
   IconCozMicrophone: () => <span />,
   IconCozPlus: () => <span />,
+  IconCozPlugin: () => <span />,
   IconCozRefresh: () => <span />,
   IconCozSendFill: () => <span />,
   IconCozSetting: () => <span />,
@@ -556,6 +563,7 @@ describe('TaskDetailPage', () => {
     mockImportTaskThreadMemories.mockReset();
     mockFetchTaskThreadArtifactContent.mockReset();
     mockGetTaskThreadArtifactSignedURL.mockReset();
+    mockInstallSkillFromArtifact.mockReset();
     mockDeleteTaskThreadArtifact.mockReset();
     mockRestoreTaskThreadArtifact.mockReset();
     mockAppendTaskThreadMessage.mockReset();
@@ -907,6 +915,15 @@ describe('TaskDetailPage', () => {
       contentDisposition: "inline; filename*=UTF-8''artifact.txt",
       contentType: 'text/plain',
     });
+    mockInstallSkillFromArtifact.mockResolvedValue({
+      data: {
+        success: true,
+        skill_name: 'weekly-research',
+        message: 'Skill weekly-research installed',
+      },
+      code: 0,
+      msg: '',
+    });
     mockDeleteTaskThreadArtifact.mockResolvedValue({
       code: 0,
       msg: '',
@@ -962,6 +979,36 @@ describe('TaskDetailPage', () => {
     vi.useRealTimers();
   });
 
+  it('renders a DeerFlow-style message skeleton while task detail is loading', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockGetTask.mockReturnValue(new Promise(() => undefined));
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+      });
+
+      expect(
+        container.querySelector('[data-testid="task-detail-loading-skeleton"]'),
+      ).toBeTruthy();
+      expect(container.querySelector('[role="human-message"]')).toBeTruthy();
+      expect(
+        container.querySelector('[role="assistant-message"]'),
+      ).toBeTruthy();
+      expect(container.textContent).not.toContain('加载中...');
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
   it('renders task data and execution events', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -985,7 +1032,7 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('理解任务意图');
     expect(container.textContent).toContain('解析用户输入并确定执行路径');
     expect(container.textContent).toContain('我会先拆解目标，再组织报告结构。');
-    expect(container.textContent).toContain('执行流程');
+    expect(container.textContent).not.toContain('已完成 ·');
     expect(
       container.querySelector('.coze-prototype-reasoning-panel'),
     ).toBeTruthy();
@@ -998,7 +1045,7 @@ describe('TaskDetailPage', () => {
     expect(
       container.querySelector('textarea[aria-label="任务描述"]'),
     ).toBeTruthy();
-    expect(container.textContent).toContain('65%');
+    expect(container.textContent).not.toContain('Worker:');
 
     act(() => {
       root?.unmount();
@@ -1014,6 +1061,28 @@ describe('TaskDetailPage', () => {
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
       thread_id: 'thread-1',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-todo-1',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_todos',
+              title: '更新 To-do 列表',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
     });
 
     await act(async () => {
@@ -1608,6 +1677,28 @@ describe('TaskDetailPage', () => {
       space_id: 'space-1',
       thread_id: 'thread-1',
     });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-todo-dock-composer-1',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_todos',
+              title: '更新 To-do 列表',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
 
     await act(async () => {
       root = createRoot(container);
@@ -1635,6 +1726,9 @@ describe('TaskDetailPage', () => {
     expect(chatTranscript?.contains(followUpComposer)).toBe(false);
     expect(detailInner?.children[0]).toBe(detailScroll);
     expect(detailInner?.children[1]).toBe(followUpComposer);
+    expect(
+      followUpComposer?.querySelector('[data-testid="task-todo-dock"]'),
+    ).toBeTruthy();
     expectDeerFlowTaskComposer(followUpComposer);
 
     const atButton = followUpComposer?.querySelector(
@@ -2520,6 +2614,23 @@ describe('TaskDetailPage', () => {
             virtual_path: '/mnt/user-data/outputs/page.html',
           },
           {
+            artifact_id: 'artifact-6',
+            artifact_type: 'table',
+            content_type: 'text/csv; charset=utf-8',
+            created_at: 1717000300000,
+            file_id: 'file-6',
+            metadata:
+              '{"raw_provider_payload":"token=metadata-secret","object_uri":"agent-runtime://objects/private"}',
+            preview_mode: 'text',
+            run_id: 'run-1',
+            size_bytes: 96,
+            thread_id: 'thread-artifacts-1',
+            title: 'budget.csv',
+            updated_at: 1717000300000,
+            virtual_path:
+              'agent-runtime://objects/private/budget.csv?token=object-secret',
+          },
+          {
             artifact_id: 'artifact-4',
             artifact_type: 'image',
             content_type: 'image/png',
@@ -2611,15 +2722,24 @@ describe('TaskDetailPage', () => {
     mockFetchTaskThreadArtifactContent.mockImplementation(
       ({ artifact_id, mode }) =>
         Promise.resolve({
-          blob: previewBlob,
+          blob:
+            artifact_id === 'artifact-6'
+              ? new Blob(['name,score\nAlice,10\nBob,12'], {
+                  type: 'text/csv',
+                })
+              : previewBlob,
           contentDisposition:
             mode === 'download'
               ? "attachment; filename*=UTF-8''page.html"
-              : "inline; filename*=UTF-8''report.txt",
+              : artifact_id === 'artifact-6'
+                ? "inline; filename*=UTF-8''budget.csv"
+                : "inline; filename*=UTF-8''report.txt",
           contentType:
             artifact_id === 'artifact-2'
               ? 'text/html; charset=utf-8'
-              : 'text/plain; charset=utf-8',
+              : artifact_id === 'artifact-6'
+                ? 'text/csv; charset=utf-8'
+                : 'text/plain; charset=utf-8',
         }),
     );
     const previousCreateObjectURL = URL.createObjectURL;
@@ -2645,6 +2765,7 @@ describe('TaskDetailPage', () => {
         thread_id: 'thread-artifacts-1',
         page: 1,
         page_size: 50,
+        space_id: 'space-1',
       });
       expect(
         container.querySelector('.coze-prototype-task-topbar-actions')
@@ -2656,11 +2777,15 @@ describe('TaskDetailPage', () => {
       expect(container.textContent).toContain('任务产物');
       expect(container.textContent).toContain('report.txt');
       expect(container.textContent).toContain('page.html');
+      expect(container.textContent).toContain('budget.csv');
       expect(container.textContent).toContain('chart.png');
       expect(container.textContent).toContain('report.pdf');
       expect(container.textContent).toContain('unsafe.txt');
       expect(container.textContent).toContain('text');
       expect(container.textContent).toContain('download');
+      expect(container.textContent).not.toContain('agent-runtime://');
+      expect(container.textContent).not.toContain('metadata-secret');
+      expect(container.textContent).not.toContain('object-secret');
       expect(
         container.querySelector(
           '[data-testid="task-artifact-item"][data-artifact-id="artifact-1"]',
@@ -2681,12 +2806,16 @@ describe('TaskDetailPage', () => {
       const imagePreviewButton = container.querySelector(
         'button[aria-label="预览 chart.png"]',
       ) as HTMLButtonElement;
+      const csvPreviewButton = container.querySelector(
+        'button[aria-label="预览 budget.csv"]',
+      ) as HTMLButtonElement;
       const pdfPreviewButton = container.querySelector(
         'button[aria-label="预览 report.pdf"]',
       ) as HTMLButtonElement;
       expect(downloadUnsafeButton).toBeTruthy();
       expect(downloadPageButton).toBeTruthy();
       expect(imagePreviewButton).toBeTruthy();
+      expect(csvPreviewButton).toBeTruthy();
       expect(pdfPreviewButton).toBeTruthy();
 
       await act(async () => {
@@ -2699,6 +2828,7 @@ describe('TaskDetailPage', () => {
         artifact_id: 'artifact-1',
         mode: 'preview',
         thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
       });
       expect(mockGetTaskThreadArtifactSignedURL).not.toHaveBeenCalled();
       expect(window.open).not.toHaveBeenCalled();
@@ -2714,6 +2844,26 @@ describe('TaskDetailPage', () => {
       expect(container.textContent).toContain('line two');
 
       await act(async () => {
+        Simulate.click(csvPreviewButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
+        artifact_id: 'artifact-6',
+        mode: 'preview',
+        thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
+      });
+      expect(
+        container.querySelector(
+          '[data-testid="task-artifact-inline-preview-table"]',
+        ) ?? container.querySelector('.coze-prototype-artifact-preview-table'),
+      ).toBeTruthy();
+      expect(container.textContent).toContain('Alice');
+      expect(container.textContent).toContain('score');
+
+      await act(async () => {
         Simulate.click(imagePreviewButton);
         await Promise.resolve();
         await Promise.resolve();
@@ -2723,6 +2873,7 @@ describe('TaskDetailPage', () => {
         artifact_id: 'artifact-4',
         mode: 'preview',
         thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
         ttl_seconds: 300,
       });
       expect(window.open).not.toHaveBeenCalled();
@@ -2735,7 +2886,7 @@ describe('TaskDetailPage', () => {
       ).toBe('https://storage.example.test/signed/chart.png?token=preview');
 
       mockFetchTaskThreadArtifactContent.mockRejectedValueOnce(
-        new Error('preview failed'),
+        new Error(`preview failed token=super-secret ${'x'.repeat(260)}`),
       );
       await act(async () => {
         Simulate.click(previewButton);
@@ -2743,12 +2894,33 @@ describe('TaskDetailPage', () => {
         await Promise.resolve();
       });
 
-      expect(container.textContent).toContain('preview failed');
+      expect(container.textContent).toContain('读取任务产物失败，请稍后重试');
+      expect(container.textContent).not.toContain('super-secret');
+      expect(container.textContent).not.toContain('x'.repeat(80));
       expect(
         container.querySelector(
           'img[data-testid="task-artifact-inline-preview-image"]',
         ),
       ).toBeNull();
+
+      await act(async () => {
+        Simulate.click(downloadUnsafeButton);
+        await Promise.resolve();
+      });
+
+      expect(mockGetTaskThreadArtifactSignedURL).toHaveBeenCalledWith({
+        artifact_id: 'artifact-3',
+        mode: 'download',
+        thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
+        ttl_seconds: 300,
+      });
+      expect(mockFetchTaskThreadArtifactContent).not.toHaveBeenCalledWith({
+        artifact_id: 'artifact-3',
+        mode: 'preview',
+        thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
+      });
 
       await act(async () => {
         Simulate.click(pdfPreviewButton);
@@ -2760,6 +2932,7 @@ describe('TaskDetailPage', () => {
         artifact_id: 'artifact-5',
         mode: 'preview',
         thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
         ttl_seconds: 300,
       });
       expect(window.open).toHaveBeenCalledWith(
@@ -2782,6 +2955,7 @@ describe('TaskDetailPage', () => {
         artifact_id: 'artifact-2',
         mode: 'download',
         thread_id: 'thread-artifacts-1',
+        space_id: 'space-1',
         ttl_seconds: 300,
       });
       expect(anchorClick).toHaveBeenCalled();
@@ -2798,7 +2972,7 @@ describe('TaskDetailPage', () => {
     }
   });
 
-  it('renders generated document artifacts in the conversation without mixing them with thread export', async () => {
+  it('renders generated document artifacts in a DeerFlow-style side preview without mixing them with thread export', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -2813,7 +2987,8 @@ describe('TaskDetailPage', () => {
         legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
-        title: '武汉3日游攻略文档',
+        title:
+          '请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项。',
         status: 'completed',
         source: 'agent',
         progress: 100,
@@ -2864,8 +3039,9 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
+    const markdownContent = `# 武汉3日游攻略\n\n${'travel-note '.repeat(14000)}`;
     mockFetchTaskThreadArtifactContent.mockResolvedValue({
-      blob: new Blob(['# 武汉3日游攻略\n\n## 行程概览'], {
+      blob: new Blob([markdownContent], {
         type: 'text/markdown',
       }),
       contentDisposition: "inline; filename*=UTF-8''wuhan.md",
@@ -2897,36 +3073,98 @@ describe('TaskDetailPage', () => {
       const messageList = container.querySelector(
         '[data-testid="task-artifact-message-list"]',
       );
+      const titleGroup = container.querySelector(
+        '.coze-prototype-task-title-group',
+      );
+
       expect(messageList).toBeTruthy();
       expect(messageList?.textContent).toContain('武汉3日游攻略.md');
       expect(messageList?.textContent).toContain('交互版攻略.html');
       expect(messageList?.textContent).toContain('Markdown');
       expect(messageList?.textContent).toContain('HTML');
-
-      const previewButton = messageList?.querySelector(
-        'button[aria-label="预览文档 武汉3日游攻略.md"]',
-      ) as HTMLButtonElement;
-      const downloadButton = messageList?.querySelector(
-        'button[aria-label="下载文档 交互版攻略.html"]',
-      ) as HTMLButtonElement;
-      expect(previewButton).toBeTruthy();
-      expect(downloadButton).toBeTruthy();
-
-      await act(async () => {
-        Simulate.click(previewButton);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
+      expect(messageList?.textContent).not.toContain('已生成');
+      expect(titleGroup?.textContent).toContain('武汉3日游攻略');
+      expect(titleGroup?.textContent).not.toContain('请生成一份');
       expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
         artifact_id: 'artifact-doc-1',
         mode: 'preview',
         thread_id: 'thread-doc-artifacts-1',
+        space_id: 'space-1',
       });
+      expect(
+        container.querySelector('[data-testid="task-artifact-side-preview"]'),
+      ).toBeTruthy();
       expect(
         container.querySelector('[data-testid="task-artifact-inline-preview"]'),
       ).toBeTruthy();
+      expect(
+        container.querySelector(
+          '[data-testid="task-artifact-inline-preview-markdown"]',
+        ),
+      ).toBeTruthy();
+      expect(
+        container.querySelector(
+          '[data-testid="task-artifact-inline-preview-truncated"]',
+        ),
+      ).toBeTruthy();
+      expect(
+        container.querySelector(
+          '[data-testid="task-artifact-inline-preview-text"]',
+        ),
+      ).toBeNull();
+      const sidePreview = container.querySelector(
+        '[data-testid="task-artifact-side-preview"]',
+      );
+      expect(
+        sidePreview?.querySelector(
+          'button[aria-label="复制文档 武汉3日游攻略.md"]',
+        ),
+      ).toBeTruthy();
+      expect(sidePreview?.textContent).not.toContain('复制');
       expect(container.textContent).toContain('# 武汉3日游攻略');
+
+      const previewCard = messageList?.querySelector(
+        '[data-artifact-id="artifact-doc-1"]',
+      ) as HTMLElement;
+      const markdownDownloadButton = messageList?.querySelector(
+        'button[aria-label="下载文档 武汉3日游攻略.md"]',
+      ) as HTMLButtonElement;
+      const downloadButton = messageList?.querySelector(
+        'button[aria-label="下载文档 交互版攻略.html"]',
+      ) as HTMLButtonElement;
+      expect(previewCard).toBeTruthy();
+      expect(previewCard.getAttribute('role')).toBe('button');
+      expect(markdownDownloadButton).toBeTruthy();
+      expect(downloadButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(previewCard);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockFetchTaskThreadArtifactContent).toHaveBeenLastCalledWith({
+        artifact_id: 'artifact-doc-1',
+        mode: 'preview',
+        thread_id: 'thread-doc-artifacts-1',
+        space_id: 'space-1',
+      });
+      expect(
+        container.querySelector('[data-testid="task-artifact-side-preview"]'),
+      ).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(markdownDownloadButton);
+        await Promise.resolve();
+      });
+
+      expect(mockGetTaskThreadArtifactSignedURL).toHaveBeenCalledWith({
+        artifact_id: 'artifact-doc-1',
+        mode: 'download',
+        thread_id: 'thread-doc-artifacts-1',
+        space_id: 'space-1',
+        ttl_seconds: 300,
+      });
 
       await act(async () => {
         Simulate.click(downloadButton);
@@ -2937,12 +3175,813 @@ describe('TaskDetailPage', () => {
         artifact_id: 'artifact-doc-2',
         mode: 'download',
         thread_id: 'thread-doc-artifacts-1',
+        space_id: 'space-1',
         ttl_seconds: 300,
       });
       expect(anchorClick).toHaveBeenCalled();
       expect(container.textContent).toContain('导出');
     } finally {
       anchorClick.mockRestore();
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
+  it('places document artifact cards in their owning assistant turns and previews the latest generated file', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const oldArtifact = {
+      artifact_id: 'artifact-doc-old',
+      artifact_type: 'document',
+      content_type: 'text/markdown; charset=utf-8',
+      created_at: 1717000300000,
+      file_id: 'file-doc-old',
+      metadata: '{"source":"present_files"}',
+      preview_mode: 'text',
+      run_id: 'run-doc-old',
+      size_bytes: 4096,
+      thread_id: 'thread-doc-followup-1',
+      title: '武汉3日游攻略.md',
+      updated_at: 1717000300000,
+      virtual_path: '/mnt/user-data/outputs/武汉3日游攻略.md',
+    };
+    const newArtifact = {
+      artifact_id: 'artifact-doc-new',
+      artifact_type: 'document',
+      content_type: 'text/markdown; charset=utf-8',
+      created_at: 1717000500000,
+      file_id: 'file-doc-new',
+      metadata: '{"source":"present_files"}',
+      preview_mode: 'text',
+      run_id: 'run-doc-new',
+      size_bytes: 6144,
+      thread_id: 'thread-doc-followup-1',
+      title: '武汉3日游攻略.md',
+      updated_at: 1717000500000,
+      virtual_path: '/mnt/user-data/outputs/武汉3日游攻略.md',
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-doc-followup-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-doc-followup-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请改成穷游风格',
+        last_agent_message: '已按穷游风格重写',
+        created_at: 1717000000000,
+        updated_at: 1717000500000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-old',
+            thread_id: 'thread-doc-followup-1',
+            run_id: 'run-doc-old',
+            role: 'user',
+            content: '请生成武汉3日游攻略文档',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-old',
+            thread_id: 'thread-doc-followup-1',
+            run_id: 'run-doc-old',
+            role: 'assistant',
+            content: '文档已生成完毕，文件已在右侧 Artifacts 中展示。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+          {
+            message_id: 'msg-user-new',
+            thread_id: 'thread-doc-followup-1',
+            run_id: 'run-doc-new',
+            role: 'user',
+            content: '请改成穷游风格',
+            metadata: '',
+            created_at: 1717000400000,
+          },
+          {
+            message_id: 'msg-assistant-new',
+            thread_id: 'thread-doc-followup-1',
+            run_id: 'run-doc-new',
+            role: 'assistant',
+            content: '已按穷游风格全面重写，文件已更新。',
+            metadata: '',
+            created_at: 1717000500000,
+          },
+        ],
+        total: 4,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [newArtifact, oldArtifact],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockFetchTaskThreadArtifactContent.mockResolvedValue({
+      blob: new Blob(['# 武汉3日游攻略\n\n穷游风格版本'], {
+        type: 'text/markdown',
+      }),
+      contentDisposition: "inline; filename*=UTF-8''wuhan.md",
+      contentType: 'text/markdown; charset=utf-8',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const artifactLists = Array.from(
+        container.querySelectorAll(
+          '[data-testid="task-artifact-message-list"]',
+        ),
+      );
+      expect(artifactLists).toHaveLength(2);
+      expect(
+        artifactLists[0]
+          .querySelector('[data-artifact-id]')
+          ?.getAttribute('data-artifact-id'),
+      ).toBe('artifact-doc-old');
+      expect(
+        artifactLists[1]
+          .querySelector('[data-artifact-id]')
+          ?.getAttribute('data-artifact-id'),
+      ).toBe('artifact-doc-new');
+      expect(container.textContent).toContain('文档已生成完毕');
+      expect(container.textContent).toContain('已按穷游风格全面重写');
+      expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
+        artifact_id: 'artifact-doc-new',
+        mode: 'preview',
+        thread_id: 'thread-doc-followup-1',
+        space_id: 'space-1',
+      });
+      expect(mockFetchTaskThreadArtifactContent).not.toHaveBeenCalledWith({
+        artifact_id: 'artifact-doc-old',
+        mode: 'preview',
+        thread_id: 'thread-doc-followup-1',
+        space_id: 'space-1',
+      });
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
+  it('keeps generated document cards with the nearest assistant turn when run ids are missing or delayed', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const oldArtifact = {
+      artifact_id: 'artifact-doc-fallback-old',
+      artifact_type: 'document',
+      content_type: 'text/markdown; charset=utf-8',
+      created_at: 1717000300000,
+      file_id: 'file-doc-fallback-old',
+      metadata: '{"source":"present_files"}',
+      preview_mode: 'text',
+      run_id: '',
+      size_bytes: 4096,
+      thread_id: 'thread-doc-fallback-1',
+      title: '武汉3日游攻略-原版.md',
+      updated_at: 1717000300000,
+      virtual_path: '/mnt/user-data/outputs/武汉3日游攻略-原版.md',
+    };
+    const newArtifact = {
+      artifact_id: 'artifact-doc-fallback-new',
+      artifact_type: 'document',
+      content_type: 'text/markdown; charset=utf-8',
+      created_at: 1717000500000,
+      file_id: 'file-doc-fallback-new',
+      metadata: '{"source":"present_files"}',
+      preview_mode: 'text',
+      run_id: 'run-doc-not-in-message-list',
+      size_bytes: 6144,
+      thread_id: 'thread-doc-fallback-1',
+      title: '武汉3日游攻略-穷游版.md',
+      updated_at: 1717000500000,
+      virtual_path: '/mnt/user-data/outputs/武汉3日游攻略-穷游版.md',
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-doc-fallback-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-doc-fallback-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请改成穷游风格',
+        last_agent_message: '已按穷游风格重写',
+        created_at: 1717000000000,
+        updated_at: 1717000500000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-fallback-old',
+            thread_id: 'thread-doc-fallback-1',
+            run_id: 'run-doc-old',
+            role: 'user',
+            content: '请生成武汉3日游攻略文档',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-fallback-old',
+            thread_id: 'thread-doc-fallback-1',
+            run_id: 'run-doc-old',
+            role: 'assistant',
+            content: '原版文档已生成，文件已在右侧 Artifacts 中展示。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+          {
+            message_id: 'msg-user-fallback-new',
+            thread_id: 'thread-doc-fallback-1',
+            run_id: 'run-doc-new',
+            role: 'user',
+            content: '请改成穷游风格',
+            metadata: '',
+            created_at: 1717000400000,
+          },
+          {
+            message_id: 'msg-assistant-fallback-new',
+            thread_id: 'thread-doc-fallback-1',
+            run_id: 'run-doc-new',
+            role: 'assistant',
+            content: '穷游版文档已生成，文件已更新。',
+            metadata: '',
+            created_at: 1717000500000,
+          },
+        ],
+        total: 4,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [newArtifact, oldArtifact],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const artifactLists = Array.from(
+        container.querySelectorAll(
+          '[data-testid="task-artifact-message-list"]',
+        ),
+      );
+      expect(artifactLists).toHaveLength(2);
+      expect(
+        artifactLists[0]
+          .querySelector('[data-artifact-id]')
+          ?.getAttribute('data-artifact-id'),
+      ).toBe('artifact-doc-fallback-old');
+      expect(
+        artifactLists[1]
+          .querySelector('[data-artifact-id]')
+          ?.getAttribute('data-artifact-id'),
+      ).toBe('artifact-doc-fallback-new');
+      expect(container.textContent?.indexOf('原版文档已生成')).toBeLessThan(
+        container.textContent?.indexOf('武汉3日游攻略-原版.md') ?? -1,
+      );
+      expect(container.textContent?.indexOf('穷游版文档已生成')).toBeLessThan(
+        container.textContent?.indexOf('武汉3日游攻略-穷游版.md') ?? -1,
+      );
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
+  it('renders presented document cards before the final assistant answer when the artifact was created first', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const artifact = {
+      artifact_id: 'artifact-doc-presented-before-answer',
+      artifact_type: 'document',
+      content_type: 'text/markdown; charset=utf-8',
+      created_at: 1717000250000,
+      file_id: 'file-doc-presented-before-answer',
+      metadata: '{"source":"present_files"}',
+      preview_mode: 'text',
+      run_id: 'run-doc-presented-before-answer',
+      size_bytes: 8192,
+      thread_id: 'thread-doc-presented-before-answer',
+      title: '武汉3日游攻略.md',
+      updated_at: 1717000250000,
+      virtual_path: '/mnt/user-data/outputs/武汉3日游攻略.md',
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-doc-presented-before-answer',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-doc-presented-before-answer',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成武汉3日游攻略文档',
+        last_agent_message: '《武汉3日游攻略》已生成完毕。',
+        created_at: 1717000000000,
+        updated_at: 1717000500000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-presented-before-answer',
+            thread_id: 'thread-doc-presented-before-answer',
+            run_id: 'run-doc-presented-before-answer',
+            role: 'user',
+            content: '请生成武汉3日游攻略文档',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-presented-before-answer',
+            thread_id: 'thread-doc-presented-before-answer',
+            run_id: '',
+            role: 'assistant',
+            content:
+              '《武汉3日游攻略》已生成完毕，文件已在右侧 Artifacts 中展示。',
+            metadata: '',
+            created_at: 1717000500000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-doc-presented-before-answer',
+            thread_id: 'thread-doc-presented-before-answer',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'succeeded',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000100000,
+            ended_at: 1717000500000,
+            created_at: 1717000100000,
+            updated_at: 1717000500000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-artifact-presented-before-answer',
+            thread_id: 'thread-doc-presented-before-answer',
+            run_id: 'run-doc-presented-before-answer',
+            event_type: 'artifact.presented',
+            payload: JSON.stringify({
+              schema: 'coze.artifact_presented.v1',
+              artifact_count: 1,
+              artifacts: [
+                {
+                  artifact_id: 'artifact-doc-presented-before-answer',
+                  virtual_path: '/mnt/user-data/outputs/武汉3日游攻略.md',
+                  title: '武汉3日游攻略.md',
+                },
+              ],
+            }),
+            created_at: 1717000250000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [artifact],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const cardIndex =
+        container.textContent?.indexOf('武汉3日游攻略.md') ?? -1;
+      const answerIndex =
+        container.textContent?.indexOf('《武汉3日游攻略》已生成完毕') ?? -1;
+
+      expect(cardIndex).toBeGreaterThanOrEqual(0);
+      expect(answerIndex).toBeGreaterThanOrEqual(0);
+      expect(cardIndex).toBeLessThan(answerIndex);
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
+  it('keeps execution steps for previous assistant turns after a follow-up', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-history-steps-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-history-steps-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Java学习路线',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '帮我加上后续学习建议',
+        last_agent_message: '已补充后续建议。',
+        created_at: 1717000000000,
+        updated_at: 1717000700000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-history-user-old',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-old',
+            role: 'user',
+            content: '生成 Java 学习路线文档',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-history-assistant-old',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-old',
+            role: 'assistant',
+            content: 'Java 学习路线已生成。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+          {
+            message_id: 'msg-history-user-new',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-new',
+            role: 'user',
+            content: '帮我加上后续学习建议',
+            metadata: '',
+            created_at: 1717000500000,
+          },
+          {
+            message_id: 'msg-history-assistant-new',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-new',
+            role: 'assistant',
+            content: '已补充后续建议。',
+            metadata: '',
+            created_at: 1717000700000,
+          },
+        ],
+        total: 4,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-history-new',
+            thread_id: 'thread-history-steps-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'succeeded',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000500000,
+            ended_at: 1717000700000,
+            created_at: 1717000500000,
+            updated_at: 1717000700000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-history-old-write',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-old',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_file',
+              title: '创建 Java 学习路线 Markdown 文档',
+              detail: '/mnt/user-data/outputs/java-learning-roadmap.md',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000200000,
+          },
+          {
+            event_id: 'event-history-new-todo',
+            thread_id: 'thread-history-steps-1',
+            run_id: 'run-history-new',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_todos',
+              title: '更新 To-do 列表',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000600000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const executionFeeds = Array.from(
+        container.querySelectorAll('.coze-prototype-execution-feed'),
+      );
+      expect(executionFeeds).toHaveLength(2);
+      expect(executionFeeds[0].textContent).toContain(
+        '创建 Java 学习路线 Markdown 文档',
+      );
+      expect(executionFeeds[1].textContent).toContain('更新 To-do 列表');
+      expect(container.textContent).toContain('Java 学习路线已生成。');
+      expect(container.textContent).toContain('已补充后续建议。');
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      document.body.removeChild(container);
+    }
+  });
+
+  it('shows DeerFlow-style install action and duplicate errors for generated .skill artifacts', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-skill-artifact-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-skill-artifact-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '创建周报技能',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '帮我创建一个周报技能',
+        last_agent_message: '技能包已生成。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-user-skill',
+            thread_id: 'thread-skill-artifact-1',
+            run_id: 'run-skill-1',
+            role: 'user',
+            content: '帮我创建一个周报技能',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-assistant-skill',
+            thread_id: 'thread-skill-artifact-1',
+            run_id: 'run-skill-1',
+            role: 'assistant',
+            content: '技能包已生成，可以安装到技能列表。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      data: {
+        artifacts: [
+          {
+            artifact_id: 'artifact-skill-1',
+            artifact_type: 'skill',
+            content_type: 'application/zip',
+            created_at: 1717000300000,
+            file_id: 'file-skill-1',
+            metadata: '{"source":"present_files","scan_status":"pending"}',
+            preview_mode: 'download',
+            run_id: 'run-skill-1',
+            size_bytes: 4096,
+            thread_id: 'thread-skill-artifact-1',
+            title: 'weekly-research.skill',
+            updated_at: 1717000300000,
+            virtual_path: '/mnt/user-data/outputs/weekly-research.skill',
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const messageList = container.querySelector(
+        '[data-testid="task-artifact-message-list"]',
+      );
+      const installButton = messageList?.querySelector(
+        'button[aria-label="安装技能 weekly-research.skill"]',
+      ) as HTMLButtonElement;
+      const releaseButton = messageList?.querySelector(
+        'button[aria-label="放行产物 weekly-research.skill"]',
+      ) as HTMLButtonElement;
+      const downloadButton = messageList?.querySelector(
+        'button[aria-label="下载文档 weekly-research.skill"]',
+      ) as HTMLButtonElement;
+
+      expect(messageList?.textContent).toContain('weekly-research.skill');
+      expect(messageList?.textContent).toContain('Skill file');
+      expect(releaseButton).toBeNull();
+      expect(messageList?.textContent).not.toContain('放行');
+      expect(messageList?.textContent).not.toContain('隔离');
+      expect(messageList?.textContent).not.toContain('阻断');
+      expect(installButton).toBeTruthy();
+      expect(downloadButton).toBeTruthy();
+      expect(mockReviewTaskThreadArtifactScan).not.toHaveBeenCalled();
+
+      await act(async () => {
+        Simulate.click(installButton);
+        await Promise.resolve();
+      });
+
+      expect(mockInstallSkillFromArtifact).toHaveBeenCalledWith({
+        artifact_id: 'artifact-skill-1',
+        space_id: 'space-1',
+        thread_id: 'thread-skill-artifact-1',
+      });
+      expect(mockGetTaskThreadArtifactSignedURL).not.toHaveBeenCalled();
+
+      mockInstallSkillFromArtifact.mockRejectedValueOnce(
+        new Error('invalid argument: skill "weekly-research" already exists'),
+      );
+
+      await act(async () => {
+        Simulate.click(installButton);
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain(
+        'skill "weekly-research" already exists',
+      );
+    } finally {
       act(() => {
         root?.unmount();
       });
@@ -3041,11 +4080,13 @@ describe('TaskDetailPage', () => {
     expect(mockDeleteTaskThreadArtifact).toHaveBeenCalledWith({
       artifact_id: 'artifact-delete-1',
       thread_id: 'thread-artifact-delete-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadArtifacts).toHaveBeenLastCalledWith({
       thread_id: 'thread-artifact-delete-1',
       page: 1,
       page_size: 50,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('产物 0');
     expect(container.textContent).toContain('暂无任务产物');
@@ -3174,11 +4215,13 @@ describe('TaskDetailPage', () => {
     expect(mockRestoreTaskThreadArtifact).toHaveBeenCalledWith({
       artifact_id: 'artifact-restore-1',
       thread_id: 'thread-artifact-restore-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadArtifacts).toHaveBeenLastCalledWith({
       thread_id: 'thread-artifact-restore-1',
       page: 1,
       page_size: 50,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('restore-me.txt');
 
@@ -3299,6 +4342,7 @@ describe('TaskDetailPage', () => {
       deleted_only: true,
       page: 1,
       page_size: 50,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('deleted-report.txt');
 
@@ -3316,12 +4360,14 @@ describe('TaskDetailPage', () => {
     expect(mockRestoreTaskThreadArtifact).toHaveBeenCalledWith({
       artifact_id: 'artifact-deleted-1',
       thread_id: 'thread-artifact-deleted-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadArtifacts).toHaveBeenLastCalledWith({
       thread_id: 'thread-artifact-deleted-1',
       deleted_only: true,
       page: 1,
       page_size: 50,
+      space_id: 'space-1',
     });
 
     act(() => {
@@ -3433,11 +4479,13 @@ describe('TaskDetailPage', () => {
       artifact_id: 'artifact-review-1',
       decision: 'release',
       thread_id: 'thread-artifact-review-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadArtifacts).toHaveBeenLastCalledWith({
       thread_id: 'thread-artifact-review-1',
       page: 1,
       page_size: 50,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('clean');
 
@@ -3547,6 +4595,7 @@ describe('TaskDetailPage', () => {
       thread_id: 'thread-scan-jobs-1',
       page: 1,
       page_size: 20,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('扫描队列 1');
     expect(container.textContent).toContain('failed');
@@ -3570,11 +4619,13 @@ describe('TaskDetailPage', () => {
     expect(mockRetryTaskThreadArtifactScanJob).toHaveBeenCalledWith({
       job_id: 'scan-job-1',
       thread_id: 'thread-scan-jobs-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadArtifactScanJobs).toHaveBeenLastCalledWith({
       thread_id: 'thread-scan-jobs-1',
       page: 1,
       page_size: 20,
+      space_id: 'space-1',
     });
     expect(container.textContent).toContain('pending');
     expect(container.textContent).toContain('manual retry requested');
@@ -4209,7 +5260,6 @@ describe('TaskDetailPage', () => {
     expect(MockEventSource.instances[0].url).toContain(
       '/api/workbench/task_threads/thread-only-1/run_events/stream',
     );
-    expect(container.textContent).toContain('执行流程');
     expect(
       container.querySelector('.coze-prototype-reasoning-panel'),
     ).toBeTruthy();
@@ -4242,6 +5292,296 @@ describe('TaskDetailPage', () => {
       root?.unmount();
     });
     expect(MockEventSource.instances[0].close).toHaveBeenCalled();
+    container.remove();
+  });
+
+  it('updates thread title from hidden title sync events without rendering them as steps', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-title-sync-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-title-sync-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '请帮我制定一份武汉3日游攻略，包含预算表和注意事项',
+        status: 'running',
+        source: 'agent',
+        progress: 35,
+        last_user_message: '请帮我制定一份武汉3日游攻略',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const titleGroup = container.querySelector(
+      '.coze-prototype-task-title-group',
+    );
+    expect(titleGroup?.textContent).toContain('请帮我制定一份武汉3日游攻略');
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    act(() => {
+      MockEventSource.instances[0].emit(
+        'run.event',
+        JSON.stringify({
+          event_id: 'event-title-sync',
+          thread_id: 'thread-title-sync-1',
+          run_id: 'run-1',
+          event_type: 'context.thread_title_updated',
+          payload: JSON.stringify({
+            thread_title: '武汉3日游攻略',
+          }),
+          created_at: 1717000400000,
+        }),
+      );
+    });
+
+    expect(titleGroup?.textContent).toContain('武汉3日游攻略');
+    expect(titleGroup?.textContent).not.toContain('请帮我制定一份');
+    expect(
+      container.querySelector('.coze-prototype-execution-feed')?.textContent ??
+        '',
+    ).not.toContain('context.thread_title_updated');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('filters run lifecycle events out of the DeerFlow execution steps', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-flow-filter-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-flow-filter-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成武汉3日游攻略',
+        last_agent_message: '文档已经生成。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-run-started',
+            thread_id: 'thread-flow-filter-1',
+            run_id: 'run-1',
+            event_type: 'run.started',
+            payload: JSON.stringify({
+              worker_id: 'agent-run-worker',
+              status: 'running',
+            }),
+            created_at: 1717000100000,
+          },
+          {
+            event_id: 'event-tool-write',
+            thread_id: 'thread-flow-filter-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_file',
+              title: '创建武汉3日游攻略文档',
+              detail: '/mnt/user-data/outputs/武汉3日游攻略.md',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000200000,
+          },
+          {
+            event_id: 'event-message',
+            thread_id: 'thread-flow-filter-1',
+            run_id: 'run-1',
+            event_type: 'message.completed',
+            payload: JSON.stringify({
+              role: 'assistant',
+              reasoning_content: '确认产物已经写入并可预览。',
+            }),
+            created_at: 1717000300000,
+          },
+          {
+            event_id: 'event-run-completed',
+            thread_id: 'thread-flow-filter-1',
+            run_id: 'run-1',
+            event_type: 'run.completed',
+            payload: JSON.stringify({
+              worker_id: 'agent-run-worker',
+              status: 'succeeded',
+            }),
+            created_at: 1717000400000,
+          },
+        ],
+        total: 4,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const executionFeed = container.querySelector(
+      '.coze-prototype-execution-feed',
+    );
+
+    expect(executionFeed).toBeTruthy();
+    expect(executionFeed?.textContent).toContain('创建武汉3日游攻略文档');
+    expect(executionFeed?.textContent).toContain('确认产物已经写入并可预览。');
+    expect(executionFeed?.textContent).not.toContain('任务开始执行');
+    expect(executionFeed?.textContent).not.toContain('任务执行完成');
+    expect(executionFeed?.textContent).not.toContain('Worker:');
+    expect(
+      container.querySelector('[data-testid="task-todo-dock"]'),
+    ).toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders DeerFlow-style reasoning steps with tool-specific labels and paths', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-flow-labels-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-flow-labels-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成武汉3日游攻略',
+        last_agent_message: '文档已经生成。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-thinking',
+            thread_id: 'thread-flow-labels-1',
+            run_id: 'run-1',
+            event_type: 'message.completed',
+            payload: JSON.stringify({
+              role: 'assistant',
+              reasoning_content:
+                'Let me write a comprehensive Wuhan 3-day travel guide. I will create it in the workspace first, then move it to outputs.',
+            }),
+            created_at: 1717000100000,
+          },
+          {
+            event_id: 'event-todos',
+            thread_id: 'thread-flow-labels-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_todos',
+              status: 'completed',
+              result_present: true,
+            }),
+            created_at: 1717000200000,
+          },
+          {
+            event_id: 'event-write-file',
+            thread_id: 'thread-flow-labels-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'write_file',
+              status: 'completed',
+              detail: '/mnt/user-data/workspace/武汉3日游攻略.md',
+              result_present: true,
+            }),
+            created_at: 1717000300000,
+          },
+        ],
+        total: 3,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const executionFeed = container.querySelector(
+      '.coze-prototype-execution-feed',
+    );
+
+    expect(executionFeed?.textContent).toContain('隐藏步骤');
+    expect(executionFeed?.textContent).toContain('更新 To-do 列表');
+    expect(executionFeed?.textContent).toContain(
+      '创建武汉3日游攻略 Markdown 文档',
+    );
+    expect(executionFeed?.textContent).toContain(
+      '/mnt/user-data/workspace/武汉3日游攻略.md',
+    );
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-step-detail')
+        ?.getAttribute('data-kind'),
+    ).toBe('path');
+    expect(executionFeed?.textContent).not.toContain(
+      '工具 write_file 调用完成',
+    );
+    expect(executionFeed?.textContent).not.toContain('已返回结果');
+
+    act(() => {
+      root?.unmount();
+    });
     container.remove();
   });
 
@@ -4485,10 +5825,11 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain('已完成');
-    expect(container.textContent).toContain('2/2 已完成 · 100%');
+    expect(container.textContent).not.toContain('已完成 ·');
+    expect(container.textContent).not.toContain('2/2 已完成');
     expect(container.textContent).not.toContain('取消任务');
     expect(container.textContent).not.toContain('等待任务执行结果');
+    expect(container.textContent).not.toContain('Worker:');
 
     act(() => {
       root?.unmount();
@@ -4496,7 +5837,7 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('cancels the latest running canonical thread run from task detail', async () => {
+  it('stops the latest running canonical thread run from the DeerFlow composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -4511,7 +5852,7 @@ describe('TaskDetailPage', () => {
         legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
-        title: '可取消任务',
+        title: '运行中任务',
         status: 'running',
         source: 'agent',
         progress: 35,
@@ -4595,12 +5936,17 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const cancelButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('取消任务'),
+    expect(container.textContent).not.toContain('取消任务');
+    expect(
+      container.querySelector('[data-testid="task-answer-loading"]'),
+    ).not.toBeNull();
+
+    const stopButton = container.querySelector(
+      'button[aria-label="停止任务"]',
     ) as HTMLButtonElement;
 
     await act(async () => {
-      cancelButton.click();
+      stopButton.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -4610,6 +5956,398 @@ describe('TaskDetailPage', () => {
       run_id: 'run-cancel-1',
     });
     expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders waiting dots for a running canonical thread assistant turn', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-running-turn-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-running-turn-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '继续查询天气',
+        status: 'running',
+        source: 'agent',
+        progress: 45,
+        last_user_message: '请继续查询北京天气',
+        last_agent_message: '我正在查询北京天气。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-running-user-1',
+            thread_id: 'thread-running-turn-1',
+            run_id: 'run-running-turn-1',
+            role: 'user',
+            content: '请继续查询北京天气',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-running-assistant-1',
+            thread_id: 'thread-running-turn-1',
+            run_id: 'run-running-turn-1',
+            role: 'assistant',
+            content: '我正在查询北京天气。',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-running-turn-1',
+            thread_id: 'thread-running-turn-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'running',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000150000,
+            ended_at: 0,
+            created_at: 1717000150000,
+            updated_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-running-turn-1',
+            thread_id: 'thread-running-turn-1',
+            run_id: 'run-running-turn-1',
+            event_type: 'step.started',
+            payload: JSON.stringify({
+              step_name: 'weather_lookup',
+              status: 'running',
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('我正在查询北京天气。');
+    expect(
+      container.querySelector('[data-testid="task-answer-loading"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[aria-label="停止任务"]'),
+    ).toBeTruthy();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders waiting dots for a running canonical thread before the assistant turn exists', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-running-user-only-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-running-user-only-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '天气查询',
+        status: 'running',
+        source: 'agent',
+        progress: 10,
+        last_user_message: '请查询武汉明天天气',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000100000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-running-user-only-1',
+            thread_id: 'thread-running-user-only-1',
+            run_id: '',
+            role: 'user',
+            content: '请查询武汉明天天气',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('请查询武汉明天天气');
+    expect(
+      container.querySelector('[data-testid="task-answer-loading"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('shows an optimistic waiting turn immediately after canonical follow-up submit', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const completedThread = {
+      thread_id: 'thread-followup-pending-1',
+      legacy_task_id: '',
+      space_id: 'space-1',
+      creator_id: 'user-1',
+      title: '天气追问',
+      status: 'completed',
+      source: 'agent',
+      progress: 100,
+      last_user_message: '请查询武汉天气',
+      last_agent_message: '武汉今天多云，适合轻便出行。',
+      created_at: 1717000000000,
+      updated_at: 1717000300000,
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-followup-pending-1',
+    });
+    mockGetTaskThread
+      .mockResolvedValueOnce({
+        data: completedThread,
+        code: 0,
+        msg: '',
+      })
+      .mockReturnValueOnce(new Promise(() => undefined));
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-weather-user-1',
+            thread_id: 'thread-followup-pending-1',
+            run_id: 'run-weather-1',
+            role: 'user',
+            content: '请查询武汉天气',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-weather-assistant-1',
+            thread_id: 'thread-followup-pending-1',
+            run_id: 'run-weather-1',
+            role: 'assistant',
+            content: '武汉今天多云，适合轻便出行。',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-weather-1',
+            thread_id: 'thread-followup-pending-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'succeeded',
+            command: '{}',
+            input: '{"messages":[]}',
+            config: '{}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000100000,
+            ended_at: 1717000200000,
+            created_at: 1717000100000,
+            updated_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockAppendTaskThreadMessage.mockResolvedValue({
+      data: {
+        message_id: 'msg-weather-followup-1',
+        thread_id: 'thread-followup-pending-1',
+        run_id: '',
+        role: 'user',
+        content: '继续查询明天武汉天气',
+        metadata: '',
+        created_at: 1717000400000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateTaskThreadRun.mockResolvedValue({
+      data: {
+        run_id: 'run-weather-followup-1',
+        thread_id: 'thread-followup-pending-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        assistant_id: 'default',
+        parent_run_id: '0',
+        run_kind: 'task',
+        status: 'running',
+        command: '{}',
+        input: '{"messages":[]}',
+        config: '{}',
+        context: '{}',
+        metadata: '{}',
+        stream_mode: '["messages","updates"]',
+        multitask_strategy: 'enqueue',
+        on_disconnect: 'continue',
+        durability: 'async',
+        idempotency_key: 'followup-key',
+        worker_id: 'agent-harness',
+        error_code: '',
+        error_message: '',
+        started_at: 1717000400000,
+        ended_at: 0,
+        created_at: 1717000400000,
+        updated_at: 1717000400000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '继续查询明天武汉天气' },
+      } as unknown as Event);
+    });
+
+    const sendButton = container.querySelector(
+      'button[aria-label="发送任务"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThreadRun).toHaveBeenCalled();
+    expect(container.textContent).toContain('继续查询明天武汉天气');
+    expect(
+      container.querySelector('[data-testid="task-answer-loading"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[aria-label="停止任务"]'),
+    ).toBeTruthy();
 
     act(() => {
       root?.unmount();
@@ -4763,11 +6501,20 @@ describe('TaskDetailPage', () => {
     });
     expect(JSON.parse(retryRequest.config)).toMatchObject({
       runtime: 'eino_adk',
-      mode: 'Auto',
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       token_usage: {
         enabled: true,
       },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        JSON.parse(retryRequest.config),
+        'reasoning_effort',
+      ),
+    ).toBe(false);
     expect(JSON.parse(retryRequest.metadata)).toMatchObject({
       source: 'task_retry',
       source_run_id: 'run-failed-1',
@@ -5110,8 +6857,26 @@ describe('TaskDetailPage', () => {
               metadata: '',
               created_at: 1717000200000,
             },
+            {
+              message_id: 'msg-orphan-empty-run',
+              thread_id: 'thread-only-1',
+              run_id: '',
+              role: 'user',
+              content: '失败后残留的追问不应进入上下文',
+              metadata: '',
+              created_at: 1717000300000,
+            },
+            {
+              message_id: 'msg-orphan-zero-run',
+              thread_id: 'thread-only-1',
+              run_id: '0',
+              role: 'user',
+              content: '旧失败追问也不能重复提交',
+              metadata: '',
+              created_at: 1717000350000,
+            },
           ],
-          total: 2,
+          total: 4,
         },
         code: 0,
         msg: '',
@@ -5137,8 +6902,26 @@ describe('TaskDetailPage', () => {
               metadata: '',
               created_at: 1717000200000,
             },
+            {
+              message_id: 'msg-history-orphan-empty-run',
+              thread_id: 'thread-only-1',
+              run_id: '',
+              role: 'user',
+              content: '历史里的失败追问不应进入新 run',
+              metadata: '',
+              created_at: 1717000300000,
+            },
+            {
+              message_id: 'msg-history-orphan-zero-run',
+              thread_id: 'thread-only-1',
+              run_id: '0',
+              role: 'user',
+              content: '历史里的旧失败追问也不能重复提交',
+              metadata: '',
+              created_at: 1717000350000,
+            },
           ],
-          total: 2,
+          total: 4,
         },
         code: 0,
         msg: '',
@@ -5267,13 +7050,26 @@ describe('TaskDetailPage', () => {
     expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
 
     const appendRequest = mockAppendTaskThreadMessage.mock.calls[0]?.[0];
-    expect(JSON.parse(appendRequest.metadata)).toMatchObject({
-      mode: 'Auto',
-      enable_skills: [],
+    const appendMetadata = JSON.parse(appendRequest.metadata);
+    expect(appendMetadata).toMatchObject({
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
+      skills: {
+        enabled: true,
+        allowed_skills: [],
+      },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(appendMetadata, 'enable_skills'),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(appendMetadata, 'reasoning_effort'),
+    ).toBe(false);
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     expect(JSON.parse(runRequest.input)).toMatchObject({
       messages: [
@@ -5292,13 +7088,20 @@ describe('TaskDetailPage', () => {
         },
       ],
     });
-    expect(JSON.parse(runRequest.config)).toMatchObject({
+    const runConfig = JSON.parse(runRequest.config);
+    expect(runConfig).toMatchObject({
       runtime: 'eino_adk',
-      mode: 'Auto',
-      enable_skills: [],
+      mode: 'pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
+      skills: {
+        enabled: true,
+        allowed_skills: [],
+      },
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -5312,6 +7115,12 @@ describe('TaskDetailPage', () => {
         enabled: true,
       },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(runConfig, 'enable_skills'),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(runConfig, 'reasoning_effort'),
+    ).toBe(false);
     expect(JSON.parse(runRequest.metadata)).toMatchObject({
       source: 'workbench_detail_followup',
       appended_message_id: 'msg-appended-1',
@@ -5619,21 +7428,29 @@ describe('TaskDetailPage', () => {
       space_id: 'space-1',
       task_id: 'task-1',
       message: '请补充风险项',
-      mode: workbench.ChatMode.Auto,
+      mode: workbench.ChatMode.Agent,
       model_type: '100002',
       model_name: 'deepseek-v4-pro',
       runtime_settings: expect.any(String),
-      enable_skills: [],
       enable_mcp: [],
       enable_kbs: [],
       enable_databases: [],
     });
-    expect(
-      JSON.parse(mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings),
-    ).toMatchObject({
+    const legacyFollowUpRuntimeSettings = JSON.parse(
+      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
+    );
+    expect(legacyFollowUpRuntimeSettings).toMatchObject({
       runtime: 'eino_adk',
+      mode: 'pro',
       model_type: 100002,
       model_name: 'deepseek-v4-pro',
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: false,
+      skills: {
+        enabled: true,
+        allowed_skills: [],
+      },
       memory_retrieval: {
         limit: 5,
         candidate_limit: 20,
@@ -5647,6 +7464,18 @@ describe('TaskDetailPage', () => {
         enabled: true,
       },
     });
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        legacyFollowUpRuntimeSettings,
+        'reasoning_effort',
+      ),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        legacyFollowUpRuntimeSettings,
+        'enable_skills',
+      ),
+    ).toBe(false);
     expect(mockGetTask).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain('已补充风险项。');
 

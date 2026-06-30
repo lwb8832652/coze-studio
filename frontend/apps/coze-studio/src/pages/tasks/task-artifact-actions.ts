@@ -31,6 +31,7 @@ import {
   deleteTaskThreadArtifact,
   fetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL,
+  installSkillFromArtifact,
   reviewTaskThreadArtifactScan,
   restoreTaskThreadArtifact,
   type ArtifactScanReviewDecision,
@@ -67,16 +68,28 @@ const downloadSignedURL = (url: string, fileName: string) => {
   link.remove();
 };
 
+const artifactActionErrorMessage = (mode: ArtifactActionMode, err?: unknown) =>
+  mode === 'install_skill' && err instanceof Error && err.message.trim()
+    ? err.message
+    : mode === 'download'
+      ? '下载任务产物失败，请稍后重试'
+      : mode === 'install_skill'
+        ? '安装技能失败，请稍后重试'
+        : '读取任务产物失败，请稍后重试';
+
 const readTextArtifactPreview = async ({
   artifact,
+  spaceId,
   threadId,
 }: {
   artifact: TaskThreadArtifact;
+  spaceId?: string;
   threadId: string;
 }): Promise<ArtifactInlinePreviewState> => {
   const response = await fetchTaskThreadArtifactContent({
     artifact_id: artifact.artifact_id,
     mode: 'preview',
+    space_id: spaceId,
     thread_id: threadId,
   });
   const contentType = response.contentType || artifact.content_type;
@@ -93,25 +106,42 @@ const readTextArtifactPreview = async ({
 const runTaskArtifactAction = async ({
   artifact,
   mode,
+  spaceId,
   setInlinePreview,
   threadId,
 }: {
   artifact: TaskThreadArtifact;
   mode: ArtifactActionMode;
+  spaceId?: string;
   setInlinePreview: (preview: ArtifactInlinePreviewState | null) => void;
   threadId: string;
 }) => {
+  if (mode === 'install_skill') {
+    if (!spaceId) {
+      throw new Error('缺少空间信息，无法安装技能');
+    }
+    await installSkillFromArtifact({
+      artifact_id: artifact.artifact_id,
+      space_id: spaceId,
+      thread_id: threadId,
+    });
+    return;
+  }
+
   const previewFamily =
     mode === 'preview' ? artifactPreviewFamily(artifact) : null;
 
   if (previewFamily === 'text' && artifactInlinePreviewKind(artifact)) {
-    setInlinePreview(await readTextArtifactPreview({ artifact, threadId }));
+    setInlinePreview(
+      await readTextArtifactPreview({ artifact, spaceId, threadId }),
+    );
     return;
   }
 
   const response = await getTaskThreadArtifactSignedURL({
     artifact_id: artifact.artifact_id,
     mode,
+    space_id: spaceId,
     thread_id: threadId,
     ttl_seconds: 300,
   });
@@ -154,6 +184,7 @@ interface TaskArtifactActionContext {
         ) => ArtifactInlinePreviewState | null),
   ) => void;
   setRemovedArtifact: (notice: RemovedArtifactNotice | null) => void;
+  spaceId?: string;
   threadId?: string;
 }
 
@@ -163,6 +194,7 @@ const createArtifactActionHandler =
     setActiveAction,
     setError,
     setInlinePreview,
+    spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
   async (artifact: TaskThreadArtifact, mode: ArtifactActionMode) => {
@@ -179,11 +211,12 @@ const createArtifactActionHandler =
       await runTaskArtifactAction({
         artifact,
         mode,
+        spaceId,
         setInlinePreview,
         threadId,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '读取任务产物失败');
+      setError(artifactActionErrorMessage(mode, err));
     } finally {
       setActiveAction('');
     }
@@ -197,6 +230,7 @@ const createDeleteArtifactHandler =
     setError,
     setInlinePreview,
     setRemovedArtifact,
+    spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
   async (artifact: TaskThreadArtifact) => {
@@ -209,6 +243,7 @@ const createDeleteArtifactHandler =
     try {
       await deleteTaskThreadArtifact({
         artifact_id: artifact.artifact_id,
+        space_id: spaceId,
         thread_id: threadId,
       });
       setInlinePreview(previous =>
@@ -231,6 +266,7 @@ const createRestoreArtifactHandler =
     setActiveAction,
     setError,
     setRemovedArtifact,
+    spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
   async () => {
@@ -243,6 +279,7 @@ const createRestoreArtifactHandler =
     try {
       await restoreTaskThreadArtifact({
         artifact_id: removedArtifact.artifactId,
+        space_id: spaceId,
         thread_id: threadId,
       });
       setRemovedArtifact(null);
@@ -260,6 +297,7 @@ const createReviewArtifactHandler =
     onArtifactsChanged,
     setActiveAction,
     setError,
+    spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
   async (
@@ -276,6 +314,7 @@ const createReviewArtifactHandler =
       await reviewTaskThreadArtifactScan({
         artifact_id: artifact.artifact_id,
         decision,
+        space_id: spaceId,
         thread_id: threadId,
       });
       await onArtifactsChanged?.();
@@ -288,9 +327,11 @@ const createReviewArtifactHandler =
 
 export const useTaskArtifactActions = ({
   onArtifactsChanged,
+  spaceId,
   threadId,
 }: {
   onArtifactsChanged?: () => void | Promise<void>;
+  spaceId?: string;
   threadId?: string;
 }): TaskArtifactActions => {
   const [activeAction, setActiveAction] = useState('');
@@ -307,6 +348,7 @@ export const useTaskArtifactActions = ({
     setError,
     setInlinePreview,
     setRemovedArtifact,
+    spaceId,
     threadId,
   };
 

@@ -25,6 +25,7 @@ import (
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 type GuardrailAuditRecorder interface {
@@ -71,10 +72,31 @@ func (r *ApplicationGuardrailAuditRecorder) RecordGuardrailDecision(
 		r == nil ||
 		r.repository == nil ||
 		r.idGen == nil {
+		logs.CtxErrorf(
+			ctx,
+			"guardrail audit record failed before insert: valid_request=%t recorder_nil=%t repository_nil=%t idgen_nil=%t space_id_set=%t thread_id_set=%t run_id_set=%t user_id_set=%t target_type=%s operation=%s source=%s",
+			validGuardrailAuditRequest(request),
+			r == nil,
+			r == nil || r.repository == nil,
+			r == nil || r.idGen == nil,
+			request.SpaceID > 0,
+			request.ThreadID > 0,
+			request.RunID > 0,
+			request.UserID > 0,
+			request.TargetType,
+			sanitizeGuardrailIdentifier(request.Operation, 64),
+			sanitizeGuardrailIdentifier(request.Source, 64),
+		)
 		return errors.New("guardrail audit record failed")
 	}
 	id, err := r.idGen.GenID(ctx)
 	if err != nil || id <= 0 {
+		logs.CtxErrorf(
+			ctx,
+			"guardrail audit id generation failed: id_positive=%t err=%v",
+			id > 0,
+			err,
+		)
 		return errors.New("guardrail audit record failed")
 	}
 	decision = normalizeGuardrailDecision(decision)
@@ -109,6 +131,14 @@ func (r *ApplicationGuardrailAuditRecorder) RecordGuardrailDecision(
 		event.FailMode = string(GuardrailFailClosed)
 	}
 	if err := r.repository.CreateGuardrailAuditEvent(ctx, event); err != nil {
+		logs.CtxErrorf(
+			ctx,
+			"guardrail audit repository create failed: target_type=%s operation=%s source=%s err=%v",
+			event.TargetType,
+			event.Operation,
+			event.Source,
+			err,
+		)
 		return errors.New("guardrail audit record failed")
 	}
 

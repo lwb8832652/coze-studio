@@ -1235,6 +1235,64 @@ func TestApplicationListArtifactsDeniesUnauthorizedViewerBeforeRepository(t *tes
 	require.Equal(t, int64(99), authorizer.req.ViewerID)
 }
 
+func TestApplicationListArtifactsRejectsClientSuppliedSameSpaceViewer(t *testing.T) {
+	artifactSVC := &recordingArtifactService{}
+	threadSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:        10,
+			SpaceID:   30,
+			CreatorID: 40,
+		},
+	}
+	app := &ApplicationService{
+		ArtifactSVC: artifactSVC,
+		ThreadSVC:   threadSVC,
+	}
+	app.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(app.ThreadSVC)
+
+	resp, err := app.ListArtifacts(context.Background(), &ListArtifactsRequest{
+		ThreadID: 10,
+		SpaceID:  30,
+		ViewerID: 99,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.ErrorIs(t, err, ErrArtifactAccessDenied)
+	require.Nil(t, resp)
+	require.Nil(t, artifactSVC.listReq)
+	require.Equal(t, int64(10), threadSVC.getID)
+}
+
+func TestApplicationListArtifactsDeniesMismatchedSpaceViewerBeforeRepository(t *testing.T) {
+	artifactSVC := &recordingArtifactService{}
+	threadSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:        10,
+			SpaceID:   30,
+			CreatorID: 40,
+		},
+	}
+	app := &ApplicationService{
+		ArtifactSVC: artifactSVC,
+		ThreadSVC:   threadSVC,
+	}
+	app.ArtifactAuthorizer = NewThreadOwnerArtifactAuthorizer(app.ThreadSVC)
+
+	resp, err := app.ListArtifacts(context.Background(), &ListArtifactsRequest{
+		ThreadID: 10,
+		SpaceID:  31,
+		ViewerID: 99,
+		Page:     1,
+		PageSize: 10,
+	})
+
+	require.ErrorIs(t, err, ErrArtifactAccessDenied)
+	require.Nil(t, resp)
+	require.Nil(t, artifactSVC.listReq)
+	require.Equal(t, int64(10), threadSVC.getID)
+}
+
 func TestApplicationListArtifactScanJobsMapsDomainJobs(t *testing.T) {
 	runID := int64(20)
 	artifactID := int64(100)
@@ -3592,6 +3650,7 @@ type recordingThreadService struct {
 	tokenUsageAggregate      *entity.TokenUsageAggregate
 	runTokenUsageAggregates  []*entity.RunTokenUsageAggregate
 	createReq                *domainservice.CreateThreadRequest
+	updateThreadTitleReq     *domainservice.UpdateThreadTitleRequest
 	createRunReq             *domainservice.CreateRunRequest
 	claimRunsReq             *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq *domainservice.ClaimQueuedResumeRunsRequest
@@ -3981,6 +4040,19 @@ func (s *recordingThreadService) CreateThread(ctx context.Context, req *domainse
 func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
 	s.getID = id
 	return s.got, nil
+}
+
+func (s *recordingThreadService) UpdateThreadTitle(
+	ctx context.Context,
+	req *domainservice.UpdateThreadTitleRequest,
+) (*entity.Thread, bool, error) {
+	s.updateThreadTitleReq = req
+	if s.got == nil {
+		return nil, false, nil
+	}
+	updated := *s.got
+	updated.Title = strings.TrimSpace(req.Title)
+	return &updated, true, nil
 }
 
 func (s *recordingThreadService) ListThreads(ctx context.Context, req *domainservice.ListThreadsRequest) ([]*entity.Thread, int64, error) {

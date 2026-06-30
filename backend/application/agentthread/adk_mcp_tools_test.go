@@ -38,6 +38,7 @@ func TestADKMCPRuntimeToolCatalogDisabledByDefault(t *testing.T) {
 				ServerName:  "docs-mcp",
 				ToolName:    "search-docs",
 				Description: "Search internal documentation.",
+				InputSchema: `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`,
 				Enabled:     true,
 			},
 		},
@@ -68,6 +69,7 @@ func TestADKMCPRuntimeToolCatalogLoadsDeferredMetadataOnlyAndFailsClosed(
 				ServerName:  "docs-mcp",
 				ToolName:    "search-docs",
 				Description: "Search internal documentation.",
+				InputSchema: `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`,
 				Enabled:     true,
 			},
 			{
@@ -117,7 +119,7 @@ func TestADKMCPRuntimeToolCatalogLoadsDeferredMetadataOnlyAndFailsClosed(
 	require.NoError(t, err)
 	require.Equal(t, "mcp_100_search_docs", info.Name)
 	require.Equal(t, "Search internal documentation.", info.Desc)
-	require.Nil(t, info.ParamsOneOf)
+	require.NotNil(t, info.ParamsOneOf)
 
 	invokable, ok := set.DynamicTools[0].(tool.InvokableTool)
 	require.True(t, ok)
@@ -181,6 +183,39 @@ func TestADKMCPRuntimeToolCatalogInvokesExecutorWithSafeIdentity(t *testing.T) {
 	require.Equal(t, int64(100), executor.call.ServerID)
 	require.Equal(t, "search-docs", executor.call.ToolName)
 	require.Equal(t, `{"query":"coze studio"}`, executor.call.Arguments)
+}
+
+func TestADKMCPRuntimeToolCatalogTreatsExplicitEmptyAllowedToolsAsDenyAll(
+	t *testing.T,
+) {
+	provider := NewADKRuntimeToolCatalogProvider(
+		NewADKMCPRuntimeToolCatalog(
+			&recordingADKMCPToolRegistry{
+				entries: []*toolapi.MCPToolRegistryEntry{
+					{
+						Name:        "mcp_100_search_docs",
+						Source:      "mcp",
+						ServerID:    100,
+						ToolName:    "search-docs",
+						Description: "Search internal documentation.",
+						Enabled:     true,
+					},
+				},
+			},
+		),
+	)
+
+	set, err := provider.ResolveToolSet(
+		context.Background(),
+		&RunSummary{
+			RunID:   20,
+			SpaceID: 30,
+			Config:  `{"mcp_tools":{"enabled":true,"allowed_tools":[]}}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Empty(t, set.DynamicTools)
 }
 
 func TestADKMCPRuntimeToolCatalogSanitizesExecutorErrors(t *testing.T) {

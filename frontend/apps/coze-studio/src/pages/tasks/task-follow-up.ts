@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { workbenchTask } from '@coze-studio/api-schema';
+
 import {
   mapModeToChatMode,
   stringifyWorkbenchRunConfig,
@@ -27,6 +29,12 @@ import {
 } from './service';
 
 const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
+
+export interface CanonicalThreadFollowUpResult {
+  kind: 'thread';
+  message?: workbenchTask.TaskThreadMessage;
+  run?: workbenchTask.TaskThreadRun;
+}
 
 interface ThreadRunInputMessage {
   role: 'user' | 'assistant';
@@ -58,6 +66,20 @@ const normalizeThreadMessageForRunInput = (message: {
   };
 };
 
+const appendThreadRunInputMessage = (
+  messages: ThreadRunInputMessage[],
+  message: ThreadRunInputMessage,
+) => {
+  const previous = messages[messages.length - 1];
+
+  if (message.role === 'user' && previous?.role === 'user') {
+    messages[messages.length - 1] = message;
+    return;
+  }
+
+  messages.push(message);
+};
+
 const getThreadFollowUpRunInput = (
   payload: WorkbenchComposerSubmitPayload,
   messageId: string,
@@ -67,17 +89,23 @@ const getThreadFollowUpRunInput = (
     message_id?: string;
   }> = [],
 ) => {
-  const messages = historyMessages
-    .map(normalizeThreadMessageForRunInput)
-    .filter((message): message is ThreadRunInputMessage => Boolean(message));
+  const messages: ThreadRunInputMessage[] = [];
 
-  messages.push(
-    {
-      role: 'user',
-      content: payload.message,
-      message_id: messageId,
-    },
-  );
+  historyMessages.forEach(message => {
+    const normalizedMessage = normalizeThreadMessageForRunInput(message);
+
+    if (!normalizedMessage) {
+      return;
+    }
+
+    appendThreadRunInputMessage(messages, normalizedMessage);
+  });
+
+  appendThreadRunInputMessage(messages, {
+    role: 'user',
+    content: payload.message,
+    message_id: messageId,
+  });
 
   return JSON.stringify({
     messages,
@@ -127,7 +155,7 @@ export const sendFollowUpMessage = async ({
     });
     const appendedMessageId = appendResponse.data?.message_id || 'pending';
 
-    await createTaskThreadRun({
+    const runResponse = await createTaskThreadRun({
       thread_id: threadId,
       input: getThreadFollowUpRunInput(
         payload,
@@ -139,7 +167,11 @@ export const sendFollowUpMessage = async ({
       idempotency_key: `${threadId}:${appendedMessageId}:followup`,
     });
 
-    return;
+    return {
+      kind: 'thread',
+      message: appendResponse.data,
+      run: runResponse.data,
+    } satisfies CanonicalThreadFollowUpResult;
   }
 
   await sendWorkbenchChat({
@@ -154,9 +186,15 @@ export const sendFollowUpMessage = async ({
         }
       : {}),
     runtime_settings: stringifyWorkbenchRunConfig(payload),
-    enable_skills: payload.enable_skills,
+    ...(payload.enable_skills
+      ? {
+          enable_skills: payload.enable_skills,
+        }
+      : {}),
     enable_mcp: payload.enable_mcp,
     enable_kbs: payload.enable_kbs,
     enable_databases: payload.enable_databases,
   });
+
+  return undefined;
 };

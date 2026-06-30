@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
+
 import { getWorkbenchLLMModels } from '../workbench/service';
 import { WorkbenchComposer } from '../workbench/components/workbench-composer';
 import {
@@ -28,8 +30,12 @@ export const TaskFollowUpComposer = ({
   error,
   spaceId,
   taskId,
+  todoDock,
+  stopLoading,
+  stopMode,
   onValueChange,
   onModeChange,
+  onStop,
   onSubmit,
 }: {
   value: string;
@@ -38,24 +44,34 @@ export const TaskFollowUpComposer = ({
   error?: string;
   spaceId?: string;
   taskId?: string;
+  todoDock?: ReactNode;
+  stopLoading?: boolean;
+  stopMode?: boolean;
   onValueChange: (value: string) => void;
   onModeChange: (mode: WorkbenchMode) => void;
+  onStop?: () => void | Promise<void>;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
 }) => (
   <section className="coze-prototype-followup">
-    <WorkbenchComposer
-      value={value}
-      mode={mode}
-      loading={loading}
-      error={error}
-      variant="detail"
-      presentation="deerflow"
-      spaceId={spaceId}
-      taskId={taskId}
-      modelLoader={getWorkbenchLLMModels}
-      onValueChange={onValueChange}
-      onModeChange={onModeChange}
-      onSubmit={onSubmit}
-    />
+    <div className="coze-prototype-followup-stack">
+      {todoDock}
+      <WorkbenchComposer
+        value={value}
+        mode={mode}
+        loading={loading}
+        error={error}
+        variant="detail"
+        presentation="deerflow"
+        spaceId={spaceId}
+        taskId={taskId}
+        stopLoading={stopLoading}
+        stopMode={stopMode}
+        modelLoader={getWorkbenchLLMModels}
+        onValueChange={onValueChange}
+        onModeChange={onModeChange}
+        onStop={onStop}
+        onSubmit={onSubmit}
+      />
+    </div>
   </section>
 );

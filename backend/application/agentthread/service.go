@@ -288,6 +288,34 @@ func (s *ApplicationService) GetThread(ctx context.Context, req *GetThreadReques
 	return &GetThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
 }
 
+func (s *ApplicationService) UpdateThreadTitle(
+	ctx context.Context,
+	req *UpdateThreadTitleRequest,
+) (*UpdateThreadTitleResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("update thread title request is required")
+	}
+
+	thread, updated, err := s.ThreadSVC.UpdateThreadTitle(ctx, &domainservice.UpdateThreadTitleRequest{
+		ThreadID: req.ThreadID,
+		Title:    req.Title,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updated && thread == nil {
+		return nil, fmt.Errorf("agent thread service returned empty updated thread")
+	}
+
+	return &UpdateThreadTitleResponse{
+		Thread:  DomainThreadToSummary(thread),
+		Updated: updated,
+	}, nil
+}
+
 func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRequest) (*ListThreadsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -1334,6 +1362,7 @@ func (s *ApplicationService) ListArtifacts(
 	}
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:  req.ThreadID,
+		SpaceID:   req.SpaceID,
 		ViewerID:  req.ViewerID,
 		Operation: ArtifactAccessOperationList,
 	}); err != nil {
@@ -1379,6 +1408,7 @@ func (s *ApplicationService) ListArtifactScanJobs(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: artifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationList,
 	}); err != nil {
@@ -1425,6 +1455,7 @@ func (s *ApplicationService) RetryArtifactScanJob(
 	}
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:  req.ThreadID,
+		SpaceID:   req.SpaceID,
 		ViewerID:  req.ViewerID,
 		Operation: ArtifactAccessOperationList,
 	}); err != nil {
@@ -1472,6 +1503,7 @@ func (s *ApplicationService) DeleteArtifact(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationDelete,
 	}); err != nil {
@@ -1517,6 +1549,7 @@ func (s *ApplicationService) RestoreArtifact(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationRestore,
 	}); err != nil {
@@ -1696,6 +1729,7 @@ func (s *ApplicationService) ReviewArtifactScan(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationReview,
 	}); err != nil {
@@ -1832,6 +1866,7 @@ func (s *ApplicationService) ReadArtifactContent(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationRead,
 	}); err != nil {
@@ -1903,6 +1938,7 @@ func (s *ApplicationService) CreateArtifactSignedURL(
 	if err := s.authorizeArtifactAccess(ctx, ArtifactAccessRequest{
 		ThreadID:   req.ThreadID,
 		ArtifactID: req.ArtifactID,
+		SpaceID:    req.SpaceID,
 		ViewerID:   req.ViewerID,
 		Operation:  ArtifactAccessOperationRead,
 	}); err != nil {

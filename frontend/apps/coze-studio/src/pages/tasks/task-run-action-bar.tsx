@@ -17,7 +17,7 @@
 import type { workbenchTask } from '@coze-studio/api-schema';
 
 import type { LoadedTaskDetailSource } from './task-detail-loader';
-import { canCancelTask, canRetryTask } from './helpers';
+import { canRetryTask } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 
@@ -29,7 +29,6 @@ export const TaskRunActionBar = ({
   loading,
   task,
   taskDetailSource,
-  onCancelTaskRun,
   onRetryTaskRun,
 }: {
   error?: string;
@@ -37,30 +36,17 @@ export const TaskRunActionBar = ({
   loading: TaskRunActionLoading;
   task: ChatTask;
   taskDetailSource: LoadedTaskDetailSource;
-  onCancelTaskRun: (runId: string) => void | Promise<void>;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
 }) => {
-  const showCancel =
-    taskDetailSource === 'thread' && latestRunID && canCancelTask(task.status);
   const showRetry =
     taskDetailSource === 'thread' && latestRunID && canRetryTask(task.status);
 
-  if (!showCancel && !showRetry && !error) {
+  if (!showRetry && !error) {
     return null;
   }
 
   return (
     <section className="coze-prototype-task-run-actions">
-      {showCancel ? (
-        <button
-          type="button"
-          className="coze-prototype-secondary-button"
-          disabled={Boolean(loading)}
-          onClick={() => void onCancelTaskRun(latestRunID)}
-        >
-          {loading === 'cancel' ? '取消中...' : '取消任务'}
-        </button>
-      ) : null}
       {showRetry ? (
         <button
           type="button"

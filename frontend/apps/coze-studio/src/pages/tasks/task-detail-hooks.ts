@@ -16,16 +16,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import { workbenchTask } from '@coze-studio/api-schema';
 
-import type {
-  WorkbenchComposerSubmitPayload,
-  WorkbenchMode,
+import {
+  DEFAULT_WORKBENCH_MODE,
+  type WorkbenchComposerSubmitPayload,
+  type WorkbenchMode,
 } from '../workbench/components/types';
+import { useTaskThreadTitleSync } from './task-title-sync';
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
 import { useTaskRunActions } from './task-run-actions-hook';
 import type { PendingHumanInteraction } from './task-human-interaction';
-import { sendFollowUpMessage } from './task-follow-up';
+import {
+  sendFollowUpMessage,
+  type CanonicalThreadFollowUpResult,
+} from './task-follow-up';
 import {
   fetchTaskDetail,
   type LoadedTaskDetailSource,
@@ -40,6 +45,7 @@ import { isTaskTerminalStatus } from './helpers';
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 const RUN_TERMINAL_STATUSES = new Set([
@@ -64,10 +70,223 @@ const shouldPollTaskDetail = (detail: TaskDetail) => {
   return Boolean(detail.task && !isTaskTerminalStatus(detail.task.status));
 };
 
-export const useTaskDetailData = ({
+const mapRunStatusToOptimisticTaskStatus = (status?: string) => {
+  switch (
+    String(status ?? '')
+      .trim()
+      .toLowerCase()
+  ) {
+    case 'pending':
+    case 'queued':
+      return workbenchTask.TaskStatus.Queued;
+    case 'running':
+    default:
+      return workbenchTask.TaskStatus.Running;
+  }
+};
+
+const appendOptimisticMessage = (
+  messages: TaskThreadMessage[],
+  message: TaskThreadMessage,
+) => {
+  if (
+    message.message_id &&
+    messages.some(item => item.message_id === message.message_id)
+  ) {
+    return messages;
+  }
+
+  return [...messages, message];
+};
+
+const useLoadTaskDetailEffect = ({
+  applyTaskDetail,
+  setError,
+  setLoadedTaskDetailSource,
+  setLoadedThreadId,
+  setLoading,
+  spaceID,
   taskDetailId,
   taskDetailSource,
 }: {
+  applyTaskDetail: (detail: TaskDetail) => void;
+  setError: (value: string) => void;
+  setLoadedTaskDetailSource: (value: LoadedTaskDetailSource) => void;
+  setLoadedThreadId: (value: string) => void;
+  setLoading: (value: boolean) => void;
+  spaceID?: string;
+  taskDetailId?: string;
+  taskDetailSource: TaskDetailSource;
+}) => {
+  useEffect(() => {
+    if (!taskDetailId) {
+      return;
+    }
+    let canceled = false;
+    const loadTaskDetail = async () => {
+      setLoading(true);
+      setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
+      setLoadedThreadId(taskDetailSource === 'thread' ? taskDetailId : '');
+      setError('');
+      try {
+        const detail = await fetchTaskDetail({
+          id: taskDetailId,
+          spaceId: spaceID,
+          source: taskDetailSource,
+        });
+        if (!canceled) {
+          applyTaskDetail(detail);
+        }
+      } catch (err) {
+        if (!canceled) {
+          setError(err instanceof Error ? err.message : '加载任务详情失败');
+        }
+      } finally {
+        if (!canceled) {
+          setLoading(false);
+        }
+      }
+    };
+    void loadTaskDetail();
+    return () => {
+      canceled = true;
+    };
+  }, [
+    applyTaskDetail,
+    setError,
+    setLoadedTaskDetailSource,
+    setLoadedThreadId,
+    setLoading,
+    spaceID,
+    taskDetailId,
+    taskDetailSource,
+  ]);
+};
+
+const usePollTaskDetailEffect = ({
+  applyTaskDetail,
+  pollingVersion,
+  setError,
+  spaceID,
+  taskDetailId,
+  taskDetailSource,
+}: {
+  applyTaskDetail: (detail: TaskDetail) => void;
+  pollingVersion: number;
+  setError: (value: string) => void;
+  spaceID?: string;
+  taskDetailId?: string;
+  taskDetailSource: TaskDetailSource;
+}) => {
+  useEffect(() => {
+    if (!taskDetailId || pollingVersion <= 0) {
+      return;
+    }
+
+    let canceled = false;
+    const timer = setTimeout(() => {
+      const refreshTaskDetail = async () => {
+        setError('');
+        try {
+          const detail = await fetchTaskDetail({
+            id: taskDetailId,
+            spaceId: spaceID,
+            source: taskDetailSource,
+          });
+          if (!canceled) {
+            applyTaskDetail(detail);
+          }
+        } catch (err) {
+          if (!canceled) {
+            setError(err instanceof Error ? err.message : '加载任务详情失败');
+          }
+        }
+      };
+      void refreshTaskDetail();
+    }, TASK_DETAIL_POLLING_DELAY_MS);
+
+    return () => {
+      canceled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    applyTaskDetail,
+    pollingVersion,
+    setError,
+    spaceID,
+    taskDetailId,
+    taskDetailSource,
+  ]);
+};
+
+const buildOptimisticFollowUpDetail = ({
+  artifacts,
+  events,
+  followUpResult,
+  messages,
+  payload,
+  subagentRuns,
+  task,
+  threadId,
+  tokenUsage,
+  tokenUsageByRunID,
+}: {
+  artifacts: TaskThreadArtifact[];
+  events: TaskEvent[];
+  followUpResult?: CanonicalThreadFollowUpResult;
+  messages: TaskThreadMessage[];
+  payload: WorkbenchComposerSubmitPayload;
+  subagentRuns: TaskDetailSubagentRun[];
+  task?: ChatTask;
+  threadId: string;
+  tokenUsage?: TaskDetailTokenUsage;
+  tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
+}): TaskDetail | undefined => {
+  const runID = followUpResult?.run?.run_id;
+  if (!task || !runID) {
+    return undefined;
+  }
+
+  const appendedMessage = followUpResult.message;
+  const now = Date.now();
+  const optimisticUserMessage: TaskThreadMessage = {
+    message_id: appendedMessage?.message_id || `pending-${runID}`,
+    thread_id: threadId,
+    run_id: runID,
+    role: 'user',
+    content: appendedMessage?.content || payload.message,
+    metadata: appendedMessage?.metadata || '',
+    created_at: appendedMessage?.created_at || now,
+  };
+
+  return {
+    source: 'thread',
+    threadId,
+    task: {
+      ...task,
+      status: mapRunStatusToOptimisticTaskStatus(followUpResult.run?.status),
+      progress: Math.max(task.progress || 0, 1),
+      last_user_message: optimisticUserMessage.content,
+      last_agent_message: '',
+      updated_at: now,
+    },
+    events,
+    artifacts,
+    latestTaskRunID: runID,
+    latestTaskRunStatus: followUpResult.run?.status || 'running',
+    messages: appendOptimisticMessage(messages, optimisticUserMessage),
+    subagentRuns,
+    tokenUsage,
+    tokenUsageByRunID,
+  };
+};
+
+export const useTaskDetailData = ({
+  spaceID,
+  taskDetailId,
+  taskDetailSource,
+}: {
+  spaceID?: string;
   taskDetailId?: string;
   taskDetailSource: TaskDetailSource;
 }) => {
@@ -89,21 +308,28 @@ export const useTaskDetailData = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pollingVersion, setPollingVersion] = useState(0);
-  const applyTaskDetail = useCallback((detail: TaskDetail) => {
-    setLoadedTaskDetailSource(detail.source);
-    setLoadedThreadId(detail.threadId ?? '');
-    setTask(detail.task);
-    setEvents(detail.events);
-    setMessages(detail.messages ?? []);
-    setArtifacts(detail.artifacts ?? []);
-    setLatestTaskRunID(detail.latestTaskRunID ?? '');
-    setSubagentRuns(detail.subagentRuns ?? []);
-    setTokenUsage(detail.tokenUsage);
-    setTokenUsageByRunID(detail.tokenUsageByRunID ?? {});
-    if (shouldPollTaskDetail(detail)) {
-      setPollingVersion(version => version + 1);
-    }
-  }, []);
+  const { handleThreadTitleUpdated, setCurrentTask } = useTaskThreadTitleSync({
+    setTask,
+    spaceID,
+  });
+  const applyTaskDetail = useCallback(
+    (detail: TaskDetail) => {
+      setLoadedTaskDetailSource(detail.source);
+      setLoadedThreadId(detail.threadId ?? '');
+      setCurrentTask(detail.task);
+      setEvents(detail.events);
+      setMessages(detail.messages ?? []);
+      setArtifacts(detail.artifacts ?? []);
+      setLatestTaskRunID(detail.latestTaskRunID ?? '');
+      setSubagentRuns(detail.subagentRuns ?? []);
+      setTokenUsage(detail.tokenUsage);
+      setTokenUsageByRunID(detail.tokenUsageByRunID ?? {});
+      if (shouldPollTaskDetail(detail)) {
+        setPollingVersion(version => version + 1);
+      }
+    },
+    [setCurrentTask],
+  );
   const refreshArtifacts = useCallback(async () => {
     if (!loadedThreadId || loadedTaskDetailSource !== 'thread') {
       return;
@@ -111,82 +337,35 @@ export const useTaskDetailData = ({
 
     const response = await listTaskThreadArtifacts({
       thread_id: loadedThreadId,
+      space_id: spaceID,
       page: 1,
       page_size: 50,
     });
     setArtifacts(response.data?.artifacts ?? []);
-  }, [loadedTaskDetailSource, loadedThreadId]);
+  }, [loadedTaskDetailSource, loadedThreadId, spaceID]);
 
-  useEffect(() => {
-    if (!taskDetailId) {
-      return;
-    }
-    let canceled = false;
-    const loadTaskDetail = async (showLoading = false) => {
-      if (showLoading) {
-        setLoading(true);
-        setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
-        setLoadedThreadId(taskDetailSource === 'thread' ? taskDetailId : '');
-      }
-      setError('');
-      try {
-        const detail = await fetchTaskDetail({
-          id: taskDetailId,
-          source: taskDetailSource,
-        });
-        if (!canceled) {
-          applyTaskDetail(detail);
-        }
-      } catch (err) {
-        if (!canceled) {
-          setError(err instanceof Error ? err.message : '加载任务详情失败');
-        }
-      } finally {
-        if (!canceled) {
-          setLoading(false);
-        }
-      }
-    };
-    void loadTaskDetail(true);
-    return () => {
-      canceled = true;
-    };
-  }, [applyTaskDetail, taskDetailId, taskDetailSource]);
-
-  useEffect(() => {
-    if (!taskDetailId || pollingVersion <= 0) {
-      return;
-    }
-
-    let canceled = false;
-    const timer = setTimeout(() => {
-      const refreshTaskDetail = async () => {
-        setError('');
-        try {
-          const detail = await fetchTaskDetail({
-            id: taskDetailId,
-            source: taskDetailSource,
-          });
-          if (!canceled) {
-            applyTaskDetail(detail);
-          }
-        } catch (err) {
-          if (!canceled) {
-            setError(err instanceof Error ? err.message : '加载任务详情失败');
-          }
-        }
-      };
-      void refreshTaskDetail();
-    }, TASK_DETAIL_POLLING_DELAY_MS);
-
-    return () => {
-      canceled = true;
-      clearTimeout(timer);
-    };
-  }, [applyTaskDetail, pollingVersion, taskDetailId, taskDetailSource]);
+  useLoadTaskDetailEffect({
+    applyTaskDetail,
+    setError,
+    setLoadedTaskDetailSource,
+    setLoadedThreadId,
+    setLoading,
+    spaceID,
+    taskDetailId,
+    taskDetailSource,
+  });
+  usePollTaskDetailEffect({
+    applyTaskDetail,
+    pollingVersion,
+    setError,
+    spaceID,
+    taskDetailId,
+    taskDetailSource,
+  });
 
   useTaskThreadRunEventStream({
     enabled: loadedTaskDetailSource === 'thread' && Boolean(loadedThreadId),
+    onThreadTitleUpdated: handleThreadTitleUpdated,
     setEvents,
     threadId: loadedThreadId,
   });
@@ -209,29 +388,46 @@ export const useTaskDetailData = ({
   };
 };
 
-export const useTaskDetailActions = ({
-  applyTaskDetail,
-  pendingHumanInteraction,
-  spaceID,
-  task,
-  taskDetailId,
-  taskDetailSource,
-}: {
+interface TaskDetailActionsOptions {
   applyTaskDetail: (detail: TaskDetail) => void;
+  artifacts: TaskThreadArtifact[];
+  events: TaskEvent[];
+  messages: TaskThreadMessage[];
   pendingHumanInteraction?: PendingHumanInteraction;
   spaceID?: string;
+  subagentRuns: TaskDetailSubagentRun[];
   task?: ChatTask;
   taskDetailId?: string;
   taskDetailSource: LoadedTaskDetailSource;
-}) => {
+  tokenUsage?: TaskDetailTokenUsage;
+  tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
+}
+
+export const useTaskDetailActions = ({
+  applyTaskDetail,
+  artifacts,
+  events,
+  messages,
+  pendingHumanInteraction,
+  spaceID,
+  subagentRuns,
+  task,
+  taskDetailId,
+  taskDetailSource,
+  tokenUsage,
+  tokenUsageByRunID,
+}: TaskDetailActionsOptions) => {
   const [followUpValue, setFollowUpValue] = useState('');
-  const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>('Auto');
+  const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>(
+    DEFAULT_WORKBENCH_MODE,
+  );
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [followUpError, setFollowUpError] = useState('');
   const [humanInteractionLoading, setHumanInteractionLoading] = useState(false);
   const [humanInteractionError, setHumanInteractionError] = useState('');
   const taskRunActions = useTaskRunActions({
     applyTaskDetail,
+    spaceID,
     task,
     taskDetailId,
     taskDetailSource,
@@ -252,17 +448,36 @@ export const useTaskDetailActions = ({
     setFollowUpLoading(true);
     setFollowUpError('');
     try {
-      await sendFollowUpMessage({
+      const followUpResult = await sendFollowUpMessage({
         activeTaskId,
         isCanonicalThreadDetail,
         payload,
         spaceId: spaceID,
         threadId: taskDetailId,
       });
+      const optimisticDetail = isCanonicalThreadDetail
+        ? buildOptimisticFollowUpDetail({
+            artifacts,
+            events,
+            followUpResult,
+            messages,
+            payload,
+            subagentRuns,
+            task,
+            threadId: taskDetailId,
+            tokenUsage,
+            tokenUsageByRunID,
+          })
+        : undefined;
+
+      if (optimisticDetail) {
+        applyTaskDetail(optimisticDetail);
+      }
 
       setFollowUpValue('');
       const detail = await fetchTaskDetail({
         id: taskDetailId,
+        spaceId: spaceID,
         source: taskDetailSource,
       });
       applyTaskDetail(detail);
@@ -301,6 +516,7 @@ export const useTaskDetailActions = ({
       });
       const detail = await fetchTaskDetail({
         id: taskDetailId,
+        spaceId: spaceID,
         source: taskDetailSource,
       });
       applyTaskDetail(detail);

@@ -18,6 +18,7 @@ import type { workbenchTask } from '@coze-studio/api-schema';
 
 import { TaskTopBar } from './task-top-bar';
 import { TaskExportAction } from './task-export-action';
+import { getTaskDisplayTitle } from './task-display-title';
 import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
@@ -53,6 +54,7 @@ export const TaskDetailHeader = ({
   tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => (
   <TaskTopBar
+    displayTitle={getTaskDisplayTitle({ artifacts, task })}
     exportAction={
       <TaskExportAction messages={messages} task={task} threadId={threadId} />
     }
@@ -64,6 +66,7 @@ export const TaskDetailHeader = ({
             <TaskArtifactsPanel
               artifacts={artifacts}
               onArtifactsChanged={onArtifactsChanged}
+              spaceId={spaceId}
               threadId={threadId}
             />
           }
