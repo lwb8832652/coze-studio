@@ -872,6 +872,7 @@ func (s *threadService) RecallMemories(ctx context.Context, req *RecallMemoriesR
 		ThreadID: req.ThreadID,
 		RunID:    req.RunID,
 		Scopes:   req.Scopes,
+		Query:    strings.TrimSpace(req.Query),
 		Limit:    limit,
 		Now:      time.Now().UnixMilli(),
 	})

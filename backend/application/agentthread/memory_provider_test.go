@@ -122,7 +122,13 @@ func TestThreadMemoryProviderAppliesContextAwareRetrievalConfig(t *testing.T) {
 	memories, err := provider.Recall(context.Background(), &RunSummary{
 		RunID:    20,
 		ThreadID: 10,
-		Input:    `{"messages":[{"role":"user","content":"review apac budget"}]}`,
+		Input: `{
+			"messages":[
+				{"role":"user","content":"review emea rollout"},
+				{"role":"assistant","content":"emea rollout summarized"},
+				{"role":"user","content":"review apac budget"}
+			]
+		}`,
 		Config: `{
 			"memory_retrieval":{
 				"limit":2,
@@ -136,6 +142,7 @@ func TestThreadMemoryProviderAppliesContextAwareRetrievalConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), domainSVC.recallMemoriesReq.ThreadID)
 	require.Equal(t, int64(20), domainSVC.recallMemoriesReq.RunID)
+	require.Equal(t, "review apac budget", domainSVC.recallMemoriesReq.Query)
 	require.Equal(t, int32(5), domainSVC.recallMemoriesReq.Limit)
 	require.Equal(t, []entity.MemoryScope{
 		entity.MemoryScopeLongTerm,

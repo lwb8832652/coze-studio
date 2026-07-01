@@ -681,6 +681,7 @@ type RecallMemoriesRequest struct {
 	ThreadID int64
 	RunID    int64
 	Scopes   []MemoryScope
+	Query    string
 	Limit    int32
 }
 

@@ -988,6 +988,7 @@ func TestRecallMemoriesNormalizesLimitAndUsesRunContext(t *testing.T) {
 	memories, total, err := svc.RecallMemories(context.Background(), &RecallMemoriesRequest{
 		ThreadID: 10,
 		RunID:    20,
+		Query:    "  memory  ",
 	})
 
 	require.NoError(t, err)
@@ -995,6 +996,7 @@ func TestRecallMemoriesNormalizesLimitAndUsesRunContext(t *testing.T) {
 	require.Len(t, memories, 2)
 	require.Equal(t, int64(10), repo.lastMemoryListReq.ThreadID)
 	require.Equal(t, int64(20), repo.lastMemoryListReq.RunID)
+	require.Equal(t, "memory", repo.lastMemoryListReq.Query)
 	require.Equal(t, int32(8), repo.lastMemoryListReq.Limit)
 	require.NotZero(t, repo.lastMemoryListReq.Now)
 }

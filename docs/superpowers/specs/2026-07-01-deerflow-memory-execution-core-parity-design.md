@@ -264,6 +264,36 @@ Residual follow-up:
   This avoids writing summary boilerplate as user memory; browser/API follow-up
   recall evidence still belongs to `P1-I-005`.
 
+### Slice 2.5: Follow-Up Recall Query
+
+Verified Coze follow-up behavior:
+
+- The canonical task-detail follow-up path appends the latest user message, then
+  creates a new run whose `input.messages` contains prior real user/assistant
+  turns plus the latest user message.
+- `ThreadMemoryProvider` extracts the last user message from `run.Input` and
+  uses it as the memory retrieval query.
+
+Implementation evidence:
+
+- `RecallMemoriesRequest` now carries `Query` from application service to
+  domain service.
+- `ThreadMemoryProvider` forwards the latest user query into
+  `ApplicationService.RecallMemories`.
+- `threadService.RecallMemories` trims and forwards the query into repository
+  `ListMemories`, so candidate recall is query-aware before Coze's local
+  relevance sorting.
+
+Verification:
+
+- `go test ./application/agentthread -run 'TestThreadMemoryProvider|TestADKMemoryMiddleware' -count=1`
+- `go test ./domain/agentthread/service -run 'TestRecallMemoriesNormalizesLimitAndUsesRunContext|TestManageMemoriesNormalizesAndDelegates' -count=1`
+
+Residual follow-up:
+
+- Browser/API evidence still needs to prove a real follow-up answer uses the
+  recalled memory and that memory update jobs remain hidden/safe.
+
 ### Slice 3: Execution Message Contract
 
 Expected behavior:

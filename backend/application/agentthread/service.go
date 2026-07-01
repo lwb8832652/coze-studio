@@ -764,6 +764,7 @@ func (s *ApplicationService) RecallMemories(ctx context.Context, req *RecallMemo
 		ThreadID: req.ThreadID,
 		RunID:    req.RunID,
 		Scopes:   scopes,
+		Query:    req.Query,
 		Limit:    req.Limit,
 	})
 	if err != nil {
