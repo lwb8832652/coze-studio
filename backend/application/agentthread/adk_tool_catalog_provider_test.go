@@ -257,7 +257,7 @@ func TestADKHumanInteractionToolProviderPreservesToolSetProviderDynamicTools(t *
 
 	require.NoError(t, err)
 	require.Equal(t, 1, base.resolveToolSetCalls)
-	require.Len(t, set.StaticTools, 3)
+	require.Len(t, set.StaticTools, 4)
 	require.Equal(t, []tool.BaseTool{dynamicTool}, set.DynamicTools)
 	names := make([]string, 0, len(set.StaticTools))
 	for _, item := range set.StaticTools {
@@ -268,6 +268,7 @@ func TestADKHumanInteractionToolProviderPreservesToolSetProviderDynamicTools(t *
 	require.ElementsMatch(t, []string{
 		"static_tool",
 		adkClarificationToolName,
+		adkDeerFlowClarificationToolName,
 		adkConfirmationToolName,
 	}, names)
 }

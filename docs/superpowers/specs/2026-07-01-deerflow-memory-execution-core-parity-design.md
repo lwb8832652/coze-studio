@@ -272,6 +272,44 @@ Observed gaps:
   `error_message` at 500 chars, so the model receives the same recovery
   instruction without losing Coze's bounded event decoding.
 
+2026-07-01 loop detection implementation note:
+
+- DeerFlow reference source:
+  `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py`.
+  DeerFlow counts repeated assistant tool-call sets, queues a warning at the
+  warn threshold, injects that warning as a final `HumanMessage` on the next
+  model call, and only clears tool calls at the hard threshold so the model can
+  produce a final answer from collected results.
+- `backend/application/agentthread/adk_semantic_loop.go` now defaults to the
+  DeerFlow thresholds (`3` warn, `5` hard) and uses Eino
+  `BeforeModelRewriteState` as the equivalent of DeerFlow `wrap_model_call`.
+  Warnings are injected as a `loop_warning` user message after prior tool
+  results, preserving tool-call pairing. At hard stop, Coze clones the ADK
+  state, clears the latest assistant `ToolCalls`, appends the DeerFlow
+  `[FORCED STOP]` text, and converts `finish_reason=tool_calls` to `stop`.
+- The existing `ADKSemanticLoopError` event path is retained for explicit
+  legacy `max_repeated_*` configuration and assistant-text loop detection, but
+  the default repeated-tool-call path now follows DeerFlow's user-visible
+  recovery behavior.
+
+2026-07-01 clarification implementation note:
+
+- DeerFlow reference source:
+  `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/tools/builtins/clarification_tool.py`
+  and
+  `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/clarification_middleware.py`.
+  DeerFlow exposes `ask_clarification(question, clarification_type, context,
+  options)`, intercepts that tool call before execution, formats a user-facing
+  prompt, and interrupts execution until the user responds.
+- Coze already has a production interrupt/resume contract through
+  `ask_user_clarification` and `request_human_confirmation`. To align with
+  DeerFlow prompts and model behavior without breaking existing Coze callers,
+  `backend/application/agentthread/adk_human_interaction.go` now also exposes
+  `ask_clarification`. It accepts DeerFlow's `clarification_type`, `context`,
+  string `options`, and stringified JSON `options`, maps them into the existing bounded
+  `coze.human_interaction.v1` prompt contract, and reuses the same Eino
+  `StatefulInterrupt` resume flow.
+
 ## First Implementation Slices
 
 ### Slice 1: Runtime Memory Injection

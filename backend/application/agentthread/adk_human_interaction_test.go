@@ -53,6 +53,49 @@ func TestADKClarificationToolInterruptsWithPrompt(t *testing.T) {
 	require.Equal(t, "last_7_days", prompt.Choices[0].ID)
 }
 
+func TestADKDeerFlowClarificationToolAcceptsReferenceArguments(t *testing.T) {
+	clarification, err := NewADKDeerFlowClarificationTool()
+	require.NoError(t, err)
+	info, err := clarification.Info(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, adkDeerFlowClarificationToolName, info.Name)
+
+	prompt, err := clarification.(*adkHumanInteractionTool).prompt(context.Background(), `{
+		"question":"Which environment should I deploy to?",
+		"clarification_type":"approach_choice",
+		"context":"I need the target environment before changing deployment settings.",
+		"options":["development","staging","production"]
+	}`)
+
+	require.NoError(t, err)
+	require.Equal(t, humanInteractionSchema, prompt.Schema)
+	require.Equal(t, HumanInteractionKindClarification, prompt.Kind)
+	require.Equal(t, adkDeerFlowClarificationToolName, prompt.ToolName)
+	require.Equal(t, "Which environment should I deploy to?", prompt.Question)
+	require.Equal(t, "I need the target environment before changing deployment settings.", prompt.Description)
+	require.True(t, prompt.Required)
+	require.False(t, prompt.AllowFreeText)
+	require.Len(t, prompt.Choices, 3)
+	require.Equal(t, "development", prompt.Choices[0].Value)
+	require.Equal(t, "staging", prompt.Choices[1].Label)
+}
+
+func TestADKDeerFlowClarificationToolAcceptsStringOptions(t *testing.T) {
+	clarification, err := NewADKDeerFlowClarificationTool()
+	require.NoError(t, err)
+
+	prompt, err := clarification.(*adkHumanInteractionTool).prompt(context.Background(), `{
+		"question":"Which environment should I deploy to?",
+		"clarification_type":"approach_choice",
+		"options":"[\"development\",\"production\"]"
+	}`)
+
+	require.NoError(t, err)
+	require.Len(t, prompt.Choices, 2)
+	require.Equal(t, "development", prompt.Choices[0].Label)
+	require.Equal(t, "production", prompt.Choices[1].Value)
+}
+
 func TestADKHumanInteractionResultFromClarificationResponse(t *testing.T) {
 	result, err := humanInteractionToolResultFromResponse(HumanInteractionResponse{
 		Schema:        humanInteractionResponseSchema,
@@ -116,7 +159,7 @@ func TestADKHumanInteractionToolProviderAppendsBuiltins(t *testing.T) {
 	tools, err := provider.ResolveTools(context.Background(), &RunSummary{RunID: 1})
 
 	require.NoError(t, err)
-	require.Len(t, tools, 3)
+	require.Len(t, tools, 4)
 	names := make([]string, 0, len(tools))
 	for _, item := range tools {
 		info, infoErr := item.Info(context.Background())
@@ -126,6 +169,7 @@ func TestADKHumanInteractionToolProviderAppendsBuiltins(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"existing_tool",
 		adkClarificationToolName,
+		adkDeerFlowClarificationToolName,
 		adkConfirmationToolName,
 	}, names)
 }

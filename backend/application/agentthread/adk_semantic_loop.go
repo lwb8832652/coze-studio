@@ -24,12 +24,21 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )
 
 const adkSemanticLoopMaxRepeatedLimit int64 = 20
+
+const (
+	adkSemanticLoopDefaultWarnRepeatedToolCalls = 3
+	adkSemanticLoopDefaultHardRepeatedToolCalls = 5
+
+	adkSemanticLoopWarningMessage  = "[LOOP DETECTED] You are repeating the same tool calls. Stop calling tools and produce your final answer now. If you cannot complete the task, summarize what you accomplished so far."
+	adkSemanticLoopHardStopMessage = "[FORCED STOP] Repeated tool calls exceeded the safety limit. Producing final answer with results collected so far."
+)
 
 type ADKSemanticLoopKind string
 
@@ -41,6 +50,8 @@ const (
 type ADKSemanticLoopConfig struct {
 	MaxRepeatedToolCalls         int
 	MaxRepeatedAssistantMessages int
+	WarnRepeatedToolCalls        int
+	HardRepeatedToolCalls        int
 }
 
 type ADKSemanticLoopError struct {
@@ -69,7 +80,10 @@ func (e *ADKSemanticLoopError) Error() string {
 
 type ADKSemanticLoopMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	config ADKSemanticLoopConfig
+	config          ADKSemanticLoopConfig
+	mu              sync.Mutex
+	pendingWarnings []string
+	warnedTools     map[string]struct{}
 }
 
 func NewADKSemanticLoopMiddleware(
@@ -78,7 +92,32 @@ func NewADKSemanticLoopMiddleware(
 	return &ADKSemanticLoopMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		config:                       config,
+		warnedTools:                  map[string]struct{}{},
 	}
+}
+
+func (m *ADKSemanticLoopMiddleware) BeforeModelRewriteState(
+	ctx context.Context,
+	state *adk.ChatModelAgentState,
+	_ *adk.ModelContext,
+) (context.Context, *adk.ChatModelAgentState, error) {
+	if m == nil || state == nil {
+		return ctx, state, nil
+	}
+	warnings := m.drainPendingWarnings()
+	if len(warnings) == 0 {
+		return ctx, state, nil
+	}
+
+	next := *state
+	next.Messages = cloneADKMessagesForProjection(state.Messages)
+	next.Messages = append(next.Messages, &schema.Message{
+		Role:    schema.User,
+		Name:    "loop_warning",
+		Content: strings.Join(deduplicateSemanticLoopWarnings(warnings), "\n\n"),
+	})
+
+	return ctx, &next, nil
 }
 
 func (m *ADKSemanticLoopMiddleware) AfterModelRewriteState(
@@ -89,18 +128,24 @@ func (m *ADKSemanticLoopMiddleware) AfterModelRewriteState(
 	if m == nil || state == nil {
 		return ctx, state, nil
 	}
-	if limit := m.config.MaxRepeatedToolCalls; limit > 0 {
-		signature, count, ok := adkConsecutiveSemanticLoopCount(
-			state.Messages,
-			ADKSemanticLoopKindToolCalls,
-		)
-		if ok && count > limit {
+	signature, count, hasToolLoop := adkConsecutiveSemanticLoopCount(
+		state.Messages,
+		ADKSemanticLoopKindToolCalls,
+	)
+	if hasToolLoop {
+		if limit := m.config.HardRepeatedToolCalls; limit > 0 && count >= limit {
+			return ctx, m.semanticLoopHardStopState(state), nil
+		}
+		if limit := m.config.MaxRepeatedToolCalls; limit > 0 && count > limit {
 			return ctx, state, &ADKSemanticLoopError{
 				Kind:      ADKSemanticLoopKindToolCalls,
 				Signature: signature,
 				Count:     count,
 				Limit:     limit,
 			}
+		}
+		if limit := m.config.WarnRepeatedToolCalls; limit > 0 && count >= limit {
+			m.queueToolWarning(signature)
 		}
 	}
 	if limit := m.config.MaxRepeatedAssistantMessages; limit > 0 {
@@ -124,7 +169,10 @@ func (m *ADKSemanticLoopMiddleware) AfterModelRewriteState(
 func adkSemanticLoopConfigFromRun(
 	run *RunSummary,
 ) (ADKSemanticLoopConfig, error) {
-	config := ADKSemanticLoopConfig{}
+	config := ADKSemanticLoopConfig{
+		WarnRepeatedToolCalls: adkSemanticLoopDefaultWarnRepeatedToolCalls,
+		HardRepeatedToolCalls: adkSemanticLoopDefaultHardRepeatedToolCalls,
+	}
 	if run == nil || strings.TrimSpace(run.Config) == "" {
 		return config, nil
 	}
@@ -158,6 +206,41 @@ func adkSemanticLoopConfigFromRun(
 	}
 	config.MaxRepeatedToolCalls = maxToolCalls
 	config.MaxRepeatedAssistantMessages = maxAssistantMessages
+	warnToolCalls, exists, err := adkSemanticLoopLimitFromConfigIfExists(
+		loopConfig,
+		"warn_repeated_tool_calls",
+		"warn_repeated_tool_calls",
+		"warnRepeatedToolCalls",
+		"warn_threshold",
+		"warnThreshold",
+	)
+	if err != nil {
+		return config, err
+	}
+	if exists {
+		config.WarnRepeatedToolCalls = warnToolCalls
+	}
+	hardToolCalls, exists, err := adkSemanticLoopLimitFromConfigIfExists(
+		loopConfig,
+		"hard_repeated_tool_calls",
+		"hard_repeated_tool_calls",
+		"hardRepeatedToolCalls",
+		"hard_limit",
+		"hardLimit",
+	)
+	if err != nil {
+		return config, err
+	}
+	if exists {
+		config.HardRepeatedToolCalls = hardToolCalls
+	}
+	if config.WarnRepeatedToolCalls > 0 &&
+		config.HardRepeatedToolCalls > 0 &&
+		config.WarnRepeatedToolCalls > config.HardRepeatedToolCalls {
+		return config, fmt.Errorf(
+			"semantic loop warn_repeated_tool_calls must be less than or equal to hard_repeated_tool_calls",
+		)
+	}
 
 	return config, nil
 }
@@ -167,22 +250,124 @@ func adkSemanticLoopLimitFromConfig(
 	name string,
 	keys ...string,
 ) (int, error) {
-	value, exists, err := firstConfigInt64AllowZero(payload, keys...)
+	value, exists, err := adkSemanticLoopLimitFromConfigIfExists(payload, name, keys...)
 	if err != nil {
-		return 0, fmt.Errorf("semantic loop %s is invalid: %w", name, err)
+		return 0, err
 	}
 	if !exists {
 		return 0, nil
 	}
+	return value, nil
+}
+
+func adkSemanticLoopLimitFromConfigIfExists(
+	payload map[string]any,
+	name string,
+	keys ...string,
+) (int, bool, error) {
+	value, exists, err := firstConfigInt64AllowZero(payload, keys...)
+	if err != nil {
+		return 0, false, fmt.Errorf("semantic loop %s is invalid: %w", name, err)
+	}
+	if !exists {
+		return 0, false, nil
+	}
 	if value > adkSemanticLoopMaxRepeatedLimit {
-		return 0, fmt.Errorf(
+		return 0, false, fmt.Errorf(
 			"semantic loop %s must be between 0 and %d",
 			name,
 			adkSemanticLoopMaxRepeatedLimit,
 		)
 	}
 
-	return int(value), nil
+	return int(value), true, nil
+}
+
+func (m *ADKSemanticLoopMiddleware) queueToolWarning(signature string) {
+	if strings.TrimSpace(signature) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warnedTools == nil {
+		m.warnedTools = map[string]struct{}{}
+	}
+	if _, ok := m.warnedTools[signature]; ok {
+		return
+	}
+	m.warnedTools[signature] = struct{}{}
+	m.pendingWarnings = append(m.pendingWarnings, adkSemanticLoopWarningMessage)
+	if len(m.pendingWarnings) > 4 {
+		m.pendingWarnings = m.pendingWarnings[len(m.pendingWarnings)-4:]
+	}
+}
+
+func (m *ADKSemanticLoopMiddleware) drainPendingWarnings() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.pendingWarnings) == 0 {
+		return nil
+	}
+	warnings := append([]string(nil), m.pendingWarnings...)
+	m.pendingWarnings = nil
+	return warnings
+}
+
+func (m *ADKSemanticLoopMiddleware) semanticLoopHardStopState(
+	state *adk.ChatModelAgentState,
+) *adk.ChatModelAgentState {
+	if state == nil || len(state.Messages) == 0 {
+		return state
+	}
+	next := *state
+	next.Messages = cloneADKMessagesForProjection(state.Messages)
+	last := next.Messages[len(next.Messages)-1]
+	if last == nil || last.Role != schema.Assistant || len(last.ToolCalls) == 0 {
+		return &next
+	}
+	last.ToolCalls = nil
+	last.Content = appendSemanticLoopText(last.Content, adkSemanticLoopHardStopMessage)
+	if last.ResponseMeta != nil {
+		meta := *last.ResponseMeta
+		if meta.FinishReason == "tool_calls" {
+			meta.FinishReason = "stop"
+		}
+		last.ResponseMeta = &meta
+	}
+	m.drainPendingWarnings()
+	return &next
+}
+
+func appendSemanticLoopText(content, addition string) string {
+	content = strings.TrimSpace(content)
+	addition = strings.TrimSpace(addition)
+	if content == "" {
+		return addition
+	}
+	if addition == "" {
+		return content
+	}
+	return content + "\n\n" + addition
+}
+
+func deduplicateSemanticLoopWarnings(warnings []string) []string {
+	if len(warnings) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(warnings))
+	deduped := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" {
+			continue
+		}
+		if _, ok := seen[warning]; ok {
+			continue
+		}
+		seen[warning] = struct{}{}
+		deduped = append(deduped, warning)
+	}
+	return deduped
 }
 
 func adkConsecutiveSemanticLoopCount(
