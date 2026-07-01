@@ -120,6 +120,8 @@ Screenshots:
   `screenshots/coze/P1-C-coze-csv-preview-7657556998191316992.png`
 - HTML/SVG download-only state:
   `screenshots/coze/P1-C-coze-html-svg-download-only-7657556998191316992.png`
+- PDF clean iframe mount after review release:
+  `screenshots/coze/P1-C-coze-pdf-preview-clean-7657556998191316992.png`
 
 Observed behavior:
 
@@ -141,6 +143,20 @@ Observed behavior:
   `产物安全扫描中，暂不能预览`, without exposing object URI, signed URL,
   scanner raw payload, provider payload, prompt, completion, or checkpoint
   bytes.
+- The existing artifact management panel was then opened through task `详情` ->
+  `产物 8`; it showed `扫描队列 8`, pending scan tags, and per-artifact
+  review actions. Clicking the single test PDF's `放行产物 p1c-fixture.pdf`
+  action changed that row to `clean` and removed the review actions for the PDF.
+- After release, clicking `预览 p1c-fixture.pdf` mounted
+  `iframe[data-testid="task-artifact-inline-preview-pdf"]` with title
+  `预览 p1c-fixture.pdf`, a signed HTTP preview URL, and no visible
+  `读取任务产物失败，请稍后重试` or `产物安全扫描中` message. Browser script
+  checks confirmed the iframe `src` did not contain object URI patterns such as
+  `s3://`, `tos://`, or `file_id`.
+- The screenshot records the management drawer iframe container after release.
+  It does not claim PDF page pixels rendered in the browser capture; the current
+  in-app browser screenshot still showed a blank iframe surface even though the
+  iframe was mounted with a signed preview URL.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
@@ -164,17 +180,16 @@ PDF parity note:
 - Unit evidence: `task-detail.test.tsx` now asserts PDF preview uses
   `iframe[data-testid="task-artifact-inline-preview-pdf"]` and does not call
   `window.open`.
-- The current fixture records PDF card placement, while the scan-pending safe
-  message is covered by service and task-detail component tests. Full browser
-  lifecycle evidence for scan-pending/review release remains under P1-C-005.
-  The clean-state iframe screenshot remains blocked until scan job processing
-  or review release marks a PDF artifact safe.
+- The current fixture records PDF card placement and clean iframe mounting after
+  review release, while the scan-pending safe message is covered by service and
+  task-detail component tests. Full browser lifecycle evidence for retry,
+  delete, restore, and visible PDF page pixels remains under P1-C-005.
 
 ## Remaining P1-C Gaps
 
-1. Capture the clean PDF right-side iframe preview screenshot after the scanner
-   or review flow releases a PDF artifact, plus copy/download affordance checks
-   where the UI exposes copy.
+1. Capture copy/download affordance checks where the UI exposes copy, and a
+   browser capture that proves PDF page pixels render rather than only iframe
+   mount state.
 2. Record bounded API summaries for artifact list, content, signed URL,
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
@@ -188,6 +203,7 @@ PDF parity note:
 ## Status
 
 P1-C is in progress. The automated coverage baseline, Go binary write support,
-one real MIME fixture task, scan-pending safe message mapping, and browser card
-evidence for the current PDF artifact are complete. API summaries, clean-PDF
-preview evidence, and remaining lifecycle browser evidence are still open.
+one real MIME fixture task, scan-pending safe message mapping, PDF review
+release, and browser iframe-mount evidence for the current PDF artifact are
+complete. API summaries, PDF pixel-render evidence, and remaining lifecycle
+browser evidence are still open.
