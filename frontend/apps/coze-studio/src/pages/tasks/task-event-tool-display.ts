@@ -141,6 +141,34 @@ const getToolPath = (parsed: Record<string, unknown> | undefined) => {
   );
 };
 
+const compactSafeToolDetail = (value?: string) => {
+  const safeValue = getSafeTaskToolDetail(value, '');
+
+  if (safeValue.length <= 80) {
+    return safeValue;
+  }
+
+  return `${safeValue.slice(0, 80)}...`;
+};
+
+const getWebSearchQuery = (parsed: Record<string, unknown> | undefined) => {
+  const args = getObject(parsed, 'args') ?? getObject(parsed, 'arguments');
+  const query =
+    getFirstString(parsed, ['query', 'search_query', 'q']) ??
+    getFirstString(args, ['query', 'search_query', 'q']);
+
+  return compactSafeToolDetail(query);
+};
+
+const getWebSearchTitle = (
+  parsed: Record<string, unknown> | undefined,
+  fallback = '搜索网页',
+) => {
+  const query = getWebSearchQuery(parsed);
+
+  return query ? `搜索网页：“${query}”` : fallback;
+};
+
 const getSkillToolName = (parsed: Record<string, unknown> | undefined) =>
   getSafeTaskToolDetail(getFirstString(parsed, ['skill_name', 'skill']), '');
 
@@ -163,6 +191,10 @@ const getToolCompletedTitle = ({
 
   if (toolName === 'present_files') {
     return '展示文件';
+  }
+
+  if (toolName === 'web_search') {
+    return getWebSearchTitle(parsed);
   }
 
   if (toolName === 'skill') {
@@ -225,6 +257,18 @@ export const getTaskToolEventDisplay = ({
         ...baseDisplay,
         title: skillName ? `加载 “${skillName}” 技能` : '加载技能',
         detail: getSafeTaskToolDetail(detail, ''),
+        status: 'running',
+      };
+    }
+
+    if (toolName === 'web_search') {
+      return {
+        ...baseDisplay,
+        title: title ?? getWebSearchTitle(parsed, '搜索网页'),
+        detail: getSafeTaskToolDetail(
+          detail,
+          argumentsPresent ? '参数已准备' : '',
+        ),
         status: 'running',
       };
     }

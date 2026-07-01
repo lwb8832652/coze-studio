@@ -31,6 +31,9 @@ const mockUseSearchParams = vi.hoisted(() =>
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCreateTaskThread = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
+const mockListKnowledgeResources = vi.hoisted(() => vi.fn());
+const mockListDatabaseResources = vi.hoisted(() => vi.fn());
+const mockListWorkflowResources = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
 const mockListMCPToolRegistryEntries = vi.hoisted(() => vi.fn());
 
@@ -43,6 +46,9 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../service', () => ({
   createTaskThread: mockCreateTaskThread,
   getWorkbenchLLMModels: mockGetTypeList,
+  listWorkbenchDatabaseResources: mockListDatabaseResources,
+  listWorkbenchKnowledgeResources: mockListKnowledgeResources,
+  listWorkbenchWorkflowResources: mockListWorkflowResources,
 }));
 
 vi.mock('../../skill/service', () => ({
@@ -182,10 +188,12 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
 import WorkbenchPage, { mapModeToChatMode } from '../index';
+import { WorkbenchComposer } from '../components/workbench-composer';
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
   createWorkbenchRunConfig,
+  DEFAULT_WORKBENCH_MODE,
 } from '../components/types';
 
 const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
@@ -255,6 +263,69 @@ const getSendButton = (container: HTMLElement) => {
   return sendButton!;
 };
 
+const createDOMRectMock = ({
+  height,
+  left,
+  top,
+  width,
+}: {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+}) =>
+  ({
+    bottom: top + height,
+    height,
+    left,
+    right: left + width,
+    toJSON: () => ({}),
+    top,
+    width,
+    x: left,
+    y: top,
+  }) as DOMRect;
+
+const installWorkbenchAtAnchorRectMock = ({
+  anchorLeft = 264,
+  composerLeft = 100,
+  composerWidth = 920,
+}: {
+  anchorLeft?: number;
+  composerLeft?: number;
+  composerWidth?: number;
+} = {}) => {
+  const originalGetBoundingClientRect =
+    HTMLElement.prototype.getBoundingClientRect;
+
+  HTMLElement.prototype.getBoundingClientRect =
+    function getBoundingClientRect() {
+      if (this.classList.contains('chat-workbench-composer')) {
+        return createDOMRectMock({
+          height: 180,
+          left: composerLeft,
+          top: 120,
+          width: composerWidth,
+        });
+      }
+
+      if (this.classList.contains('chat-workbench-at-prefix')) {
+        return createDOMRectMock({
+          height: 20,
+          left: anchorLeft,
+          top: 152,
+          width: 8,
+        });
+      }
+
+      return originalGetBoundingClientRect.call(this);
+    };
+
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+  };
+};
+
 describe('WorkbenchPage', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -263,6 +334,30 @@ describe('WorkbenchPage', () => {
     mockNavigate.mockReset();
     mockCreateTaskThread.mockReset();
     mockGetTypeList.mockReset();
+    mockListKnowledgeResources.mockReset();
+    mockListKnowledgeResources.mockResolvedValue([
+      {
+        id: 'kb-101',
+        name: 'Product Knowledge',
+        description: 'Product docs',
+      },
+    ]);
+    mockListDatabaseResources.mockReset();
+    mockListDatabaseResources.mockResolvedValue([
+      {
+        id: 'db-101',
+        name: 'Orders Database',
+        description: 'Order records',
+      },
+    ]);
+    mockListWorkflowResources.mockReset();
+    mockListWorkflowResources.mockResolvedValue([
+      {
+        id: 'workflow-101',
+        name: 'Issue Triage Workflow',
+        description: 'Triage incoming issues',
+      },
+    ]);
     mockListSkills.mockReset();
     mockListSkills.mockResolvedValue({
       data: {
@@ -498,8 +593,14 @@ describe('WorkbenchPage', () => {
 
     expect(container.textContent).toContain('选择资源类型');
     expect(container.textContent).toContain('技能');
+    expect(container.textContent).toContain('知识库');
+    expect(container.textContent).toContain('数据库');
+    expect(container.textContent).toContain('工作流');
+    expect(container.textContent).toContain('插件');
     expect(container.textContent).toContain('代码仓库');
-    expect(container.textContent).toContain('空间文档库');
+    expect(container.textContent).not.toContain('仓库分支');
+    expect(container.textContent).not.toContain('代码文件夹');
+    expect(container.textContent).not.toContain('空间文档库');
     expect(container.textContent).toContain('Esc 退出');
 
     const extensionButton = Array.from(
@@ -534,6 +635,328 @@ describe('WorkbenchPage', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/skill');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders Coze @ references as inline resource tokens in the DeerFlow composer', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const restoreRects = installWorkbenchAtAnchorRectMock();
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      Simulate.change(textarea, { target: { value: '请参考@' } });
+      await Promise.resolve();
+    });
+
+    const resourceInline = container.querySelector('.chat-workbench-at-inline');
+    expect(resourceInline?.textContent).toContain('@');
+    expect(container.textContent).toContain('选择资源类型');
+    expect(container.textContent).toContain('请参考');
+    const atMenu = container.querySelector(
+      '.chat-workbench-at-menu',
+    ) as HTMLElement;
+    expect(atMenu?.dataset.placement).toBe('bottom');
+    expect(atMenu?.style.left).toBe('164px');
+    expect(atMenu?.style.top).toBe('56px');
+
+    const resourceSearch = container.querySelector(
+      'input[aria-label="@资源搜索"]',
+    ) as HTMLInputElement;
+    expect(resourceSearch?.placeholder).toBe('选择资源类型');
+    await act(async () => {
+      Simulate.change(resourceSearch, { target: { value: '技能' } });
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('技能');
+    expect(container.textContent).not.toContain('代码仓库');
+
+    const skillResourceButton = Array.from(
+      container.querySelectorAll('.chat-workbench-at-menu-list button'),
+    ).find(button => button.textContent?.includes('技能')) as HTMLButtonElement;
+    await act(async () => {
+      skillResourceButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const skillInline = container.querySelector('.chat-workbench-at-inline');
+    expect(skillInline?.textContent).toContain('@技能：');
+
+    const skillSearch = container.querySelector(
+      'input[aria-label="@技能搜索"]',
+    ) as HTMLInputElement;
+    expect(skillSearch?.placeholder).toBe('请输入搜索技能');
+    await act(async () => {
+      Simulate.change(skillSearch, { target: { value: 'Research' } });
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Research Skill');
+
+    const skillButton = Array.from(
+      container.querySelectorAll('.chat-workbench-at-menu-list button'),
+    ).find(button =>
+      button.textContent?.includes('Research Skill'),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      skillButton.click();
+      await Promise.resolve();
+    });
+
+    const referenceChip = container.querySelector(
+      '.chat-workbench-at-resource-chip',
+    );
+    expect(referenceChip?.textContent).toContain('✦');
+    expect(referenceChip?.textContent).toContain('Research Skill');
+    expect(referenceChip?.textContent).not.toContain('@');
+    expect(referenceChip?.textContent).not.toContain('技能：');
+    expect(container.querySelector('.chat-workbench-at-inline')).toBeNull();
+    expect(container.querySelector('.chat-workbench-at-menu')).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+
+    await act(async () => {
+      Simulate.change(textarea, { target: { value: '继续处理@' } });
+      await Promise.resolve();
+    });
+    const secondSkillResourceButton = Array.from(
+      container.querySelectorAll('.chat-workbench-at-menu-list button'),
+    ).find(button => button.textContent?.includes('技能')) as HTMLButtonElement;
+    await act(async () => {
+      secondSkillResourceButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const secondSkillSearch = container.querySelector(
+      'input[aria-label="@技能搜索"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      Simulate.change(secondSkillSearch, { target: { value: 'Research' } });
+      await Promise.resolve();
+    });
+    const secondSkillButton = Array.from(
+      container.querySelectorAll('.chat-workbench-at-menu-list button'),
+    ).find(button =>
+      button.textContent?.includes('Research Skill'),
+    ) as HTMLButtonElement;
+    act(() => {
+      secondSkillButton.click();
+    });
+
+    const referenceChips = container.querySelectorAll(
+      '.chat-workbench-at-resource-chip',
+    );
+    expect(referenceChips).toHaveLength(2);
+    expect(container.textContent).toContain('继续处理');
+
+    await act(async () => {
+      Simulate.keyDown(textarea, { key: 'Backspace' });
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelectorAll('.chat-workbench-at-resource-chip'),
+    ).toHaveLength(1);
+    expect(container.textContent).toContain('请参考');
+    expect(container.textContent).toContain('继续处理');
+    expect(document.activeElement).toBe(textarea);
+
+    act(() => {
+      root?.unmount();
+    });
+    restoreRects();
+    container.remove();
+  });
+
+  it('anchors the Coze @ resource menu above the inline marker in the detail composer', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const restoreRects = installWorkbenchAtAnchorRectMock();
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <WorkbenchComposer
+          value=""
+          mode={DEFAULT_WORKBENCH_MODE}
+          loading={false}
+          variant="detail"
+          presentation="deerflow"
+          spaceId="space-1"
+          onValueChange={vi.fn()}
+          onModeChange={vi.fn()}
+          onSubmit={vi.fn()}
+        />,
+      );
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      Simulate.change(textarea, { target: { value: '@' } });
+      await Promise.resolve();
+    });
+
+    const atMenu = container.querySelector(
+      '.chat-workbench-at-menu',
+    ) as HTMLElement;
+    expect(atMenu?.dataset.placement).toBe('top');
+    expect(atMenu?.style.left).toBe('164px');
+    expect(atMenu?.style.bottom).toBe('152px');
+
+    act(() => {
+      root?.unmount();
+    });
+    restoreRects();
+    container.remove();
+  });
+
+  it('opens the Coze @ resource reference flow when typing @ in the composer', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      Simulate.change(textarea, { target: { value: '@' } });
+      await Promise.resolve();
+    });
+
+    expect(textarea.value).toBe('');
+    expect(container.textContent).toContain('@');
+    expect(container.textContent).toContain('选择资源类型');
+    expect(
+      container.querySelector('input[aria-label="@资源搜索"]'),
+    ).toBeTruthy();
+
+    await act(async () => {
+      Simulate.keyDown(
+        container.querySelector(
+          'input[aria-label="@资源搜索"]',
+        ) as HTMLInputElement,
+        {
+          key: 'Backspace',
+        },
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.chat-workbench-at-inline')).toBeNull();
+    expect(container.querySelector('.chat-workbench-at-menu')).toBeNull();
+    expect(textarea.value).toBe('');
+    expect(document.activeElement).toBe(textarea);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('supports keyboard navigation in the Coze @ resource menu', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const keyDown = (element: Element, key: string) => {
+      element.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key,
+        }),
+      );
+    };
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    await act(async () => {
+      Simulate.change(textarea, { target: { value: '@' } });
+      await Promise.resolve();
+    });
+
+    const resourceSearch = container.querySelector(
+      'input[aria-label="@资源搜索"]',
+    ) as HTMLInputElement;
+    const resourceButtons = () =>
+      Array.from(
+        container.querySelectorAll('.chat-workbench-at-menu-list button'),
+      ) as HTMLButtonElement[];
+
+    expect(resourceButtons()[0]?.dataset.active).toBe('true');
+    expect(resourceButtons()[0]?.textContent).toContain('技能');
+
+    await act(async () => {
+      keyDown(resourceSearch, 'ArrowDown');
+      await Promise.resolve();
+    });
+
+    expect(resourceButtons()[1]?.dataset.active).toBe('true');
+    expect(resourceButtons()[1]?.textContent).toContain('知识库');
+
+    await act(async () => {
+      keyDown(resourceSearch, 'ArrowUp');
+      await Promise.resolve();
+    });
+
+    expect(resourceButtons()[0]?.dataset.active).toBe('true');
+    expect(resourceButtons()[0]?.textContent).toContain('技能');
+
+    await act(async () => {
+      keyDown(resourceSearch, 'ArrowDown');
+      await Promise.resolve();
+    });
+
+    expect(resourceButtons()[1]?.dataset.active).toBe('true');
+    expect(resourceButtons()[1]?.textContent).toContain('知识库');
+
+    await act(async () => {
+      keyDown(resourceSearch, 'Enter');
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('@知识库：');
+    expect(
+      container.querySelector('input[aria-label="@知识库搜索"]'),
+    ).toBeTruthy();
+
+    await act(async () => {
+      keyDown(
+        container.querySelector(
+          'input[aria-label="@知识库搜索"]',
+        ) as HTMLInputElement,
+        'Escape',
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.chat-workbench-at-inline')).toBeNull();
+    expect(container.querySelector('.chat-workbench-at-menu')).toBeNull();
+    expect(document.activeElement).toBe(textarea);
 
     act(() => {
       root?.unmount();
@@ -920,7 +1343,11 @@ describe('WorkbenchPage', () => {
         min_confidence: 0.2,
       },
       web_tools: {
-        enabled: false,
+        enabled: true,
+        search: {
+          enabled: true,
+          max_results: 5,
+        },
       },
       token_usage: {
         enabled: true,
@@ -940,6 +1367,82 @@ describe('WorkbenchPage', () => {
       Object.prototype.hasOwnProperty.call(defaultRunConfig, 'enable_skills'),
     ).toBe(false);
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('submits the task when pressing Enter in the composer input', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockCreateTaskThread.mockResolvedValue(
+      buildCreateTaskThreadResponse('thread-enter-submit', '回车发送任务'),
+    );
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '回车发送任务' },
+      } as unknown as Event);
+    });
+
+    await act(async () => {
+      Simulate.keyDown(textarea, {
+        key: 'Enter',
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>);
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '回车发送任务',
+      config: expect.any(String),
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/tasks/thread-enter-submit',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('does not submit the task when pressing Shift Enter in the composer input', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '保留多行输入' },
+      } as unknown as Event);
+      Simulate.keyDown(textarea, {
+        key: 'Enter',
+        shiftKey: true,
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>);
+    });
+
+    expect(mockCreateTaskThread).not.toHaveBeenCalled();
 
     act(() => {
       root?.unmount();
@@ -1415,8 +1918,8 @@ describe('WorkbenchPage', () => {
     });
 
     const skillTypeButton = Array.from(
-      container.querySelectorAll('button'),
-    ).find(button => button.textContent?.trim() === '01技能›') as
+      container.querySelectorAll('.chat-workbench-at-menu-list button'),
+    ).find(button => button.textContent?.includes('技能')) as
       | HTMLButtonElement
       | undefined;
     expect(skillTypeButton).toBeTruthy();
@@ -1589,10 +2092,14 @@ describe('WorkbenchPage', () => {
     );
     expect(runtimeSettings).toMatchObject({
       web_tools: {
-        enabled: false,
+        enabled: true,
         http: {
           enabled: false,
           allowed_hosts: [],
+        },
+        search: {
+          enabled: true,
+          max_results: 5,
         },
       },
       token_usage: {
@@ -1733,12 +2240,16 @@ describe('WorkbenchPage', () => {
     );
     expect(runtimeSettings).toMatchObject({
       web_tools: {
-        enabled: false,
+        enabled: true,
         http: {
           enabled: false,
           allowed_hosts: [],
           timeout_ms: 10000,
           max_response_bytes: 262144,
+        },
+        search: {
+          enabled: true,
+          max_results: 5,
         },
       },
     });

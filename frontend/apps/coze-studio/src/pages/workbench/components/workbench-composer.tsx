@@ -17,9 +17,12 @@
 /* eslint-disable max-lines -- P0 composer container, split in phase 2. */
 
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
   type KeyboardEvent,
   type SetStateAction,
@@ -34,7 +37,19 @@ import {
   WorkbenchComposerToolbar,
   type WorkbenchComposerPresentation,
 } from './workbench-composer-controls';
-import { AtMenu } from './workbench-composer-at-menu';
+import {
+  addDatabaseSelection,
+  addKnowledgeSelection,
+  addSkillSelection,
+  AtMenu,
+  removeDatabaseSelection,
+  removeKnowledgeSelection,
+  removeSkillSelection,
+  type WorkbenchAtDraft,
+  type WorkbenchAtReference,
+  type WorkbenchAtResourceType,
+  type WorkbenchAtSegment,
+} from './workbench-composer-at-menu';
 import {
   createWorkbenchSubmitPayload,
   createDefaultWorkbenchResourceSelection,
@@ -60,6 +75,8 @@ type WorkbenchComposerActiveOverlay =
 const MAX_SLASH_SKILL_SUGGESTIONS = 6;
 const EXTENSION_USAGE_STORAGE_VERSION = 1;
 const EXTENSION_USAGE_STORAGE_PREFIX = 'coze-workbench-extension-usage';
+const WORKBENCH_AT_MENU_WIDTH = 300;
+const WORKBENCH_AT_MENU_GAP = 4;
 
 interface StoredWorkbenchExtensionUsage {
   version: typeof EXTENSION_USAGE_STORAGE_VERSION;
@@ -515,6 +532,83 @@ const createSubmitHandler = ({
   );
 };
 
+const createWorkbenchAtSegmentId = () =>
+  `at-segment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const createTextSegment = (text: string): WorkbenchAtSegment | undefined =>
+  text
+    ? {
+        id: createWorkbenchAtSegmentId(),
+        text,
+        type: 'text',
+      }
+    : undefined;
+
+const createReferenceSegment = (
+  reference: WorkbenchAtReference,
+): WorkbenchAtSegment => ({
+  id: createWorkbenchAtSegmentId(),
+  reference,
+  type: 'reference',
+});
+
+const createWorkbenchComposerMessage = (
+  segments: WorkbenchAtSegment[],
+  value: string,
+) =>
+  `${segments
+    .map(segment => (segment.type === 'text' ? segment.text : ''))
+    .join('')}${value}`;
+
+const hasReferenceSegment = (
+  segments: WorkbenchAtSegment[],
+  reference: WorkbenchAtReference,
+) =>
+  segments.some(
+    segment =>
+      segment.type === 'reference' &&
+      segment.reference.resourceType === reference.resourceType &&
+      segment.reference.id === reference.id,
+  );
+
+const addReferenceSelection = (
+  selection: WorkbenchResourceSelection,
+  reference: WorkbenchAtReference,
+) => {
+  if (reference.resourceType === '技能') {
+    return addSkillSelection(selection, reference.id);
+  }
+
+  if (reference.resourceType === '知识库') {
+    return addKnowledgeSelection(selection, reference.id);
+  }
+
+  if (reference.resourceType === '数据库') {
+    return addDatabaseSelection(selection, reference.id);
+  }
+
+  return selection;
+};
+
+const removeReferenceSelection = (
+  selection: WorkbenchResourceSelection,
+  reference: WorkbenchAtReference,
+) => {
+  if (reference.resourceType === '技能') {
+    return removeSkillSelection(selection, reference.id);
+  }
+
+  if (reference.resourceType === '知识库') {
+    return removeKnowledgeSelection(selection, reference.id);
+  }
+
+  if (reference.resourceType === '数据库') {
+    return removeDatabaseSelection(selection, reference.id);
+  }
+
+  return selection;
+};
+
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps overlay and submit orchestration together.
 export const WorkbenchComposer = ({
   value,
@@ -535,6 +629,11 @@ export const WorkbenchComposer = ({
 }: WorkbenchComposerProps) => {
   const [activeOverlay, setActiveOverlay] =
     useState<WorkbenchComposerActiveOverlay>(null);
+  const [atDraft, setAtDraft] = useState<WorkbenchAtDraft | null>(null);
+  const [atMenuAnchorPosition, setAtMenuAnchorPosition] =
+    useState<CSSProperties>();
+  const [atSegments, setAtSegments] = useState<WorkbenchAtSegment[]>([]);
+  const composerRef = useRef<HTMLElement>(null);
   const [resourceSelection, setResourceSelection] = useState(
     () =>
       readStoredExtensionUsage(spaceId)?.resourceSelection ??
@@ -543,7 +642,8 @@ export const WorkbenchComposer = ({
   const [runtimeSettings, setRuntimeSettings] = useState(() =>
     createRuntimeSettingsFromStoredUsage(readStoredExtensionUsage(spaceId)),
   );
-  const canSend = Boolean(value.trim()) && !loading;
+  const composerMessage = createWorkbenchComposerMessage(atSegments, value);
+  const canSend = Boolean(composerMessage.trim()) && !loading;
   const overlayPlacement = variant === 'detail' ? 'top' : 'bottom';
   const atMenuOpen = activeOverlay === 'at';
   const extensionsOpen = activeOverlay === 'extensions';
@@ -602,13 +702,169 @@ export const WorkbenchComposer = ({
     spaceId,
   ]);
 
-  const handleValueChange = (nextValue: string) => {
-    onValueChange(nextValue);
-    if (nextValue.endsWith('@')) {
-      setActiveOverlay('at');
-    } else if (activeOverlay === 'at') {
-      setActiveOverlay(null);
+  const commitCurrentText = (text: string) => {
+    const textSegment = createTextSegment(text);
+
+    if (textSegment) {
+      setAtSegments(prevSegments => [...prevSegments, textSegment]);
     }
+  };
+
+  const startAtResourceSelection = (textBeforeAt = value) => {
+    commitCurrentText(textBeforeAt);
+    onValueChange('');
+    setAtMenuAnchorPosition(undefined);
+    setAtDraft({ stage: 'resource-type', query: '' });
+    setActiveOverlay('at');
+  };
+
+  const closeAtResourceSelection = () => {
+    setAtMenuAnchorPosition(undefined);
+    setAtDraft(null);
+    setActiveOverlay(null);
+  };
+
+  const handleAtAnchorRectChange = useCallback(
+    (anchorRect: DOMRect) => {
+      const composerRect = composerRef.current?.getBoundingClientRect();
+
+      if (!composerRect) {
+        return;
+      }
+
+      const rawAnchorLeft = anchorRect.left - composerRect.left;
+      const rawAnchorTop = anchorRect.top - composerRect.top;
+      const rawAnchorBottom = anchorRect.bottom - composerRect.top;
+      const maxAnchorLeft = Math.max(
+        0,
+        composerRect.width - WORKBENCH_AT_MENU_WIDTH,
+      );
+      const nextAnchorLeft = Math.min(
+        Math.max(0, rawAnchorLeft),
+        maxAnchorLeft,
+      );
+
+      setAtMenuAnchorPosition({
+        left: nextAnchorLeft,
+        ...(overlayPlacement === 'top'
+          ? {
+              bottom:
+                composerRect.height - rawAnchorTop + WORKBENCH_AT_MENU_GAP,
+            }
+          : {
+              top: rawAnchorBottom + WORKBENCH_AT_MENU_GAP,
+            }),
+      });
+    },
+    [overlayPlacement],
+  );
+
+  const handleAtDraftQueryChange = (query: string) => {
+    setAtDraft(prevDraft => (prevDraft ? { ...prevDraft, query } : prevDraft));
+  };
+
+  const handleAtResourceTypeSelect = (
+    resourceType: WorkbenchAtResourceType,
+  ) => {
+    setAtDraft({
+      stage: 'resource-search',
+      resourceType,
+      query: '',
+    });
+    setActiveOverlay('at');
+  };
+
+  const handleAtReferenceSelect = (reference: WorkbenchAtReference) => {
+    setResourceSelection(prevSelection =>
+      addReferenceSelection(prevSelection, reference),
+    );
+    setAtSegments(prevSegments => [
+      ...prevSegments,
+      createReferenceSegment(reference),
+    ]);
+    setAtDraft(null);
+  };
+
+  const handleAtSegmentRemove = (segment: WorkbenchAtSegment) => {
+    if (segment.type !== 'reference') {
+      return;
+    }
+
+    setAtSegments(prevSegments => {
+      const nextSegments = prevSegments.filter(item => item.id !== segment.id);
+
+      if (!hasReferenceSegment(nextSegments, segment.reference)) {
+        setResourceSelection(prevSelection =>
+          removeReferenceSelection(prevSelection, segment.reference),
+        );
+      }
+
+      return nextSegments;
+    });
+  };
+
+  const handleLastAtSegmentRemove = () => {
+    setAtSegments(prevSegments => {
+      const lastSegment = prevSegments[prevSegments.length - 1];
+
+      if (!lastSegment) {
+        return prevSegments;
+      }
+
+      const nextSegments = prevSegments.slice(0, -1);
+
+      if (lastSegment.type === 'reference') {
+        if (!hasReferenceSegment(nextSegments, lastSegment.reference)) {
+          setResourceSelection(prevSelection =>
+            removeReferenceSelection(prevSelection, lastSegment.reference),
+          );
+        }
+
+        return nextSegments;
+      }
+
+      onValueChange(lastSegment.text);
+
+      return nextSegments;
+    });
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === 'Backspace' &&
+      !value &&
+      !atDraft &&
+      atSegments.length > 0
+    ) {
+      event.preventDefault();
+      handleLastAtSegmentRemove();
+
+      return;
+    }
+
+    handleSkillSuggestionKeyDown(event);
+
+    if (
+      event.defaultPrevented ||
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    handleSubmit();
+  };
+
+  const handleValueChange = (nextValue: string) => {
+    if (nextValue.endsWith('@')) {
+      startAtResourceSelection(nextValue.slice(0, -1));
+
+      return;
+    }
+
+    onValueChange(nextValue);
   };
 
   const handleSubmit = () => {
@@ -624,13 +880,14 @@ export const WorkbenchComposer = ({
       stopLoading,
       stopMode,
       taskId,
-      value,
+      value: composerMessage,
     });
   };
 
   return (
     <>
       <section
+        ref={composerRef}
         className="chat-workbench-composer"
         data-variant={variant}
         data-composer-style={presentation}
@@ -638,14 +895,22 @@ export const WorkbenchComposer = ({
       >
         {atMenuOpen ? (
           <AtMenu
+            anchorPosition={atMenuAnchorPosition}
+            draft={atDraft ?? { stage: 'resource-type', query: '' }}
             placement={overlayPlacement}
             spaceId={spaceId}
             value={resourceSelection}
-            onClose={() => setActiveOverlay(null)}
-            onChange={setResourceSelection}
+            onClose={closeAtResourceSelection}
+            onBackToResourceTypes={() =>
+              setAtDraft({ stage: 'resource-type', query: '' })
+            }
+            onReferenceSelect={handleAtReferenceSelect}
+            onResourceTypeSelect={handleAtResourceTypeSelect}
           />
         ) : null}
         <WorkbenchComposerBody
+          atDraft={atDraft}
+          atSegments={atSegments}
           value={value}
           mode={mode}
           presentation={presentation}
@@ -656,7 +921,11 @@ export const WorkbenchComposer = ({
           onChange={handleValueChange}
           onSkillSuggestionApply={handleSkillSuggestionApply}
           onSkillSuggestionIndexChange={setSkillSuggestionIndex}
-          onSkillSuggestionKeyDown={handleSkillSuggestionKeyDown}
+          onSkillSuggestionKeyDown={handleComposerKeyDown}
+          onAtAnchorRectChange={handleAtAnchorRectChange}
+          onAtDraftCancel={closeAtResourceSelection}
+          onAtDraftQueryChange={handleAtDraftQueryChange}
+          onAtSegmentRemove={handleAtSegmentRemove}
           onTextareaBlur={() => setTextareaFocused(false)}
           onTextareaFocus={() => setTextareaFocused(true)}
         />
@@ -681,7 +950,9 @@ export const WorkbenchComposer = ({
           stopMode={stopMode}
           failoverCandidateCount={failoverCandidateCount}
           spaceId={spaceId}
-          onAtMenuOpenChange={open => setActiveOverlay(open ? 'at' : null)}
+          onAtMenuOpenChange={open =>
+            open ? startAtResourceSelection(value) : closeAtResourceSelection()
+          }
           onExtensionsOpenChange={open =>
             setActiveOverlay(open ? 'extensions' : null)
           }

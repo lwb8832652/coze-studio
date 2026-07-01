@@ -2051,6 +2051,39 @@ func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T
 	require.NotContains(t, payload, "media")
 }
 
+func TestTaskThreadRunEventPayloadKeepsSafeWebSearchQuery(t *testing.T) {
+	arguments := `{"query":"青岛最佳旅游时间","max_results":5,"url":"https://private.example/signed","api_key":"sk-secret"}`
+	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+		"role":"assistant",
+		"content":"final text should not be exposed through event payload",
+		"tool_calls":[{
+			"id":"call_web_search",
+			"type":"function",
+			"function":{
+				"name":"web_search",
+				"arguments":`+strconv.Quote(arguments)+`
+			}
+		}]
+	}`)
+
+	require.JSONEq(t, `{
+		"redacted":true,
+		"role":"assistant",
+		"tool_calls":[{
+			"id":"call_web_search",
+			"type":"function",
+			"function":{
+				"name":"web_search",
+				"arguments":"{\"query\":\"青岛最佳旅游时间\"}"
+			}
+		}]
+	}`, payload)
+	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "private.example")
+	require.NotContains(t, payload, "sk-secret")
+	require.NotContains(t, payload, "max_results")
+}
+
 func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
 	arguments := `{"skill":"skill-creator","url":"https://private.example/signed","api_key":"sk-secret"}`
 	payload := taskThreadRunEventPayloadToAPI("message.completed", `{

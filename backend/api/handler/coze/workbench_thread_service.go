@@ -1729,6 +1729,12 @@ func safeRunEventToolArguments(toolName string, values ...any) map[string]any {
 			}
 		}
 
+		if toolName == "web_search" {
+			if query, ok := safeRunEventDisplayString(arguments["query"]); ok {
+				safeArguments["query"] = query
+			}
+		}
+
 		if description, ok := safeRunEventDisplayString(arguments["description"]); ok {
 			safeArguments["description"] = description
 		}

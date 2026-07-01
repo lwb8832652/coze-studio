@@ -15,9 +15,20 @@
  */
 
 import { workbench, workbenchTask } from '@coze-studio/api-schema';
-import { DeveloperApi } from '@coze-arch/bot-api';
+import {
+  DeveloperApi,
+  KnowledgeApi,
+  MemoryApi,
+  workflowApi,
+} from '@coze-arch/bot-api';
 
 import { type WorkbenchLLMModel } from './components/types';
+
+export interface WorkbenchReferenceResource {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 export const createTaskThread = workbenchTask.CreateTaskThread;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
@@ -37,4 +48,72 @@ export const getWorkbenchLLMModels = async (
   });
 
   return response?.data?.model_list ?? [];
+};
+
+export const listWorkbenchKnowledgeResources = async (
+  spaceId?: string,
+): Promise<WorkbenchReferenceResource[]> => {
+  if (!spaceId) {
+    return [];
+  }
+
+  const response = await KnowledgeApi.ListDataset({
+    page: 1,
+    size: 50,
+    space_id: spaceId,
+  });
+
+  return (response.dataset_list ?? [])
+    .filter(item => item.dataset_id && item.name)
+    .map(item => ({
+      id: String(item.dataset_id),
+      name: item.name ?? '',
+      description: item.description,
+    }));
+};
+
+export const listWorkbenchDatabaseResources = async (
+  spaceId?: string,
+): Promise<WorkbenchReferenceResource[]> => {
+  if (!spaceId) {
+    return [];
+  }
+
+  const response = await MemoryApi.ListDatabase({
+    limit: 50,
+    offset: 0,
+    space_id: spaceId,
+    table_type: 2,
+  });
+
+  return (response.database_info_list ?? [])
+    .filter(item => item.id && item.table_name)
+    .map(item => ({
+      id: String(item.id),
+      name: item.table_name ?? '',
+      description: item.table_desc,
+    }));
+};
+
+export const listWorkbenchWorkflowResources = async (
+  spaceId?: string,
+): Promise<WorkbenchReferenceResource[]> => {
+  if (!spaceId) {
+    return [];
+  }
+
+  const response = await workflowApi.WorkflowListV2({
+    page: 1,
+    size: 50,
+    space_id: spaceId,
+    flow_mode: 100,
+  });
+
+  return (response.data?.workflow_list ?? [])
+    .filter(item => item.workflow_id && item.name)
+    .map(item => ({
+      id: String(item.workflow_id),
+      name: item.name ?? '',
+      description: item.desc,
+    }));
 };

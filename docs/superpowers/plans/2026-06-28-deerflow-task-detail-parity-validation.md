@@ -299,11 +299,11 @@ docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/
 | Step | Scope | Output | Status |
 | --- | --- | --- | --- |
 | P0-A | 建立测试 case 和证据目录 | 本文件 + evidence README，含 `TD-DOC-*` 文档生成/预览 case | 已完成 |
-| P0-B | DeerFlow 参考页基线 | DOM 摘要、截图、网络接口列表 | 进行中 |
-| P0-C | Coze 目标页基线 | DOM 摘要、截图、网络接口列表 | 进行中 |
-| P0-D | 任务详情差异分级 | P0 待开发/待验收列表 | 待执行 |
-| P0-E | 按 case 修复 P0 差异 | 每个修复绑定 case id、测试和提交 | 待执行 |
-| P0-F | 回归验收 | 所有 P0 case 证据齐全 | 待执行 |
+| P0-B | DeerFlow 参考页基线 | DOM 摘要、截图、网络接口列表 | 已完成 |
+| P0-C | Coze 目标页基线 | DOM 摘要、截图、网络接口列表 | 已完成 |
+| P0-D | 任务详情差异分级 | P0 待开发/待验收列表 | 已完成 |
+| P0-E | 按 case 修复 P0 差异 | 每个修复绑定 case id、测试和提交 | 已完成 |
+| P0-F | 回归验收 | 所有 P0 case 证据齐全；真实截图/API 样本库不足项进入 P1 | 已完成 |
 
 ## 首轮页面基线记录
 
@@ -473,7 +473,19 @@ Coze 目标页可见能力：
   旧产物保留在原轮次卡片中。2026-06-30 已补真实浏览器 DOM/截图证据：
   artifact message card 只显示 `下载`，不再显示扫描审核的 `放行/隔离/阻断`
   操作；非待办文档场景不常驻 To-dos；宽屏右侧预览按 DeerFlow 60/40 方向
-  自适应。artifact API 响应摘要改入总冒烟/二期证据归档，不再阻塞 P0。
+  自适应。2026-07-01 对
+  `/space/7656275718757679104/tasks/7657061782099329024` 复验：文档卡
+  `java-learning-roadmap.md` 只含 `下载` 按钮，点击文件卡后右侧预览打开，
+  DOM 为 `data-layout="deerflow-split"`，预览宽度约为主页面 40%
+  (`sideWidth=360`, `mainWidth=900`, `sideRatio=0.4`)，与 DeerFlow
+  `OPEN_MODE={chat:60, artifacts:40}` 对齐。artifact API 响应摘要改入总冒烟
+  /二期证据归档，不再阻塞 P0。
+- `TD-FLOW-001/002` 已补 2026-07-01 搜索任务真实 DOM 复验：
+  `/space/7656275718757679104/tasks/7657273152627539968` 的执行步骤中
+  `web_search` 展示为 `搜索网页`，DOM 带 `data-icon="search"`，步骤内
+  `runtimeCount=0`，不再出现 `搜索网页Agent`；后端 run event 脱敏仅允许
+  assistant tool call 中的 bounded `web_search.query` 作为展示元数据，工具
+  result、URL、密钥和其它参数仍不进入 Workbench API/UI。
 - `TD-DOC-003/008` 已补代码与单测：Markdown 产物在右侧预览中使用 Markdown
   renderer，不再落到 raw text block；超长预览显示截断提示；Markdown 和 HTML
   文档下载都通过 artifact signed-url `mode=download`，不混用顶部任务导出。

@@ -1564,6 +1564,8 @@ describe('TaskDetailPage', () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
@@ -3009,7 +3011,7 @@ describe('TaskDetailPage', () => {
             content_type: 'text/markdown; charset=utf-8',
             created_at: 1717000300000,
             file_id: 'file-doc-1',
-            metadata: '{}',
+            metadata: '{"scan_status":"blocked"}',
             preview_mode: 'text',
             run_id: 'run-doc-1',
             size_bytes: 4096,
@@ -3083,6 +3085,9 @@ describe('TaskDetailPage', () => {
       expect(messageList?.textContent).toContain('Markdown');
       expect(messageList?.textContent).toContain('HTML');
       expect(messageList?.textContent).not.toContain('已生成');
+      expect(messageList?.textContent).not.toContain('放行');
+      expect(messageList?.textContent).not.toContain('隔离');
+      expect(messageList?.textContent).not.toContain('阻断');
       expect(titleGroup?.textContent).toContain('武汉3日游攻略');
       expect(titleGroup?.textContent).not.toContain('请生成一份');
       expect(mockFetchTaskThreadArtifactContent).toHaveBeenCalledWith({
@@ -3115,6 +3120,7 @@ describe('TaskDetailPage', () => {
       const sidePreview = container.querySelector(
         '[data-testid="task-artifact-side-preview"]',
       );
+      expect(sidePreview?.getAttribute('data-layout')).toBe('deerflow-split');
       expect(
         sidePreview?.querySelector(
           'button[aria-label="复制文档 武汉3日游攻略.md"]',
@@ -5531,6 +5537,19 @@ describe('TaskDetailPage', () => {
             created_at: 1717000200000,
           },
           {
+            event_id: 'event-web-search',
+            thread_id: 'thread-flow-labels-1',
+            run_id: 'run-1',
+            event_type: 'tool.completed',
+            payload: JSON.stringify({
+              tool_name: 'web_search',
+              query: '武汉三日游最佳路线',
+              status: 'completed',
+              result_present: true,
+            }),
+            created_at: 1717000250000,
+          },
+          {
             event_id: 'event-write-file',
             thread_id: 'thread-flow-labels-1',
             run_id: 'run-1',
@@ -5561,8 +5580,8 @@ describe('TaskDetailPage', () => {
       '.coze-prototype-execution-feed',
     );
 
-    expect(executionFeed?.textContent).toContain('隐藏步骤');
-    expect(executionFeed?.textContent).toContain('更新 To-do 列表');
+    expect(executionFeed?.textContent).toContain('查看其他 3 个步骤');
+    expect(executionFeed?.textContent).not.toContain('更新 To-do 列表');
     expect(executionFeed?.textContent).toContain(
       '创建武汉3日游攻略 Markdown 文档',
     );
@@ -5574,10 +5593,55 @@ describe('TaskDetailPage', () => {
         ?.querySelector('.coze-prototype-step-detail')
         ?.getAttribute('data-kind'),
     ).toBe('path');
+    expect(
+      executionFeed?.querySelector(
+        '.coze-prototype-step-icon[data-icon="edit"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      executionFeed?.querySelector('.coze-prototype-step-rail'),
+    ).toBeTruthy();
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-step-more-chevron')
+        ?.getAttribute('data-open'),
+    ).toBe('false');
     expect(executionFeed?.textContent).not.toContain(
       '工具 write_file 调用完成',
     );
     expect(executionFeed?.textContent).not.toContain('已返回结果');
+
+    const moreButton = executionFeed?.querySelector(
+      '.coze-prototype-step-more-button',
+    );
+    expect(moreButton).toBeTruthy();
+
+    act(() => {
+      if (!moreButton) {
+        return;
+      }
+
+      Simulate.click(moreButton);
+    });
+
+    expect(executionFeed?.textContent).toContain('隐藏步骤');
+    expect(executionFeed?.textContent).toContain('更新 To-do 列表');
+    expect(executionFeed?.textContent).toContain(
+      '搜索网页：“武汉三日游最佳路线”',
+    );
+    expect(
+      executionFeed?.querySelector('.coze-prototype-step-runtime'),
+    ).toBeFalsy();
+    expect(
+      executionFeed?.querySelector(
+        '.coze-prototype-step-icon[data-icon="todo"]',
+      ),
+    ).toBeTruthy();
+    expect(
+      executionFeed?.querySelector(
+        '.coze-prototype-step-icon[data-icon="search"]',
+      ),
+    ).toBeTruthy();
 
     act(() => {
       root?.unmount();
@@ -5678,7 +5742,14 @@ describe('TaskDetailPage', () => {
       '.coze-prototype-inline-reasoning',
     );
     expect(thinkingBlock).toBeTruthy();
+    expect(
+      thinkingBlock?.querySelector('.coze-prototype-inline-reasoning-icon'),
+    ).toBeTruthy();
+    expect(
+      thinkingBlock?.querySelector('.coze-prototype-inline-reasoning-chevron'),
+    ).toBeTruthy();
     expect(thinkingBlock?.textContent).toContain('思考');
+    expect(thinkingBlock?.textContent).toContain('思考图标');
     expect(thinkingBlock?.textContent).toContain(
       '我先判断用户要的是 P0 收敛。',
     );
@@ -6471,7 +6542,20 @@ describe('TaskDetailPage', () => {
       root = createRoot(container);
       root.render(<TaskDetailPage />);
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: 'thread-retry-1',
+      page: 1,
+      page_size: 100,
+    });
+    expect(container.textContent).toContain('任务执行失败');
+    expect(container.textContent).toContain('bounded failure');
 
     const retryButton = Array.from(container.querySelectorAll('button')).find(
       button => button.textContent?.includes('重试任务'),
@@ -7109,7 +7193,7 @@ describe('TaskDetailPage', () => {
         min_confidence: 0.2,
       },
       web_tools: {
-        enabled: false,
+        enabled: true,
       },
       token_usage: {
         enabled: true,
@@ -7458,7 +7542,7 @@ describe('TaskDetailPage', () => {
         min_confidence: 0.2,
       },
       web_tools: {
-        enabled: false,
+        enabled: true,
       },
       token_usage: {
         enabled: true,

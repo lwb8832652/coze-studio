@@ -115,6 +115,13 @@ func (r *recordingAgentThreadService) GetThread(context.Context, int64) (*agentt
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) UpdateThreadTitle(
+	context.Context,
+	*agentthreadsvc.UpdateThreadTitleRequest,
+) (*agentthreadentity.Thread, bool, error) {
+	return nil, false, nil
+}
+
 func (r *recordingAgentThreadService) ListThreads(context.Context, *agentthreadsvc.ListThreadsRequest) ([]*agentthreadentity.Thread, int64, error) {
 	return nil, 0, nil
 }

@@ -325,6 +325,7 @@ export const TaskArtifactFeedback = ({
       <aside
         aria-label="任务产物预览"
         className="coze-prototype-artifact-side-preview"
+        data-layout="deerflow-split"
         data-testid="task-artifact-side-preview"
       >
         <TaskArtifactInlinePreview

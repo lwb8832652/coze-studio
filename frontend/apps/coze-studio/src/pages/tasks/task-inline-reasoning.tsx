@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+import {
+  IconCozArrowDown,
+  IconCozLightbulb,
+} from '@coze-arch/coze-design/icons';
+
 export const TaskInlineReasoning = ({ content }: { content?: string }) => {
   const value = content?.trim();
 
@@ -23,7 +28,21 @@ export const TaskInlineReasoning = ({ content }: { content?: string }) => {
 
   return (
     <details className="coze-prototype-inline-reasoning">
-      <summary>思考</summary>
+      <summary>
+        <span
+          className="coze-prototype-inline-reasoning-icon"
+          aria-hidden="true"
+        >
+          <IconCozLightbulb />
+        </span>
+        <span className="coze-prototype-inline-reasoning-label">思考</span>
+        <span
+          className="coze-prototype-inline-reasoning-chevron"
+          aria-hidden="true"
+        >
+          <IconCozArrowDown />
+        </span>
+      </summary>
       <div className="coze-prototype-inline-reasoning-content">{value}</div>
     </details>
   );

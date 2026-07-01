@@ -33,17 +33,32 @@ import (
 )
 
 const (
-	agentThreadWebSearchEnabledEnv          = "AGENT_THREAD_WEB_SEARCH_ENABLED"
-	agentThreadWebSearchEndpointEnv         = "AGENT_THREAD_WEB_SEARCH_ENDPOINT"
-	agentThreadWebSearchAPIKeyEnv           = "AGENT_THREAD_WEB_SEARCH_API_KEY"
-	agentThreadWebSearchHeaderEnv           = "AGENT_THREAD_WEB_SEARCH_HEADER"
-	agentThreadWebSearchTimeoutMsEnv        = "AGENT_THREAD_WEB_SEARCH_TIMEOUT_MS"
-	agentThreadWebSearchMaxResponseBytesEnv = "AGENT_THREAD_WEB_SEARCH_MAX_RESPONSE_BYTES"
-	agentThreadWebSearchAllowHTTPEnv        = "AGENT_THREAD_WEB_SEARCH_ALLOW_HTTP"
-	agentThreadWebSearchAllowPrivateIPsEnv  = "AGENT_THREAD_WEB_SEARCH_ALLOW_PRIVATE_IPS"
+	agentThreadWebSearchEnabledEnv              = "AGENT_THREAD_WEB_SEARCH_ENABLED"
+	agentThreadWebSearchProviderEnv             = "AGENT_THREAD_WEB_SEARCH_PROVIDER"
+	agentThreadWebSearchEndpointEnv             = "AGENT_THREAD_WEB_SEARCH_ENDPOINT"
+	agentThreadWebSearchAPIKeyEnv               = "AGENT_THREAD_WEB_SEARCH_API_KEY"
+	agentThreadWebSearchHeaderEnv               = "AGENT_THREAD_WEB_SEARCH_HEADER"
+	agentThreadWebSearchDDGRegionEnv            = "AGENT_THREAD_WEB_SEARCH_DDG_REGION"
+	agentThreadWebSearchDDGSafeSearchEnv        = "AGENT_THREAD_WEB_SEARCH_DDG_SAFESEARCH"
+	agentThreadWebSearchBraveBaseURLEnv         = "AGENT_THREAD_WEB_SEARCH_BRAVE_BASE_URL"
+	agentThreadWebSearchWikipediaBaseURLEnv     = "AGENT_THREAD_WEB_SEARCH_WIKIPEDIA_BASE_URL"
+	agentThreadWebSearchWikipediaLanguageEnv    = "AGENT_THREAD_WEB_SEARCH_WIKIPEDIA_LANGUAGE"
+	agentThreadWebSearchWikipediaUserAgentEnv   = "AGENT_THREAD_WEB_SEARCH_WIKIPEDIA_USER_AGENT"
+	agentThreadWebSearchWikipediaDocMaxCharsEnv = "AGENT_THREAD_WEB_SEARCH_WIKIPEDIA_DOC_MAX_CHARS"
+	agentThreadWebSearchTimeoutMsEnv            = "AGENT_THREAD_WEB_SEARCH_TIMEOUT_MS"
+	agentThreadWebSearchMaxResponseBytesEnv     = "AGENT_THREAD_WEB_SEARCH_MAX_RESPONSE_BYTES"
+	agentThreadWebSearchAllowHTTPEnv            = "AGENT_THREAD_WEB_SEARCH_ALLOW_HTTP"
+	agentThreadWebSearchAllowPrivateIPsEnv      = "AGENT_THREAD_WEB_SEARCH_ALLOW_PRIVATE_IPS"
 )
 
 const (
+	adkWebSearchProviderAuto       = "auto"
+	adkWebSearchProviderDuckDuckGo = "duckduckgo"
+	adkWebSearchProviderBrave      = "brave"
+	adkWebSearchProviderWikipedia  = "wikipedia"
+	adkWebSearchProviderHTTP       = "http"
+	adkWebSearchProviderDisabled   = "disabled"
+
 	defaultADKHTTPWebSearchTimeout       = 10 * time.Second
 	maxADKHTTPWebSearchTimeout           = 60 * time.Second
 	defaultADKHTTPWebSearchResponseBytes = 64 << 10
@@ -78,13 +93,147 @@ type ADKHTTPWebSearchBackend struct {
 }
 
 func ADKWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
-	enabled, err := adkWebSearchBoolEnv(agentThreadWebSearchEnabledEnv, false)
+	enabled, enabledSet, err := adkWebSearchOptionalBoolEnv(
+		agentThreadWebSearchEnabledEnv,
+	)
 	if err != nil {
 		return nil, false, err
 	}
-	if !enabled {
+	if enabledSet && !enabled {
 		return nil, false, nil
 	}
+	provider := normalizeADKWebSearchProvider(
+		os.Getenv(agentThreadWebSearchProviderEnv),
+	)
+	if provider == "" {
+		provider = defaultADKWebSearchProviderFromEnv()
+	}
+	switch provider {
+	case adkWebSearchProviderAuto:
+		return ADKAutoWebSearchBackendFromEnv()
+	case adkWebSearchProviderDuckDuckGo:
+		return ADKDuckDuckGoWebSearchBackendFromEnv()
+	case adkWebSearchProviderBrave:
+		return ADKBraveWebSearchBackendFromEnv()
+	case adkWebSearchProviderWikipedia:
+		return ADKWikipediaWebSearchBackendFromEnv()
+	case adkWebSearchProviderHTTP:
+		return ADKHTTPWebSearchBackendFromEnv()
+	case adkWebSearchProviderDisabled:
+		return nil, false, nil
+	default:
+		return nil, true, fmt.Errorf("unsupported web search provider: %s", provider)
+	}
+}
+
+func ADKAutoWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
+	duck, _, err := ADKDuckDuckGoWebSearchBackendFromEnv()
+	if err != nil {
+		return nil, true, err
+	}
+	brave, _, err := ADKBraveWebSearchBackendFromEnv()
+	if err != nil {
+		return nil, true, err
+	}
+	wikipedia, _, err := ADKWikipediaWebSearchBackendFromEnv()
+	if err != nil {
+		return nil, true, err
+	}
+
+	return NewADKAutoWebSearchBackend(duck, brave, wikipedia), true, nil
+}
+
+func ADKDuckDuckGoWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
+	timeoutMillis, err := adkWebSearchPositiveInt64Env(
+		agentThreadWebSearchTimeoutMsEnv,
+		int64(defaultADKDuckDuckGoTimeout/time.Millisecond),
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	backend, err := NewADKDuckDuckGoWebSearchBackend(
+		ADKDuckDuckGoWebSearchBackendOptions{
+			Region:     os.Getenv(agentThreadWebSearchDDGRegionEnv),
+			SafeSearch: os.Getenv(agentThreadWebSearchDDGSafeSearchEnv),
+			Timeout:    time.Duration(timeoutMillis) * time.Millisecond,
+			Source:     defaultADKDuckDuckGoSource,
+		},
+	)
+	if err != nil {
+		return nil, true, err
+	}
+
+	return backend, true, nil
+}
+
+func ADKBraveWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
+	allowHTTP, err := adkWebSearchBoolEnv(agentThreadWebSearchAllowHTTPEnv, false)
+	if err != nil {
+		return nil, true, err
+	}
+	allowPrivateIPs, err := adkWebSearchBoolEnv(
+		agentThreadWebSearchAllowPrivateIPsEnv,
+		false,
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	timeoutMillis, err := adkWebSearchPositiveInt64Env(
+		agentThreadWebSearchTimeoutMsEnv,
+		int64(defaultADKBraveSearchTimeout/time.Millisecond),
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	backend, err := NewADKBraveWebSearchBackend(
+		ADKBraveWebSearchBackendOptions{
+			BaseURL:         os.Getenv(agentThreadWebSearchBraveBaseURLEnv),
+			AllowHTTP:       allowHTTP,
+			AllowPrivateIPs: allowPrivateIPs,
+			Timeout:         time.Duration(timeoutMillis) * time.Millisecond,
+			Source:          defaultADKBraveSearchSource,
+		},
+	)
+	if err != nil {
+		return nil, true, err
+	}
+
+	return backend, true, nil
+}
+
+func ADKWikipediaWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
+	timeoutMillis, err := adkWebSearchPositiveInt64Env(
+		agentThreadWebSearchTimeoutMsEnv,
+		int64(defaultADKWikipediaTimeout/time.Millisecond),
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	docMaxChars, err := adkWebSearchPositiveInt64Env(
+		agentThreadWebSearchWikipediaDocMaxCharsEnv,
+		defaultADKWikipediaDocMaxChars,
+	)
+	if err != nil {
+		return nil, true, err
+	}
+	backend, err := NewADKWikipediaWebSearchBackend(
+		ADKWikipediaWebSearchBackendOptions{
+			BaseURL:     os.Getenv(agentThreadWebSearchWikipediaBaseURLEnv),
+			Language:    os.Getenv(agentThreadWebSearchWikipediaLanguageEnv),
+			UserAgent:   os.Getenv(agentThreadWebSearchWikipediaUserAgentEnv),
+			DocMaxChars: int(docMaxChars),
+			Timeout:     time.Duration(timeoutMillis) * time.Millisecond,
+			Source:      defaultADKWikipediaSource,
+		},
+	)
+	if err != nil {
+		return nil, true, err
+	}
+
+	return backend, true, nil
+}
+
+func ADKHTTPWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
 	allowHTTP, err := adkWebSearchBoolEnv(agentThreadWebSearchAllowHTTPEnv, false)
 	if err != nil {
 		return nil, true, err
@@ -128,6 +277,37 @@ func ADKWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
 	}
 
 	return backend, true, nil
+}
+
+func normalizeADKWebSearchProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "":
+		return ""
+	case "auto":
+		return adkWebSearchProviderAuto
+	case "ddg", adkWebSearchProviderDuckDuckGo:
+		return adkWebSearchProviderDuckDuckGo
+	case adkWebSearchProviderBrave:
+		return adkWebSearchProviderBrave
+	case "wiki", adkWebSearchProviderWikipedia:
+		return adkWebSearchProviderWikipedia
+	case adkWebSearchProviderHTTP, "coze_http":
+		return adkWebSearchProviderHTTP
+	case adkWebSearchProviderDisabled, "off", "none", "false":
+		return adkWebSearchProviderDisabled
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+func defaultADKWebSearchProviderFromEnv() string {
+	if strings.TrimSpace(os.Getenv(agentThreadWebSearchEndpointEnv)) != "" ||
+		strings.TrimSpace(os.Getenv(agentThreadWebSearchAPIKeyEnv)) != "" ||
+		strings.TrimSpace(os.Getenv(agentThreadWebSearchHeaderEnv)) != "" {
+		return adkWebSearchProviderHTTP
+	}
+
+	return adkWebSearchProviderAuto
 }
 
 func NewADKHTTPWebSearchBackend(
@@ -404,6 +584,19 @@ func adkWebSearchBoolEnv(key string, defaultValue bool) (bool, error) {
 	}
 
 	return parsed, nil
+}
+
+func adkWebSearchOptionalBoolEnv(key string) (bool, bool, error) {
+	raw, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return false, false, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false, true, fmt.Errorf("parse %s: %w", key, err)
+	}
+
+	return parsed, true, nil
 }
 
 func adkWebSearchPositiveInt64Env(key string, defaultValue int64) (int64, error) {
