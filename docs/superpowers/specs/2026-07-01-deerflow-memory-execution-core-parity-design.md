@@ -223,10 +223,15 @@ Observed gaps:
 - `backend/application/agentthread/runner.go` now cleans explicit generated
   titles before updating thread metadata: `<think>...</think>` blocks are
   removed, wrapper quotes are stripped, and trailing punctuation is trimmed.
-- This is a narrow safety/parity step for the existing explicit-title contract.
-  The remaining P1-J-003 work is to add the DeerFlow-equivalent title model
-  generation path in the Go/Eino middleware chain and verify live UI title
-  propagation.
+- `backend/application/agentthread/title_generator.go` adds a DeerFlow-style
+  model title generator: it uses the first user message and first assistant
+  response, strips assistant `<think>` blocks, truncates each side to 500
+  characters, asks for a concise title with the default 6-word/60-character
+  budget, and does not apply main-run thinking/reasoning model options.
+- `backend/application/agentthread/worker.go` wires the generator into the run
+  worker, while `RunProcessor` only invokes it when the thread title is still
+  the initial prompt-derived title. Follow-ups or user-edited titles are not
+  overwritten.
 
 ## First Implementation Slices
 
