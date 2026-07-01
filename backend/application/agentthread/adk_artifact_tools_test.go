@@ -20,6 +20,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -293,6 +294,60 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 	require.NotContains(t, presentResult, "agent-runtime")
 	require.NotNil(t, artifacts.registerReq)
 	require.Equal(t, int64(99), artifacts.registerReq.FileID)
+}
+
+func TestADKArtifactToolCatalogWritesBase64OutputFile(t *testing.T) {
+	runtimeFiles := &recordingRuntimeFileService{}
+	objectStorage := &recordingArtifactObjectReader{objects: map[string][]byte{}}
+	app := &ApplicationService{
+		RuntimeFileSVC:        runtimeFiles,
+		ArtifactObjectStorage: objectStorage,
+	}
+	run := &RunSummary{
+		RunID:     20,
+		ThreadID:  10,
+		SpaceID:   30,
+		CreatorID: 40,
+	}
+	provider := NewADKRuntimeToolCatalogProvider(NewADKArtifactToolCatalog(app))
+	set, err := provider.ResolveToolSet(context.Background(), run)
+	require.NoError(t, err)
+	writeTool := requireADKInvokableTool(
+		t,
+		context.Background(),
+		set.StaticTools,
+		"write_file",
+	)
+	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 1, 2, 0xff}
+	args, err := json.Marshal(map[string]string{
+		"file_path":      "/mnt/user-data/outputs/pixel.png",
+		"content_base64": base64.StdEncoding.EncodeToString(pngBytes),
+		"content_type":   "image/png",
+	})
+	require.NoError(t, err)
+
+	writeResult, err := writeTool.InvokableRun(context.Background(), string(args))
+
+	require.NoError(t, err)
+	require.Contains(t, writeResult, "/mnt/user-data/outputs/pixel.png")
+	require.NotContains(t, writeResult, "agent-runtime")
+	require.NotContains(t, writeResult, base64.StdEncoding.EncodeToString(pngBytes))
+	require.NotNil(t, runtimeFiles.req)
+	require.Equal(t, "image/png", runtimeFiles.req.ContentType)
+	require.Equal(t, domainentity.AgentFileKindOutput, runtimeFiles.req.FileKind)
+	require.Equal(t, pngBytes, objectStorage.objects[objectStorage.key])
+
+	_, err = writeTool.InvokableRun(
+		context.Background(),
+		`{"file_path":"/mnt/user-data/outputs/ambiguous.bin","content":"text","content_base64":"dGV4dA=="}`,
+	)
+	require.ErrorContains(t, err, "either content or content_base64")
+
+	_, err = writeTool.InvokableRun(
+		context.Background(),
+		`{"file_path":"/mnt/user-data/outputs/missing.bin"}`,
+	)
+	require.ErrorContains(t, err, "requires either content or content_base64")
 }
 
 func TestDefaultADKToolProviderCanWireArtifactTools(t *testing.T) {

@@ -9,10 +9,10 @@ DeerFlow-style document artifact path. This note maps existing source and test
 coverage first, then keeps the remaining real-browser sample work explicit.
 
 This is not a claim that the full sample library is complete. The current
-covered state is an automated safety and rendering baseline for Markdown,
-plain/text-like previews, CSV, PDF, PNG/image, active-content rejection,
-blocked/error states, and delete/restore lifecycle. Browser screenshots and
-API summaries for one consolidated fixture pack still remain open.
+covered state is an automated safety and rendering baseline plus one real
+browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
+SVG artifact cards. API summaries, every-family side-preview screenshots, and
+the scan/delete/restore UI lifecycle evidence remain open.
 
 ## DeerFlow Reference
 
@@ -61,6 +61,7 @@ npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'canonical thr
 cd backend
 go test ./api/handler/coze -run 'Test(GetTaskThreadArtifactContentHandler|GetTaskThreadArtifactSignedURLHandler|ReviewTaskThreadArtifactScanHandler|ListTaskThreadArtifactsHandler|DeleteTaskThreadArtifactHandler|RetryTaskThreadArtifactScanJobHandler|ListTaskThreadArtifactScanJobsHandler)' -count=1 -gcflags='all=-N -l'
 go test ./application/agentthread -run 'Test(ApplicationReadArtifactContent|ArtifactScanReadPolicy|ApplicationRecordArtifactScanResult|ApplicationProcessArtifactScanJobs)' -count=1
+go test ./application/agentthread -run 'TestADKArtifactToolCatalog|TestDefaultADKToolProviderCanWireArtifactTools|TestApplication(WriteOutputFileStoresObjectAndRegistersOutputFile|CreateSkillPackageWritesInstallableSkillArchive|PresentOutputFilesRegistersArtifactsAndEmitsSafeEvent)' -count=1
 ```
 
 Results:
@@ -69,24 +70,85 @@ Results:
 - `task-detail.test.tsx` focused artifact subset: 7 passed, 42 skipped.
 - `backend/api/handler/coze`: passed.
 - `backend/application/agentthread`: passed.
+- `backend/application/agentthread` ADK artifact binary/write-file subset:
+  passed.
+
+## 2026-07-01 Browser Fixture Evidence
+
+Fixture task:
+
+- `http://localhost:8080/space/7656275718757679104/tasks/7657556998191316992`
+
+Implementation note:
+
+- Go ADK `write_file` now accepts either UTF-8 `content` or binary
+  `content_base64`. This closes the fixture-generation gap where true PNG/PDF
+  bytes could not be produced by the Go-native artifact tool path without a
+  Python sidecar.
+- The tool rejects calls that provide both fields, rejects calls that provide
+  neither field, strips harmless base64 whitespace, and returns only bounded
+  file metadata. It does not echo object URIs or base64 payloads.
+
+Artifact card summary captured from the Coze task detail page:
+
+```text
+p1c-fixture.md    Markdown file  下载
+p1c-fixture.txt   Text file      下载
+p1c-fixture.json  JSON file      下载
+p1c-fixture.csv   CSV file       下载
+p1c-fixture.pdf   PDF file       下载
+p1c-fixture.png   Image file     下载
+p1c-fixture.html  HTML file      下载
+p1c-fixture.svg   Image file     下载
+```
+
+Screenshots:
+
+- Full fixture page:
+  `screenshots/coze/P1-C-coze-mime-fixture-task-7657556998191316992.png`
+- Markdown preview:
+  `screenshots/coze/P1-C-coze-markdown-preview-7657556998191316992.png`
+- PNG preview:
+  `screenshots/coze/P1-C-coze-png-preview-7657556998191316992.png`
+- HTML/SVG download-only state:
+  `screenshots/coze/P1-C-coze-html-svg-download-only-7657556998191316992.png`
+
+Observed behavior:
+
+- Markdown opened in the side artifact panel and rendered the document content.
+- PNG opened in the side artifact panel and loaded as an image with natural size
+  `1x1`; the underlying image URL is a signed preview URL and is intentionally
+  not recorded here.
+- HTML and SVG remained card/download entries; page-level script probes stayed
+  false: `window.__p1c_should_not_run=false` and
+  `window.__p1c_svg_should_not_run=false`.
+- The visible page text included `content_base64` because the fixture task
+  prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
+  was user-visible test input text, not a provider/tool payload, object URI, or
+  signed URL leak.
+
+Browser API capture note:
+
+- The in-app browser read-only page scope could not provide an authenticated
+  `fetch` summary for artifact APIs in this pass. No inferred request/response
+  payloads are recorded. P1-C-004 stays open for bounded API summaries.
 
 ## Remaining P1-C Gaps
 
-1. Create one consolidated browser fixture task with generated or seeded
-   artifacts for Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and SVG.
-2. Capture Coze UI evidence for each artifact family: card placement, side
-   preview/open behavior, copy/download affordances, bounded errors, and no
-   object URI or signed URL leakage.
-3. Record bounded API summaries for artifact list, content, signed URL,
+1. Capture remaining every-family preview screenshots for TXT, JSON, CSV, PDF,
+   plus copy/download affordance checks where the UI exposes copy.
+2. Record bounded API summaries for artifact list, content, signed URL,
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
    completion, or checkpoint bytes.
-4. Add browser evidence for active-content safety: HTML/SVG are not rendered as
-   inline executable content and remain download-only or blocked by policy.
-5. Add real UI evidence for deleted artifact list, undo restore, blocked scan
+3. Add real UI evidence for deleted artifact list, undo restore, blocked scan
    review, and scan retry state.
+4. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
+   dedicated skill/tool-driven fixture if future evidence needs zero
+   `content_base64` visible-text hits.
 
 ## Status
 
-P1-C is in progress. The automated coverage baseline is complete, but the real
-MIME sample fixture pack and paired browser/API evidence are still open.
+P1-C is in progress. The automated coverage baseline, Go binary write support,
+and one real MIME fixture task are complete. API summaries and remaining
+per-family/lifecycle browser evidence are still open.
