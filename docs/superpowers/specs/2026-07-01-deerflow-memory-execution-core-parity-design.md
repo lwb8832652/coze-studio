@@ -452,3 +452,11 @@ DeerFlow and match these user-visible outcomes:
     `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-J-006-artifact-present-files.md`.
 - Token rows and top-bar token display remain consistent with the message
   stream.
+- Streaming controls follow DeerFlow's core behavior.
+  - 2026-07-01 P1-J-007 evidence: Coze maps running canonical thread details
+    to a DeerFlow-style stop-square composer button, renders three-dot loading
+    while the answer is streaming, submits follow-ups through the canonical
+    message/run APIs with prior real history, preserves previous-turn execution
+    steps after follow-up, and keeps retry/cancel requests bounded to safe
+    metadata. Source/test/browser smoke evidence:
+    `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-J-007-stream-stop-followup.md`.
