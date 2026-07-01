@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,212 @@ func TestADKWebToolCatalogDisabledByDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Empty(t, definitions)
+}
+
+func TestADKWebSearchBackendFromEnvDefaultsToAuto(t *testing.T) {
+	resetADKWebSearchEnv(t)
+
+	backend, enabled, err := ADKWebSearchBackendFromEnv()
+
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.IsType(t, &ADKAutoWebSearchBackend{}, backend)
+}
+
+func TestADKDuckDuckGoDefaultTimeoutKeepsInteractiveRunsResponsive(t *testing.T) {
+	require.Equal(t, 10*time.Second, defaultADKDuckDuckGoTimeout)
+}
+
+func TestADKDuckDuckGoWebSearchBackendNormalizesResults(t *testing.T) {
+	searcher := &fakeADKDuckDuckGoSearcher{
+		results: []adkDuckDuckGoSearchResult{
+			{
+				Title:       "Duck Result",
+				URL:         "https://example.com/duck",
+				Description: "Duck snippet",
+			},
+		},
+	}
+	backend := &ADKDuckDuckGoWebSearchBackend{
+		searcher:   searcher,
+		region:     defaultADKDuckDuckGoRegion,
+		safeSearch: defaultADKDuckDuckGoSafeSearch,
+		source:     defaultADKDuckDuckGoSource,
+	}
+
+	response, err := backend.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "coze duck", MaxResults: 99},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "coze duck", searcher.query)
+	require.Equal(t, maxADKWebSearchResults, searcher.maxResults)
+	require.Equal(t, defaultADKDuckDuckGoRegion, searcher.region)
+	require.Equal(t, defaultADKDuckDuckGoSafeSearch, searcher.safeSearch)
+	require.Equal(t, []ADKWebSearchResult{
+		{
+			Title:   "Duck Result",
+			URL:     "https://example.com/duck",
+			Snippet: "Duck snippet",
+			Source:  defaultADKDuckDuckGoSource,
+		},
+	}, response.Results)
+}
+
+func TestADKAutoWebSearchBackendFallsBackAfterDuckDuckGoFailure(t *testing.T) {
+	duck := &fakeADKWebSearchBackend{
+		err: fmt.Errorf("duck unavailable"),
+	}
+	brave := &fakeADKWebSearchBackend{
+		response: &ADKWebSearchResponse{
+			Schema: adkWebSearchSchema,
+			Results: []ADKWebSearchResult{
+				{
+					Title:   "Brave Result",
+					URL:     "https://example.com/brave",
+					Snippet: "Brave snippet",
+					Source:  defaultADKBraveSearchSource,
+				},
+			},
+		},
+	}
+	backend := NewADKAutoWebSearchBackend(duck, brave)
+
+	response, err := backend.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "coze auto", MaxResults: 3},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, duck.calls)
+	require.Equal(t, 1, brave.calls)
+	require.Equal(t, "Brave Result", response.Results[0].Title)
+}
+
+func TestADKAutoWebSearchBackendFallsBackAfterEmptyResults(t *testing.T) {
+	duck := &fakeADKWebSearchBackend{
+		response: &ADKWebSearchResponse{Schema: adkWebSearchSchema},
+	}
+	brave := &fakeADKWebSearchBackend{
+		response: &ADKWebSearchResponse{
+			Schema: adkWebSearchSchema,
+			Results: []ADKWebSearchResult{
+				{Title: "Fallback Result", URL: "https://example.com/fallback"},
+			},
+		},
+	}
+	backend := NewADKAutoWebSearchBackend(duck, brave)
+
+	response, err := backend.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "coze auto", MaxResults: 3},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, duck.calls)
+	require.Equal(t, 1, brave.calls)
+	require.Equal(t, "Fallback Result", response.Results[0].Title)
+}
+
+func TestADKBraveWebSearchBackendParsesDeerFlowStyleResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(
+		func(writer http.ResponseWriter, request *http.Request) {
+			require.Equal(t, "/search", request.URL.Path)
+			require.Equal(t, "coze brave", request.URL.Query().Get("q"))
+			require.Equal(t, "web", request.URL.Query().Get("source"))
+			require.Contains(t, request.Header.Get("Cookie"), "useLocation=0")
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = writer.Write([]byte(`
+				<html><body>
+					<div data-type="web">
+						<a href="https://example.com/brave">
+							<div class="site-name-wrapper">Example</div>
+							<div class="title search-snippet-title">Brave Title</div>
+						</a>
+						<div class="snippet">
+							<div class="content">Brave snippet text</div>
+						</div>
+					</div>
+				</body></html>
+			`))
+		},
+	))
+	defer server.Close()
+	backend, err := NewADKBraveWebSearchBackend(
+		ADKBraveWebSearchBackendOptions{
+			BaseURL:         server.URL + "/search",
+			AllowHTTP:       true,
+			AllowPrivateIPs: true,
+			Timeout:         time.Second,
+		},
+	)
+	require.NoError(t, err)
+
+	response, err := backend.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "coze brave", MaxResults: 3},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, []ADKWebSearchResult{
+		{
+			Title:   "Brave Title",
+			URL:     "https://example.com/brave",
+			Snippet: "Brave snippet text",
+			Source:  defaultADKBraveSearchSource,
+		},
+	}, response.Results)
+}
+
+func TestADKWebSearchBackendFromEnvCanUseWikipedia(t *testing.T) {
+	resetADKWebSearchEnv(t)
+	t.Setenv(agentThreadWebSearchProviderEnv, "wikipedia")
+	t.Setenv(agentThreadWebSearchWikipediaLanguageEnv, "zh")
+
+	backend, enabled, err := ADKWebSearchBackendFromEnv()
+
+	require.NoError(t, err)
+	require.True(t, enabled)
+	wikipediaBackend := &ADKWikipediaWebSearchBackend{}
+	require.IsType(t, wikipediaBackend, backend)
+	require.Equal(t, "zh", backend.(*ADKWikipediaWebSearchBackend).language)
+}
+
+func TestADKWikipediaWebSearchBackendNormalizesResults(t *testing.T) {
+	searcher := &fakeADKWikipediaSearcher{
+		results: []adkWikipediaSearchResult{
+			{
+				Title:   "Wikipedia Result",
+				URL:     "https://en.wikipedia.org/wiki/Coze",
+				Snippet: "Coze snippet",
+				Extract: "Longer Coze extract",
+			},
+		},
+	}
+	backend := &ADKWikipediaWebSearchBackend{
+		searcher: searcher,
+		language: defaultADKWikipediaLanguage,
+		source:   defaultADKWikipediaSource,
+	}
+
+	response, err := backend.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "coze wiki", MaxResults: 99},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "coze wiki", searcher.query)
+	require.Equal(t, maxADKWebSearchResults, searcher.maxResults)
+	require.Equal(t, defaultADKWikipediaLanguage, searcher.language)
+	require.Equal(t, []ADKWebSearchResult{
+		{
+			Title:   "Wikipedia Result",
+			URL:     "https://en.wikipedia.org/wiki/Coze",
+			Snippet: "Coze snippet\n\nLonger Coze extract",
+			Source:  defaultADKWikipediaSource,
+		},
+	}, response.Results)
 }
 
 func TestADKWebFetchToolRequiresAllowedHostAndRejectsPrivateIP(t *testing.T) {
@@ -466,8 +673,9 @@ func TestADKWebSearchBackendFromEnvBuildsHTTPBackend(t *testing.T) {
 	require.Equal(t, "coze_env_http", response.Results[0].Source)
 }
 
-func TestADKWebSearchBackendFromEnvDisabledByDefault(t *testing.T) {
+func TestADKWebSearchBackendFromEnvCanBeExplicitlyDisabled(t *testing.T) {
 	resetADKWebSearchEnv(t)
+	t.Setenv(agentThreadWebSearchEnabledEnv, "false")
 
 	backend, enabled, err := ADKWebSearchBackendFromEnv()
 
@@ -496,9 +704,17 @@ func resetADKWebSearchEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		agentThreadWebSearchEnabledEnv,
+		agentThreadWebSearchProviderEnv,
 		agentThreadWebSearchEndpointEnv,
 		agentThreadWebSearchAPIKeyEnv,
 		agentThreadWebSearchHeaderEnv,
+		agentThreadWebSearchDDGRegionEnv,
+		agentThreadWebSearchDDGSafeSearchEnv,
+		agentThreadWebSearchBraveBaseURLEnv,
+		agentThreadWebSearchWikipediaBaseURLEnv,
+		agentThreadWebSearchWikipediaLanguageEnv,
+		agentThreadWebSearchWikipediaUserAgentEnv,
+		agentThreadWebSearchWikipediaDocMaxCharsEnv,
 		agentThreadWebSearchTimeoutMsEnv,
 		agentThreadWebSearchMaxResponseBytesEnv,
 		agentThreadWebSearchAllowHTTPEnv,
@@ -506,6 +722,70 @@ func resetADKWebSearchEnv(t *testing.T) {
 	} {
 		t.Setenv(key, "")
 	}
+}
+
+type fakeADKWebSearchBackend struct {
+	calls    int
+	response *ADKWebSearchResponse
+	err      error
+}
+
+func (f *fakeADKWebSearchBackend) SearchADKWeb(
+	_ context.Context,
+	_ ADKWebSearchRequest,
+) (*ADKWebSearchResponse, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return f.response, nil
+}
+
+type fakeADKDuckDuckGoSearcher struct {
+	query       string
+	maxResults  int
+	region      string
+	safeSearch  string
+	results     []adkDuckDuckGoSearchResult
+	searchError error
+}
+
+func (f *fakeADKDuckDuckGoSearcher) SearchADKDuckDuckGo(
+	_ context.Context,
+	request adkDuckDuckGoSearchRequest,
+) ([]adkDuckDuckGoSearchResult, error) {
+	f.query = request.Query
+	f.maxResults = request.MaxResults
+	f.region = request.Region
+	f.safeSearch = request.SafeSearch
+	if f.searchError != nil {
+		return nil, f.searchError
+	}
+
+	return f.results, nil
+}
+
+type fakeADKWikipediaSearcher struct {
+	query       string
+	maxResults  int
+	language    string
+	results     []adkWikipediaSearchResult
+	searchError error
+}
+
+func (f *fakeADKWikipediaSearcher) SearchADKWikipedia(
+	_ context.Context,
+	request adkWikipediaSearchRequest,
+) ([]adkWikipediaSearchResult, error) {
+	f.query = request.Query
+	f.maxResults = request.MaxResults
+	f.language = request.Language
+	if f.searchError != nil {
+		return nil, f.searchError
+	}
+
+	return f.results, nil
 }
 
 func TestDefaultADKToolProviderExposesWebFetchWhenConfigured(t *testing.T) {

@@ -210,7 +210,7 @@ export const createDefaultWorkbenchRuntimeSettings = (
     allowed_tools: [...resourceSelection.enable_mcp],
   },
   web_tools: {
-    enabled: false,
+    enabled: true,
     visibility: 'deferred',
     http: {
       enabled: false,
@@ -219,7 +219,7 @@ export const createDefaultWorkbenchRuntimeSettings = (
       max_response_bytes: 262144,
     },
     search: {
-      enabled: false,
+      enabled: true,
       max_results: 5,
     },
   },

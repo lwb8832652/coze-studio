@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
+/* eslint-disable max-lines -- P0 composer controls stay colocated until phase 2 split. */
+
 import {
+  useEffect,
+  useRef,
   type KeyboardEventHandler,
   type ReactNode,
   type Dispatch,
@@ -43,7 +47,13 @@ import {
   DeerFlowStopIcon,
   DeerFlowZapIcon,
 } from './workbench-deerflow-mode-icons';
-import type { WorkbenchComposerOverlayPlacement } from './workbench-composer-at-menu';
+import { WorkbenchAtSegments } from './workbench-composer-at-segments';
+import type {
+  WorkbenchAtDraft,
+  WorkbenchAtSegment,
+  WorkbenchComposerOverlayPlacement,
+} from './workbench-composer-at-menu';
+import { WorkbenchAtInline } from './workbench-composer-at-inline';
 import {
   DEFAULT_WORKBENCH_MODE,
   WORKBENCH_MODE_DESCRIPTIONS,
@@ -116,6 +126,8 @@ const DEERFLOW_MODE_OPTIONS: Array<{
 ];
 
 export const WorkbenchComposerBody = ({
+  atDraft,
+  atSegments,
   value,
   mode,
   presentation,
@@ -127,9 +139,15 @@ export const WorkbenchComposerBody = ({
   onSkillSuggestionApply,
   onSkillSuggestionIndexChange,
   onSkillSuggestionKeyDown,
+  onAtDraftQueryChange,
+  onAtDraftCancel,
+  onAtAnchorRectChange,
+  onAtSegmentRemove,
   onTextareaBlur,
   onTextareaFocus,
 }: {
+  atDraft?: WorkbenchAtDraft | null;
+  atSegments?: WorkbenchAtSegment[];
   value: string;
   mode: WorkbenchMode;
   presentation: WorkbenchComposerPresentation;
@@ -141,10 +159,30 @@ export const WorkbenchComposerBody = ({
   onSkillSuggestionApply?: (skill: { id: string; name: string }) => void;
   onSkillSuggestionIndexChange?: (index: number) => void;
   onSkillSuggestionKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  onAtDraftQueryChange?: (query: string) => void;
+  onAtDraftCancel?: () => void;
+  onAtAnchorRectChange?: (rect: DOMRect) => void;
+  onAtSegmentRemove?: (segment: WorkbenchAtSegment) => void;
   onTextareaBlur?: () => void;
   onTextareaFocus?: () => void;
 }) => {
   const isDeerFlow = presentation === 'deerflow';
+  const hasRichContent = Boolean(atSegments?.length || atDraft);
+  const richInputRef = useRef<HTMLDivElement>(null);
+  const hadDraftRef = useRef(Boolean(atDraft));
+
+  useEffect(() => {
+    const shouldRestoreFocus = hadDraftRef.current && !atDraft;
+    hadDraftRef.current = Boolean(atDraft);
+
+    if (!shouldRestoreFocus) {
+      return;
+    }
+
+    richInputRef.current
+      ?.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务描述"]')
+      ?.focus();
+  }, [atDraft]);
 
   return (
     <div className="chat-workbench-composer-body">
@@ -183,19 +221,31 @@ export const WorkbenchComposerBody = ({
           })}
         </div>
       ) : null}
-      <TextArea
-        aria-label="任务描述"
-        autosize={false}
-        rows={3}
-        value={value}
-        onBlur={onTextareaBlur}
-        onChange={onChange}
-        onFocus={onTextareaFocus}
-        onKeyDown={onSkillSuggestionKeyDown}
-        placeholder={isDeerFlow ? '今天想做什么？' : ''}
-        className="chat-workbench-input"
-      />
-      {!value && !isDeerFlow ? (
+      <div className="chat-workbench-rich-input" ref={richInputRef}>
+        <WorkbenchAtSegments
+          segments={atSegments}
+          onSegmentRemove={onAtSegmentRemove}
+        />
+        <WorkbenchAtInline
+          draft={atDraft}
+          onAnchorRectChange={onAtAnchorRectChange}
+          onDraftCancel={onAtDraftCancel}
+          onDraftQueryChange={onAtDraftQueryChange}
+        />
+        <TextArea
+          aria-label="任务描述"
+          autosize={false}
+          rows={hasRichContent ? 1 : 3}
+          value={value}
+          onBlur={onTextareaBlur}
+          onChange={onChange}
+          onFocus={onTextareaFocus}
+          onKeyDown={onSkillSuggestionKeyDown}
+          placeholder={isDeerFlow && !hasRichContent ? '今天想做什么？' : ''}
+          className="chat-workbench-input"
+        />
+      </div>
+      {!value && !isDeerFlow && !hasRichContent ? (
         <div
           className="chat-workbench-composer-prompt"
           aria-label="当前模式提示"

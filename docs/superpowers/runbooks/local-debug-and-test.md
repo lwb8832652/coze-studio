@@ -44,6 +44,27 @@ Confirm the startup log contains:
 load env file: .env.debug
 ```
 
+### Local Web Search Proxy
+
+DeerFlow's Python/DDGS path can pick up the host proxy in the local Docker
+environment, but Go `net/http` does not automatically read macOS system proxy
+settings. If local `web_search` hangs or reports provider request failures,
+put explicit proxy variables in the ignored `bin/.env.debug` used by the
+backend:
+
+```bash
+export HTTP_PROXY="http://127.0.0.1:7893"
+export HTTPS_PROXY="http://127.0.0.1:7893"
+export NO_PROXY="localhost,127.0.0.1,::1"
+export http_proxy="http://127.0.0.1:7893"
+export https_proxy="http://127.0.0.1:7893"
+export no_proxy="localhost,127.0.0.1,::1"
+```
+
+Keep this local-only. `bin/.env.debug` is ignored, and production/test
+environments should configure their own approved outbound proxy or search
+provider instead of relying on a developer machine port.
+
 ## Debug MySQL
 
 - Do not start or pull the local MySQL image for the normal debug path.

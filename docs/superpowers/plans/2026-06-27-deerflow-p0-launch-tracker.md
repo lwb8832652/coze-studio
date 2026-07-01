@@ -63,6 +63,75 @@ Every implementation slice must update this document:
 
 ## Recent Slice Notes
 
+- 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
+  stabilized after the DeerFlow composer parity cut. The inline trigger now
+  keeps `@` / `@资源类型：` as plain prefix text, applies the gray pill only to
+  the search placeholder, converts selected resources into icon + resource name
+  chips, supports multiple inline references mixed with user text, supports
+  Backspace removal/cancel, and positions the chooser from the current `@`
+  anchor (`bottom` on new-task home, `top` on task detail). Resource types are
+  fixed to 技能 / 知识库 / 数据库 / 工作流 / 插件 / 代码仓库; Skills, knowledge,
+  databases, and workflows load existing project resources, while plugin and
+  code repository remain reserved empty states. The chooser rows intentionally
+  show title only, no descriptions, to avoid the cramped UI seen during manual
+  testing. Verification: `npm run test --
+  src/pages/workbench/__tests__/workbench.test.tsx`; in-app browser smoke on
+  `/space/7656275718757679104/chats/new` confirmed resource-type rows
+  `技能/知识库/数据库/工作流/插件/代码仓库`, `descCount=0`, keyboard
+  `ArrowDown + Enter` enters `@知识库：请输入搜索知识库`, and Skill search rows
+  also render title-only entries.
+- 2026-07-01 `TD-DETAIL-007`: task-detail visible layout was rechecked
+  against DeerFlow source (`ChatBox` `OPEN_MODE={chat:60, artifacts:40}`,
+  `ArtifactFileList`, `MessageGroup`, and `StreamingIndicator`) and current
+  Coze runtime pages. Coze document Artifacts now use a DeerFlow split-layout
+  side preview contract instead of falling back to a full overlay at desktop
+  widths, generated document cards keep DeerFlow-style actions (download for
+  documents, install only for `.skill`), and `web_search` tool-call projection
+  renders a readable `搜索网页` step with the safe query and search step icon when
+  the event carries one; backend run-event redaction now whitelists only bounded
+  `web_search.query` from assistant tool calls so URLs, tool results, and other
+  arguments stay hidden. Detail execution rows also stop rendering the default
+  `Agent` runtime badge inside step labels, matching DeerFlow's `ToolCall` /
+  `ChainOfThoughtStep` structure where the agent identity lives in the message
+  header. Verification: `npm run test --
+  src/pages/tasks/__tests__/tasks.test.tsx`, `npm run test --
+  src/pages/tasks/__tests__/task-detail.test.tsx`, `npx tsc --noEmit
+  --project tsconfig.json`, `git diff --check`, and in-app browser smoke on
+  tasks `7657061782099329024` and `7657273152627539968` confirming
+  `data-layout=deerflow-split`, document cards with only `下载`, and
+  `web_search` no longer displaying the raw tool name as the primary label.
+- 2026-07-01 `TD-COMP-006`: DeerFlow `web_search` parity was rechecked
+  against DeerFlow config/source and a live DeerFlow container. DeerFlow uses
+  `deerflow.community.ddg_search.tools:web_search_tool`, backed by Python
+  `ddgs` defaults `backend=auto`, `region=wt-wt`, and `safesearch=moderate`.
+  Live validation showed fixed `duckduckgo` can return no results locally while
+  `auto` and `brave` do return results. Coze now defaults `web_search` to an
+  `auto` provider chain: Eino-ext DuckDuckGo v2 -> bounded Brave HTML search
+  -> Eino-ext Wikipedia. Explicit providers remain
+  `duckduckgo/brave/wikipedia/http/disabled`, and the visible tool contract
+  stays `web_search`. Local debug also needs explicit `HTTP_PROXY` /
+  `HTTPS_PROXY` in ignored `bin/.env.debug`, because Go `net/http` does not
+  read macOS system proxy settings the way DeerFlow's Python/Docker path did.
+  Frontend Workbench defaults keep search enabled and raw HTTP fetch disabled.
+  Verification: `go test ./application/agentthread -count=1`, direct Go
+  `ADKWebSearchBackendFromEnv` smoke returned 5 results for `青岛最佳旅游时间`,
+  backend build `go build -ldflags='-s -w' -o ../bin/opencoze main.go`, and
+  browser smoke on task `7657273152627539968` confirmed `tool_search` selected
+  `web_search`, `tool.completed` succeeded, and the run finished `succeeded`
+  with a Qingdao travel-time answer.
+- 2026-06-30 `TD-MSG-006`: task-detail execution steps and inline thinking
+  blocks were rechecked against DeerFlow source (`ChainOfThought`,
+  `Reasoning`, and `MessageGroup.convertToSteps`) and restyled to match the
+  DeerFlow visible structure: historical steps default to `查看其他 N 个步骤`,
+  expanded state switches to `隐藏步骤`, step rows use per-action icons plus a
+  vertical rail and path pills, and the inline `思考` block uses the DeerFlow
+  icon/chevron collapsible row. Verified with
+  `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx`,
+  `npx tsc --noEmit --project tsconfig.json`, `git diff --check`, and in-app
+  browser smoke on
+  `http://localhost:8080/space/7656275718757679104/tasks/7657061782099329024`
+  confirming default `查看其他 4 个步骤` collapsed state and `隐藏步骤` expanded
+  state.
 - 2026-06-30 `TD-COMP-003`: DeerFlow mode selection now uses native
   `flash/thinking/pro/ultra` runtime semantics instead of collapsing to Coze
   `Auto/Ask/Agent`. Coze defaults the DeerFlow composer to `Pro`, sends

@@ -17,10 +17,19 @@
 /* eslint-disable max-lines -- P0 DeerFlow parity wiring; split after parity stabilizes. */
 
 import { useParams } from 'react-router-dom';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
+import {
+  IconCozArrowDown,
+  IconCozCode,
+  IconCozDocument,
+  IconCozEdit,
+  IconCozLightbulb,
+  IconCozMagnifier,
+  IconCozPlugin,
+} from '@coze-arch/coze-design/icons';
 
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
@@ -75,6 +84,7 @@ import {
   parseTaskResultPayload,
   isTaskTerminalStatus,
   canCancelTask,
+  type TaskEventDisplay,
 } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
@@ -679,7 +689,7 @@ const TaskEventsSection = ({
   events: TaskEvent[];
   task: ChatTask;
 }) => {
-  const [showAllSteps, setShowAllSteps] = useState(true);
+  const [showAllSteps, setShowAllSteps] = useState(false);
   const eventItems = projectTaskExecutionEvents(events);
   if (!eventItems.length) {
     return null;
@@ -719,6 +729,27 @@ const TaskEventsSection = ({
       : displayItems;
   const isPathDetail = (detail?: string) =>
     detail?.startsWith('/mnt/') || detail?.startsWith('write-file:');
+  const renderStepIcon = (display: TaskEventDisplay) => {
+    const { key, icon } = getTaskExecutionStepIcon(display);
+
+    return (
+      <span
+        className="coze-prototype-step-icon"
+        data-icon={key}
+        data-status={display.status}
+        aria-hidden="true"
+      >
+        {display.status === 'running' ? (
+          <span className="coze-prototype-step-running" />
+        ) : display.status === 'failed' ? (
+          <span className="coze-prototype-step-status-mark">!</span>
+        ) : (
+          icon
+        )}
+        <span className="coze-prototype-step-rail" aria-hidden="true" />
+      </span>
+    );
+  };
 
   return (
     <section
@@ -739,7 +770,7 @@ const TaskEventsSection = ({
                 data-open={showAllSteps}
                 aria-hidden="true"
               >
-                v
+                <IconCozArrowDown />
               </span>
               <span>
                 {showAllSteps
@@ -756,17 +787,7 @@ const TaskEventsSection = ({
             data-kind={display.kind}
             data-status={display.status}
           >
-            {display.status === 'running' ? (
-              <span className="coze-prototype-step-running" />
-            ) : (
-              <span className="coze-prototype-step-check">
-                {display.kind === 'thought'
-                  ? '•'
-                  : display.status === 'failed'
-                    ? '!'
-                    : '✓'}
-              </span>
-            )}
+            {renderStepIcon(display)}
             <span className="coze-prototype-step-content">
               {display.kind === 'thought' && display.thought ? (
                 <span className="coze-prototype-step-thought">
@@ -778,7 +799,7 @@ const TaskEventsSection = ({
                     <span className="coze-prototype-step-title">
                       {display.title}
                     </span>
-                    {display.runtime ? (
+                    {display.runtime && display.runtime !== 'Agent' ? (
                       <span className="coze-prototype-step-runtime">
                         {display.runtime}
                       </span>
@@ -805,6 +826,59 @@ const TaskEventsSection = ({
       </ol>
     </section>
   );
+};
+
+const getTaskExecutionStepIcon = (
+  display: TaskEventDisplay,
+): { key: string; icon: ReactNode } => {
+  if (display.kind === 'thought') {
+    return {
+      key: 'thought',
+      icon: <IconCozLightbulb />,
+    };
+  }
+
+  const title = display.title.toLowerCase();
+  const detail = display.detail?.toLowerCase() ?? '';
+
+  if (title.includes('搜索网页') || title.includes('web_search')) {
+    return {
+      key: 'search',
+      icon: <IconCozMagnifier />,
+    };
+  }
+
+  if (title.includes('to-do') || title.includes('todo')) {
+    return {
+      key: 'todo',
+      icon: <IconCozDocument />,
+    };
+  }
+
+  if (
+    title.includes('文件') ||
+    title.includes('文档') ||
+    title.includes('file') ||
+    detail.startsWith('/mnt/') ||
+    detail.startsWith('write-file:')
+  ) {
+    return {
+      key: 'edit',
+      icon: <IconCozEdit />,
+    };
+  }
+
+  if (title.includes('命令') || title.includes('command')) {
+    return {
+      key: 'terminal',
+      icon: <IconCozCode />,
+    };
+  }
+
+  return {
+    key: 'tool',
+    icon: <IconCozPlugin />,
+  };
 };
 
 const TaskTranscript = ({

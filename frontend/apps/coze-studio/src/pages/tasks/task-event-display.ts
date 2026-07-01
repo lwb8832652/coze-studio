@@ -261,7 +261,7 @@ const getRunEventDisplay = ({
     runtime: runtime ?? 'Agent',
     structured: true,
     kind: 'step',
-    visibleInFlow: false,
+    visibleInFlow: eventType === 'run.failed',
   };
 };
 

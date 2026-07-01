@@ -657,6 +657,72 @@ describe('TasksPage helpers', () => {
     expect(projected[1].display.status).toBe('completed');
   });
 
+  it('projects web search tool calls with DeerFlow-style readable query labels', () => {
+    const events = [
+      {
+        id: 'event-assistant-search-call',
+        task_id: 'task-1',
+        event_type: 'message.completed',
+        payload: JSON.stringify({
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call-web-search',
+              type: 'function',
+              function: {
+                name: 'web_search',
+                arguments: JSON.stringify({
+                  query: '青岛最佳旅游时间',
+                  max_results: 5,
+                }),
+              },
+            },
+          ],
+        }),
+        created_at: 5,
+      },
+      {
+        id: 'event-tool-result',
+        task_id: 'task-1',
+        event_type: 'tool.completed',
+        payload: JSON.stringify({
+          role: 'tool',
+          tool_name: 'web_search',
+          tool_call_id: 'call-web-search',
+          content: '{"results":[]}',
+        }),
+        created_at: 6,
+      },
+    ];
+
+    const projected = projectTaskExecutionEvents(events);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].display.title).toBe('搜索网页：“青岛最佳旅游时间”');
+    expect(projected[0].display.status).toBe('completed');
+  });
+
+  it('projects failed run lifecycle events when no assistant turn exists', () => {
+    const projected = projectTaskExecutionEvents([
+      {
+        id: 'event-failed-run',
+        task_id: 'thread-1',
+        run_id: 'run-1',
+        event_type: 'run.failed',
+        payload: JSON.stringify({
+          error_code: 'executor_error',
+          error_message: 'bounded failure',
+        }),
+        created_at: 1,
+      },
+    ]);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].display.title).toBe('任务执行失败');
+    expect(projected[0].display.detail).toBe('bounded failure');
+    expect(projected[0].display.status).toBe('failed');
+  });
+
   it('shows selected skill name for skill tool-call execution steps', () => {
     const events = [
       {

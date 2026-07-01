@@ -126,6 +126,9 @@ const getToolPath = (args: Record<string, unknown>) =>
     'output_path',
   ]);
 
+const getToolQuery = (args: Record<string, unknown>) =>
+  getFirstString(args, ['query', 'search_query', 'q', 'keyword']);
+
 const getSkillName = (args: Record<string, unknown>) =>
   getFirstString(args, ['skill', 'skill_name']);
 
@@ -228,6 +231,8 @@ const createToolCallProjection = ({
   const completed = Boolean(resultEvent && !failed);
   const title = getString(toolCall.args, 'description');
   const detail = getToolPath(toolCall.args);
+  const query =
+    toolCall.name === 'web_search' ? getToolQuery(toolCall.args) : undefined;
   const skillName =
     toolCall.name === 'skill'
       ? (getSkillName(toolCall.args) ??
@@ -238,6 +243,7 @@ const createToolCallProjection = ({
     tool_name: toolCall.name,
     tool_call_id: toolCall.id,
     skill_name: skillName,
+    query,
     title,
     detail,
     status: failed ? 'failed' : completed ? 'completed' : 'running',
