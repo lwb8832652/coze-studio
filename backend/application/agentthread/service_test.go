@@ -626,7 +626,7 @@ func TestApplicationProcessMemoryFlushJobsRetriesExtractorFailureWithoutTranscri
 	require.NotNil(t, domainSVC.retryMemoryFlushReq)
 	require.Equal(t, int64(901), domainSVC.retryMemoryFlushReq.JobID)
 	require.Equal(t, "memory-worker-a", domainSVC.retryMemoryFlushReq.WorkerID)
-	require.Equal(t, "memory extraction failed", domainSVC.retryMemoryFlushReq.ErrorText)
+	require.Equal(t, "memory extraction failed: extractor_failed", domainSVC.retryMemoryFlushReq.ErrorText)
 	require.GreaterOrEqual(t, domainSVC.retryMemoryFlushReq.AvailableAt-domainSVC.retryMemoryFlushReq.Now, int64(60000))
 	require.NotContains(t, domainSVC.retryMemoryFlushReq.ErrorText, "secret transcript body")
 	require.Empty(t, domainSVC.rememberMemoryReqs)

@@ -218,7 +218,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
-			"memory extraction failed",
+			memoryFlushSafeErrorText("memory extraction failed", err),
 			maxAttempts,
 			retryBackoffMillis,
 		)
@@ -291,6 +291,35 @@ func extractMemoryUpdates(
 		return nil, err
 	}
 	return &MemoryExtractionResult{Facts: facts}, nil
+}
+
+func memoryFlushSafeErrorText(prefix string, err error) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "memory flush failed"
+	}
+	if err == nil {
+		return prefix
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "memory extractor is not configured"):
+		return prefix + ": extractor_not_configured"
+	case strings.Contains(message, "resolve memory extraction model"):
+		return prefix + ": resolve_model_failed"
+	case strings.Contains(message, "memory extraction model is not configured"):
+		return prefix + ": model_not_configured"
+	case strings.Contains(message, "run memory extraction model"):
+		return prefix + ": model_call_failed"
+	case strings.Contains(message, "memory extraction model returned empty response"):
+		return prefix + ": empty_model_response"
+	case strings.Contains(message, "decode memory extraction model output"):
+		return prefix + ": decode_failed"
+	case strings.Contains(message, "record memory extraction usage"):
+		return prefix + ": usage_record_failed"
+	default:
+		return prefix + ": extractor_failed"
+	}
 }
 
 func (s *ApplicationService) memoryFlushCurrentMemoryState(

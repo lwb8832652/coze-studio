@@ -332,6 +332,7 @@ func Init(ctx context.Context) (err error) {
 	)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
 	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentResumeRunExecutor)
+	agentthread.StartMemoryFlushWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartArtifactScanWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartGuardrailAuditArchiveWorkerFromEnv(
 		ctx,
