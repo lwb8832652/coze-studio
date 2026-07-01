@@ -161,6 +161,17 @@ const runTaskArtifactAction = async ({
     return;
   }
 
+  if (previewFamily === 'pdf') {
+    setInlinePreview({
+      artifactId: artifact.artifact_id,
+      contentType: response.data?.content_type || artifact.content_type,
+      name: artifactFileName(artifact),
+      previewRenderer: 'pdf',
+      url: signedURL,
+    });
+    return;
+  }
+
   if (mode === 'preview') {
     window.open(signedURL, '_blank', 'noopener,noreferrer');
     return;

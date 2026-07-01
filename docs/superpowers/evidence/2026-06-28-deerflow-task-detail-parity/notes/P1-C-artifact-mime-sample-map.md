@@ -110,12 +110,21 @@ Screenshots:
   `screenshots/coze/P1-C-coze-markdown-preview-7657556998191316992.png`
 - PNG preview:
   `screenshots/coze/P1-C-coze-png-preview-7657556998191316992.png`
+- TXT preview:
+  `screenshots/coze/P1-C-coze-txt-preview-7657556998191316992.png`
+- JSON preview:
+  `screenshots/coze/P1-C-coze-json-preview-7657556998191316992.png`
+- CSV preview:
+  `screenshots/coze/P1-C-coze-csv-preview-7657556998191316992.png`
 - HTML/SVG download-only state:
   `screenshots/coze/P1-C-coze-html-svg-download-only-7657556998191316992.png`
 
 Observed behavior:
 
 - Markdown opened in the side artifact panel and rendered the document content.
+- TXT opened in the side artifact panel and rendered plain text.
+- JSON opened in the side artifact panel and rendered formatted JSON text.
+- CSV opened in the side artifact panel and rendered the delimited content.
 - PNG opened in the side artifact panel and loaded as an image with natural size
   `1x1`; the underlying image URL is a signed preview URL and is intentionally
   not recorded here.
@@ -133,10 +142,26 @@ Browser API capture note:
   `fetch` summary for artifact APIs in this pass. No inferred request/response
   payloads are recorded. P1-C-004 stays open for bounded API summaries.
 
+PDF parity note:
+
+- DeerFlow source check: `artifact-file-detail.tsx` renders non-code artifacts
+  inside the Artifact panel via iframe, while still exposing open-in-new-window
+  and download actions.
+- Coze previously opened PDF preview with `window.open`, so the right-side
+  artifact panel did not switch to the PDF. The frontend contract was adjusted
+  so `preview_mode=pdf` now sets a PDF preview state rendered by a right-side
+  iframe. The existing download action is unchanged.
+- Unit evidence: `task-detail.test.tsx` now asserts PDF preview uses
+  `iframe[data-testid="task-artifact-inline-preview-pdf"]` and does not call
+  `window.open`.
+- Browser screenshot for PDF remains open because the in-app browser automation
+  timed out twice while reloading the fixture page after the frontend change.
+
 ## Remaining P1-C Gaps
 
-1. Capture remaining every-family preview screenshots for TXT, JSON, CSV, PDF,
-   plus copy/download affordance checks where the UI exposes copy.
+1. Capture the PDF right-side preview screenshot after the browser connection
+   is stable again, plus copy/download affordance checks where the UI exposes
+   copy.
 2. Record bounded API summaries for artifact list, content, signed URL,
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,

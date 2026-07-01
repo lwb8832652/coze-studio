@@ -43,9 +43,15 @@ export interface ArtifactImagePreviewState extends ArtifactPreviewBaseState {
   url: string;
 }
 
+export interface ArtifactPDFPreviewState extends ArtifactPreviewBaseState {
+  previewRenderer: 'pdf';
+  url: string;
+}
+
 export type ArtifactInlinePreviewState =
   | ArtifactContentPreviewState
-  | ArtifactImagePreviewState;
+  | ArtifactImagePreviewState
+  | ArtifactPDFPreviewState;
 
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps preview branches together.
 export const TaskArtifactInlinePreview = ({
@@ -172,6 +178,15 @@ export const TaskArtifactInlinePreview = ({
           loading="lazy"
           referrerPolicy="no-referrer"
           src={inlinePreview.url}
+        />
+      ) : inlinePreview.previewRenderer === 'pdf' ? (
+        <iframe
+          className="coze-prototype-artifact-preview-pdf"
+          data-testid="task-artifact-inline-preview-pdf"
+          referrerPolicy="no-referrer"
+          sandbox=""
+          src={inlinePreview.url}
+          title={`预览 ${name}`}
         />
       ) : contentPreview?.kind === 'table' && contentPreview.columns?.length ? (
         <Table

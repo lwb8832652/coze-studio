@@ -2714,7 +2714,7 @@ describe('TaskDetailPage', () => {
                 : artifactID === 'artifact-4'
                   ? 'https://storage.example.test/signed/chart.png?token=preview'
                   : artifactID === 'artifact-5'
-                    ? 'https://storage.example.test/signed/report.pdf?token=preview'
+                    ? 'data:application/pdf;base64,JVBERi0xLjQK'
                     : 'https://storage.example.test/signed/report.txt?token=preview',
           },
           code: 0,
@@ -2937,11 +2937,14 @@ describe('TaskDetailPage', () => {
         space_id: 'space-1',
         ttl_seconds: 300,
       });
-      expect(window.open).toHaveBeenCalledWith(
-        'https://storage.example.test/signed/report.pdf?token=preview',
-        '_blank',
-        'noopener,noreferrer',
-      );
+      expect(window.open).not.toHaveBeenCalled();
+      expect(
+        container
+          .querySelector(
+            'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+          )
+          ?.getAttribute('src'),
+      ).toBe('data:application/pdf;base64,JVBERi0xLjQK');
       expect(
         container.querySelector(
           'img[data-testid="task-artifact-inline-preview-image"]',
