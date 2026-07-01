@@ -369,14 +369,16 @@ Verification:
 - `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx`
 - `npx tsc --noEmit --project tsconfig.json`
 
-Residual follow-up:
+2026-07-01 evidence note:
 
-- Browser/API evidence still needs to compare Coze `journal_messages` with
-  DeerFlow `GET /api/threads/:thread_id/runs/:run_id/messages` for the canonical
-  document, Mermaid, search, and follow-up tasks.
-- Coze UI still needs the final ChainOfThought visual/style alignment recorded
-  under `P1-J-008`; this slice only moves the data source away from frontend
-  guesswork.
+- P1-J-005 source/runtime/test evidence is recorded in
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-J-005-run-journal-message-contract.md`.
+  Browser API JSON capture was blocked by the local browser extension for both
+  Coze and DeerFlow API paths, so this acceptance combines DeerFlow source
+  anchors, runtime screenshots, Coze DOM evidence, and Coze handler/API tests.
+- Coze UI still needs the broader ChainOfThought paired visual screenshot set
+  under `P1-J-008`; P1-J-005 closes the data contract rather than all visual
+  quality cases.
 
 ### Slice 4: To-dos Loop Control
 
