@@ -1,0 +1,31 @@
+{
+  "case": "P1-A-003",
+  "system": "coze",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008",
+  "title": "联网搜索青岛最佳旅游时间",
+  "tokenText": "Tokens72.4K",
+  "messageEvidence": {
+    "hasInitialUserTurn": true,
+    "hasInitialAssistantRun": true,
+    "hasFollowUpUserTurn": true,
+    "hasFollowUpAssistantRun": true,
+    "hasPreviousSearchStepAfterFollowUp": true,
+    "hasFollowUpReasoningStep": true,
+    "hasTokenRow": true,
+    "hasComposer": true
+  },
+  "counts": {
+    "visibleReasoningBlocks": 2,
+    "visibleArtifactCards": 0
+  },
+  "redaction": {
+    "promptAndCompletionText": "redacted",
+    "toolArgumentsAndResults": "redacted",
+    "providerPayloads": "redacted",
+    "credentialsAndObjectUris": "redacted"
+  },
+  "notes": [
+    "This is a search/revision follow-up sample; artifact continuity is not applicable because the run did not create an artifact.",
+    "Artifact persistence and right-side preview remain covered by P1-A-005 and P1-J-006."
+  ]
+}

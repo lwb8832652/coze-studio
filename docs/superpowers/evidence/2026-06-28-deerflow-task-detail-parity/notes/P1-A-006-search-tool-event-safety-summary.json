@@ -1,0 +1,9 @@
+{
+  "hasReasoningBlocks": true,
+  "hasSearchStep": true,
+  "hasTokenText": true,
+  "reasoningBlockCount": 2,
+  "redaction": "Full page text is not retained; only regex hit names and safe booleans are stored.",
+  "unsafeHits": [],
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008"
+}

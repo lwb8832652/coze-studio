@@ -92,12 +92,12 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | P1-A-000 new-task environment baseline | 已完成 | DeerFlow and Coze new-task pages are reachable; safe screenshots and redacted DOM summaries stored. DeerFlow old reference task redirects to `workspace/chats/new`, so P1 uses fresh paired runs. |
 | P1-A-001 canonical new task run | 待验收 | Coze task created at `http://localhost:8080/space/7656275718757679104/tasks/7657390468782620672`; screenshot and safe browser summary captured. Unauthenticated curl correctly returns `401 missing session_key in cookie`; authenticated API/event summary for create/run/events is still missing. |
 | P1-A-002 DeerFlow comparison run | 待验收 | Fresh DeerFlow run created at `http://localhost:2026/workspace/chats/165d8335-5aa2-48ec-8295-54c4a917fce7`; visual screenshot and safe summary captured after an initial transient browser timeout. Authenticated Network endpoint summary is still missing. |
-| P1-A-003 follow-up preserves history | 待开始 | Coze follow-up after completed task keeps prior turns, run steps, artifacts, and token rows. |
-| P1-A-004 sidebar recent tasks pagination | 待开始 | `我的任务` scroll/load-more behavior with loading affordance and immediate insertion for new tasks. |
-| P1-A-005 artifact side preview | 待开始 | Coze and DeerFlow paired screenshots for generated Markdown artifact card and right-side preview. |
-| P1-A-006 search/tool event safety | 待开始 | Web search or weather MCP run proves visible safe step labels without raw tool results, URLs, or credentials. |
-| P1-A-007 token popover modes | 待开始 | Top-bar token popover screenshots for summary/per-turn/debug-safe modes. |
-| P1-A-008 loading/error states | 待开始 | Throttled loading, 403/404, and failed preview screenshots; API summaries must be redacted. |
+| P1-A-003 follow-up preserves history | 待验收 | Coze search/revision follow-up evidence captured for task `http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008`: prior turns, prior run steps, follow-up run steps, and token row remain visible. Direct browser-authenticated API read is blocked by read-only browser scope; source/handler-test anchors are recorded. Artifact continuity is handled by P1-A-005 because this sample has no artifacts. |
+| P1-A-004 sidebar recent tasks pagination | 已完成 | Browser evidence shows `我的任务` renders 20 tasks, scrolls independently, and loads the next page to 40 rows. Source/test evidence covers `加载更多任务...`, `page_size=20`, and `coze:workspace-task-thread-upsert` immediate insertion/title patch. Evidence: `notes/P1-A-004-sidebar-recent-tasks.md`; test: `npm run test -- src/components/workspace-sub-menu/__tests__/workspace-sub-menu.test.tsx -t "loads more recent tasks\|prepends a newly created task thread\|patches an existing recent task title"`. |
+| P1-A-005 artifact side preview | 已完成 | Paired DeerFlow/Coze Markdown artifact card and side-preview evidence is recorded using the P1-J-006 verified runs, with P1-A screenshot aliases and source/test anchors. Evidence: `notes/P1-A-005-artifact-side-preview.md`; screenshots: `screenshots/deerflow/P1-A-005-deerflow-artifact-side-preview.png`, `screenshots/coze/P1-A-005-coze-artifact-side-preview.png`. Broader MIME samples remain P1-C. |
+| P1-A-006 search/tool event safety | 已完成 | Web-search task evidence shows visible search/reasoning steps and token text with zero unsafe visible-pattern hits. Source/test anchors cover tool display sanitization and backend run-event payload redaction. Evidence: `notes/P1-A-006-search-tool-event-safety.md`; tests: frontend tool event display + backend redaction/web_search safe query targeted suites passed. |
+| P1-A-007 token popover modes | 已完成 | Browser evidence shows the top-bar Token popover with `输入`/`输出`/`总计`, modes `关闭`/`总览`/`每轮`/`调试`, explanatory note, and zero unsafe visible-pattern hits. Evidence: `notes/P1-A-007-token-popover-modes.md`; test: `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "token usage"`. |
+| P1-A-008 loading/error states | 已完成 | Browser evidence covers bounded task not-found/cannot-view state with no raw error leak. Targeted frontend/backend tests cover DeerFlow-style loading skeleton, artifact preview failure redaction, safe artifact headers, scan-blocked conflict mapping, and signed URL object-URI hiding. Evidence: `notes/P1-A-008-loading-error-states.md`. Live throttled loading screenshot is N/A for this turn and replaced by deterministic component tests. |
 
 ## Evidence Locations
 
@@ -133,9 +133,11 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-Continue P1 execution-flow parity:
+Continue P1 browser/evidence baseline:
 
-- Finish the remaining `P1-J-003` middleware/runtime behavior gaps that directly
-  affect visible task quality: loop handling and clarification behavior.
-- Keep `P1-A` browser evidence running as acceptance evidence for each slice,
-  but do not let generic browser polish displace the memory/execution core.
+- Decide whether `P1-A-001` / `P1-A-002` / `P1-A-003` can be accepted with
+  the recorded browser-read limitation plus source/handler-test anchors, or
+  whether they still need external authenticated Network capture outside the
+  in-app browser's read-only execution scope.
+- If accepted, move `P1-A` workstream to `已完成`; otherwise keep the three
+  rows at `待验收` and begin `P1-B` visual补证 without fabricating API evidence.
