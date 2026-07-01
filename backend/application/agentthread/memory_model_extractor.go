@@ -31,7 +31,7 @@ import (
 
 const (
 	defaultModelMemoryExtractorMaxFacts = 16
-	modelMemoryExtractorInstruction     = "Extract durable memory facts from the transcript. Return JSON only with shape {\"facts\":[{\"key\":\"stable_key\",\"scope\":\"long_term|thread|run\",\"content\":\"short fact\",\"metadata\":{},\"score\":0.0,\"confidence\":0.0}]}. Include only facts that are useful for future task execution, preferences, constraints, or stable user/project context. If metadata.memory_flush.correction_detected is true, treat the transcript as a correction and update or replace conflicting memory; if metadata.memory_flush.reinforcement_detected is true, increase confidence for matching stable facts. Do not include tool outputs, credentials, URLs, filenames, object keys, raw provider payloads, or transient chit-chat."
+	modelMemoryExtractorInstruction     = `Extract durable memory updates from the transcript. Return JSON only with shape {"user":{"workContext":{"summary":"","shouldUpdate":false},"personalContext":{"summary":"","shouldUpdate":false},"topOfMind":{"summary":"","shouldUpdate":false}},"history":{"recentMonths":{"summary":"","shouldUpdate":false},"earlierContext":{"summary":"","shouldUpdate":false},"longTermBackground":{"summary":"","shouldUpdate":false}},"newFacts":[{"content":"short fact","category":"preference|knowledge|context|behavior|goal|correction","confidence":0.0,"sourceError":""}],"factsToRemove":[]}. The legacy {"facts":[{"key":"stable_key","scope":"long_term|thread|run","content":"short fact","metadata":{},"score":0.0,"confidence":0.0}]} shape is also accepted for compatibility. Include only facts that are useful for future task execution, preferences, constraints, or stable user/project context. If metadata.memory_flush.correction_detected is true, treat the transcript as a correction and update or replace conflicting memory; if metadata.memory_flush.reinforcement_detected is true, increase confidence for matching stable facts. Do not include tool outputs, credentials, URLs, filenames, object keys, raw provider payloads, uploaded-file references, or transient chit-chat.`
 )
 
 const (
@@ -139,8 +139,13 @@ func (e *ModelMemoryExtractor) ExtractMemories(
 }
 
 func (e *ModelMemoryExtractor) messages(req MemoryExtractionRequest) []*schema.Message {
+	currentMemory := strings.TrimSpace(req.CurrentMemory)
+	if currentMemory == "" {
+		currentMemory = "{}"
+	}
 	user := schema.UserMessage(fmt.Sprintf(
-		"Transcript snapshot metadata:\nkind=%s\nsnapshot_id=%d\nmessage_count=%d\ndigest=%s\nmetadata=%s\n\nTranscript messages JSON:\n%s",
+		"Current memory JSON:\n%s\n\nTranscript snapshot metadata:\nkind=%s\nsnapshot_id=%d\nmessage_count=%d\ndigest=%s\nmetadata=%s\n\nTranscript messages JSON:\n%s",
+		currentMemory,
 		req.Kind,
 		req.SnapshotID,
 		req.MessageCount,
@@ -253,13 +258,37 @@ func memoryExtractionUsageIdempotencyKey(
 }
 
 type modelMemoryExtractionPayload struct {
-	Facts []modelMemoryExtractionFact `json:"facts"`
+	User          modelMemoryExtractionUser    `json:"user"`
+	History       modelMemoryExtractionHistory `json:"history"`
+	NewFacts      []modelMemoryExtractionFact  `json:"newFacts"`
+	Facts         []modelMemoryExtractionFact  `json:"facts"`
+	FactsToRemove []string                     `json:"factsToRemove"`
+}
+
+type modelMemoryExtractionUser struct {
+	WorkContext     modelMemoryExtractionSection `json:"workContext"`
+	PersonalContext modelMemoryExtractionSection `json:"personalContext"`
+	TopOfMind       modelMemoryExtractionSection `json:"topOfMind"`
+}
+
+type modelMemoryExtractionHistory struct {
+	RecentMonths       modelMemoryExtractionSection `json:"recentMonths"`
+	EarlierContext     modelMemoryExtractionSection `json:"earlierContext"`
+	LongTermBackground modelMemoryExtractionSection `json:"longTermBackground"`
+}
+
+type modelMemoryExtractionSection struct {
+	Summary      string `json:"summary"`
+	ShouldUpdate bool   `json:"shouldUpdate"`
 }
 
 type modelMemoryExtractionFact struct {
 	Key                  string          `json:"key"`
 	Scope                string          `json:"scope"`
 	Content              string          `json:"content"`
+	Category             string          `json:"category"`
+	SourceError          string          `json:"sourceError"`
+	SourceErrorSnake     string          `json:"source_error"`
 	Metadata             json.RawMessage `json:"metadata"`
 	Score                float64         `json:"score"`
 	Confidence           float64         `json:"confidence"`
@@ -278,30 +307,80 @@ func parseModelMemoryExtractionFacts(raw string, maxFacts int) ([]MemoryExtracti
 	if maxFacts <= 0 {
 		maxFacts = defaultModelMemoryExtractorMaxFacts
 	}
-	facts := make([]MemoryExtractionFact, 0, len(payload.Facts))
-	for _, item := range payload.Facts {
-		content := strings.TrimSpace(item.Content)
+	facts := make([]MemoryExtractionFact, 0, maxFacts)
+	appendFact := func(fact MemoryExtractionFact) bool {
+		content := strings.TrimSpace(fact.Content)
 		if content == "" {
-			continue
+			return len(facts) < maxFacts
 		}
-		facts = append(facts, MemoryExtractionFact{
-			Key:                  strings.TrimSpace(item.Key),
-			Scope:                memoryFlushFactScope(MemoryScope(strings.TrimSpace(item.Scope))),
-			Content:              content,
-			Metadata:             modelMemoryFactMetadata(item.Metadata),
-			Score:                clampModelMemoryFloat(item.Score),
-			Confidence:           clampModelMemoryFloat(item.Confidence),
-			SourceType:           strings.TrimSpace(item.SourceType),
-			SourceID:             strings.TrimSpace(item.SourceID),
-			CorrectionOfMemoryID: item.CorrectionOfMemoryID,
-			CorrectedAt:          item.CorrectedAt,
-			ExpiresAt:            item.ExpiresAt,
+		fact.Content = content
+		facts = append(facts, fact)
+		return len(facts) < maxFacts
+	}
+	appendSection := func(sectionKey string, section modelMemoryExtractionSection) bool {
+		content := strings.TrimSpace(section.Summary)
+		if !section.ShouldUpdate || content == "" {
+			return len(facts) < maxFacts
+		}
+		return appendFact(MemoryExtractionFact{
+			Key:        "deerflow:" + sectionKey,
+			Scope:      MemoryScopeLongTerm,
+			Content:    content,
+			Metadata:   modelMemoryMetadataWithDefaults(nil, map[string]string{"category": "context", "deerflow_section": sectionKey}),
+			Score:      0.8,
+			Confidence: 0.8,
 		})
+	}
+	for _, section := range []struct {
+		key     string
+		section modelMemoryExtractionSection
+	}{
+		{key: "user.workContext", section: payload.User.WorkContext},
+		{key: "user.personalContext", section: payload.User.PersonalContext},
+		{key: "user.topOfMind", section: payload.User.TopOfMind},
+		{key: "history.recentMonths", section: payload.History.RecentMonths},
+		{key: "history.earlierContext", section: payload.History.EarlierContext},
+		{key: "history.longTermBackground", section: payload.History.LongTermBackground},
+	} {
+		if !appendSection(section.key, section.section) {
+			return facts, nil
+		}
+	}
+	for _, item := range payload.NewFacts {
+		if !appendFact(modelMemoryExtractionFactToMemoryFact(item)) {
+			return facts, nil
+		}
+	}
+	for _, item := range payload.Facts {
+		if !appendFact(modelMemoryExtractionFactToMemoryFact(item)) {
+			return facts, nil
+		}
 		if len(facts) >= maxFacts {
 			break
 		}
 	}
 	return facts, nil
+}
+
+func modelMemoryExtractionFactToMemoryFact(item modelMemoryExtractionFact) MemoryExtractionFact {
+	category := strings.TrimSpace(item.Category)
+	sourceError := strings.TrimSpace(item.SourceError)
+	if sourceError == "" {
+		sourceError = strings.TrimSpace(item.SourceErrorSnake)
+	}
+	return MemoryExtractionFact{
+		Key:                  strings.TrimSpace(item.Key),
+		Scope:                memoryFlushFactScope(MemoryScope(strings.TrimSpace(item.Scope))),
+		Content:              strings.TrimSpace(item.Content),
+		Metadata:             modelMemoryMetadataWithDefaults(item.Metadata, map[string]string{"category": category, "sourceError": sourceError}),
+		Score:                clampModelMemoryFloat(item.Score),
+		Confidence:           clampModelMemoryFloat(item.Confidence),
+		SourceType:           strings.TrimSpace(item.SourceType),
+		SourceID:             strings.TrimSpace(item.SourceID),
+		CorrectionOfMemoryID: item.CorrectionOfMemoryID,
+		CorrectedAt:          item.CorrectedAt,
+		ExpiresAt:            item.ExpiresAt,
+	}
 }
 
 func modelMemoryJSONPayload(raw string) string {
@@ -331,6 +410,34 @@ func modelMemoryFactMetadata(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return "{}"
+}
+
+func modelMemoryMetadataWithDefaults(
+	raw json.RawMessage,
+	defaults map[string]string,
+) string {
+	metadata := make(map[string]any)
+	base := modelMemoryFactMetadata(raw)
+	if base != "" && base != "{}" {
+		_ = json.Unmarshal([]byte(base), &metadata)
+	}
+	for key, value := range defaults {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if _, exists := metadata[key]; exists {
+			continue
+		}
+		metadata[key] = strings.TrimSpace(value)
+	}
+	if len(metadata) == 0 {
+		return "{}"
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func clampModelMemoryFloat(value float64) float64 {

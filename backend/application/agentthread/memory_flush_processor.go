@@ -49,6 +49,7 @@ type MemoryExtractionRequest struct {
 	MessageCount   int32
 	Messages       string
 	Metadata       string
+	CurrentMemory  string
 }
 
 type MemoryExtractionFact struct {
@@ -178,6 +179,18 @@ func (s *ApplicationService) processMemoryFlushJob(
 		)
 	}
 
+	currentMemory, err := s.memoryFlushCurrentMemoryState(ctx, job)
+	if err != nil {
+		return s.failClaimedMemoryFlushJob(
+			ctx,
+			job,
+			workerID,
+			"memory current state unavailable",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+
 	facts, err := s.MemoryExtractor.ExtractMemories(
 		ctx,
 		MemoryExtractionRequest{
@@ -191,6 +204,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 			MessageCount:   snapshot.MessageCount,
 			Messages:       snapshot.Messages,
 			Metadata:       snapshot.Metadata,
+			CurrentMemory:  currentMemory,
 		},
 	)
 	if err != nil {
@@ -236,6 +250,112 @@ func (s *ApplicationService) processMemoryFlushJob(
 		"facts_skipped": skipped,
 	})
 	return memoryFlushJobProcessSucceeded, nil
+}
+
+func (s *ApplicationService) memoryFlushCurrentMemoryState(
+	ctx context.Context,
+	job *domainentity.MemoryFlushJob,
+) (string, error) {
+	if s == nil || s.ThreadSVC == nil || job == nil {
+		return "{}", nil
+	}
+	memories, _, err := s.ThreadSVC.RecallMemories(
+		ctx,
+		&domainservice.RecallMemoriesRequest{
+			ThreadID: job.ThreadID,
+			RunID:    job.RunID,
+			Scopes: []domainentity.MemoryScope{
+				domainentity.MemoryScopeLongTerm,
+				domainentity.MemoryScopeThread,
+				domainentity.MemoryScopeRun,
+			},
+			Limit: 100,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return buildMemoryFlushCurrentMemoryDocument(memories), nil
+}
+
+func buildMemoryFlushCurrentMemoryDocument(memories []*domainentity.Memory) string {
+	newSection := func() map[string]string {
+		return map[string]string{"summary": ""}
+	}
+	user := map[string]map[string]string{
+		"workContext":     newSection(),
+		"personalContext": newSection(),
+		"topOfMind":       newSection(),
+	}
+	history := map[string]map[string]string{
+		"recentMonths":       newSection(),
+		"earlierContext":     newSection(),
+		"longTermBackground": newSection(),
+	}
+	sectionConfidence := make(map[string]float64)
+	facts := make([]map[string]any, 0, len(memories))
+	for _, memory := range memories {
+		if memory == nil || memory.DeletedAt > 0 {
+			continue
+		}
+		content := strings.TrimSpace(memory.Content)
+		if content == "" {
+			continue
+		}
+		metadata := adkMemoryMetadata(memory.Metadata)
+		if section, ok := adkStructuredMemorySection(metadata); ok && section.path != "" {
+			confidence := memoryFlushMemoryConfidence(memory)
+			if confidence >= sectionConfidence[section.path] {
+				if section.group == "user" {
+					user[strings.TrimPrefix(section.path, "user.")]["summary"] = content
+				} else if section.group == "history" {
+					history[strings.TrimPrefix(section.path, "history.")]["summary"] = content
+				}
+				sectionConfidence[section.path] = confidence
+			}
+			continue
+		}
+		category := firstADKMemoryMetadataString(metadata, "category")
+		if category == "" {
+			category = string(memory.Scope)
+		}
+		if category == "" {
+			category = "context"
+		}
+		fact := map[string]any{
+			"id":         fmt.Sprintf("memory_%d", memory.ID),
+			"content":    content,
+			"category":   category,
+			"confidence": memoryFlushMemoryConfidence(memory),
+		}
+		if sourceError := firstADKMemoryMetadataString(metadata, "sourceError", "source_error"); sourceError != "" {
+			fact["sourceError"] = sourceError
+		}
+		facts = append(facts, fact)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"version": "1.0",
+		"user":    user,
+		"history": history,
+		"facts":   facts,
+	})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func memoryFlushMemoryConfidence(memory *domainentity.Memory) float64 {
+	if memory == nil {
+		return 0
+	}
+	if memory.Confidence > 0 {
+		return memory.Confidence
+	}
+	if memory.Score > 0 {
+		return memory.Score
+	}
+	return 0
 }
 
 func (s *ApplicationService) rememberExtractedMemoryFacts(

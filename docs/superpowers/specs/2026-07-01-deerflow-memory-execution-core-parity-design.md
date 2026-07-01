@@ -96,9 +96,23 @@ Initial observed gaps:
   generating summaries, then restores the reminders ahead of the summary message.
   This matches DeerFlow's `_preserve_dynamic_context_reminders` behavior and
   avoids folding hidden memory/date reminders into summary text.
-- Remaining gap: memory content is still projected from Coze `AgentMemory`
-  records into a DeerFlow-like `Facts:` section. Coze does not yet store
-  DeerFlow's full `user/history/facts` memory document shape.
+- Memory injection formatting now matches DeerFlow's visible prompt contract
+  when safe section metadata is available: `User Context:` supports `Work`,
+  `Personal`, and `Current Focus`; `History:` supports `Recent`, `Earlier`, and
+  `Background`; `Facts:` remains confidence sorted and supports correction
+  `(avoid: ...)` metadata.
+- `ModelMemoryExtractor` now asks for DeerFlow's `user/history/newFacts`
+  update shape and still accepts the legacy Coze `facts` shape. Parsed
+  `user/history` summaries are bridged into normalized `AgentMemory` records
+  using controlled `deerflow_section` metadata, so later injection can render
+  DeerFlow-style memory sections without leaking raw model metadata.
+- Memory flush processing now recalls current memories before model extraction
+  and sends a safe DeerFlow-like `user/history/facts` JSON projection to the
+  extractor. The projection omits source ids, raw metadata, private paths,
+  credentials, object URIs, and provider payloads.
+- Remaining gap: Coze still stores normalized records rather than a single
+  DeerFlow memory document, and it does not yet apply `factsToRemove` as
+  delete/update operations.
 
 ## Eino Landing Point
 

@@ -468,7 +468,30 @@ func TestApplicationProcessMemoryFlushJobsExtractsMemoriesAndCompletesJob(t *tes
 			Messages:       `[{"role":"user","content":"请记住我偏好中文回答"},{"role":"assistant","content":"好的"}]`,
 			Metadata:       `{"runtime":"eino_adk"}`,
 		},
-		recalledMemories: []*entity.Memory{},
+		recalledMemories: []*entity.Memory{
+			{
+				ID:         401,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "正在推进 DeerFlow parity 主线",
+				Metadata:   `{"deerflow_section":"user.workContext","path":"/private/secret"}`,
+				Confidence: 0.88,
+				SourceType: "manual",
+				SourceID:   "private-source-id",
+			},
+			{
+				ID:         402,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "用户偏好中文回答",
+				Metadata:   `{"category":"preference","path":"/private/secret"}`,
+				Confidence: 0.92,
+				SourceType: "manual",
+				SourceID:   "private-source-id",
+			},
+		},
 		rememberedMemories: []*entity.Memory{
 			{
 				ID:         301,
@@ -525,6 +548,11 @@ func TestApplicationProcessMemoryFlushJobsExtractsMemoriesAndCompletesJob(t *tes
 	require.Equal(t, int64(501), extractor.req.SnapshotID)
 	require.Equal(t, TranscriptKindTerminal, extractor.req.Kind)
 	require.Contains(t, extractor.req.Messages, "偏好中文")
+	require.Contains(t, extractor.req.CurrentMemory, "正在推进 DeerFlow parity 主线")
+	require.Contains(t, extractor.req.CurrentMemory, `"workContext"`)
+	require.Contains(t, extractor.req.CurrentMemory, `"preference"`)
+	require.NotContains(t, extractor.req.CurrentMemory, "/private/secret")
+	require.NotContains(t, extractor.req.CurrentMemory, "private-source-id")
 	require.Len(t, domainSVC.rememberMemoryReqs, 1)
 	require.Equal(t, int64(10), domainSVC.rememberMemoryReqs[0].ThreadID)
 	require.Equal(t, int64(20), domainSVC.rememberMemoryReqs[0].RunID)

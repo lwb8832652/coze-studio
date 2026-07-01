@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -150,9 +151,13 @@ func buildADKMemoryContext(memories []AgentMemory, tokenBudget int) (string, err
 	}
 
 	usedTokens := estimateADKTextTokens(adkMemoryContextStart) +
-		estimateADKTextTokens(adkMemoryContextEnd) +
-		estimateADKTextTokens("Facts:")
-	lines := make([]string, 0, len(normalized.Items))
+		estimateADKTextTokens(adkMemoryContextEnd)
+	sections := make([]string, 0, 3)
+	userContext := make(map[adkMemoryStructuredSection]string)
+	userContextConfidence := make(map[adkMemoryStructuredSection]float64)
+	historyContext := make(map[adkMemoryStructuredSection]string)
+	historyContextConfidence := make(map[adkMemoryStructuredSection]float64)
+	factLines := make([]string, 0, len(normalized.Items))
 	seen := make(map[string]struct{}, len(normalized.Items))
 	items := append([]AgentMemory(nil), normalized.Items...)
 	sort.SliceStable(items, func(i, j int) bool {
@@ -169,26 +174,195 @@ func buildADKMemoryContext(memories []AgentMemory, tokenBudget int) (string, err
 		}
 		seen[key] = struct{}{}
 
-		category := strings.TrimSpace(memory.Scope)
-		if category == "" {
-			category = "context"
+		metadata := adkMemoryMetadata(memory.Metadata)
+		if section, ok := adkStructuredMemorySection(metadata); ok {
+			confidence := adkMemoryConfidence(memory)
+			if section.group == "user" {
+				if confidence >= userContextConfidence[section] {
+					userContext[section] = content
+					userContextConfidence[section] = confidence
+				}
+				continue
+			}
+			if section.group == "history" {
+				if confidence >= historyContextConfidence[section] {
+					historyContext[section] = content
+					historyContextConfidence[section] = confidence
+				}
+				continue
+			}
 		}
-		line := fmt.Sprintf("- [%s | %.2f] %s", category, adkMemoryConfidence(memory), content)
-		lineTokens := estimateADKTextTokens(line)
-		if usedTokens+lineTokens > tokenBudget {
-			continue
-		}
-		lines = append(lines, line)
-		usedTokens += lineTokens
+
+		factLines = append(factLines, adkMemoryFactLine(memory, metadata, content))
 	}
-	if len(lines) == 0 {
+
+	appendSection := func(header string, lines []string) {
+		if len(lines) == 0 {
+			return
+		}
+		accepted := make([]string, 0, len(lines))
+		headerTokens := estimateADKTextTokens(header)
+		for _, line := range lines {
+			lineTokens := estimateADKTextTokens(line)
+			sectionStartTokens := 0
+			if len(accepted) == 0 {
+				sectionStartTokens = headerTokens
+			}
+			if usedTokens+sectionStartTokens+lineTokens > tokenBudget {
+				continue
+			}
+			if len(accepted) == 0 {
+				usedTokens += sectionStartTokens
+			}
+			accepted = append(accepted, line)
+			usedTokens += lineTokens
+		}
+		if len(accepted) > 0 {
+			sections = append(sections, header+"\n"+strings.Join(accepted, "\n"))
+		}
+	}
+
+	appendSection("User Context:", adkStructuredMemoryLines(userContext, []adkMemoryStructuredSection{
+		adkMemorySectionWorkContext,
+		adkMemorySectionPersonalContext,
+		adkMemorySectionTopOfMind,
+	}))
+	appendSection("History:", adkStructuredMemoryLines(historyContext, []adkMemoryStructuredSection{
+		adkMemorySectionRecentMonths,
+		adkMemorySectionEarlierContext,
+		adkMemorySectionLongTermBackground,
+	}))
+	appendSection("Facts:", factLines)
+
+	if len(sections) == 0 {
 		return "", nil
 	}
 
 	return adkMemoryContextStart + "\n" +
-		"Facts:\n" +
-		strings.Join(lines, "\n") + "\n" +
+		strings.Join(sections, "\n\n") + "\n" +
 		adkMemoryContextEnd, nil
+}
+
+type adkMemoryStructuredSection struct {
+	group string
+	label string
+	path  string
+}
+
+var (
+	adkMemorySectionWorkContext        = adkMemoryStructuredSection{group: "user", label: "Work", path: "user.workContext"}
+	adkMemorySectionPersonalContext    = adkMemoryStructuredSection{group: "user", label: "Personal", path: "user.personalContext"}
+	adkMemorySectionTopOfMind          = adkMemoryStructuredSection{group: "user", label: "Current Focus", path: "user.topOfMind"}
+	adkMemorySectionRecentMonths       = adkMemoryStructuredSection{group: "history", label: "Recent", path: "history.recentMonths"}
+	adkMemorySectionEarlierContext     = adkMemoryStructuredSection{group: "history", label: "Earlier", path: "history.earlierContext"}
+	adkMemorySectionLongTermBackground = adkMemoryStructuredSection{group: "history", label: "Background", path: "history.longTermBackground"}
+)
+
+func adkMemoryMetadata(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return nil
+	}
+	return metadata
+}
+
+func adkStructuredMemorySection(
+	metadata map[string]any,
+) (adkMemoryStructuredSection, bool) {
+	raw := firstADKMemoryMetadataString(
+		metadata,
+		"deerflow_section",
+		"memory_section",
+		"section",
+	)
+	key := strings.ToLower(strings.NewReplacer("_", "", "-", "", ".", "").Replace(raw))
+	switch key {
+	case "userworkcontext", "workcontext", "userwork", "work":
+		return adkMemorySectionWorkContext, true
+	case "userpersonalcontext", "personalcontext", "userpersonal", "personal":
+		return adkMemorySectionPersonalContext, true
+	case "usertopofmind", "topofmind", "currentfocus", "focus":
+		return adkMemorySectionTopOfMind, true
+	case "historyrecentmonths", "recentmonths", "recent":
+		return adkMemorySectionRecentMonths, true
+	case "historyearliercontext", "earliercontext", "earlier":
+		return adkMemorySectionEarlierContext, true
+	case "historylongtermbackground", "longtermbackground", "background":
+		return adkMemorySectionLongTermBackground, true
+	default:
+		return adkMemoryStructuredSection{}, false
+	}
+}
+
+func adkStructuredMemoryLines(
+	sections map[adkMemoryStructuredSection]string,
+	order []adkMemoryStructuredSection,
+) []string {
+	lines := make([]string, 0, len(order))
+	for _, section := range order {
+		content := strings.TrimSpace(sections[section])
+		if content == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", section.label, content))
+	}
+	return lines
+}
+
+func adkMemoryFactLine(
+	memory AgentMemory,
+	metadata map[string]any,
+	content string,
+) string {
+	category := firstADKMemoryMetadataString(metadata, "category")
+	if category == "" {
+		category = strings.TrimSpace(memory.Scope)
+	}
+	if category == "" {
+		category = "context"
+	}
+	confidence := adkMemoryConfidence(memory)
+	if category == "correction" {
+		sourceError := firstADKMemoryMetadataString(
+			metadata,
+			"sourceError",
+			"source_error",
+		)
+		if sourceError != "" {
+			return fmt.Sprintf(
+				"- [%s | %.2f] %s (avoid: %s)",
+				category,
+				confidence,
+				content,
+				sourceError,
+			)
+		}
+	}
+	return fmt.Sprintf("- [%s | %.2f] %s", category, confidence, content)
+}
+
+func firstADKMemoryMetadataString(metadata map[string]any, keys ...string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if text = strings.TrimSpace(text); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func (m *ADKMemoryMiddleware) currentDate() string {

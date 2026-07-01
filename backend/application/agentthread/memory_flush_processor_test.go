@@ -79,6 +79,44 @@ func TestModelMemoryExtractorParsesStructuredFacts(t *testing.T) {
 	require.NotContains(t, chatModel.messages[0].Content, "agent-runtime")
 }
 
+func TestModelMemoryExtractorParsesDeerFlowMemoryDocument(t *testing.T) {
+	facts, err := parseModelMemoryExtractionFacts(`{
+		"user":{
+			"workContext":{"summary":"正在推进 DeerFlow parity 主线","shouldUpdate":true},
+			"personalContext":{"summary":"","shouldUpdate":false},
+			"topOfMind":{"summary":"优先稳定记忆系统和 Agent 执行链路","shouldUpdate":true}
+		},
+		"history":{
+			"recentMonths":{"summary":"最近持续验证任务详情、Skills 和 MCP 能力","shouldUpdate":true},
+			"earlierContext":{"summary":"","shouldUpdate":false},
+			"longTermBackground":{"summary":"","shouldUpdate":false}
+		},
+		"newFacts":[
+			{
+				"content":"用户要求 DeerFlow 对齐必须先核实源码再修改",
+				"category":"preference",
+				"confidence":0.97,
+				"sourceError":"之前有过猜测式改动"
+			}
+		],
+		"factsToRemove":["stale_fact"]
+	}`, 8)
+
+	require.NoError(t, err)
+	require.Len(t, facts, 4)
+	require.Equal(t, "deerflow:user.workContext", facts[0].Key)
+	require.Equal(t, MemoryScopeLongTerm, facts[0].Scope)
+	require.Equal(t, "正在推进 DeerFlow parity 主线", facts[0].Content)
+	require.JSONEq(t, `{"category":"context","deerflow_section":"user.workContext"}`, facts[0].Metadata)
+	require.Equal(t, "deerflow:user.topOfMind", facts[1].Key)
+	require.JSONEq(t, `{"category":"context","deerflow_section":"user.topOfMind"}`, facts[1].Metadata)
+	require.Equal(t, "deerflow:history.recentMonths", facts[2].Key)
+	require.JSONEq(t, `{"category":"context","deerflow_section":"history.recentMonths"}`, facts[2].Metadata)
+	require.Equal(t, "用户要求 DeerFlow 对齐必须先核实源码再修改", facts[3].Content)
+	require.JSONEq(t, `{"category":"preference","sourceError":"之前有过猜测式改动"}`, facts[3].Metadata)
+	require.Equal(t, 0.97, facts[3].Confidence)
+}
+
 func TestModelMemoryExtractorRejectsInvalidModelJSON(t *testing.T) {
 	chatModel := &recordingChatModel{
 		resp: schema.AssistantMessage("not json", nil),

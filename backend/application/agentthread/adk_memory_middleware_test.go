@@ -94,6 +94,49 @@ func TestADKMemoryMiddlewareInjectsDeerFlowReminderBeforeFirstUser(t *testing.T)
 	require.Equal(t, "hello", got.Messages[1].Content)
 }
 
+func TestADKMemoryMiddlewareFormatsDeerFlowMemorySections(t *testing.T) {
+	got, err := buildADKMemoryContext([]AgentMemory{
+		{
+			ID:         "work-context",
+			Content:    "prefers concise rollout notes",
+			Metadata:   `{"deerflow_section":"user.workContext","path":"/private/secret"}`,
+			Confidence: 0.83,
+		},
+		{
+			ID:         "personal-context",
+			Content:    "usually asks for Chinese explanations",
+			Metadata:   `{"memory_section":"user.personalContext"}`,
+			Confidence: 0.74,
+		},
+		{
+			ID:         "recent-history",
+			Content:    "recently focused on DeerFlow parity launch",
+			Metadata:   `{"deerflow_section":"history.recentMonths"}`,
+			Confidence: 0.68,
+		},
+		{
+			ID:         "correction-fact",
+			Scope:      "long_term",
+			Content:    "deployment region is EU",
+			Metadata:   `{"category":"correction","sourceError":"old region APAC","path":"/private/secret"}`,
+			Confidence: 0.91,
+		},
+	}, 256)
+
+	require.NoError(t, err)
+	require.Contains(t, got, "<memory>")
+	require.Contains(t, got, "User Context:")
+	require.Contains(t, got, "- Work: prefers concise rollout notes")
+	require.Contains(t, got, "- Personal: usually asks for Chinese explanations")
+	require.Contains(t, got, "History:")
+	require.Contains(t, got, "- Recent: recently focused on DeerFlow parity launch")
+	require.Contains(t, got, "Facts:")
+	require.Contains(t, got, "- [correction | 0.91] deployment region is EU (avoid: old region APAC)")
+	require.NotContains(t, got, "deerflow_section")
+	require.NotContains(t, got, "memory_section")
+	require.NotContains(t, got, "/private/secret")
+}
+
 func TestADKMemoryMiddlewareSkipsDuplicateReminderForSameDate(t *testing.T) {
 	provider := &recordingMemoryProvider{memories: []AgentMemory{{
 		ID:      "1",
