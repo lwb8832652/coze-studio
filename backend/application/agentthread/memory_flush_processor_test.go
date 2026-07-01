@@ -80,7 +80,7 @@ func TestModelMemoryExtractorParsesStructuredFacts(t *testing.T) {
 }
 
 func TestModelMemoryExtractorParsesDeerFlowMemoryDocument(t *testing.T) {
-	facts, err := parseModelMemoryExtractionFacts(`{
+	update, err := parseModelMemoryExtractionUpdate(`{
 		"user":{
 			"workContext":{"summary":"正在推进 DeerFlow parity 主线","shouldUpdate":true},
 			"personalContext":{"summary":"","shouldUpdate":false},
@@ -99,10 +99,12 @@ func TestModelMemoryExtractorParsesDeerFlowMemoryDocument(t *testing.T) {
 				"sourceError":"之前有过猜测式改动"
 			}
 		],
-		"factsToRemove":["stale_fact"]
+		"factsToRemove":["memory_401","stale_fact","memory_401"]
 	}`, 8)
 
 	require.NoError(t, err)
+	require.Equal(t, []int64{401}, update.FactsToRemove)
+	facts := update.Facts
 	require.Len(t, facts, 4)
 	require.Equal(t, "deerflow:user.workContext", facts[0].Key)
 	require.Equal(t, MemoryScopeLongTerm, facts[0].Scope)

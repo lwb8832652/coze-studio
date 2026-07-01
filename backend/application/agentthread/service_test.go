@@ -632,6 +632,92 @@ func TestApplicationProcessMemoryFlushJobsRetriesExtractorFailureWithoutTranscri
 	require.Empty(t, domainSVC.rememberMemoryReqs)
 }
 
+func TestApplicationProcessMemoryFlushJobsAppliesFactsToRemove(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedMemoryFlushJobs: []*entity.MemoryFlushJob{
+			{
+				ID:                   902,
+				ThreadID:             10,
+				RunID:                20,
+				SpaceID:              30,
+				UserID:               40,
+				TranscriptSnapshotID: 503,
+				Status:               entity.MemoryFlushJobStatusProcessing,
+				WorkerID:             "memory-worker-a",
+				AttemptCount:         1,
+			},
+		},
+		gotTranscriptSnapshot: &entity.TranscriptSnapshot{
+			ID:             503,
+			ThreadID:       10,
+			RunID:          20,
+			SpaceID:        30,
+			Kind:           entity.TranscriptKindTerminal,
+			Digest:         strings.Repeat("c", 64),
+			IdempotencyKey: "terminal:" + strings.Repeat("c", 64),
+			MessageCount:   2,
+			Messages:       `[{"role":"user","content":"请不要再记住旧地区了"},{"role":"assistant","content":"已更新"}]`,
+			Metadata:       `{"runtime":"eino_adk"}`,
+		},
+		recalledMemories: []*entity.Memory{
+			{
+				ID:         401,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "部署地区是 APAC",
+				Metadata:   `{"category":"context"}`,
+				Confidence: 0.9,
+			},
+		},
+		completedMemoryFlushJob: &entity.MemoryFlushJob{
+			ID:     902,
+			Status: entity.MemoryFlushJobStatusSucceeded,
+		},
+		memoryFlushUpdated: true,
+		deleteMemoryOK:     true,
+	}
+	extractor := &recordingMemoryUpdateExtractor{
+		result: &MemoryExtractionResult{
+			FactsToRemove: []int64{401},
+			Facts: []MemoryExtractionFact{
+				{
+					Key:        "region",
+					Scope:      MemoryScopeLongTerm,
+					Content:    "部署地区是 EU",
+					Metadata:   `{"category":"correction","sourceError":"部署地区是 APAC"}`,
+					Confidence: 0.98,
+				},
+			},
+		},
+	}
+	app := &ApplicationService{
+		ThreadSVC:       domainSVC,
+		MemoryExtractor: extractor,
+	}
+
+	resp, err := app.ProcessMemoryFlushJobs(context.Background(), &ProcessMemoryFlushJobsRequest{
+		WorkerID:           "memory-worker-a",
+		Limit:              1,
+		MaxAttempts:        3,
+		RetryBackoffMillis: 60000,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int32(1), resp.Succeeded)
+	require.NotNil(t, domainSVC.deleteMemoryReq)
+	require.Equal(t, int64(10), domainSVC.deleteMemoryReq.ThreadID)
+	require.Equal(t, int64(401), domainSVC.deleteMemoryReq.MemoryID)
+	require.Equal(t, int64(40), domainSVC.deleteMemoryReq.ActorID)
+	require.Len(t, domainSVC.rememberMemoryReqs, 1)
+	require.Equal(t, "部署地区是 EU", domainSVC.rememberMemoryReqs[0].Content)
+	require.NotNil(t, domainSVC.completeMemoryFlushReq)
+	require.Equal(t, int64(902), domainSVC.completeMemoryFlushReq.JobID)
+	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 APAC")
+	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 EU")
+}
+
 func TestApplicationTokenUsageMethodsMapDomainUsage(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		recordedTokenUsage: &entity.TokenUsage{
@@ -4356,6 +4442,34 @@ func (e *recordingMemoryExtractor) ExtractMemories(
 		return nil, e.err
 	}
 	return e.facts, nil
+}
+
+type recordingMemoryUpdateExtractor struct {
+	req    MemoryExtractionRequest
+	result *MemoryExtractionResult
+	err    error
+}
+
+func (e *recordingMemoryUpdateExtractor) ExtractMemories(
+	ctx context.Context,
+	req MemoryExtractionRequest,
+) ([]MemoryExtractionFact, error) {
+	result, err := e.ExtractMemoryUpdates(ctx, req)
+	if err != nil || result == nil {
+		return nil, err
+	}
+	return result.Facts, nil
+}
+
+func (e *recordingMemoryUpdateExtractor) ExtractMemoryUpdates(
+	_ context.Context,
+	req MemoryExtractionRequest,
+) (*MemoryExtractionResult, error) {
+	e.req = req
+	if e.err != nil {
+		return nil, e.err
+	}
+	return e.result, nil
 }
 
 type fixedIDGen struct{}

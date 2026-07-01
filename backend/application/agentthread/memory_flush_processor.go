@@ -66,8 +66,17 @@ type MemoryExtractionFact struct {
 	ExpiresAt            int64
 }
 
+type MemoryExtractionResult struct {
+	Facts         []MemoryExtractionFact
+	FactsToRemove []int64
+}
+
 type MemoryExtractor interface {
 	ExtractMemories(ctx context.Context, req MemoryExtractionRequest) ([]MemoryExtractionFact, error)
+}
+
+type MemoryUpdateExtractor interface {
+	ExtractMemoryUpdates(ctx context.Context, req MemoryExtractionRequest) (*MemoryExtractionResult, error)
 }
 
 type memoryFlushJobProcessOutcome int
@@ -191,22 +200,19 @@ func (s *ApplicationService) processMemoryFlushJob(
 		)
 	}
 
-	facts, err := s.MemoryExtractor.ExtractMemories(
-		ctx,
-		MemoryExtractionRequest{
-			ThreadID:       snapshot.ThreadID,
-			RunID:          snapshot.RunID,
-			SpaceID:        snapshot.SpaceID,
-			SnapshotID:     snapshot.ID,
-			Kind:           TranscriptKind(snapshot.Kind),
-			Digest:         snapshot.Digest,
-			IdempotencyKey: snapshot.IdempotencyKey,
-			MessageCount:   snapshot.MessageCount,
-			Messages:       snapshot.Messages,
-			Metadata:       snapshot.Metadata,
-			CurrentMemory:  currentMemory,
-		},
-	)
+	updates, err := extractMemoryUpdates(ctx, s.MemoryExtractor, MemoryExtractionRequest{
+		ThreadID:       snapshot.ThreadID,
+		RunID:          snapshot.RunID,
+		SpaceID:        snapshot.SpaceID,
+		SnapshotID:     snapshot.ID,
+		Kind:           TranscriptKind(snapshot.Kind),
+		Digest:         snapshot.Digest,
+		IdempotencyKey: snapshot.IdempotencyKey,
+		MessageCount:   snapshot.MessageCount,
+		Messages:       snapshot.Messages,
+		Metadata:       snapshot.Metadata,
+		CurrentMemory:  currentMemory,
+	})
 	if err != nil {
 		return s.failClaimedMemoryFlushJob(
 			ctx,
@@ -217,8 +223,23 @@ func (s *ApplicationService) processMemoryFlushJob(
 			retryBackoffMillis,
 		)
 	}
+	if updates == nil {
+		updates = &MemoryExtractionResult{}
+	}
 
-	written, skipped, err := s.rememberExtractedMemoryFacts(ctx, job, snapshot, facts)
+	removed, removeSkipped, err := s.removeExtractedMemoryFacts(ctx, job, updates.FactsToRemove)
+	if err != nil {
+		return s.failClaimedMemoryFlushJob(
+			ctx,
+			job,
+			workerID,
+			"memory delete failed",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+
+	written, skipped, err := s.rememberExtractedMemoryFacts(ctx, job, snapshot, updates.Facts)
 	if err != nil {
 		return s.failClaimedMemoryFlushJob(
 			ctx,
@@ -245,11 +266,31 @@ func (s *ApplicationService) processMemoryFlushJob(
 		return memoryFlushJobProcessSkipped, nil
 	}
 	s.emitMemoryFlushEvent(ctx, job, snapshot, memoryFlushCompletedEvent, map[string]any{
-		"status":        "succeeded",
-		"facts_written": written,
-		"facts_skipped": skipped,
+		"status":               "succeeded",
+		"facts_written":        written,
+		"facts_skipped":        skipped,
+		"facts_removed":        removed,
+		"facts_remove_skipped": removeSkipped,
 	})
 	return memoryFlushJobProcessSucceeded, nil
+}
+
+func extractMemoryUpdates(
+	ctx context.Context,
+	extractor MemoryExtractor,
+	req MemoryExtractionRequest,
+) (*MemoryExtractionResult, error) {
+	if extractor == nil {
+		return nil, fmt.Errorf("memory extractor is not configured")
+	}
+	if updateExtractor, ok := extractor.(MemoryUpdateExtractor); ok {
+		return updateExtractor.ExtractMemoryUpdates(ctx, req)
+	}
+	facts, err := extractor.ExtractMemories(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &MemoryExtractionResult{Facts: facts}, nil
 }
 
 func (s *ApplicationService) memoryFlushCurrentMemoryState(
@@ -408,6 +449,44 @@ func (s *ApplicationService) rememberExtractedMemoryFacts(
 		written++
 	}
 	return written, skipped, nil
+}
+
+func (s *ApplicationService) removeExtractedMemoryFacts(
+	ctx context.Context,
+	job *domainentity.MemoryFlushJob,
+	memoryIDs []int64,
+) (int32, int32, error) {
+	if s == nil || s.ThreadSVC == nil || job == nil || len(memoryIDs) == 0 {
+		return 0, 0, nil
+	}
+	seen := make(map[int64]struct{}, len(memoryIDs))
+	var removed int32
+	var skipped int32
+	for _, memoryID := range memoryIDs {
+		if memoryID <= 0 {
+			skipped++
+			continue
+		}
+		if _, exists := seen[memoryID]; exists {
+			skipped++
+			continue
+		}
+		seen[memoryID] = struct{}{}
+		deleted, err := s.ThreadSVC.DeleteMemory(ctx, &domainservice.DeleteMemoryRequest{
+			ThreadID: job.ThreadID,
+			MemoryID: memoryID,
+			ActorID:  job.UserID,
+		})
+		if err != nil {
+			return removed, skipped, err
+		}
+		if deleted {
+			removed++
+			continue
+		}
+		skipped++
+	}
+	return removed, skipped, nil
 }
 
 func (s *ApplicationService) memoryFlushFactExists(

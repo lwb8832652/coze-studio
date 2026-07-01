@@ -105,6 +105,20 @@ func (e *ModelMemoryExtractor) ExtractMemories(
 	ctx context.Context,
 	req MemoryExtractionRequest,
 ) ([]MemoryExtractionFact, error) {
+	result, err := e.ExtractMemoryUpdates(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.Facts, nil
+}
+
+func (e *ModelMemoryExtractor) ExtractMemoryUpdates(
+	ctx context.Context,
+	req MemoryExtractionRequest,
+) (*MemoryExtractionResult, error) {
 	if e == nil {
 		return nil, fmt.Errorf("model memory extractor is required")
 	}
@@ -131,11 +145,11 @@ func (e *ModelMemoryExtractor) ExtractMemories(
 		return nil, err
 	}
 
-	facts, err := parseModelMemoryExtractionFacts(resp.Content, e.options.MaxFacts)
+	result, err := parseModelMemoryExtractionUpdate(resp.Content, e.options.MaxFacts)
 	if err != nil {
 		return nil, err
 	}
-	return facts, nil
+	return result, nil
 }
 
 func (e *ModelMemoryExtractor) messages(req MemoryExtractionRequest) []*schema.Message {
@@ -300,6 +314,17 @@ type modelMemoryExtractionFact struct {
 }
 
 func parseModelMemoryExtractionFacts(raw string, maxFacts int) ([]MemoryExtractionFact, error) {
+	result, err := parseModelMemoryExtractionUpdate(raw, maxFacts)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.Facts, nil
+}
+
+func parseModelMemoryExtractionUpdate(raw string, maxFacts int) (*MemoryExtractionResult, error) {
 	var payload modelMemoryExtractionPayload
 	if err := json.Unmarshal([]byte(modelMemoryJSONPayload(raw)), &payload); err != nil {
 		return nil, fmt.Errorf("decode memory extraction model output: %w", err)
@@ -307,20 +332,23 @@ func parseModelMemoryExtractionFacts(raw string, maxFacts int) ([]MemoryExtracti
 	if maxFacts <= 0 {
 		maxFacts = defaultModelMemoryExtractorMaxFacts
 	}
-	facts := make([]MemoryExtractionFact, 0, maxFacts)
+	result := &MemoryExtractionResult{
+		Facts:         make([]MemoryExtractionFact, 0, maxFacts),
+		FactsToRemove: modelMemoryFactsToRemove(payload.FactsToRemove),
+	}
 	appendFact := func(fact MemoryExtractionFact) bool {
 		content := strings.TrimSpace(fact.Content)
 		if content == "" {
-			return len(facts) < maxFacts
+			return len(result.Facts) < maxFacts
 		}
 		fact.Content = content
-		facts = append(facts, fact)
-		return len(facts) < maxFacts
+		result.Facts = append(result.Facts, fact)
+		return len(result.Facts) < maxFacts
 	}
 	appendSection := func(sectionKey string, section modelMemoryExtractionSection) bool {
 		content := strings.TrimSpace(section.Summary)
 		if !section.ShouldUpdate || content == "" {
-			return len(facts) < maxFacts
+			return len(result.Facts) < maxFacts
 		}
 		return appendFact(MemoryExtractionFact{
 			Key:        "deerflow:" + sectionKey,
@@ -343,23 +371,23 @@ func parseModelMemoryExtractionFacts(raw string, maxFacts int) ([]MemoryExtracti
 		{key: "history.longTermBackground", section: payload.History.LongTermBackground},
 	} {
 		if !appendSection(section.key, section.section) {
-			return facts, nil
+			return result, nil
 		}
 	}
 	for _, item := range payload.NewFacts {
 		if !appendFact(modelMemoryExtractionFactToMemoryFact(item)) {
-			return facts, nil
+			return result, nil
 		}
 	}
 	for _, item := range payload.Facts {
 		if !appendFact(modelMemoryExtractionFactToMemoryFact(item)) {
-			return facts, nil
+			return result, nil
 		}
-		if len(facts) >= maxFacts {
+		if len(result.Facts) >= maxFacts {
 			break
 		}
 	}
-	return facts, nil
+	return result, nil
 }
 
 func modelMemoryExtractionFactToMemoryFact(item modelMemoryExtractionFact) MemoryExtractionFact {
@@ -381,6 +409,31 @@ func modelMemoryExtractionFactToMemoryFact(item modelMemoryExtractionFact) Memor
 		CorrectedAt:          item.CorrectedAt,
 		ExpiresAt:            item.ExpiresAt,
 	}
+}
+
+func modelMemoryFactsToRemove(rawIDs []string) []int64 {
+	if len(rawIDs) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(rawIDs))
+	seen := make(map[int64]struct{}, len(rawIDs))
+	for _, rawID := range rawIDs {
+		value := strings.TrimSpace(rawID)
+		value = strings.TrimPrefix(value, "memory_")
+		if value == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func modelMemoryJSONPayload(raw string) string {

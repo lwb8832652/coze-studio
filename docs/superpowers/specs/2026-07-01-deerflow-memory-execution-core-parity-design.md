@@ -110,9 +110,13 @@ Initial observed gaps:
   and sends a safe DeerFlow-like `user/history/facts` JSON projection to the
   extractor. The projection omits source ids, raw metadata, private paths,
   credentials, object URIs, and provider payloads.
+- `factsToRemove` now applies to Coze's normalized memory records through safe
+  current-memory ids such as `memory_401`. The flush worker deletes those
+  records before writing new extracted memories and keeps delete/write counts
+  as bounded event metadata.
 - Remaining gap: Coze still stores normalized records rather than a single
-  DeerFlow memory document, and it does not yet apply `factsToRemove` as
-  delete/update operations.
+  DeerFlow memory document. End-to-end browser/API evidence is still required
+  to prove update, recall, and follow-up behavior work together in a live run.
 
 ## Eino Landing Point
 
