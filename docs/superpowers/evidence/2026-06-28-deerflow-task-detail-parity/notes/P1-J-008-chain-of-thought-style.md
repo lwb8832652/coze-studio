@@ -124,6 +124,42 @@ Runtime limitation:
   collapse affordance, file path pills, and artifact adjacency, but they are not
   a same-prompt output-quality comparison.
 
+## Same-Prompt Document Artifact Smoke
+
+The DeerFlow expanded-step screenshot above uses this prompt:
+
+```text
+请生成一份《P1-J-006 产物验证》Markdown 简短文档，包含标题、要点列表和一个小表格。请保存为 Markdown 文件，并把文件作为右侧 Artifacts 产物展示，不要只在聊天里输出正文。
+```
+
+The same prompt was submitted through Coze:
+
+- Coze task:
+  `http://localhost:8080/space/7656275718757679104/tasks/7657502884837195776`
+- Coze screenshot:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/coze/P1-J-008-coze-same-prompt-document.jpg`
+
+Coze DOM summary:
+
+```json
+{
+  "hasMoreStepsBeforeExpand": true,
+  "hasHideStepsAfterExpand": true,
+  "hasMarkdownCard": true,
+  "artifactName": "P1-J-006-产物验证.md",
+  "hasDownload": true,
+  "hasRightPreview": true,
+  "tokenLine": "Tokens输入: 39.1K输出: 1,178总计: 40.3K",
+  "unsafeHits": []
+}
+```
+
+Expanded Coze step text included the safe skill catalog projection, reasoning,
+file creation, and `present_files` display step. This matches the DeerFlow
+same-prompt shape for this document-artifact smoke: reasoning/tool steps,
+output path pill, artifact card, download, token row, and final summary are all
+visible without raw tool arguments or object URIs.
+
 ## Automated Verification
 
 Commands:
@@ -151,6 +187,7 @@ Known test noise:
 ## Remaining Gap
 
 This slice confirms Coze's current execution feed structure and spacing are
-closer to DeerFlow and now has paired expanded-step screenshots. Full P1-J-008
-still needs same-prompt DeerFlow/Coze visual evidence across the canonical
-quality prompts before the tracker can move to `已完成`.
+closer to DeerFlow, now has paired expanded-step screenshots, and includes one
+same-prompt document-artifact smoke. Full P1-J-008 still needs same-prompt
+DeerFlow/Coze visual evidence for search/answer and multi-turn revision before
+the tracker can move to `已完成`.
