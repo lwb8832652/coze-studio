@@ -116,6 +116,13 @@ vi.mock('../service', () => ({
   reviewTaskThreadArtifactScan: mockReviewTaskThreadArtifactScan,
   fetchTaskThreadArtifactContent: mockFetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL: mockGetTaskThreadArtifactSignedURL,
+  isTaskThreadArtifactSafeError: (err: unknown) =>
+    Boolean(
+      err &&
+        typeof err === 'object' &&
+        'safeForDisplay' in err &&
+        (err as { safeForDisplay?: unknown }).safeForDisplay === true,
+    ),
   installSkillFromArtifact: mockInstallSkillFromArtifact,
   deleteTaskThreadArtifact: mockDeleteTaskThreadArtifact,
   restoreTaskThreadArtifact: mockRestoreTaskThreadArtifact,
@@ -2923,6 +2930,25 @@ describe('TaskDetailPage', () => {
         thread_id: 'thread-artifacts-1',
         space_id: 'space-1',
       });
+
+      mockGetTaskThreadArtifactSignedURL.mockRejectedValueOnce(
+        Object.assign(new Error('产物安全扫描中，暂不能预览'), {
+          safeForDisplay: true,
+        }),
+      );
+      await act(async () => {
+        Simulate.click(pdfPreviewButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain('产物安全扫描中，暂不能预览');
+      expect(container.textContent).not.toContain('生成任务产物签名链接失败');
+      expect(
+        container.querySelector(
+          'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+        ),
+      ).toBeNull();
 
       await act(async () => {
         Simulate.click(pdfPreviewButton);

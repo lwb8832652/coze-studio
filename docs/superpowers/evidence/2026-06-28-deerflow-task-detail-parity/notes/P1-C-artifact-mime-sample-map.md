@@ -11,8 +11,8 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. API summaries, every-family side-preview screenshots, and
-the scan/delete/restore UI lifecycle evidence remain open.
+SVG artifact cards. API summaries, the clean PDF side-preview screenshot after
+scan release, and the scan/delete/restore UI lifecycle evidence remain open.
 
 ## DeerFlow Reference
 
@@ -54,6 +54,7 @@ Commands passed on 2026-07-01:
 ```bash
 cd frontend/apps/coze-studio
 npm run test -- src/pages/tasks/__tests__/task-artifacts-helpers.test.ts
+npm run test -- src/pages/tasks/__tests__/tasks-service.test.ts
 npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'canonical thread artifacts|generated document artifacts|deletes a canonical thread artifact|restores the last removed|lists deleted thread artifacts|reviews a blocked artifact|renders artifact scan jobs'
 ```
 
@@ -67,6 +68,7 @@ go test ./application/agentthread -run 'TestADKArtifactToolCatalog|TestDefaultAD
 Results:
 
 - `task-artifacts-helpers.test.ts`: 3 passed.
+- `tasks-service.test.ts`: 14 passed.
 - `task-detail.test.tsx` focused artifact subset: 7 passed, 42 skipped.
 - `backend/api/handler/coze`: passed.
 - `backend/application/agentthread`: passed.
@@ -131,6 +133,14 @@ Observed behavior:
 - HTML and SVG remained card/download entries; page-level script probes stayed
   false: `window.__p1c_should_not_run=false` and
   `window.__p1c_svg_should_not_run=false`.
+- PDF artifact metadata is present with `content_type=application/pdf` and
+  `preview_mode=pdf`, but the fixture task's artifact scan rows and scan jobs
+  are still `pending`. The backend therefore correctly rejects preview signed
+  URL generation by scan policy. The frontend now maps bounded
+  `reason=scan_pending` to the safe user-facing message
+  `产物安全扫描中，暂不能预览`, without exposing object URI, signed URL,
+  scanner raw payload, provider payload, prompt, completion, or checkpoint
+  bytes.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
@@ -154,14 +164,17 @@ PDF parity note:
 - Unit evidence: `task-detail.test.tsx` now asserts PDF preview uses
   `iframe[data-testid="task-artifact-inline-preview-pdf"]` and does not call
   `window.open`.
-- Browser screenshot for PDF remains open because the in-app browser automation
-  timed out twice while reloading the fixture page after the frontend change.
+- The current fixture records PDF card placement, while the scan-pending safe
+  message is covered by service and task-detail component tests. Full browser
+  lifecycle evidence for scan-pending/review release remains under P1-C-005.
+  The clean-state iframe screenshot remains blocked until scan job processing
+  or review release marks a PDF artifact safe.
 
 ## Remaining P1-C Gaps
 
-1. Capture the PDF right-side preview screenshot after the browser connection
-   is stable again, plus copy/download affordance checks where the UI exposes
-   copy.
+1. Capture the clean PDF right-side iframe preview screenshot after the scanner
+   or review flow releases a PDF artifact, plus copy/download affordance checks
+   where the UI exposes copy.
 2. Record bounded API summaries for artifact list, content, signed URL,
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
@@ -175,5 +188,6 @@ PDF parity note:
 ## Status
 
 P1-C is in progress. The automated coverage baseline, Go binary write support,
-and one real MIME fixture task are complete. API summaries and remaining
-per-family/lifecycle browser evidence are still open.
+one real MIME fixture task, scan-pending safe message mapping, and browser card
+evidence for the current PDF artifact are complete. API summaries, clean-PDF
+preview evidence, and remaining lifecycle browser evidence are still open.

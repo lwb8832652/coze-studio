@@ -32,6 +32,7 @@ import {
   fetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL,
   installSkillFromArtifact,
+  isTaskThreadArtifactSafeError,
   reviewTaskThreadArtifactScan,
   restoreTaskThreadArtifact,
   type ArtifactScanReviewDecision,
@@ -69,13 +70,15 @@ const downloadSignedURL = (url: string, fileName: string) => {
 };
 
 const artifactActionErrorMessage = (mode: ArtifactActionMode, err?: unknown) =>
-  mode === 'install_skill' && err instanceof Error && err.message.trim()
+  isTaskThreadArtifactSafeError(err)
     ? err.message
-    : mode === 'download'
-      ? '下载任务产物失败，请稍后重试'
-      : mode === 'install_skill'
-        ? '安装技能失败，请稍后重试'
-        : '读取任务产物失败，请稍后重试';
+    : mode === 'install_skill' && err instanceof Error && err.message.trim()
+      ? err.message
+      : mode === 'download'
+        ? '下载任务产物失败，请稍后重试'
+        : mode === 'install_skill'
+          ? '安装技能失败，请稍后重试'
+          : '读取任务产物失败，请稍后重试';
 
 const readTextArtifactPreview = async ({
   artifact,
