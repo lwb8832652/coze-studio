@@ -5,7 +5,8 @@ Date: 2026-07-01
 ## Scope
 
 This note covers the task-detail execution-step / thinking-chain visual
-alignment slice. It does not close the full P1-J-008 acceptance suite.
+alignment slice, plus the same-prompt quality smoke evidence needed to close
+P1-J-008 after the user deferred detailed Skills/MCP quality checks to P2.
 
 ## DeerFlow Reference
 
@@ -205,6 +206,54 @@ the parity acceptance for this search/answer smoke: intent-triggered web
 search, visible search steps, final answer with source-type explanation, and no
 unsafe raw tool payload on the page.
 
+## Same-Prompt Multi-Turn Revision Smoke
+
+Follow-up prompt:
+
+```text
+请把上面的回答压缩成更短版本，每点不超过 30 个字，并保留来源类型。
+```
+
+DeerFlow:
+
+- Task:
+  `http://localhost:2026/workspace/chats/72b6d7d7-ac4e-4899-80e3-86ece96e3ce7`
+- Screenshot:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/deerflow/P1-J-008-deerflow-revision-followup.jpg`
+- Visible behavior: the follow-up preserved the previous web-search answer
+  context and returned three shortened lines with source types, a token row,
+  and generated follow-up suggestions.
+
+Coze:
+
+- Task:
+  `http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008`
+- Screenshot:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/coze/P1-J-008-coze-revision-followup.jpg`
+- Visible behavior: the canonical follow-up run preserved the previous Qingdao
+  search answer context and returned three shortened lines with source types,
+  a token row, and safe step metadata.
+
+Coze DOM summary:
+
+```json
+{
+  "hasOriginalSearchAnswer": true,
+  "hasRevisionPrompt": true,
+  "hasStopButton": false,
+  "hasShortAnswer": true,
+  "hasTokens": true,
+  "hasMoreSteps": true,
+  "unsafeHits": []
+}
+```
+
+DeerFlow and Coze differ in exact wording and selected source labels, which is
+expected for live model/search output. The parity point for this smoke is the
+same: follow-up context is preserved, the new answer is grounded in the
+previous turn, token usage remains visible, and internal tool payloads stay
+hidden.
+
 ## Automated Verification
 
 Commands:
@@ -214,6 +263,9 @@ cd frontend/apps/coze-studio
 npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "renders DeerFlow-style reasoning steps"
 npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx
 npx tsc --noEmit --project tsconfig.json
+npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "renders DeerFlow-style reasoning steps|sends canonical thread follow-up messages through the message API|keeps execution steps for previous assistant turns after a follow-up"
+git diff --check
+file docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/deerflow/P1-J-008-deerflow-revision-followup.jpg docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/coze/P1-J-008-coze-revision-followup.jpg
 ```
 
 Result:
@@ -222,6 +274,8 @@ Result:
   `coze-prototype-chain-of-thought`.
 - Full task-detail test suite passed: 49 tests.
 - TypeScript check passed.
+- 2026-07-01 multi-turn closure verification passed: 3 targeted tests,
+  `git diff --check`, and JPEG validation for both revision screenshots.
 
 Known test noise:
 
@@ -229,10 +283,11 @@ Known test noise:
   `keeps the follow-up composer docked outside the scrollable chat transcript`;
   the suite still passed and the noise was unrelated to this style slice.
 
-## Remaining Gap
+## Closure
 
 This slice confirms Coze's current execution feed structure and spacing are
 closer to DeerFlow, now has paired expanded-step screenshots, and includes one
-same-prompt document-artifact smoke plus one same-prompt search/answer smoke.
-Full P1-J-008 still needs same-prompt DeerFlow/Coze visual evidence for
-multi-turn revision before the tracker can move to `已完成`.
+same-prompt document-artifact smoke, one same-prompt search/answer smoke, and
+one same-prompt multi-turn revision smoke. Detailed Skills/MCP quality
+acceptance was explicitly deferred by the user, so P1-J-008 can close without
+reopening the Skills/MCP parity line in this slice.
