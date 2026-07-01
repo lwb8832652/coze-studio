@@ -71,6 +71,59 @@ After clicking `查看其他 4 个步骤`:
 Observed expanded step texts included skill catalog, reasoning, file creation,
 and file presentation steps. No raw tool argument/result payloads were exposed.
 
+## Paired Screenshot Evidence
+
+2026-07-01 paired visual smoke:
+
+- DeerFlow expanded-step reference:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/deerflow/P1-J-008-deerflow-expanded-steps.jpg`
+- Coze expanded-step reference:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/coze/P1-J-008-coze-expanded-steps.jpg`
+
+DeerFlow DOM summary:
+
+```json
+{
+  "url": "http://localhost:2026/workspace/chats/fb3b753d-7c88-44e9-949e-5e0a7f860286",
+  "hasMoreStepsBeforeExpand": true,
+  "hasHideStepsAfterExpand": true,
+  "visibleStepLabels": [
+    "Create P1-J-006 artifact verification document",
+    "Copy to outputs directory"
+  ],
+  "hasArtifactCard": true,
+  "hasDownload": true
+}
+```
+
+Coze DOM summary:
+
+```json
+{
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657390468782620672",
+  "hasMoreStepsBeforeExpand": true,
+  "hasHideStepsAfterExpand": true,
+  "visibleStepLabels": [
+    "可用技能目录 22 个",
+    "创建mermaid-diagrams Markdown 文档",
+    "展示文件"
+  ],
+  "hasArtifactCard": true,
+  "hasDownload": true,
+  "hasRightPreview": true
+}
+```
+
+Runtime limitation:
+
+- The earliest DeerFlow Mermaid reference task
+  `c155a732-f475-4cf9-aa49-13fd26b29888` redirected to
+  `/workspace/chats/new` during this pass, so it cannot be used as same-prompt
+  visual evidence.
+- The paired screenshots above prove expanded-step structure, spacing,
+  collapse affordance, file path pills, and artifact adjacency, but they are not
+  a same-prompt output-quality comparison.
+
 ## Automated Verification
 
 Commands:
@@ -98,6 +151,6 @@ Known test noise:
 ## Remaining Gap
 
 This slice confirms Coze's current execution feed structure and spacing are
-closer to DeerFlow. Full P1-J-008 still needs paired DeerFlow/Coze visual
-screenshots across the canonical prompts before the tracker can move to
-`已完成`.
+closer to DeerFlow and now has paired expanded-step screenshots. Full P1-J-008
+still needs same-prompt DeerFlow/Coze visual evidence across the canonical
+quality prompts before the tracker can move to `已完成`.
