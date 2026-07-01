@@ -155,6 +155,7 @@ func TestADKExecutorPersistsSummarizationEventsWithBoundedMemory(t *testing.T) {
 		"message.completed",
 	}, eventSink.eventTypes())
 	require.Equal(t, []string{"summarization", ""}, chatModel.usageKindValues())
+	require.Equal(t, 0, chatModel.inputMemoryCountAt(0, "deployment region is APAC"))
 	require.Equal(t, 1, chatModel.finalInputMemoryCount("deployment region is APAC"))
 	for _, event := range eventSink.events {
 		require.NotContains(t, event.Payload, "first")
@@ -1008,6 +1009,21 @@ func (m *summarizationIntegrationChatModel) finalInputMemoryCount(value string) 
 	}
 	count := 0
 	for _, message := range m.inputs[len(m.inputs)-1] {
+		if message != nil {
+			count += strings.Count(message.Content, value)
+		}
+	}
+	return count
+}
+
+func (m *summarizationIntegrationChatModel) inputMemoryCountAt(index int, value string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if index < 0 || index >= len(m.inputs) {
+		return 0
+	}
+	count := 0
+	for _, message := range m.inputs[index] {
 		if message != nil {
 			count += strings.Count(message.Content, value)
 		}

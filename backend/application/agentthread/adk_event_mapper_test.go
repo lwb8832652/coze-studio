@@ -169,6 +169,62 @@ func TestMapADKEventMapsAssistantMessage(t *testing.T) {
 	}`, mapped.Usage.Metadata)
 }
 
+func TestMapADKEventHidesPlanCompletionGuardMessages(t *testing.T) {
+	t.Run("assistant tool call", func(t *testing.T) {
+		mapped, err := MapADKEvent(context.Background(), 10, 20, &adk.AgentEvent{
+			Output: &adk.AgentOutput{
+				MessageOutput: &adk.MessageVariant{
+					Message: &schema.Message{
+						Role: schema.Assistant,
+						ToolCalls: []schema.ToolCall{{
+							ID:   "call-plan-guard",
+							Type: "function",
+							Function: schema.FunctionCall{
+								Name:      adkPlanCompletionGuardToolName,
+								Arguments: `{"reminder":"continue"}`,
+							},
+						}},
+					},
+					Role: schema.Assistant,
+				},
+			},
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "agent.control", mapped.EventType)
+		require.Empty(t, mapped.FinalText)
+		require.JSONEq(t, `{
+			"hidden":true,
+			"schema":"coze.plan_completion_guard.v1"
+		}`, mapped.Payload)
+	})
+
+	t.Run("tool result", func(t *testing.T) {
+		mapped, err := MapADKEvent(context.Background(), 10, 20, &adk.AgentEvent{
+			Output: &adk.AgentOutput{
+				MessageOutput: &adk.MessageVariant{
+					Message: &schema.Message{
+						Role:       schema.Tool,
+						Content:    "<system_reminder>continue</system_reminder>",
+						ToolName:   adkPlanCompletionGuardToolName,
+						ToolCallID: "call-plan-guard",
+					},
+					Role:     schema.Tool,
+					ToolName: adkPlanCompletionGuardToolName,
+				},
+			},
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "agent.control", mapped.EventType)
+		require.Empty(t, mapped.FinalText)
+		require.JSONEq(t, `{
+			"hidden":true,
+			"schema":"coze.plan_completion_guard.v1"
+		}`, mapped.Payload)
+	})
+}
+
 func TestMapADKEventMapsSafetyFinish(t *testing.T) {
 	event := &adk.AgentEvent{
 		AgentName: "lead",

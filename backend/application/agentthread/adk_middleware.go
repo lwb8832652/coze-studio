@@ -283,6 +283,7 @@ func defaultADKMiddlewareBuilder(
 					ContextMessages: budget.SummarizationMessages,
 				},
 				EmitInternalEvents: true,
+				Finalize:           finalizeADKSummarizationWithDynamicContextReminders,
 			}
 			multimodalBudget, err := NewADKMultimodalBudgetMiddleware(
 				input.Run,
@@ -292,8 +293,20 @@ func defaultADKMiddlewareBuilder(
 			if err != nil {
 				return nil, err
 			}
-			config.GenModelInput = multimodalBudget.
-				buildSummarizationModelInput
+			config.GenModelInput = func(
+				genCtx context.Context,
+				systemInstruction *schema.Message,
+				userInstruction *schema.Message,
+				originalMessages []*schema.Message,
+			) ([]*schema.Message, error) {
+				filteredMessages, _ := filterADKDynamicContextReminders(originalMessages)
+				return multimodalBudget.buildSummarizationModelInput(
+					genCtx,
+					systemInstruction,
+					userInstruction,
+					filteredMessages,
+				)
+			}
 			if options.TranscriptStore != nil {
 				hooks := NewADKTranscriptHooks(
 					input.Run,
@@ -511,10 +524,23 @@ func defaultADKMiddlewareBuilder(
 			if input.PlanBackend == nil {
 				return newReservedADKMiddleware(name), nil
 			}
-			return plantask.New(ctx, &plantask.Config{
+			planMiddleware, err := plantask.New(ctx, &plantask.Config{
 				Backend: input.PlanBackend,
 				BaseDir: adkPlanBaseDir,
 			})
+			if err != nil {
+				return nil, err
+			}
+			guard, err := newADKPlanCompletionGuardMiddleware(
+				input.PlanBackend,
+			)
+			if err != nil {
+				return nil, err
+			}
+			return newADKPlanTaskWithCompletionGuardMiddleware(
+				planMiddleware,
+				guard,
+			)
 		}
 	case ADKMiddlewareContextBudget:
 		return func(

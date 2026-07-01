@@ -31,7 +31,7 @@ import (
 
 const (
 	defaultModelMemoryExtractorMaxFacts = 16
-	modelMemoryExtractorInstruction     = "Extract durable memory facts from the transcript. Return JSON only with shape {\"facts\":[{\"key\":\"stable_key\",\"scope\":\"long_term|thread|run\",\"content\":\"short fact\",\"metadata\":{},\"score\":0.0,\"confidence\":0.0}]}. Include only facts that are useful for future task execution, preferences, constraints, or stable user/project context. Do not include tool outputs, credentials, URLs, filenames, object keys, raw provider payloads, or transient chit-chat."
+	modelMemoryExtractorInstruction     = "Extract durable memory facts from the transcript. Return JSON only with shape {\"facts\":[{\"key\":\"stable_key\",\"scope\":\"long_term|thread|run\",\"content\":\"short fact\",\"metadata\":{},\"score\":0.0,\"confidence\":0.0}]}. Include only facts that are useful for future task execution, preferences, constraints, or stable user/project context. If metadata.memory_flush.correction_detected is true, treat the transcript as a correction and update or replace conflicting memory; if metadata.memory_flush.reinforcement_detected is true, increase confidence for matching stable facts. Do not include tool outputs, credentials, URLs, filenames, object keys, raw provider payloads, or transient chit-chat."
 )
 
 const (

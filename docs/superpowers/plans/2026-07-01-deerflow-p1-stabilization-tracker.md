@@ -13,6 +13,13 @@ Skill, MCP, memory, token, artifact, and web-search behavior while adding the
 missing evidence, automated browser coverage, and narrow hardening that P0
 explicitly deferred.
 
+2026-07-01 scope correction: the memory system and Agent execution flow are
+core DeerFlow capabilities, not cosmetic polish. P0 completed the management
+surface and a runnable Go/Eino path, but it does **not** yet mean Coze fully
+matches DeerFlow's runtime memory injection/update semantics, middleware chain,
+To-dos loop control, RunJournal/message contract, or visible execution
+quality. P1 must prioritize these two capabilities before broad hardening.
+
 ## Scope Rules
 
 - Mainline remains DeerFlow-visible behavior first. If a user cannot observe
@@ -25,6 +32,9 @@ explicitly deferred.
   keep an existing P0 feature safe.
 - Every task-detail change must reference a case id from
   `docs/superpowers/plans/2026-06-28-deerflow-task-detail-parity-validation.md`.
+- Do not treat task-memory CRUD or safe event projection as full DeerFlow
+  parity. Runtime memory and execution-flow parity require source/runtime/API
+  evidence from DeerFlow plus matching Coze behavior.
 
 ## Status Rules
 
@@ -40,6 +50,8 @@ explicitly deferred.
 
 | Workstream | Status | Acceptance | Notes |
 | --- | --- | --- | --- |
+| P1-I 记忆系统运行时对齐 | 进行中 | Coze matches DeerFlow memory injection/update behavior for normal task runs, follow-ups, and long-term recall without exposing unsafe payloads. | New top priority. P0 memory CRUD/UI is not enough; must verify DeerFlow `DynamicContextMiddleware` / `MemoryMiddleware` / memory prompt/update flow and implement equivalent Go/Eino behavior. |
+| P1-J Agent 执行流程对齐 | 进行中 | Coze task runs follow DeerFlow's agent harness semantics: planning/To-dos, step grouping, tool/artifact messages, follow-up context, streaming status, stop/retry, and visible execution quality. | New top priority. Current execution can run but still differs from DeerFlow's middleware + RunJournal/message-driven step contract. |
 | P1-A 浏览器回归与证据基线 | 进行中 | DeerFlow and Coze have paired desktop evidence for the canonical P0 workflows, plus safe Network/API summaries where applicable. | Start here. Convert P0 manual notes into a repeatable evidence checklist before adding new functionality. |
 | P1-B 任务详情视觉补证 | 待开始 | Task detail screenshots/API summaries cover layout, execution steps, inline thinking, Mermaid, Artifacts, export, token modes, memory entry, loading/error states, and narrow/mobile risk cases. | Uses existing evidence root `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/`. |
 | P1-C 文档产物 MIME 样本库 | 待开始 | Markdown/TXT/CSV/PDF/image/HTML-SVG blocked/error/delete-restore cases each have UI evidence, API summaries, and unit/API tests. | Builds on TD-DOC-003~011. No raw object URI, signed URL, provider payload, or scanner raw body in evidence. |
@@ -48,6 +60,30 @@ explicitly deferred.
 | P1-F Skills/MCP/Tools 策略与历史 | 待开始 | Adds policy controls, invocation history, output budgets, and deeper transport management where DeerFlow-visible workflows need it. | User has accepted P0 Skills/MCP as good enough; this is hardening, not re-litigating P0 UI. |
 | P1-G Token 成本与调试视图 | 待开始 | Adds pricing-ready cost snapshots only when backend has safe positive cost and a single currency, plus provider/model breakdowns. | Keep per-turn and top-bar behavior stable. |
 | P1-H Web Search Provider Hardening | 待开始 | Documents and tests provider selection/fallback for DuckDuckGo v2, Wikipedia, Brave HTML, and configured HTTP search. | Search is disabled by default unless policy/env enables it. |
+
+## P1-I Checklist: 记忆系统运行时对齐
+
+| Case | Status | Required Evidence |
+| --- | --- | --- |
+| P1-I-001 DeerFlow memory source map | 已完成 | Source anchors and behavior contract recorded in `docs/superpowers/specs/2026-07-01-deerflow-memory-execution-core-parity-design.md`. Verified `DynamicContextMiddleware`, `MemoryMiddleware`, `message_processing.py`, `agents/memory/prompt.py`, and `agents/memory/updater.py`. |
+| P1-I-002 Coze memory runtime gap map | 已完成 | Coze anchors and initial gaps recorded in `docs/superpowers/specs/2026-07-01-deerflow-memory-execution-core-parity-design.md`: before P1-I-003, `ADKMemoryMiddleware` injected `<memory_context>` into instruction; extraction remains transcript/flush-worker based and is not yet DeerFlow after-agent queue parity. |
+| P1-I-003 Prompt injection contract | 已完成 | Implemented in `backend/application/agentthread/adk_memory_middleware.go`: Eino `BeforeModelRewriteState` injects a hidden user `<system-reminder>` with optional `<memory>` and `<current_date>`, skips same-day duplicates, adds date-only cross-day reminders, degrades on recall timeout, and preserves reminders through summarization finalization. Tests: `go test ./application/agentthread -run 'TestADKMemoryMiddleware|TestADKExecutorPersistsSummarizationEventsWithBoundedMemory|TestADKSummarizedCheckpointRestartsWithoutOriginalHistoryOrDuplicateMemory|TestADKMiddleware' -count=1`; `go test ./application/agentthread -count=1`. |
+| P1-I-004 Async memory update contract | 已完成 | Implemented DeerFlow-style terminal-only memory queueing in `backend/application/agentthread/adk_transcript.go`: `summary_input` no longer queues memory; terminal runs build a sanitized memory input from real user messages plus final assistant responses only; hidden dynamic reminders, Eino summarization control messages, tool calls/results, and `<uploaded_files>` blocks are excluded; upload-only turns skip the immediate assistant response; correction/reinforcement signals are captured in safe snapshot metadata. Tests: `go test ./application/agentthread -run 'TestADKTranscript|TestModelMemoryExtractor' -count=1`; `go test ./application/agentthread -count=1`. |
+| P1-I-005 Follow-up recall behavior | 进行中 | Next slice. Follow-up task run recalls prior thread/long-term memories and keeps conversation context without losing previous turns; verify runtime recall/update together in browser/API evidence. |
+| P1-I-006 Memory UI/API smoke | 待开始 | Browser and API evidence show memory management and runtime recall/update agree; unsafe prompt/completion/tool payloads stay hidden. |
+
+## P1-J Checklist: Agent 执行流程对齐
+
+| Case | Status | Required Evidence |
+| --- | --- | --- |
+| P1-J-001 DeerFlow execution source map | 已完成 | Source anchors and behavior contract recorded in `docs/superpowers/specs/2026-07-01-deerflow-memory-execution-core-parity-design.md`. Verified `build_middlewares`, `TodoMiddleware`, `RunJournal`, `GET /api/threads/:thread_id/runs/:run_id/messages`, `getMessageGroups`, and `convertToSteps`. |
+| P1-J-002 Coze execution gap map | 已完成 | Coze anchors and gaps recorded in `docs/superpowers/specs/2026-07-01-deerflow-memory-execution-core-parity-design.md`: current ADK event projection exists but is not yet a DeerFlow-equivalent visible message contract. |
+| P1-J-003 Middleware parity | 进行中 | Dynamic context + summarization reminder preservation completed via P1-I-003. Continue adapting Eino equivalents for DeerFlow runtime behaviors that directly affect visible task quality: To-dos, title, memory update, token usage, loop/tool-error handling, clarification, safe finish. |
+| P1-J-004 To-dos and incomplete-work loop | 已完成 | Implemented in `backend/application/agentthread/adk_plan_completion_guard.go`: Coze composes Eino `plantask` with a DeerFlow-style incomplete-work guard. If active plan items remain and the model attempts a clean final answer, `WrapModel` rewrites it into a hidden internal completion-reminder tool call before the ADK event sender observes it, forcing another model turn; reminders are capped at 2. The reserved tool is removed from model-visible `ToolInfos` and hidden guard events are mapped to bounded `agent.control` metadata. Tests: `go test ./application/agentthread -run 'TestADKPlanCompletionGuard|TestMapADKEvent|TestADKMiddleware' -count=1`; `go test ./application/agentthread -count=1`. Frontend To-dos dock parity remains tracked under P1-J-007/P1-J-008 browser acceptance. |
+| P1-J-005 RunJournal/message contract | 待开始 | Coze persists and serves visible steps from message/tool/assistant event semantics equivalent to DeerFlow, not fixed/stub-like lifecycle events. |
+| P1-J-006 Artifacts and present_files semantics | 待开始 | File creation, output presentation, artifact card position, side preview, download/copy, MIME handling, and final answer ordering match DeerFlow. |
+| P1-J-007 Streaming/stop/retry/follow-up | 待开始 | Sending, loading dots, stop square, cancellation, retry, and follow-up history preservation match DeerFlow behavior in browser evidence. |
+| P1-J-008 Quality acceptance suite | 待开始 | Same prompts run on DeerFlow and Coze: travel document, Mermaid diagram, search/answer, skill creation, MCP/weather, and multi-turn revision; compare visible output, steps, artifacts, tokens, and memory effects. |
 
 ## P1-A Checklist
 
@@ -97,11 +133,12 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-Start `P1-A-001` and `P1-A-002` as a paired baseline:
+Continue `P1-I-005`, then `P1-J-005`:
 
-- Use the standard Mermaid prompt from the task-detail validation ledger.
-- Capture DeerFlow first, then Coze.
-- Store screenshots and Network summaries under the evidence root.
-- If the browser automation tooling is not stable enough for repeatable
-  capture, record the blocker and keep manual evidence structured in the same
-  file layout.
+- Verify follow-up recall behavior end-to-end now that hidden memory injection and
+  after-agent memory queue filtering are implemented.
+- Then implement the RunJournal/message contract so visible execution steps come
+  from DeerFlow-equivalent message/tool semantics rather than generic lifecycle
+  projections.
+- Keep `P1-A` browser evidence running as acceptance evidence for each slice,
+  but do not let generic browser polish displace the memory/execution core.

@@ -156,7 +156,7 @@ func TestEncodeADKTranscriptIgnoresVolatileEinoMessageIDForDigest(t *testing.T) 
 	require.NotEqual(t, firstDigest, changedBusinessDigest)
 }
 
-func TestADKTranscriptHooksPersistAndQueueEligibleSummary(t *testing.T) {
+func TestADKTranscriptHooksPersistSummaryInputWithoutMemoryQueue(t *testing.T) {
 	store := &recordingADKTranscriptStore{}
 	queue := &recordingADKMemoryFlushQueue{}
 	events := &recordingRunEventSink{}
@@ -179,17 +179,13 @@ func TestADKTranscriptHooksPersistAndQueueEligibleSummary(t *testing.T) {
 	require.Len(t, store.calls, 1)
 	require.Equal(t, TranscriptKindSummaryInput, store.calls[0].Kind)
 	require.JSONEq(t, store.calls[0].Messages, store.snapshot.Messages)
-	require.Len(t, queue.calls, 1)
-	require.Equal(t, store.snapshot.SnapshotID, queue.calls[0].SnapshotID)
-	require.Equal(t, []string{
-		"context.transcript_persisted",
-		"memory.update_queued",
-	}, events.eventTypes())
+	require.Empty(t, queue.calls)
+	require.Equal(t, []string{"context.transcript_persisted"}, events.eventTypes())
 
 	err = hooks.PersistSummaryInput(context.Background(), messages)
 	require.NoError(t, err)
 	require.Len(t, store.calls, 2)
-	require.Len(t, queue.calls, 2)
+	require.Empty(t, queue.calls)
 	require.Equal(t, store.calls[0].IdempotencyKey, store.calls[1].IdempotencyKey)
 }
 
@@ -210,7 +206,7 @@ func TestADKTranscriptHooksFailClosedForSnapshotAndOpenForQueue(t *testing.T) {
 			events,
 		)
 
-		err := hooks.PersistSummaryInput(context.Background(), messages)
+		err := hooks.PersistTerminal(context.Background(), messages)
 
 		require.ErrorContains(t, err, "persist eino adk transcript")
 		require.Empty(t, events.events)
@@ -224,7 +220,7 @@ func TestADKTranscriptHooksFailClosedForSnapshotAndOpenForQueue(t *testing.T) {
 		events := &recordingRunEventSink{}
 		hooks := NewADKTranscriptHooks(run, store, queue, events)
 
-		err := hooks.PersistSummaryInput(context.Background(), messages)
+		err := hooks.PersistTerminal(context.Background(), messages)
 
 		require.NoError(t, err)
 		require.Equal(t, []string{
@@ -246,31 +242,122 @@ func TestADKTranscriptMiddlewarePersistsSuccessfulTerminalState(t *testing.T) {
 		queue,
 		events,
 	))
+	hiddenReminder := schema.UserMessage("<system-reminder>hidden memory</system-reminder>")
+	hiddenReminder.Extra = map[string]any{
+		adkHideFromUIExtraKey:             true,
+		adkDynamicContextReminderExtraKey: true,
+	}
 	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
-		schema.UserMessage("finish the task"),
+		hiddenReminder,
+		schema.UserMessage("<uploaded_files>/mnt/user-data/private.pdf</uploaded_files>"),
+		schema.AssistantMessage("I can inspect the uploaded file.", nil),
+		schema.UserMessage("<uploaded_files>/mnt/user-data/private.pdf</uploaded_files>\nremember that I prefer Go"),
 		schema.AssistantMessage("", []schema.ToolCall{{
 			ID:   "call-1",
 			Type: "function",
 			Function: schema.FunctionCall{
-				Name:      "search",
-				Arguments: `{}`,
+				Name:      "search_private_file",
+				Arguments: `{"path":"/mnt/user-data/private.pdf","token":"tool-secret"}`,
 			},
 		}}),
-		schema.ToolMessage("result", "call-1"),
-		schema.AssistantMessage("done", nil),
+		schema.ToolMessage("tool-secret result", "call-1"),
+		schema.AssistantMessage("Noted: use Go.", nil),
 	}}
 
 	gotCtx, err := middleware.AfterAgent(context.Background(), state)
 
 	require.NoError(t, err)
 	require.NotNil(t, gotCtx)
-	require.Len(t, store.calls, 1)
+	require.Len(t, store.calls, 2)
 	require.Equal(t, TranscriptKindTerminal, store.calls[0].Kind)
+	require.Equal(t, TranscriptKindTerminal, store.calls[1].Kind)
+	require.Contains(t, store.calls[0].Messages, "tool-secret")
+	require.Contains(t, store.calls[0].Messages, "hidden memory")
+	require.NotContains(t, store.calls[1].Messages, "tool-secret")
+	require.NotContains(t, store.calls[1].Messages, "hidden memory")
+	require.NotContains(t, store.calls[1].Messages, "<uploaded_files>")
+	require.NotContains(t, store.calls[1].Messages, "private.pdf")
+	require.NotContains(t, store.calls[1].Messages, "search_private_file")
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"kind":"terminal",
+		"digest":"`+store.calls[1].Digest+`",
+		"purpose":"memory_flush",
+		"source_digest":"`+store.calls[0].Digest+`",
+		"source_snapshot_id":501,
+		"memory_flush":{
+			"purpose":"memory_flush",
+			"correction_detected":false,
+			"reinforcement_detected":false,
+			"schema":"coze.adk_memory_flush.v1"
+		}
+	}`, store.calls[1].Metadata)
 	require.Len(t, queue.calls, 1)
+	require.Equal(t, store.snapshots[1].SnapshotID, queue.calls[0].SnapshotID)
+	require.Equal(t, store.calls[1].IdempotencyKey, queue.calls[0].IdempotencyKey)
 	require.Equal(t, []string{
 		"context.transcript_persisted",
 		"memory.update_queued",
 	}, events.eventTypes())
+
+	memoryMessages := decodeADKTranscriptMessages(t, store.calls[1].Messages)
+	require.Len(t, memoryMessages, 2)
+	require.Equal(t, schema.User, memoryMessages[0].Role)
+	require.Equal(t, "remember that I prefer Go", memoryMessages[0].Content)
+	require.Empty(t, memoryMessages[0].UserInputMultiContent)
+	require.Equal(t, schema.Assistant, memoryMessages[1].Role)
+	require.Equal(t, "Noted: use Go.", memoryMessages[1].Content)
+	require.Empty(t, memoryMessages[1].ToolCalls)
+}
+
+func TestADKTranscriptMemoryFlushMetadataCapturesCorrectionAndReinforcement(
+	t *testing.T,
+) {
+	for _, testCase := range []struct {
+		name          string
+		user          string
+		correction    bool
+		reinforcement bool
+	}{
+		{
+			name:       "correction",
+			user:       "不对，改用 Go 语言",
+			correction: true,
+		},
+		{
+			name:          "reinforcement",
+			user:          "对，就是这样。",
+			reinforcement: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := &recordingADKTranscriptStore{}
+			queue := &recordingADKMemoryFlushQueue{}
+			hooks := NewADKTranscriptHooks(
+				&RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+				store,
+				queue,
+				&recordingRunEventSink{},
+			)
+
+			err := hooks.PersistTerminal(context.Background(), []*schema.Message{
+				schema.UserMessage(testCase.user),
+				schema.AssistantMessage("已记录。", nil),
+			})
+
+			require.NoError(t, err)
+			require.Len(t, store.calls, 1)
+			require.Len(t, queue.calls, 1)
+			metadata := decodeADKTranscriptMetadata(t, store.calls[0].Metadata)
+			require.Contains(t, metadata, "memory_flush")
+			flush, ok := metadata["memory_flush"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, testCase.correction, flush["correction_detected"])
+			require.Equal(t, testCase.reinforcement, flush["reinforcement_detected"])
+			require.Equal(t, adkTranscriptMemoryFlushPurpose, flush["purpose"])
+			require.NotContains(t, store.calls[0].Metadata, testCase.user)
+		})
+	}
 }
 
 func TestADKTranscriptMiddlewareSkipsTerminalSnapshotOnModelFailureOrCancel(
@@ -622,13 +709,14 @@ func TestADKTranscriptReplayWithFreshAgentPersistsEachDigestOnce(t *testing.T) {
 	var jobCount int64
 	require.NoError(t, db.Table("agent_memory_flush_jobs").
 		Count(&jobCount).Error)
-	require.Equal(t, int64(2), jobCount)
+	require.Equal(t, int64(0), jobCount)
 }
 
 type recordingADKTranscriptStore struct {
-	calls    []ADKTranscriptPersistRequest
-	snapshot ADKTranscriptSnapshot
-	err      error
+	calls     []ADKTranscriptPersistRequest
+	snapshot  ADKTranscriptSnapshot
+	snapshots []ADKTranscriptSnapshot
+	err       error
 }
 
 func (s *recordingADKTranscriptStore) PersistTranscript(
@@ -640,18 +728,24 @@ func (s *recordingADKTranscriptStore) PersistTranscript(
 	if s.err != nil {
 		return ADKTranscriptSnapshot{}, false, s.err
 	}
-	if s.snapshot.SnapshotID == 0 {
-		s.snapshot = ADKTranscriptSnapshot{
-			SnapshotID:     501,
-			Kind:           req.Kind,
-			Digest:         req.Digest,
-			IdempotencyKey: req.IdempotencyKey,
-			MessageCount:   req.MessageCount,
-			Messages:       req.Messages,
+	for _, snapshot := range s.snapshots {
+		if snapshot.IdempotencyKey == req.IdempotencyKey {
+			return snapshot, false, nil
 		}
-		return s.snapshot, true, nil
 	}
-	return s.snapshot, false, nil
+	snapshot := ADKTranscriptSnapshot{
+		SnapshotID:     int64(501 + len(s.snapshots)),
+		Kind:           req.Kind,
+		Digest:         req.Digest,
+		IdempotencyKey: req.IdempotencyKey,
+		MessageCount:   req.MessageCount,
+		Messages:       req.Messages,
+	}
+	s.snapshots = append(s.snapshots, snapshot)
+	if s.snapshot.SnapshotID == 0 {
+		s.snapshot = snapshot
+	}
+	return snapshot, true, nil
 }
 
 type recordingADKMemoryFlushQueue struct {
@@ -749,4 +843,18 @@ func (g *sequentialTranscriptIDGen) GenMultiIDs(
 
 func transcriptPayloadContains(payload, value string) bool {
 	return strings.Contains(payload, value)
+}
+
+func decodeADKTranscriptMessages(t *testing.T, raw string) []*schema.Message {
+	t.Helper()
+	var messages []*schema.Message
+	require.NoError(t, json.Unmarshal([]byte(raw), &messages))
+	return messages
+}
+
+func decodeADKTranscriptMetadata(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &metadata))
+	return metadata
 }

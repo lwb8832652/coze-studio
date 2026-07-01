@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -34,7 +35,42 @@ const (
 	TranscriptKindSummaryInput TranscriptKind = "summary_input"
 	TranscriptKindTerminal     TranscriptKind = "terminal"
 
-	einoMessageIDExtraKey = "_eino_msg_id"
+	einoMessageIDExtraKey             = "_eino_msg_id"
+	adkSummarizationContentTypeKey    = "_eino_summarization_content_type"
+	adkTranscriptMemoryFlushPurpose   = "memory_flush"
+	adkTranscriptUploadedFilesPattern = `(?s)<uploaded_files>.*?</uploaded_files>`
+)
+
+var (
+	adkTranscriptUploadedFilesRE = regexp.MustCompile(adkTranscriptUploadedFilesPattern)
+	adkTranscriptCorrectionREs   = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bthat(?:'s| is) (?:wrong|incorrect)\b`),
+		regexp.MustCompile(`(?i)\byou misunderstood\b`),
+		regexp.MustCompile(`(?i)\btry again\b`),
+		regexp.MustCompile(`(?i)\bredo\b`),
+		regexp.MustCompile(`不对`),
+		regexp.MustCompile(`你理解错了`),
+		regexp.MustCompile(`你理解有误`),
+		regexp.MustCompile(`重试`),
+		regexp.MustCompile(`重新来`),
+		regexp.MustCompile(`换一种`),
+		regexp.MustCompile(`改用`),
+	}
+	adkTranscriptReinforcementREs = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\byes[,.]?\s+(?:exactly|perfect|that(?:'s| is) (?:right|correct|it))\b`),
+		regexp.MustCompile(`(?i)\bperfect(?:[.!?]|$)`),
+		regexp.MustCompile(`(?i)\bexactly\s+(?:right|correct)\b`),
+		regexp.MustCompile(`(?i)\bthat(?:'s| is)\s+(?:exactly\s+)?(?:right|correct|what i (?:wanted|needed|meant))\b`),
+		regexp.MustCompile(`(?i)\bkeep\s+(?:doing\s+)?that\b`),
+		regexp.MustCompile(`(?i)\bjust\s+(?:like\s+)?(?:that|this)\b`),
+		regexp.MustCompile(`(?i)\bthis is (?:great|helpful)\b(?:[.!?]|$)`),
+		regexp.MustCompile(`(?i)\bthis is what i wanted\b(?:[.!?]|$)`),
+		regexp.MustCompile(`对[，,]?\s*就是这样(?:[。！？!?.]|$)`),
+		regexp.MustCompile(`完全正确(?:[。！？!?.]|$)`),
+		regexp.MustCompile(`(?:对[，,]?\s*)?就是这个意思(?:[。！？!?.]|$)`),
+		regexp.MustCompile(`正是我想要的(?:[。！？!?.]|$)`),
+		regexp.MustCompile(`继续保持(?:[。！？!?.]|$)`),
+	}
 )
 
 type ADKTranscriptPersistRequest struct {
@@ -208,18 +244,133 @@ func (h *ADKTranscriptHooks) persist(
 	if h.store == nil {
 		return fmt.Errorf("eino adk transcript store is required")
 	}
-	raw, digest, messageCount, err := encodeADKTranscript(messages)
+	metadataExtra := map[string]any{}
+	var memoryMessages []*schema.Message
+	var memorySignal map[string]any
+	memoryEligible := false
+	if h.queue != nil && kind == TranscriptKindTerminal {
+		memoryMessages = buildADKTranscriptMemoryMessages(messages)
+		memoryEligible = adkTranscriptMemoryEligible(memoryMessages)
+		if memoryEligible {
+			memorySignal = buildADKTranscriptMemoryFlushMetadata(memoryMessages)
+			metadataExtra["memory_flush"] = memorySignal
+		}
+	}
+	snapshot, digest, _, messageCount, err := h.persistSnapshot(
+		ctx,
+		kind,
+		messages,
+		metadataExtra,
+		true,
+	)
 	if err != nil {
 		return err
 	}
+
+	if h.queue == nil || kind != TranscriptKindTerminal || !memoryEligible {
+		return nil
+	}
+	memoryRaw, memoryDigest, memoryMessageCount, err := encodeADKTranscript(memoryMessages)
+	if err != nil {
+		return err
+	}
+	memoryIdempotencyKey := string(kind) + ":" + memoryDigest
+	memorySnapshot := snapshot
+	if memoryDigest != digest {
+		memorySnapshot, err = h.persistMemoryFlushSnapshot(
+			ctx,
+			kind,
+			memoryDigest,
+			memoryIdempotencyKey,
+			memoryMessageCount,
+			memoryRaw,
+			digest,
+			snapshot.SnapshotID,
+			memorySignal,
+		)
+		if err != nil {
+			emitRunEvent(ctx, h.eventSink, RunEvent{
+				ThreadID:  h.run.ThreadID,
+				RunID:     h.run.RunID,
+				EventType: "memory.update_failed",
+				Payload: encodeRunEventPayload(ctx, map[string]any{
+					"snapshot_id":   snapshot.SnapshotID,
+					"kind":          kind,
+					"digest":        digest,
+					"message_count": messageCount,
+					"error":         err.Error(),
+				}),
+			})
+			return nil
+		}
+	}
+
+	queued, queueErr := h.queue.EnqueueMemoryFlush(
+		ctx,
+		h.run,
+		ADKMemoryFlushRequest{
+			SnapshotID:     memorySnapshot.SnapshotID,
+			Kind:           kind,
+			Digest:         memoryDigest,
+			IdempotencyKey: memoryIdempotencyKey,
+			MessageCount:   memoryMessageCount,
+		},
+	)
+	if queueErr != nil {
+		emitRunEvent(ctx, h.eventSink, RunEvent{
+			ThreadID:  h.run.ThreadID,
+			RunID:     h.run.RunID,
+			EventType: "memory.update_failed",
+			Payload: encodeRunEventPayload(ctx, map[string]any{
+				"snapshot_id":   memorySnapshot.SnapshotID,
+				"kind":          kind,
+				"digest":        memoryDigest,
+				"message_count": memoryMessageCount,
+				"error":         queueErr.Error(),
+			}),
+		})
+		return nil
+	}
+	if queued {
+		emitRunEvent(ctx, h.eventSink, RunEvent{
+			ThreadID:  h.run.ThreadID,
+			RunID:     h.run.RunID,
+			EventType: "memory.update_queued",
+			Payload: encodeRunEventPayload(ctx, map[string]any{
+				"snapshot_id":   memorySnapshot.SnapshotID,
+				"kind":          kind,
+				"digest":        memoryDigest,
+				"message_count": memoryMessageCount,
+			}),
+		})
+	}
+	return nil
+}
+
+func (h *ADKTranscriptHooks) persistSnapshot(
+	ctx context.Context,
+	kind TranscriptKind,
+	messages []*schema.Message,
+	metadataExtra map[string]any,
+	emitEvent bool,
+) (ADKTranscriptSnapshot, string, string, int32, error) {
+	raw, digest, messageCount, err := encodeADKTranscript(messages)
+	if err != nil {
+		return ADKTranscriptSnapshot{}, "", "", 0, err
+	}
 	idempotencyKey := string(kind) + ":" + digest
-	metadata, err := json.Marshal(map[string]any{
+	metadataMap := map[string]any{
 		"runtime": "eino_adk",
 		"kind":    kind,
 		"digest":  digest,
-	})
+	}
+	for key, value := range metadataExtra {
+		metadataMap[key] = value
+	}
+	metadata, err := json.Marshal(metadataMap)
 	if err != nil {
-		return fmt.Errorf("encode eino adk transcript metadata: %w", err)
+		return ADKTranscriptSnapshot{}, "", "", 0,
+			fmt.Errorf("encode eino adk transcript metadata: %w", err)
 	}
 	snapshot, created, err := h.store.PersistTranscript(
 		ctx,
@@ -234,12 +385,14 @@ func (h *ADKTranscriptHooks) persist(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("persist eino adk transcript: %w", err)
+		return ADKTranscriptSnapshot{}, "", "", 0,
+			fmt.Errorf("persist eino adk transcript: %w", err)
 	}
 	if snapshot.SnapshotID <= 0 {
-		return fmt.Errorf("persist eino adk transcript returned empty snapshot")
+		return ADKTranscriptSnapshot{}, "", "", 0,
+			fmt.Errorf("persist eino adk transcript returned empty snapshot")
 	}
-	if created {
+	if created && emitEvent {
 		emitRunEvent(ctx, h.eventSink, RunEvent{
 			ThreadID:  h.run.ThreadID,
 			RunID:     h.run.RunID,
@@ -252,50 +405,59 @@ func (h *ADKTranscriptHooks) persist(
 			}),
 		})
 	}
+	return snapshot, digest, idempotencyKey, messageCount, nil
+}
 
-	if h.queue == nil || !adkTranscriptMemoryEligible(messages) {
-		return nil
+func (h *ADKTranscriptHooks) persistMemoryFlushSnapshot(
+	ctx context.Context,
+	kind TranscriptKind,
+	digest string,
+	idempotencyKey string,
+	messageCount int32,
+	raw string,
+	sourceDigest string,
+	sourceSnapshotID int64,
+	memorySignal map[string]any,
+) (ADKTranscriptSnapshot, error) {
+	metadata, err := json.Marshal(map[string]any{
+		"runtime":            "eino_adk",
+		"kind":               kind,
+		"digest":             digest,
+		"purpose":            adkTranscriptMemoryFlushPurpose,
+		"source_digest":      sourceDigest,
+		"source_snapshot_id": sourceSnapshotID,
+		"memory_flush":       memorySignal,
+	})
+	if err != nil {
+		return ADKTranscriptSnapshot{}, fmt.Errorf(
+			"encode eino adk memory transcript metadata: %w",
+			err,
+		)
 	}
-	queued, queueErr := h.queue.EnqueueMemoryFlush(
+	snapshot, _, err := h.store.PersistTranscript(
 		ctx,
 		h.run,
-		ADKMemoryFlushRequest{
-			SnapshotID:     snapshot.SnapshotID,
+		ADKTranscriptPersistRequest{
 			Kind:           kind,
 			Digest:         digest,
 			IdempotencyKey: idempotencyKey,
 			MessageCount:   messageCount,
+			Messages:       raw,
+			Metadata:       string(metadata),
 		},
 	)
-	if queueErr != nil {
-		emitRunEvent(ctx, h.eventSink, RunEvent{
-			ThreadID:  h.run.ThreadID,
-			RunID:     h.run.RunID,
-			EventType: "memory.update_failed",
-			Payload: encodeRunEventPayload(ctx, map[string]any{
-				"snapshot_id":   snapshot.SnapshotID,
-				"kind":          kind,
-				"digest":        digest,
-				"message_count": messageCount,
-				"error":         queueErr.Error(),
-			}),
-		})
-		return nil
+	if err != nil {
+		return ADKTranscriptSnapshot{}, fmt.Errorf(
+			"persist eino adk memory transcript: %w",
+			err,
+		)
 	}
-	if queued {
-		emitRunEvent(ctx, h.eventSink, RunEvent{
-			ThreadID:  h.run.ThreadID,
-			RunID:     h.run.RunID,
-			EventType: "memory.update_queued",
-			Payload: encodeRunEventPayload(ctx, map[string]any{
-				"snapshot_id":   snapshot.SnapshotID,
-				"kind":          kind,
-				"digest":        digest,
-				"message_count": messageCount,
-			}),
-		})
+	if snapshot.SnapshotID <= 0 {
+		return ADKTranscriptSnapshot{}, fmt.Errorf(
+			"persist eino adk memory transcript returned empty snapshot",
+		)
 	}
-	return nil
+	return snapshot, nil
 }
 
 type ADKTranscriptMiddleware struct {
@@ -403,4 +565,120 @@ func adkTranscriptMemoryEligible(messages []*schema.Message) bool {
 		}
 	}
 	return hasUser && hasAssistantAnswer
+}
+
+func buildADKTranscriptMemoryMessages(messages []*schema.Message) []*schema.Message {
+	filtered := make([]*schema.Message, 0, len(messages))
+	skipNextAssistant := false
+	for _, message := range messages {
+		if message == nil || isADKHiddenTranscriptMessage(message) {
+			continue
+		}
+		switch message.Role {
+		case schema.User:
+			content, uploadOnly := sanitizeADKTranscriptUserMemoryContent(message)
+			if content == "" {
+				if uploadOnly {
+					skipNextAssistant = true
+				}
+				continue
+			}
+			skipNextAssistant = false
+			filtered = append(filtered, schema.UserMessage(content))
+		case schema.Assistant:
+			if skipNextAssistant {
+				skipNextAssistant = false
+				continue
+			}
+			content := strings.TrimSpace(message.Content)
+			if content == "" || len(message.ToolCalls) > 0 {
+				continue
+			}
+			filtered = append(filtered, schema.AssistantMessage(content, nil))
+		}
+	}
+	return filtered
+}
+
+func buildADKTranscriptMemoryFlushMetadata(messages []*schema.Message) map[string]any {
+	correction := detectADKTranscriptMemorySignal(messages, adkTranscriptCorrectionREs)
+	reinforcement := false
+	if !correction {
+		reinforcement = detectADKTranscriptMemorySignal(
+			messages,
+			adkTranscriptReinforcementREs,
+		)
+	}
+	return map[string]any{
+		"purpose":                adkTranscriptMemoryFlushPurpose,
+		"correction_detected":    correction,
+		"reinforcement_detected": reinforcement,
+		"schema":                 "coze.adk_memory_flush.v1",
+	}
+}
+
+func detectADKTranscriptMemorySignal(
+	messages []*schema.Message,
+	patterns []*regexp.Regexp,
+) bool {
+	seenUsers := 0
+	for index := len(messages) - 1; index >= 0 && seenUsers < 6; index-- {
+		message := messages[index]
+		if message == nil || message.Role != schema.User {
+			continue
+		}
+		seenUsers++
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		for _, pattern := range patterns {
+			if pattern.MatchString(content) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isADKHiddenTranscriptMessage(message *schema.Message) bool {
+	if message == nil {
+		return true
+	}
+	if isADKDynamicContextReminder(message) {
+		return true
+	}
+	if message.Extra != nil {
+		if hidden, _ := message.Extra[adkHideFromUIExtraKey].(bool); hidden {
+			return true
+		}
+		if _, summarized := message.Extra[adkSummarizationContentTypeKey]; summarized {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeADKTranscriptUserMemoryContent(message *schema.Message) (string, bool) {
+	if message == nil {
+		return "", false
+	}
+	parts := make([]string, 0, 1+len(message.UserInputMultiContent)+len(message.MultiContent))
+	if strings.TrimSpace(message.Content) != "" {
+		parts = append(parts, message.Content)
+	}
+	for _, part := range message.UserInputMultiContent {
+		if part.Type == schema.ChatMessagePartTypeText && strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+		}
+	}
+	for _, part := range message.MultiContent {
+		if part.Type == schema.ChatMessagePartTypeText && strings.TrimSpace(part.Text) != "" {
+			parts = append(parts, part.Text)
+		}
+	}
+	raw := strings.Join(parts, "\n")
+	hadUploadBlock := adkTranscriptUploadedFilesRE.MatchString(raw)
+	sanitized := strings.TrimSpace(adkTranscriptUploadedFilesRE.ReplaceAllString(raw, ""))
+	return sanitized, hadUploadBlock && sanitized == ""
 }

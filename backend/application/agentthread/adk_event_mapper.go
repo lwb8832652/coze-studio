@@ -184,6 +184,18 @@ func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEve
 		if err != nil {
 			return nil, err
 		}
+		if isADKPlanCompletionGuardPayload(payload) {
+			encoded, err := marshalADKPayload(map[string]any{
+				"hidden": true,
+				"schema": adkPlanCompletionGuardSchema,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("marshal agent.control payload: %w", err)
+			}
+			mapped.EventType = "agent.control"
+			mapped.Payload = encoded
+			return mapped, nil
+		}
 
 		mapped.EventType = "message.completed"
 		if payload.Role == schema.Tool {
@@ -400,6 +412,22 @@ func mapADKMessage(
 	}
 
 	return payload, usage, finalText, nil
+}
+
+func isADKPlanCompletionGuardPayload(payload adkMessagePayload) bool {
+	if payload.Role == schema.Tool &&
+		payload.ToolName == adkPlanCompletionGuardToolName {
+		return true
+	}
+	if payload.Role != schema.Assistant || len(payload.ToolCalls) == 0 {
+		return false
+	}
+	for _, call := range payload.ToolCalls {
+		if call.Function.Name != adkPlanCompletionGuardToolName {
+			return false
+		}
+	}
+	return true
 }
 
 func newADKFinishClassification(reason string) *adkFinishClassificationPayload {
