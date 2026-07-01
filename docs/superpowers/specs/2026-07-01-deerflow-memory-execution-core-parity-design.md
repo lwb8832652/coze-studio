@@ -233,6 +233,30 @@ Observed gaps:
   the initial prompt-derived title. Follow-ups or user-edited titles are not
   overwritten.
 
+2026-07-01 safety finish implementation note:
+
+- DeerFlow reference source:
+  `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/safety_finish_reason_middleware.py`
+  and `safety_termination_detectors.py`. DeerFlow detects provider safety
+  termination (`finish_reason=content_filter`, `stop_reason=refusal`, Gemini
+  `SAFETY/BLOCKLIST/PROHIBITED_CONTENT/SPII/RECITATION/...`) only when the
+  assistant response also carries tool calls, strips those tool calls, appends
+  a user-facing explanation, and persists bounded audit metadata without tool
+  arguments.
+- `backend/application/agentthread/adk_safety_finish.go` adds the equivalent
+  Eino `AfterModelRewriteState` middleware. It clones the ADK state, clears the
+  unsafe assistant `ToolCalls`, appends the safety explanation, stamps
+  `Extra["safety_termination"]`, and emits `middleware:safety_termination`
+  with only detector, reason field/value, tool call count/names/ids, and safe
+  provider extras.
+- `backend/application/agentthread/adk_middleware.go` registers
+  `safety_finish` after `tool_error_normalization` and before
+  `semantic_loop`, matching the DeerFlow intent that half-truncated tool calls
+  are suppressed before loop accounting and policy/audit downstream handling.
+- `backend/application/agentthread/adk_model_reliability.go` expands safety
+  finish classification to match the DeerFlow detector set used by the Go
+  middleware.
+
 ## First Implementation Slices
 
 ### Slice 1: Runtime Memory Injection

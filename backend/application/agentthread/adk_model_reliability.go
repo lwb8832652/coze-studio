@@ -357,9 +357,15 @@ func isADKSafetyFinishReason(reason string) bool {
 	switch normalizeADKFinishReason(reason) {
 	case "content_filter",
 		"safety",
+		"blocklist",
 		"blocked",
 		"prohibited_content",
-		"recitation":
+		"spii",
+		"recitation",
+		"image_safety",
+		"image_prohibited_content",
+		"image_recitation",
+		"refusal":
 		return true
 	default:
 		return false

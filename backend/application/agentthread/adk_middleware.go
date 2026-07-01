@@ -48,6 +48,7 @@ const (
 	ADKMiddlewareTranscript             ADKMiddlewareName = "transcript"
 	ADKMiddlewareMultimodal             ADKMiddlewareName = "multimodalbudget"
 	ADKMiddlewareToolErrorNormalization ADKMiddlewareName = "tool_error_normalization"
+	ADKMiddlewareSafetyFinish           ADKMiddlewareName = "safety_finish"
 	ADKMiddlewareSemanticLoop           ADKMiddlewareName = "semantic_loop"
 	ADKMiddlewarePolicy                 ADKMiddlewareName = "policy"
 	ADKMiddlewareAudit                  ADKMiddlewareName = "audit"
@@ -68,6 +69,7 @@ var adkMiddlewareOrder = []ADKMiddlewareName{
 	ADKMiddlewareSummarization,
 	ADKMiddlewareReduction,
 	ADKMiddlewareToolErrorNormalization,
+	ADKMiddlewareSafetyFinish,
 	ADKMiddlewareSemanticLoop,
 	ADKMiddlewarePolicy,
 	ADKMiddlewareAudit,
@@ -515,6 +517,13 @@ func defaultADKMiddlewareBuilder(
 					), nil
 				},
 			})
+		}
+	case ADKMiddlewareSafetyFinish:
+		return func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (adk.ChatModelAgentMiddleware, error) {
+			return NewADKSafetyFinishMiddleware(input.Run, options.EventSink), nil
 		}
 	case ADKMiddlewarePlanTask:
 		return func(
