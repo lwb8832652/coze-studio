@@ -35,7 +35,11 @@ the browser/runtime state and visual evidence status.
 
 ## Decision
 
-Move `P1-A-002` to `待验收`: DeerFlow visual evidence exists, but the
-authenticated Network endpoint summary is still missing. Do not mark the case
-complete until the endpoint/API summary is captured or an explicit N/A reason
-is accepted.
+Accept `P1-A-002` for P1-A with an explicit authenticated Network capture N/A
+reason recorded in:
+
+`docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-A-001-003-authenticated-api-capture-decision.md`
+
+The DeerFlow visual/runtime evidence exists and the unauthenticated redirect
+confirms the auth boundary. A future authenticated Network capture can be added
+as supplemental evidence, but it no longer blocks the P1-A browser baseline.

@@ -63,9 +63,13 @@ turn. The recorded API summary therefore contains the failed capture metadata
 only, while the response contract remains covered by source anchors and handler
 tests.
 
-## Remaining Gap
+## Acceptance Decision
 
-P1-A-003 is ready for acceptance on search/revision follow-up history. Artifact
-continuity is intentionally not closed here because this sample has no
-artifacts; it remains under P1-A-005 artifact side-preview and the existing
+P1-A-003 is accepted for search/revision follow-up history with an explicit
+authenticated API capture N/A reason recorded in:
+
+`docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-A-001-003-authenticated-api-capture-decision.md`
+
+Artifact continuity is intentionally not closed here because this sample has
+no artifacts; it remains under P1-A-005 artifact side-preview and the existing
 P1-J-006 artifact semantics evidence.

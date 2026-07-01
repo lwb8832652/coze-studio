@@ -52,7 +52,7 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | --- | --- | --- | --- |
 | P1-I 记忆系统运行时对齐 | 已完成 | Coze matches DeerFlow memory injection/update behavior for normal task runs, follow-ups, and long-term recall without exposing unsafe payloads. | 2026-07-01 completed source/runtime/UI/API-effect evidence for hidden memory injection, terminal async update, follow-up recall, durable memory flush, and memory management smoke. Direct JSON API capture was blocked by browser security, so P1-I-006 records real UI API effects plus DB audit summaries. |
 | P1-J Agent 执行流程对齐 | 已完成 | Coze task runs follow DeerFlow's agent harness semantics: planning/To-dos, step grouping, tool/artifact messages, follow-up context, streaming status, stop/retry, and visible execution quality. | Backend/runtime and visible task-detail parity slices are complete for P1. Remaining browser evidence and regression hardening continue under P1-A/P1-B. |
-| P1-A 浏览器回归与证据基线 | 进行中 | DeerFlow and Coze have paired desktop evidence for the canonical P0 workflows, plus safe Network/API summaries where applicable. | Start here. Convert P0 manual notes into a repeatable evidence checklist before adding new functionality. |
+| P1-A 浏览器回归与证据基线 | 已完成 | DeerFlow and Coze have paired desktop evidence for the canonical P0 workflows, plus safe Network/API summaries where applicable. | 2026-07-01 completed P1-A-000~008. Authenticated Network/API capture is explicitly N/A for P1-A-001~003 inside the current in-app browser read-only scope; no inferred payloads were recorded. Any future black-box API packet capture moves to P1-D or external QA evidence. |
 | P1-B 任务详情视觉补证 | 待开始 | Task detail screenshots/API summaries cover layout, execution steps, inline thinking, Mermaid, Artifacts, export, token modes, memory entry, loading/error states, and narrow/mobile risk cases. | Uses existing evidence root `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/`. |
 | P1-C 文档产物 MIME 样本库 | 待开始 | Markdown/TXT/CSV/PDF/image/HTML-SVG blocked/error/delete-restore cases each have UI evidence, API summaries, and unit/API tests. | Builds on TD-DOC-003~011. No raw object URI, signed URL, provider payload, or scanner raw body in evidence. |
 | P1-D LangGraph 兼容套件 | 待开始 | Black-box tests cover thread/run/history/state/stream/cancel/join behavior beyond DeerFlow-visible P0 paths. | Do not treat LangGraph checkpoint history as the only visible step source. Visible steps still follow the DeerFlow messages/history chain verified in P0. |
@@ -90,9 +90,9 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | Case | Status | Required Evidence |
 | --- | --- | --- |
 | P1-A-000 new-task environment baseline | 已完成 | DeerFlow and Coze new-task pages are reachable; safe screenshots and redacted DOM summaries stored. DeerFlow old reference task redirects to `workspace/chats/new`, so P1 uses fresh paired runs. |
-| P1-A-001 canonical new task run | 待验收 | Coze task created at `http://localhost:8080/space/7656275718757679104/tasks/7657390468782620672`; screenshot and safe browser summary captured. Unauthenticated curl correctly returns `401 missing session_key in cookie`; authenticated API/event summary for create/run/events is still missing. |
-| P1-A-002 DeerFlow comparison run | 待验收 | Fresh DeerFlow run created at `http://localhost:2026/workspace/chats/165d8335-5aa2-48ec-8295-54c4a917fce7`; visual screenshot and safe summary captured after an initial transient browser timeout. Authenticated Network endpoint summary is still missing. |
-| P1-A-003 follow-up preserves history | 待验收 | Coze search/revision follow-up evidence captured for task `http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008`: prior turns, prior run steps, follow-up run steps, and token row remain visible. Direct browser-authenticated API read is blocked by read-only browser scope; source/handler-test anchors are recorded. Artifact continuity is handled by P1-A-005 because this sample has no artifacts. |
+| P1-A-001 canonical new task run | 已完成 | Coze task created at `http://localhost:8080/space/7656275718757679104/tasks/7657390468782620672`; screenshot and safe browser summary captured; unauthenticated curl correctly returns `401 missing session_key in cookie`. Authenticated API/event capture is explicitly N/A in the current in-app browser scope and documented in `notes/P1-A-001-003-authenticated-api-capture-decision.md`; no fake payloads recorded. |
+| P1-A-002 DeerFlow comparison run | 已完成 | Fresh DeerFlow run created at `http://localhost:2026/workspace/chats/165d8335-5aa2-48ec-8295-54c4a917fce7`; visual screenshot and safe summary captured after an initial transient browser timeout. Authenticated Network capture is explicitly N/A for this P1-A browser pass and documented in `notes/P1-A-001-003-authenticated-api-capture-decision.md`. |
+| P1-A-003 follow-up preserves history | 已完成 | Coze search/revision follow-up evidence captured for task `http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008`: prior turns, prior run steps, follow-up run steps, and token row remain visible. Direct browser-authenticated API read is blocked by read-only browser scope; source/handler-test anchors and the explicit N/A decision are recorded. Artifact continuity is handled by P1-A-005 because this sample has no artifacts. |
 | P1-A-004 sidebar recent tasks pagination | 已完成 | Browser evidence shows `我的任务` renders 20 tasks, scrolls independently, and loads the next page to 40 rows. Source/test evidence covers `加载更多任务...`, `page_size=20`, and `coze:workspace-task-thread-upsert` immediate insertion/title patch. Evidence: `notes/P1-A-004-sidebar-recent-tasks.md`; test: `npm run test -- src/components/workspace-sub-menu/__tests__/workspace-sub-menu.test.tsx -t "loads more recent tasks\|prepends a newly created task thread\|patches an existing recent task title"`. |
 | P1-A-005 artifact side preview | 已完成 | Paired DeerFlow/Coze Markdown artifact card and side-preview evidence is recorded using the P1-J-006 verified runs, with P1-A screenshot aliases and source/test anchors. Evidence: `notes/P1-A-005-artifact-side-preview.md`; screenshots: `screenshots/deerflow/P1-A-005-deerflow-artifact-side-preview.png`, `screenshots/coze/P1-A-005-coze-artifact-side-preview.png`. Broader MIME samples remain P1-C. |
 | P1-A-006 search/tool event safety | 已完成 | Web-search task evidence shows visible search/reasoning steps and token text with zero unsafe visible-pattern hits. Source/test anchors cover tool display sanitization and backend run-event payload redaction. Evidence: `notes/P1-A-006-search-tool-event-safety.md`; tests: frontend tool event display + backend redaction/web_search safe query targeted suites passed. |
@@ -133,11 +133,12 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-Continue P1 browser/evidence baseline:
+Start P1-B task-detail visual evidence mapping:
 
-- Decide whether `P1-A-001` / `P1-A-002` / `P1-A-003` can be accepted with
-  the recorded browser-read limitation plus source/handler-test anchors, or
-  whether they still need external authenticated Network capture outside the
-  in-app browser's read-only execution scope.
-- If accepted, move `P1-A` workstream to `已完成`; otherwise keep the three
-  rows at `待验收` and begin `P1-B` visual补证 without fabricating API evidence.
+- Map existing P1-J/P1-A evidence to layout, execution steps, inline thinking,
+  Mermaid, Artifacts, export, token modes, memory entry, loading/error, and
+  narrow-width cases.
+- Fill only missing desktop/narrow visual evidence; keep P1-C MIME sample
+  library and P1-D black-box API suite separate.
+- Continue the same rule: do not fabricate authenticated Network evidence when
+  the current browser scope cannot capture it.

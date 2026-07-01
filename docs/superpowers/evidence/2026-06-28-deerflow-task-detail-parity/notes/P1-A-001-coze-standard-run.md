@@ -26,15 +26,19 @@ completed task detail rendering.
 - Right-side artifact preview is open and renders Mermaid diagrams.
 - Bottom composer remains available for follow-up.
 
-## Remaining Evidence
+## Closure Decision
 
-Keep this case as `待验收` until a safe backend API/event summary is captured
-for create/run/events. The browser summary already redacts prompt text, full
-assistant output, tool arguments/results, credentials, object URIs, signed
-URLs, raw provider bodies, and checkpoint bytes.
+This case is accepted for P1-A with an explicit authenticated API capture N/A
+reason recorded in:
+
+`docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-A-001-003-authenticated-api-capture-decision.md`
+
+The browser summary already redacts prompt text, full assistant output, tool
+arguments/results, credentials, object URIs, signed URLs, raw provider bodies,
+and checkpoint bytes.
 
 Unauthenticated curl checks against task, run, and event endpoints returned
 `401 missing session_key in cookie`, which is recorded as an auth-boundary
-check, not as the required authenticated API summary:
+check, not as a replacement for authenticated API payload evidence:
 
 `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/network/coze/P1-A-001-api-unauthenticated-summary.json`
