@@ -54,7 +54,7 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | P1-J Agent 执行流程对齐 | 已完成 | Coze task runs follow DeerFlow's agent harness semantics: planning/To-dos, step grouping, tool/artifact messages, follow-up context, streaming status, stop/retry, and visible execution quality. | Backend/runtime and visible task-detail parity slices are complete for P1. Remaining browser evidence and regression hardening continue under P1-A/P1-B. |
 | P1-A 浏览器回归与证据基线 | 已完成 | DeerFlow and Coze have paired desktop evidence for the canonical P0 workflows, plus safe Network/API summaries where applicable. | 2026-07-01 completed P1-A-000~008. Authenticated Network/API capture is explicitly N/A for P1-A-001~003 inside the current in-app browser read-only scope; no inferred payloads were recorded. Any future black-box API packet capture moves to P1-D or external QA evidence. |
 | P1-B 任务详情视觉补证 | 进行中 | Task detail screenshots/API summaries cover layout, execution steps, inline thinking, Mermaid, Artifacts, export, token modes, memory entry, loading/error states, and narrow/mobile risk cases. | 2026-07-01 evidence map created at `notes/P1-B-task-detail-visual-evidence-map.md`; existing desktop evidence covers most modules. First `TD-LAYOUT-002` responsive capture attempt was blocked by browser tab binding timeout, so next target remains 390px/768px screenshots and any overlap fix. |
-| P1-C 文档产物 MIME 样本库 | 待开始 | Markdown/TXT/CSV/PDF/image/HTML-SVG blocked/error/delete-restore cases each have UI evidence, API summaries, and unit/API tests. | Builds on TD-DOC-003~011. No raw object URI, signed URL, provider payload, or scanner raw body in evidence. |
+| P1-C 文档产物 MIME 样本库 | 进行中 | Markdown/TXT/CSV/PDF/image/HTML-SVG blocked/error/delete-restore cases each have UI evidence, API summaries, and unit/API tests. | 2026-07-01 automated source/test coverage map recorded in `notes/P1-C-artifact-mime-sample-map.md`; helper, task-detail, API handler, and application scan-policy tests passed. Real browser fixture pack and bounded API summaries remain open. No raw object URI, signed URL, provider payload, or scanner raw body in evidence. |
 | P1-D LangGraph 兼容套件 | 待开始 | Black-box tests cover thread/run/history/state/stream/cancel/join behavior beyond DeerFlow-visible P0 paths. | Do not treat LangGraph checkpoint history as the only visible step source. Visible steps still follow the DeerFlow messages/history chain verified in P0. |
 | P1-E Runtime Doctor 深诊断 | 待开始 | Adds live model connectivity, provider capability matrix, sandbox diagnostics, and richer Skill/MCP probes with bounded metadata. | Must fail closed and avoid prompt, credential, tool arg/result, checkpoint, raw provider, and object URI leaks. |
 | P1-F Skills/MCP/Tools 策略与历史 | 待开始 | Adds policy controls, invocation history, output budgets, and deeper transport management where DeerFlow-visible workflows need it. | User has accepted P0 Skills/MCP as good enough; this is hardening, not re-litigating P0 UI. |
@@ -99,6 +99,16 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | P1-A-007 token popover modes | 已完成 | Browser evidence shows the top-bar Token popover with `输入`/`输出`/`总计`, modes `关闭`/`总览`/`每轮`/`调试`, explanatory note, and zero unsafe visible-pattern hits. Evidence: `notes/P1-A-007-token-popover-modes.md`; test: `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "token usage"`. |
 | P1-A-008 loading/error states | 已完成 | Browser evidence covers bounded task not-found/cannot-view state with no raw error leak. Targeted frontend/backend tests cover DeerFlow-style loading skeleton, artifact preview failure redaction, safe artifact headers, scan-blocked conflict mapping, and signed URL object-URI hiding. Evidence: `notes/P1-A-008-loading-error-states.md`. Live throttled loading screenshot is N/A for this turn and replaced by deterministic component tests. |
 
+## P1-C Checklist
+
+| Case | Status | Required Evidence |
+| --- | --- | --- |
+| P1-C-001 automated coverage map | 已完成 | Source/test coverage matrix recorded in `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-C-artifact-mime-sample-map.md`. Tests passed: `npm run test -- src/pages/tasks/__tests__/task-artifacts-helpers.test.ts`; `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'canonical thread artifacts\|generated document artifacts\|deletes a canonical thread artifact\|restores the last removed\|lists deleted thread artifacts\|reviews a blocked artifact\|renders artifact scan jobs'`; `go test ./api/handler/coze -run 'Test(GetTaskThreadArtifactContentHandler\|GetTaskThreadArtifactSignedURLHandler\|ReviewTaskThreadArtifactScanHandler\|ListTaskThreadArtifactsHandler\|DeleteTaskThreadArtifactHandler\|RetryTaskThreadArtifactScanJobHandler\|ListTaskThreadArtifactScanJobsHandler)' -count=1 -gcflags='all=-N -l'`; `go test ./application/agentthread -run 'Test(ApplicationReadArtifactContent\|ArtifactScanReadPolicy\|ApplicationRecordArtifactScanResult\|ApplicationProcessArtifactScanJobs)' -count=1`. |
+| P1-C-002 real MIME fixture task | 待开始 | One Coze task or seeded thread contains Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and SVG artifacts with bounded metadata only. |
+| P1-C-003 UI screenshots per MIME family | 待开始 | Browser screenshots show card placement, side preview/open behavior, download/copy affordances, and safe active-content handling for every fixture artifact family. |
+| P1-C-004 bounded API summaries | 待开始 | Artifact list/content/signed URL/scan-block/delete/restore summaries recorded without raw object URI, signed URL, provider body, scanner raw body, prompt, completion, or checkpoint bytes. |
+| P1-C-005 lifecycle and scan state UI | 待开始 | Deleted list, undo restore, blocked scan review, scan retry, and bounded error states have real UI evidence. |
+
 ## Evidence Locations
 
 Use the existing evidence root:
@@ -133,12 +143,12 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-Start P1-B task-detail visual evidence mapping:
+Continue P1-C document artifact MIME sample library:
 
-- Map existing P1-J/P1-A evidence to layout, execution steps, inline thinking,
-  Mermaid, Artifacts, export, token modes, memory entry, loading/error, and
-  narrow-width cases.
-- Fill only missing desktop/narrow visual evidence; keep P1-C MIME sample
-  library and P1-D black-box API suite separate.
-- Continue the same rule: do not fabricate authenticated Network evidence when
-  the current browser scope cannot capture it.
+- Build or seed one browser-verifiable fixture task containing Markdown, TXT,
+  JSON, CSV, PDF, PNG, HTML, and SVG artifacts.
+- Capture UI screenshots and bounded API summaries for preview, download,
+  active-content blocking, scan blocked/review, delete, and restore.
+- Keep P1-B responsive screenshots open separately; do not fabricate browser
+  or authenticated Network evidence when the current browser scope cannot
+  capture it.
