@@ -3121,6 +3121,9 @@ describe('TaskDetailPage', () => {
         '[data-testid="task-artifact-side-preview"]',
       );
       expect(sidePreview?.getAttribute('data-layout')).toBe('deerflow-split');
+      expect(sidePreview?.getAttribute('data-width-mode')).toBe(
+        'deerflow-60-40',
+      );
       expect(
         sidePreview?.querySelector(
           'button[aria-label="复制文档 武汉3日游攻略.md"]',
@@ -5579,8 +5582,18 @@ describe('TaskDetailPage', () => {
     const executionFeed = container.querySelector(
       '.coze-prototype-execution-feed',
     );
+    const chainContent = executionFeed?.querySelector(
+      '.coze-prototype-chain-content',
+    );
 
+    expect(
+      executionFeed?.classList.contains('coze-prototype-chain-of-thought'),
+    ).toBe(true);
+    expect(chainContent).toBeTruthy();
     expect(executionFeed?.textContent).toContain('查看其他 3 个步骤');
+    expect(chainContent?.querySelectorAll('.coze-prototype-step')).toHaveLength(
+      1,
+    );
     expect(executionFeed?.textContent).not.toContain('更新 To-do 列表');
     expect(executionFeed?.textContent).toContain(
       '创建武汉3日游攻略 Markdown 文档',
@@ -5625,6 +5638,11 @@ describe('TaskDetailPage', () => {
     });
 
     expect(executionFeed?.textContent).toContain('隐藏步骤');
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-chain-content')
+        ?.querySelectorAll('.coze-prototype-step'),
+    ).toHaveLength(4);
     expect(executionFeed?.textContent).toContain('更新 To-do 列表');
     expect(executionFeed?.textContent).toContain(
       '搜索网页：“武汉三日游最佳路线”',

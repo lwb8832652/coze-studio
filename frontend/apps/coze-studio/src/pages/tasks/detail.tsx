@@ -754,9 +754,9 @@ const TaskEventsSection = ({
   return (
     <section
       aria-label="执行流程"
-      className="coze-prototype-execution-feed coze-prototype-reasoning-panel"
+      className="coze-prototype-execution-feed coze-prototype-reasoning-panel coze-prototype-chain-of-thought"
     >
-      <ol className="coze-prototype-execution-feed-list">
+      <ol className="coze-prototype-execution-feed-list coze-prototype-chain-content">
         {hiddenStepCount > 0 ? (
           <li>
             <button

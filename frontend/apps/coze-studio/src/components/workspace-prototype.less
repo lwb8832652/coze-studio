@@ -350,7 +350,7 @@
 }
 
 .coze-prototype-task-detail-page {
-  --coze-prototype-artifact-side-preview-width: clamp(360px, 40%, 640px);
+  --coze-prototype-artifact-side-preview-width: 40%;
 
   position: relative;
   overflow: hidden;
@@ -2618,6 +2618,12 @@
   border-radius: 10px;
 }
 
+.coze-prototype-chain-of-thought {
+  overflow: hidden;
+  gap: 2px;
+  box-shadow: none;
+}
+
 .coze-prototype-execution-feed-list {
   display: grid;
   gap: 0;
@@ -2628,6 +2634,10 @@
   list-style: none;
 }
 
+.coze-prototype-chain-content {
+  color: #6b7280;
+}
+
 .coze-prototype-step-more-button {
   cursor: pointer;
 
@@ -2636,9 +2646,9 @@
   align-items: center;
 
   width: 100%;
-  padding: 10px 14px 8px;
+  padding: 11px 16px 9px;
 
-  font-size: 13px;
+  font-size: 14px;
   line-height: 20px;
   color: #8f96a3;
   text-align: left;
@@ -2671,7 +2681,7 @@
 
 .coze-prototype-execution-feed-item {
   position: relative;
-  padding: 7px 14px 9px;
+  padding: 8px 16px 11px;
 }
 
 .coze-prototype-execution-list {
@@ -2686,10 +2696,10 @@
 
 .coze-prototype-step {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-start;
 
-  font-size: 13px;
+  font-size: 14px;
   line-height: 22px;
   color: #8f96a3;
 }
@@ -2698,10 +2708,10 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 
   min-width: 0;
-  padding-top: 1px;
+  padding-top: 0;
 }
 
 .coze-prototype-step-title-row {
@@ -2766,7 +2776,7 @@
 
   padding-top: 1px;
 
-  line-height: 22px;
+  line-height: 24px;
   color: #6b7280;
   white-space: pre-wrap;
 
@@ -2783,8 +2793,8 @@
   justify-content: center;
 
   width: 16px;
-  height: 20px;
-  margin-top: 2px;
+  height: 22px;
+  margin-top: 1px;
 
   color: #7d8593;
 }
@@ -2826,8 +2836,8 @@
 
 .coze-prototype-step-rail {
   position: absolute;
-  top: 24px;
-  bottom: -16px;
+  top: 28px;
+  bottom: -18px;
   left: 50%;
   transform: translateX(-50%);
 
