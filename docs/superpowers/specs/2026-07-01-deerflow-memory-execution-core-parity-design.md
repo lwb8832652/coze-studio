@@ -143,7 +143,11 @@ Verified source anchors:
 
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/lead_agent/agent.py`
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py`
+- `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/title_middleware.py`
+- `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/config/title_config.py`
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/runtime/journal.py`
+- `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/runtime/runs/worker.py`
+- `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/app/gateway/routers/threads.py`
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/frontend/src/core/messages/utils.ts`
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/frontend/src/components/workspace/messages/message-group.tsx`
 - `/Users/liuwenbo/code/BuildingAI/deer-flow/frontend/src/core/threads/hooks.ts`
@@ -162,6 +166,14 @@ Behavior to reproduce:
   `category=message`.
 - `RunJournal` also accumulates token usage by caller bucket: lead agent,
   subagent, and middleware.
+- `TitleMiddleware` generates a title after the first complete user/assistant
+  exchange only when the thread title is still unset. It uses the first user
+  message plus the first assistant response, strips `<think>` blocks, disables
+  thinking for the title model call, caps titles by config, and falls back to a
+  short user-message truncation.
+- DeerFlow syncs a generated checkpoint `title` back to thread metadata after
+  the run, and the frontend updates thread caches when state updates carry
+  `title`.
 - Frontend history reads `GET /api/threads/:thread_id/runs/:run_id/messages`.
   Checkpoint history is not the visible step source.
 - Frontend `getMessageGroups` filters hidden control messages, groups human,
@@ -191,6 +203,10 @@ Observed gaps:
 - Coze has `plantask` and durable plan backend. It does not yet implement
   DeerFlow's incomplete-todo loop guard that forces continued model work while
   active tasks remain.
+- Coze has a `RunExecutionResult.Title` path and a first-user-message fallback,
+  but P1 still needs the full DeerFlow-style model title middleware. The
+  fallback/explicit-title path must never expose `<think>` blocks, wrapper
+  quotes, or prompt-shaped long text in task lists and task detail headers.
 - Coze persists generic run events such as `message.completed`,
   `tool.completed`, `plan.task.*`, `memory.update_*`, and lifecycle events.
   DeerFlow's visible contract is message-category events, not generic lifecycle
@@ -201,6 +217,16 @@ Observed gaps:
   keep drifting.
 - Coze currently hides some internal lifecycle events in the flow, but the
   event stream still carries concepts that should be bounded metadata only.
+
+2026-07-01 title implementation note:
+
+- `backend/application/agentthread/runner.go` now cleans explicit generated
+  titles before updating thread metadata: `<think>...</think>` blocks are
+  removed, wrapper quotes are stripped, and trailing punctuation is trimmed.
+- This is a narrow safety/parity step for the existing explicit-title contract.
+  The remaining P1-J-003 work is to add the DeerFlow-equivalent title model
+  generation path in the Go/Eino middleware chain and verify live UI title
+  propagation.
 
 ## First Implementation Slices
 

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -31,6 +32,8 @@ const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
 	subagentRetryNotSupportedMessage = "subagent retry executor is not implemented"
 )
+
+var generatedThreadTitleThinkTagRE = regexp.MustCompile(`(?is)<think>.*?</think>`)
 
 type RunExecutor interface {
 	Execute(ctx context.Context, run *RunSummary) (*RunExecutionResult, error)
@@ -487,10 +490,20 @@ func firstGeneratedThreadTitleSentence(text string) string {
 
 func normalizeGeneratedThreadTitle(title string) string {
 	title = strings.TrimSpace(title)
-	title = strings.Trim(title, "\"'")
-	title = strings.TrimSpace(title)
-	title = strings.Trim(title, "，。,.；;:：")
-	title = strings.TrimSpace(title)
+	title = generatedThreadTitleThinkTagRE.ReplaceAllString(title, "")
+	for {
+		next := strings.TrimSpace(title)
+		next = strings.Trim(next, "\"'“”‘’")
+		next = strings.TrimSpace(next)
+		next = strings.Trim(next, "，。,.；;:：")
+		next = strings.TrimSpace(next)
+		next = strings.Trim(next, "\"'“”‘’")
+		next = strings.TrimSpace(next)
+		if next == title {
+			break
+		}
+		title = next
+	}
 	if title == "" {
 		return ""
 	}

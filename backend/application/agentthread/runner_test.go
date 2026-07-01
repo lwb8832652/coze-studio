@@ -147,6 +147,61 @@ func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"武汉3日游攻略"`)
 }
 
+func TestRunProcessorUsesCleanExplicitGeneratedThreadTitle(t *testing.T) {
+	userMessage := "请帮我安排青岛家庭旅行，顺便推荐适合孩子的路线"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "路线已整理",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{
+			Message: "路线已整理",
+			Title:   `<think>需要保留短标题</think>"青岛亲子旅行路线"。`,
+		}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, "青岛亲子旅行路线", domainSVC.updateThreadTitleReq.Title)
+	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"青岛亲子旅行路线"`)
+	require.NotContains(t, eventSink.events[1].Payload, "think")
+}
+
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
 	input, err := taskThreadRunInputFromMessage("能把预算表导出成 Excel 吗？")
 	require.NoError(t, err)
