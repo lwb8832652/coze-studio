@@ -160,6 +160,51 @@ same-prompt shape for this document-artifact smoke: reasoning/tool steps,
 output path pill, artifact card, download, token row, and final summary are all
 visible without raw tool arguments or object URIs.
 
+## Same-Prompt Search / Answer Smoke
+
+Prompt:
+
+```text
+请联网搜索青岛最佳旅游时间，并用 3 点回答，注明信息来源类型。
+```
+
+DeerFlow:
+
+- Task:
+  `http://localhost:2026/workspace/chats/72b6d7d7-ac4e-4899-80e3-86ece96e3ce7`
+- Screenshot:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/deerflow/P1-J-008-deerflow-search-answer.jpg`
+- Visible behavior: multiple web search / page view steps, expanded
+  `隐藏步骤`, final 3-point answer, source-type notes, token row, and generated
+  follow-up suggestions.
+
+Coze:
+
+- Task:
+  `http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008`
+- Screenshot:
+  `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/screenshots/coze/P1-J-008-coze-search-answer.jpg`
+- Visible behavior: automatic search steps (`搜索网页`), expanded `隐藏步骤`,
+  final 3-point answer, source-type notes, token row, and safe step metadata.
+
+Coze DOM summary:
+
+```json
+{
+  "hasMoreStepsBeforeExpand": true,
+  "hasHideStepsAfterExpand": true,
+  "hasAnswer": true,
+  "hasSearchStep": true,
+  "hasTokens": true,
+  "unsafeHits": []
+}
+```
+
+DeerFlow and Coze differ in exact source selection and wording, but both satisfy
+the parity acceptance for this search/answer smoke: intent-triggered web
+search, visible search steps, final answer with source-type explanation, and no
+unsafe raw tool payload on the page.
+
 ## Automated Verification
 
 Commands:
@@ -188,6 +233,6 @@ Known test noise:
 
 This slice confirms Coze's current execution feed structure and spacing are
 closer to DeerFlow, now has paired expanded-step screenshots, and includes one
-same-prompt document-artifact smoke. Full P1-J-008 still needs same-prompt
-DeerFlow/Coze visual evidence for search/answer and multi-turn revision before
-the tracker can move to `已完成`.
+same-prompt document-artifact smoke plus one same-prompt search/answer smoke.
+Full P1-J-008 still needs same-prompt DeerFlow/Coze visual evidence for
+multi-turn revision before the tracker can move to `已完成`.
