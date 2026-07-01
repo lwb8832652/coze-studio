@@ -272,13 +272,20 @@ func ListTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	}
+	apiEvents := taskThreadRunEventsToAPI(resp.Events)
+	journalMessages, err := taskThreadRunJournalMessagesForAPIEvents(ctx, req, apiEvents)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
 
 	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadRunEventsResponse{
 		Code: 0,
 		Msg:  "success",
 		Data: &threadapi.ListTaskThreadRunEventsData{
-			Events: taskThreadRunEventsToAPI(resp.Events),
-			Total:  resp.Total,
+			Events:          apiEvents,
+			Total:           resp.Total,
+			JournalMessages: journalMessages,
 		},
 	})
 }
@@ -1274,6 +1281,141 @@ func taskThreadRunEventsToAPI(events []*appagentthread.RunEventSummary) []*threa
 	}
 
 	return result
+}
+
+func taskThreadRunJournalMessagesForAPIEvents(
+	ctx context.Context,
+	req threadapi.ListTaskThreadRunEventsRequest,
+	events []*threadapi.TaskThreadRunEvent,
+) ([]*threadapi.TaskThreadRunJournalMessage, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+
+	messagesResp, err := appagentthread.SVC.ListMessages(ctx, &appagentthread.ListMessagesRequest{
+		ThreadID: req.ThreadID,
+		Page:     1,
+		PageSize: 200,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	runs := make([]*appagentthread.RunSummary, 0)
+	if req.RunID > 0 {
+		runResp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{
+			RunID: req.RunID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if runResp != nil && runResp.Run != nil && runResp.Run.ThreadID == req.ThreadID {
+			runs = append(runs, runResp.Run)
+		}
+	} else {
+		runsResp, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
+			ThreadID:         req.ThreadID,
+			IncludeChildRuns: true,
+			Page:             1,
+			PageSize:         200,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if runsResp != nil {
+			runs = append(runs, runsResp.Runs...)
+		}
+	}
+
+	var persistedMessages []*appagentthread.MessageSummary
+	if messagesResp != nil {
+		persistedMessages = messagesResp.Messages
+	}
+	journalMessages := appagentthread.ProjectThreadRunJournalMessages(
+		runs,
+		persistedMessages,
+		taskThreadRunEventAPIsToSummaries(events),
+	)
+
+	return taskThreadRunJournalMessagesToAPI(journalMessages), nil
+}
+
+func taskThreadRunEventAPIsToSummaries(events []*threadapi.TaskThreadRunEvent) []*appagentthread.RunEventSummary {
+	result := make([]*appagentthread.RunEventSummary, 0, len(events))
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		result = append(result, &appagentthread.RunEventSummary{
+			EventID:   event.EventID,
+			ThreadID:  event.ThreadID,
+			RunID:     event.RunID,
+			EventType: event.EventType,
+			Payload:   event.Payload,
+			CreatedAt: event.CreatedAt,
+		})
+	}
+	return result
+}
+
+func taskThreadRunJournalMessagesToAPI(
+	messages []*appagentthread.RunJournalMessage,
+) []*threadapi.TaskThreadRunJournalMessage {
+	result := make([]*threadapi.TaskThreadRunJournalMessage, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, taskThreadRunJournalMessageToAPI(message))
+	}
+	return result
+}
+
+func taskThreadRunJournalMessageToAPI(
+	message *appagentthread.RunJournalMessage,
+) *threadapi.TaskThreadRunJournalMessage {
+	if message == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadRunJournalMessage{
+		ID:               message.ID,
+		ThreadID:         message.ThreadID,
+		RunID:            message.RunID,
+		Type:             string(message.Type),
+		Role:             string(message.Role),
+		Content:          message.Content,
+		Name:             message.Name,
+		ToolCallID:       message.ToolCallID,
+		ToolCalls:        taskThreadRunJournalToolCallsToAPI(message.ToolCalls),
+		AdditionalKwargs: taskThreadRunJournalJSONObject(message.AdditionalKwargs),
+		Usage:            taskThreadRunJournalJSONObject(message.Usage),
+		CreatedAt:        message.CreatedAt,
+		SourceEventID:    message.SourceEventID,
+	}
+}
+
+func taskThreadRunJournalToolCallsToAPI(
+	toolCalls []appagentthread.RunJournalToolCall,
+) []*threadapi.TaskThreadRunJournalToolCall {
+	result := make([]*threadapi.TaskThreadRunJournalToolCall, 0, len(toolCalls))
+	for _, toolCall := range toolCalls {
+		result = append(result, &threadapi.TaskThreadRunJournalToolCall{
+			ID:        toolCall.ID,
+			Name:      toolCall.Name,
+			Type:      toolCall.Type,
+			Arguments: taskThreadRunJournalJSONObject(toolCall.Args),
+		})
+	}
+	return result
+}
+
+func taskThreadRunJournalJSONObject(value map[string]any) string {
+	if len(value) == 0 {
+		return "{}"
+	}
+	encoded, err := sonic.MarshalString(value)
+	if err != nil {
+		return "{}"
+	}
+	return encoded
 }
 
 func taskThreadTokenUsagesToAPI(usages []*appagentthread.TokenUsageSummary) []*threadapi.TaskThreadTokenUsage {

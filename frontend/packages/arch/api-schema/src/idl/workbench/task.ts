@@ -108,6 +108,27 @@ export interface TaskThreadRunEvent {
   payload: string;
   created_at: number;
 }
+export interface TaskThreadRunJournalToolCall {
+  id: string;
+  name: string;
+  type: string;
+  arguments: string;
+}
+export interface TaskThreadRunJournalMessage {
+  id: string;
+  thread_id: string;
+  run_id: string;
+  type: string;
+  role: string;
+  content: string;
+  name: string;
+  tool_call_id: string;
+  tool_calls: TaskThreadRunJournalToolCall[];
+  additional_kwargs: string;
+  usage: string;
+  created_at: number;
+  source_event_id: string;
+}
 export interface TaskThreadTokenUsage {
   usage_id: string;
   thread_id: string;
@@ -495,6 +516,7 @@ export interface ListTaskThreadRunsResponse {
 export interface ListTaskThreadRunEventsData {
   events: TaskThreadRunEvent[];
   total: number;
+  journal_messages?: TaskThreadRunJournalMessage[];
 }
 export interface ListTaskThreadRunEventsResponse {
   data?: ListTaskThreadRunEventsData;

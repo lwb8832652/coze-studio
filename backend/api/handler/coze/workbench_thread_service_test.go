@@ -2116,6 +2116,117 @@ func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
 	require.NotContains(t, payload, "sk-secret")
 }
 
+func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input: `{
+			"messages":[
+				{"role":"user","content":"上一轮"},
+				{"role":"assistant","content":"上一轮回答"},
+				{"role":"user","content":"青岛最佳旅游时间"}
+			]
+		}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleUser,
+		Content:  "青岛最佳旅游时间",
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "message.completed",
+		Payload: `{
+			"role":"assistant",
+			"content":"final text should not be exposed through event payload",
+			"reasoning_content":"需要查询季节和天气资料。",
+			"tool_calls":[{
+				"id":"call_web_search",
+				"type":"function",
+				"function":{
+					"name":"web_search",
+					"arguments":"{\"query\":\"青岛最佳旅游时间\",\"url\":\"https://private.example/signed\",\"api_key\":\"sk-secret\"}"
+				}
+			}],
+			"usage":{"prompt_tokens":10,"completion_tokens":5}
+		}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "tool.completed",
+		Payload: `{
+			"role":"tool",
+			"tool_name":"web_search",
+			"tool_call_id":"call_web_search",
+			"content":"tool result sk-secret https://private.example/signed"
+		}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "青岛 4-6 月和 9-10 月最适合旅行。",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1/run_events?page=1&page_size=10", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			JournalMessages []struct {
+				ID               string `json:"id"`
+				Type             string `json:"type"`
+				Content          string `json:"content"`
+				AdditionalKwargs string `json:"additional_kwargs"`
+				Usage            string `json:"usage"`
+				ToolCallID       string `json:"tool_call_id"`
+				ToolCalls        []struct {
+					ID        string `json:"id"`
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"tool_calls"`
+			} `json:"journal_messages"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Result().Body(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Len(t, resp.Data.JournalMessages, 4)
+	require.Equal(t, "human", resp.Data.JournalMessages[0].Type)
+	require.Equal(t, "青岛最佳旅游时间", resp.Data.JournalMessages[0].Content)
+	require.Equal(t, "ai", resp.Data.JournalMessages[1].Type)
+	require.JSONEq(t, `{"reasoning_content":"需要查询季节和天气资料。"}`, resp.Data.JournalMessages[1].AdditionalKwargs)
+	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].Usage)
+	require.Len(t, resp.Data.JournalMessages[1].ToolCalls, 1)
+	require.Equal(t, "call_web_search", resp.Data.JournalMessages[1].ToolCalls[0].ID)
+	require.Equal(t, "web_search", resp.Data.JournalMessages[1].ToolCalls[0].Name)
+	require.JSONEq(t, `{"query":"青岛最佳旅游时间"}`, resp.Data.JournalMessages[1].ToolCalls[0].Arguments)
+	require.Equal(t, "tool", resp.Data.JournalMessages[2].Type)
+	require.Equal(t, "call_web_search", resp.Data.JournalMessages[2].ToolCallID)
+	require.Empty(t, resp.Data.JournalMessages[2].Content)
+	require.Equal(t, "ai", resp.Data.JournalMessages[3].Type)
+	require.Equal(t, "青岛 4-6 月和 9-10 月最适合旅行。", resp.Data.JournalMessages[3].Content)
+
+	body := string(w.Result().Body())
+	require.NotContains(t, body, "final text should not be exposed")
+	require.NotContains(t, body, "tool result")
+	require.NotContains(t, body, "private.example")
+	require.NotContains(t, body, "sk-secret")
+	require.NotContains(t, body, "prompt_tokens")
+	require.NotContains(t, body, "completion_tokens")
+}
+
 func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)

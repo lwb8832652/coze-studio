@@ -313,6 +313,53 @@ Tests first:
   messages.
 - Frontend unit test mirroring DeerFlow `getMessageGroups` cases.
 
+2026-07-01 implementation note:
+
+- `backend/application/agentthread/run_journal_messages.go` adds the internal
+  DeerFlow-style journal projection:
+  `ProjectRunJournalMessages(run, persistedMessages, events)`.
+- The projection emits `human`, `ai`, and `tool` messages with the fields
+  DeerFlow's frontend depends on: AI `additional_kwargs.reasoning_content`,
+  `tool_calls` with parsed arguments, tool `name`, `tool_call_id`, and final
+  assistant content.
+- Current-run user text comes from the persisted user message for that run. If
+  it is missing, Coze falls back to the latest user/human message in
+  `run.input.messages`; this avoids replaying the whole follow-up history as
+  the current run's visible input.
+- Pure final-answer `message.completed` events are de-duplicated against
+  persisted assistant messages. The visible final answer remains the transcript
+  assistant message, while reasoning/tool-call AI events remain available for
+  steps.
+- `ProjectThreadRunJournalMessages` groups multiple runs for the task-detail
+  thread endpoint and sorts by created time with user -> event -> final assistant
+  tie-breaking for same-millisecond writes.
+- `ListTaskThreadRunEvents` now returns optional `journal_messages` in addition
+  to existing `events`. The handler builds journal messages from the same
+  already-sanitized event payloads returned to the browser, so raw tool results,
+  credentials, object URLs, provider raw bodies, and token raw usage are not
+  newly exposed.
+- `frontend/apps/coze-studio/src/pages/tasks/task-detail-loader.ts` prefers
+  `journal_messages` for message/tool-backed steps and keeps non-message events
+  such as plan, todo, run lifecycle, and safe metadata events from the original
+  event list.
+
+Verification:
+
+- `go test ./application/agentthread -run TestProjectRunJournalMessages -count=1`
+- `go test ./api/handler/coze -run 'TestListTaskThreadRunEventsHandlerReturnsJournalMessages|TestTaskThreadRunEventPayloadKeepsSafe|TestListTaskThreadRunEventsHandlerRedactsUnsafePayload' -count=1 -gcflags="all=-N -l"`
+- `npm run test -- src/pages/tasks/__tests__/task-detail-loader.test.ts`
+- `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx`
+- `npx tsc --noEmit --project tsconfig.json`
+
+Residual follow-up:
+
+- Browser/API evidence still needs to compare Coze `journal_messages` with
+  DeerFlow `GET /api/threads/:thread_id/runs/:run_id/messages` for the canonical
+  document, Mermaid, search, and follow-up tasks.
+- Coze UI still needs the final ChainOfThought visual/style alignment recorded
+  under `P1-J-008`; this slice only moves the data source away from frontend
+  guesswork.
+
 ### Slice 4: To-dos Loop Control
 
 Verified DeerFlow behavior:

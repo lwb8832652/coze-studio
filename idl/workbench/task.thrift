@@ -100,6 +100,29 @@ struct TaskThreadRunEvent {
     6: required i64 created_at
 }
 
+struct TaskThreadRunJournalToolCall {
+    1: required string id
+    2: required string name
+    3: required string type
+    4: required string arguments
+}
+
+struct TaskThreadRunJournalMessage {
+    1: required string id
+    2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    4: required string type
+    5: required string role
+    6: required string content
+    7: required string name
+    8: required string tool_call_id
+    9: required list<TaskThreadRunJournalToolCall> tool_calls
+    10: required string additional_kwargs
+    11: required string usage
+    12: required i64 created_at
+    13: required i64 source_event_id (agw.js_conv="str", api.js_conv="true")
+}
+
 struct TaskThreadTokenUsage {
     1: required i64 usage_id (agw.js_conv="str", api.js_conv="true")
     2: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
@@ -414,6 +437,7 @@ struct ListTaskThreadRunsResponse {
 struct ListTaskThreadRunEventsData {
     1: required list<TaskThreadRunEvent> events
     2: required i64 total
+    3: optional list<TaskThreadRunJournalMessage> journal_messages
 }
 
 struct ListTaskThreadRunEventsResponse {

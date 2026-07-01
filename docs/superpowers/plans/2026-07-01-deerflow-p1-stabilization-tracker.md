@@ -80,7 +80,7 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | P1-J-002 Coze execution gap map | 已完成 | Coze anchors and gaps recorded in `docs/superpowers/specs/2026-07-01-deerflow-memory-execution-core-parity-design.md`: current ADK event projection exists but is not yet a DeerFlow-equivalent visible message contract. |
 | P1-J-003 Middleware parity | 进行中 | Dynamic context + summarization reminder preservation completed via P1-I-003. Continue adapting Eino equivalents for DeerFlow runtime behaviors that directly affect visible task quality: To-dos, title, memory update, token usage, loop/tool-error handling, clarification, safe finish. |
 | P1-J-004 To-dos and incomplete-work loop | 已完成 | Implemented in `backend/application/agentthread/adk_plan_completion_guard.go`: Coze composes Eino `plantask` with a DeerFlow-style incomplete-work guard. If active plan items remain and the model attempts a clean final answer, `WrapModel` rewrites it into a hidden internal completion-reminder tool call before the ADK event sender observes it, forcing another model turn; reminders are capped at 2. The reserved tool is removed from model-visible `ToolInfos` and hidden guard events are mapped to bounded `agent.control` metadata. Tests: `go test ./application/agentthread -run 'TestADKPlanCompletionGuard|TestMapADKEvent|TestADKMiddleware' -count=1`; `go test ./application/agentthread -count=1`. Frontend To-dos dock parity remains tracked under P1-J-007/P1-J-008 browser acceptance. |
-| P1-J-005 RunJournal/message contract | 待开始 | Coze persists and serves visible steps from message/tool/assistant event semantics equivalent to DeerFlow, not fixed/stub-like lifecycle events. |
+| P1-J-005 RunJournal/message contract | 待验收 | Backend/API/loader baseline implemented: `ProjectRunJournalMessages` projects persisted user/final assistant messages plus sanitized `message.completed`/`tool.*` run events into DeerFlow-style `human/ai/tool` journal messages; `ListTaskThreadRunEvents` now returns optional `journal_messages`; task-detail loader prefers journal-backed message/tool steps while preserving non-message runtime events. Tests: `go test ./application/agentthread -run TestProjectRunJournalMessages -count=1`; `go test ./api/handler/coze -run 'TestListTaskThreadRunEventsHandlerReturnsJournalMessages|TestTaskThreadRunEventPayloadKeepsSafe|TestListTaskThreadRunEventsHandlerRedactsUnsafePayload' -count=1 -gcflags="all=-N -l"`; `npm run test -- src/pages/tasks/__tests__/task-detail-loader.test.ts`; `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx`; `npx tsc --noEmit --project tsconfig.json`. Remaining: paired browser/API evidence against DeerFlow `GET /api/threads/:thread_id/runs/:run_id/messages`, plus UI ChainOfThought style parity under P1-J-008. |
 | P1-J-006 Artifacts and present_files semantics | 待开始 | File creation, output presentation, artifact card position, side preview, download/copy, MIME handling, and final answer ordering match DeerFlow. |
 | P1-J-007 Streaming/stop/retry/follow-up | 待开始 | Sending, loading dots, stop square, cancellation, retry, and follow-up history preservation match DeerFlow behavior in browser evidence. |
 | P1-J-008 Quality acceptance suite | 待开始 | Same prompts run on DeerFlow and Coze: travel document, Mermaid diagram, search/answer, skill creation, MCP/weather, and multi-turn revision; compare visible output, steps, artifacts, tokens, and memory effects. |
@@ -133,12 +133,12 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-Continue `P1-I-005`, then `P1-J-005`:
+Continue P1 acceptance evidence:
 
-- Verify follow-up recall behavior end-to-end now that hidden memory injection and
-  after-agent memory queue filtering are implemented.
-- Then implement the RunJournal/message contract so visible execution steps come
-  from DeerFlow-equivalent message/tool semantics rather than generic lifecycle
-  projections.
+- Verify follow-up recall behavior end-to-end now that hidden memory injection,
+  after-agent memory queue filtering, and query-aware recall propagation are
+  implemented.
+- Verify the new `journal_messages` contract in browser/API evidence and compare
+  Coze task-detail steps with DeerFlow message-driven ChainOfThought rendering.
 - Keep `P1-A` browser evidence running as acceptance evidence for each slice,
   but do not let generic browser polish displace the memory/execution core.
