@@ -445,5 +445,10 @@ DeerFlow and match these user-visible outcomes:
   lifecycle placeholders.
 - To-dos prevent premature completion in complex tasks.
 - Artifacts appear in the same relative order and side preview flow.
+  - 2026-07-01 P1-J-006 evidence: Coze now renders generated document
+    artifacts as DeerFlow-style message cards with right-side preview,
+    download/copy controls, no visible review actions on non-skill cards, and
+    final-answer ordering covered by task-detail tests. Source/runtime evidence:
+    `docs/superpowers/evidence/2026-06-28-deerflow-task-detail-parity/notes/P1-J-006-artifact-present-files.md`.
 - Token rows and top-bar token display remain consistent with the message
   stream.
