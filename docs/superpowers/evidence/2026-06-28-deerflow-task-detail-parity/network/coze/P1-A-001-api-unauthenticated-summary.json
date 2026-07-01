@@ -1,0 +1,40 @@
+{
+  "case_id": "P1-A-001",
+  "captured_at": "2026-07-01",
+  "source": "coze",
+  "method": "curl_without_browser_cookie",
+  "target_thread_id": "7657390468782620672",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/workbench/task_threads/7657390468782620672",
+      "status_code": 401,
+      "message": "missing session_key in cookie"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workbench/task_threads/7657390468782620672/runs",
+      "status_code": 401,
+      "message": "missing session_key in cookie"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workbench/task_threads/7657390468782620672/runs/7657390468782620673/events",
+      "status_code": 401,
+      "message": "missing session_key in cookie"
+    }
+  ],
+  "decision": "Unauthenticated curl is only an auth-boundary check. It cannot replace the authenticated browser/API event summary required before P1-A-001 is complete.",
+  "redacted_fields": [
+    "cookie",
+    "session key",
+    "prompt text",
+    "assistant answer",
+    "tool arguments/results",
+    "credentials",
+    "object URIs",
+    "signed URLs",
+    "raw provider bodies",
+    "checkpoint bytes"
+  ]
+}
