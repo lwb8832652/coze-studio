@@ -25,7 +25,7 @@ import (
 const (
 	adkToolErrorSchema            = "coze.tool_error.v1"
 	adkToolRepairSchema           = "coze.tool_repair.v1"
-	adkToolErrorMessageMaxLength  = 2048
+	adkToolErrorMessageMaxLength  = 500
 	adkToolErrorDefaultMessage    = "tool call failed"
 	adkToolRepairReasonMissing    = "missing_tool_result"
 	adkToolRepairModelInstruction = "Tool result was missing and has been patched by Coze runtime. Continue with available context or retry the tool if needed."
@@ -37,6 +37,7 @@ type ADKToolErrorPayload struct {
 	ToolName     string `json:"tool_name,omitempty"`
 	ToolCallID   string `json:"tool_call_id,omitempty"`
 	ErrorMessage string `json:"error_message"`
+	Message      string `json:"message"`
 	Recoverable  bool   `json:"recoverable"`
 	Normalized   bool   `json:"normalized"`
 }
@@ -59,13 +60,15 @@ func newADKToolErrorPayload(
 	if err != nil {
 		message = err.Error()
 	}
+	message = sanitizeADKToolErrorMessage(message)
 
 	return ADKToolErrorPayload{
 		Schema:       adkToolErrorSchema,
 		Status:       "failed",
 		ToolName:     toolName,
 		ToolCallID:   toolCallID,
-		ErrorMessage: sanitizeADKToolErrorMessage(message),
+		ErrorMessage: message,
+		Message:      formatADKToolErrorModelMessage(toolName, message),
 		Recoverable:  true,
 		Normalized:   true,
 	}
@@ -149,16 +152,26 @@ func sanitizeADKToolErrorMessage(message string) string {
 	}
 	runes := []rune(message)
 	if len(runes) > adkToolErrorMessageMaxLength {
-		message = string(runes[:adkToolErrorMessageMaxLength])
+		message = string(runes[:adkToolErrorMessageMaxLength-3]) + "..."
 	}
 
 	return message
 }
 
+func formatADKToolErrorModelMessage(toolName string, message string) string {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		toolName = "unknown_tool"
+	}
+	message = sanitizeADKToolErrorMessage(message)
+
+	return "Error: Tool '" + toolName + "' failed with error: " + message + ". Continue with available context, or choose an alternative tool."
+}
+
 func mustMarshalADKToolResultProtocol(payload any) string {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return `{"schema":"coze.tool_error.v1","status":"failed","error_message":"tool call failed","recoverable":true,"normalized":true}`
+		return `{"schema":"coze.tool_error.v1","status":"failed","error_message":"tool call failed","message":"Error: Tool 'unknown_tool' failed with error: tool call failed. Continue with available context, or choose an alternative tool.","recoverable":true,"normalized":true}`
 	}
 
 	return string(encoded)

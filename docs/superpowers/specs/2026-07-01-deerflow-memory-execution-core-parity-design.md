@@ -257,6 +257,21 @@ Observed gaps:
   finish classification to match the DeerFlow detector set used by the Go
   middleware.
 
+2026-07-01 tool error implementation note:
+
+- DeerFlow reference source:
+  `/Users/liuwenbo/code/BuildingAI/deer-flow/backend/packages/harness/deerflow/agents/middlewares/tool_error_handling_middleware.py`.
+  DeerFlow converts non-control-flow tool exceptions into a user/model-visible
+  `ToolMessage`: `Error: Tool '<name>' failed ... Continue with available
+  context, or choose an alternative tool.`, truncating exception details to
+  500 chars while preserving graph control-flow interruptions.
+- Coze already converted ordinary Eino tool errors into recoverable
+  `coze.tool_error.v1` payloads and preserved interrupt/cancel/configuration
+  errors. `backend/application/agentthread/adk_tool_result_protocol.go` now
+  adds a DeerFlow-style `message` field to that structured payload and caps
+  `error_message` at 500 chars, so the model receives the same recovery
+  instruction without losing Coze's bounded event decoding.
+
 ## First Implementation Slices
 
 ### Slice 1: Runtime Memory Injection

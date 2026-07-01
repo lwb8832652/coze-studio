@@ -349,7 +349,7 @@ func TestMapADKEventMapsNormalizedToolError(t *testing.T) {
 	require.JSONEq(t, `{
 		"agent_name":"lead",
 		"role":"tool",
-		"content":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"calculator\",\"tool_call_id\":\"call-1\",\"error_message\":\"divide failed\",\"recoverable\":true,\"normalized\":true}",
+		"content":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"calculator\",\"tool_call_id\":\"call-1\",\"error_message\":\"divide failed\",\"message\":\"Error: Tool 'calculator' failed with error: divide failed. Continue with available context, or choose an alternative tool.\",\"recoverable\":true,\"normalized\":true}",
 		"tool_name":"calculator",
 		"tool_call_id":"call-1",
 		"tool_error":{
@@ -358,6 +358,7 @@ func TestMapADKEventMapsNormalizedToolError(t *testing.T) {
 			"tool_name":"calculator",
 			"tool_call_id":"call-1",
 			"error_message":"divide failed",
+			"message":"Error: Tool 'calculator' failed with error: divide failed. Continue with available context, or choose an alternative tool.",
 			"recoverable":true,
 			"normalized":true
 		}
@@ -395,10 +396,10 @@ func TestMapADKEventMapsEnhancedToolErrorTextPart(t *testing.T) {
 	require.JSONEq(t, `{
 		"agent_name":"lead",
 		"role":"tool",
-		"content":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"inspect_image\",\"tool_call_id\":\"call-image\",\"error_message\":\"image inspect failed\",\"recoverable\":true,\"normalized\":true}",
+		"content":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"inspect_image\",\"tool_call_id\":\"call-image\",\"error_message\":\"image inspect failed\",\"message\":\"Error: Tool 'inspect_image' failed with error: image inspect failed. Continue with available context, or choose an alternative tool.\",\"recoverable\":true,\"normalized\":true}",
 		"content_parts":[{
 			"type":"text",
-			"text":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"inspect_image\",\"tool_call_id\":\"call-image\",\"error_message\":\"image inspect failed\",\"recoverable\":true,\"normalized\":true}"
+			"text":"{\"schema\":\"coze.tool_error.v1\",\"status\":\"failed\",\"tool_name\":\"inspect_image\",\"tool_call_id\":\"call-image\",\"error_message\":\"image inspect failed\",\"message\":\"Error: Tool 'inspect_image' failed with error: image inspect failed. Continue with available context, or choose an alternative tool.\",\"recoverable\":true,\"normalized\":true}"
 		}],
 		"tool_name":"inspect_image",
 		"tool_call_id":"call-image",
@@ -408,6 +409,7 @@ func TestMapADKEventMapsEnhancedToolErrorTextPart(t *testing.T) {
 			"tool_name":"inspect_image",
 			"tool_call_id":"call-image",
 			"error_message":"image inspect failed",
+			"message":"Error: Tool 'inspect_image' failed with error: image inspect failed. Continue with available context, or choose an alternative tool.",
 			"recoverable":true,
 			"normalized":true
 		}

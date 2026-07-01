@@ -39,6 +39,7 @@ func TestADKToolResultProtocolEncodesAndDecodesToolError(t *testing.T) {
 	require.Equal(t, "search_docs", decoded.ToolName)
 	require.Equal(t, "call-1", decoded.ToolCallID)
 	require.Equal(t, "upstream timeout", decoded.ErrorMessage)
+	require.Equal(t, "Error: Tool 'search_docs' failed with error: upstream timeout. Continue with available context, or choose an alternative tool.", decoded.Message)
 	require.True(t, decoded.Recoverable)
 	require.True(t, decoded.Normalized)
 	require.JSONEq(t, `{
@@ -47,6 +48,7 @@ func TestADKToolResultProtocolEncodesAndDecodesToolError(t *testing.T) {
 		"tool_name":"search_docs",
 		"tool_call_id":"call-1",
 		"error_message":"upstream timeout",
+		"message":"Error: Tool 'search_docs' failed with error: upstream timeout. Continue with available context, or choose an alternative tool.",
 		"recoverable":true,
 		"normalized":true
 	}`, encoded)
@@ -63,6 +65,7 @@ func TestADKToolResultProtocolDefaultsBlankToolError(t *testing.T) {
 
 	require.True(t, ok)
 	require.Equal(t, "tool call failed", decoded.ErrorMessage)
+	require.Contains(t, decoded.Message, "tool call failed")
 }
 
 func TestADKToolResultProtocolTruncatesToolError(t *testing.T) {
@@ -76,6 +79,7 @@ func TestADKToolResultProtocolTruncatesToolError(t *testing.T) {
 
 	require.True(t, ok)
 	require.Len(t, decoded.ErrorMessage, adkToolErrorMessageMaxLength)
+	require.Contains(t, decoded.Message, "xxx...")
 }
 
 func TestADKToolResultProtocolIgnoresNonToolErrorPayload(t *testing.T) {
