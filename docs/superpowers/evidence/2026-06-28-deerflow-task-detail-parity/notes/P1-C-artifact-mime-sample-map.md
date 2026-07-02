@@ -11,8 +11,8 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. Visible PDF page-pixel rendering and scan retry remain
-open.
+SVG artifact cards. Visible PDF page-pixel rendering and bounded error-state
+browser evidence remain open.
 
 ## DeerFlow Reference
 
@@ -136,6 +136,10 @@ Screenshots:
   `screenshots/coze/P1-C-coze-scan-review-blocked-7657556998191316992.png`
 - SVG scan review released state:
   `screenshots/coze/P1-C-coze-scan-review-released-7657556998191316992.png`
+- Scan retry failed state:
+  `screenshots/coze/P1-C-coze-scan-retry-failed-7657556998191316992.png`
+- Scan retry after state:
+  `screenshots/coze/P1-C-coze-scan-retry-after-7657556998191316992.png`
 - Copy/download affordance state:
   `screenshots/coze/P1-C-coze-copy-download-affordance-7657556998191316992.png`
 
@@ -197,6 +201,18 @@ Observed behavior:
   `clean`, removed review actions, and left `下载` / `删除` only. Browser script
   checks for both states found zero visible hits for `s3://`, `tos://`,
   `file_id`, `checkpoint`, tool-argument labels, or provider payload markers.
+- Scan retry UI evidence was captured against the same fixture task. Because
+  the local debug artifact scan worker is disabled, all fixture scan jobs were
+  initially `pending`. For UI evidence only, one fixture scan job
+  `7657557151346327552` was changed from `pending` to `failed` with bounded
+  metadata (`worker_id=codex-ui-evidence`, `attempt_count=1`,
+  `last_error=artifact scan failed`). The management panel then showed the
+  `failed` tag and `重试` button for that job. Clicking the page's real
+  `重试扫描任务 7657557151346327552` action called the frontend retry path and
+  returned the job to `pending` with bounded `last_error=manual retry
+  requested`; the retry button disappeared. Browser visible-text checks after
+  retry found zero hits for `s3://`, `tos://`, `file_id`, `checkpoint`,
+  `provider_payload`, `scanner_raw`, or `agent-runtime/`.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
@@ -276,9 +292,8 @@ PDF parity note:
 
 1. Capture a browser image that proves PDF page pixels render rather than only
    iframe mount state.
-2. Add real UI evidence for scan retry state. The current fixture shows pending
-   scan jobs but no failed job row, so retry remains open until a failed scan
-   job is available.
+2. Add real browser evidence for bounded artifact error states beyond the
+   existing service/task-detail tests.
 3. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
    dedicated skill/tool-driven fixture if future evidence needs zero
    `content_base64` visible-text hits.
@@ -289,5 +304,6 @@ P1-C is in progress. The automated coverage baseline, Go binary write support,
 one real MIME fixture task, scan-pending safe message mapping, PDF review
 release, browser iframe-mount evidence for the current PDF artifact,
 delete/restore UI lifecycle evidence, manual scan review evidence, and
-copy/download affordance checks, and bounded API summaries are complete. PDF
-pixel-render evidence and scan retry are still open.
+copy/download affordance checks, bounded API summaries, and scan retry UI
+evidence are complete. PDF pixel-render evidence and bounded error-state
+browser evidence are still open.
