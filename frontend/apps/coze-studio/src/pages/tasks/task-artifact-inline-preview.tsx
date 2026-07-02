@@ -25,6 +25,7 @@ import {
 import { Button, Table } from '@coze-arch/coze-design';
 
 import { TaskMarkdownContent } from './task-markdown-content';
+import { copyTextToClipboard } from './task-clipboard';
 import type { ArtifactInlinePreview } from './task-artifacts-helpers';
 
 interface ArtifactPreviewBaseState {
@@ -98,7 +99,10 @@ export const TaskArtifactInlinePreview = ({
       return;
     }
 
-    await navigator.clipboard?.writeText(text);
+    const didCopy = await copyTextToClipboard(text);
+    if (!didCopy) {
+      return;
+    }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   };

@@ -11,8 +11,8 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. API summaries, visible PDF page-pixel rendering, blocked
-scan review, scan retry, and copy/download affordance checks remain open.
+SVG artifact cards. API summaries, visible PDF page-pixel rendering, and scan
+retry remain open.
 
 ## DeerFlow Reference
 
@@ -74,6 +74,12 @@ Results:
 - `backend/application/agentthread`: passed.
 - `backend/application/agentthread` ADK artifact binary/write-file subset:
   passed.
+- 2026-07-02 copy fallback regression:
+  `npm run test -- src/pages/tasks/__tests__/task-clipboard.test.ts`
+  passed with 3 tests.
+- 2026-07-02 focused copy/download regression:
+  `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'renders Mermaid answer markdown through the markdown viewer|renders generated document artifacts in a DeerFlow-style side preview without mixing them with thread export'`
+  passed with 2 tests, 48 skipped.
 
 ## 2026-07-01 Browser Fixture Evidence
 
@@ -126,6 +132,12 @@ Screenshots:
   `screenshots/coze/P1-C-coze-delete-restore-deleted-7657556998191316992.png`
 - SVG delete/restore restored active-list state:
   `screenshots/coze/P1-C-coze-delete-restore-restored-7657556998191316992.png`
+- SVG scan review blocked state:
+  `screenshots/coze/P1-C-coze-scan-review-blocked-7657556998191316992.png`
+- SVG scan review released state:
+  `screenshots/coze/P1-C-coze-scan-review-released-7657556998191316992.png`
+- Copy/download affordance state:
+  `screenshots/coze/P1-C-coze-copy-download-affordance-7657556998191316992.png`
 
 Observed behavior:
 
@@ -174,14 +186,35 @@ Observed behavior:
   `已移除` list; the frontend now clears that notice through the deleted-list
   restore callback, and `task-detail.test.tsx` locks the regression with
   `clears the undo notice when restoring a removed artifact from the deleted list`.
-  A clean post-fix browser recapture is pending because the in-app browser
-  control session timed out during reload.
+  The restored-state screenshot was recaptured after the fix and shows no
+  `撤销移除` notice while the SVG row is back in the active list.
   No raw object URI, signed URL, scanner raw body, provider payload, prompt,
   completion, or checkpoint bytes were recorded in these lifecycle screenshots.
+- The management panel was also used to validate manual scan review for the
+  same SVG sample. Clicking `阻断产物 p1c-fixture.svg` moved the row to
+  `blocked` and left only bounded review/actions visible: `放行`, `隔离`,
+  `下载`, and `删除`. Clicking `放行产物 p1c-fixture.svg` then moved the row to
+  `clean`, removed review actions, and left `下载` / `删除` only. Browser script
+  checks for both states found zero visible hits for `s3://`, `tos://`,
+  `file_id`, `checkpoint`, tool-argument labels, or provider payload markers.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
   signed URL leak.
+- Copy/download affordance checks were run after reloading the task page.
+  Browser DOM evidence showed all 8 artifact message cards expose visible
+  download buttons; the right-side Markdown artifact preview exposes the
+  DeerFlow-style code/preview toggle and a header copy button; the Mermaid block
+  exposes download-SVG and copy-source icon buttons. Clicking
+  `复制文档 p1c-fixture.md` initially left the browser clipboard empty, because
+  the frontend relied only on `navigator.clipboard?.writeText` and silently did
+  nothing when the API was blocked or unavailable. The frontend now routes
+  document-preview copy and Mermaid-source copy through `copyTextToClipboard`,
+  which falls back to a temporary textarea and `document.execCommand('copy')`.
+  The same browser action was recaptured after the fix: clipboard length was
+  `590`, it contained `# P1-C Fixture: Markdown`, and unsafe visible-pattern
+  checks found zero hits for `s3://`, `tos://`, `file_id`, `checkpoint`,
+  `provider_payload`, or `scanner_raw`.
 
 Browser API capture note:
 
@@ -208,15 +241,15 @@ PDF parity note:
 
 ## Remaining P1-C Gaps
 
-1. Capture copy/download affordance checks where the UI exposes copy, and a
-   browser capture that proves PDF page pixels render rather than only iframe
-   mount state.
+1. Capture a browser image that proves PDF page pixels render rather than only
+   iframe mount state.
 2. Record bounded API summaries for artifact list, content, signed URL,
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
    completion, or checkpoint bytes.
-3. Add real UI evidence for blocked scan review, scan retry state, and a clean
-   post-fix restore capture after browser control reconnects.
+3. Add real UI evidence for scan retry state. The current fixture shows pending
+   scan jobs but no failed job row, so retry remains open until a failed scan
+   job is available.
 4. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
    dedicated skill/tool-driven fixture if future evidence needs zero
    `content_base64` visible-text hits.
@@ -225,7 +258,7 @@ PDF parity note:
 
 P1-C is in progress. The automated coverage baseline, Go binary write support,
 one real MIME fixture task, scan-pending safe message mapping, PDF review
-release, browser iframe-mount evidence for the current PDF artifact, and
-delete/restore UI lifecycle evidence are partially complete. API summaries, PDF
-pixel-render evidence, blocked scan review, scan retry, clean post-fix restore
-browser recapture, and copy/download affordance checks are still open.
+release, browser iframe-mount evidence for the current PDF artifact,
+delete/restore UI lifecycle evidence, manual scan review evidence, and
+copy/download affordance checks are complete. API summaries, PDF pixel-render
+evidence, and scan retry are still open.
