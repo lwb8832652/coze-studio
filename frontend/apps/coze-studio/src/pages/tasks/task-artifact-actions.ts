@@ -43,6 +43,7 @@ type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 export interface TaskArtifactActions {
   activeAction: string;
   clearInlinePreview: () => void;
+  clearRemovedArtifact: (artifactId?: string) => void;
   error: string;
   handleArtifactAction: (
     artifact: TaskThreadArtifact,
@@ -369,6 +370,10 @@ export const useTaskArtifactActions = ({
   return {
     activeAction,
     clearInlinePreview: () => setInlinePreview(null),
+    clearRemovedArtifact: artifactId =>
+      setRemovedArtifact(previous =>
+        !artifactId || previous?.artifactId === artifactId ? null : previous,
+      ),
     error,
     handleArtifactAction: createArtifactActionHandler(context),
     handleDeleteArtifact: createDeleteArtifactHandler(context),

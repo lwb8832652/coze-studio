@@ -4269,6 +4269,171 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('clears the undo notice when restoring a removed artifact from the deleted list', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const artifact = {
+      artifact_id: 'artifact-restore-list-1',
+      artifact_type: 'report',
+      content_type: 'text/plain; charset=utf-8',
+      created_at: 1717000300000,
+      deleted_at: 1717000400000,
+      file_id: 'file-restore-list-1',
+      metadata: '{}',
+      preview_mode: 'text',
+      run_id: 'run-1',
+      size_bytes: 42,
+      thread_id: 'thread-artifact-restore-list-1',
+      title: 'restore-from-list.txt',
+      updated_at: 1717000400000,
+      virtual_path: '/mnt/user-data/outputs/restore-from-list.txt',
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-artifact-restore-list-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-artifact-restore-list-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '已移除列表恢复任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成可恢复报告',
+        last_agent_message: '报告已生成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [],
+          total: 0,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [],
+          total: 0,
+        },
+        code: 0,
+        msg: '',
+      });
+    mockRestoreTaskThreadArtifact.mockResolvedValue({
+      data: {
+        artifact_id: 'artifact-restore-list-1',
+        restored: true,
+      },
+      code: 0,
+      msg: 'success',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openTaskArtifactsPanel(container);
+
+    const deleteButton = container.querySelector(
+      'button[aria-label="删除 restore-from-list.txt"]',
+    ) as HTMLButtonElement;
+    expect(deleteButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(deleteButton);
+      const confirmButton = Array.from(
+        container.querySelectorAll('button'),
+      ).find(
+        button => button.textContent?.trim() === '确认删除',
+      ) as HTMLButtonElement;
+      Simulate.click(confirmButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector(
+        'button[aria-label="撤销移除 restore-from-list.txt"]',
+      ),
+    ).toBeTruthy();
+
+    const deletedTab = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.trim() === '已移除',
+    ) as HTMLButtonElement;
+    expect(deletedTab).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(deletedTab);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const restoreButton = container.querySelector(
+      'button[aria-label="恢复 restore-from-list.txt"]',
+    ) as HTMLButtonElement;
+    expect(restoreButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(restoreButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockRestoreTaskThreadArtifact).toHaveBeenCalledWith({
+      artifact_id: 'artifact-restore-list-1',
+      thread_id: 'thread-artifact-restore-list-1',
+      space_id: 'space-1',
+    });
+    expect(
+      container.querySelector(
+        'button[aria-label="撤销移除 restore-from-list.txt"]',
+      ),
+    ).toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('lists deleted thread artifacts and restores one from the drawer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

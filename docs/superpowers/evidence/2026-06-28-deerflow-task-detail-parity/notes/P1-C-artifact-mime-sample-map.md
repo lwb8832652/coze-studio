@@ -11,8 +11,8 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. API summaries, the clean PDF side-preview screenshot after
-scan release, and the scan/delete/restore UI lifecycle evidence remain open.
+SVG artifact cards. API summaries, visible PDF page-pixel rendering, blocked
+scan review, scan retry, and copy/download affordance checks remain open.
 
 ## DeerFlow Reference
 
@@ -122,6 +122,10 @@ Screenshots:
   `screenshots/coze/P1-C-coze-html-svg-download-only-7657556998191316992.png`
 - PDF clean iframe mount after review release:
   `screenshots/coze/P1-C-coze-pdf-preview-clean-7657556998191316992.png`
+- SVG delete/restore removed-list state:
+  `screenshots/coze/P1-C-coze-delete-restore-deleted-7657556998191316992.png`
+- SVG delete/restore restored active-list state:
+  `screenshots/coze/P1-C-coze-delete-restore-restored-7657556998191316992.png`
 
 Observed behavior:
 
@@ -157,6 +161,23 @@ Observed behavior:
   It does not claim PDF page pixels rendered in the browser capture; the current
   in-app browser screenshot still showed a blank iframe surface even though the
   iframe was mounted with a signed preview URL.
+- The same artifact management panel was used to validate the delete/restore
+  UI lifecycle on the visible `p1c-fixture.svg` sample. Clicking
+  `删除 p1c-fixture.svg` opened the bounded confirmation copy
+  `移除任务产物？只会从任务详情隐藏该产物，不会删除底层文件。`; confirming with
+  `移除` moved the row out of the active list. The removed-list capture shows
+  the `已移除` tab with `已移除 1`, `p1c-fixture.svg`, and
+  `恢复 p1c-fixture.svg`. The restored-state capture verifies that `恢复`
+  returned the SVG row to the active list with
+  the expected `预览` / `放行` / `隔离` / `阻断` / `下载` / `删除` actions.
+  This browser pass also exposed a stale undo notice after restoring from the
+  `已移除` list; the frontend now clears that notice through the deleted-list
+  restore callback, and `task-detail.test.tsx` locks the regression with
+  `clears the undo notice when restoring a removed artifact from the deleted list`.
+  A clean post-fix browser recapture is pending because the in-app browser
+  control session timed out during reload.
+  No raw object URI, signed URL, scanner raw body, provider payload, prompt,
+  completion, or checkpoint bytes were recorded in these lifecycle screenshots.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
@@ -194,8 +215,8 @@ PDF parity note:
    scan-blocked conflict, review release, delete, and restore. Do not record
    raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
    completion, or checkpoint bytes.
-3. Add real UI evidence for deleted artifact list, undo restore, blocked scan
-   review, and scan retry state.
+3. Add real UI evidence for blocked scan review, scan retry state, and a clean
+   post-fix restore capture after browser control reconnects.
 4. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
    dedicated skill/tool-driven fixture if future evidence needs zero
    `content_base64` visible-text hits.
@@ -204,6 +225,7 @@ PDF parity note:
 
 P1-C is in progress. The automated coverage baseline, Go binary write support,
 one real MIME fixture task, scan-pending safe message mapping, PDF review
-release, and browser iframe-mount evidence for the current PDF artifact are
-complete. API summaries, PDF pixel-render evidence, and remaining lifecycle
-browser evidence are still open.
+release, browser iframe-mount evidence for the current PDF artifact, and
+delete/restore UI lifecycle evidence are partially complete. API summaries, PDF
+pixel-render evidence, blocked scan review, scan retry, clean post-fix restore
+browser recapture, and copy/download affordance checks are still open.
