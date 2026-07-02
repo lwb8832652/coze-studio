@@ -16,6 +16,9 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { resolve as resolvePath } from 'node:path';
+import { readFileSync } from 'node:fs';
+
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -984,6 +987,10 @@ describe('TaskDetailPage', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    document.documentElement.classList.remove(
+      'coze-task-detail-responsive-page',
+    );
+    document.body.classList.remove('coze-task-detail-responsive-page');
   });
 
   it('renders a DeerFlow-style message skeleton while task detail is loading', async () => {
@@ -1819,6 +1826,53 @@ describe('TaskDetailPage', () => {
       root?.unmount();
     });
     container.remove();
+  });
+
+  it('scopes narrow responsive overrides to the mounted task detail page', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(false);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(true);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(false);
+  });
+
+  it('keeps task detail responsive overrides scoped to narrow screens', () => {
+    const workspacePrototypeStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/components/workspace-prototype.less'),
+      'utf8',
+    );
+
+    expect(workspacePrototypeStyles).toContain('@media (width <= 1199px)');
+    expect(workspacePrototypeStyles).toContain(
+      'body.coze-task-detail-responsive-page',
+    );
+    expect(workspacePrototypeStyles).toContain('min-width: 0 !important');
+    expect(workspacePrototypeStyles).toContain(
+      '.coze-prototype-task-detail-page:has(.coze-prototype-artifact-side-preview)',
+    );
   });
 
   it('renders canonical thread guardrail audit records with metadata-only fields', async () => {
@@ -3047,7 +3101,7 @@ describe('TaskDetailPage', () => {
             content_type: 'text/markdown; charset=utf-8',
             created_at: 1717000300000,
             file_id: 'file-doc-1',
-            metadata: '{"scan_status":"blocked"}',
+            metadata: '{"scan_status":"clean"}',
             preview_mode: 'text',
             run_id: 'run-doc-1',
             size_bytes: 4096,

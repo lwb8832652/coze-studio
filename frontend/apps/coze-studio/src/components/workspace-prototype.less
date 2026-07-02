@@ -356,6 +356,35 @@
   overflow: hidden;
 }
 
+@media (width <= 1199px) {
+  html.coze-task-detail-responsive-page,
+  body.coze-task-detail-responsive-page {
+    min-width: 0 !important;
+  }
+
+  body.coze-task-detail-responsive-page #root,
+  body.coze-task-detail-responsive-page #root > div,
+  body.coze-task-detail-responsive-page .coz-layout.flex {
+    width: 100%;
+    min-width: 0;
+  }
+
+  body.coze-task-detail-responsive-page .coz-layout.flex > .coz-layout.flex-1 {
+    min-width: 0;
+  }
+}
+
+@media (width <= 720px) {
+  body.coze-task-detail-responsive-page .coz-layout.flex > .h-full:first-child {
+    display: none;
+  }
+
+  body.coze-task-detail-responsive-page .coz-layout.flex > .coz-layout.flex-1 {
+    flex-basis: 100%;
+    width: 100%;
+  }
+}
+
 .coze-prototype-page-body {
   overflow: auto;
   flex: 1 1 auto;

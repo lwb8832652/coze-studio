@@ -113,6 +113,7 @@ interface MessageArtifactGroups {
 }
 
 const TASK_DETAIL_SKELETON_STAGGER_MS = 60;
+const TASK_DETAIL_RESPONSIVE_PAGE_CLASS = 'coze-task-detail-responsive-page';
 
 const normalizeThreadRunID = (runID?: string) => {
   const value = String(runID ?? '').trim();
@@ -1041,6 +1042,18 @@ const TaskDetailPage = () => {
   const userInfo = useUserInfo();
   const taskDetailId = thread_id ?? task_id;
   const taskDetailSource = getTaskDetailSource(thread_id);
+
+  useEffect(() => {
+    document.documentElement.classList.add(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+    document.body.classList.add(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+
+    return () => {
+      document.documentElement.classList.remove(
+        TASK_DETAIL_RESPONSIVE_PAGE_CLASS,
+      );
+      document.body.classList.remove(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+    };
+  }, []);
   const {
     applyTaskDetail,
     artifacts,

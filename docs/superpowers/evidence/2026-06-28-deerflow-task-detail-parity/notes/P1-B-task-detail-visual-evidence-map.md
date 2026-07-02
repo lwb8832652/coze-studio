@@ -30,37 +30,33 @@ the user deferred to P2.
 | Memory entry and memory management UI | Covered by P1-I evidence | `notes/P1-I-005-follow-up-memory-runtime.md`, `notes/P1-I-006-memory-ui-api-smoke.md`, `screenshots/coze/P1-I-005-follow-up-recall.png`, `screenshots/coze/P1-I-006-memory-panel-list.png`, `screenshots/coze/P1-I-006-memory-deleted.png`, `screenshots/coze/P1-I-006-memory-restored.png` |
 | Loading/error bounded states | Covered by P1-A evidence and component tests | `notes/P1-A-008-loading-error-states.md`, `screenshots/coze/P1-A-008-coze-task-not-found.png` |
 | Search/tool event visual safety | Covered for desktop | `notes/P1-A-006-search-tool-event-safety.md`, `screenshots/coze/P1-A-006-coze-search-tool-safe-steps.png`, `screenshots/deerflow/P1-A-006-deerflow-search-tool-safe-steps.jpg` |
+| Narrow responsive layout | Covered for 390px and 768px | `screenshots/coze/P1-B-TD-LAYOUT-002-coze-390-task-detail.png`, `screenshots/coze/P1-B-TD-LAYOUT-002-coze-768-task-detail.png` |
 
 ## Remaining P1-B Visual Gaps
 
 These are the remaining task-detail visual items that still need either fresh
 browser evidence or an explicit product decision:
 
-1. `TD-LAYOUT-002` responsive screenshots: capture 390px and 768px Coze task
-   detail screenshots, preferably with an artifact side preview closed/open
-   where the layout supports it. DeerFlow comparison screenshots are useful
-   but should not block Coze overlap/overflow verification.
-2. `TD-MSG-006` assistant copy/feedback affordance: Coze has copy coverage, but
+1. `TD-MSG-006` assistant copy/feedback affordance: Coze has copy coverage, but
    feedback parity remains a P1 decision. If not building feedback now, record
    the reason and keep it out of the launch blocker list.
-3. `TD-MD-003` Mermaid error visual state: component fallback exists in tests,
+2. `TD-MD-003` Mermaid error visual state: component fallback exists in tests,
    but a real invalid Mermaid screenshot is still useful.
-4. `TD-FLOW-003` subagent deep card: safe metadata projection exists as a
+3. `TD-FLOW-003` subagent deep card: safe metadata projection exists as a
    backend/frontend boundary, but no dedicated browser sample is recorded.
-5. `TD-COMP-006` file upload visual path: composer shows upload affordance, but
+4. `TD-COMP-006` file upload visual path: composer shows upload affordance, but
    upload-to-task evidence is not part of the DeerFlow P0 closure.
-6. `TD-TOKEN-003` active streaming token state: current policy avoids showing
+5. `TD-TOKEN-003` active streaming token state: current policy avoids showing
    misleading zero values; live running-token evidence remains a P1 hardening
    item.
-7. Rich MIME artifact samples remain under `P1-C`, not P1-B, so P1-B should
+6. Rich MIME artifact samples remain under `P1-C`, not P1-B, so P1-B should
    not expand into CSV/PDF/image/HTML-SVG matrix work.
 
 ## Next Action
 
-Start with `TD-LAYOUT-002` because it is the only broad visual gap likely to
-affect ordinary task-detail usage. Capture Coze 390px and 768px screenshots
-for a completed task with visible messages, execution steps, token row, and
-composer. If overlap is found, fix layout before moving to smaller edge cases.
+`TD-LAYOUT-002` is now closed. Continue only with the remaining smaller visual
+decision items above, or explicitly defer them to P2 if they are not launch
+blocking.
 
 ## 2026-07-01 Responsive Capture Attempt
 
@@ -74,5 +70,53 @@ during tab binding; after reconnect, the only visible tab was `about:blank`,
 and rebinding that tab timed out. No responsive evidence was written and
 `TD-LAYOUT-002` remains open.
 
-Do not mark P1-B complete until the responsive screenshots and bounded layout
-summary are captured successfully.
+The follow-up 2026-07-02 pass below captured the responsive screenshots and
+bounded layout summary successfully.
+
+## 2026-07-02 Responsive Evidence And Fix
+
+The first in-app browser check on
+`http://localhost:8080/space/7656275718757679104/tasks/7657061782099329024`
+showed a real 768px overflow: document `scrollWidth=1200` with
+`clientWidth=768`. The root cause was the global Coze shell `html, body`
+minimum width, which is valid for the broader Studio shell but unsafe for the
+DeerFlow-style task-detail responsive page.
+
+The fix is scoped to the mounted task-detail page only:
+
+- `TaskDetailPage` adds `coze-task-detail-responsive-page` to `html` and
+  `body`, then removes it on unmount.
+- At `width <= 1199px`, task-detail overrides the page/body/root/flex minimum
+  widths to allow shrinking.
+- At `width <= 720px`, the left workspace submenu is hidden for task detail so
+  a 390px viewport can keep the task content and follow-up composer usable.
+- The global `frontend/apps/coze-studio/src/global.less` `min-width: 1200px`
+  rule was not changed.
+
+Clean headless browser verification against the original 765627 workspace was
+blocked by the frontend route guard returning the permission page, despite the
+same authenticated API session being able to list task threads. That page was
+therefore not used as final proof. Final evidence uses an authenticated task
+detail page under:
+
+`http://localhost:8080/space/7645565700475453440/tasks/7657075192350375936`
+
+Final browser metrics:
+
+- 768px viewport: task detail mounted, skeleton gone, no login/permission page,
+  `scrollWidth=768`, `clientWidth=768`, `horizontalOverflow=false`, sidebar
+  visible at 300px, task content at 468px, scroll area at 420px.
+- 390px viewport: task detail mounted, skeleton gone, no login/permission page,
+  `scrollWidth=390`, `clientWidth=390`, `horizontalOverflow=false`, sidebar
+  hidden, task content at 390px, scroll area at 342px, composer at 342px.
+
+Screenshots:
+
+- `screenshots/coze/P1-B-TD-LAYOUT-002-coze-768-task-detail.png`
+- `screenshots/coze/P1-B-TD-LAYOUT-002-coze-390-task-detail.png`
+
+Safe Network/DOM notes: the final verification page loaded the task thread,
+runs, messages, artifacts, token usage, run events, run-event stream, recent
+task list, and bot type list without exposing raw cookie values, prompt
+payloads, object URIs, signed URLs, tool arguments/results, provider bodies, or
+checkpoint bytes in this evidence note.
