@@ -1567,6 +1567,8 @@ type memoryRepo struct {
 	tokenUsages                   []*entity.TokenUsage
 	lastListReq                   repository.ListThreadsRequest
 	lastUpdateThreadTitleReq      repository.UpdateThreadTitleRequest
+	lastUpdateThreadMetadataReq   repository.UpdateThreadMetadataRequest
+	lastDeleteThreadReq           repository.DeleteThreadRequest
 	lastMessageListReq            repository.ListMessagesRequest
 	lastRunListReq                repository.ListRunsRequest
 	lastRunEventListReq           repository.ListRunEventsRequest
@@ -1639,6 +1641,43 @@ func (r *memoryRepo) UpdateThreadTitle(
 	cloned.UpdatedAt = req.UpdatedAt
 	r.threads[req.ThreadID] = cloned
 	return cloneThread(cloned), true, nil
+}
+
+func (r *memoryRepo) UpdateThreadMetadata(
+	ctx context.Context,
+	req repository.UpdateThreadMetadataRequest,
+) (*entity.Thread, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastUpdateThreadMetadataReq = req
+	thread, ok := r.threads[req.ThreadID]
+	if !ok {
+		return nil, false, nil
+	}
+	cloned := cloneThread(thread)
+	cloned.Metadata = strings.TrimSpace(req.Metadata)
+	cloned.UpdatedAt = req.UpdatedAt
+	r.threads[req.ThreadID] = cloned
+	return cloneThread(cloned), true, nil
+}
+
+func (r *memoryRepo) DeleteThread(
+	ctx context.Context,
+	req repository.DeleteThreadRequest,
+) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastDeleteThreadReq = req
+	if _, ok := r.threads[req.ThreadID]; !ok {
+		return false, nil
+	}
+	delete(r.threads, req.ThreadID)
+	delete(r.messages, req.ThreadID)
+	delete(r.runs, req.ThreadID)
+	delete(r.runEvents, req.ThreadID)
+	delete(r.checkpoints, req.ThreadID)
+	delete(r.memories, req.ThreadID)
+	return true, nil
 }
 
 func (r *memoryRepo) ListThreads(ctx context.Context, req repository.ListThreadsRequest) ([]*entity.Thread, int64, error) {

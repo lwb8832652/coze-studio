@@ -854,6 +854,30 @@ describe('TaskDetailPage', () => {
           default_mode: 'eino_adk',
           eino_adk_enabled: true,
         },
+        model: {
+          status: 'ready',
+          configured: true,
+          live_probe: 'disabled',
+          capabilities: {
+            native_tool_search: false,
+            thinking: true,
+            reasoning: false,
+            vision: false,
+            pdf: false,
+            file: false,
+            audio: false,
+            video: false,
+          },
+        },
+        sandbox: {
+          status: 'ready',
+          runner_type: 'sandbox',
+          network: 'restricted',
+          process: 'restricted',
+          ffi: 'restricted',
+          node_modules: 'restricted',
+          message: 'sandbox code runner policy is configured',
+        },
         web_tools: {
           web_fetch: {
             status: 'ready',
@@ -2392,13 +2416,56 @@ describe('TaskDetailPage', () => {
     });
     mockGetTaskThreadTokenUsage.mockResolvedValue({
       data: {
-        usage: [],
+        usage: [
+          {
+            usage_id: 'usage-token-1',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'planner',
+            step_index: 0,
+            step_name: 'planner',
+            model_name: 'gpt-4.1',
+            provider: 'openai',
+            input_tokens: 1000,
+            output_tokens: 500,
+            total_tokens: 1500,
+            cost_micros: 2000,
+            currency: 'usd',
+            estimated: false,
+            raw_usage: '{"prompt":"secret"}',
+            metadata: '{"hidden":"metadata"}',
+            created_at: 1717000200000,
+          },
+          {
+            usage_id: 'usage-token-2',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            space_id: 'space-1',
+            source: 'tool',
+            step_id: 'tool-step',
+            step_index: 1,
+            step_name: 'tool-step',
+            model_name: '',
+            provider: '',
+            input_tokens: 234,
+            output_tokens: 67,
+            total_tokens: 301,
+            cost_micros: 500,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000210000,
+          },
+        ],
         total: 2,
         aggregate: {
           input_tokens: 1234,
           output_tokens: 567,
           total_tokens: 1801,
-          cost_micros: 0,
+          cost_micros: 2500,
           call_count: 2,
           lead_agent_tokens: 1500,
           subagent_tokens: 0,
@@ -2447,6 +2514,8 @@ describe('TaskDetailPage', () => {
       '567',
       '总计',
       '1,801',
+      '成本',
+      'USD 0.002500',
       '显示方式',
       '关闭',
       '隐藏顶部和会话内',
@@ -2460,6 +2529,265 @@ describe('TaskDetailPage', () => {
     ]);
     expect(container.textContent).not.toContain('Agent 1,500');
     expect(container.textContent).not.toContain('Tool 301');
+    expect(container.textContent).not.toContain('openai / gpt-4.1');
+    expect(container.textContent).not.toContain('secret');
+
+    const debugModeButton = Array.from(
+      container.querySelectorAll('.coze-prototype-token-usage-mode-item'),
+    ).find(button => button.textContent?.includes('调试'));
+    expect(debugModeButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(debugModeButton as HTMLButtonElement);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      Simulate.click(tokenUsage!);
+      await Promise.resolve();
+    });
+
+    const debugTokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(debugTokenUsagePopover, [
+      '调试摘要',
+      '调用',
+      '2',
+      'Lead agent',
+      '1,500',
+      'Tool',
+      '301',
+      '模型',
+      'openai / gpt-4.1',
+    ]);
+    expect(debugTokenUsagePopover?.textContent).not.toContain('secret');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('hides thread token cost when usage rows contain mixed currencies', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-mixed-currency-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-mixed-currency-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '混合币种 Token 统计',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-token-mixed-1',
+            thread_id: 'thread-token-mixed-currency-1',
+            run_id: 'run-token-mixed-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-1',
+            step_index: 0,
+            step_name: 'model-step-1',
+            model_name: 'model-a',
+            provider: 'provider-a',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+          {
+            usage_id: 'usage-token-mixed-2',
+            thread_id: 'thread-token-mixed-currency-1',
+            run_id: 'run-token-mixed-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-2',
+            step_index: 1,
+            step_name: 'model-step-2',
+            model_name: 'model-b',
+            provider: 'provider-b',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'CNY',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000210000,
+          },
+        ],
+        total: 2,
+        aggregate: {
+          input_tokens: 200,
+          output_tokens: 100,
+          total_tokens: 300,
+          cost_micros: 2000,
+          call_count: 2,
+          lead_agent_tokens: 300,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const tokenUsageButton = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsageButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(tokenUsageButton!);
+      await Promise.resolve();
+    });
+
+    const tokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(tokenUsagePopover, [
+      'Token 用量',
+      '总计',
+      '300',
+    ]);
+    expect(tokenUsagePopover?.textContent).not.toContain('成本');
+    expect(tokenUsagePopover?.textContent).not.toContain('USD 0.002000');
+    expect(tokenUsagePopover?.textContent).not.toContain('CNY');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('hides thread token cost when usage rows are paginated and currency is incomplete', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-paginated-currency-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-paginated-currency-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '分页币种 Token 统计',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-token-paginated-1',
+            thread_id: 'thread-token-paginated-currency-1',
+            run_id: 'run-token-paginated-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-1',
+            step_index: 0,
+            step_name: 'model-step-1',
+            model_name: 'model-a',
+            provider: 'provider-a',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
+        aggregate: {
+          input_tokens: 200,
+          output_tokens: 100,
+          total_tokens: 300,
+          cost_micros: 2000,
+          call_count: 2,
+          lead_agent_tokens: 300,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const tokenUsageButton = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsageButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(tokenUsageButton!);
+      await Promise.resolve();
+    });
+
+    const tokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(tokenUsagePopover, [
+      'Token 用量',
+      '总计',
+      '300',
+    ]);
+    expect(tokenUsagePopover?.textContent).not.toContain('成本');
+    expect(tokenUsagePopover?.textContent).not.toContain('USD 0.002000');
 
     act(() => {
       root?.unmount();

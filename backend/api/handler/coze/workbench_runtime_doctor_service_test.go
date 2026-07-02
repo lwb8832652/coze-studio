@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,7 @@ import (
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
@@ -39,11 +41,19 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	t.Setenv("AGENT_THREAD_WEB_SEARCH_ENABLED", "true")
 	t.Setenv("AGENT_THREAD_WEB_SEARCH_ENDPOINT", "https://search.example.test/private/path")
 	t.Setenv("AGENT_THREAD_WEB_SEARCH_API_KEY", "secret-search-key")
+	t.Setenv("WORKBENCH_RUNTIME_DOCTOR_LIVE_MODEL_PROBE", "true")
+	t.Setenv(consts.CodeRunnerType, "sandbox")
+	t.Setenv(consts.CodeRunnerAllowNet, "search.example.test,private.internal")
+	t.Setenv(consts.CodeRunnerNodeModulesDir, "/private/node_modules")
 	installMCPToolTestService(t)
 	appworkbench.InitService(&appworkbench.ServiceComponents{
 		MCPToolSVC: appmcptool.SVC,
 		ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
-			return &testutil.UTChatModel{}, true, nil
+			return &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, _ []*schema.Message) (*schema.Message, error) {
+					return schema.AssistantMessage("hidden runtime probe response", nil), nil
+				},
+			}, true, nil
 		},
 	})
 
@@ -89,7 +99,14 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	require.Contains(t, body, `"eino_adk_enabled":true`)
 	require.Contains(t, body, `"web_search"`)
 	require.Contains(t, body, `"configured":true`)
+	require.Contains(t, body, `"model"`)
+	require.Contains(t, body, `"live_probe":"ready"`)
+	require.Contains(t, body, `"sandbox"`)
+	require.Contains(t, body, `"runner_type":"sandbox"`)
 	require.Contains(t, body, `"model.default"`)
+	require.Contains(t, body, `"model.capabilities"`)
+	require.Contains(t, body, `"model.live_connectivity"`)
+	require.Contains(t, body, `"sandbox.runner_policy"`)
 	require.Contains(t, body, `"skills.runtime_catalog"`)
 	require.Contains(t, body, `"mcp_tools"`)
 	require.Contains(t, body, `"total_servers":1`)
@@ -98,10 +115,21 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	require.NotContains(t, body, "secret-token")
 	require.NotContains(t, body, "mcp.example.test")
 	require.NotContains(t, body, "search.example.test/private")
+	require.NotContains(t, body, "hidden runtime probe response")
+	require.NotContains(t, body, "private.internal")
+	require.NotContains(t, body, "/private/node_modules")
 
 	var decoded struct {
 		Data struct {
 			Status string `json:"status"`
+			Model  struct {
+				Configured bool   `json:"configured"`
+				LiveProbe  string `json:"live_probe"`
+			} `json:"model"`
+			Sandbox struct {
+				Status     string `json:"status"`
+				RunnerType string `json:"runner_type"`
+			} `json:"sandbox"`
 			Checks []struct {
 				Name   string `json:"name"`
 				Status string `json:"status"`
@@ -110,5 +138,9 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(resp.Result().Body(), &decoded))
 	require.Equal(t, "warning", decoded.Data.Status)
+	require.True(t, decoded.Data.Model.Configured)
+	require.Equal(t, "ready", decoded.Data.Model.LiveProbe)
+	require.Equal(t, "ready", decoded.Data.Sandbox.Status)
+	require.Equal(t, "sandbox", decoded.Data.Sandbox.RunnerType)
 	require.NotEmpty(t, decoded.Data.Checks)
 }

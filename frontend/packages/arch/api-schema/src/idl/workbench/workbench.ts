@@ -72,6 +72,32 @@ export interface RuntimeDoctorRuntimeData {
   default_mode: string,
   eino_adk_enabled: boolean,
 }
+export interface RuntimeDoctorModelCapabilities {
+  native_tool_search: boolean,
+  thinking: boolean,
+  reasoning: boolean,
+  vision: boolean,
+  pdf: boolean,
+  file: boolean,
+  audio: boolean,
+  video: boolean,
+}
+export interface RuntimeDoctorModelData {
+  status: string,
+  configured: boolean,
+  live_probe: string,
+  capabilities?: RuntimeDoctorModelCapabilities,
+  message?: string,
+}
+export interface RuntimeDoctorSandboxData {
+  status: string,
+  runner_type: string,
+  network: string,
+  process: string,
+  ffi: string,
+  node_modules: string,
+  message?: string,
+}
 export interface RuntimeDoctorWebToolStatus {
   status: string,
   configured: boolean,
@@ -92,6 +118,8 @@ export interface RuntimeDoctorMCPToolsData {
 export interface WorkbenchRuntimeDoctorData {
   status: string,
   runtime: RuntimeDoctorRuntimeData,
+  model: RuntimeDoctorModelData,
+  sandbox: RuntimeDoctorSandboxData,
   web_tools: RuntimeDoctorWebToolsData,
   mcp_tools: RuntimeDoctorMCPToolsData,
   checks: RuntimeDoctorCheck[],

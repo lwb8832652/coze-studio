@@ -316,6 +316,55 @@ func (s *ApplicationService) UpdateThreadTitle(
 	}, nil
 }
 
+func (s *ApplicationService) UpdateThreadMetadata(
+	ctx context.Context,
+	req *UpdateThreadMetadataRequest,
+) (*UpdateThreadMetadataResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("update thread metadata request is required")
+	}
+
+	thread, updated, err := s.ThreadSVC.UpdateThreadMetadata(ctx, &domainservice.UpdateThreadMetadataRequest{
+		ThreadID: req.ThreadID,
+		Metadata: req.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updated && thread == nil {
+		return nil, fmt.Errorf("agent thread service returned empty updated thread")
+	}
+
+	return &UpdateThreadMetadataResponse{
+		Thread:  DomainThreadToSummary(thread),
+		Updated: updated,
+	}, nil
+}
+
+func (s *ApplicationService) DeleteThread(
+	ctx context.Context,
+	req *DeleteThreadRequest,
+) (*DeleteThreadResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("delete thread request is required")
+	}
+
+	deleted, err := s.ThreadSVC.DeleteThread(ctx, &domainservice.DeleteThreadRequest{
+		ThreadID: req.ThreadID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &DeleteThreadResponse{Deleted: deleted}, nil
+}
+
 func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRequest) (*ListThreadsResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

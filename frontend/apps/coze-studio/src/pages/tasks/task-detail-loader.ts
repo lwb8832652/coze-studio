@@ -407,6 +407,8 @@ const fetchTaskThreadDetail = async (
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
+      tokenUsageResponse.data?.usage,
+      tokenUsageResponse.data?.total,
     ),
     tokenUsageByRunID: mapTaskThreadTokenUsageRowsByRunID(
       tokenUsageResponse.data?.usage,

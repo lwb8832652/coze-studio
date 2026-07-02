@@ -48,6 +48,16 @@ type UpdateThreadTitleRequest struct {
 	UpdatedAt int64
 }
 
+type UpdateThreadMetadataRequest struct {
+	ThreadID  int64
+	Metadata  string
+	UpdatedAt int64
+}
+
+type DeleteThreadRequest struct {
+	ThreadID int64
+}
+
 type AppendMessageRequest struct {
 	ThreadID int64
 	RunID    int64
@@ -359,6 +369,8 @@ type ThreadService interface {
 	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
 	UpdateThreadTitle(ctx context.Context, req *UpdateThreadTitleRequest) (*entity.Thread, bool, error)
+	UpdateThreadMetadata(ctx context.Context, req *UpdateThreadMetadataRequest) (*entity.Thread, bool, error)
+	DeleteThread(ctx context.Context, req *DeleteThreadRequest) (bool, error)
 	ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error)
 	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)

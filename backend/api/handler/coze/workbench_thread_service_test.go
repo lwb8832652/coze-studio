@@ -2817,6 +2817,66 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			created_at integer,
 			updated_at integer,
 			UNIQUE (artifact_id, idempotency_key)
+		);
+		CREATE TABLE agent_transcript_snapshots (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			kind text,
+			digest text,
+			idempotency_key text,
+			message_count integer,
+			messages json,
+			metadata json,
+			created_at integer
+		);
+		CREATE TABLE agent_memory_flush_jobs (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			space_id integer,
+			user_id integer,
+			assistant_id text,
+			transcript_snapshot_id integer,
+			idempotency_key text,
+			status text,
+			attempt_count integer,
+			worker_id text,
+			last_error text,
+			available_at integer,
+			lease_expires_at integer,
+			started_at integer,
+			ended_at integer,
+			created_at integer,
+			updated_at integer
+		);
+		CREATE TABLE agent_run_plans (
+			run_id integer PRIMARY KEY,
+			thread_id integer,
+			space_id integer,
+			user_id integer,
+			high_watermark integer,
+			revision integer,
+			created_at integer,
+			updated_at integer
+		);
+		CREATE TABLE agent_run_plan_items (
+			id integer PRIMARY KEY,
+			run_id integer,
+			task_id integer,
+			subject text,
+			description text,
+			status text,
+			active_form text,
+			owner text,
+			blocks json,
+			blocked_by json,
+			metadata json,
+			active boolean,
+			version integer,
+			created_at integer,
+			updated_at integer
 		)
 	`).Error
 }

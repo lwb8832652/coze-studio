@@ -96,6 +96,85 @@ func GetLangGraphThread(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, langGraphThreadToAPI(resp.Thread))
 }
 
+// PatchLangGraphThread .
+// @router /api/threads/:thread_id [PATCH]
+func PatchLangGraphThread(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.PatchThreadRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if threadResp == nil || threadResp.Thread == nil {
+		c.JSON(consts.StatusNotFound, map[string]any{
+			"detail": "Thread " + strconv.FormatInt(req.ThreadID, 10) + " not found",
+		})
+		return
+	}
+
+	metadata := langGraphStoredThreadMetadata(threadResp.Thread)
+	for key, value := range stripLangGraphPatchMetadata(req.Metadata) {
+		metadata[key] = value
+	}
+	metadataJSON, err := sonic.MarshalString(metadata)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+
+	updateResp, err := appagentthread.SVC.UpdateThreadMetadata(ctx, &appagentthread.UpdateThreadMetadataRequest{
+		ThreadID: req.ThreadID,
+		Metadata: metadataJSON,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if updateResp == nil || !updateResp.Updated || updateResp.Thread == nil {
+		c.JSON(consts.StatusNotFound, map[string]any{
+			"detail": "Thread " + strconv.FormatInt(req.ThreadID, 10) + " not found",
+		})
+		return
+	}
+
+	c.JSON(consts.StatusOK, langGraphThreadToAPI(updateResp.Thread))
+}
+
+// DeleteLangGraphThread .
+// @router /api/threads/:thread_id [DELETE]
+func DeleteLangGraphThread(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.DeleteThreadRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	deleteResp, err := appagentthread.SVC.DeleteThread(ctx, &appagentthread.DeleteThreadRequest{
+		ThreadID: req.ThreadID,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if deleteResp == nil || !deleteResp.Deleted {
+		c.JSON(consts.StatusNotFound, map[string]any{
+			"detail": "Thread " + strconv.FormatInt(req.ThreadID, 10) + " not found",
+		})
+		return
+	}
+
+	threadID := strconv.FormatInt(req.ThreadID, 10)
+	c.JSON(consts.StatusOK, &langgraphapi.ThreadDeleteResponse{
+		Success: true,
+		Message: "Deleted local thread data for " + threadID,
+	})
+}
+
 // SearchLangGraphThreads .
 // @router /api/threads/search [POST]
 func SearchLangGraphThreads(ctx context.Context, c *app.RequestContext) {
@@ -168,10 +247,10 @@ func GetLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, state)
 }
 
-// GetLangGraphThreadHistory .
-// @router /api/threads/:thread_id/history [GET]
-func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.GetThreadHistoryRequest
+// PostLangGraphThreadState .
+// @router /api/threads/:thread_id/state [POST]
+func PostLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.PostThreadStateRequest
 	if err := c.BindAndValidate(&req); err != nil {
 		invalidParamRequestResponse(c, err.Error())
 		return
@@ -187,58 +266,69 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	limit := req.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
-	checkpointLimit := limit + req.Offset
-	if checkpointLimit <= 0 || checkpointLimit > 100 {
-		checkpointLimit = 100
-	}
-	checkpointsResp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
-		ThreadID: req.ThreadID,
-		Limit:    checkpointLimit,
-	})
-	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
-		return
-	}
-	if checkpointsResp != nil && checkpointsResp.Total > 0 {
-		checkpoints := checkpointsResp.Checkpoints
-		if req.Offset > 0 {
-			if req.Offset >= int32(len(checkpoints)) {
-				c.JSON(consts.StatusOK, []*langgraphapi.ThreadState{})
-				return
-			}
-			checkpoints = checkpoints[req.Offset:]
-		}
-		if int32(len(checkpoints)) > limit {
-			checkpoints = checkpoints[:limit]
-		}
-		c.JSON(consts.StatusOK, langGraphThreadHistoryFromCheckpoints(threadResp.Thread, checkpoints))
-		return
-	}
-
-	page := int32(1)
-	if req.Offset > 0 {
-		page = req.Offset/limit + 1
-	}
-
-	eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
-		ThreadID: req.ThreadID,
-		Page:     page,
-		PageSize: limit,
-	})
+	state, err := buildLangGraphThreadStateUpdate(ctx, threadResp.Thread, &req)
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
 		return
 	}
 
-	c.JSON(consts.StatusOK, langGraphThreadHistoryFromEvents(eventsResp.Events))
+	c.JSON(consts.StatusOK, state)
+}
+
+// GetLangGraphThreadHistory .
+// @router /api/threads/:thread_id/history [GET]
+func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.GetThreadHistoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if thread == nil {
+		invalidParamRequestResponse(c, "thread_id is invalid")
+		return
+	}
+
+	history, err := buildLangGraphThreadHistory(ctx, thread, req.Limit, req.Offset)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, history)
+}
+
+// PostLangGraphThreadHistory .
+// @router /api/threads/:thread_id/history [POST]
+func PostLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
+	var req langgraphapi.PostThreadHistoryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+	if thread == nil {
+		invalidParamRequestResponse(c, "thread_id is invalid")
+		return
+	}
+
+	history, err := buildLangGraphThreadHistoryEntries(ctx, thread, req.Limit, req.Before)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, history)
 }
 
 // GetLangGraphCheckpointResumeReadiness .
@@ -294,6 +384,142 @@ func buildLangGraphCheckpointResumeReadiness(
 	return langGraphCheckpointResumeReadiness(checkpointResp.Checkpoint), nil
 }
 
+func getLangGraphHistoryThread(ctx context.Context, threadID int64) (*appagentthread.ThreadSummary, error) {
+	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: threadID})
+	if err != nil {
+		return nil, err
+	}
+	if threadResp == nil || threadResp.Thread == nil {
+		return nil, nil
+	}
+
+	return threadResp.Thread, nil
+}
+
+func buildLangGraphThreadHistory(
+	ctx context.Context,
+	thread *appagentthread.ThreadSummary,
+	limit int32,
+	offset int32,
+) ([]*langgraphapi.ThreadState, error) {
+	limit = normalizeLangGraphHistoryLimit(limit)
+	checkpointLimit := limit + offset
+	if checkpointLimit <= 0 || checkpointLimit > 100 {
+		checkpointLimit = 100
+	}
+	checkpointsResp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
+		ThreadID: thread.ThreadID,
+		Limit:    checkpointLimit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if checkpointsResp != nil && checkpointsResp.Total > 0 {
+		checkpoints := checkpointsResp.Checkpoints
+		if offset > 0 {
+			if offset >= int32(len(checkpoints)) {
+				return []*langgraphapi.ThreadState{}, nil
+			}
+			checkpoints = checkpoints[offset:]
+		}
+		if int32(len(checkpoints)) > limit {
+			checkpoints = checkpoints[:limit]
+		}
+
+		return langGraphThreadHistoryFromCheckpoints(thread, checkpoints), nil
+	}
+
+	page := int32(1)
+	if offset > 0 {
+		page = offset/limit + 1
+	}
+
+	eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+		ThreadID: thread.ThreadID,
+		Page:     page,
+		PageSize: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return langGraphThreadHistoryFromEvents(eventsResp.Events), nil
+}
+
+func buildLangGraphThreadHistoryEntries(
+	ctx context.Context,
+	thread *appagentthread.ThreadSummary,
+	limit int32,
+	before string,
+) ([]*langgraphapi.ThreadHistoryEntry, error) {
+	limit = normalizeLangGraphHistoryLimit(limit)
+	checkpointLimit := limit
+	if strings.TrimSpace(before) != "" {
+		checkpointLimit = 100
+	}
+	checkpointsResp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
+		ThreadID: thread.ThreadID,
+		Limit:    checkpointLimit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if checkpointsResp != nil && checkpointsResp.Total > 0 {
+		checkpoints := langGraphCheckpointsAfterCursor(checkpointsResp.Checkpoints, before)
+		if int32(len(checkpoints)) > limit {
+			checkpoints = checkpoints[:limit]
+		}
+
+		return langGraphThreadHistoryEntriesFromCheckpoints(thread, checkpoints), nil
+	}
+
+	eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+		ThreadID: thread.ThreadID,
+		Page:     1,
+		PageSize: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return langGraphThreadHistoryEntriesFromEvents(eventsResp.Events), nil
+}
+
+func normalizeLangGraphHistoryLimit(limit int32) int32 {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+
+	return limit
+}
+
+func langGraphCheckpointsAfterCursor(
+	checkpoints []*appagentthread.CheckpointSummary,
+	before string,
+) []*appagentthread.CheckpointSummary {
+	before = strings.TrimSpace(before)
+	if before == "" {
+		return checkpoints
+	}
+	for idx, checkpoint := range checkpoints {
+		if checkpoint == nil {
+			continue
+		}
+		if strconv.FormatInt(checkpoint.CheckpointID, 10) == before {
+			if idx+1 >= len(checkpoints) {
+				return []*appagentthread.CheckpointSummary{}
+			}
+
+			return checkpoints[idx+1:]
+		}
+	}
+
+	return []*appagentthread.CheckpointSummary{}
+}
+
 func langGraphCheckpointResumeReadiness(checkpoint *appagentthread.CheckpointSummary) *langgraphapi.CheckpointResumeReadiness {
 	if checkpoint == nil {
 		return nil
@@ -304,7 +530,7 @@ func langGraphCheckpointResumeReadiness(checkpoint *appagentthread.CheckpointSum
 		return langGraphADKCheckpointResumeReadiness(checkpoint, metadata)
 	}
 
-	values := langGraphCheckpointValues(checkpoint.ChannelValues)
+	values := langGraphCheckpointValues(checkpoint)
 	next := langGraphCheckpointNext(checkpoint.PendingSends, values)
 	status := langGraphStringValue(metadata["status"])
 	errorType := langGraphStringValue(metadata["error_type"])
@@ -456,6 +682,164 @@ func buildLangGraphThreadState(ctx context.Context, thread *appagentthread.Threa
 	}, nil
 }
 
+func buildLangGraphThreadStateUpdate(
+	ctx context.Context,
+	thread *appagentthread.ThreadSummary,
+	req *langgraphapi.PostThreadStateRequest,
+) (*langgraphapi.ThreadState, error) {
+	if thread == nil || req == nil {
+		return nil, errors.New("thread state update request is required")
+	}
+
+	base, err := langGraphThreadStateUpdateBaseCheckpoint(ctx, thread.ThreadID, req.CheckpointID)
+	if err != nil {
+		return nil, err
+	}
+	if base == nil {
+		return nil, errors.New("thread checkpoint is required")
+	}
+	if base.ThreadID != thread.ThreadID {
+		return nil, errors.New("checkpoint does not belong to thread")
+	}
+	if strings.TrimSpace(base.RuntimeType) == string(appagentthread.RuntimeModeEinoADK) {
+		return nil, errors.New("eino adk checkpoint state update is not supported")
+	}
+
+	values := langGraphMergeChannelValues(langGraphCheckpointValues(base), req.Values)
+	channelValues, err := sonic.MarshalString(values)
+	if err != nil {
+		return nil, err
+	}
+	channelVersions, err := sonic.MarshalString(langGraphUpdatedChannelVersions(base.ChannelVersions, req.Values))
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := sonic.MarshalString(langGraphThreadStateUpdateMetadata(base.Metadata, req.Values, req.AsNode))
+	if err != nil {
+		return nil, err
+	}
+
+	created, err := appagentthread.SVC.CreateCheckpoint(ctx, &appagentthread.CreateCheckpointRequest{
+		ThreadID:           thread.ThreadID,
+		RunID:              base.RunID,
+		ParentCheckpointID: base.CheckpointID,
+		CheckpointNS:       base.CheckpointNS,
+		RuntimeType:        base.RuntimeType,
+		RuntimeKey:         base.RuntimeKey,
+		EnvelopeVersion:    base.EnvelopeVersion,
+		ChannelValues:      channelValues,
+		ChannelVersions:    channelVersions,
+		PendingSends:       base.PendingSends,
+		Metadata:           metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	updatedThread := thread
+	if title := strings.TrimSpace(langGraphStringValue(req.Values["title"])); title != "" {
+		updatedResp, updateErr := appagentthread.SVC.UpdateThreadTitle(ctx, &appagentthread.UpdateThreadTitleRequest{
+			ThreadID: thread.ThreadID,
+			Title:    title,
+		})
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if updatedResp != nil && updatedResp.Thread != nil {
+			updatedThread = updatedResp.Thread
+		}
+	}
+
+	return langGraphThreadStateFromCheckpoint(updatedThread, created.Checkpoint), nil
+}
+
+func langGraphThreadStateUpdateBaseCheckpoint(
+	ctx context.Context,
+	threadID int64,
+	checkpointID string,
+) (*appagentthread.CheckpointSummary, error) {
+	checkpointID = strings.TrimSpace(checkpointID)
+	if checkpointID != "" {
+		id, err := strconv.ParseInt(checkpointID, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := appagentthread.SVC.GetCheckpoint(ctx, &appagentthread.GetCheckpointRequest{CheckpointID: id})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return nil, nil
+		}
+
+		return resp.Checkpoint, nil
+	}
+
+	resp, err := appagentthread.SVC.GetLatestCheckpoint(ctx, &appagentthread.GetLatestCheckpointRequest{ThreadID: threadID})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
+	}
+
+	return resp.Checkpoint, nil
+}
+
+func langGraphMergeChannelValues(base map[string]any, updates map[string]any) map[string]any {
+	merged := map[string]any{}
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range updates {
+		merged[key] = value
+	}
+
+	return merged
+}
+
+func langGraphUpdatedChannelVersions(raw string, updates map[string]any) map[string]any {
+	versions := langGraphRunEventPayloadMap(raw)
+	for key := range updates {
+		current := int64(0)
+		switch typed := versions[key].(type) {
+		case float64:
+			current = int64(typed)
+		case int64:
+			current = typed
+		case int:
+			current = int64(typed)
+		}
+		versions[key] = current + 1
+	}
+
+	return versions
+}
+
+func langGraphThreadStateUpdateMetadata(raw string, values map[string]any, asNode string) map[string]any {
+	metadata := langGraphRunEventPayloadMap(raw)
+	metadata["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if asNode = strings.TrimSpace(asNode); asNode != "" {
+		metadata["source"] = "update"
+		metadata["step"] = langGraphMetadataStep(metadata["step"]) + 1
+		metadata["writes"] = map[string]any{asNode: values}
+	}
+
+	return metadata
+}
+
+func langGraphMetadataStep(value any) int64 {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed)
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
 func langGraphThreadHistoryFromCheckpoints(
 	thread *appagentthread.ThreadSummary,
 	checkpoints []*appagentthread.CheckpointSummary,
@@ -471,11 +855,45 @@ func langGraphThreadHistoryFromCheckpoints(
 	return result
 }
 
+func langGraphThreadHistoryEntriesFromCheckpoints(
+	thread *appagentthread.ThreadSummary,
+	checkpoints []*appagentthread.CheckpointSummary,
+) []*langgraphapi.ThreadHistoryEntry {
+	result := make([]*langgraphapi.ThreadHistoryEntry, 0, len(checkpoints))
+	for index, checkpoint := range checkpoints {
+		if checkpoint == nil {
+			continue
+		}
+		values := langGraphCheckpointValues(checkpoint)
+		if index > 0 {
+			delete(values, "messages")
+		}
+		parentID := (*string)(nil)
+		if checkpoint.ParentCheckpointID > 0 {
+			value := strconv.FormatInt(checkpoint.ParentCheckpointID, 10)
+			parentID = &value
+		}
+		result = append(result, &langgraphapi.ThreadHistoryEntry{
+			CheckpointID:       strconv.FormatInt(checkpoint.CheckpointID, 10),
+			ParentCheckpointID: parentID,
+			Metadata: langGraphThreadStateMetadata(
+				thread,
+				langGraphCheckpointMetadata(checkpoint),
+			),
+			Values:    values,
+			CreatedAt: langGraphTime(checkpoint.CreatedAt),
+			Next:      langGraphCheckpointNext(checkpoint.PendingSends, values),
+		})
+	}
+
+	return result
+}
+
 func langGraphThreadStateFromCheckpoint(
 	thread *appagentthread.ThreadSummary,
 	checkpoint *appagentthread.CheckpointSummary,
 ) *langgraphapi.ThreadState {
-	values := langGraphCheckpointValues(checkpoint.ChannelValues)
+	values := langGraphCheckpointValues(checkpoint)
 	metadata := langGraphThreadStateMetadata(
 		thread,
 		langGraphCheckpointMetadata(checkpoint),
@@ -493,6 +911,33 @@ func langGraphThreadStateFromCheckpoint(
 		CreatedAt: langGraphTime(checkpoint.CreatedAt),
 		UpdatedAt: langGraphTime(checkpoint.CreatedAt),
 	}
+}
+
+func langGraphThreadHistoryEntriesFromEvents(events []*appagentthread.RunEventSummary) []*langgraphapi.ThreadHistoryEntry {
+	result := make([]*langgraphapi.ThreadHistoryEntry, 0, len(events))
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		checkpointID := "event-" + strconv.FormatInt(event.EventID, 10)
+		result = append(result, &langgraphapi.ThreadHistoryEntry{
+			CheckpointID: checkpointID,
+			Metadata: map[string]any{
+				"thread_id":  strconv.FormatInt(event.ThreadID, 10),
+				"run_id":     strconv.FormatInt(event.RunID, 10),
+				"event_id":   strconv.FormatInt(event.EventID, 10),
+				"event_type": event.EventType,
+				"source":     "event_log",
+			},
+			Values: map[string]any{
+				"event": langGraphRunEventPayload(event.Payload),
+			},
+			CreatedAt: langGraphTime(event.CreatedAt),
+			Next:      []string{},
+		})
+	}
+
+	return result
 }
 
 func langGraphThreadHistoryFromEvents(events []*appagentthread.RunEventSummary) []*langgraphapi.ThreadState {
@@ -527,9 +972,24 @@ func langGraphThreadHistoryFromEvents(events []*appagentthread.RunEventSummary) 
 	return result
 }
 
-func langGraphCheckpointValues(raw string) map[string]any {
-	values := langGraphRunEventPayloadMap(raw)
+func langGraphCheckpointValues(checkpoint *appagentthread.CheckpointSummary) map[string]any {
 	defaults := langGraphThreadStateValues(nil)
+	if checkpoint == nil {
+		return defaults
+	}
+	if strings.TrimSpace(checkpoint.RuntimeType) == string(appagentthread.RuntimeModeEinoADK) {
+		values := defaults
+		values["runtime"] = string(appagentthread.RuntimeModeEinoADK)
+		if envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues)); err == nil {
+			values["interrupts"] = langGraphADKInterruptIDs(envelope.Interrupts)
+		} else {
+			values["interrupts"] = []string{}
+		}
+
+		return values
+	}
+
+	values := langGraphRunEventPayloadMap(checkpoint.ChannelValues)
 	for key, value := range defaults {
 		if _, ok := values[key]; !ok {
 			values[key] = value
@@ -560,6 +1020,9 @@ func langGraphCheckpointNext(raw string, values map[string]any) []string {
 	next := langGraphStringSliceValue(langGraphRunEventPayload(raw))
 	if len(next) > 0 {
 		return next
+	}
+	if interrupts := langGraphStringSliceValue(values["interrupts"]); len(interrupts) > 0 {
+		return interrupts
 	}
 
 	return langGraphStringSliceValue(values["next"])
@@ -666,10 +1129,7 @@ func langGraphThreadToAPI(thread *appagentthread.ThreadSummary) *langgraphapi.Th
 }
 
 func langGraphThreadMetadata(thread *appagentthread.ThreadSummary) map[string]any {
-	metadata := map[string]any{}
-	if thread.Metadata != "" {
-		_ = sonic.UnmarshalString(thread.Metadata, &metadata)
-	}
+	metadata := langGraphStoredThreadMetadata(thread)
 	if _, ok := metadata["space_id"]; !ok && thread.SpaceID > 0 {
 		metadata["space_id"] = strconv.FormatInt(thread.SpaceID, 10)
 	}
@@ -686,6 +1146,18 @@ func langGraphThreadMetadata(thread *appagentthread.ThreadSummary) map[string]an
 	return metadata
 }
 
+func langGraphStoredThreadMetadata(thread *appagentthread.ThreadSummary) map[string]any {
+	metadata := map[string]any{}
+	if thread == nil || thread.Metadata == "" {
+		return metadata
+	}
+	_ = sonic.UnmarshalString(thread.Metadata, &metadata)
+	if metadata == nil {
+		return map[string]any{}
+	}
+	return metadata
+}
+
 func normalizeLangGraphMetadata(metadata map[string]any) map[string]any {
 	if len(metadata) == 0 {
 		return map[string]any{}
@@ -696,6 +1168,35 @@ func normalizeLangGraphMetadata(metadata map[string]any) map[string]any {
 		result[key] = value
 	}
 
+	return result
+}
+
+func stripLangGraphPatchMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+	reserved := map[string]struct{}{
+		"owner_id":       {},
+		"user_id":        {},
+		"creator_id":     {},
+		"space_id":       {},
+		"thread_id":      {},
+		"id":             {},
+		"status":         {},
+		"source":         {},
+		"legacy_task_id": {},
+		"created_at":     {},
+		"updated_at":     {},
+		"values":         {},
+		"interrupts":     {},
+	}
+	result := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		if _, ok := reserved[key]; ok {
+			continue
+		}
+		result[key] = value
+	}
 	return result
 }
 

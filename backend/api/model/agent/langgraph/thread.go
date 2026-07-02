@@ -39,6 +39,20 @@ type GetThreadRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 }
 
+type PatchThreadRequest struct {
+	ThreadID int64          `path:"thread_id,required" json:"-"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type DeleteThreadRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+}
+
+type ThreadDeleteResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 type SearchThreadsRequest struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 	Status   string         `json:"status,omitempty"`
@@ -50,15 +64,38 @@ type GetThreadStateRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 }
 
+type PostThreadStateRequest struct {
+	ThreadID     int64          `path:"thread_id,required" json:"-"`
+	Values       map[string]any `json:"values,omitempty"`
+	CheckpointID string         `json:"checkpoint_id,omitempty"`
+	Checkpoint   map[string]any `json:"checkpoint,omitempty"`
+	AsNode       string         `json:"as_node,omitempty"`
+}
+
 type GetThreadHistoryRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	Limit    int32 `query:"limit,omitempty"`
 	Offset   int32 `query:"offset,omitempty"`
 }
 
+type PostThreadHistoryRequest struct {
+	ThreadID int64  `path:"thread_id,required" json:"-"`
+	Limit    int32  `json:"limit,omitempty"`
+	Before   string `json:"before,omitempty"`
+}
+
 type GetCheckpointResumeRequest struct {
 	ThreadID     int64 `path:"thread_id,required"`
 	CheckpointID int64 `path:"checkpoint_id,required"`
+}
+
+type ThreadHistoryEntry struct {
+	CheckpointID       string         `json:"checkpoint_id"`
+	ParentCheckpointID *string        `json:"parent_checkpoint_id"`
+	Metadata           map[string]any `json:"metadata"`
+	Values             map[string]any `json:"values"`
+	CreatedAt          string         `json:"created_at,omitempty"`
+	Next               []string       `json:"next"`
 }
 
 type ThreadState struct {

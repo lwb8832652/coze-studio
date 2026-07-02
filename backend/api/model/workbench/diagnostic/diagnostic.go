@@ -32,6 +32,35 @@ type RuntimeDoctorRuntimeData struct {
 	EinoADKEnabled bool   `json:"eino_adk_enabled"`
 }
 
+type RuntimeDoctorModelCapabilities struct {
+	NativeToolSearch bool `json:"native_tool_search"`
+	Thinking         bool `json:"thinking"`
+	Reasoning        bool `json:"reasoning"`
+	Vision           bool `json:"vision"`
+	PDF              bool `json:"pdf"`
+	File             bool `json:"file"`
+	Audio            bool `json:"audio"`
+	Video            bool `json:"video"`
+}
+
+type RuntimeDoctorModelData struct {
+	Status       string                          `json:"status"`
+	Configured   bool                            `json:"configured"`
+	LiveProbe    string                          `json:"live_probe"`
+	Capabilities *RuntimeDoctorModelCapabilities `json:"capabilities,omitempty"`
+	Message      string                          `json:"message,omitempty"`
+}
+
+type RuntimeDoctorSandboxData struct {
+	Status      string `json:"status"`
+	RunnerType  string `json:"runner_type"`
+	Network     string `json:"network"`
+	Process     string `json:"process"`
+	FFI         string `json:"ffi"`
+	NodeModules string `json:"node_modules"`
+	Message     string `json:"message,omitempty"`
+}
+
 type RuntimeDoctorWebToolStatus struct {
 	Status     string `json:"status"`
 	Configured bool   `json:"configured"`
@@ -55,6 +84,8 @@ type RuntimeDoctorMCPToolsData struct {
 type WorkbenchRuntimeDoctorData struct {
 	Status   string                     `json:"status"`
 	Runtime  *RuntimeDoctorRuntimeData  `json:"runtime"`
+	Model    *RuntimeDoctorModelData    `json:"model"`
+	Sandbox  *RuntimeDoctorSandboxData  `json:"sandbox"`
 	WebTools *RuntimeDoctorWebToolsData `json:"web_tools"`
 	MCPTools *RuntimeDoctorMCPToolsData `json:"mcp_tools"`
 	Checks   []*RuntimeDoctorCheck      `json:"checks"`

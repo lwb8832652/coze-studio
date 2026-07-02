@@ -105,6 +105,44 @@ type GetRunRequest struct {
 	RunID    int64 `path:"run_id,required"`
 }
 
+type ListRunMessagesRequest struct {
+	ThreadID  int64 `path:"thread_id,required"`
+	RunID     int64 `path:"run_id,required"`
+	Limit     int32 `query:"limit,omitempty"`
+	BeforeSeq int64 `query:"before_seq,omitempty"`
+	AfterSeq  int64 `query:"after_seq,omitempty"`
+}
+
+type StatelessListRunMessagesRequest struct {
+	RunID     int64 `path:"run_id,required"`
+	Limit     int32 `query:"limit,omitempty"`
+	BeforeSeq int64 `query:"before_seq,omitempty"`
+	AfterSeq  int64 `query:"after_seq,omitempty"`
+}
+
+type StatelessRunFeedbackRequest struct {
+	RunID int64 `path:"run_id,required"`
+}
+
+type ListThreadMessagesRequest struct {
+	ThreadID  int64 `path:"thread_id,required"`
+	Limit     int32 `query:"limit,omitempty"`
+	BeforeSeq int64 `query:"before_seq,omitempty"`
+	AfterSeq  int64 `query:"after_seq,omitempty"`
+}
+
+type ListRunEventsRequest struct {
+	ThreadID   int64  `path:"thread_id,required"`
+	RunID      int64  `path:"run_id,required"`
+	EventTypes string `query:"event_types,omitempty"`
+	Limit      int32  `query:"limit,omitempty"`
+}
+
+type RunMessagesPage struct {
+	Data    []map[string]any `json:"data"`
+	HasMore bool             `json:"has_more"`
+}
+
 type CancelRunRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	RunID    int64 `path:"run_id,required"`
@@ -113,6 +151,8 @@ type CancelRunRequest struct {
 type StreamRunRequest struct {
 	ThreadID     int64    `path:"thread_id,required"`
 	RunID        int64    `path:"run_id,required"`
+	Action       string   `query:"action,omitempty"`
+	Wait         int32    `query:"wait,omitempty"`
 	StreamMode   string   `query:"stream_mode,omitempty"`
 	StreamModes  []string `json:"-" query:"-"`
 	AfterEventID int64    `query:"after_event_id,omitempty"`

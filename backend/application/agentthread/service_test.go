@@ -3765,6 +3765,9 @@ type recordingThreadService struct {
 	runTokenUsageAggregates  []*entity.RunTokenUsageAggregate
 	createReq                *domainservice.CreateThreadRequest
 	updateThreadTitleReq     *domainservice.UpdateThreadTitleRequest
+	updateThreadMetadataReq  *domainservice.UpdateThreadMetadataRequest
+	deleteThreadReq          *domainservice.DeleteThreadRequest
+	deleteThreadOK           bool
 	createRunReq             *domainservice.CreateRunRequest
 	claimRunsReq             *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq *domainservice.ClaimQueuedResumeRunsRequest
@@ -4167,6 +4170,27 @@ func (s *recordingThreadService) UpdateThreadTitle(
 	updated := *s.got
 	updated.Title = strings.TrimSpace(req.Title)
 	return &updated, true, nil
+}
+
+func (s *recordingThreadService) UpdateThreadMetadata(
+	ctx context.Context,
+	req *domainservice.UpdateThreadMetadataRequest,
+) (*entity.Thread, bool, error) {
+	s.updateThreadMetadataReq = req
+	if s.got == nil {
+		return nil, false, nil
+	}
+	updated := *s.got
+	updated.Metadata = strings.TrimSpace(req.Metadata)
+	return &updated, true, nil
+}
+
+func (s *recordingThreadService) DeleteThread(
+	ctx context.Context,
+	req *domainservice.DeleteThreadRequest,
+) (bool, error) {
+	s.deleteThreadReq = req
+	return s.deleteThreadOK, nil
 }
 
 func (s *recordingThreadService) ListThreads(ctx context.Context, req *domainservice.ListThreadsRequest) ([]*entity.Thread, int64, error) {

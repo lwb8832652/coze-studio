@@ -90,6 +90,31 @@ const deferredCheck = (name: string, category: string): RuntimeDoctorCheck => ({
   message: RUNTIME_DOCTOR_PENDING_MESSAGE,
 });
 
+const runtimeDoctorCapabilityLabels = {
+  native_tool_search: '原生工具搜索',
+  thinking: '思考',
+  reasoning: '推理',
+  vision: '视觉',
+  pdf: 'PDF',
+  file: '文件',
+  audio: '音频',
+  video: '视频',
+} as const;
+
+const modelCapabilitySummary = (
+  capabilities?: WorkbenchRuntimeDoctorData['model']['capabilities'],
+) => {
+  if (!capabilities) {
+    return '未返回能力矩阵';
+  }
+
+  const enabled = Object.entries(runtimeDoctorCapabilityLabels)
+    .filter(([key]) => capabilities[key as keyof typeof capabilities])
+    .map(([, label]) => label);
+
+  return enabled.length ? enabled.join('、') : '未检测到 provider 能力标记';
+};
+
 const RuntimeDoctorCard = ({
   detail,
   meta,
@@ -143,11 +168,108 @@ const RuntimeDoctorCheckRow = ({ check }: { check: RuntimeDoctorCheck }) => (
   </li>
 );
 
-export const TaskRuntimeDoctorSection = ({
-  spaceId,
+const RuntimeDoctorCardGrid = ({
+  data,
+  derivedChecks,
 }: {
-  spaceId?: string;
+  data: WorkbenchRuntimeDoctorData;
+  derivedChecks: {
+    memory: RuntimeDoctorCheck;
+    model: RuntimeDoctorCheck;
+    skill: RuntimeDoctorCheck;
+  };
 }) => {
+  const modelLiveProbeDetail = `Live Probe ${statusLabel(
+    data.model.live_probe,
+  )}${data.model.message ? ` · ${data.model.message}` : ''}`;
+  const sandboxDetail = [
+    `网络 ${data.sandbox.network}`,
+    `进程 ${data.sandbox.process}`,
+    `FFI ${data.sandbox.ffi}`,
+    `Node Modules ${data.sandbox.node_modules}`,
+  ].join(' · ');
+  const mcpMeta = `总计 ${data.mcp_tools.total_servers} · 启用 ${data.mcp_tools.enabled_servers}`;
+  const mcpDetail = [
+    `健康 ${data.mcp_tools.healthy_servers}`,
+    `异常 ${data.mcp_tools.unhealthy_servers}`,
+    `未知 ${data.mcp_tools.unknown_servers}`,
+  ].join(' · ');
+
+  return (
+    <ol className="coze-prototype-runtime-doctor-card-grid">
+      <RuntimeDoctorCard
+        title="Eino ADK"
+        status={data.runtime.eino_adk_enabled ? 'ready' : 'disabled'}
+        meta={data.runtime.eino_adk_enabled ? '已启用' : '未启用'}
+        detail={`默认模式 ${data.runtime.default_mode || '未配置'}`}
+      />
+      <RuntimeDoctorCard
+        title="Web Fetch"
+        status={data.web_tools.web_fetch.status}
+        meta={data.web_tools.web_fetch.configured ? '已配置' : '未配置'}
+        detail={data.web_tools.web_fetch.message}
+      />
+      <RuntimeDoctorCard
+        title="Web Search"
+        status={data.web_tools.web_search.status}
+        meta={data.web_tools.web_search.configured ? '已配置' : '未配置'}
+        detail={data.web_tools.web_search.message}
+      />
+      <RuntimeDoctorCard
+        title="MCP 工具"
+        status={data.mcp_tools.status}
+        meta={mcpMeta}
+        detail={mcpDetail}
+      />
+      <RuntimeDoctorCard
+        title="模型连通"
+        status={data.model.status}
+        meta={data.model.configured ? '默认模型已配置' : '默认模型未配置'}
+        detail={modelLiveProbeDetail}
+      />
+      <RuntimeDoctorCard
+        title="模型能力"
+        status={derivedChecks.model.status}
+        meta={modelCapabilitySummary(data.model.capabilities)}
+        detail={derivedChecks.model.message}
+      />
+      <RuntimeDoctorCard
+        title="Sandbox"
+        status={data.sandbox.status}
+        meta={`Runner ${data.sandbox.runner_type}`}
+        detail={sandboxDetail}
+      />
+      <RuntimeDoctorCard
+        title="Skill 检查"
+        status={derivedChecks.skill.status}
+        detail={derivedChecks.skill.message}
+      />
+      <RuntimeDoctorCard
+        title="记忆检查"
+        status={derivedChecks.memory.status}
+        detail={derivedChecks.memory.message}
+      />
+    </ol>
+  );
+};
+
+const RuntimeDoctorCheckList = ({
+  checks,
+}: {
+  checks: RuntimeDoctorCheck[];
+}) =>
+  checks.length ? (
+    <ol className="coze-prototype-runtime-doctor-check-list">
+      {checks.map(check => (
+        <RuntimeDoctorCheckRow
+          key={`${check.category}:${check.name}`}
+          check={check}
+        />
+      ))}
+    </ol>
+  ) : null;
+
+export const TaskRuntimeDoctorSection = ({ spaceId }: { spaceId?: string }) => {
   const [data, setData] = useState<WorkbenchRuntimeDoctorData>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -176,7 +298,7 @@ export const TaskRuntimeDoctorSection = ({
     void loadRuntimeDoctor();
   }, [loadRuntimeDoctor]);
 
-  const checks = data?.checks ?? [];
+  const checks = useMemo(() => data?.checks ?? [], [data?.checks]);
   const derivedChecks = useMemo(
     () => ({
       memory:
@@ -227,61 +349,8 @@ export const TaskRuntimeDoctorSection = ({
       <Spin spinning={loading}>
         {data ? (
           <>
-            <ol className="coze-prototype-runtime-doctor-card-grid">
-              <RuntimeDoctorCard
-                title="Eino ADK"
-                status={data.runtime.eino_adk_enabled ? 'ready' : 'disabled'}
-                meta={
-                  data.runtime.eino_adk_enabled ? '已启用' : '未启用'
-                }
-                detail={`默认模式 ${data.runtime.default_mode || '未配置'}`}
-              />
-              <RuntimeDoctorCard
-                title="Web Fetch"
-                status={data.web_tools.web_fetch.status}
-                meta={data.web_tools.web_fetch.configured ? '已配置' : '未配置'}
-                detail={data.web_tools.web_fetch.message}
-              />
-              <RuntimeDoctorCard
-                title="Web Search"
-                status={data.web_tools.web_search.status}
-                meta={
-                  data.web_tools.web_search.configured ? '已配置' : '未配置'
-                }
-                detail={data.web_tools.web_search.message}
-              />
-              <RuntimeDoctorCard
-                title="MCP 工具"
-                status={data.mcp_tools.status}
-                meta={`总计 ${data.mcp_tools.total_servers} · 启用 ${data.mcp_tools.enabled_servers}`}
-                detail={`健康 ${data.mcp_tools.healthy_servers} · 异常 ${data.mcp_tools.unhealthy_servers} · 未知 ${data.mcp_tools.unknown_servers}`}
-              />
-              <RuntimeDoctorCard
-                title="模型配置"
-                status={derivedChecks.model.status}
-                detail={derivedChecks.model.message}
-              />
-              <RuntimeDoctorCard
-                title="Skill 检查"
-                status={derivedChecks.skill.status}
-                detail={derivedChecks.skill.message}
-              />
-              <RuntimeDoctorCard
-                title="记忆检查"
-                status={derivedChecks.memory.status}
-                detail={derivedChecks.memory.message}
-              />
-            </ol>
-            {checks.length ? (
-              <ol className="coze-prototype-runtime-doctor-check-list">
-                {checks.map(check => (
-                  <RuntimeDoctorCheckRow
-                    key={`${check.category}:${check.name}`}
-                    check={check}
-                  />
-                ))}
-              </ol>
-            ) : null}
+            <RuntimeDoctorCardGrid data={data} derivedChecks={derivedChecks} />
+            <RuntimeDoctorCheckList checks={checks} />
           </>
         ) : (
           <div className="coze-prototype-runtime-doctor-empty">

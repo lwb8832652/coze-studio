@@ -33,7 +33,23 @@ export interface TaskDetailTokenUsage {
   subagentTokens: number;
   middlewareTokens: number;
   toolTokens: number;
+  modelAttributions: string[];
 }
+
+const getSingleCurrency = (currencies?: string[]): string => {
+  const normalized = Array.from(
+    new Set(
+      (currencies ?? [])
+        .map(currency => currency.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  return normalized.length === 1 ? normalized[0] : '';
+};
+
+const getSingleTokenUsageCurrency = (rows?: TaskThreadTokenUsage[]): string =>
+  getSingleCurrency(rows?.map(row => row.currency));
 
 const emptyTaskDetailTokenUsage = (): TaskDetailTokenUsage => ({
   inputTokens: 0,
@@ -46,26 +62,62 @@ const emptyTaskDetailTokenUsage = (): TaskDetailTokenUsage => ({
   subagentTokens: 0,
   middlewareTokens: 0,
   toolTokens: 0,
+  modelAttributions: [],
 });
+
+const getSafeTokenUsageAttributionPart = (value?: string): string =>
+  (value ?? '').trim().slice(0, 80);
+
+const getModelAttribution = (row: TaskThreadTokenUsage): string => {
+  const provider = getSafeTokenUsageAttributionPart(row.provider);
+  const modelName = getSafeTokenUsageAttributionPart(row.model_name);
+
+  if (provider && modelName) {
+    return `${provider} / ${modelName}`;
+  }
+
+  return provider || modelName;
+};
+
+const getUniqueModelAttributions = (
+  rows?: TaskThreadTokenUsage[],
+): string[] => {
+  const attributions: string[] = [];
+
+  for (const row of rows ?? []) {
+    const attribution = getModelAttribution(row);
+
+    if (attribution && !attributions.includes(attribution)) {
+      attributions.push(attribution);
+    }
+  }
+
+  return attributions;
+};
 
 export const mapTaskThreadTokenUsageAggregate = (
   aggregate?: TaskThreadTokenUsageAggregate,
+  rows?: TaskThreadTokenUsage[],
+  totalRows?: number,
 ): TaskDetailTokenUsage | undefined => {
   if (!aggregate || aggregate.total_tokens <= 0) {
     return undefined;
   }
+  const hasCompleteCurrencyRows =
+    typeof totalRows !== 'number' || (rows?.length ?? 0) >= totalRows;
 
   return {
     inputTokens: aggregate.input_tokens,
     outputTokens: aggregate.output_tokens,
     totalTokens: aggregate.total_tokens,
     costMicros: aggregate.cost_micros,
-    currency: '',
+    currency: hasCompleteCurrencyRows ? getSingleTokenUsageCurrency(rows) : '',
     callCount: aggregate.call_count,
     leadAgentTokens: aggregate.lead_agent_tokens,
     subagentTokens: aggregate.subagent_tokens,
     middlewareTokens: aggregate.middleware_tokens,
     toolTokens: aggregate.tool_tokens,
+    modelAttributions: getUniqueModelAttributions(rows),
   };
 };
 
@@ -73,6 +125,7 @@ export const mapTaskThreadTokenUsageRowsByRunID = (
   rows?: TaskThreadTokenUsage[],
 ): Record<string, TaskDetailTokenUsage> => {
   const usageByRunID: Record<string, TaskDetailTokenUsage> = {};
+  const currenciesByRunID: Record<string, string[]> = {};
 
   for (const row of rows ?? []) {
     const runID = row.run_id?.trim();
@@ -82,11 +135,22 @@ export const mapTaskThreadTokenUsageRowsByRunID = (
     }
 
     const aggregate = usageByRunID[runID] ?? emptyTaskDetailTokenUsage();
+    const currencies = currenciesByRunID[runID] ?? [];
     aggregate.inputTokens += row.input_tokens;
     aggregate.outputTokens += row.output_tokens;
     aggregate.totalTokens += row.total_tokens;
     aggregate.costMicros += row.cost_micros;
     aggregate.callCount += 1;
+    if (row.currency.trim()) {
+      currencies.push(row.currency);
+    }
+    const modelAttribution = getModelAttribution(row);
+    if (
+      modelAttribution &&
+      !aggregate.modelAttributions.includes(modelAttribution)
+    ) {
+      aggregate.modelAttributions.push(modelAttribution);
+    }
 
     switch (row.source) {
       case 'lead_agent':
@@ -106,7 +170,25 @@ export const mapTaskThreadTokenUsageRowsByRunID = (
     }
 
     usageByRunID[runID] = aggregate;
+    currenciesByRunID[runID] = currencies;
+  }
+
+  for (const [runID, aggregate] of Object.entries(usageByRunID)) {
+    aggregate.currency = getSingleCurrency(currenciesByRunID[runID]);
   }
 
   return usageByRunID;
+};
+
+export const formatTaskTokenCost = (
+  costMicros: number,
+  currency: string,
+): string => {
+  const normalizedCurrency = currency.trim().toUpperCase();
+
+  if (costMicros <= 0 || !normalizedCurrency) {
+    return '';
+  }
+
+  return `${normalizedCurrency} ${(costMicros / 1_000_000).toFixed(6)}`;
 };

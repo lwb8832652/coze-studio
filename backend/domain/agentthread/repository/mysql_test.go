@@ -97,6 +97,110 @@ func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
 	require.Equal(t, int64(3), updated.LastMessageAt)
 }
 
+func TestThreadRepositoryUpdateThreadMetadata(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID:            1,
+		SpaceID:       10,
+		CreatorID:     20,
+		Title:         "metadata",
+		Status:        entity.ThreadStatusIdle,
+		Source:        entity.ThreadSourceWeb,
+		Metadata:      `{"source":"old"}`,
+		CreatedAt:     1,
+		UpdatedAt:     2,
+		LastMessageAt: 3,
+	}))
+
+	updated, ok, err := repo.UpdateThreadMetadata(context.Background(), UpdateThreadMetadataRequest{
+		ThreadID:  1,
+		Metadata:  `{"source":"old","custom":"new"}`,
+		UpdatedAt: 100,
+	})
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.JSONEq(t, `{"source":"old","custom":"new"}`, updated.Metadata)
+	require.Equal(t, int64(100), updated.UpdatedAt)
+	require.Equal(t, int64(3), updated.LastMessageAt)
+}
+
+func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{},
+		&messagePO{},
+		&runPO{},
+		&runEventPO{},
+		&checkpointPO{},
+		&memoryPO{},
+		&memoryAuditEventPO{},
+		&transcriptSnapshotPO{},
+		&memoryFlushJobPO{},
+		&tokenUsagePO{},
+		&agentFilePO{},
+		&agentArtifactPO{},
+		&agentArtifactScanJobPO{},
+		&agentRunPlanPO{},
+		&agentRunPlanItemPO{},
+	))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID:        1,
+		SpaceID:   10,
+		CreatorID: 20,
+		Title:     "delete",
+		Status:    entity.ThreadStatusIdle,
+		Source:    entity.ThreadSourceWeb,
+	}))
+	require.NoError(t, db.Create(&messagePO{ID: 10, ThreadID: 1, Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&runPO{ID: 11, ThreadID: 1, Command: []byte(`{}`), Input: []byte(`{}`), Config: []byte(`{}`), Context: []byte(`{}`), Metadata: []byte(`{}`), StreamMode: []byte(`[]`)}).Error)
+	require.NoError(t, db.Create(&runEventPO{ID: 12, ThreadID: 1, RunID: 11, Payload: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&checkpointPO{ID: 13, ThreadID: 1, RunID: 11, ChannelValues: []byte(`{}`), ChannelVersions: []byte(`{}`), PendingSends: []byte(`[]`), Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&memoryPO{ID: 14, ThreadID: 1, Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&memoryAuditEventPO{ID: 15, ThreadID: 1}).Error)
+	require.NoError(t, db.Create(&transcriptSnapshotPO{ID: 16, ThreadID: 1, RunID: 11, IdempotencyKey: "snapshot", Messages: []byte(`[]`), Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&memoryFlushJobPO{ID: 17, ThreadID: 1, RunID: 11, IdempotencyKey: "flush"}).Error)
+	require.NoError(t, db.Create(&tokenUsagePO{ID: 18, ThreadID: 1, RawUsage: []byte(`{}`), Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&agentFilePO{ID: 19, ThreadID: 1, RunID: 11, VirtualPathHash: "path", Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&agentArtifactPO{ID: 20, ThreadID: 1, RunID: 11, FileID: 19, Metadata: []byte(`{}`)}).Error)
+	require.NoError(t, db.Create(&agentArtifactScanJobPO{ID: 21, ThreadID: 1, ArtifactID: 20, IdempotencyKey: "scan"}).Error)
+	require.NoError(t, db.Create(&agentRunPlanPO{RunID: 11, ThreadID: 1}).Error)
+	require.NoError(t, db.Create(&agentRunPlanItemPO{ID: 22, RunID: 11, TaskID: 1, Blocks: []byte(`[]`), BlockedBy: []byte(`[]`), Metadata: []byte(`{}`)}).Error)
+
+	deleted, err := repo.DeleteThread(context.Background(), DeleteThreadRequest{ThreadID: 1})
+
+	require.NoError(t, err)
+	require.True(t, deleted)
+	for _, model := range []any{
+		&threadPO{},
+		&messagePO{},
+		&runPO{},
+		&runEventPO{},
+		&checkpointPO{},
+		&memoryPO{},
+		&memoryAuditEventPO{},
+		&transcriptSnapshotPO{},
+		&memoryFlushJobPO{},
+		&tokenUsagePO{},
+		&agentFilePO{},
+		&agentArtifactPO{},
+		&agentArtifactScanJobPO{},
+		&agentRunPlanPO{},
+		&agentRunPlanItemPO{},
+	} {
+		var count int64
+		require.NoError(t, db.Model(model).Count(&count).Error)
+		require.Zero(t, count)
+	}
+}
+
 func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
