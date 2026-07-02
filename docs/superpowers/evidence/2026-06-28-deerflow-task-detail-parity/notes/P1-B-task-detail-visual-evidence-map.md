@@ -32,31 +32,31 @@ the user deferred to P2.
 | Search/tool event visual safety | Covered for desktop | `notes/P1-A-006-search-tool-event-safety.md`, `screenshots/coze/P1-A-006-coze-search-tool-safe-steps.png`, `screenshots/deerflow/P1-A-006-deerflow-search-tool-safe-steps.jpg` |
 | Narrow responsive layout | Covered for 390px and 768px | `screenshots/coze/P1-B-TD-LAYOUT-002-coze-390-task-detail.png`, `screenshots/coze/P1-B-TD-LAYOUT-002-coze-768-task-detail.png` |
 
-## Remaining P1-B Visual Gaps
+## P2 Visual Hardening Items
 
-These are the remaining task-detail visual items that still need either fresh
-browser evidence or an explicit product decision:
+P1-B is closed for launch-critical task-detail parity. These smaller visual
+items are useful hardening, but they do not block the P1-B closure because the
+main task-detail layout, messages, steps, artifacts, token, memory entry,
+loading/error, and narrow responsive cases already have evidence or tests:
 
 1. `TD-MSG-006` assistant copy/feedback affordance: Coze has copy coverage, but
-   feedback parity remains a P1 decision. If not building feedback now, record
-   the reason and keep it out of the launch blocker list.
+   feedback affordance parity can be designed as a P2 interaction pass.
 2. `TD-MD-003` Mermaid error visual state: component fallback exists in tests,
-   but a real invalid Mermaid screenshot is still useful.
+   but a real invalid Mermaid screenshot remains useful for P2 QA evidence.
 3. `TD-FLOW-003` subagent deep card: safe metadata projection exists as a
    backend/frontend boundary, but no dedicated browser sample is recorded.
 4. `TD-COMP-006` file upload visual path: composer shows upload affordance, but
-   upload-to-task evidence is not part of the DeerFlow P0 closure.
+   upload-to-task evidence is not part of the DeerFlow P1 closure.
 5. `TD-TOKEN-003` active streaming token state: current policy avoids showing
-   misleading zero values; live running-token evidence remains a P1 hardening
+   misleading zero values; live running-token evidence remains a P2 hardening
    item.
 6. Rich MIME artifact samples remain under `P1-C`, not P1-B, so P1-B should
    not expand into CSV/PDF/image/HTML-SVG matrix work.
 
 ## Next Action
 
-`TD-LAYOUT-002` is now closed. Continue only with the remaining smaller visual
-decision items above, or explicitly defer them to P2 if they are not launch
-blocking.
+P1-B is closed. Continue P1 stabilization with the next open workstream in the
+tracker.
 
 ## 2026-07-01 Responsive Capture Attempt
 
