@@ -11,8 +11,8 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. API summaries, visible PDF page-pixel rendering, and scan
-retry remain open.
+SVG artifact cards. Visible PDF page-pixel rendering and scan retry remain
+open.
 
 ## DeerFlow Reference
 
@@ -216,11 +216,44 @@ Observed behavior:
   checks found zero hits for `s3://`, `tos://`, `file_id`, `checkpoint`,
   `provider_payload`, or `scanner_raw`.
 
+## 2026-07-02 Bounded API Summary
+
 Browser API capture note:
 
 - The in-app browser read-only page scope could not provide an authenticated
-  `fetch` summary for artifact APIs in this pass. No inferred request/response
-  payloads are recorded. P1-C-004 stays open for bounded API summaries.
+  `fetch` summary for artifact APIs in this pass. No inferred live
+  request/response payloads are recorded.
+- The bounded API summary below is source/test based. Evidence anchors:
+  `backend/api/router/coze/api.go` routes,
+  `backend/api/model/workbench/thread/thread.go` request/response structs,
+  `backend/api/handler/coze/workbench_thread_service.go` handlers, and
+  `backend/api/handler/coze/workbench_thread_service_test.go` redaction tests.
+- `task.thrift` defines the generated artifact list and signed URL shape for
+  `/artifacts` and `/signed_url`; the scan/content/delete/restore routes are
+  currently modeled directly in Go router/model structs.
+
+Routes and bounded response contracts:
+
+| Area | Route | Request shape | Safe response shape | Redaction evidence |
+| --- | --- | --- | --- | --- |
+| List artifacts | `GET /api/workbench/task_threads/:thread_id/artifacts` | `thread_id`, optional `run_id`, `deleted_only`, `space_id`, `page`, `page_size` | `artifacts[]` with ids, title, artifact type, virtual path, content type, size, preview mode, metadata, timestamps, plus `total` | Handler test asserts list response includes safe metadata but not `agent-runtime/` object URI. |
+| List scan jobs | `GET /api/workbench/task_threads/:thread_id/artifact_scan_jobs` | `thread_id`, optional `run_id`, `artifact_id`, `space_id`, `status`, `scanner`, `page`, `page_size` | `jobs[]` with job/thread/run/artifact/file ids, scanner, status, worker id, attempt count, bounded last error, timestamps, plus `total` | Handler test asserts no `agent-runtime/`, `/mnt/user-data`, or original `secret.txt`. |
+| Retry scan job | `POST /api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry` | `thread_id`, `job_id`, optional `space_id` | `job` safe projection plus `retried` | Handler tests cover failed -> pending retry and non-failed -> conflict, both without object URI or `/mnt/user-data`. |
+| Review scan | `POST /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/scan_review` | `thread_id`, `artifact_id`, optional `space_id`, JSON `decision`, `reason` | `artifact_id`, `decision`, `scan_status`, `reviewed` | Handler test asserts response and emitted event omit object URI, `/mnt/user-data`, original filename, artifact bytes, and reviewer reason. |
+| Read content | `GET /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content` | `thread_id`, `artifact_id`, optional `space_id`, `mode=preview|download` | raw bytes only after scan policy allows; headers include content type, bounded content-disposition filename, `X-Content-Type-Options: nosniff` | Handler tests assert safe headers, no object URI in filename, and scan-blocked conflict returns bounded `reason=scan_blocked` without bytes/object path/original filename. |
+| Signed URL | `GET /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url` | `thread_id`, `artifact_id`, optional `space_id`, `mode`, `ttl_seconds` | `artifact_id`, `url`, bounded `expires_in_seconds`, `content_type`, `preview_mode` | Handler tests assert the service signs the internal object key but response omits `object_uri` and the raw object URI; TTL is clamped to safe bounds. Actual signed URLs are not recorded in this evidence file. |
+| Delete artifact | `DELETE /api/workbench/task_threads/:thread_id/artifacts/:artifact_id` | `thread_id`, `artifact_id`, optional `space_id` | `code=0`, `msg=success` only | Handler/list tests verify deleted artifact disappears from active list. |
+| Restore artifact | `POST /api/workbench/task_threads/:thread_id/artifacts/:artifact_id/restore` | `thread_id`, `artifact_id`, optional `space_id` | `artifact_id`, `restored` | Handler test asserts restore response and event payload omit object URI, `/mnt/user-data`, and filename. |
+
+Security boundary recorded for P1-C-004:
+
+- Safe to expose: ids, title, artifact type, virtual path, content type,
+  preview mode, size, timestamps, scanner/status/attempt count, bounded scan
+  error text, and bounded lifecycle decisions/status.
+- Not recorded and not exposed by tests: raw object URI, raw signed URL
+  evidence, scanner raw body, provider body, prompt, completion, checkpoint
+  bytes, artifact bytes in JSON error responses, or reviewer free-form reason
+  in emitted lifecycle event payloads.
 
 PDF parity note:
 
@@ -243,14 +276,10 @@ PDF parity note:
 
 1. Capture a browser image that proves PDF page pixels render rather than only
    iframe mount state.
-2. Record bounded API summaries for artifact list, content, signed URL,
-   scan-blocked conflict, review release, delete, and restore. Do not record
-   raw object URIs, signed URLs, scanner raw bodies, provider payloads, prompt,
-   completion, or checkpoint bytes.
-3. Add real UI evidence for scan retry state. The current fixture shows pending
+2. Add real UI evidence for scan retry state. The current fixture shows pending
    scan jobs but no failed job row, so retry remains open until a failed scan
    job is available.
-4. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
+3. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
    dedicated skill/tool-driven fixture if future evidence needs zero
    `content_base64` visible-text hits.
 
@@ -260,5 +289,5 @@ P1-C is in progress. The automated coverage baseline, Go binary write support,
 one real MIME fixture task, scan-pending safe message mapping, PDF review
 release, browser iframe-mount evidence for the current PDF artifact,
 delete/restore UI lifecycle evidence, manual scan review evidence, and
-copy/download affordance checks are complete. API summaries, PDF pixel-render
-evidence, and scan retry are still open.
+copy/download affordance checks, and bounded API summaries are complete. PDF
+pixel-render evidence and scan retry are still open.
