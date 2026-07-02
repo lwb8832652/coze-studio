@@ -188,7 +188,6 @@ export const TaskArtifactInlinePreview = ({
           className="coze-prototype-artifact-preview-pdf"
           data-testid="task-artifact-inline-preview-pdf"
           referrerPolicy="no-referrer"
-          sandbox=""
           src={inlinePreview.url}
           title={`预览 ${name}`}
         />

@@ -2972,6 +2972,13 @@ describe('TaskDetailPage', () => {
           ?.getAttribute('src'),
       ).toBe('data:application/pdf;base64,JVBERi0xLjQK');
       expect(
+        container
+          .querySelector(
+            'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+          )
+          ?.getAttribute('sandbox'),
+      ).toBeNull();
+      expect(
         container.querySelector(
           'img[data-testid="task-artifact-inline-preview-image"]',
         ),

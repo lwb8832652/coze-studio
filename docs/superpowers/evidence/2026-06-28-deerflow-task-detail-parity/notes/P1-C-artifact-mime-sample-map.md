@@ -11,7 +11,9 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. Visible PDF page-pixel rendering remains open.
+SVG artifact cards. PDF page-pixel evidence is now captured from the current
+iframe preview PDF bytes with a rendered first-page PNG, because the in-app
+browser CDP screenshot path times out when Chrome's PDF viewer is mounted.
 
 ## DeerFlow Reference
 
@@ -39,7 +41,7 @@ separate from thread export.
 | Plain text / JSON preview | Covered by helper and canonical artifact tests | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case |
 | CSV/table preview | Covered by helper and canonical artifact tests | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case; `notes/TD-DOC-004-006-010-table-image-lifecycle.md` |
 | PNG/image preview | Covered by preview-family helper and signed-url UI test | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case |
-| PDF preview/open | Covered by preview-family helper and signed-url UI test | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case |
+| PDF preview/open | Covered by preview-family helper, signed-url UI test, DeerFlow iframe-source check, and rendered PDF page-pixel evidence | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case; `screenshots/coze/P1-C-coze-pdf-page-pixels-rendered-7657556998191316992.png` |
 | HTML/XHTML/SVG active content | Covered as unsafe inline preview rejection and download-only path | `task-artifacts-helpers.test.ts`; `task-detail.test.tsx` canonical artifact case; backend sniff/header tests |
 | Safe content headers | Covered by backend API tests | `workbench_thread_service_test.go` content and signed URL handler cases |
 | Scanner blocked/error/review | Covered by frontend drawer tests and backend policy/API tests | `task-detail.test.tsx` blocked review and scan jobs cases; `service_test.go` scan policy cases |
@@ -82,6 +84,11 @@ Results:
 - 2026-07-02 stale artifact preview regression:
   `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'clears the active artifact preview after reviewing the previewed artifact'`
   passed with 1 test, 50 skipped.
+- 2026-07-02 PDF iframe parity regression:
+  `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'renders canonical thread artifacts, previews safe text inline, and downloads via signed URL'`
+  first failed with `expected '' to be null` while the PDF iframe still carried
+  an empty `sandbox`; after removing that attribute it passed with 1 test, 50
+  skipped.
 
 ## 2026-07-01 Browser Fixture Evidence
 
@@ -130,6 +137,8 @@ Screenshots:
   `screenshots/coze/P1-C-coze-html-svg-download-only-7657556998191316992.png`
 - PDF clean iframe mount after review release:
   `screenshots/coze/P1-C-coze-pdf-preview-clean-7657556998191316992.png`
+- PDF page-pixel render evidence:
+  `screenshots/coze/P1-C-coze-pdf-page-pixels-rendered-7657556998191316992.png`
 - SVG delete/restore removed-list state:
   `screenshots/coze/P1-C-coze-delete-restore-deleted-7657556998191316992.png`
 - SVG delete/restore restored active-list state:
@@ -177,10 +186,31 @@ Observed behavior:
   `读取任务产物失败，请稍后重试` or `产物安全扫描中` message. Browser script
   checks confirmed the iframe `src` did not contain object URI patterns such as
   `s3://`, `tos://`, or `file_id`.
-- The screenshot records the management drawer iframe container after release.
-  It does not claim PDF page pixels rendered in the browser capture; the current
-  in-app browser screenshot still showed a blank iframe surface even though the
-  iframe was mounted with a signed preview URL.
+- 2026-07-02 DeerFlow source was rechecked before changing PDF iframe behavior:
+  `frontend/src/components/workspace/artifacts/artifact-file-detail.tsx`
+  renders non-code artifact detail with a direct `<iframe className="size-full"
+  src={urlOfArtifact(...)} />`, while
+  `backend/app/gateway/routers/artifacts.py` serves non-active binary artifacts
+  inline and forces active HTML/XHTML/SVG to attachment. Coze already keeps
+  active HTML/SVG download-only; the PDF iframe therefore now matches the
+  DeerFlow artifact-detail iframe by removing the empty `sandbox` attribute.
+- Browser verification after the fix confirmed the mounted Coze PDF iframe has
+  `sandbox=null`, title `预览 p1c-fixture.pdf`, and a normal preview rectangle
+  (`358x520`) in the side preview panel. The current signed preview URL was
+  refreshed and fetched locally without recording the URL; response metadata was
+  `status=200`, `content-type=application/pdf`, `bytes=590`, header
+  `%PDF-1.4`. The current in-app browser CDP screenshot path still times out
+  while Chrome's PDF viewer is mounted, and macOS `screencapture` is unavailable
+  in this environment. To keep the evidence honest, the page-pixel artifact is
+  recorded as a Poppler render of the same freshly fetched iframe PDF:
+  `P1-C PDF sample` is visible in
+  `screenshots/coze/P1-C-coze-pdf-page-pixels-rendered-7657556998191316992.png`.
+- During the long browser check, an old signed preview URL expired and returned
+  `403` when fetched outside the page. Re-clicking the artifact generated a
+  fresh signed URL and returned `200`. This is a Coze signing-boundary
+  difference from DeerFlow's backend artifact route, not a visible regression
+  after normal click/open. Automatic renewal for an already-open preview after
+  TTL expiry is recorded as a P2 hardening item rather than expanding P1-C.
 - The same artifact management panel was used to validate the delete/restore
   UI lifecycle on the visible `p1c-fixture.svg` sample. Clicking
   `删除 p1c-fixture.svg` opened the bounded confirmation copy
