@@ -45,6 +45,7 @@ export const TaskArtifactsPanel = ({
   const {
     activeAction,
     clearInlinePreview,
+    clearRemovedArtifact,
     error,
     handleArtifactAction,
     handleDeleteArtifact,
@@ -146,6 +147,9 @@ export const TaskArtifactsPanel = ({
               spaceId={spaceId}
               threadId={threadId}
               visible={visible}
+              onArtifactRestored={artifact =>
+                clearRemovedArtifact(artifact.artifact_id)
+              }
               onArtifactsChanged={onArtifactsChanged}
             />
           )}

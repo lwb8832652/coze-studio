@@ -1,0 +1,36 @@
+{
+  "endpoints": [
+    {
+      "dataKeys": [],
+      "error": "XMLHttpRequest is not a constructor",
+      "eventCount": 0,
+      "eventTypes": [],
+      "journalCount": 0,
+      "journalRoles": [],
+      "ok": false,
+      "path": "/api/workbench/task_threads/7657504771049259008/runs?page=1&page_size=20",
+      "redaction": "Only counts, statuses, types, and keys are retained; prompt/completion/tool payload bodies are not retained.",
+      "runCount": 0,
+      "runStatuses": [],
+      "status": 0,
+      "topLevelKeys": []
+    },
+    {
+      "dataKeys": [],
+      "error": "XMLHttpRequest is not a constructor",
+      "eventCount": 0,
+      "eventTypes": [],
+      "journalCount": 0,
+      "journalRoles": [],
+      "ok": false,
+      "path": "/api/workbench/task_threads/7657504771049259008/run_events?page=1&page_size=200",
+      "redaction": "Only counts, statuses, types, and keys are retained; prompt/completion/tool payload bodies are not retained.",
+      "runCount": 0,
+      "runStatuses": [],
+      "status": 0,
+      "topLevelKeys": []
+    }
+  ],
+  "threadId": "7657504771049259008",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008"
+}

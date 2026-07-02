@@ -1,5 +1,13 @@
 # Eino ADK Semantic Loop And Budget Design
 
+> 2026-07-01 P1 DeerFlow parity update: the original M2 design made semantic
+> loop detection opt-in and terminal-error oriented. P1-J-003 supersedes that
+> default for repeated tool calls: Coze now enables DeerFlow-style warn/hard
+> thresholds by default, injects a `loop_warning` user message before the next
+> model call, and hard-stops by clearing repeated assistant tool calls so the
+> model can finalize. The content-free `run.semantic_loop_detected` path remains
+> only for explicit legacy limits and assistant-text loop detection.
+
 ## Goal
 
 Add Coze-owned semantic loop detection around Eino ADK task execution without

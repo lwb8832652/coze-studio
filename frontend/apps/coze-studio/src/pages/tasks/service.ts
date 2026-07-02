@@ -20,6 +20,12 @@ import {
   workbenchTask,
 } from '@coze-studio/api-schema';
 
+import {
+  taskThreadArtifactPayloadError,
+  taskThreadArtifactServiceError,
+} from './task-artifact-safe-error';
+export { isTaskThreadArtifactSafeError } from './task-artifact-safe-error';
+
 export const listTasks = workbenchTask.ListTasks;
 export const getTask = workbenchTask.GetTask;
 export const listTaskThreads = workbenchTask.ListTaskThreads;
@@ -129,6 +135,7 @@ export interface TaskThreadArtifactSignedURLResponse {
   };
   code: number;
   msg: string;
+  reason?: string;
 }
 
 export interface TaskThreadArtifactScanJob {
@@ -427,13 +434,21 @@ export const getTaskThreadArtifactSignedURL = async ({
   );
 
   if (!response.ok) {
-    throw new Error('生成任务产物签名链接失败');
+    throw await taskThreadArtifactServiceError(
+      response,
+      '生成任务产物签名链接失败',
+      mode,
+    );
   }
 
   const payload =
     (await response.json()) as TaskThreadArtifactSignedURLResponse;
   if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '生成任务产物签名链接失败');
+    throw taskThreadArtifactPayloadError(
+      payload.reason,
+      '生成任务产物签名链接失败',
+      mode,
+    );
   }
 
   return payload;

@@ -414,6 +414,91 @@ func (r *threadRepository) UpdateThreadTitle(
 	return thread, true, nil
 }
 
+func (r *threadRepository) UpdateThreadMetadata(
+	ctx context.Context,
+	req UpdateThreadMetadataRequest,
+) (*entity.Thread, bool, error) {
+	if req.ThreadID <= 0 {
+		return nil, false, fmt.Errorf("thread id is required")
+	}
+	metadata, err := optionalJSON("metadata", req.Metadata)
+	if err != nil {
+		return nil, false, err
+	}
+	updatedAt := req.UpdatedAt
+	if updatedAt <= 0 {
+		updatedAt = time.Now().UnixMilli()
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&threadPO{}).
+		Where("id = ?", req.ThreadID).
+		Updates(map[string]any{
+			"metadata":   metadata,
+			"updated_at": updatedAt,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+
+	thread, err := r.GetThread(ctx, req.ThreadID)
+	if err != nil {
+		return nil, false, err
+	}
+	return thread, true, nil
+}
+
+func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadRequest) (bool, error) {
+	if req.ThreadID <= 0 {
+		return false, fmt.Errorf("thread id is required")
+	}
+
+	var deleted bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		runPlanIDs := tx.Model(&agentRunPlanPO{}).
+			Select("run_id").
+			Where("thread_id = ?", req.ThreadID)
+		if err := tx.Where("run_id IN (?)", runPlanIDs).Delete(&agentRunPlanItemPO{}).Error; err != nil {
+			return err
+		}
+
+		cascadeDeletes := []struct {
+			model any
+			where string
+		}{
+			{model: &agentRunPlanPO{}, where: "thread_id = ?"},
+			{model: &agentArtifactScanJobPO{}, where: "thread_id = ?"},
+			{model: &agentArtifactPO{}, where: "thread_id = ?"},
+			{model: &agentFilePO{}, where: "thread_id = ?"},
+			{model: &tokenUsagePO{}, where: "thread_id = ?"},
+			{model: &memoryFlushJobPO{}, where: "thread_id = ?"},
+			{model: &transcriptSnapshotPO{}, where: "thread_id = ?"},
+			{model: &memoryAuditEventPO{}, where: "thread_id = ?"},
+			{model: &memoryPO{}, where: "thread_id = ?"},
+			{model: &checkpointPO{}, where: "thread_id = ?"},
+			{model: &runEventPO{}, where: "thread_id = ?"},
+			{model: &messagePO{}, where: "thread_id = ?"},
+			{model: &runPO{}, where: "thread_id = ?"},
+		}
+		for _, item := range cascadeDeletes {
+			if err := tx.Where(item.where, req.ThreadID).Delete(item.model).Error; err != nil {
+				return err
+			}
+		}
+
+		result := tx.Where("id = ?", req.ThreadID).Delete(&threadPO{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deleted = result.RowsAffected > 0
+		return nil
+	})
+	return deleted, err
+}
+
 func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	page := req.Page
 	if page <= 0 {

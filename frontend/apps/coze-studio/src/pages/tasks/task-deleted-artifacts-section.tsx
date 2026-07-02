@@ -86,11 +86,13 @@ const DeletedArtifactListItem = ({
 };
 
 export const TaskDeletedArtifactsSection = ({
+  onArtifactRestored,
   onArtifactsChanged,
   spaceId,
   threadId,
   visible,
 }: {
+  onArtifactRestored?: (artifact: TaskThreadArtifact) => void | Promise<void>;
   onArtifactsChanged?: () => void | Promise<void>;
   spaceId?: string;
   threadId: string;
@@ -151,6 +153,7 @@ export const TaskDeletedArtifactsSection = ({
         space_id: spaceId,
         thread_id: threadId,
       });
+      await onArtifactRestored?.(artifact);
       await onArtifactsChanged?.();
       await loadDeletedArtifacts();
     } catch (err) {

@@ -327,6 +327,7 @@ export const TaskArtifactFeedback = ({
         className="coze-prototype-artifact-side-preview"
         data-layout="deerflow-split"
         data-testid="task-artifact-side-preview"
+        data-width-mode="deerflow-60-40"
       >
         <TaskArtifactInlinePreview
           inlinePreview={inlinePreview}

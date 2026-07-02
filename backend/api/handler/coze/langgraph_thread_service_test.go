@@ -101,6 +101,122 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.NotContains(t, searchBody, `"thread_id":"1"`)
 }
 
+func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
+	h := server.Default()
+	h.PATCH("/api/threads/:thread_id", PatchLangGraphThread)
+	h.GET("/api/threads/:thread_id", GetLangGraphThread)
+	installAgentThreadTestService(t)
+
+	patchPayload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"title":       "Patched title metadata",
+			"custom":      "new",
+			"space_id":    "999",
+			"user_id":     "888",
+			"creator_id":  "777",
+			"thread_id":   "666",
+			"created_at":  "bad",
+			"updated_at":  "bad",
+			"status":      "running",
+			"source":      "evil",
+			"legacy_task": "evil",
+		},
+	})
+	require.NoError(t, err)
+
+	patchResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPatch,
+		"/api/threads/1",
+		&ut.Body{Body: bytes.NewBuffer(patchPayload), Len: len(patchPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	patchBody := string(patchResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, patchResp.Code)
+	require.Contains(t, patchBody, `"thread_id":"1"`)
+	require.Contains(t, patchBody, `"custom":"new"`)
+	require.Contains(t, patchBody, `"title":"Patched title metadata"`)
+	require.Contains(t, patchBody, `"space_id":"1"`)
+	require.Contains(t, patchBody, `"user_id":"2"`)
+	require.Contains(t, patchBody, `"source":"web"`)
+	require.Contains(t, patchBody, `"status":"idle"`)
+	require.NotContains(t, patchBody, `"thread_id":"666"`)
+	require.NotContains(t, patchBody, `"creator_id":"777"`)
+
+	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
+	getBody := string(getResp.Result().Body())
+	require.Equal(t, http.StatusOK, getResp.Code)
+	require.Contains(t, getBody, `"custom":"new"`)
+	require.Contains(t, getBody, `"space_id":"1"`)
+	require.Contains(t, getBody, `"user_id":"2"`)
+	require.Contains(t, getBody, `"source":"web"`)
+}
+
+func TestLangGraphThreadDeleteRemovesThreadData(t *testing.T) {
+	h := server.Default()
+	h.DELETE("/api/threads/:thread_id", DeleteLangGraphThread)
+	h.GET("/api/threads/:thread_id", GetLangGraphThread)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"delete me"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendMessage(context.Background(), &appagentthread.AppendMessageRequest{
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+		Role:     appagentthread.MessageRoleUser,
+		Content:  "delete me",
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID:  1,
+		RunID:     runResp.Run.RunID,
+		EventType: "step.completed",
+		Payload:   `{"step":"done"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		ChannelValues:   `{"messages":[{"role":"user","content":"delete me"}]}`,
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"test"}`,
+	})
+	require.NoError(t, err)
+
+	deleteResp := ut.PerformRequest(h.Engine, http.MethodDelete, "/api/threads/1", nil)
+	deleteBody := string(deleteResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, deleteResp.Code)
+	require.Contains(t, deleteBody, `"success":true`)
+	require.Contains(t, deleteBody, `"Deleted local thread data for 1"`)
+
+	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
+	require.NotEqual(t, http.StatusOK, getResp.Code)
+
+	messagesResp, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, messagesResp.Messages)
+	require.Zero(t, messagesResp.Total)
+
+	runsResp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Empty(t, runsResp.Runs)
+	require.Zero(t, runsResp.Total)
+}
+
 func TestLangGraphThreadSearchUsesMetadataSpaceID(t *testing.T) {
 	h := server.Default()
 	h.POST("/api/threads/search", SearchLangGraphThreads)
@@ -224,6 +340,62 @@ func TestLangGraphThreadStateHandlerPrefersLatestCheckpoint(t *testing.T) {
 	require.Contains(t, body, `"parent_checkpoint_id":"99"`)
 }
 
+func TestLangGraphThreadStatePostHandlerMergesValuesAndSyncsTitle(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/state", PostLangGraphThreadState)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"state update run"}]}`,
+	})
+	require.NoError(t, err)
+	base, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "planner",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"base message"}],"title":"旧标题","thread_data":{"city":"武汉"}}`,
+		ChannelVersions: `{"messages":1,"title":1,"thread_data":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"checkpoint","step":1}`,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"checkpoint_id": strconv.FormatInt(base.Checkpoint.CheckpointID, 10),
+		"as_node":       "manual_update",
+		"values": map[string]any{
+			"title":       "青岛旅游计划",
+			"thread_data": map[string]any{"city": "青岛", "days": 3},
+			"todos":       []map[string]any{{"content": "补充最佳旅行季节"}},
+		},
+	})
+	require.NoError(t, err)
+
+	updateResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/state",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(updateResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, updateResp.Code)
+	require.Contains(t, body, `"content":"base message"`)
+	require.Contains(t, body, `"title":"青岛旅游计划"`)
+	require.Contains(t, body, `"city":"青岛"`)
+	require.Contains(t, body, `"days":3`)
+	require.Contains(t, body, `"content":"补充最佳旅行季节"`)
+	require.Contains(t, body, `"parent_checkpoint_id":"`+strconv.FormatInt(base.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"source":"update"`)
+	require.Contains(t, body, `"writes":{"manual_update"`)
+	require.NotContains(t, body, `"checkpoint_id":"`+strconv.FormatInt(base.Checkpoint.CheckpointID, 10)+`"`)
+
+	threadResp, err := appagentthread.SVC.GetThread(context.Background(), &appagentthread.GetThreadRequest{ThreadID: 1})
+	require.NoError(t, err)
+	require.Equal(t, "青岛旅游计划", threadResp.Thread.Title)
+}
+
 func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
@@ -306,6 +478,124 @@ func TestLangGraphThreadHistoryHandlerPrefersCheckpointHistory(t *testing.T) {
 	require.Contains(t, body, `"parent_checkpoint_id":"`+strconv.FormatInt(first.Checkpoint.CheckpointID, 10)+`"`)
 	require.Contains(t, body, `"checkpoint_source":"checkpoint"`)
 	require.NotContains(t, body, "event-fallback")
+}
+
+func TestLangGraphThreadHistoryPostHandlerAcceptsDeerFlowBodyCursor(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/history", PostLangGraphThreadHistory)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"post history"}]}`,
+	})
+	require.NoError(t, err)
+	first, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "planner",
+		ChannelValues:   `{"messages":[{"role":"assistant","content":"older checkpoint"}],"todos":[{"content":"older"}]}`,
+		ChannelVersions: `{"messages":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"checkpoint","step":1}`,
+	})
+	require.NoError(t, err)
+	second, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:           1,
+		RunID:              runResp.Run.RunID,
+		ParentCheckpointID: first.Checkpoint.CheckpointID,
+		CheckpointNS:       "tools",
+		ChannelValues:      `{"messages":[{"role":"assistant","content":"newer checkpoint"}],"tool_results":{"search":"ok"}}`,
+		ChannelVersions:    `{"messages":2,"tool_results":1}`,
+		PendingSends:       `[{"node":"final"}]`,
+		Metadata:           `{"source":"checkpoint","step":2}`,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"limit":  1,
+		"before": strconv.FormatInt(second.Checkpoint.CheckpointID, 10),
+	})
+	require.NoError(t, err)
+
+	historyResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/history",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(historyResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, historyResp.Code)
+	require.Contains(t, body, `"checkpoint_id":"`+strconv.FormatInt(first.Checkpoint.CheckpointID, 10)+`"`)
+	require.Contains(t, body, `"parent_checkpoint_id":null`)
+	require.Contains(t, body, `"checkpoint_ns":"planner"`)
+	require.Contains(t, body, `"todos":[{"content":"older"}]`)
+	require.NotContains(t, body, `"checkpoint_id":"`+strconv.FormatInt(second.Checkpoint.CheckpointID, 10)+`"`)
+	require.NotContains(t, body, "newer checkpoint")
+}
+
+func TestLangGraphThreadHistoryPostHandlerRedactsADKCheckpointEnvelope(t *testing.T) {
+	h := server.Default()
+	h.POST("/api/threads/:thread_id/history", PostLangGraphThreadHistory)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"adk checkpoint"}]}`,
+	})
+	require.NoError(t, err)
+	envelope := appagentthread.ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(appagentthread.RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "thread-1/run-2",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte("raw-secret-checkpoint-bytes"),
+		Interrupts: map[string]appagentthread.ADKInterruptItem{
+			"interrupt-1": {
+				ID:          "interrupt-1",
+				Address:     "agent.ask",
+				IsRootCause: true,
+			},
+		},
+		RunRevision: 1,
+		CreatedAt:   1777252410411,
+	}
+	rawEnvelope, err := envelope.Marshal()
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "eino.adk",
+		RuntimeType:     string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey:      "thread-1/run-2",
+		EnvelopeVersion: 1,
+		ChannelValues:   string(rawEnvelope),
+		ChannelVersions: `{"runtime":1}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"source":"agent_harness","checkpoint_phase":"interrupt","status":"running"}`,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{"limit": 10})
+	require.NoError(t, err)
+
+	historyResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/history",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(historyResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, historyResp.Code)
+	require.Contains(t, body, `"checkpoint_ns":"eino.adk"`)
+	require.Contains(t, body, `"next":["interrupt-1"]`)
+	require.Contains(t, body, `"runtime":"eino_adk"`)
+	require.NotContains(t, body, "checkpoint_bytes")
+	require.NotContains(t, body, "raw-secret-checkpoint-bytes")
+	require.NotContains(t, body, "runtime_key")
 }
 
 func TestLangGraphCheckpointResumeReadinessHandlerReturnsPendingSends(t *testing.T) {

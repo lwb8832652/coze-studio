@@ -32,6 +32,7 @@ import {
   fetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL,
   installSkillFromArtifact,
+  isTaskThreadArtifactSafeError,
   reviewTaskThreadArtifactScan,
   restoreTaskThreadArtifact,
   type ArtifactScanReviewDecision,
@@ -42,6 +43,7 @@ type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 export interface TaskArtifactActions {
   activeAction: string;
   clearInlinePreview: () => void;
+  clearRemovedArtifact: (artifactId?: string) => void;
   error: string;
   handleArtifactAction: (
     artifact: TaskThreadArtifact,
@@ -69,13 +71,15 @@ const downloadSignedURL = (url: string, fileName: string) => {
 };
 
 const artifactActionErrorMessage = (mode: ArtifactActionMode, err?: unknown) =>
-  mode === 'install_skill' && err instanceof Error && err.message.trim()
+  isTaskThreadArtifactSafeError(err)
     ? err.message
-    : mode === 'download'
-      ? '下载任务产物失败，请稍后重试'
-      : mode === 'install_skill'
-        ? '安装技能失败，请稍后重试'
-        : '读取任务产物失败，请稍后重试';
+    : mode === 'install_skill' && err instanceof Error && err.message.trim()
+      ? err.message
+      : mode === 'download'
+        ? '下载任务产物失败，请稍后重试'
+        : mode === 'install_skill'
+          ? '安装技能失败，请稍后重试'
+          : '读取任务产物失败，请稍后重试';
 
 const readTextArtifactPreview = async ({
   artifact,
@@ -156,6 +160,17 @@ const runTaskArtifactAction = async ({
       contentType: response.data?.content_type || artifact.content_type,
       name: artifactFileName(artifact),
       previewRenderer: 'image',
+      url: signedURL,
+    });
+    return;
+  }
+
+  if (previewFamily === 'pdf') {
+    setInlinePreview({
+      artifactId: artifact.artifact_id,
+      contentType: response.data?.content_type || artifact.content_type,
+      name: artifactFileName(artifact),
+      previewRenderer: 'pdf',
       url: signedURL,
     });
     return;
@@ -297,6 +312,7 @@ const createReviewArtifactHandler =
     onArtifactsChanged,
     setActiveAction,
     setError,
+    setInlinePreview,
     spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
@@ -317,6 +333,9 @@ const createReviewArtifactHandler =
         space_id: spaceId,
         thread_id: threadId,
       });
+      setInlinePreview(previous =>
+        previous?.artifactId === artifact.artifact_id ? null : previous,
+      );
       await onArtifactsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : '审核产物扫描状态失败');
@@ -355,6 +374,10 @@ export const useTaskArtifactActions = ({
   return {
     activeAction,
     clearInlinePreview: () => setInlinePreview(null),
+    clearRemovedArtifact: artifactId =>
+      setRemovedArtifact(previous =>
+        !artifactId || previous?.artifactId === artifactId ? null : previous,
+      ),
     error,
     handleArtifactAction: createArtifactActionHandler(context),
     handleDeleteArtifact: createDeleteArtifactHandler(context),

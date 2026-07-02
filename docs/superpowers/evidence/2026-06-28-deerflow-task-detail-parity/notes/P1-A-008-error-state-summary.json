@@ -1,0 +1,11 @@
+{
+  "hasCannotView": true,
+  "hasRawError": false,
+  "redaction": "Full page text is not retained; only bounded error-state booleans are stored.",
+  "textSignals": {
+    "cannotView": false,
+    "retryOrReturn": true
+  },
+  "title": "扣子",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/1"
+}

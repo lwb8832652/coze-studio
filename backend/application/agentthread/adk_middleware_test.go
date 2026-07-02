@@ -246,12 +246,14 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 		_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
 			BeforeAgent(context.Background(), runCtx)
 		require.NoError(t, err)
-		require.Len(t, runCtx.Tools, 4)
+		require.Len(t, runCtx.Tools, 5)
 		var names []string
+		var toolInfos []*schema.ToolInfo
 		invokableTools := make(map[string]tool.InvokableTool)
 		for _, candidate := range runCtx.Tools {
 			info, infoErr := candidate.Info(context.Background())
 			require.NoError(t, infoErr)
+			toolInfos = append(toolInfos, info)
 			names = append(names, info.Name)
 			invokable, ok := candidate.(tool.InvokableTool)
 			require.True(t, ok)
@@ -262,7 +264,23 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 			plantask.TaskGetToolName,
 			plantask.TaskUpdateToolName,
 			plantask.TaskListToolName,
+			adkPlanCompletionGuardToolName,
 		}, names)
+		_, modelState, err := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
+			BeforeModelRewriteState(context.Background(), &adk.ChatModelAgentState{
+				ToolInfos: toolInfos,
+			}, nil)
+		require.NoError(t, err)
+		var visibleToolNames []string
+		for _, info := range modelState.ToolInfos {
+			visibleToolNames = append(visibleToolNames, info.Name)
+		}
+		require.ElementsMatch(t, []string{
+			plantask.TaskCreateToolName,
+			plantask.TaskGetToolName,
+			plantask.TaskUpdateToolName,
+			plantask.TaskListToolName,
+		}, visibleToolNames)
 
 		created, err := invokableTools[plantask.TaskCreateToolName].
 			InvokableRun(context.Background(), `{

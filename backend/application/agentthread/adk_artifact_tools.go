@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -36,14 +37,22 @@ const adkWriteFileInputSchema = `{
     },
     "content":{
       "type":"string",
-      "description":"Complete file content to write."
+      "description":"Complete UTF-8 text content to write. Use content_base64 instead for binary files."
+    },
+    "content_base64":{
+      "type":"string",
+      "description":"Base64-encoded file bytes for binary files such as images or PDFs. Do not provide content and content_base64 together."
     },
     "content_type":{
       "type":"string",
       "description":"Optional MIME type, for example text/markdown; charset=utf-8."
     }
   },
-  "required":["file_path","content"]
+  "required":["file_path"],
+  "oneOf":[
+    {"required":["content"]},
+    {"required":["content_base64"]}
+  ]
 }`
 
 const adkPresentFilesInputSchema = `{
@@ -100,9 +109,10 @@ type ADKArtifactToolCatalog struct {
 }
 
 type adkWriteFileInput struct {
-	FilePath    string `json:"file_path"`
-	Content     string `json:"content"`
-	ContentType string `json:"content_type"`
+	FilePath      string  `json:"file_path"`
+	Content       *string `json:"content"`
+	ContentBase64 *string `json:"content_base64"`
+	ContentType   string  `json:"content_type"`
 }
 
 type adkPresentFilesInput struct {
@@ -173,10 +183,14 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 		if err := json.Unmarshal([]byte(strings.TrimSpace(call.Arguments)), &input); err != nil {
 			return "", fmt.Errorf("write_file arguments are invalid: %w", err)
 		}
+		content, err := decodeADKWriteFileContent(input)
+		if err != nil {
+			return "", err
+		}
 		resp, err := i.app.WriteOutputFile(ctx, &WriteOutputFileRequest{
 			Run:         call.Run,
 			FilePath:    input.FilePath,
-			Content:     input.Content,
+			Content:     string(content),
 			ContentType: input.ContentType,
 		})
 		if err != nil {
@@ -215,4 +229,29 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 	default:
 		return "", fmt.Errorf("unsupported artifact tool: %s", call.Name)
 	}
+}
+
+func decodeADKWriteFileContent(input adkWriteFileInput) ([]byte, error) {
+	hasContent := input.Content != nil
+	hasContentBase64 := input.ContentBase64 != nil && strings.TrimSpace(*input.ContentBase64) != ""
+	if hasContent && hasContentBase64 {
+		return nil, fmt.Errorf("write_file requires either content or content_base64, not both")
+	}
+	if hasContent {
+		return []byte(*input.Content), nil
+	}
+	if !hasContentBase64 {
+		return nil, fmt.Errorf("write_file requires either content or content_base64")
+	}
+	normalized := strings.NewReplacer(
+		"\n", "",
+		"\r", "",
+		"\t", "",
+		" ", "",
+	).Replace(*input.ContentBase64)
+	content, err := base64.StdEncoding.DecodeString(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("write_file content_base64 is invalid")
+	}
+	return content, nil
 }

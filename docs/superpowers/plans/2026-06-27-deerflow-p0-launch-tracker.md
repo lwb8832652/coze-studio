@@ -301,6 +301,9 @@ Every implementation slice must update this document:
 
 P1 starts only after the P0 exit gate passes.
 
+- Active P1 stabilization tracker:
+  `docs/superpowers/plans/2026-07-01-deerflow-p1-stabilization-tracker.md`
+
 - Full browser E2E harness and CI jobs for task, memory, Skills, MCP, and
   Runtime Doctor workflows.
 - Complete LangGraph compatibility suite beyond the DeerFlow-visible P0 API

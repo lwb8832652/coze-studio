@@ -640,6 +640,7 @@ func TestDefaultADKToolProviderIncludesHumanInteractionTools(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{
 		adkClarificationToolName,
+		adkDeerFlowClarificationToolName,
 		adkConfirmationToolName,
 	}, names)
 }

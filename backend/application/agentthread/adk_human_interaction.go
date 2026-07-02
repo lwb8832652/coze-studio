@@ -36,8 +36,9 @@ const (
 	humanInteractionResponseSchema = "coze.human_interaction_response.v1"
 	humanInteractionResultSchema   = "coze.human_interaction_tool_result.v1"
 
-	adkClarificationToolName = "ask_user_clarification"
-	adkConfirmationToolName  = "request_human_confirmation"
+	adkClarificationToolName         = "ask_user_clarification"
+	adkDeerFlowClarificationToolName = "ask_clarification"
+	adkConfirmationToolName          = "request_human_confirmation"
 )
 
 const (
@@ -120,11 +121,48 @@ type humanInteractionToolState struct {
 }
 
 type clarificationToolInput struct {
-	Question      string                   `json:"question"`
-	Description   string                   `json:"description,omitempty"`
-	Choices       []HumanInteractionChoice `json:"choices,omitempty"`
-	AllowFreeText bool                     `json:"allow_free_text,omitempty"`
-	Required      bool                     `json:"required,omitempty"`
+	Question          string                   `json:"question"`
+	Description       string                   `json:"description,omitempty"`
+	Context           string                   `json:"context,omitempty"`
+	ClarificationType string                   `json:"clarification_type,omitempty"`
+	Choices           []HumanInteractionChoice `json:"choices,omitempty"`
+	Options           clarificationOptions     `json:"options,omitempty"`
+	AllowFreeText     bool                     `json:"allow_free_text,omitempty"`
+	Required          bool                     `json:"required,omitempty"`
+}
+
+type clarificationOptions []string
+
+func (o *clarificationOptions) UnmarshalJSON(raw []byte) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		*o = nil
+		return nil
+	}
+
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		*o = values
+		return nil
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		*o = nil
+		return nil
+	}
+	if strings.HasPrefix(value, "[") {
+		if err := json.Unmarshal([]byte(value), &values); err == nil {
+			*o = values
+			return nil
+		}
+	}
+	*o = []string{value}
+	return nil
 }
 
 type confirmationToolInput struct {
@@ -151,6 +189,14 @@ func NewADKClarificationTool() (tool.InvokableTool, error) {
 	}, nil
 }
 
+func NewADKDeerFlowClarificationTool() (tool.InvokableTool, error) {
+	return &adkHumanInteractionTool{
+		name:        adkDeerFlowClarificationToolName,
+		description: "Ask the user for clarification when more information is required before continuing.",
+		kind:        HumanInteractionKindClarification,
+	}, nil
+}
+
 func NewADKConfirmationTool() (tool.InvokableTool, error) {
 	return &adkHumanInteractionTool{
 		name:        adkConfirmationToolName,
@@ -164,12 +210,16 @@ func NewADKHumanInteractionTools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
+	deerFlowClarification, err := NewADKDeerFlowClarificationTool()
+	if err != nil {
+		return nil, err
+	}
 	confirmation, err := NewADKConfirmationTool()
 	if err != nil {
 		return nil, err
 	}
 
-	return []tool.BaseTool{clarification, confirmation}, nil
+	return []tool.BaseTool{clarification, deerFlowClarification, confirmation}, nil
 }
 
 func NewDefaultADKToolProvider() ADKToolProvider {
@@ -464,10 +514,17 @@ func (t *adkHumanInteractionTool) Info(context.Context) (*schema.ToolInfo, error
 	switch t.kind {
 	case HumanInteractionKindClarification:
 		params = map[string]*schema.ParameterInfo{
-			"question":        {Type: schema.String, Desc: "Question to ask the user.", Required: true},
-			"description":     {Type: schema.String, Desc: "Short context for the question."},
-			"allow_free_text": {Type: schema.Boolean, Desc: "Whether a free-text answer is allowed."},
-			"required":        {Type: schema.Boolean, Desc: "Whether the answer is required."},
+			"question":           {Type: schema.String, Desc: "Question to ask the user.", Required: true},
+			"description":        {Type: schema.String, Desc: "Short context for the question."},
+			"context":            {Type: schema.String, Desc: "Optional context explaining why clarification is required."},
+			"clarification_type": {Type: schema.String, Desc: "Clarification type.", Enum: []string{"missing_info", "ambiguous_requirement", "approach_choice", "risk_confirmation", "suggestion"}},
+			"allow_free_text":    {Type: schema.Boolean, Desc: "Whether a free-text answer is allowed."},
+			"required":           {Type: schema.Boolean, Desc: "Whether the answer is required."},
+			"options": {
+				Type:     schema.Array,
+				Desc:     "Optional answer options.",
+				ElemInfo: &schema.ParameterInfo{Type: schema.String},
+			},
 			"choices": {
 				Type: schema.Array,
 				Desc: "Optional answer choices.",
@@ -555,16 +612,24 @@ func (t *adkHumanInteractionTool) prompt(
 		if err := json.Unmarshal([]byte(strings.TrimSpace(argumentsInJSON)), &input); err != nil {
 			return HumanInteractionPrompt{}, fmt.Errorf("clarification arguments are invalid: %w", err)
 		}
+		description := strings.TrimSpace(input.Description)
+		if description == "" {
+			description = strings.TrimSpace(input.Context)
+		}
+		choices := normalizeHumanInteractionChoices(input.Choices)
+		if len(choices) == 0 {
+			choices = humanInteractionChoicesFromOptions([]string(input.Options))
+		}
 		prompt := HumanInteractionPrompt{
 			Schema:        humanInteractionSchema,
 			InteractionID: newHumanInteractionID(t.kind, input.Question),
 			Kind:          HumanInteractionKindClarification,
 			Title:         "需要补充信息",
 			Question:      strings.TrimSpace(input.Question),
-			Description:   strings.TrimSpace(input.Description),
+			Description:   description,
 			Required:      input.Required,
 			AllowFreeText: input.AllowFreeText,
-			Choices:       normalizeHumanInteractionChoices(input.Choices),
+			Choices:       choices,
 			RiskLevel:     HumanInteractionRiskNone,
 			ToolName:      t.name,
 			ToolCallID:    compose.GetToolCallID(ctx),
@@ -835,6 +900,23 @@ func normalizeHumanInteractionChoices(choices []HumanInteractionChoice) []HumanI
 			continue
 		}
 		out = append(out, normalized)
+	}
+
+	return out
+}
+
+func humanInteractionChoicesFromOptions(options []string) []HumanInteractionChoice {
+	out := make([]HumanInteractionChoice, 0, len(options))
+	for index, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, HumanInteractionChoice{
+			ID:    fmt.Sprintf("%d", index+1),
+			Label: trimmed,
+			Value: trimmed,
+		})
 	}
 
 	return out

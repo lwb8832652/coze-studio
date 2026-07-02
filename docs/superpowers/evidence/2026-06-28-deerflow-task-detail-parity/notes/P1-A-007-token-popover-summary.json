@@ -1,0 +1,11 @@
+{
+  "hasDisplayModes": true,
+  "hasExplanatoryNote": true,
+  "hasInput": true,
+  "hasOutput": true,
+  "hasPopover": true,
+  "hasTotal": true,
+  "redaction": "Full popover text is not retained; this summary stores only booleans and unsafe hit names.",
+  "unsafeHits": [],
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008"
+}

@@ -139,6 +139,66 @@ func (s *threadService) UpdateThreadTitle(
 	})
 }
 
+func (s *threadService) UpdateThreadMetadata(
+	ctx context.Context,
+	req *UpdateThreadMetadataRequest,
+) (*entity.Thread, bool, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, false, err
+	}
+	if req == nil {
+		return nil, false, InvalidArgumentErrorf("update thread metadata request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, false, InvalidArgumentErrorf("thread id is required")
+	}
+	metadata := strings.TrimSpace(req.Metadata)
+	if metadata == "" {
+		metadata = "{}"
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return nil, false, InvalidArgumentErrorf("thread metadata must be valid JSON object: %v", err)
+	}
+	if parsed == nil {
+		parsed = map[string]any{}
+	}
+	metadataJSON, err := json.Marshal(parsed)
+	if err != nil {
+		return nil, false, err
+	}
+
+	updatedAt := req.UpdatedAt
+	if updatedAt <= 0 {
+		updatedAt = time.Now().UnixMilli()
+	}
+
+	return s.repo.UpdateThreadMetadata(ctx, repository.UpdateThreadMetadataRequest{
+		ThreadID:  req.ThreadID,
+		Metadata:  string(metadataJSON),
+		UpdatedAt: updatedAt,
+	})
+}
+
+func (s *threadService) DeleteThread(
+	ctx context.Context,
+	req *DeleteThreadRequest,
+) (bool, error) {
+	if err := s.requireRepo(); err != nil {
+		return false, err
+	}
+	if req == nil {
+		return false, InvalidArgumentErrorf("delete thread request is required")
+	}
+	if req.ThreadID <= 0 {
+		return false, InvalidArgumentErrorf("thread id is required")
+	}
+
+	return s.repo.DeleteThread(ctx, repository.DeleteThreadRequest{
+		ThreadID: req.ThreadID,
+	})
+}
+
 func (s *threadService) ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, 0, err
@@ -872,6 +932,7 @@ func (s *threadService) RecallMemories(ctx context.Context, req *RecallMemoriesR
 		ThreadID: req.ThreadID,
 		RunID:    req.RunID,
 		Scopes:   req.Scopes,
+		Query:    strings.TrimSpace(req.Query),
 		Limit:    limit,
 		Now:      time.Now().UnixMilli(),
 	})

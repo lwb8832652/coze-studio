@@ -1,0 +1,28 @@
+{
+  "case_id": "P1-A-000",
+  "captured_at": "2026-07-01",
+  "source": "coze",
+  "method": "browser_dom_summary",
+  "url": "http://localhost:8080/space/7656275718757679104/chats/new",
+  "title": "扣子",
+  "ready_state": "complete",
+  "has_login_prompt": false,
+  "has_workbench_shell": true,
+  "safe_visible_labels": [
+    "新建任务",
+    "全部任务",
+    "我的任务",
+    "Pro",
+    "拓展",
+    "DeepSeek V4 Pro (Thinking)",
+    "@"
+  ],
+  "button_count_sampled": 30,
+  "redacted_fields": [
+    "body text",
+    "recent task titles",
+    "full button labels",
+    "message content",
+    "prompt text"
+  ]
+}

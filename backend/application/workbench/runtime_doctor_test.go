@@ -19,13 +19,18 @@ package workbench
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
 
+	diagnosticapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/diagnostic"
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
+	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 func TestRuntimeDoctorModelCheckReportsConfiguredDefaultModelWithoutCallingIt(t *testing.T) {
@@ -74,6 +79,104 @@ func TestRuntimeDoctorModelCheckConvertsProviderPanicToDiagnosticError(t *testin
 	require.Contains(t, check.Message, "provider panic")
 	require.NotContains(t, check.Message, "hunter2")
 	require.NotContains(t, check.Message, "password")
+}
+
+func TestRuntimeDoctorModelDiagnosticsReportsCapabilitiesAndOptionalLiveProbe(t *testing.T) {
+	t.Setenv("WORKBENCH_RUNTIME_DOCTOR_LIVE_MODEL_PROBE", "true")
+	ctx := context.Background()
+	chatModel := &fakeRuntimeDoctorCapabilityModel{
+		UTChatModel: &testutil.UTChatModel{
+			InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+				require.Len(t, in, 1)
+				require.NotContains(t, in[0].Content, "user prompt")
+				return schema.AssistantMessage("provider replied with hidden diagnostic text", nil), nil
+			},
+		},
+		capabilities: appagentthread.ADKModelCapabilities{
+			NativeToolSearch: true,
+			Thinking:         true,
+			Reasoning:        true,
+			Vision:           true,
+		},
+	}
+
+	data, checks := runtimeDoctorModelDiagnostics(ctx, func(context.Context, int64) (model.BaseChatModel, bool, error) {
+		return chatModel, true, nil
+	})
+
+	require.Equal(t, runtimeDoctorStatusReady, data.Status)
+	require.True(t, data.Configured)
+	require.Equal(t, runtimeDoctorStatusReady, data.LiveProbe)
+	require.NotNil(t, data.Capabilities)
+	require.True(t, data.Capabilities.NativeToolSearch)
+	require.True(t, data.Capabilities.Thinking)
+	require.True(t, data.Capabilities.Reasoning)
+	require.True(t, data.Capabilities.Vision)
+	require.False(t, data.Capabilities.Audio)
+	require.Equal(t, 1, chatModel.Index)
+
+	checkByName := runtimeDoctorChecksByName(checks)
+	require.Equal(t, runtimeDoctorStatusReady, checkByName["model.default"].Status)
+	require.Equal(t, runtimeDoctorStatusReady, checkByName["model.capabilities"].Status)
+	require.Equal(t, runtimeDoctorStatusReady, checkByName["model.live_connectivity"].Status)
+	require.NotContains(t, strings.Join(runtimeDoctorCheckMessages(checks), "\n"), "provider replied")
+	require.NotContains(t, strings.Join(runtimeDoctorCheckMessages(checks), "\n"), "user prompt")
+}
+
+func TestRuntimeDoctorModelDiagnosticsRedactsLiveProbeErrors(t *testing.T) {
+	t.Setenv("WORKBENCH_RUNTIME_DOCTOR_LIVE_MODEL_PROBE", "true")
+	ctx := context.Background()
+	chatModel := &testutil.UTChatModel{
+		InvokeResultProvider: func(_ int, _ []*schema.Message) (*schema.Message, error) {
+			return nil, errors.New("upstream failed authorization=Bearer sk-live-secret")
+		},
+	}
+
+	data, checks := runtimeDoctorModelDiagnostics(ctx, func(context.Context, int64) (model.BaseChatModel, bool, error) {
+		return chatModel, true, nil
+	})
+
+	require.Equal(t, runtimeDoctorStatusError, data.LiveProbe)
+	checkByName := runtimeDoctorChecksByName(checks)
+	require.Equal(t, runtimeDoctorStatusError, checkByName["model.live_connectivity"].Status)
+	message := checkByName["model.live_connectivity"].Message
+	require.Contains(t, message, "upstream failed")
+	require.NotContains(t, message, "authorization")
+	require.NotContains(t, message, "Bearer")
+	require.NotContains(t, message, "sk-live-secret")
+}
+
+func TestRuntimeDoctorSandboxDataReportsBoundedPolicy(t *testing.T) {
+	t.Setenv(consts.CodeRunnerType, "sandbox")
+	t.Setenv(consts.CodeRunnerAllowNet, "api.example.test,localhost:3000")
+	t.Setenv(consts.CodeRunnerAllowRun, "")
+	t.Setenv(consts.CodeRunnerAllowFFI, "")
+	t.Setenv(consts.CodeRunnerNodeModulesDir, "/private/node_modules")
+
+	data, check := runtimeDoctorSandboxData()
+
+	require.Equal(t, runtimeDoctorStatusReady, data.Status)
+	require.Equal(t, "sandbox", data.RunnerType)
+	require.Equal(t, "configured", data.Network)
+	require.Equal(t, "restricted", data.Process)
+	require.Equal(t, "restricted", data.FFI)
+	require.Equal(t, "configured", data.NodeModules)
+	require.Equal(t, "sandbox.runner_policy", check.Name)
+	require.Equal(t, "sandbox", check.Category)
+	require.Equal(t, runtimeDoctorStatusReady, check.Status)
+	require.NotContains(t, check.Message, "api.example.test")
+	require.NotContains(t, check.Message, "/private/node_modules")
+}
+
+func TestRuntimeDoctorSandboxDataWarnsForLocalRunner(t *testing.T) {
+	t.Setenv(consts.CodeRunnerType, "local")
+
+	data, check := runtimeDoctorSandboxData()
+
+	require.Equal(t, runtimeDoctorStatusWarning, data.Status)
+	require.Equal(t, "local", data.RunnerType)
+	require.Equal(t, runtimeDoctorStatusWarning, check.Status)
+	require.Contains(t, check.Message, "local code runner")
 }
 
 func TestRuntimeDoctorSkillCheckSummarizesCountsAndSafeNames(t *testing.T) {
@@ -162,4 +265,35 @@ func (f *fakeRuntimeDoctorSkillService) ListSkills(
 ) (*skillapi.ListSkillsResponse, error) {
 	f.req = req
 	return f.resp, f.err
+}
+
+type fakeRuntimeDoctorCapabilityModel struct {
+	*testutil.UTChatModel
+	capabilities appagentthread.ADKModelCapabilities
+}
+
+func (f *fakeRuntimeDoctorCapabilityModel) ADKProviderCapabilities() appagentthread.ADKModelCapabilities {
+	return f.capabilities
+}
+
+func runtimeDoctorChecksByName(
+	checks []*diagnosticapi.RuntimeDoctorCheck,
+) map[string]*diagnosticapi.RuntimeDoctorCheck {
+	result := make(map[string]*diagnosticapi.RuntimeDoctorCheck, len(checks))
+	for _, check := range checks {
+		if check != nil {
+			result[check.Name] = check
+		}
+	}
+	return result
+}
+
+func runtimeDoctorCheckMessages(checks []*diagnosticapi.RuntimeDoctorCheck) []string {
+	result := make([]string, 0, len(checks))
+	for _, check := range checks {
+		if check != nil {
+			result = append(result, check.Message)
+		}
+	}
+	return result
 }

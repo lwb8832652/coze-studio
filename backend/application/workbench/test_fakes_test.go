@@ -122,8 +122,19 @@ func (r *recordingAgentThreadService) UpdateThreadTitle(
 	return nil, false, nil
 }
 
+func (r *recordingAgentThreadService) UpdateThreadMetadata(
+	context.Context,
+	*agentthreadsvc.UpdateThreadMetadataRequest,
+) (*agentthreadentity.Thread, bool, error) {
+	return nil, false, nil
+}
+
 func (r *recordingAgentThreadService) ListThreads(context.Context, *agentthreadsvc.ListThreadsRequest) ([]*agentthreadentity.Thread, int64, error) {
 	return nil, 0, nil
+}
+
+func (r *recordingAgentThreadService) DeleteThread(context.Context, *agentthreadsvc.DeleteThreadRequest) (bool, error) {
+	return false, nil
 }
 
 func (r *recordingAgentThreadService) AppendMessage(context.Context, *agentthreadsvc.AppendMessageRequest) (*agentthreadentity.Message, error) {

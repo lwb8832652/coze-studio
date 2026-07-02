@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -31,6 +32,8 @@ const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
 	subagentRetryNotSupportedMessage = "subagent retry executor is not implemented"
 )
+
+var generatedThreadTitleThinkTagRE = regexp.MustCompile(`(?is)<think>.*?</think>`)
 
 type RunExecutor interface {
 	Execute(ctx context.Context, run *RunSummary) (*RunExecutionResult, error)
@@ -68,18 +71,30 @@ type RunExecutionResult struct {
 	Title    string
 }
 
+type RunTitleGenerationInput struct {
+	Run              *RunSummary
+	UserMessage      string
+	AssistantMessage string
+}
+
+type RunTitleGenerator interface {
+	GenerateTitle(ctx context.Context, input RunTitleGenerationInput) (string, error)
+}
+
 type RunProcessorOptions struct {
-	WorkerID  string
-	BatchSize int32
-	EventSink RunEventSink
+	WorkerID       string
+	BatchSize      int32
+	EventSink      RunEventSink
+	TitleGenerator RunTitleGenerator
 }
 
 type RunProcessor struct {
-	app       *ApplicationService
-	executor  RunExecutor
-	eventSink RunEventSink
-	workerID  string
-	batchSize int32
+	app            *ApplicationService
+	executor       RunExecutor
+	eventSink      RunEventSink
+	titleGenerator RunTitleGenerator
+	workerID       string
+	batchSize      int32
 }
 
 type RunProcessResult struct {
@@ -118,11 +133,12 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 	}
 
 	return &RunProcessor{
-		app:       app,
-		executor:  executor,
-		eventSink: eventSink,
-		workerID:  workerID,
-		batchSize: batchSize,
+		app:            app,
+		executor:       executor,
+		eventSink:      eventSink,
+		titleGenerator: opts.TitleGenerator,
+		workerID:       workerID,
+		batchSize:      batchSize,
 	}
 }
 
@@ -376,11 +392,6 @@ func (p *RunProcessor) syncGeneratedThreadTitle(
 	if userMessage == "" {
 		return
 	}
-	title := generatedThreadTitle(userMessage, resultTitle(result))
-	if title == "" {
-		return
-	}
-
 	threadResp, err := p.app.GetThread(ctx, &GetThreadRequest{ThreadID: run.ThreadID})
 	if err != nil || threadResp == nil || threadResp.Thread == nil {
 		return
@@ -388,6 +399,10 @@ func (p *RunProcessor) syncGeneratedThreadTitle(
 	currentTitle := strings.TrimSpace(threadResp.Thread.Title)
 	initialTitle := taskThreadTitle("", userMessage)
 	if currentTitle != "" && currentTitle != initialTitle {
+		return
+	}
+	title := p.generatedThreadTitle(ctx, run, userMessage, result)
+	if title == "" {
 		return
 	}
 	if currentTitle == title {
@@ -406,6 +421,33 @@ func (p *RunProcessor) syncGeneratedThreadTitle(
 	})
 }
 
+func (p *RunProcessor) generatedThreadTitle(
+	ctx context.Context,
+	run *RunSummary,
+	userMessage string,
+	result *RunExecutionResult,
+) string {
+	if title := normalizeGeneratedThreadTitle(resultTitle(result)); title != "" {
+		return title
+	}
+	if title := extractQuotedGeneratedThreadTitle(userMessage); title != "" {
+		return title
+	}
+	if p != nil && p.titleGenerator != nil {
+		title, err := p.titleGenerator.GenerateTitle(ctx, RunTitleGenerationInput{
+			Run:              run,
+			UserMessage:      userMessage,
+			AssistantMessage: strings.TrimSpace(resultMessage(result)),
+		})
+		if err == nil {
+			if title := normalizeGeneratedThreadTitle(title); title != "" {
+				return title
+			}
+		}
+	}
+	return fallbackGeneratedThreadTitle(userMessage)
+}
+
 func generatedThreadTitle(userMessage, explicitTitle string) string {
 	if title := normalizeGeneratedThreadTitle(explicitTitle); title != "" {
 		return title
@@ -413,7 +455,10 @@ func generatedThreadTitle(userMessage, explicitTitle string) string {
 	if title := extractQuotedGeneratedThreadTitle(userMessage); title != "" {
 		return title
 	}
+	return fallbackGeneratedThreadTitle(userMessage)
+}
 
+func fallbackGeneratedThreadTitle(userMessage string) string {
 	title := stripGeneratedThreadTitlePrefix(userMessage)
 	title = firstGeneratedThreadTitleSentence(title)
 	title = normalizeGeneratedThreadTitle(title)
@@ -486,19 +531,7 @@ func firstGeneratedThreadTitleSentence(text string) string {
 }
 
 func normalizeGeneratedThreadTitle(title string) string {
-	title = strings.TrimSpace(title)
-	title = strings.Trim(title, "\"'")
-	title = strings.TrimSpace(title)
-	title = strings.Trim(title, "，。,.；;:：")
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return ""
-	}
-	runes := []rune(title)
-	if len(runes) > 60 {
-		return string(runes[:60])
-	}
-	return title
+	return normalizeGeneratedThreadTitleWithLimit(title, defaultRunTitleMaxChars)
 }
 
 func isSubagentRetryCommand(command string) bool {

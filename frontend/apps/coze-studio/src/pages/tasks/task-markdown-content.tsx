@@ -20,6 +20,8 @@ import type mermaid from 'mermaid';
 import { IconCozCopy, IconCozDownload } from '@coze-arch/coze-design/icons';
 import { MdBoxLazy } from '@coze-arch/bot-md-box-adapter/lazy';
 
+import { copyTextToClipboard } from './task-clipboard';
+
 type MermaidAPI = typeof mermaid;
 interface MarkdownSegment {
   key: string;
@@ -166,7 +168,7 @@ const TaskMermaidBlock = ({ source }: { source: string }) => {
   }, [renderID, source]);
 
   const handleCopySource = () => {
-    void navigator.clipboard?.writeText(source);
+    void copyTextToClipboard(source);
   };
 
   const handleDownloadSVG = () => {

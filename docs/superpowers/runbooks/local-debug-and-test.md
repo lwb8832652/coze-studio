@@ -35,6 +35,10 @@ AGENT_THREAD_RUNTIME_DEFAULT=eino_adk \
 AGENT_THREAD_EINO_ADK_ENABLED=true \
 AGENT_THREAD_WORKER_ENABLED=true \
 AGENT_THREAD_WORKER_INTERVAL_MS=2000 \
+AGENT_MEMORY_FLUSH_WORKER_ENABLED=true \
+AGENT_MEMORY_EXTRACTOR_ENABLED=true \
+AGENT_MEMORY_EXTRACTOR_MODEL_ID=100002 \
+AGENT_MEMORY_EXTRACTOR_MODEL_NAME=deepseek-v4-pro \
 ./opencoze -start
 ```
 
@@ -43,6 +47,11 @@ Confirm the startup log contains:
 ```text
 load env file: .env.debug
 ```
+
+For DeerFlow memory parity tests, the memory flush worker and model extractor
+must be enabled together. If `AGENT_MEMORY_FLUSH_WORKER_ENABLED=true` but
+`AGENT_MEMORY_EXTRACTOR_ENABLED=false`, terminal transcripts will enqueue
+`agent_memory_flush_jobs` but no durable memory records will be written.
 
 ### Local Web Search Proxy
 

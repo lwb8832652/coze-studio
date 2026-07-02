@@ -1,0 +1,27 @@
+{
+  "case_id": "P1-A-002",
+  "captured_at": "2026-07-01",
+  "source": "deerflow",
+  "method": "browser_visual_summary",
+  "url": "http://localhost:2026/workspace/chats/165d8335-5aa2-48ec-8295-54c4a917fce7",
+  "title": "Mermaid Diagrams Request and Example - DeerFlow",
+  "screenshot": "screenshots/deerflow/P1-A-002-standard-mermaid-run.png",
+  "visible_controls": {
+    "token_indicator": true,
+    "export_action": true,
+    "bottom_composer": true,
+    "followup_suggestions": true
+  },
+  "transient_capture_issue": "Initial in-app browser DOM/screenshot capture timed out while the page was still settling; retry succeeded after the page stabilized.",
+  "missing_evidence": ["authenticated Network endpoint summary"],
+  "redacted_fields": [
+    "prompt text",
+    "full assistant answer",
+    "tool arguments/results",
+    "credentials",
+    "object URIs",
+    "signed URLs",
+    "raw provider bodies",
+    "checkpoint bytes"
+  ]
+}

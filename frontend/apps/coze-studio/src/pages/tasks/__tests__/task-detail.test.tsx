@@ -16,6 +16,9 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { resolve as resolvePath } from 'node:path';
+import { readFileSync } from 'node:fs';
+
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -116,6 +119,13 @@ vi.mock('../service', () => ({
   reviewTaskThreadArtifactScan: mockReviewTaskThreadArtifactScan,
   fetchTaskThreadArtifactContent: mockFetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL: mockGetTaskThreadArtifactSignedURL,
+  isTaskThreadArtifactSafeError: (err: unknown) =>
+    Boolean(
+      err &&
+        typeof err === 'object' &&
+        'safeForDisplay' in err &&
+        (err as { safeForDisplay?: unknown }).safeForDisplay === true,
+    ),
   installSkillFromArtifact: mockInstallSkillFromArtifact,
   deleteTaskThreadArtifact: mockDeleteTaskThreadArtifact,
   restoreTaskThreadArtifact: mockRestoreTaskThreadArtifact,
@@ -844,6 +854,30 @@ describe('TaskDetailPage', () => {
           default_mode: 'eino_adk',
           eino_adk_enabled: true,
         },
+        model: {
+          status: 'ready',
+          configured: true,
+          live_probe: 'disabled',
+          capabilities: {
+            native_tool_search: false,
+            thinking: true,
+            reasoning: false,
+            vision: false,
+            pdf: false,
+            file: false,
+            audio: false,
+            video: false,
+          },
+        },
+        sandbox: {
+          status: 'ready',
+          runner_type: 'sandbox',
+          network: 'restricted',
+          process: 'restricted',
+          ffi: 'restricted',
+          node_modules: 'restricted',
+          message: 'sandbox code runner policy is configured',
+        },
         web_tools: {
           web_fetch: {
             status: 'ready',
@@ -977,6 +1011,10 @@ describe('TaskDetailPage', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    document.documentElement.classList.remove(
+      'coze-task-detail-responsive-page',
+    );
+    document.body.classList.remove('coze-task-detail-responsive-page');
   });
 
   it('renders a DeerFlow-style message skeleton while task detail is loading', async () => {
@@ -1814,6 +1852,53 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('scopes narrow responsive overrides to the mounted task detail page', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(false);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(true);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+
+    expect(
+      document.body.classList.contains('coze-task-detail-responsive-page'),
+    ).toBe(false);
+  });
+
+  it('keeps task detail responsive overrides scoped to narrow screens', () => {
+    const workspacePrototypeStyles = readFileSync(
+      resolvePath(process.cwd(), 'src/components/workspace-prototype.less'),
+      'utf8',
+    );
+
+    expect(workspacePrototypeStyles).toContain('@media (width <= 1199px)');
+    expect(workspacePrototypeStyles).toContain(
+      'body.coze-task-detail-responsive-page',
+    );
+    expect(workspacePrototypeStyles).toContain('min-width: 0 !important');
+    expect(workspacePrototypeStyles).toContain(
+      '.coze-prototype-task-detail-page:has(.coze-prototype-artifact-side-preview)',
+    );
+  });
+
   it('renders canonical thread guardrail audit records with metadata-only fields', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -2331,13 +2416,56 @@ describe('TaskDetailPage', () => {
     });
     mockGetTaskThreadTokenUsage.mockResolvedValue({
       data: {
-        usage: [],
+        usage: [
+          {
+            usage_id: 'usage-token-1',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'planner',
+            step_index: 0,
+            step_name: 'planner',
+            model_name: 'gpt-4.1',
+            provider: 'openai',
+            input_tokens: 1000,
+            output_tokens: 500,
+            total_tokens: 1500,
+            cost_micros: 2000,
+            currency: 'usd',
+            estimated: false,
+            raw_usage: '{"prompt":"secret"}',
+            metadata: '{"hidden":"metadata"}',
+            created_at: 1717000200000,
+          },
+          {
+            usage_id: 'usage-token-2',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            space_id: 'space-1',
+            source: 'tool',
+            step_id: 'tool-step',
+            step_index: 1,
+            step_name: 'tool-step',
+            model_name: '',
+            provider: '',
+            input_tokens: 234,
+            output_tokens: 67,
+            total_tokens: 301,
+            cost_micros: 500,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000210000,
+          },
+        ],
         total: 2,
         aggregate: {
           input_tokens: 1234,
           output_tokens: 567,
           total_tokens: 1801,
-          cost_micros: 0,
+          cost_micros: 2500,
           call_count: 2,
           lead_agent_tokens: 1500,
           subagent_tokens: 0,
@@ -2386,6 +2514,8 @@ describe('TaskDetailPage', () => {
       '567',
       '总计',
       '1,801',
+      '成本',
+      'USD 0.002500',
       '显示方式',
       '关闭',
       '隐藏顶部和会话内',
@@ -2399,6 +2529,265 @@ describe('TaskDetailPage', () => {
     ]);
     expect(container.textContent).not.toContain('Agent 1,500');
     expect(container.textContent).not.toContain('Tool 301');
+    expect(container.textContent).not.toContain('openai / gpt-4.1');
+    expect(container.textContent).not.toContain('secret');
+
+    const debugModeButton = Array.from(
+      container.querySelectorAll('.coze-prototype-token-usage-mode-item'),
+    ).find(button => button.textContent?.includes('调试'));
+    expect(debugModeButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(debugModeButton as HTMLButtonElement);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      Simulate.click(tokenUsage!);
+      await Promise.resolve();
+    });
+
+    const debugTokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(debugTokenUsagePopover, [
+      '调试摘要',
+      '调用',
+      '2',
+      'Lead agent',
+      '1,500',
+      'Tool',
+      '301',
+      '模型',
+      'openai / gpt-4.1',
+    ]);
+    expect(debugTokenUsagePopover?.textContent).not.toContain('secret');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('hides thread token cost when usage rows contain mixed currencies', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-mixed-currency-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-mixed-currency-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '混合币种 Token 统计',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-token-mixed-1',
+            thread_id: 'thread-token-mixed-currency-1',
+            run_id: 'run-token-mixed-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-1',
+            step_index: 0,
+            step_name: 'model-step-1',
+            model_name: 'model-a',
+            provider: 'provider-a',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+          {
+            usage_id: 'usage-token-mixed-2',
+            thread_id: 'thread-token-mixed-currency-1',
+            run_id: 'run-token-mixed-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-2',
+            step_index: 1,
+            step_name: 'model-step-2',
+            model_name: 'model-b',
+            provider: 'provider-b',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'CNY',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000210000,
+          },
+        ],
+        total: 2,
+        aggregate: {
+          input_tokens: 200,
+          output_tokens: 100,
+          total_tokens: 300,
+          cost_micros: 2000,
+          call_count: 2,
+          lead_agent_tokens: 300,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const tokenUsageButton = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsageButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(tokenUsageButton!);
+      await Promise.resolve();
+    });
+
+    const tokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(tokenUsagePopover, [
+      'Token 用量',
+      '总计',
+      '300',
+    ]);
+    expect(tokenUsagePopover?.textContent).not.toContain('成本');
+    expect(tokenUsagePopover?.textContent).not.toContain('USD 0.002000');
+    expect(tokenUsagePopover?.textContent).not.toContain('CNY');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('hides thread token cost when usage rows are paginated and currency is incomplete', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-paginated-currency-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-paginated-currency-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '分页币种 Token 统计',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '统计完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-token-paginated-1',
+            thread_id: 'thread-token-paginated-currency-1',
+            run_id: 'run-token-paginated-1',
+            space_id: 'space-1',
+            source: 'lead_agent',
+            step_id: 'model-step-1',
+            step_index: 0,
+            step_name: 'model-step-1',
+            model_name: 'model-a',
+            provider: 'provider-a',
+            input_tokens: 100,
+            output_tokens: 50,
+            total_tokens: 150,
+            cost_micros: 1000,
+            currency: 'USD',
+            estimated: false,
+            raw_usage: '',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
+        aggregate: {
+          input_tokens: 200,
+          output_tokens: 100,
+          total_tokens: 300,
+          cost_micros: 2000,
+          call_count: 2,
+          lead_agent_tokens: 300,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    const tokenUsageButton = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsageButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(tokenUsageButton!);
+      await Promise.resolve();
+    });
+
+    const tokenUsagePopover = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(tokenUsagePopover, [
+      'Token 用量',
+      '总计',
+      '300',
+    ]);
+    expect(tokenUsagePopover?.textContent).not.toContain('成本');
+    expect(tokenUsagePopover?.textContent).not.toContain('USD 0.002000');
 
     act(() => {
       root?.unmount();
@@ -2714,7 +3103,7 @@ describe('TaskDetailPage', () => {
                 : artifactID === 'artifact-4'
                   ? 'https://storage.example.test/signed/chart.png?token=preview'
                   : artifactID === 'artifact-5'
-                    ? 'https://storage.example.test/signed/report.pdf?token=preview'
+                    ? 'data:application/pdf;base64,JVBERi0xLjQK'
                     : 'https://storage.example.test/signed/report.txt?token=preview',
           },
           code: 0,
@@ -2924,6 +3313,25 @@ describe('TaskDetailPage', () => {
         space_id: 'space-1',
       });
 
+      mockGetTaskThreadArtifactSignedURL.mockRejectedValueOnce(
+        Object.assign(new Error('产物安全扫描中，暂不能预览'), {
+          safeForDisplay: true,
+        }),
+      );
+      await act(async () => {
+        Simulate.click(pdfPreviewButton);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain('产物安全扫描中，暂不能预览');
+      expect(container.textContent).not.toContain('生成任务产物签名链接失败');
+      expect(
+        container.querySelector(
+          'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+        ),
+      ).toBeNull();
+
       await act(async () => {
         Simulate.click(pdfPreviewButton);
         await Promise.resolve();
@@ -2937,11 +3345,21 @@ describe('TaskDetailPage', () => {
         space_id: 'space-1',
         ttl_seconds: 300,
       });
-      expect(window.open).toHaveBeenCalledWith(
-        'https://storage.example.test/signed/report.pdf?token=preview',
-        '_blank',
-        'noopener,noreferrer',
-      );
+      expect(window.open).not.toHaveBeenCalled();
+      expect(
+        container
+          .querySelector(
+            'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+          )
+          ?.getAttribute('src'),
+      ).toBe('data:application/pdf;base64,JVBERi0xLjQK');
+      expect(
+        container
+          .querySelector(
+            'iframe[data-testid="task-artifact-inline-preview-pdf"]',
+          )
+          ?.getAttribute('sandbox'),
+      ).toBeNull();
       expect(
         container.querySelector(
           'img[data-testid="task-artifact-inline-preview-image"]',
@@ -3011,7 +3429,7 @@ describe('TaskDetailPage', () => {
             content_type: 'text/markdown; charset=utf-8',
             created_at: 1717000300000,
             file_id: 'file-doc-1',
-            metadata: '{"scan_status":"blocked"}',
+            metadata: '{"scan_status":"clean"}',
             preview_mode: 'text',
             run_id: 'run-doc-1',
             size_bytes: 4096,
@@ -3121,6 +3539,9 @@ describe('TaskDetailPage', () => {
         '[data-testid="task-artifact-side-preview"]',
       );
       expect(sidePreview?.getAttribute('data-layout')).toBe('deerflow-split');
+      expect(sidePreview?.getAttribute('data-width-mode')).toBe(
+        'deerflow-60-40',
+      );
       expect(
         sidePreview?.querySelector(
           'button[aria-label="复制文档 武汉3日游攻略.md"]',
@@ -4237,6 +4658,171 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('clears the undo notice when restoring a removed artifact from the deleted list', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const artifact = {
+      artifact_id: 'artifact-restore-list-1',
+      artifact_type: 'report',
+      content_type: 'text/plain; charset=utf-8',
+      created_at: 1717000300000,
+      deleted_at: 1717000400000,
+      file_id: 'file-restore-list-1',
+      metadata: '{}',
+      preview_mode: 'text',
+      run_id: 'run-1',
+      size_bytes: 42,
+      thread_id: 'thread-artifact-restore-list-1',
+      title: 'restore-from-list.txt',
+      updated_at: 1717000400000,
+      virtual_path: '/mnt/user-data/outputs/restore-from-list.txt',
+    };
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-artifact-restore-list-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-artifact-restore-list-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '已移除列表恢复任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成可恢复报告',
+        last_agent_message: '报告已生成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadArtifacts
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [],
+          total: 0,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [artifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [],
+          total: 0,
+        },
+        code: 0,
+        msg: '',
+      });
+    mockRestoreTaskThreadArtifact.mockResolvedValue({
+      data: {
+        artifact_id: 'artifact-restore-list-1',
+        restored: true,
+      },
+      code: 0,
+      msg: 'success',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openTaskArtifactsPanel(container);
+
+    const deleteButton = container.querySelector(
+      'button[aria-label="删除 restore-from-list.txt"]',
+    ) as HTMLButtonElement;
+    expect(deleteButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(deleteButton);
+      const confirmButton = Array.from(
+        container.querySelectorAll('button'),
+      ).find(
+        button => button.textContent?.trim() === '确认删除',
+      ) as HTMLButtonElement;
+      Simulate.click(confirmButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector(
+        'button[aria-label="撤销移除 restore-from-list.txt"]',
+      ),
+    ).toBeTruthy();
+
+    const deletedTab = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent?.trim() === '已移除',
+    ) as HTMLButtonElement;
+    expect(deletedTab).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(deletedTab);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const restoreButton = container.querySelector(
+      'button[aria-label="恢复 restore-from-list.txt"]',
+    ) as HTMLButtonElement;
+    expect(restoreButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(restoreButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockRestoreTaskThreadArtifact).toHaveBeenCalledWith({
+      artifact_id: 'artifact-restore-list-1',
+      thread_id: 'thread-artifact-restore-list-1',
+      space_id: 'space-1',
+    });
+    expect(
+      container.querySelector(
+        'button[aria-label="撤销移除 restore-from-list.txt"]',
+      ),
+    ).toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('lists deleted thread artifacts and restores one from the drawer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -4494,6 +5080,150 @@ describe('TaskDetailPage', () => {
       space_id: 'space-1',
     });
     expect(container.textContent).toContain('clean');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('clears the active artifact preview after reviewing the previewed artifact', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-artifact-review-preview-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-artifact-review-preview-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '产物预览审核任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成需要预览的图片',
+        last_agent_message: '图片已生成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const pendingArtifact = {
+      artifact_id: 'artifact-review-preview-1',
+      artifact_type: 'image',
+      content_type: 'image/png',
+      created_at: 1717000300000,
+      file_id: 'file-review-preview-1',
+      metadata: '{"scan_status":"pending"}',
+      preview_mode: 'image',
+      run_id: 'run-1',
+      size_bytes: 68,
+      thread_id: 'thread-artifact-review-preview-1',
+      title: 'preview.png',
+      updated_at: 1717000300000,
+      virtual_path: '/mnt/user-data/outputs/preview.png',
+    };
+    const blockedArtifact = {
+      ...pendingArtifact,
+      metadata: '{"scan_status":"blocked"}',
+      updated_at: 1717000400000,
+    };
+
+    mockListTaskThreadArtifacts
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [pendingArtifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [blockedArtifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      });
+    mockGetTaskThreadArtifactSignedURL.mockResolvedValue({
+      data: {
+        artifact_id: 'artifact-review-preview-1',
+        content_type: 'image/png',
+        expires_in_seconds: 300,
+        preview_mode: 'image',
+        url: 'https://storage.example.test/signed/preview.png?token=clean',
+      },
+      code: 0,
+      msg: '',
+    });
+    mockReviewTaskThreadArtifactScan.mockResolvedValue({
+      code: 0,
+      data: {
+        artifact_id: 'artifact-review-preview-1',
+        decision: 'block',
+        reviewed: true,
+        scan_status: 'blocked',
+      },
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openTaskArtifactsPanel(container);
+
+    const previewButton = container.querySelector(
+      'button[aria-label="预览 preview.png"]',
+    ) as HTMLButtonElement;
+    expect(previewButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(previewButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector(
+        'img[data-testid="task-artifact-inline-preview-image"]',
+      ),
+    ).toBeTruthy();
+
+    const blockButton = container.querySelector(
+      'button[aria-label="阻断产物 preview.png"]',
+    ) as HTMLButtonElement;
+    expect(blockButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(blockButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockReviewTaskThreadArtifactScan).toHaveBeenCalledWith({
+      artifact_id: 'artifact-review-preview-1',
+      decision: 'block',
+      thread_id: 'thread-artifact-review-preview-1',
+      space_id: 'space-1',
+    });
+    expect(container.textContent).toContain('blocked');
+    expect(
+      container.querySelector(
+        'img[data-testid="task-artifact-inline-preview-image"]',
+      ),
+    ).toBeNull();
 
     act(() => {
       root?.unmount();
@@ -5579,8 +6309,18 @@ describe('TaskDetailPage', () => {
     const executionFeed = container.querySelector(
       '.coze-prototype-execution-feed',
     );
+    const chainContent = executionFeed?.querySelector(
+      '.coze-prototype-chain-content',
+    );
 
+    expect(
+      executionFeed?.classList.contains('coze-prototype-chain-of-thought'),
+    ).toBe(true);
+    expect(chainContent).toBeTruthy();
     expect(executionFeed?.textContent).toContain('查看其他 3 个步骤');
+    expect(chainContent?.querySelectorAll('.coze-prototype-step')).toHaveLength(
+      1,
+    );
     expect(executionFeed?.textContent).not.toContain('更新 To-do 列表');
     expect(executionFeed?.textContent).toContain(
       '创建武汉3日游攻略 Markdown 文档',
@@ -5625,6 +6365,11 @@ describe('TaskDetailPage', () => {
     });
 
     expect(executionFeed?.textContent).toContain('隐藏步骤');
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-chain-content')
+        ?.querySelectorAll('.coze-prototype-step'),
+    ).toHaveLength(4);
     expect(executionFeed?.textContent).toContain('更新 To-do 列表');
     expect(executionFeed?.textContent).toContain(
       '搜索网页：“武汉三日游最佳路线”',

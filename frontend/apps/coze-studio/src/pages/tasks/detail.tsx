@@ -67,7 +67,10 @@ import {
 } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
-import { canPreviewArtifact } from './task-artifacts-helpers';
+import {
+  artifactScanStatus,
+  canPreviewArtifact,
+} from './task-artifacts-helpers';
 import {
   TaskArtifactFeedback,
   TaskArtifactMessageList,
@@ -110,6 +113,7 @@ interface MessageArtifactGroups {
 }
 
 const TASK_DETAIL_SKELETON_STAGGER_MS = 60;
+const TASK_DETAIL_RESPONSIVE_PAGE_CLASS = 'coze-task-detail-responsive-page';
 
 const normalizeThreadRunID = (runID?: string) => {
   const value = String(runID ?? '').trim();
@@ -150,6 +154,20 @@ const getLatestPreviewableArtifactID = (artifacts: TaskThreadArtifact[]) =>
         right.created_at - left.created_at ||
         right.artifact_id.localeCompare(left.artifact_id),
     )[0]?.artifact_id ?? '';
+
+const BLOCKING_ARTIFACT_SCAN_STATUSES = new Set([
+  'blocked',
+  'failed',
+  'infected',
+  'quarantined',
+]);
+
+const shouldClearArtifactPreviewForScanStatus = (
+  artifact?: TaskThreadArtifact,
+) =>
+  artifact
+    ? BLOCKING_ARTIFACT_SCAN_STATUSES.has(artifactScanStatus(artifact))
+    : true;
 
 const groupTaskArtifactsByRunID = (artifacts: TaskThreadArtifact[]) => {
   const grouped = new Map<string, TaskThreadArtifact[]>();
@@ -754,9 +772,9 @@ const TaskEventsSection = ({
   return (
     <section
       aria-label="执行流程"
-      className="coze-prototype-execution-feed coze-prototype-reasoning-panel"
+      className="coze-prototype-execution-feed coze-prototype-reasoning-panel coze-prototype-chain-of-thought"
     >
-      <ol className="coze-prototype-execution-feed-list">
+      <ol className="coze-prototype-execution-feed-list coze-prototype-chain-content">
         {hiddenStepCount > 0 ? (
           <li>
             <button
@@ -929,6 +947,20 @@ const TaskTranscript = ({
     threadId: taskDetailSource === 'thread' ? task.id : undefined,
   });
 
+  useEffect(() => {
+    const inlineArtifactID = artifactActions.inlinePreview?.artifactId;
+    if (!inlineArtifactID) {
+      return;
+    }
+
+    const artifact = artifacts.find(
+      item => item.artifact_id === inlineArtifactID,
+    );
+    if (shouldClearArtifactPreviewForScanStatus(artifact)) {
+      artifactActions.clearInlinePreview();
+    }
+  }, [artifactActions, artifacts]);
+
   return (
     <section
       className="coze-prototype-chat-transcript"
@@ -1010,6 +1042,18 @@ const TaskDetailPage = () => {
   const userInfo = useUserInfo();
   const taskDetailId = thread_id ?? task_id;
   const taskDetailSource = getTaskDetailSource(thread_id);
+
+  useEffect(() => {
+    document.documentElement.classList.add(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+    document.body.classList.add(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+
+    return () => {
+      document.documentElement.classList.remove(
+        TASK_DETAIL_RESPONSIVE_PAGE_CLASS,
+      );
+      document.body.classList.remove(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
+    };
+  }, []);
   const {
     applyTaskDetail,
     artifacts,

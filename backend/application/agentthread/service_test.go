@@ -468,7 +468,30 @@ func TestApplicationProcessMemoryFlushJobsExtractsMemoriesAndCompletesJob(t *tes
 			Messages:       `[{"role":"user","content":"请记住我偏好中文回答"},{"role":"assistant","content":"好的"}]`,
 			Metadata:       `{"runtime":"eino_adk"}`,
 		},
-		recalledMemories: []*entity.Memory{},
+		recalledMemories: []*entity.Memory{
+			{
+				ID:         401,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "正在推进 DeerFlow parity 主线",
+				Metadata:   `{"deerflow_section":"user.workContext","path":"/private/secret"}`,
+				Confidence: 0.88,
+				SourceType: "manual",
+				SourceID:   "private-source-id",
+			},
+			{
+				ID:         402,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "用户偏好中文回答",
+				Metadata:   `{"category":"preference","path":"/private/secret"}`,
+				Confidence: 0.92,
+				SourceType: "manual",
+				SourceID:   "private-source-id",
+			},
+		},
 		rememberedMemories: []*entity.Memory{
 			{
 				ID:         301,
@@ -525,6 +548,11 @@ func TestApplicationProcessMemoryFlushJobsExtractsMemoriesAndCompletesJob(t *tes
 	require.Equal(t, int64(501), extractor.req.SnapshotID)
 	require.Equal(t, TranscriptKindTerminal, extractor.req.Kind)
 	require.Contains(t, extractor.req.Messages, "偏好中文")
+	require.Contains(t, extractor.req.CurrentMemory, "正在推进 DeerFlow parity 主线")
+	require.Contains(t, extractor.req.CurrentMemory, `"workContext"`)
+	require.Contains(t, extractor.req.CurrentMemory, `"preference"`)
+	require.NotContains(t, extractor.req.CurrentMemory, "/private/secret")
+	require.NotContains(t, extractor.req.CurrentMemory, "private-source-id")
 	require.Len(t, domainSVC.rememberMemoryReqs, 1)
 	require.Equal(t, int64(10), domainSVC.rememberMemoryReqs[0].ThreadID)
 	require.Equal(t, int64(20), domainSVC.rememberMemoryReqs[0].RunID)
@@ -598,10 +626,96 @@ func TestApplicationProcessMemoryFlushJobsRetriesExtractorFailureWithoutTranscri
 	require.NotNil(t, domainSVC.retryMemoryFlushReq)
 	require.Equal(t, int64(901), domainSVC.retryMemoryFlushReq.JobID)
 	require.Equal(t, "memory-worker-a", domainSVC.retryMemoryFlushReq.WorkerID)
-	require.Equal(t, "memory extraction failed", domainSVC.retryMemoryFlushReq.ErrorText)
+	require.Equal(t, "memory extraction failed: extractor_failed", domainSVC.retryMemoryFlushReq.ErrorText)
 	require.GreaterOrEqual(t, domainSVC.retryMemoryFlushReq.AvailableAt-domainSVC.retryMemoryFlushReq.Now, int64(60000))
 	require.NotContains(t, domainSVC.retryMemoryFlushReq.ErrorText, "secret transcript body")
 	require.Empty(t, domainSVC.rememberMemoryReqs)
+}
+
+func TestApplicationProcessMemoryFlushJobsAppliesFactsToRemove(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedMemoryFlushJobs: []*entity.MemoryFlushJob{
+			{
+				ID:                   902,
+				ThreadID:             10,
+				RunID:                20,
+				SpaceID:              30,
+				UserID:               40,
+				TranscriptSnapshotID: 503,
+				Status:               entity.MemoryFlushJobStatusProcessing,
+				WorkerID:             "memory-worker-a",
+				AttemptCount:         1,
+			},
+		},
+		gotTranscriptSnapshot: &entity.TranscriptSnapshot{
+			ID:             503,
+			ThreadID:       10,
+			RunID:          20,
+			SpaceID:        30,
+			Kind:           entity.TranscriptKindTerminal,
+			Digest:         strings.Repeat("c", 64),
+			IdempotencyKey: "terminal:" + strings.Repeat("c", 64),
+			MessageCount:   2,
+			Messages:       `[{"role":"user","content":"请不要再记住旧地区了"},{"role":"assistant","content":"已更新"}]`,
+			Metadata:       `{"runtime":"eino_adk"}`,
+		},
+		recalledMemories: []*entity.Memory{
+			{
+				ID:         401,
+				ThreadID:   10,
+				RunID:      20,
+				Scope:      entity.MemoryScopeLongTerm,
+				Content:    "部署地区是 APAC",
+				Metadata:   `{"category":"context"}`,
+				Confidence: 0.9,
+			},
+		},
+		completedMemoryFlushJob: &entity.MemoryFlushJob{
+			ID:     902,
+			Status: entity.MemoryFlushJobStatusSucceeded,
+		},
+		memoryFlushUpdated: true,
+		deleteMemoryOK:     true,
+	}
+	extractor := &recordingMemoryUpdateExtractor{
+		result: &MemoryExtractionResult{
+			FactsToRemove: []int64{401},
+			Facts: []MemoryExtractionFact{
+				{
+					Key:        "region",
+					Scope:      MemoryScopeLongTerm,
+					Content:    "部署地区是 EU",
+					Metadata:   `{"category":"correction","sourceError":"部署地区是 APAC"}`,
+					Confidence: 0.98,
+				},
+			},
+		},
+	}
+	app := &ApplicationService{
+		ThreadSVC:       domainSVC,
+		MemoryExtractor: extractor,
+	}
+
+	resp, err := app.ProcessMemoryFlushJobs(context.Background(), &ProcessMemoryFlushJobsRequest{
+		WorkerID:           "memory-worker-a",
+		Limit:              1,
+		MaxAttempts:        3,
+		RetryBackoffMillis: 60000,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int32(1), resp.Succeeded)
+	require.NotNil(t, domainSVC.deleteMemoryReq)
+	require.Equal(t, int64(10), domainSVC.deleteMemoryReq.ThreadID)
+	require.Equal(t, int64(401), domainSVC.deleteMemoryReq.MemoryID)
+	require.Equal(t, int64(40), domainSVC.deleteMemoryReq.ActorID)
+	require.Len(t, domainSVC.rememberMemoryReqs, 1)
+	require.Equal(t, "部署地区是 EU", domainSVC.rememberMemoryReqs[0].Content)
+	require.NotNil(t, domainSVC.completeMemoryFlushReq)
+	require.Equal(t, int64(902), domainSVC.completeMemoryFlushReq.JobID)
+	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 APAC")
+	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 EU")
 }
 
 func TestApplicationTokenUsageMethodsMapDomainUsage(t *testing.T) {
@@ -3651,6 +3765,9 @@ type recordingThreadService struct {
 	runTokenUsageAggregates  []*entity.RunTokenUsageAggregate
 	createReq                *domainservice.CreateThreadRequest
 	updateThreadTitleReq     *domainservice.UpdateThreadTitleRequest
+	updateThreadMetadataReq  *domainservice.UpdateThreadMetadataRequest
+	deleteThreadReq          *domainservice.DeleteThreadRequest
+	deleteThreadOK           bool
 	createRunReq             *domainservice.CreateRunRequest
 	claimRunsReq             *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq *domainservice.ClaimQueuedResumeRunsRequest
@@ -4055,6 +4172,27 @@ func (s *recordingThreadService) UpdateThreadTitle(
 	return &updated, true, nil
 }
 
+func (s *recordingThreadService) UpdateThreadMetadata(
+	ctx context.Context,
+	req *domainservice.UpdateThreadMetadataRequest,
+) (*entity.Thread, bool, error) {
+	s.updateThreadMetadataReq = req
+	if s.got == nil {
+		return nil, false, nil
+	}
+	updated := *s.got
+	updated.Metadata = strings.TrimSpace(req.Metadata)
+	return &updated, true, nil
+}
+
+func (s *recordingThreadService) DeleteThread(
+	ctx context.Context,
+	req *domainservice.DeleteThreadRequest,
+) (bool, error) {
+	s.deleteThreadReq = req
+	return s.deleteThreadOK, nil
+}
+
 func (s *recordingThreadService) ListThreads(ctx context.Context, req *domainservice.ListThreadsRequest) ([]*entity.Thread, int64, error) {
 	s.listReq = req
 	return s.listed, s.total, nil
@@ -4328,6 +4466,34 @@ func (e *recordingMemoryExtractor) ExtractMemories(
 		return nil, e.err
 	}
 	return e.facts, nil
+}
+
+type recordingMemoryUpdateExtractor struct {
+	req    MemoryExtractionRequest
+	result *MemoryExtractionResult
+	err    error
+}
+
+func (e *recordingMemoryUpdateExtractor) ExtractMemories(
+	ctx context.Context,
+	req MemoryExtractionRequest,
+) ([]MemoryExtractionFact, error) {
+	result, err := e.ExtractMemoryUpdates(ctx, req)
+	if err != nil || result == nil {
+		return nil, err
+	}
+	return result.Facts, nil
+}
+
+func (e *recordingMemoryUpdateExtractor) ExtractMemoryUpdates(
+	_ context.Context,
+	req MemoryExtractionRequest,
+) (*MemoryExtractionResult, error) {
+	e.req = req
+	if e.err != nil {
+		return nil, e.err
+	}
+	return e.result, nil
 }
 
 type fixedIDGen struct{}

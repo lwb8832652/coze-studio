@@ -19,9 +19,13 @@ package workbench
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/cloudwego/eino/schema"
 
 	diagnosticapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/diagnostic"
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
@@ -29,6 +33,7 @@ import (
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
+	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
 const (
@@ -68,7 +73,10 @@ func (s *ApplicationService) GetRuntimeDoctor(
 	if s != nil {
 		chatModelProvider = s.chatModelProvider
 	}
-	checks = append(checks, runtimeDoctorModelCheck(ctx, chatModelProvider))
+	modelData, modelChecks := runtimeDoctorModelDiagnostics(ctx, chatModelProvider)
+	checks = append(checks, modelChecks...)
+	sandboxData, sandboxCheck := runtimeDoctorSandboxData()
+	checks = append(checks, sandboxCheck)
 	checks = append(checks, runtimeDoctorSkillCheck(ctx, s.skillDiagnosticService(), req.SpaceID))
 
 	webTools, webChecks := runtimeDoctorWebToolsData()
@@ -86,6 +94,8 @@ func (s *ApplicationService) GetRuntimeDoctor(
 		Data: &diagnosticapi.WorkbenchRuntimeDoctorData{
 			Status:   runtimeDoctorOverallStatus(checks),
 			Runtime:  runtimeData,
+			Model:    modelData,
+			Sandbox:  sandboxData,
 			WebTools: webTools,
 			MCPTools: mcpTools,
 			Checks:   checks,
@@ -131,14 +141,36 @@ func runtimeDoctorModelCheck(
 	ctx context.Context,
 	provider chatModelProvider,
 ) (check *diagnosticapi.RuntimeDoctorCheck) {
+	_, checks := runtimeDoctorModelDiagnostics(ctx, provider)
+	if len(checks) == 0 {
+		return &diagnosticapi.RuntimeDoctorCheck{
+			Name:     "model.default",
+			Category: "model",
+			Status:   runtimeDoctorStatusError,
+			Message:  "model diagnostic did not return checks",
+		}
+	}
+	return checks[0]
+}
+
+func runtimeDoctorModelDiagnostics(
+	ctx context.Context,
+	provider chatModelProvider,
+) (data *diagnosticapi.RuntimeDoctorModelData, checks []*diagnosticapi.RuntimeDoctorCheck) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			check = &diagnosticapi.RuntimeDoctorCheck{
+			data = &diagnosticapi.RuntimeDoctorModelData{
+				Status:     runtimeDoctorStatusError,
+				Configured: false,
+				LiveProbe:  runtimeDoctorStatusDisabled,
+				Message:    boundedRuntimeDoctorMessage(fmt.Sprintf("model provider panic: %v", recovered)),
+			}
+			checks = []*diagnosticapi.RuntimeDoctorCheck{{
 				Name:     "model.default",
 				Category: "model",
 				Status:   runtimeDoctorStatusError,
 				Message:  boundedRuntimeDoctorMessage(fmt.Sprintf("model provider panic: %v", recovered)),
-			}
+			}}
 		}
 	}()
 
@@ -148,28 +180,188 @@ func runtimeDoctorModelCheck(
 
 	chatModel, configured, err := provider(ctx, 0)
 	if err != nil {
-		return &diagnosticapi.RuntimeDoctorCheck{
+		data = &diagnosticapi.RuntimeDoctorModelData{
+			Status:     runtimeDoctorStatusError,
+			Configured: false,
+			LiveProbe:  runtimeDoctorStatusDisabled,
+			Message:    boundedRuntimeDoctorMessage(err.Error()),
+		}
+		return data, []*diagnosticapi.RuntimeDoctorCheck{{
 			Name:     "model.default",
 			Category: "model",
 			Status:   runtimeDoctorStatusError,
 			Message:  boundedRuntimeDoctorMessage(err.Error()),
-		}
+		}}
 	}
 	if !configured || chatModel == nil {
-		return &diagnosticapi.RuntimeDoctorCheck{
+		data = &diagnosticapi.RuntimeDoctorModelData{
+			Status:     runtimeDoctorStatusDisabled,
+			Configured: false,
+			LiveProbe:  runtimeDoctorStatusDisabled,
+			Message:    "Workbench default chat model is not configured",
+		}
+		return data, []*diagnosticapi.RuntimeDoctorCheck{{
 			Name:     "model.default",
 			Category: "model",
 			Status:   runtimeDoctorStatusDisabled,
 			Message:  "Workbench default chat model is not configured",
-		}
+		}}
 	}
 
-	return &diagnosticapi.RuntimeDoctorCheck{
-		Name:     "model.default",
-		Category: "model",
-		Status:   runtimeDoctorStatusReady,
-		Message:  "Workbench default chat model is configured",
+	capabilities := appagentthread.DetectADKModelCapabilities(chatModel)
+	data = &diagnosticapi.RuntimeDoctorModelData{
+		Status:       runtimeDoctorStatusReady,
+		Configured:   true,
+		LiveProbe:    runtimeDoctorStatusDisabled,
+		Capabilities: runtimeDoctorModelCapabilities(capabilities),
 	}
+	checks = []*diagnosticapi.RuntimeDoctorCheck{
+		{
+			Name:     "model.default",
+			Category: "model",
+			Status:   runtimeDoctorStatusReady,
+			Message:  "Workbench default chat model is configured",
+		},
+		{
+			Name:     "model.capabilities",
+			Category: "model",
+			Status:   runtimeDoctorStatusReady,
+			Message:  runtimeDoctorModelCapabilitiesMessage(capabilities),
+		},
+	}
+
+	liveProbeCheck := &diagnosticapi.RuntimeDoctorCheck{
+		Name:     "model.live_connectivity",
+		Category: "model",
+		Status:   runtimeDoctorStatusDisabled,
+		Message:  "Live model probe is disabled by policy",
+	}
+	if runtimeDoctorLiveModelProbeEnabled() {
+		liveProbeCheck.Status = runtimeDoctorStatusReady
+		liveProbeCheck.Message = "Live model probe succeeded"
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if _, err := chatModel.Generate(
+			probeCtx,
+			[]*schema.Message{schema.UserMessage("Runtime diagnostic connectivity check. Reply OK.")},
+		); err != nil {
+			liveProbeCheck.Status = runtimeDoctorStatusError
+			liveProbeCheck.Message = boundedRuntimeDoctorMessage(err.Error())
+		}
+	}
+	data.LiveProbe = liveProbeCheck.Status
+	if liveProbeCheck.Status == runtimeDoctorStatusError {
+		data.Status = runtimeDoctorStatusError
+	}
+	checks = append(checks, liveProbeCheck)
+
+	return data, checks
+}
+
+func runtimeDoctorModelCapabilities(
+	capabilities appagentthread.ADKModelCapabilities,
+) *diagnosticapi.RuntimeDoctorModelCapabilities {
+	return &diagnosticapi.RuntimeDoctorModelCapabilities{
+		NativeToolSearch: capabilities.NativeToolSearch,
+		Thinking:         capabilities.Thinking,
+		Reasoning:        capabilities.Reasoning,
+		Vision:           capabilities.Vision,
+		PDF:              capabilities.PDF,
+		File:             capabilities.File,
+		Audio:            capabilities.Audio,
+		Video:            capabilities.Video,
+	}
+}
+
+func runtimeDoctorModelCapabilitiesMessage(
+	capabilities appagentthread.ADKModelCapabilities,
+) string {
+	enabled := make([]string, 0, 8)
+	if capabilities.NativeToolSearch {
+		enabled = append(enabled, "native_tool_search")
+	}
+	if capabilities.Thinking {
+		enabled = append(enabled, "thinking")
+	}
+	if capabilities.Reasoning {
+		enabled = append(enabled, "reasoning")
+	}
+	if capabilities.Vision {
+		enabled = append(enabled, "vision")
+	}
+	if capabilities.PDF {
+		enabled = append(enabled, "pdf")
+	}
+	if capabilities.File {
+		enabled = append(enabled, "file")
+	}
+	if capabilities.Audio {
+		enabled = append(enabled, "audio")
+	}
+	if capabilities.Video {
+		enabled = append(enabled, "video")
+	}
+	if len(enabled) == 0 {
+		return "No provider capability flags detected"
+	}
+	return fmt.Sprintf("Detected provider capabilities: %s", strings.Join(enabled, ", "))
+}
+
+func runtimeDoctorLiveModelProbeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("WORKBENCH_RUNTIME_DOCTOR_LIVE_MODEL_PROBE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeDoctorSandboxData() (
+	*diagnosticapi.RuntimeDoctorSandboxData,
+	*diagnosticapi.RuntimeDoctorCheck,
+) {
+	runnerType := strings.TrimSpace(strings.ToLower(os.Getenv(consts.CodeRunnerType)))
+	if runnerType == "" {
+		runnerType = "sandbox"
+	}
+	status := runtimeDoctorStatusReady
+	message := "sandbox code runner policy is configured"
+	if runnerType != "sandbox" {
+		status = runtimeDoctorStatusWarning
+		message = "local code runner is enabled; sandbox isolation is not active"
+	}
+
+	data := &diagnosticapi.RuntimeDoctorSandboxData{
+		Status:      status,
+		RunnerType:  runnerType,
+		Network:     runtimeDoctorConfiguredOrRestricted(os.Getenv(consts.CodeRunnerAllowNet)),
+		Process:     runtimeDoctorConfiguredOrRestricted(os.Getenv(consts.CodeRunnerAllowRun)),
+		FFI:         runtimeDoctorConfiguredOrRestricted(os.Getenv(consts.CodeRunnerAllowFFI)),
+		NodeModules: runtimeDoctorConfiguredOrRestricted(os.Getenv(consts.CodeRunnerNodeModulesDir)),
+		Message:     message,
+	}
+
+	return data,
+		&diagnosticapi.RuntimeDoctorCheck{
+			Name:     "sandbox.runner_policy",
+			Category: "sandbox",
+			Status:   status,
+			Message: fmt.Sprintf(
+				"%s; network %s; process %s; ffi %s; node modules %s",
+				message,
+				data.Network,
+				data.Process,
+				data.FFI,
+				data.NodeModules,
+			),
+		}
+}
+
+func runtimeDoctorConfiguredOrRestricted(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "restricted"
+	}
+	return "configured"
 }
 
 func runtimeDoctorSkillCheck(
@@ -386,13 +578,15 @@ func runtimeDoctorOverallStatus(checks []*diagnosticapi.RuntimeDoctorCheck) stri
 }
 
 var (
-	runtimeDoctorSecretPattern = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|token)\s*[:=]\s*[^,\s;]+`)
-	runtimeDoctorSensitiveName = regexp.MustCompile(`(?i)\b(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|token)\b`)
+	runtimeDoctorSecretPattern           = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|token)\s*[:=]\s*[^,\s;]+(?:\s+[^,\s;]+)?`)
+	runtimeDoctorStandaloneSecretPattern = regexp.MustCompile(`(?i)\b(bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9._-]+)\b`)
+	runtimeDoctorSensitiveName           = regexp.MustCompile(`(?i)\b(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|token)\b`)
 )
 
 func boundedRuntimeDoctorMessage(value string) string {
 	value = strings.TrimSpace(value)
 	value = runtimeDoctorSecretPattern.ReplaceAllString(value, "[redacted]")
+	value = runtimeDoctorStandaloneSecretPattern.ReplaceAllString(value, "[redacted]")
 	if len([]rune(value)) <= 256 {
 		return value
 	}

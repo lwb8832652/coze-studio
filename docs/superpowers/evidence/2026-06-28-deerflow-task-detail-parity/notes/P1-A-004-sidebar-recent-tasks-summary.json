@@ -1,0 +1,38 @@
+{
+  "case": "P1-A-004",
+  "system": "coze",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657504771049259008",
+  "sourceContract": {
+    "component": "frontend/apps/coze-studio/src/components/workspace-sub-menu/workspace-task-list.tsx",
+    "pageSize": 20,
+    "paginationMechanism": "IntersectionObserver sentinel inside .coze-prototype-sidebar-task-list",
+    "immediateInsertionEvent": "coze:workspace-task-thread-upsert",
+    "api": "GET /api/workbench/task_threads?space_id=:space_id&page=:page&page_size=20"
+  },
+  "beforeScroll": {
+    "rowCount": 20,
+    "canScroll": true,
+    "hasLoadMoreSentinel": true,
+    "clientHeight": 541,
+    "scrollHeight": 712,
+    "scrollTop": 0
+  },
+  "afterScroll": {
+    "rowCount": 40,
+    "canScroll": true,
+    "hasLoadMoreSentinel": true,
+    "clientHeight": 541,
+    "scrollHeight": 1392,
+    "scrollTop": 171
+  },
+  "browserResult": {
+    "firstPageRows": 20,
+    "afterBottomScrollRows": 40,
+    "loadedNextPage": true
+  },
+  "redaction": {
+    "taskTitles": "not retained in this JSON summary",
+    "promptsAndCompletions": "redacted",
+    "credentialsAndPayloads": "redacted"
+  }
+}

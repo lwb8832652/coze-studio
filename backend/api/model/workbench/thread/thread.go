@@ -78,6 +78,29 @@ type TaskThreadRunEvent struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+type TaskThreadRunJournalToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Arguments string `json:"arguments"`
+}
+
+type TaskThreadRunJournalMessage struct {
+	ID               string                          `json:"id"`
+	ThreadID         int64                           `json:"thread_id,string"`
+	RunID            int64                           `json:"run_id,string"`
+	Type             string                          `json:"type"`
+	Role             string                          `json:"role"`
+	Content          string                          `json:"content"`
+	Name             string                          `json:"name"`
+	ToolCallID       string                          `json:"tool_call_id"`
+	ToolCalls        []*TaskThreadRunJournalToolCall `json:"tool_calls"`
+	AdditionalKwargs string                          `json:"additional_kwargs"`
+	Usage            string                          `json:"usage"`
+	CreatedAt        int64                           `json:"created_at"`
+	SourceEventID    int64                           `json:"source_event_id,string"`
+}
+
 type TaskThreadTokenUsage struct {
 	UsageID      int64  `json:"usage_id,string"`
 	ThreadID     int64  `json:"thread_id,string"`
@@ -507,8 +530,9 @@ type ListTaskThreadRunsData struct {
 }
 
 type ListTaskThreadRunEventsData struct {
-	Events []*TaskThreadRunEvent `json:"events"`
-	Total  int64                 `json:"total"`
+	Events          []*TaskThreadRunEvent          `json:"events"`
+	Total           int64                          `json:"total"`
+	JournalMessages []*TaskThreadRunJournalMessage `json:"journal_messages,omitempty"`
 }
 
 type GetTaskThreadTokenUsageData struct {

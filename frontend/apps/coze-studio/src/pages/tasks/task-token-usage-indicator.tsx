@@ -17,6 +17,7 @@
 import { IconCozArrowDown } from '@coze-arch/coze-design/icons';
 import { Popover } from '@coze-arch/coze-design';
 
+import { formatTaskTokenCost } from './task-detail-token-usage';
 import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
@@ -64,6 +65,51 @@ const tokenUsageModeLabel = (mode: TaskTokenUsageViewMode) =>
   TOKEN_USAGE_VIEW_OPTIONS.find(option => option.value === mode)?.label ??
   '每轮';
 
+const getTokenUsageDebugRows = (tokenUsage: TaskDetailTokenUsage) => {
+  const rows: Array<{ label: string; value: string }> = [
+    {
+      label: '调用',
+      value: formatTokenCount(tokenUsage.callCount),
+    },
+  ];
+  const sourceRows = [
+    {
+      label: 'Lead agent',
+      value: tokenUsage.leadAgentTokens,
+    },
+    {
+      label: 'Subagent',
+      value: tokenUsage.subagentTokens,
+    },
+    {
+      label: 'Middleware',
+      value: tokenUsage.middlewareTokens,
+    },
+    {
+      label: 'Tool',
+      value: tokenUsage.toolTokens,
+    },
+  ];
+
+  for (const sourceRow of sourceRows) {
+    if (sourceRow.value > 0) {
+      rows.push({
+        label: sourceRow.label,
+        value: formatTokenCount(sourceRow.value),
+      });
+    }
+  }
+
+  if (tokenUsage.modelAttributions.length > 0) {
+    rows.push({
+      label: '模型',
+      value: tokenUsage.modelAttributions.slice(0, 4).join(', '),
+    });
+  }
+
+  return rows;
+};
+
 export const TaskTokenUsageIndicator = ({
   onViewModeChange,
   tokenUsage,
@@ -83,6 +129,10 @@ export const TaskTokenUsageIndicator = ({
   )} · 输出 ${formatTokenCount(tokenUsage.outputTokens)} · 总计 ${formatTokenCount(
     tokenUsage.totalTokens,
   )}`;
+  const costText = formatTaskTokenCost(
+    tokenUsage.costMicros,
+    tokenUsage.currency,
+  );
   const usageRows = [
     {
       label: '输入',
@@ -96,7 +146,17 @@ export const TaskTokenUsageIndicator = ({
       label: '总计',
       value: formatTokenCount(tokenUsage.totalTokens),
     },
-  ];
+  ].concat(
+    costText
+      ? [
+          {
+            label: '成本',
+            value: costText,
+          },
+        ]
+      : [],
+  );
+  const debugRows = getTokenUsageDebugRows(tokenUsage);
   const content = (
     <div
       className="coze-prototype-token-usage-popover"
@@ -144,6 +204,25 @@ export const TaskTokenUsageIndicator = ({
         ))}
       </div>
       <div className="coze-prototype-token-usage-popover-divider" />
+      {viewMode === 'debug' ? (
+        <>
+          <div className="coze-prototype-token-usage-popover-title">
+            调试摘要
+          </div>
+          <dl className="coze-prototype-token-usage-popover-list">
+            {debugRows.map(row => (
+              <div
+                key={row.label}
+                className="coze-prototype-token-usage-popover-row"
+              >
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="coze-prototype-token-usage-popover-divider" />
+        </>
+      ) : null}
       <p className="coze-prototype-token-usage-note">
         顶部总量优先使用后端持久化的线程用量；当当前回复仍在流式返回时，还会叠加可见的进行中用量。每轮和调试用量只来自当前可见消息，可能与平台账单页不完全一致。
       </p>

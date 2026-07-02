@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
@@ -47,6 +48,29 @@ func TestADKToolErrorNormalizationInvokableReturnsStableToolError(t *testing.T) 
 	require.Equal(t, "search_docs", decoded.ToolName)
 	require.Equal(t, "call-1", decoded.ToolCallID)
 	require.Equal(t, "upstream timeout", decoded.ErrorMessage)
+	require.Contains(t, decoded.Message, "Error: Tool 'search_docs' failed")
+	require.Contains(t, decoded.Message, "Continue with available context, or choose an alternative tool.")
+}
+
+func TestADKToolErrorNormalizationCapsModelVisibleErrorDetail(t *testing.T) {
+	middleware := NewADKToolErrorNormalizationMiddleware()
+	wrapped, err := middleware.WrapInvokableToolCall(
+		context.Background(),
+		func(context.Context, string, ...tool.Option) (string, error) {
+			return "", errors.New(strings.Repeat("x", 600))
+		},
+		&adk.ToolContext{Name: "search_docs", CallID: "call-1"},
+	)
+	require.NoError(t, err)
+
+	result, err := wrapped(context.Background(), `{}`)
+
+	require.NoError(t, err)
+	decoded, ok := decodeADKToolErrorResult(result)
+	require.True(t, ok)
+	require.Len(t, decoded.ErrorMessage, 500)
+	require.Contains(t, decoded.Message, "xxx...")
+	require.LessOrEqual(t, len([]rune(decoded.Message)), 620)
 }
 
 func TestADKToolErrorNormalizationStreamableReturnsStableToolError(t *testing.T) {

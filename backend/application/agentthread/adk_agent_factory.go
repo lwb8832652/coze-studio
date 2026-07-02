@@ -129,6 +129,12 @@ type ADKReasoningOptionProjector interface {
 	ProjectADKReasoningOptions(ADKReasoningRequest) ([]model.Option, error)
 }
 
+func DetectADKModelCapabilities(
+	chatModel model.BaseChatModel,
+) ADKModelCapabilities {
+	return adkModelCapabilitiesFromChatModel(chatModel)
+}
+
 type ApplicationADKAgentFactory struct {
 	modelProvider ChatModelProvider
 	toolProvider  ADKToolProvider

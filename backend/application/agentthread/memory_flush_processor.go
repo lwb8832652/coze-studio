@@ -49,6 +49,7 @@ type MemoryExtractionRequest struct {
 	MessageCount   int32
 	Messages       string
 	Metadata       string
+	CurrentMemory  string
 }
 
 type MemoryExtractionFact struct {
@@ -65,8 +66,17 @@ type MemoryExtractionFact struct {
 	ExpiresAt            int64
 }
 
+type MemoryExtractionResult struct {
+	Facts         []MemoryExtractionFact
+	FactsToRemove []int64
+}
+
 type MemoryExtractor interface {
 	ExtractMemories(ctx context.Context, req MemoryExtractionRequest) ([]MemoryExtractionFact, error)
+}
+
+type MemoryUpdateExtractor interface {
+	ExtractMemoryUpdates(ctx context.Context, req MemoryExtractionRequest) (*MemoryExtractionResult, error)
 }
 
 type memoryFlushJobProcessOutcome int
@@ -178,33 +188,58 @@ func (s *ApplicationService) processMemoryFlushJob(
 		)
 	}
 
-	facts, err := s.MemoryExtractor.ExtractMemories(
-		ctx,
-		MemoryExtractionRequest{
-			ThreadID:       snapshot.ThreadID,
-			RunID:          snapshot.RunID,
-			SpaceID:        snapshot.SpaceID,
-			SnapshotID:     snapshot.ID,
-			Kind:           TranscriptKind(snapshot.Kind),
-			Digest:         snapshot.Digest,
-			IdempotencyKey: snapshot.IdempotencyKey,
-			MessageCount:   snapshot.MessageCount,
-			Messages:       snapshot.Messages,
-			Metadata:       snapshot.Metadata,
-		},
-	)
+	currentMemory, err := s.memoryFlushCurrentMemoryState(ctx, job)
 	if err != nil {
 		return s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
-			"memory extraction failed",
+			"memory current state unavailable",
 			maxAttempts,
 			retryBackoffMillis,
 		)
 	}
 
-	written, skipped, err := s.rememberExtractedMemoryFacts(ctx, job, snapshot, facts)
+	updates, err := extractMemoryUpdates(ctx, s.MemoryExtractor, MemoryExtractionRequest{
+		ThreadID:       snapshot.ThreadID,
+		RunID:          snapshot.RunID,
+		SpaceID:        snapshot.SpaceID,
+		SnapshotID:     snapshot.ID,
+		Kind:           TranscriptKind(snapshot.Kind),
+		Digest:         snapshot.Digest,
+		IdempotencyKey: snapshot.IdempotencyKey,
+		MessageCount:   snapshot.MessageCount,
+		Messages:       snapshot.Messages,
+		Metadata:       snapshot.Metadata,
+		CurrentMemory:  currentMemory,
+	})
+	if err != nil {
+		return s.failClaimedMemoryFlushJob(
+			ctx,
+			job,
+			workerID,
+			memoryFlushSafeErrorText("memory extraction failed", err),
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+	if updates == nil {
+		updates = &MemoryExtractionResult{}
+	}
+
+	removed, removeSkipped, err := s.removeExtractedMemoryFacts(ctx, job, updates.FactsToRemove)
+	if err != nil {
+		return s.failClaimedMemoryFlushJob(
+			ctx,
+			job,
+			workerID,
+			"memory delete failed",
+			maxAttempts,
+			retryBackoffMillis,
+		)
+	}
+
+	written, skipped, err := s.rememberExtractedMemoryFacts(ctx, job, snapshot, updates.Facts)
 	if err != nil {
 		return s.failClaimedMemoryFlushJob(
 			ctx,
@@ -231,11 +266,166 @@ func (s *ApplicationService) processMemoryFlushJob(
 		return memoryFlushJobProcessSkipped, nil
 	}
 	s.emitMemoryFlushEvent(ctx, job, snapshot, memoryFlushCompletedEvent, map[string]any{
-		"status":        "succeeded",
-		"facts_written": written,
-		"facts_skipped": skipped,
+		"status":               "succeeded",
+		"facts_written":        written,
+		"facts_skipped":        skipped,
+		"facts_removed":        removed,
+		"facts_remove_skipped": removeSkipped,
 	})
 	return memoryFlushJobProcessSucceeded, nil
+}
+
+func extractMemoryUpdates(
+	ctx context.Context,
+	extractor MemoryExtractor,
+	req MemoryExtractionRequest,
+) (*MemoryExtractionResult, error) {
+	if extractor == nil {
+		return nil, fmt.Errorf("memory extractor is not configured")
+	}
+	if updateExtractor, ok := extractor.(MemoryUpdateExtractor); ok {
+		return updateExtractor.ExtractMemoryUpdates(ctx, req)
+	}
+	facts, err := extractor.ExtractMemories(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &MemoryExtractionResult{Facts: facts}, nil
+}
+
+func memoryFlushSafeErrorText(prefix string, err error) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "memory flush failed"
+	}
+	if err == nil {
+		return prefix
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "memory extractor is not configured"):
+		return prefix + ": extractor_not_configured"
+	case strings.Contains(message, "resolve memory extraction model"):
+		return prefix + ": resolve_model_failed"
+	case strings.Contains(message, "memory extraction model is not configured"):
+		return prefix + ": model_not_configured"
+	case strings.Contains(message, "run memory extraction model"):
+		return prefix + ": model_call_failed"
+	case strings.Contains(message, "memory extraction model returned empty response"):
+		return prefix + ": empty_model_response"
+	case strings.Contains(message, "decode memory extraction model output"):
+		return prefix + ": decode_failed"
+	case strings.Contains(message, "record memory extraction usage"):
+		return prefix + ": usage_record_failed"
+	default:
+		return prefix + ": extractor_failed"
+	}
+}
+
+func (s *ApplicationService) memoryFlushCurrentMemoryState(
+	ctx context.Context,
+	job *domainentity.MemoryFlushJob,
+) (string, error) {
+	if s == nil || s.ThreadSVC == nil || job == nil {
+		return "{}", nil
+	}
+	memories, _, err := s.ThreadSVC.RecallMemories(
+		ctx,
+		&domainservice.RecallMemoriesRequest{
+			ThreadID: job.ThreadID,
+			RunID:    job.RunID,
+			Scopes: []domainentity.MemoryScope{
+				domainentity.MemoryScopeLongTerm,
+				domainentity.MemoryScopeThread,
+				domainentity.MemoryScopeRun,
+			},
+			Limit: 100,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return buildMemoryFlushCurrentMemoryDocument(memories), nil
+}
+
+func buildMemoryFlushCurrentMemoryDocument(memories []*domainentity.Memory) string {
+	newSection := func() map[string]string {
+		return map[string]string{"summary": ""}
+	}
+	user := map[string]map[string]string{
+		"workContext":     newSection(),
+		"personalContext": newSection(),
+		"topOfMind":       newSection(),
+	}
+	history := map[string]map[string]string{
+		"recentMonths":       newSection(),
+		"earlierContext":     newSection(),
+		"longTermBackground": newSection(),
+	}
+	sectionConfidence := make(map[string]float64)
+	facts := make([]map[string]any, 0, len(memories))
+	for _, memory := range memories {
+		if memory == nil || memory.DeletedAt > 0 {
+			continue
+		}
+		content := strings.TrimSpace(memory.Content)
+		if content == "" {
+			continue
+		}
+		metadata := adkMemoryMetadata(memory.Metadata)
+		if section, ok := adkStructuredMemorySection(metadata); ok && section.path != "" {
+			confidence := memoryFlushMemoryConfidence(memory)
+			if confidence >= sectionConfidence[section.path] {
+				if section.group == "user" {
+					user[strings.TrimPrefix(section.path, "user.")]["summary"] = content
+				} else if section.group == "history" {
+					history[strings.TrimPrefix(section.path, "history.")]["summary"] = content
+				}
+				sectionConfidence[section.path] = confidence
+			}
+			continue
+		}
+		category := firstADKMemoryMetadataString(metadata, "category")
+		if category == "" {
+			category = string(memory.Scope)
+		}
+		if category == "" {
+			category = "context"
+		}
+		fact := map[string]any{
+			"id":         fmt.Sprintf("memory_%d", memory.ID),
+			"content":    content,
+			"category":   category,
+			"confidence": memoryFlushMemoryConfidence(memory),
+		}
+		if sourceError := firstADKMemoryMetadataString(metadata, "sourceError", "source_error"); sourceError != "" {
+			fact["sourceError"] = sourceError
+		}
+		facts = append(facts, fact)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"version": "1.0",
+		"user":    user,
+		"history": history,
+		"facts":   facts,
+	})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func memoryFlushMemoryConfidence(memory *domainentity.Memory) float64 {
+	if memory == nil {
+		return 0
+	}
+	if memory.Confidence > 0 {
+		return memory.Confidence
+	}
+	if memory.Score > 0 {
+		return memory.Score
+	}
+	return 0
 }
 
 func (s *ApplicationService) rememberExtractedMemoryFacts(
@@ -288,6 +478,44 @@ func (s *ApplicationService) rememberExtractedMemoryFacts(
 		written++
 	}
 	return written, skipped, nil
+}
+
+func (s *ApplicationService) removeExtractedMemoryFacts(
+	ctx context.Context,
+	job *domainentity.MemoryFlushJob,
+	memoryIDs []int64,
+) (int32, int32, error) {
+	if s == nil || s.ThreadSVC == nil || job == nil || len(memoryIDs) == 0 {
+		return 0, 0, nil
+	}
+	seen := make(map[int64]struct{}, len(memoryIDs))
+	var removed int32
+	var skipped int32
+	for _, memoryID := range memoryIDs {
+		if memoryID <= 0 {
+			skipped++
+			continue
+		}
+		if _, exists := seen[memoryID]; exists {
+			skipped++
+			continue
+		}
+		seen[memoryID] = struct{}{}
+		deleted, err := s.ThreadSVC.DeleteMemory(ctx, &domainservice.DeleteMemoryRequest{
+			ThreadID: job.ThreadID,
+			MemoryID: memoryID,
+			ActorID:  job.UserID,
+		})
+		if err != nil {
+			return removed, skipped, err
+		}
+		if deleted {
+			removed++
+			continue
+		}
+		skipped++
+	}
+	return removed, skipped, nil
 }
 
 func (s *ApplicationService) memoryFlushFactExists(

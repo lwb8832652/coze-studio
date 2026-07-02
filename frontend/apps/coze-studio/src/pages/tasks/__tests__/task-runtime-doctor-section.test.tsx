@@ -104,6 +104,30 @@ describe('TaskRuntimeDoctorSection', () => {
           default_mode: 'eino_adk',
           eino_adk_enabled: true,
         },
+        model: {
+          status: 'ready',
+          configured: true,
+          live_probe: 'ready',
+          capabilities: {
+            native_tool_search: true,
+            thinking: true,
+            reasoning: false,
+            vision: true,
+            pdf: false,
+            file: false,
+            audio: false,
+            video: false,
+          },
+        },
+        sandbox: {
+          status: 'ready',
+          runner_type: 'sandbox',
+          network: 'configured',
+          process: 'restricted',
+          ffi: 'restricted',
+          node_modules: 'configured',
+          message: 'sandbox code runner policy is configured',
+        },
         web_tools: {
           web_fetch: {
             status: 'ready',
@@ -136,6 +160,26 @@ describe('TaskRuntimeDoctorSection', () => {
             category: 'model',
             status: 'ready',
             message: 'Workbench default chat model is configured',
+          },
+          {
+            name: 'model.capabilities',
+            category: 'model',
+            status: 'ready',
+            message:
+              'Detected provider capabilities: native_tool_search, thinking, vision',
+          },
+          {
+            name: 'model.live_connectivity',
+            category: 'model',
+            status: 'ready',
+            message: 'Live model probe succeeded',
+          },
+          {
+            name: 'sandbox.runner_policy',
+            category: 'sandbox',
+            status: 'ready',
+            message:
+              'sandbox code runner policy is configured; network configured; process restricted; ffi restricted; node modules configured',
           },
           {
             name: 'skills.runtime_catalog',
@@ -175,10 +219,17 @@ describe('TaskRuntimeDoctorSection', () => {
     expect(container.textContent).toContain('总计 3');
     expect(container.textContent).toContain('健康 1');
     expect(container.textContent).toContain('未知 2');
-    expect(container.textContent).toContain('模型配置');
+    expect(container.textContent).toContain('模型连通');
+    expect(container.textContent).toContain('默认模型已配置');
+    expect(container.textContent).toContain('Live Probe 正常');
+    expect(container.textContent).toContain('模型能力');
+    expect(container.textContent).toContain('原生工具搜索、思考、视觉');
     expect(container.textContent).toContain(
       'Workbench default chat model is configured',
     );
+    expect(container.textContent).toContain('Sandbox');
+    expect(container.textContent).toContain('Runner sandbox');
+    expect(container.textContent).toContain('网络 configured');
     expect(container.textContent).toContain('Skill 检查');
     expect(container.textContent).toContain(
       '2 enabled / 3 total skills: research, writer',

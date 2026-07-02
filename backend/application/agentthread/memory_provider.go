@@ -89,6 +89,7 @@ func (p *ThreadMemoryProvider) Recall(ctx context.Context, run *RunSummary) ([]A
 		ThreadID: run.ThreadID,
 		RunID:    run.RunID,
 		Scopes:   options.Scopes,
+		Query:    options.Query,
 		Limit:    options.CandidateLimit,
 	})
 	if err != nil {

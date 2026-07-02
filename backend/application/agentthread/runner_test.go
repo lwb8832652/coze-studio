@@ -147,6 +147,118 @@ func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
 	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"武汉3日游攻略"`)
 }
 
+func TestRunProcessorUsesCleanExplicitGeneratedThreadTitle(t *testing.T) {
+	userMessage := "请帮我安排青岛家庭旅行，顺便推荐适合孩子的路线"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "路线已整理",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{
+			Message: "路线已整理",
+			Title:   `<think>需要保留短标题</think>"青岛亲子旅行路线"。`,
+		}, nil
+	}), RunProcessorOptions{
+		WorkerID:  "worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+	})
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, "青岛亲子旅行路线", domainSVC.updateThreadTitleReq.Title)
+	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"青岛亲子旅行路线"`)
+	require.NotContains(t, eventSink.events[1].Payload, "think")
+}
+
+func TestRunProcessorGeneratesThreadTitleWithTitleGenerator(t *testing.T) {
+	userMessage := "请根据下面这段很长的需求帮我整理一份可执行的项目上线计划，包含排期、风险、负责人和验收标准"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "上线计划已整理完成",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	eventSink := &recordingRunEventSink{}
+	titleGenerator := &recordingRunTitleGenerator{title: "项目上线计划"}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "上线计划已整理完成"}, nil
+	}), RunProcessorOptions{
+		WorkerID:       "worker-a",
+		BatchSize:      1,
+		EventSink:      eventSink,
+		TitleGenerator: titleGenerator,
+	})
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, titleGenerator.calls)
+	require.Equal(t, userMessage, titleGenerator.input.UserMessage)
+	require.Equal(t, "上线计划已整理完成", titleGenerator.input.AssistantMessage)
+	require.Equal(t, int64(200), titleGenerator.input.Run.RunID)
+	require.NotNil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, "项目上线计划", domainSVC.updateThreadTitleReq.Title)
+	require.Equal(t, []string{"run.started", "context.thread_title_updated", "run.completed"}, eventSink.eventTypes())
+}
+
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
 	input, err := taskThreadRunInputFromMessage("能把预算表导出成 Excel 吗？")
 	require.NoError(t, err)
@@ -636,4 +748,21 @@ func (unsupportedSubagentRetryRunExecutor) ExecuteSubagentRetry(
 	*RunSummary,
 ) (*RunExecutionResult, error) {
 	return nil, &SubagentRetryUnsupportedError{}
+}
+
+type recordingRunTitleGenerator struct {
+	title string
+	err   error
+	calls int
+	input RunTitleGenerationInput
+}
+
+func (g *recordingRunTitleGenerator) GenerateTitle(
+	_ context.Context,
+	input RunTitleGenerationInput,
+) (string, error) {
+	g.calls++
+	g.input = input
+
+	return g.title, g.err
 }

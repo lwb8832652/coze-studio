@@ -1,0 +1,28 @@
+{
+  "case_id": "P1-A-001",
+  "captured_at": "2026-07-01",
+  "source": "coze",
+  "method": "browser_runtime_summary",
+  "url": "http://localhost:8080/space/7656275718757679104/tasks/7657390468782620672",
+  "title": "扣子",
+  "screenshot": "screenshots/coze/P1-A-001-standard-mermaid-run.png",
+  "visible_controls": {
+    "token_indicator": true,
+    "export_action": true,
+    "bottom_composer": true,
+    "mermaid_or_source_hint": true,
+    "running_indicator_visible": false,
+    "completed_content_visible": true
+  },
+  "missing_evidence": ["backend API/event summary for create/run/events"],
+  "redacted_fields": [
+    "prompt text",
+    "full assistant answer",
+    "tool arguments/results",
+    "credentials",
+    "object URIs",
+    "signed URLs",
+    "raw provider bodies",
+    "checkpoint bytes"
+  ]
+}

@@ -547,6 +547,44 @@ describe('task thread service', () => {
     }
   });
 
+  it('maps artifact scan-pending signed URL rejection to safe preview message', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      headers: new Headers({
+        'content-type': 'application/json',
+      }),
+      json: () =>
+        Promise.resolve({
+          code: 409,
+          msg: 'artifact content blocked by scan policy',
+          reason: 'scan_pending',
+        }),
+      ok: false,
+    });
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    try {
+      await expect(
+        getTaskThreadArtifactSignedURL({
+          artifact_id: 'artifact-pdf',
+          mode: 'preview',
+          thread_id: 'thread 1',
+          ttl_seconds: 300,
+        }),
+      ).rejects.toThrow('产物安全扫描中，暂不能预览');
+      await expect(
+        getTaskThreadArtifactSignedURL({
+          artifact_id: 'artifact-pdf',
+          mode: 'download',
+          thread_id: 'thread 1',
+          ttl_seconds: 300,
+        }),
+      ).rejects.toThrow('产物安全扫描中，暂不能下载');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('deletes a task-thread artifact with encoded route params', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       headers: new Headers({

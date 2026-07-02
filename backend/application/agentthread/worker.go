@@ -171,9 +171,10 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 
 	eventSink := NewApplicationRunEventSink(app)
 	processor := NewRunProcessor(app, executor, RunProcessorOptions{
-		WorkerID:  envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
-		BatchSize: envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
-		EventSink: eventSink,
+		WorkerID:       envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
+		BatchSize:      envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink:      eventSink,
+		TitleGenerator: NewModelRunTitleGenerator(DefaultChatModelProvider),
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{
 		Interval: time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,

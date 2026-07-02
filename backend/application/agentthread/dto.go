@@ -482,6 +482,24 @@ type ListThreadsResponse struct {
 	Total   int64
 }
 
+type UpdateThreadMetadataRequest struct {
+	ThreadID int64
+	Metadata string
+}
+
+type UpdateThreadMetadataResponse struct {
+	Thread  *ThreadSummary
+	Updated bool
+}
+
+type DeleteThreadRequest struct {
+	ThreadID int64
+}
+
+type DeleteThreadResponse struct {
+	Deleted bool
+}
+
 type AppendMessageRequest struct {
 	ThreadID int64
 	RunID    int64
@@ -681,6 +699,7 @@ type RecallMemoriesRequest struct {
 	ThreadID int64
 	RunID    int64
 	Scopes   []MemoryScope
+	Query    string
 	Limit    int32
 }
 

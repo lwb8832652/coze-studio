@@ -1,0 +1,25 @@
+{
+  "case_id": "P1-A-000",
+  "captured_at": "2026-07-01",
+  "source": "deerflow",
+  "method": "browser_dom_summary",
+  "url": "http://localhost:2026/workspace/chats/new",
+  "title": "DeerFlow",
+  "ready_state": "complete",
+  "redirected_to_new_chat": true,
+  "has_login_prompt": false,
+  "has_token_or_artifact_controls": true,
+  "safe_visible_labels": [
+    "DF",
+    "Tokens",
+    "Pro",
+    "DeepSeek V4 Pro (Thinking)",
+    "Submit"
+  ],
+  "redacted_fields": [
+    "body text",
+    "full button labels",
+    "message content",
+    "prompt text"
+  ]
+}
