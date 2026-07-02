@@ -11,8 +11,7 @@ coverage first, then keeps the remaining real-browser sample work explicit.
 This is not a claim that the full sample library is complete. The current
 covered state is an automated safety and rendering baseline plus one real
 browser fixture task covering Markdown, TXT, JSON, CSV, PDF, PNG, HTML, and
-SVG artifact cards. Visible PDF page-pixel rendering and bounded error-state
-browser evidence remain open.
+SVG artifact cards. Visible PDF page-pixel rendering remains open.
 
 ## DeerFlow Reference
 
@@ -80,6 +79,9 @@ Results:
 - 2026-07-02 focused copy/download regression:
   `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'renders Mermaid answer markdown through the markdown viewer|renders generated document artifacts in a DeerFlow-style side preview without mixing them with thread export'`
   passed with 2 tests, 48 skipped.
+- 2026-07-02 stale artifact preview regression:
+  `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t 'clears the active artifact preview after reviewing the previewed artifact'`
+  passed with 1 test, 50 skipped.
 
 ## 2026-07-01 Browser Fixture Evidence
 
@@ -142,6 +144,8 @@ Screenshots:
   `screenshots/coze/P1-C-coze-scan-retry-after-7657556998191316992.png`
 - Copy/download affordance state:
   `screenshots/coze/P1-C-coze-copy-download-affordance-7657556998191316992.png`
+- Bounded scan-blocked preview error state:
+  `screenshots/coze/P1-C-coze-bounded-error-scan-blocked-message-7657556998191316992.png`
 
 Observed behavior:
 
@@ -213,6 +217,24 @@ Observed behavior:
   requested`; the retry button disappeared. Browser visible-text checks after
   retry found zero hits for `s3://`, `tos://`, `file_id`, `checkpoint`,
   `provider_payload`, `scanner_raw`, or `agent-runtime/`.
+- Bounded error-state evidence was captured from the same fixture task. The
+  local debug policy currently uses an outage mode that may allow non-executable
+  `pending` image/text previews, so the browser pass used a real manual review
+  transition instead of treating `pending` as fail-closed evidence. Clicking
+  `阻断产物 p1c-fixture.png` changed the PNG row to `blocked`; reloading the
+  page confirmed no stale `img[data-testid="task-artifact-inline-preview-image"]`
+  remained. Clicking `预览 p1c-fixture.png` then showed the bounded user-facing
+  error `产物安全扫描未通过，暂不能预览`, did not mount an image preview, and
+  visible text checks found zero hits for `s3://`, `tos://`, `file_id`,
+  `object_uri`, `agent-runtime/`, `checkpoint`, `provider_payload`,
+  `scanner_raw`, `signed_url`, or `raw_body`. This browser pass exposed a stale
+  preview bug: the task transcript and the artifact drawer keep separate
+  preview action state, so reviewing an already-previewed artifact could leave
+  a previously signed preview mounted after the artifact became blocked. The
+  frontend now clears the affected inline preview after successful review and
+  also clears transcript-side previews when refreshed artifact metadata moves
+  the previewed artifact into a blocking scan status. The regression is locked
+  by `clears the active artifact preview after reviewing the previewed artifact`.
 - The visible page text included `content_base64` because the fixture task
   prompt itself contained base64 inputs for PDF/PNG/HTML/SVG generation. This
   was user-visible test input text, not a provider/tool payload, object URI, or
@@ -292,9 +314,7 @@ PDF parity note:
 
 1. Capture a browser image that proves PDF page pixels render rather than only
    iframe mount state.
-2. Add real browser evidence for bounded artifact error states beyond the
-   existing service/task-detail tests.
-3. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
+2. Replace the prompt-embedded base64 fixture with a cleaner seeded fixture or
    dedicated skill/tool-driven fixture if future evidence needs zero
    `content_base64` visible-text hits.
 
@@ -305,5 +325,5 @@ one real MIME fixture task, scan-pending safe message mapping, PDF review
 release, browser iframe-mount evidence for the current PDF artifact,
 delete/restore UI lifecycle evidence, manual scan review evidence, and
 copy/download affordance checks, bounded API summaries, and scan retry UI
-evidence are complete. PDF pixel-render evidence and bounded error-state
-browser evidence are still open.
+evidence, bounded error-state browser evidence, and stale-preview regression
+coverage are complete. PDF pixel-render evidence is still open.

@@ -312,6 +312,7 @@ const createReviewArtifactHandler =
     onArtifactsChanged,
     setActiveAction,
     setError,
+    setInlinePreview,
     spaceId,
     threadId,
   }: TaskArtifactActionContext) =>
@@ -332,6 +333,9 @@ const createReviewArtifactHandler =
         space_id: spaceId,
         thread_id: threadId,
       });
+      setInlinePreview(previous =>
+        previous?.artifactId === artifact.artifact_id ? null : previous,
+      );
       await onArtifactsChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : '审核产物扫描状态失败');

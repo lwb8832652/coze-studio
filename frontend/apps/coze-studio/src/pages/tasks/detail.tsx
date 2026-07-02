@@ -67,7 +67,10 @@ import {
 } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
-import { canPreviewArtifact } from './task-artifacts-helpers';
+import {
+  artifactScanStatus,
+  canPreviewArtifact,
+} from './task-artifacts-helpers';
 import {
   TaskArtifactFeedback,
   TaskArtifactMessageList,
@@ -150,6 +153,20 @@ const getLatestPreviewableArtifactID = (artifacts: TaskThreadArtifact[]) =>
         right.created_at - left.created_at ||
         right.artifact_id.localeCompare(left.artifact_id),
     )[0]?.artifact_id ?? '';
+
+const BLOCKING_ARTIFACT_SCAN_STATUSES = new Set([
+  'blocked',
+  'failed',
+  'infected',
+  'quarantined',
+]);
+
+const shouldClearArtifactPreviewForScanStatus = (
+  artifact?: TaskThreadArtifact,
+) =>
+  artifact
+    ? BLOCKING_ARTIFACT_SCAN_STATUSES.has(artifactScanStatus(artifact))
+    : true;
 
 const groupTaskArtifactsByRunID = (artifacts: TaskThreadArtifact[]) => {
   const grouped = new Map<string, TaskThreadArtifact[]>();
@@ -928,6 +945,20 @@ const TaskTranscript = ({
     spaceId: task.space_id,
     threadId: taskDetailSource === 'thread' ? task.id : undefined,
   });
+
+  useEffect(() => {
+    const inlineArtifactID = artifactActions.inlinePreview?.artifactId;
+    if (!inlineArtifactID) {
+      return;
+    }
+
+    const artifact = artifacts.find(
+      item => item.artifact_id === inlineArtifactID,
+    );
+    if (shouldClearArtifactPreviewForScanStatus(artifact)) {
+      artifactActions.clearInlinePreview();
+    }
+  }, [artifactActions, artifacts]);
 
   return (
     <section

@@ -4698,6 +4698,150 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('clears the active artifact preview after reviewing the previewed artifact', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-artifact-review-preview-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-artifact-review-preview-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '产物预览审核任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成需要预览的图片',
+        last_agent_message: '图片已生成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const pendingArtifact = {
+      artifact_id: 'artifact-review-preview-1',
+      artifact_type: 'image',
+      content_type: 'image/png',
+      created_at: 1717000300000,
+      file_id: 'file-review-preview-1',
+      metadata: '{"scan_status":"pending"}',
+      preview_mode: 'image',
+      run_id: 'run-1',
+      size_bytes: 68,
+      thread_id: 'thread-artifact-review-preview-1',
+      title: 'preview.png',
+      updated_at: 1717000300000,
+      virtual_path: '/mnt/user-data/outputs/preview.png',
+    };
+    const blockedArtifact = {
+      ...pendingArtifact,
+      metadata: '{"scan_status":"blocked"}',
+      updated_at: 1717000400000,
+    };
+
+    mockListTaskThreadArtifacts
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [pendingArtifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          artifacts: [blockedArtifact],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      });
+    mockGetTaskThreadArtifactSignedURL.mockResolvedValue({
+      data: {
+        artifact_id: 'artifact-review-preview-1',
+        content_type: 'image/png',
+        expires_in_seconds: 300,
+        preview_mode: 'image',
+        url: 'https://storage.example.test/signed/preview.png?token=clean',
+      },
+      code: 0,
+      msg: '',
+    });
+    mockReviewTaskThreadArtifactScan.mockResolvedValue({
+      code: 0,
+      data: {
+        artifact_id: 'artifact-review-preview-1',
+        decision: 'block',
+        reviewed: true,
+        scan_status: 'blocked',
+      },
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openTaskArtifactsPanel(container);
+
+    const previewButton = container.querySelector(
+      'button[aria-label="预览 preview.png"]',
+    ) as HTMLButtonElement;
+    expect(previewButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(previewButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector(
+        'img[data-testid="task-artifact-inline-preview-image"]',
+      ),
+    ).toBeTruthy();
+
+    const blockButton = container.querySelector(
+      'button[aria-label="阻断产物 preview.png"]',
+    ) as HTMLButtonElement;
+    expect(blockButton).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(blockButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockReviewTaskThreadArtifactScan).toHaveBeenCalledWith({
+      artifact_id: 'artifact-review-preview-1',
+      decision: 'block',
+      thread_id: 'thread-artifact-review-preview-1',
+      space_id: 'space-1',
+    });
+    expect(container.textContent).toContain('blocked');
+    expect(
+      container.querySelector(
+        'img[data-testid="task-artifact-inline-preview-image"]',
+      ),
+    ).toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('renders artifact scan jobs in the task artifact drawer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
