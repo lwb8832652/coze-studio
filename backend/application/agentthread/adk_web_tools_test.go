@@ -454,6 +454,65 @@ func TestADKWebSearchToolUsesBoundedBackend(t *testing.T) {
 	}`, result)
 }
 
+func TestADKInstrumentedWebSearchBackendRecordsMetrics(t *testing.T) {
+	backend := &fakeADKWebSearchBackend{
+		response: &ADKWebSearchResponse{
+			Schema: adkWebSearchSchema,
+			Results: []ADKWebSearchResult{
+				{Title: "Qingdao travel", URL: "https://example.test/qingdao"},
+				{Title: "Best season", URL: "https://example.test/season"},
+			},
+		},
+	}
+	collector := &recordingRuntimeMetricsCollector{}
+	instrumented := NewADKInstrumentedWebSearchBackend(
+		backend,
+		"duckduckgo",
+		collector,
+	)
+
+	resp, err := instrumented.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "青岛最佳旅游时间", MaxResults: 5},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 2)
+	require.Len(t, collector.webSearches, 1)
+	require.Equal(t, RuntimeWebSearchMetricsObservation{
+		Provider:     "duckduckgo",
+		Result:       "success",
+		ErrorCode:    "none",
+		ResultCount:  2,
+		ObserveCount: true,
+	}, collector.webSearches[0].withoutLatency())
+	require.GreaterOrEqual(t, collector.webSearches[0].LatencyMs, int64(0))
+}
+
+func TestADKInstrumentedWebSearchBackendRecordsFailureWithoutQueryLeak(t *testing.T) {
+	backend := &fakeADKWebSearchBackend{
+		err: fmt.Errorf("provider failed for secret query 青岛最佳旅游时间"),
+	}
+	collector := &recordingRuntimeMetricsCollector{}
+	instrumented := NewADKInstrumentedWebSearchBackend(
+		backend,
+		"http /mnt/raw",
+		collector,
+	)
+
+	_, err := instrumented.SearchADKWeb(
+		context.Background(),
+		ADKWebSearchRequest{Query: "secret query 青岛最佳旅游时间", MaxResults: 5},
+	)
+
+	require.Error(t, err)
+	require.Len(t, collector.webSearches, 1)
+	require.Equal(t, "http /mnt/raw", collector.webSearches[0].Provider)
+	require.Equal(t, "failed", collector.webSearches[0].Result)
+	require.Equal(t, "search_failed", collector.webSearches[0].ErrorCode)
+	require.False(t, collector.webSearches[0].ObserveCount)
+}
+
 func TestDefaultADKToolProviderExposesWebSearchWithInjectedBackend(t *testing.T) {
 	backend := ADKWebSearchBackendFunc(func(
 		_ context.Context,
@@ -719,6 +778,7 @@ func resetADKWebSearchEnv(t *testing.T) {
 		agentThreadWebSearchMaxResponseBytesEnv,
 		agentThreadWebSearchAllowHTTPEnv,
 		agentThreadWebSearchAllowPrivateIPsEnv,
+		agentThreadRuntimePrometheusMetricsEnabledEnv,
 	} {
 		t.Setenv(key, "")
 	}

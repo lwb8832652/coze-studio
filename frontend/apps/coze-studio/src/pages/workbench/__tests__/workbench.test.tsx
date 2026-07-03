@@ -30,6 +30,9 @@ const mockUseSearchParams = vi.hoisted(() =>
 );
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCreateTaskThread = vi.hoisted(() => vi.fn());
+const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
+const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
+const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
 const mockListKnowledgeResources = vi.hoisted(() => vi.fn());
 const mockListDatabaseResources = vi.hoisted(() => vi.fn());
@@ -44,11 +47,14 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../service', () => ({
+  appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThread: mockCreateTaskThread,
+  createTaskThreadRun: mockCreateTaskThreadRun,
   getWorkbenchLLMModels: mockGetTypeList,
   listWorkbenchDatabaseResources: mockListDatabaseResources,
   listWorkbenchKnowledgeResources: mockListKnowledgeResources,
   listWorkbenchWorkflowResources: mockListWorkflowResources,
+  uploadTaskThreadFiles: mockUploadTaskThreadFiles,
 }));
 
 vi.mock('../../skill/service', () => ({
@@ -333,6 +339,9 @@ describe('WorkbenchPage', () => {
     mockUseSearchParams.mockReturnValue([new URLSearchParams(), vi.fn()]);
     mockNavigate.mockReset();
     mockCreateTaskThread.mockReset();
+    mockAppendTaskThreadMessage.mockReset();
+    mockCreateTaskThreadRun.mockReset();
+    mockUploadTaskThreadFiles.mockReset();
     mockGetTypeList.mockReset();
     mockListKnowledgeResources.mockReset();
     mockListKnowledgeResources.mockResolvedValue([
@@ -871,6 +880,62 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
+  it('keeps selected attachments in the composer payload', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const onSubmit = vi.fn();
+    const file = new File(['hello'], 'brief.md', { type: 'text/markdown' });
+
+    act(() => {
+      root = createRoot(container);
+      root.render(
+        <WorkbenchComposer
+          value="请总结附件"
+          mode={DEFAULT_WORKBENCH_MODE}
+          loading={false}
+          presentation="deerflow"
+          spaceId="space-1"
+          onValueChange={vi.fn()}
+          onModeChange={vi.fn()}
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+
+    const uploadButton = container.querySelector(
+      'button[aria-label="添加附件"]',
+    ) as HTMLButtonElement;
+    const fileInput = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      uploadButton.click();
+      Simulate.change(fileInput, {
+        target: { files: [file] },
+      } as unknown as Event);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('brief.md');
+
+    await act(async () => {
+      getSendButton(container).click();
+      await Promise.resolve();
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect((onSubmit.mock.calls[0]?.[0] as { files?: File[] }).files).toEqual([
+      file,
+    ]);
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('supports keyboard navigation in the Coze @ resource menu', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -1367,6 +1432,155 @@ describe('WorkbenchPage', () => {
       Object.prototype.hasOwnProperty.call(defaultRunConfig, 'enable_skills'),
     ).toBe(false);
     expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/tasks/thread-1');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('uploads selected files before starting a new canonical task run', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const file = new File(['# Brief'], 'brief.md', {
+      type: 'text/markdown',
+    });
+
+    mockCreateTaskThread.mockResolvedValue({
+      data: {
+        thread: {
+          thread_id: 'thread-upload-1',
+          legacy_task_id: '0',
+          space_id: 'space-1',
+          creator_id: 'user-1',
+          title: '请总结附件',
+          status: 'idle',
+          source: 'web',
+          progress: 0,
+          last_user_message: '',
+          last_agent_message: '',
+          created_at: 1717000000,
+          updated_at: 1717000000,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+    mockUploadTaskThreadFiles.mockResolvedValue({
+      data: {
+        files: [
+          {
+            file_id: 'file-1',
+            file_name: 'brief.md',
+            virtual_path: '/mnt/user-data/uploads/brief.md',
+            content_type: 'text/markdown',
+            size_bytes: 7,
+            created_at: 1717000000,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
+    mockAppendTaskThreadMessage.mockResolvedValue({
+      data: {
+        message_id: 'msg-upload-1',
+        thread_id: 'thread-upload-1',
+        run_id: '',
+        role: 'user',
+        content: '请总结附件',
+        metadata: '{}',
+        created_at: 1717000000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateTaskThreadRun.mockResolvedValue({
+      data: {
+        run_id: 'run-upload-1',
+        thread_id: 'thread-upload-1',
+        status: 'queued',
+      },
+      code: 0,
+      msg: '',
+    });
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<WorkbenchPage />);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      Simulate.change(fileInput, {
+        target: { files: [file] },
+      } as unknown as Event);
+      await Promise.resolve();
+    });
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '请总结附件' },
+      } as unknown as Event);
+    });
+
+    await act(async () => {
+      getSendButton(container).click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateTaskThread).toHaveBeenCalledWith({
+      space_id: 'space-1',
+      message: '请总结附件',
+      config: expect.any(String),
+      defer_start: true,
+    });
+    expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
+      thread_id: 'thread-upload-1',
+      files: [file],
+    });
+    expect(mockAppendTaskThreadMessage).toHaveBeenCalledWith({
+      thread_id: 'thread-upload-1',
+      role: 'user',
+      content: '请总结附件',
+      metadata: expect.any(String),
+    });
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
+      thread_id: 'thread-upload-1',
+      input: expect.any(String),
+      config: expect.any(String),
+      metadata: expect.any(String),
+      idempotency_key: expect.any(String),
+    });
+    expect(
+      JSON.parse(mockCreateTaskThreadRun.mock.calls[0]?.[0].input),
+    ).toMatchObject({
+      messages: [
+        {
+          role: 'user',
+          content: '请总结附件',
+          message_id: 'msg-upload-1',
+        },
+      ],
+      uploaded_files: [
+        {
+          file_name: 'brief.md',
+          virtual_path: '/mnt/user-data/uploads/brief.md',
+          content_type: 'text/markdown',
+          size_bytes: 7,
+        },
+      ],
+    });
+    expect(mockNavigate).toHaveBeenCalledWith(
+      '/space/space-1/tasks/thread-upload-1',
+    );
 
     act(() => {
       root?.unmount();

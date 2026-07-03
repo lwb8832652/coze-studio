@@ -34,19 +34,25 @@ func TestMCPRuntimeAuditRepositoryCreatesAndListsEvents(t *testing.T) {
 	second.EventType = "mcp.tool.completed"
 	second.OutputBytes = 128
 	second.CreatedAt = 200
+	third := sampleMCPRuntimeAuditEvent(5003)
+	third.ThreadID = 11
+	third.CreatedAt = 300
 
 	require.NoError(t, repo.CreateMCPRuntimeAuditEvent(context.Background(), first))
 	require.NoError(t, repo.CreateMCPRuntimeAuditEvent(context.Background(), second))
+	require.NoError(t, repo.CreateMCPRuntimeAuditEvent(context.Background(), third))
 
-	got, err := repo.ListMCPRuntimeAuditEvents(
+	got, total, err := repo.ListMCPRuntimeAuditEvents(
 		context.Background(),
 		ListMCPRuntimeAuditEventsRequest{
-			RunID: 20,
-			Limit: 10,
+			ThreadID: 10,
+			RunID:    20,
+			Limit:    10,
 		},
 	)
 
 	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
 	require.Equal(t, []*entity.MCPRuntimeAuditEvent{first, second}, got)
 }
 
@@ -58,12 +64,13 @@ func TestMCPRuntimeAuditRepositoryBoundsSanitizedFields(t *testing.T) {
 
 	require.NoError(t, repo.CreateMCPRuntimeAuditEvent(context.Background(), event))
 
-	got, err := repo.ListMCPRuntimeAuditEvents(
+	got, total, err := repo.ListMCPRuntimeAuditEvents(
 		context.Background(),
-		ListMCPRuntimeAuditEventsRequest{RunID: 20, Limit: 1},
+		ListMCPRuntimeAuditEventsRequest{ThreadID: 10, RunID: 20, Limit: 1},
 	)
 
 	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
 	require.Len(t, got, 1)
 	require.LessOrEqual(t, len(got[0].RuntimeToolName), 128)
 	require.LessOrEqual(t, len(got[0].ErrorCode), 64)

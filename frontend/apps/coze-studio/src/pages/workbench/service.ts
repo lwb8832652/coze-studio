@@ -31,8 +31,69 @@ export interface WorkbenchReferenceResource {
 }
 
 export const createTaskThread = workbenchTask.CreateTaskThread;
+export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
+export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
 export const sendWorkbenchChat = workbench.WorkbenchChat;
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
+
+export interface TaskThreadUploadedFile {
+  file_id?: string;
+  file_name: string;
+  virtual_path: string;
+  content_type?: string;
+  size_bytes?: number;
+  created_at?: number;
+}
+
+export interface UploadTaskThreadFilesResponse {
+  data?: {
+    files?: TaskThreadUploadedFile[];
+    skipped_files?: string[];
+  };
+  code: number;
+  msg: string;
+}
+
+export const uploadTaskThreadFiles = async ({
+  files,
+  thread_id: threadId,
+}: {
+  thread_id: string;
+  files: File[];
+}): Promise<UploadTaskThreadFilesResponse> => {
+  if (!threadId || files.length === 0) {
+    return {
+      data: {
+        files: [],
+        skipped_files: [],
+      },
+      code: 0,
+      msg: 'success',
+    };
+  }
+
+  const formData = new FormData();
+  files.forEach(file => {
+    formData.append('files', file, file.name);
+  });
+
+  const response = await fetch(
+    `/api/workbench/task_threads/${encodeURIComponent(threadId)}/uploads`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+  );
+  if (!response.ok) {
+    throw new Error('上传附件失败');
+  }
+  const payload = (await response.json()) as UploadTaskThreadFilesResponse;
+  if (typeof payload.code === 'number' && payload.code !== 0) {
+    throw new Error(payload.msg || '上传附件失败');
+  }
+
+  return payload;
+};
 
 export const getWorkbenchLLMModels = async (
   spaceId: string,

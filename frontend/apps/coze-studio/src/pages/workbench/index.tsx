@@ -32,7 +32,14 @@ import {
   buildTaskThreadDetailPath,
   buildTaskThreadListPath,
 } from '../chats/task-thread-routes';
-import { createTaskThread, getWorkbenchLLMModels } from './service';
+import {
+  appendTaskThreadMessage as appendWorkbenchTaskThreadMessage,
+  createTaskThread,
+  createTaskThreadRun,
+  getWorkbenchLLMModels,
+  type TaskThreadUploadedFile,
+  uploadTaskThreadFiles,
+} from './service';
 import { WorkbenchComposer } from './components/workbench-composer';
 import {
   DEFAULT_WORKBENCH_MODE,
@@ -80,6 +87,39 @@ const activateSkillCreator = (
     },
   };
 };
+
+const buildNewTaskRunInput = ({
+  message,
+  messageId,
+  uploadedFiles,
+}: {
+  message: string;
+  messageId: string;
+  uploadedFiles?: TaskThreadUploadedFile[];
+}) =>
+  JSON.stringify({
+    messages: [
+      {
+        role: 'user',
+        content: message,
+        message_id: messageId,
+      },
+    ],
+    uploaded_files: uploadedFiles ?? [],
+  });
+
+const getNewTaskRunMetadata = ({
+  messageId,
+  mode,
+}: {
+  messageId: string;
+  mode: WorkbenchMode;
+}) =>
+  JSON.stringify({
+    source: 'workbench_new_task',
+    appended_message_id: messageId,
+    mode,
+  });
 
 const TEMPLATE_CARDS = [
   {
@@ -306,6 +346,58 @@ const WorkbenchPage = () => {
       const submitPayload = isSkillCreationMode
         ? activateSkillCreator(payload)
         : payload;
+      const files = submitPayload.files ?? [];
+
+      if (files.length > 0) {
+        const response = await createTaskThread({
+          space_id,
+          message: submitPayload.message,
+          config: stringifyWorkbenchRunConfig(submitPayload),
+          defer_start: true,
+        });
+        const thread = response?.data?.thread;
+        if (!thread?.thread_id) {
+          navigate(buildTaskThreadListPath(space_id));
+          return;
+        }
+
+        const uploadResponse = await uploadTaskThreadFiles({
+          thread_id: thread.thread_id,
+          files,
+        });
+        const appendResponse = await appendWorkbenchTaskThreadMessage({
+          thread_id: thread.thread_id,
+          role: 'user',
+          content: submitPayload.message,
+          metadata: stringifyWorkbenchRunConfig(submitPayload),
+        });
+        const appendedMessageId =
+          appendResponse.data?.message_id || `${thread.thread_id}:message`;
+
+        await createTaskThreadRun({
+          thread_id: thread.thread_id,
+          input: buildNewTaskRunInput({
+            message: submitPayload.message,
+            messageId: appendedMessageId,
+            uploadedFiles: uploadResponse.data?.files,
+          }),
+          config: stringifyWorkbenchRunConfig(submitPayload),
+          metadata: getNewTaskRunMetadata({
+            messageId: appendedMessageId,
+            mode: submitPayload.mode,
+          }),
+          idempotency_key: `${thread.thread_id}:${appendedMessageId}:new-task`,
+        });
+
+        setValue('');
+        emitWorkspaceTaskThreadUpsert({
+          space_id,
+          thread,
+        });
+        navigate(buildTaskThreadDetailPath(space_id, thread.thread_id));
+        return;
+      }
+
       const response = await createTaskThread({
         space_id,
         message: submitPayload.message,

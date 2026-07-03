@@ -447,3 +447,19 @@ func registerHistogramVec(
 	}
 	return collector, nil
 }
+
+func registerGaugeVec(
+	registerer prometheus.Registerer,
+	collector *prometheus.GaugeVec,
+) (*prometheus.GaugeVec, error) {
+	if err := registerer.Register(collector); err != nil {
+		if already, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			existing, ok := already.ExistingCollector.(*prometheus.GaugeVec)
+			if ok {
+				return existing, nil
+			}
+		}
+		return nil, err
+	}
+	return collector, nil
+}

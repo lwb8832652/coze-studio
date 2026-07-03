@@ -279,6 +279,10 @@ type ClaimMemoryFlushJobsRequest struct {
 	LeaseTTLMillis int64
 }
 
+type AggregateMemoryFlushBacklogRequest struct {
+	Statuses []entity.MemoryFlushJobStatus
+}
+
 type CompleteMemoryFlushJobRequest struct {
 	JobID    int64
 	WorkerID string
@@ -343,6 +347,10 @@ type ListRunEventsRequest struct {
 type ClaimPendingRunsRequest struct {
 	WorkerID string
 	Limit    int32
+}
+
+type AggregateRunBacklogRequest struct {
+	Statuses []entity.RunStatus
 }
 
 type ClaimQueuedResumeRunsRequest struct {
@@ -411,6 +419,7 @@ type ThreadService interface {
 		req *EnqueueMemoryFlushJobRequest,
 	) (*entity.MemoryFlushJob, bool, error)
 	ClaimMemoryFlushJobs(ctx context.Context, req *ClaimMemoryFlushJobsRequest) ([]*entity.MemoryFlushJob, error)
+	AggregateMemoryFlushBacklog(ctx context.Context, req *AggregateMemoryFlushBacklogRequest) ([]*entity.MemoryFlushBacklogAggregate, error)
 	CompleteMemoryFlushJob(ctx context.Context, req *CompleteMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
 	RetryMemoryFlushJob(ctx context.Context, req *RetryMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
 	FailMemoryFlushJob(ctx context.Context, req *FailMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
@@ -418,6 +427,7 @@ type ThreadService interface {
 	GetRunTokenUsage(ctx context.Context, req *GetRunTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, []*entity.RunTokenUsageAggregate, error)
 	GetThreadTokenUsage(ctx context.Context, req *GetThreadTokenUsageRequest) ([]*entity.TokenUsage, int64, *entity.TokenUsageAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
+	AggregateRunBacklog(ctx context.Context, req *AggregateRunBacklogRequest) ([]*entity.RunBacklogAggregate, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
 	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

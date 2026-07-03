@@ -431,6 +431,7 @@ func TestADKMCPRuntimeExecutorRecordsContentFreeAuditLifecycle(t *testing.T) {
 	require.Equal(t, int64(20), audit.records[1].RunID)
 	require.Equal(t, int64(100), audit.records[1].ServerID)
 	require.Equal(t, "mcp_100_search_docs", audit.records[1].RuntimeToolName)
+	require.Equal(t, "stdio", audit.records[1].Transport)
 	require.Equal(t, int64(len("secret output")), audit.records[1].OutputBytes)
 	for _, record := range audit.records {
 		require.NotContains(t, record.RuntimeToolName, "secret docs")
@@ -509,6 +510,7 @@ func TestADKMCPRuntimeExecutorReportsRuntimeHealthAfterTransport(
 	require.Len(t, health.reports, 1)
 	require.True(t, health.reports[0].Success)
 	require.Equal(t, int64(100), health.reports[0].ServerID)
+	require.Equal(t, adkMCPRuntimeTransportStdio, health.reports[0].Transport)
 	require.Empty(t, health.reports[0].ErrorCode)
 	require.GreaterOrEqual(t, health.reports[0].LatencyMs, int64(0))
 }
@@ -547,6 +549,7 @@ func TestADKMCPRuntimeExecutorReportsUnhealthyAfterTransportFailure(
 	require.Empty(t, result)
 	require.Len(t, health.reports, 1)
 	require.False(t, health.reports[0].Success)
+	require.Equal(t, adkMCPRuntimeTransportStdio, health.reports[0].Transport)
 	require.Equal(t, "transport_failed", health.reports[0].ErrorCode)
 	require.NotContains(t, health.reports[0].ErrorCode, "stdio-secret-token")
 }

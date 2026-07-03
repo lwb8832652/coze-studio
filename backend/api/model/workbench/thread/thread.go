@@ -194,6 +194,20 @@ type TaskThreadGuardrailAuditEvent struct {
 	CreatedAt  int64  `json:"created_at"`
 }
 
+type TaskThreadMCPRuntimeAuditEvent struct {
+	EventID         int64  `json:"event_id,string"`
+	SpaceID         int64  `json:"space_id,string"`
+	ThreadID        int64  `json:"thread_id,string"`
+	RunID           int64  `json:"run_id,string"`
+	ServerID        int64  `json:"server_id,string"`
+	RuntimeToolName string `json:"runtime_tool_name"`
+	EventType       string `json:"event_type"`
+	ErrorCode       string `json:"error_code"`
+	ElapsedMillis   int64  `json:"elapsed_millis"`
+	OutputBytes     int64  `json:"output_bytes"`
+	CreatedAt       int64  `json:"created_at"`
+}
+
 type TaskThreadArtifact struct {
 	ArtifactID   int64  `json:"artifact_id,string"`
 	ThreadID     int64  `json:"thread_id,string"`
@@ -243,6 +257,7 @@ type CreateTaskThreadRequest struct {
 	SpaceID           int64  `json:"space_id,string,required"`
 	Message           string `json:"message,required"`
 	Title             string `json:"title,omitempty"`
+	DeferStart        bool   `json:"defer_start,omitempty"`
 	AssistantID       string `json:"assistant_id,omitempty"`
 	Command           string `json:"command,omitempty"`
 	Config            string `json:"config,omitempty"`
@@ -305,6 +320,22 @@ type GetTaskThreadTokenUsageRequest struct {
 	PageSize         int32  `query:"page_size"`
 }
 
+type ListTaskThreadUploadFilesRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	SpaceID  int64 `query:"space_id"`
+}
+
+type UploadTaskThreadFilesRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	SpaceID  int64 `query:"space_id"`
+}
+
+type DeleteTaskThreadUploadFileRequest struct {
+	ThreadID int64  `path:"thread_id,required"`
+	FileName string `path:"filename,required"`
+	SpaceID  int64  `query:"space_id"`
+}
+
 type ListTaskThreadMemoriesRequest struct {
 	ThreadID       int64    `path:"thread_id,required"`
 	RunID          int64    `query:"run_id"`
@@ -336,6 +367,13 @@ type ListTaskThreadMemoryAuditEventsRequest struct {
 }
 
 type ListTaskThreadGuardrailAuditEventsRequest struct {
+	ThreadID int64 `path:"thread_id,required"`
+	RunID    int64 `query:"run_id"`
+	Page     int32 `query:"page"`
+	PageSize int32 `query:"page_size"`
+}
+
+type ListTaskThreadMCPRuntimeAuditEventsRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	RunID    int64 `query:"run_id"`
 	Page     int32 `query:"page"`
@@ -581,6 +619,11 @@ type ListTaskThreadGuardrailAuditEventsData struct {
 	Total  int64                            `json:"total"`
 }
 
+type ListTaskThreadMCPRuntimeAuditEventsData struct {
+	Events []*TaskThreadMCPRuntimeAuditEvent `json:"events"`
+	Total  int64                             `json:"total"`
+}
+
 type ExportTaskThreadGuardrailAuditEventsData struct {
 	Schema     string                           `json:"schema"`
 	ThreadID   int64                            `json:"thread_id,string"`
@@ -630,6 +673,33 @@ type GetTaskThreadArtifactSignedURLData struct {
 	PreviewMode      string `json:"preview_mode"`
 }
 
+type TaskThreadUploadFile struct {
+	FileID      int64  `json:"file_id,string"`
+	FileName    string `json:"filename"`
+	Path        string `json:"path"`
+	VirtualPath string `json:"virtual_path"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+type UploadTaskThreadFilesData struct {
+	Success      bool                    `json:"success"`
+	Files        []*TaskThreadUploadFile `json:"files"`
+	Message      string                  `json:"message"`
+	SkippedFiles []string                `json:"skipped_files"`
+}
+
+type ListTaskThreadUploadFilesData struct {
+	Files []*TaskThreadUploadFile `json:"files"`
+	Count int64                   `json:"count"`
+}
+
+type DeleteTaskThreadUploadFileData struct {
+	Deleted bool                  `json:"deleted"`
+	File    *TaskThreadUploadFile `json:"file,omitempty"`
+}
+
 type ListTaskThreadsResponse struct {
 	Data *ListTaskThreadsData `json:"data,omitempty"`
 	Code int64                `json:"code"`
@@ -646,6 +716,24 @@ type GetTaskThreadResponse struct {
 	Data *TaskThread `json:"data,omitempty"`
 	Code int64       `json:"code"`
 	Msg  string      `json:"msg"`
+}
+
+type UploadTaskThreadFilesResponse struct {
+	Data *UploadTaskThreadFilesData `json:"data,omitempty"`
+	Code int64                      `json:"code"`
+	Msg  string                     `json:"msg"`
+}
+
+type ListTaskThreadUploadFilesResponse struct {
+	Data *ListTaskThreadUploadFilesData `json:"data,omitempty"`
+	Code int64                          `json:"code"`
+	Msg  string                         `json:"msg"`
+}
+
+type DeleteTaskThreadUploadFileResponse struct {
+	Data *DeleteTaskThreadUploadFileData `json:"data,omitempty"`
+	Code int64                           `json:"code"`
+	Msg  string                          `json:"msg"`
 }
 
 type ListTaskThreadMessagesResponse struct {
@@ -718,6 +806,12 @@ type ListTaskThreadGuardrailAuditEventsResponse struct {
 	Data *ListTaskThreadGuardrailAuditEventsData `json:"data,omitempty"`
 	Code int64                                   `json:"code"`
 	Msg  string                                  `json:"msg"`
+}
+
+type ListTaskThreadMCPRuntimeAuditEventsResponse struct {
+	Data *ListTaskThreadMCPRuntimeAuditEventsData `json:"data,omitempty"`
+	Code int64                                    `json:"code"`
+	Msg  string                                   `json:"msg"`
 }
 
 type ExportTaskThreadGuardrailAuditEventsResponse struct {

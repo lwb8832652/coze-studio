@@ -69,6 +69,10 @@ type ArtifactRepository interface {
 		ctx context.Context,
 		req ClaimArtifactScanJobsRequest,
 	) ([]*entity.ArtifactScanJob, error)
+	AggregateArtifactScanBacklog(
+		ctx context.Context,
+		req AggregateArtifactScanBacklogRequest,
+	) ([]*entity.ArtifactScanBacklogAggregate, error)
 	GetArtifactScanJob(
 		ctx context.Context,
 		jobID int64,
@@ -134,6 +138,10 @@ type ClaimArtifactScanJobsRequest struct {
 	Limit          int32
 	Now            int64
 	LeaseExpiresAt int64
+}
+
+type AggregateArtifactScanBacklogRequest struct {
+	Statuses []entity.ArtifactScanJobStatus
 }
 
 type CompleteArtifactScanJobRequest struct {

@@ -19,6 +19,7 @@ package coze
 import (
 	"context"
 	"errors"
+	"io"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -112,6 +113,7 @@ func CreateTaskThread(ctx context.Context, c *app.RequestContext) {
 		Config:            req.Config,
 		Context:           req.Context,
 		Metadata:          req.Metadata,
+		DeferStart:        req.DeferStart,
 		StreamMode:        req.StreamMode,
 		MultitaskStrategy: req.MultitaskStrategy,
 		OnDisconnect:      req.OnDisconnect,
@@ -130,6 +132,146 @@ func CreateTaskThread(ctx context.Context, c *app.RequestContext) {
 			Thread:  taskThreadToAPI(resp.Thread),
 			Message: taskThreadMessageToAPI(resp.Message),
 			Run:     taskThreadRunToAPI(resp.Run),
+		},
+	})
+}
+
+// ListTaskThreadUploadFiles .
+// @router /api/workbench/task_threads/:thread_id/uploads [GET]
+func ListTaskThreadUploadFiles(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadUploadFilesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ListTaskThreadUploadFiles(
+		ctx,
+		&appagentthread.ListTaskThreadUploadFilesRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   workbenchViewerIDFromCtx(ctx),
+			ThreadID: req.ThreadID,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	files := taskThreadUploadFilesToAPI(resp.Files)
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadUploadFilesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadUploadFilesData{
+			Files: files,
+			Count: int64(len(files)),
+		},
+	})
+}
+
+// UploadTaskThreadFiles .
+// @router /api/workbench/task_threads/:thread_id/uploads [POST]
+func UploadTaskThreadFiles(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.UploadTaskThreadFilesRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	form, err := c.MultipartForm()
+	if err != nil {
+		invalidParamRequestResponse(c, "multipart form is required")
+		return
+	}
+	fileHeaders := form.File["files"]
+	if len(fileHeaders) == 0 {
+		fileHeaders = form.File["file"]
+	}
+	if len(fileHeaders) == 0 {
+		invalidParamRequestResponse(c, "upload files are required")
+		return
+	}
+
+	files := make([]appagentthread.TaskThreadUploadFileInput, 0, len(fileHeaders))
+	for _, header := range fileHeaders {
+		if header == nil {
+			continue
+		}
+		opened, err := header.Open()
+		if err != nil {
+			internalServerErrorResponse(ctx, c, err)
+			return
+		}
+		content, readErr := io.ReadAll(opened)
+		closeErr := opened.Close()
+		if readErr != nil {
+			internalServerErrorResponse(ctx, c, readErr)
+			return
+		}
+		if closeErr != nil {
+			internalServerErrorResponse(ctx, c, closeErr)
+			return
+		}
+		files = append(files, appagentthread.TaskThreadUploadFileInput{
+			FileName:    header.Filename,
+			Content:     content,
+			ContentType: header.Header.Get("Content-Type"),
+		})
+	}
+	resp, err := appagentthread.SVC.UploadTaskThreadFiles(
+		ctx,
+		&appagentthread.UploadTaskThreadFilesRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   workbenchViewerIDFromCtx(ctx),
+			ThreadID: req.ThreadID,
+			Files:    files,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.UploadTaskThreadFilesResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.UploadTaskThreadFilesData{
+			Success:      true,
+			Files:        taskThreadUploadFilesToAPI(resp.Files),
+			Message:      "uploaded",
+			SkippedFiles: resp.SkippedFiles,
+		},
+	})
+}
+
+// DeleteTaskThreadUploadFile .
+// @router /api/workbench/task_threads/:thread_id/uploads/:filename [DELETE]
+func DeleteTaskThreadUploadFile(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.DeleteTaskThreadUploadFileRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.DeleteTaskThreadUploadFile(
+		ctx,
+		&appagentthread.DeleteTaskThreadUploadFileRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   workbenchViewerIDFromCtx(ctx),
+			ThreadID: req.ThreadID,
+			FileName: req.FileName,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.DeleteTaskThreadUploadFileResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.DeleteTaskThreadUploadFileData{
+			Deleted: resp.Deleted,
+			File:    taskThreadUploadFileToAPI(resp.File),
 		},
 	})
 }
@@ -669,6 +811,40 @@ func ListTaskThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestConte
 		Msg:  "success",
 		Data: &threadapi.ListTaskThreadGuardrailAuditEventsData{
 			Events: taskThreadGuardrailAuditEventsToAPI(resp.Events),
+			Total:  resp.Total,
+		},
+	})
+}
+
+// ListTaskThreadMCPRuntimeAuditEvents .
+// @router /api/workbench/task_threads/:thread_id/mcp_runtime_audit_events [GET]
+func ListTaskThreadMCPRuntimeAuditEvents(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.ListTaskThreadMCPRuntimeAuditEventsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appagentthread.SVC.ListMCPRuntimeAuditEvents(
+		ctx,
+		&appagentthread.ListMCPRuntimeAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			ViewerID: workbenchViewerIDFromCtx(ctx),
+			Page:     req.Page,
+			PageSize: req.PageSize,
+		},
+	)
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.ListTaskThreadMCPRuntimeAuditEventsResponse{
+		Code: 0,
+		Msg:  "success",
+		Data: &threadapi.ListTaskThreadMCPRuntimeAuditEventsData{
+			Events: taskThreadMCPRuntimeAuditEventsToAPI(resp.Events),
 			Total:  resp.Total,
 		},
 	})
@@ -1482,6 +1658,17 @@ func taskThreadGuardrailAuditEventsToAPI(
 	return result
 }
 
+func taskThreadMCPRuntimeAuditEventsToAPI(
+	events []*appagentthread.MCPRuntimeAuditEventSummary,
+) []*threadapi.TaskThreadMCPRuntimeAuditEvent {
+	result := make([]*threadapi.TaskThreadMCPRuntimeAuditEvent, 0, len(events))
+	for _, item := range events {
+		result = append(result, taskThreadMCPRuntimeAuditEventToAPI(item))
+	}
+
+	return result
+}
+
 func taskThreadMemoryScopes(scope string, scopes []string) []appagentthread.MemoryScope {
 	values := make([]appagentthread.MemoryScope, 0, len(scopes)+1)
 	if strings.TrimSpace(scope) != "" {
@@ -1640,6 +1827,28 @@ func taskThreadGuardrailAuditEventToAPI(
 		ReasonCode: event.ReasonCode,
 		RuleIDs:    event.RuleIDs,
 		CreatedAt:  event.CreatedAt,
+	}
+}
+
+func taskThreadMCPRuntimeAuditEventToAPI(
+	event *appagentthread.MCPRuntimeAuditEventSummary,
+) *threadapi.TaskThreadMCPRuntimeAuditEvent {
+	if event == nil {
+		return nil
+	}
+
+	return &threadapi.TaskThreadMCPRuntimeAuditEvent{
+		EventID:         event.EventID,
+		SpaceID:         event.SpaceID,
+		ThreadID:        event.ThreadID,
+		RunID:           event.RunID,
+		ServerID:        event.ServerID,
+		RuntimeToolName: event.RuntimeToolName,
+		EventType:       event.EventType,
+		ErrorCode:       event.ErrorCode,
+		ElapsedMillis:   event.ElapsedMillis,
+		OutputBytes:     event.OutputBytes,
+		CreatedAt:       event.CreatedAt,
 	}
 }
 
@@ -2128,6 +2337,35 @@ func taskThreadMessageToAPI(message *appagentthread.MessageSummary) *threadapi.T
 	}
 }
 
+func taskThreadUploadFilesToAPI(
+	files []*appagentthread.TaskThreadUploadedFileSummary,
+) []*threadapi.TaskThreadUploadFile {
+	apiFiles := make([]*threadapi.TaskThreadUploadFile, 0, len(files))
+	for _, file := range files {
+		if mapped := taskThreadUploadFileToAPI(file); mapped != nil {
+			apiFiles = append(apiFiles, mapped)
+		}
+	}
+	return apiFiles
+}
+
+func taskThreadUploadFileToAPI(
+	file *appagentthread.TaskThreadUploadedFileSummary,
+) *threadapi.TaskThreadUploadFile {
+	if file == nil {
+		return nil
+	}
+	return &threadapi.TaskThreadUploadFile{
+		FileID:      file.FileID,
+		FileName:    file.FileName,
+		Path:        file.VirtualPath,
+		VirtualPath: file.VirtualPath,
+		ContentType: file.ContentType,
+		SizeBytes:   file.SizeBytes,
+		CreatedAt:   file.CreatedAt,
+	}
+}
+
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
 	if errors.Is(err, appagentthread.ErrArtifactAccessDenied) {
 		c.JSON(consts.StatusForbidden, map[string]any{
@@ -2147,6 +2385,13 @@ func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, er
 		c.JSON(consts.StatusForbidden, map[string]any{
 			"code": consts.StatusForbidden,
 			"msg":  "guardrail audit access denied",
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrMCPRuntimeAuditAccessDenied) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": consts.StatusForbidden,
+			"msg":  "mcp runtime audit access denied",
 		})
 		return
 	}

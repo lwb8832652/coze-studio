@@ -55,6 +55,7 @@ type ADKMCPRuntimeTransportInvoker interface {
 
 type ADKMCPRuntimeHealthReport struct {
 	ServerID  int64
+	Transport string
 	Success   bool
 	ErrorCode string
 	LatencyMs int64
@@ -196,9 +197,10 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 	startedAt := time.Now()
 	name := adkMCPRuntimeSafeName(call.Name)
 	run := call.Run
-	e.emitLifecycle(ctx, run, "mcp.tool.started", name, call.ServerID, "", startedAt, 0)
+	transportType := ""
+	e.emitLifecycle(ctx, run, "mcp.tool.started", name, call.ServerID, transportType, "", startedAt, 0)
 	fail := func(code string, message string) (string, error) {
-		e.emitLifecycle(ctx, run, "mcp.tool.failed", name, call.ServerID, code, startedAt, 0)
+		e.emitLifecycle(ctx, run, "mcp.tool.failed", name, call.ServerID, transportType, code, startedAt, 0)
 		return "", fmt.Errorf("%s: %s", message, name)
 	}
 
@@ -236,6 +238,9 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 	if !server.Enabled {
 		return fail("server_disabled", "mcp runtime server disabled")
 	}
+	transportType = normalizeADKMCPRuntimeTransportType(
+		ADKMCPRuntimeTransportCall{Server: server},
+	)
 	if !adkMCPRuntimeServerHasTool(server, toolName) {
 		return fail("tool_not_configured", "mcp runtime tool is not configured")
 	}
@@ -258,7 +263,7 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 		},
 	)
 	if err != nil {
-		e.reportHealth(ctx, call.ServerID, false, "transport_failed", startedAt)
+		e.reportHealth(ctx, call.ServerID, transportType, false, "transport_failed", startedAt)
 		return fail("transport_failed", "mcp runtime transport failed")
 	}
 	outputBytes := len([]byte(result))
@@ -281,12 +286,12 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 				errorCode = "output_offload_failed"
 				message = "mcp runtime output offload failed"
 			}
-			e.reportHealth(ctx, call.ServerID, false, errorCode, startedAt)
+			e.reportHealth(ctx, call.ServerID, transportType, false, errorCode, startedAt)
 			return fail(errorCode, message)
 		}
 		result = offloaded.Notice
 	}
-	e.reportHealth(ctx, call.ServerID, true, "", startedAt)
+	e.reportHealth(ctx, call.ServerID, transportType, true, "", startedAt)
 
 	e.emitLifecycle(
 		ctx,
@@ -294,6 +299,7 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 		"mcp.tool.completed",
 		name,
 		call.ServerID,
+		transportType,
 		"",
 		startedAt,
 		outputBytes,
@@ -335,6 +341,7 @@ func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 	eventType string,
 	name string,
 	serverID int64,
+	transport string,
 	errorCode string,
 	startedAt time.Time,
 	outputBytes int,
@@ -348,6 +355,7 @@ func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 		eventType,
 		name,
 		serverID,
+		transport,
 		errorCode,
 		startedAt,
 		outputBytes,
@@ -379,6 +387,7 @@ func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 func (e *ADKMCPRuntimeExecutor) reportHealth(
 	ctx context.Context,
 	serverID int64,
+	transport string,
 	success bool,
 	errorCode string,
 	startedAt time.Time,
@@ -390,6 +399,7 @@ func (e *ADKMCPRuntimeExecutor) reportHealth(
 		ctx,
 		ADKMCPRuntimeHealthReport{
 			ServerID:  serverID,
+			Transport: transport,
 			Success:   success,
 			ErrorCode: errorCode,
 			LatencyMs: time.Since(startedAt).Milliseconds(),
@@ -403,6 +413,7 @@ func (e *ADKMCPRuntimeExecutor) recordAudit(
 	eventType string,
 	name string,
 	serverID int64,
+	transport string,
 	errorCode string,
 	startedAt time.Time,
 	outputBytes int,
@@ -418,6 +429,7 @@ func (e *ADKMCPRuntimeExecutor) recordAudit(
 			RunID:           run.RunID,
 			ServerID:        serverID,
 			RuntimeToolName: name,
+			Transport:       transport,
 			EventType:       eventType,
 			ErrorCode:       errorCode,
 			ElapsedMillis:   time.Since(startedAt).Milliseconds(),

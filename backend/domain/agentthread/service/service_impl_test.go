@@ -1543,53 +1543,56 @@ func TestGetThreadTokenUsageReturnsAggregate(t *testing.T) {
 }
 
 type memoryRepo struct {
-	mu                            sync.Mutex
-	threads                       map[int64]*entity.Thread
-	messages                      map[int64][]*entity.Message
-	runs                          map[int64][]*entity.Run
-	runEvents                     map[int64][]*entity.RunEvent
-	checkpoints                   map[int64][]*entity.Checkpoint
-	memories                      map[int64][]*entity.Memory
-	sourceMemory                  *entity.Memory
-	sourceMemoryCreated           bool
-	updatedMemory                 *entity.Memory
-	restoredMemory                *entity.Memory
-	deleteMemoryOK                bool
-	clearMemoryCount              int64
-	memoryAuditEvents             []*entity.MemoryAuditEvent
-	transcriptSnapshots           map[string]*entity.TranscriptSnapshot
-	memoryFlushJobs               map[string]*entity.MemoryFlushJob
-	claimedMemoryFlushJobs        []*entity.MemoryFlushJob
-	completedMemoryFlushJob       *entity.MemoryFlushJob
-	retriedMemoryFlushJob         *entity.MemoryFlushJob
-	failedMemoryFlushJob          *entity.MemoryFlushJob
-	memoryFlushUpdated            bool
-	tokenUsages                   []*entity.TokenUsage
-	lastListReq                   repository.ListThreadsRequest
-	lastUpdateThreadTitleReq      repository.UpdateThreadTitleRequest
-	lastUpdateThreadMetadataReq   repository.UpdateThreadMetadataRequest
-	lastDeleteThreadReq           repository.DeleteThreadRequest
-	lastMessageListReq            repository.ListMessagesRequest
-	lastRunListReq                repository.ListRunsRequest
-	lastRunEventListReq           repository.ListRunEventsRequest
-	lastCheckpointListReq         repository.ListCheckpointsRequest
-	lastCheckpointID              int64
-	lastMemoryListReq             repository.ListMemoriesRequest
-	lastUpdateMemoryReq           repository.UpdateMemoryRequest
-	lastDeleteMemoryReq           repository.DeleteMemoryRequest
-	lastRestoreMemoryReq          repository.RestoreMemoryRequest
-	lastClearMemoriesReq          repository.ClearMemoriesRequest
-	lastMemoryAuditListReq        repository.ListMemoryAuditEventsRequest
-	lastCreateOrGetMemoryBySource *entity.Memory
-	lastClaimMemoryFlushReq       repository.ClaimMemoryFlushJobsRequest
-	lastCompleteMemoryFlushReq    repository.CompleteMemoryFlushJobRequest
-	lastRetryMemoryFlushReq       repository.RetryMemoryFlushJobRequest
-	lastFailMemoryFlushReq        repository.FailMemoryFlushJobRequest
-	lastTokenUsageListReq         repository.ListTokenUsageRequest
-	lastTokenUsageAggregateReq    repository.AggregateTokenUsageRequest
-	lastClaimReq                  repository.ClaimPendingRunsRequest
-	lastClaimQueuedResumeReq      repository.ClaimQueuedResumeRunsRequest
-	lastUpdateRunReq              repository.UpdateRunStatusRequest
+	mu                                 sync.Mutex
+	threads                            map[int64]*entity.Thread
+	messages                           map[int64][]*entity.Message
+	runs                               map[int64][]*entity.Run
+	runEvents                          map[int64][]*entity.RunEvent
+	checkpoints                        map[int64][]*entity.Checkpoint
+	memories                           map[int64][]*entity.Memory
+	sourceMemory                       *entity.Memory
+	sourceMemoryCreated                bool
+	updatedMemory                      *entity.Memory
+	restoredMemory                     *entity.Memory
+	deleteMemoryOK                     bool
+	clearMemoryCount                   int64
+	memoryAuditEvents                  []*entity.MemoryAuditEvent
+	transcriptSnapshots                map[string]*entity.TranscriptSnapshot
+	memoryFlushJobs                    map[string]*entity.MemoryFlushJob
+	claimedMemoryFlushJobs             []*entity.MemoryFlushJob
+	memoryFlushBacklogAggregates       []*entity.MemoryFlushBacklogAggregate
+	completedMemoryFlushJob            *entity.MemoryFlushJob
+	retriedMemoryFlushJob              *entity.MemoryFlushJob
+	failedMemoryFlushJob               *entity.MemoryFlushJob
+	memoryFlushUpdated                 bool
+	tokenUsages                        []*entity.TokenUsage
+	lastListReq                        repository.ListThreadsRequest
+	lastUpdateThreadTitleReq           repository.UpdateThreadTitleRequest
+	lastUpdateThreadMetadataReq        repository.UpdateThreadMetadataRequest
+	lastDeleteThreadReq                repository.DeleteThreadRequest
+	lastMessageListReq                 repository.ListMessagesRequest
+	lastRunListReq                     repository.ListRunsRequest
+	lastRunEventListReq                repository.ListRunEventsRequest
+	lastCheckpointListReq              repository.ListCheckpointsRequest
+	lastCheckpointID                   int64
+	lastMemoryListReq                  repository.ListMemoriesRequest
+	lastUpdateMemoryReq                repository.UpdateMemoryRequest
+	lastDeleteMemoryReq                repository.DeleteMemoryRequest
+	lastRestoreMemoryReq               repository.RestoreMemoryRequest
+	lastClearMemoriesReq               repository.ClearMemoriesRequest
+	lastMemoryAuditListReq             repository.ListMemoryAuditEventsRequest
+	lastCreateOrGetMemoryBySource      *entity.Memory
+	lastClaimMemoryFlushReq            repository.ClaimMemoryFlushJobsRequest
+	lastAggregateMemoryFlushBacklogReq repository.AggregateMemoryFlushBacklogRequest
+	lastCompleteMemoryFlushReq         repository.CompleteMemoryFlushJobRequest
+	lastRetryMemoryFlushReq            repository.RetryMemoryFlushJobRequest
+	lastFailMemoryFlushReq             repository.FailMemoryFlushJobRequest
+	lastTokenUsageListReq              repository.ListTokenUsageRequest
+	lastTokenUsageAggregateReq         repository.AggregateTokenUsageRequest
+	lastClaimReq                       repository.ClaimPendingRunsRequest
+	lastAggregateRunBacklogReq         repository.AggregateRunBacklogRequest
+	lastClaimQueuedResumeReq           repository.ClaimQueuedResumeRunsRequest
+	lastUpdateRunReq                   repository.UpdateRunStatusRequest
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -1828,6 +1831,58 @@ func (r *memoryRepo) ListRuns(ctx context.Context, req repository.ListRunsReques
 		end = len(runs)
 	}
 	return runs[start:end], total, nil
+}
+
+func (r *memoryRepo) AggregateRunBacklog(
+	ctx context.Context,
+	req repository.AggregateRunBacklogRequest,
+) ([]*entity.RunBacklogAggregate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastAggregateRunBacklogReq = req
+
+	statuses := req.Statuses
+	if len(statuses) == 0 {
+		statuses = defaultRunBacklogStatuses()
+	}
+	allowed := make(map[entity.RunStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status != "" {
+			allowed[status] = struct{}{}
+		}
+	}
+	type aggregateKey struct {
+		status entity.RunStatus
+		config string
+	}
+	counts := map[aggregateKey]int64{}
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run == nil {
+				continue
+			}
+			if _, ok := allowed[run.Status]; !ok {
+				continue
+			}
+			counts[aggregateKey{status: run.Status, config: run.Config}]++
+		}
+	}
+	aggregates := make([]*entity.RunBacklogAggregate, 0, len(counts))
+	for key, count := range counts {
+		aggregates = append(aggregates, &entity.RunBacklogAggregate{
+			Status: key.status,
+			Config: key.config,
+			Count:  count,
+		})
+	}
+	sort.Slice(aggregates, func(i, j int) bool {
+		if aggregates[i].Status == aggregates[j].Status {
+			return aggregates[i].Config < aggregates[j].Config
+		}
+		return aggregates[i].Status < aggregates[j].Status
+	})
+
+	return aggregates, nil
 }
 
 func (r *memoryRepo) CreateRunEvent(ctx context.Context, event *entity.RunEvent) error {
@@ -2224,6 +2279,24 @@ func (r *memoryRepo) ClaimMemoryFlushJobs(
 		jobs = append(jobs, cloneMemoryFlushJob(job))
 	}
 	return jobs, nil
+}
+
+func (r *memoryRepo) AggregateMemoryFlushBacklog(
+	ctx context.Context,
+	req repository.AggregateMemoryFlushBacklogRequest,
+) ([]*entity.MemoryFlushBacklogAggregate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastAggregateMemoryFlushBacklogReq = req
+	aggregates := make([]*entity.MemoryFlushBacklogAggregate, 0, len(r.memoryFlushBacklogAggregates))
+	for _, aggregate := range r.memoryFlushBacklogAggregates {
+		if aggregate == nil {
+			continue
+		}
+		cloned := *aggregate
+		aggregates = append(aggregates, &cloned)
+	}
+	return aggregates, nil
 }
 
 func (r *memoryRepo) CompleteMemoryFlushJob(

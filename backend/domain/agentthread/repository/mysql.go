@@ -685,6 +685,69 @@ func (r *threadRepository) ListRuns(ctx context.Context, req ListRunsRequest) ([
 	return runs, total, nil
 }
 
+func (r *threadRepository) AggregateRunBacklog(
+	ctx context.Context,
+	req AggregateRunBacklogRequest,
+) ([]*entity.RunBacklogAggregate, error) {
+	statuses := req.Statuses
+	if len(statuses) == 0 {
+		statuses = defaultRunBacklogStatuses()
+	}
+	statusValues := make([]string, 0, len(statuses))
+	seen := make(map[entity.RunStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status == "" {
+			continue
+		}
+		if _, ok := seen[status]; ok {
+			continue
+		}
+		seen[status] = struct{}{}
+		statusValues = append(statusValues, string(status))
+	}
+	if len(statusValues) == 0 {
+		return []*entity.RunBacklogAggregate{}, nil
+	}
+
+	type runBacklogAggregatePO struct {
+		Status string `gorm:"column:status"`
+		Config []byte `gorm:"column:config"`
+		Count  int64  `gorm:"column:count"`
+	}
+	pos := make([]*runBacklogAggregatePO, 0)
+	if err := r.db.WithContext(ctx).
+		Model(&runPO{}).
+		Select("status, config, COUNT(*) AS count").
+		Where("status IN ?", statusValues).
+		Group("status, config").
+		Scan(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	aggregates := make([]*entity.RunBacklogAggregate, 0, len(pos))
+	for _, po := range pos {
+		if po == nil {
+			continue
+		}
+		aggregates = append(aggregates, &entity.RunBacklogAggregate{
+			Status: entity.RunStatus(po.Status),
+			Config: string(po.Config),
+			Count:  po.Count,
+		})
+	}
+
+	return aggregates, nil
+}
+
+func defaultRunBacklogStatuses() []entity.RunStatus {
+	return []entity.RunStatus{
+		entity.RunStatusPending,
+		entity.RunStatusQueued,
+		entity.RunStatusRunning,
+		entity.RunStatusInterrupted,
+	}
+}
+
 func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.RunEvent) error {
 	if event == nil {
 		return fmt.Errorf("run event is required")
@@ -1346,6 +1409,64 @@ func claimableMemoryFlushJobQuery(db *gorm.DB, now int64) *gorm.DB {
 	)
 }
 
+func (r *threadRepository) AggregateMemoryFlushBacklog(
+	ctx context.Context,
+	req AggregateMemoryFlushBacklogRequest,
+) ([]*entity.MemoryFlushBacklogAggregate, error) {
+	statuses := req.Statuses
+	if len(statuses) == 0 {
+		statuses = defaultMemoryFlushBacklogStatuses()
+	}
+	statusValues := make([]string, 0, len(statuses))
+	seen := make(map[entity.MemoryFlushJobStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status == "" {
+			continue
+		}
+		if _, ok := seen[status]; ok {
+			continue
+		}
+		seen[status] = struct{}{}
+		statusValues = append(statusValues, string(status))
+	}
+	if len(statusValues) == 0 {
+		return []*entity.MemoryFlushBacklogAggregate{}, nil
+	}
+
+	type memoryFlushBacklogAggregatePO struct {
+		Status string `gorm:"column:status"`
+		Count  int64  `gorm:"column:count"`
+	}
+	pos := make([]*memoryFlushBacklogAggregatePO, 0)
+	if err := r.db.WithContext(ctx).
+		Model(&memoryFlushJobPO{}).
+		Select("status, COUNT(*) AS count").
+		Where("status IN ?", statusValues).
+		Group("status").
+		Scan(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	aggregates := make([]*entity.MemoryFlushBacklogAggregate, 0, len(pos))
+	for _, po := range pos {
+		if po == nil {
+			continue
+		}
+		aggregates = append(aggregates, &entity.MemoryFlushBacklogAggregate{
+			Status: entity.MemoryFlushJobStatus(po.Status),
+			Count:  po.Count,
+		})
+	}
+	return aggregates, nil
+}
+
+func defaultMemoryFlushBacklogStatuses() []entity.MemoryFlushJobStatus {
+	return []entity.MemoryFlushJobStatus{
+		entity.MemoryFlushJobStatusPending,
+		entity.MemoryFlushJobStatusProcessing,
+	}
+}
+
 func (r *threadRepository) CompleteMemoryFlushJob(
 	ctx context.Context,
 	req CompleteMemoryFlushJobRequest,
@@ -1562,6 +1683,20 @@ func (r *threadRepository) UpsertRuntimeFile(
 	return stored.toEntity(), created, nil
 }
 
+func (r *threadRepository) CreateRuntimeFile(
+	ctx context.Context,
+	file *entity.AgentFile,
+) error {
+	if file == nil {
+		return fmt.Errorf("runtime file is required")
+	}
+	po, err := agentFileToPO(file)
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Create(po).Error
+}
+
 func (r *threadRepository) GetRuntimeFile(
 	ctx context.Context,
 	runID int64,
@@ -1584,6 +1719,72 @@ func (r *threadRepository) GetRuntimeFile(
 		return nil, err
 	}
 	return stored.toEntity(), nil
+}
+
+func (r *threadRepository) ListThreadUploadFiles(
+	ctx context.Context,
+	req ListThreadUploadFilesRequest,
+) ([]*entity.AgentFile, error) {
+	var stored []*agentFilePO
+	query := r.db.WithContext(ctx).
+		Where("space_id = ?", req.SpaceID).
+		Where("user_id = ?", req.UserID).
+		Where("thread_id = ?", req.ThreadID).
+		Where("file_kind = ?", string(entity.AgentFileKindUpload)).
+		Where("status = ?", string(entity.AgentFileStatusActive)).
+		Order("created_at ASC, id ASC")
+	if req.Limit > 0 {
+		query = query.Limit(req.Limit)
+	}
+	if err := query.Find(&stored).Error; err != nil {
+		return nil, err
+	}
+	files := make([]*entity.AgentFile, 0, len(stored))
+	for _, po := range stored {
+		files = append(files, po.toEntity())
+	}
+	return files, nil
+}
+
+func (r *threadRepository) MarkThreadUploadFileDeleted(
+	ctx context.Context,
+	req MarkThreadUploadFileDeletedRequest,
+) (*entity.AgentFile, bool, error) {
+	var stored agentFilePO
+	err := r.db.WithContext(ctx).
+		Where("space_id = ?", req.SpaceID).
+		Where("user_id = ?", req.UserID).
+		Where("thread_id = ?", req.ThreadID).
+		Where("file_kind = ?", string(entity.AgentFileKindUpload)).
+		Where("file_name = ?", req.FileName).
+		Where("status = ?", string(entity.AgentFileStatusActive)).
+		First(&stored).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	deletedAt := req.DeletedAt
+	if deletedAt <= 0 {
+		deletedAt = time.Now().UnixMilli()
+	}
+	result := r.db.WithContext(ctx).
+		Model(&agentFilePO{}).
+		Where("id = ? AND status = ?", stored.ID, string(entity.AgentFileStatusActive)).
+		Updates(map[string]any{
+			"status":     string(entity.AgentFileStatusDeleted),
+			"updated_at": deletedAt,
+		})
+	if result.Error != nil {
+		return nil, false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	stored.Status = string(entity.AgentFileStatusDeleted)
+	stored.UpdatedAt = deletedAt
+	return stored.toEntity(), true, nil
 }
 
 func (r *threadRepository) GetFileByID(
@@ -1960,6 +2161,67 @@ func (r *threadRepository) ClaimArtifactScanJobs(
 		return nil, err
 	}
 	return claimed, nil
+}
+
+func (r *threadRepository) AggregateArtifactScanBacklog(
+	ctx context.Context,
+	req AggregateArtifactScanBacklogRequest,
+) ([]*entity.ArtifactScanBacklogAggregate, error) {
+	statuses := req.Statuses
+	if len(statuses) == 0 {
+		statuses = defaultArtifactScanBacklogStatuses()
+	}
+	statusValues := make([]string, 0, len(statuses))
+	seen := make(map[entity.ArtifactScanJobStatus]struct{}, len(statuses))
+	for _, status := range statuses {
+		if status == "" {
+			continue
+		}
+		if _, ok := seen[status]; ok {
+			continue
+		}
+		seen[status] = struct{}{}
+		statusValues = append(statusValues, string(status))
+	}
+	if len(statusValues) == 0 {
+		return []*entity.ArtifactScanBacklogAggregate{}, nil
+	}
+
+	type artifactScanBacklogAggregatePO struct {
+		Scanner string `gorm:"column:scanner"`
+		Status  string `gorm:"column:status"`
+		Count   int64  `gorm:"column:count"`
+	}
+	pos := make([]*artifactScanBacklogAggregatePO, 0)
+	if err := r.db.WithContext(ctx).
+		Model(&agentArtifactScanJobPO{}).
+		Select("scanner, status, COUNT(*) AS count").
+		Where("status IN ?", statusValues).
+		Group("scanner, status").
+		Scan(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	aggregates := make([]*entity.ArtifactScanBacklogAggregate, 0, len(pos))
+	for _, po := range pos {
+		if po == nil {
+			continue
+		}
+		aggregates = append(aggregates, &entity.ArtifactScanBacklogAggregate{
+			Scanner: po.Scanner,
+			Status:  entity.ArtifactScanJobStatus(po.Status),
+			Count:   po.Count,
+		})
+	}
+
+	return aggregates, nil
+}
+
+func defaultArtifactScanBacklogStatuses() []entity.ArtifactScanJobStatus {
+	return []entity.ArtifactScanJobStatus{
+		entity.ArtifactScanJobStatusPending,
+		entity.ArtifactScanJobStatusProcessing,
+	}
 }
 
 func claimableArtifactScanJobQuery(

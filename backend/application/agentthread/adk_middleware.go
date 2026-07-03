@@ -40,6 +40,7 @@ const (
 	ADKMiddlewareReduction              ADKMiddlewareName = "reduction"
 	ADKMiddlewareAgentsMD               ADKMiddlewareName = "agentsmd"
 	ADKMiddlewareMemory                 ADKMiddlewareName = "memory"
+	ADKMiddlewareUploadedFiles          ADKMiddlewareName = "uploaded_files"
 	ADKMiddlewareSkill                  ADKMiddlewareName = "skill"
 	ADKMiddlewareToolSearch             ADKMiddlewareName = "toolsearch"
 	ADKMiddlewarePatchTools             ADKMiddlewareName = "patchtoolcalls"
@@ -60,6 +61,7 @@ const (
 var adkMiddlewareOrder = []ADKMiddlewareName{
 	ADKMiddlewareAgentsMD,
 	ADKMiddlewareMemory,
+	ADKMiddlewareUploadedFiles,
 	ADKMiddlewareSkill,
 	ADKMiddlewareToolSearch,
 	ADKMiddlewarePatchTools,
@@ -408,6 +410,13 @@ func defaultADKMiddlewareBuilder(
 				return nil, err
 			}
 			return NewADKMemoryMiddleware(input.Run, options.MemoryProvider, budget)
+		}
+	case ADKMiddlewareUploadedFiles:
+		return func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (adk.ChatModelAgentMiddleware, error) {
+			return NewADKUploadedFilesMiddleware(input.Run), nil
 		}
 	case ADKMiddlewareSkill:
 		return func(

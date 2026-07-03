@@ -226,6 +226,28 @@ func DomainGuardrailAuditEventToSummary(
 	}
 }
 
+func DomainMCPRuntimeAuditEventToSummary(
+	event *entity.MCPRuntimeAuditEvent,
+) *MCPRuntimeAuditEventSummary {
+	if event == nil {
+		return nil
+	}
+
+	return &MCPRuntimeAuditEventSummary{
+		EventID:         event.ID,
+		SpaceID:         event.SpaceID,
+		ThreadID:        event.ThreadID,
+		RunID:           event.RunID,
+		ServerID:        event.ServerID,
+		RuntimeToolName: event.RuntimeToolName,
+		EventType:       event.EventType,
+		ErrorCode:       event.ErrorCode,
+		ElapsedMillis:   event.ElapsedMillis,
+		OutputBytes:     event.OutputBytes,
+		CreatedAt:       event.CreatedAt,
+	}
+}
+
 func DomainTranscriptSnapshotToSummary(
 	snapshot *entity.TranscriptSnapshot,
 ) *TranscriptSnapshotSummary {

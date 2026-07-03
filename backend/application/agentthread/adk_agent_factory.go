@@ -329,6 +329,16 @@ func prepareADKChatModelForRun(
 			options: options,
 		}
 	}
+	if collector := NewRuntimePrometheusMetricsCollectorFromEnv(); collector != nil {
+		chatModel = newRuntimeInstrumentedChatModel(
+			chatModel,
+			collector,
+			RuntimeModelCallMetricsConfig{
+				Runtime:     runtimeMetricsRunRuntime(run),
+				ModelFamily: cfg.ModelName,
+			},
+		)
+	}
 
 	return chatModel, modelCapabilities, nil
 }

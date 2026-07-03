@@ -190,6 +190,45 @@ func TestRuntimeFileServiceResolvesOwnedWorkspaceOffload(t *testing.T) {
 	require.Equal(t, repo.runtimeFile, file)
 }
 
+func TestRuntimeFileServiceResolvesOwnedUploadFile(t *testing.T) {
+	expected := &entity.AgentFile{
+		ID:          99,
+		SpaceID:     30,
+		UserID:      40,
+		ThreadID:    10,
+		RunID:       0,
+		FileName:    "report.md",
+		FileKind:    entity.AgentFileKindUpload,
+		VirtualPath: "/mnt/user-data/uploads/report.md",
+		ObjectURI:   "agent-runtime/30/10/uploads/report.md",
+		ContentType: "text/markdown; charset=utf-8",
+		SizeBytes:   128,
+		Digest:      runtimeFileTestDigest,
+		Status:      entity.AgentFileStatusActive,
+		Metadata:    `{"source":"composer"}`,
+		CreatedAt:   100,
+		UpdatedAt:   100,
+	}
+	repo := &recordingRuntimeFileRepo{runtimeFile: expected}
+	svc := NewRuntimeFileService(&RuntimeFileComponents{
+		FileRepo: repo,
+	})
+
+	file, err := svc.ResolveRuntimeFile(
+		context.Background(),
+		&ResolveRuntimeFileRequest{
+			SpaceID:     30,
+			ThreadID:    10,
+			RunID:       20,
+			VirtualPath: "/mnt/user-data/uploads/report.md",
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, expected, file)
+	require.Equal(t, int64(0), repo.resolvedRunID)
+}
+
 func TestRuntimeFileServiceRejectsInvalidRuntimeFileResolve(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -515,9 +554,10 @@ func TestRuntimeFileServiceRejectsInvalidWorkspaceOffload(t *testing.T) {
 }
 
 type recordingRuntimeFileRepo struct {
-	run         *entity.Run
-	runtimeFile *entity.AgentFile
-	upserted    *entity.AgentFile
+	run           *entity.Run
+	runtimeFile   *entity.AgentFile
+	upserted      *entity.AgentFile
+	resolvedRunID int64
 }
 
 func (r *recordingRuntimeFileRepo) GetRun(
@@ -538,9 +578,10 @@ func (r *recordingRuntimeFileRepo) UpsertRuntimeFile(
 
 func (r *recordingRuntimeFileRepo) GetRuntimeFile(
 	_ context.Context,
-	_ int64,
+	runID int64,
 	_ string,
 ) (*entity.AgentFile, error) {
+	r.resolvedRunID = runID
 	if r.runtimeFile == nil {
 		return nil, nil
 	}

@@ -23,6 +23,7 @@ import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
 } from './task-detail-loader';
+import { TaskAssistantMessageActions } from './task-assistant-message-actions';
 import {
   getLatestAnswerEventMessage,
   getLatestAnswerEventReasoning,
@@ -74,6 +75,9 @@ const TaskAnswer = ({
         tokenUsage={tokenUsage}
         viewMode={tokenUsageViewMode}
       />
+      {!isRunning && answerMessage ? (
+        <TaskAssistantMessageActions copyText={answerMessage} />
+      ) : null}
       {result.retrievalSources.length ? (
         <div className="coze-prototype-result-sources">
           {result.retrievalSources.map(source => (

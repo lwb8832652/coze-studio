@@ -67,6 +67,7 @@ import {
 } from './task-detail-loader';
 import { useTaskDetailActions, useTaskDetailData } from './task-detail-hooks';
 import { TaskDetailHeader } from './task-detail-header';
+import { TaskAssistantMessageActions } from './task-assistant-message-actions';
 import {
   artifactScanStatus,
   canPreviewArtifact,
@@ -526,6 +527,9 @@ const TaskThreadAssistantMessage = ({
         tokenUsage={tokenUsage}
         viewMode={tokenUsageViewMode}
       />
+      {!isRunning && answerMessage ? (
+        <TaskAssistantMessageActions copyText={answerMessage} />
+      ) : null}
     </article>
   );
 };

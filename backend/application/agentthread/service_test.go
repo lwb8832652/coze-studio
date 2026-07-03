@@ -104,6 +104,38 @@ func TestApplicationCreateTaskThreadRejectsRuntimeBeforeThreadPersistence(t *tes
 	require.Nil(t, domainSVC.appendReq)
 }
 
+func TestApplicationCreateTaskThreadCanDeferRunStartForUploads(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		created: &entity.Thread{
+			ID:        10,
+			SpaceID:   1,
+			CreatorID: 2,
+			Title:     "带附件任务",
+			Status:    entity.ThreadStatusIdle,
+			Source:    entity.ThreadSourceWeb,
+			CreatedAt: 100,
+			UpdatedAt: 100,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID:    1,
+		UserID:     2,
+		Message:    "请分析附件",
+		DeferStart: true,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp.Thread)
+	require.Equal(t, int64(10), resp.Thread.ThreadID)
+	require.Nil(t, resp.Message)
+	require.Nil(t, resp.Run)
+	require.NotNil(t, domainSVC.createReq)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
 func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		listed: []*entity.Thread{
@@ -679,7 +711,7 @@ func TestApplicationProcessMemoryFlushJobsAppliesFactsToRemove(t *testing.T) {
 	}
 	extractor := &recordingMemoryUpdateExtractor{
 		result: &MemoryExtractionResult{
-			FactsToRemove: []int64{401},
+			FactsToRemove: []int64{401, 401, 0},
 			Facts: []MemoryExtractionFact{
 				{
 					Key:        "region",
@@ -687,6 +719,10 @@ func TestApplicationProcessMemoryFlushJobsAppliesFactsToRemove(t *testing.T) {
 					Content:    "部署地区是 EU",
 					Metadata:   `{"category":"correction","sourceError":"部署地区是 APAC"}`,
 					Confidence: 0.98,
+				},
+				{
+					Key:     "blank",
+					Content: "   ",
 				},
 			},
 		},
@@ -714,6 +750,11 @@ func TestApplicationProcessMemoryFlushJobsAppliesFactsToRemove(t *testing.T) {
 	require.Equal(t, "部署地区是 EU", domainSVC.rememberMemoryReqs[0].Content)
 	require.NotNil(t, domainSVC.completeMemoryFlushReq)
 	require.Equal(t, int64(902), domainSVC.completeMemoryFlushReq.JobID)
+	require.ElementsMatch(t, []*MemoryFactMetricsSummary{
+		{Operation: "upsert", Result: "success", Count: 1},
+		{Operation: "remove", Result: "success", Count: 1},
+		{Operation: "skip", Result: "skipped", Count: 3},
+	}, resp.FactMetrics)
 	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 APAC")
 	require.NotContains(t, domainSVC.appendRunEventReq.Payload, "部署地区是 EU")
 }
@@ -3713,146 +3754,152 @@ func TestThreadOwnerMemoryAuthorizerAllowsOnlyThreadCreator(t *testing.T) {
 }
 
 type recordingThreadService struct {
-	created                  *entity.Thread
-	createdRun               *entity.Run
-	gotRun                   *entity.Run
-	idempotentRun            *entity.Run
-	claimedRuns              []*entity.Run
-	completedRun             *entity.Run
-	failedRun                *entity.Run
-	canceledRun              *entity.Run
-	listed                   []*entity.Thread
-	got                      *entity.Thread
-	appended                 *entity.Message
-	appendedRunEvent         *entity.RunEvent
-	createdCheckpoint        *entity.Checkpoint
-	latestCheckpoint         *entity.Checkpoint
-	checkpoint               *entity.Checkpoint
-	rememberedMemory         *entity.Memory
-	rememberedMemories       []*entity.Memory
-	updatedMemory            *entity.Memory
-	memoryAuditEvents        []*entity.MemoryAuditEvent
-	deleteMemoryOK           bool
-	clearMemoryCount         int64
-	transcriptSnapshot       *entity.TranscriptSnapshot
-	gotTranscriptSnapshot    *entity.TranscriptSnapshot
-	memoryFlushJob           *entity.MemoryFlushJob
-	claimedMemoryFlushJobs   []*entity.MemoryFlushJob
-	completedMemoryFlushJob  *entity.MemoryFlushJob
-	retriedMemoryFlushJob    *entity.MemoryFlushJob
-	failedMemoryFlushJob     *entity.MemoryFlushJob
-	transcriptCreated        bool
-	memoryFlushCreated       bool
-	memoryFlushUpdated       bool
-	recordedTokenUsage       *entity.TokenUsage
-	messages                 []*entity.Message
-	runs                     []*entity.Run
-	gotRunsByID              map[int64]*entity.Run
-	claimedQueuedResumeRuns  []*entity.Run
-	interruptedRun           *entity.Run
-	runEvents                []*entity.RunEvent
-	checkpoints              []*entity.Checkpoint
-	recalledMemories         []*entity.Memory
-	tokenUsageRows           []*entity.TokenUsage
-	total                    int64
-	messageTotal             int64
-	runTotal                 int64
-	runEventTotal            int64
-	checkpointTotal          int64
-	memoryTotal              int64
-	tokenUsageTotal          int64
-	tokenUsageAggregate      *entity.TokenUsageAggregate
-	runTokenUsageAggregates  []*entity.RunTokenUsageAggregate
-	createReq                *domainservice.CreateThreadRequest
-	updateThreadTitleReq     *domainservice.UpdateThreadTitleRequest
-	updateThreadMetadataReq  *domainservice.UpdateThreadMetadataRequest
-	deleteThreadReq          *domainservice.DeleteThreadRequest
-	deleteThreadOK           bool
-	createRunReq             *domainservice.CreateRunRequest
-	claimRunsReq             *domainservice.ClaimPendingRunsRequest
-	claimQueuedResumeRunsReq *domainservice.ClaimQueuedResumeRunsRequest
-	completeRunReq           *domainservice.UpdateRunStatusRequest
-	interruptRunReq          *domainservice.UpdateRunStatusRequest
-	failRunReq               *domainservice.UpdateRunStatusRequest
-	cancelRunReq             *domainservice.UpdateRunStatusRequest
-	appendRunEventReq        *domainservice.AppendRunEventRequest
-	createCheckpointReq      *domainservice.CreateCheckpointRequest
-	listCheckpointsReq       *domainservice.ListCheckpointsRequest
-	getCheckpointReq         *domainservice.GetCheckpointRequest
-	getLatestCheckpointReq   *domainservice.GetLatestCheckpointRequest
-	getLatestRuntimeReq      *domainservice.GetLatestRuntimeCheckpointRequest
-	deleteRuntimeReq         *domainservice.DeleteRuntimeCheckpointRequest
-	rememberMemoryReq        *domainservice.RememberMemoryRequest
-	rememberMemoryReqs       []*domainservice.RememberMemoryRequest
-	importMemoriesReq        *domainservice.ImportMemoriesRequest
-	importMemoriesResult     *domainservice.ImportMemoriesResult
-	recallMemoriesReq        *domainservice.RecallMemoriesRequest
-	listMemoriesReq          *domainservice.ListMemoriesRequest
-	updateMemoryReq          *domainservice.UpdateMemoryRequest
-	deleteMemoryReq          *domainservice.DeleteMemoryRequest
-	restoreMemoryReq         *domainservice.RestoreMemoryRequest
-	clearMemoriesReq         *domainservice.ClearMemoriesRequest
-	listMemoryAuditReq       *domainservice.ListMemoryAuditEventsRequest
-	persistTranscriptReq     *domainservice.PersistTranscriptSnapshotRequest
-	getTranscriptSnapshotReq *domainservice.GetTranscriptSnapshotRequest
-	enqueueMemoryFlushReq    *domainservice.EnqueueMemoryFlushJobRequest
-	claimMemoryFlushReq      *domainservice.ClaimMemoryFlushJobsRequest
-	completeMemoryFlushReq   *domainservice.CompleteMemoryFlushJobRequest
-	retryMemoryFlushReq      *domainservice.RetryMemoryFlushJobRequest
-	failMemoryFlushReq       *domainservice.FailMemoryFlushJobRequest
-	recordTokenUsageReq      *domainservice.RecordTokenUsageRequest
-	getRunTokenUsageReq      *domainservice.GetRunTokenUsageRequest
-	getThreadTokenUsageReq   *domainservice.GetThreadTokenUsageRequest
-	getRunByIdemSpaceID      int64
-	getRunByIdemKey          string
-	listReq                  *domainservice.ListThreadsRequest
-	listRunsReq              *domainservice.ListRunsRequest
-	listRunEventsReq         *domainservice.ListRunEventsRequest
-	appendReq                *domainservice.AppendMessageRequest
-	listMessagesReq          *domainservice.ListMessagesRequest
-	getID                    int64
-	getRunID                 int64
-	completeRunErr           error
+	created                        *entity.Thread
+	createdRun                     *entity.Run
+	gotRun                         *entity.Run
+	idempotentRun                  *entity.Run
+	claimedRuns                    []*entity.Run
+	completedRun                   *entity.Run
+	failedRun                      *entity.Run
+	canceledRun                    *entity.Run
+	listed                         []*entity.Thread
+	got                            *entity.Thread
+	appended                       *entity.Message
+	appendedRunEvent               *entity.RunEvent
+	createdCheckpoint              *entity.Checkpoint
+	latestCheckpoint               *entity.Checkpoint
+	checkpoint                     *entity.Checkpoint
+	rememberedMemory               *entity.Memory
+	rememberedMemories             []*entity.Memory
+	updatedMemory                  *entity.Memory
+	memoryAuditEvents              []*entity.MemoryAuditEvent
+	deleteMemoryOK                 bool
+	clearMemoryCount               int64
+	transcriptSnapshot             *entity.TranscriptSnapshot
+	gotTranscriptSnapshot          *entity.TranscriptSnapshot
+	memoryFlushJob                 *entity.MemoryFlushJob
+	claimedMemoryFlushJobs         []*entity.MemoryFlushJob
+	memoryFlushBacklogAggregates   []*entity.MemoryFlushBacklogAggregate
+	completedMemoryFlushJob        *entity.MemoryFlushJob
+	retriedMemoryFlushJob          *entity.MemoryFlushJob
+	failedMemoryFlushJob           *entity.MemoryFlushJob
+	transcriptCreated              bool
+	memoryFlushCreated             bool
+	memoryFlushUpdated             bool
+	recordedTokenUsage             *entity.TokenUsage
+	messages                       []*entity.Message
+	runs                           []*entity.Run
+	gotRunsByID                    map[int64]*entity.Run
+	claimedQueuedResumeRuns        []*entity.Run
+	interruptedRun                 *entity.Run
+	runEvents                      []*entity.RunEvent
+	checkpoints                    []*entity.Checkpoint
+	recalledMemories               []*entity.Memory
+	tokenUsageRows                 []*entity.TokenUsage
+	total                          int64
+	messageTotal                   int64
+	runTotal                       int64
+	runEventTotal                  int64
+	checkpointTotal                int64
+	memoryTotal                    int64
+	tokenUsageTotal                int64
+	tokenUsageAggregate            *entity.TokenUsageAggregate
+	runTokenUsageAggregates        []*entity.RunTokenUsageAggregate
+	runBacklogAggregates           []*entity.RunBacklogAggregate
+	createReq                      *domainservice.CreateThreadRequest
+	updateThreadTitleReq           *domainservice.UpdateThreadTitleRequest
+	updateThreadMetadataReq        *domainservice.UpdateThreadMetadataRequest
+	deleteThreadReq                *domainservice.DeleteThreadRequest
+	deleteThreadOK                 bool
+	createRunReq                   *domainservice.CreateRunRequest
+	claimRunsReq                   *domainservice.ClaimPendingRunsRequest
+	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
+	aggregateRunBacklogReq         *domainservice.AggregateRunBacklogRequest
+	completeRunReq                 *domainservice.UpdateRunStatusRequest
+	interruptRunReq                *domainservice.UpdateRunStatusRequest
+	failRunReq                     *domainservice.UpdateRunStatusRequest
+	cancelRunReq                   *domainservice.UpdateRunStatusRequest
+	appendRunEventReq              *domainservice.AppendRunEventRequest
+	createCheckpointReq            *domainservice.CreateCheckpointRequest
+	listCheckpointsReq             *domainservice.ListCheckpointsRequest
+	getCheckpointReq               *domainservice.GetCheckpointRequest
+	getLatestCheckpointReq         *domainservice.GetLatestCheckpointRequest
+	getLatestRuntimeReq            *domainservice.GetLatestRuntimeCheckpointRequest
+	deleteRuntimeReq               *domainservice.DeleteRuntimeCheckpointRequest
+	rememberMemoryReq              *domainservice.RememberMemoryRequest
+	rememberMemoryReqs             []*domainservice.RememberMemoryRequest
+	importMemoriesReq              *domainservice.ImportMemoriesRequest
+	importMemoriesResult           *domainservice.ImportMemoriesResult
+	recallMemoriesReq              *domainservice.RecallMemoriesRequest
+	listMemoriesReq                *domainservice.ListMemoriesRequest
+	updateMemoryReq                *domainservice.UpdateMemoryRequest
+	deleteMemoryReq                *domainservice.DeleteMemoryRequest
+	restoreMemoryReq               *domainservice.RestoreMemoryRequest
+	clearMemoriesReq               *domainservice.ClearMemoriesRequest
+	listMemoryAuditReq             *domainservice.ListMemoryAuditEventsRequest
+	persistTranscriptReq           *domainservice.PersistTranscriptSnapshotRequest
+	getTranscriptSnapshotReq       *domainservice.GetTranscriptSnapshotRequest
+	enqueueMemoryFlushReq          *domainservice.EnqueueMemoryFlushJobRequest
+	claimMemoryFlushReq            *domainservice.ClaimMemoryFlushJobsRequest
+	aggregateMemoryFlushBacklogReq *domainservice.AggregateMemoryFlushBacklogRequest
+	completeMemoryFlushReq         *domainservice.CompleteMemoryFlushJobRequest
+	retryMemoryFlushReq            *domainservice.RetryMemoryFlushJobRequest
+	failMemoryFlushReq             *domainservice.FailMemoryFlushJobRequest
+	recordTokenUsageReq            *domainservice.RecordTokenUsageRequest
+	getRunTokenUsageReq            *domainservice.GetRunTokenUsageRequest
+	getThreadTokenUsageReq         *domainservice.GetThreadTokenUsageRequest
+	getRunByIdemSpaceID            int64
+	getRunByIdemKey                string
+	listReq                        *domainservice.ListThreadsRequest
+	listRunsReq                    *domainservice.ListRunsRequest
+	listRunEventsReq               *domainservice.ListRunEventsRequest
+	appendReq                      *domainservice.AppendMessageRequest
+	listMessagesReq                *domainservice.ListMessagesRequest
+	getID                          int64
+	getRunID                       int64
+	completeRunErr                 error
 }
 
 type recordingArtifactService struct {
-	artifacts               []*entity.AgentArtifact
-	registered              *entity.AgentArtifact
-	got                     *entity.AgentArtifact
-	deleted                 *entity.AgentArtifact
-	deletedOK               bool
-	restored                *entity.AgentArtifact
-	restoredOK              bool
-	scanUpdated             *entity.AgentArtifact
-	scanUpdatedOK           bool
-	claimedScanJobs         []*entity.ArtifactScanJob
-	completeScanJob         *entity.ArtifactScanJob
-	completeScanJobOK       bool
-	retryScanJob            *entity.ArtifactScanJob
-	retryScanJobOK          bool
-	requeueFailedScanJob    *entity.ArtifactScanJob
-	requeueFailedScanJobOK  bool
-	failScanJob             *entity.ArtifactScanJob
-	failScanJobOK           bool
-	listScanJobs            []*entity.ArtifactScanJob
-	listScanJobsTotal       int64
-	cleanupCandidates       []*entity.AgentArtifact
-	markFileDeletedOK       bool
-	total                   int64
-	registerReq             *domainservice.RegisterArtifactRequest
-	listReq                 *domainservice.ListArtifactsRequest
-	listScanJobsReq         *domainservice.ListArtifactScanJobsRequest
-	cleanupReq              *domainservice.ListDeletedArtifactCleanupCandidatesRequest
-	markFileDeletedReq      *domainservice.MarkArtifactFileDeletedRequest
-	getReq                  *domainservice.GetArtifactRequest
-	deleteReq               *domainservice.DeleteArtifactRequest
-	restoreReq              *domainservice.RestoreArtifactRequest
-	scanReq                 *domainservice.UpdateArtifactScanResultRequest
-	claimScanJobsReq        *domainservice.ClaimArtifactScanJobsRequest
-	completeScanJobReq      *domainservice.CompleteArtifactScanJobRequest
-	retryScanJobReq         *domainservice.RetryArtifactScanJobRequest
-	requeueFailedScanJobReq *domainservice.RequeueFailedArtifactScanJobRequest
-	failScanJobReq          *domainservice.FailArtifactScanJobRequest
+	artifacts                       []*entity.AgentArtifact
+	registered                      *entity.AgentArtifact
+	got                             *entity.AgentArtifact
+	deleted                         *entity.AgentArtifact
+	deletedOK                       bool
+	restored                        *entity.AgentArtifact
+	restoredOK                      bool
+	scanUpdated                     *entity.AgentArtifact
+	scanUpdatedOK                   bool
+	claimedScanJobs                 []*entity.ArtifactScanJob
+	artifactScanBacklogAggregates   []*entity.ArtifactScanBacklogAggregate
+	completeScanJob                 *entity.ArtifactScanJob
+	completeScanJobOK               bool
+	retryScanJob                    *entity.ArtifactScanJob
+	retryScanJobOK                  bool
+	requeueFailedScanJob            *entity.ArtifactScanJob
+	requeueFailedScanJobOK          bool
+	failScanJob                     *entity.ArtifactScanJob
+	failScanJobOK                   bool
+	listScanJobs                    []*entity.ArtifactScanJob
+	listScanJobsTotal               int64
+	cleanupCandidates               []*entity.AgentArtifact
+	markFileDeletedOK               bool
+	total                           int64
+	registerReq                     *domainservice.RegisterArtifactRequest
+	listReq                         *domainservice.ListArtifactsRequest
+	listScanJobsReq                 *domainservice.ListArtifactScanJobsRequest
+	cleanupReq                      *domainservice.ListDeletedArtifactCleanupCandidatesRequest
+	markFileDeletedReq              *domainservice.MarkArtifactFileDeletedRequest
+	getReq                          *domainservice.GetArtifactRequest
+	deleteReq                       *domainservice.DeleteArtifactRequest
+	restoreReq                      *domainservice.RestoreArtifactRequest
+	scanReq                         *domainservice.UpdateArtifactScanResultRequest
+	claimScanJobsReq                *domainservice.ClaimArtifactScanJobsRequest
+	aggregateArtifactScanBacklogReq *domainservice.AggregateArtifactScanBacklogRequest
+	completeScanJobReq              *domainservice.CompleteArtifactScanJobRequest
+	retryScanJobReq                 *domainservice.RetryArtifactScanJobRequest
+	requeueFailedScanJobReq         *domainservice.RequeueFailedArtifactScanJobRequest
+	failScanJobReq                  *domainservice.FailArtifactScanJobRequest
 }
 
 func (s *recordingArtifactService) RegisterArtifact(
@@ -3929,6 +3976,14 @@ func (s *recordingArtifactService) ClaimArtifactScanJobs(
 ) ([]*entity.ArtifactScanJob, error) {
 	s.claimScanJobsReq = req
 	return s.claimedScanJobs, nil
+}
+
+func (s *recordingArtifactService) AggregateArtifactScanBacklog(
+	_ context.Context,
+	req *domainservice.AggregateArtifactScanBacklogRequest,
+) ([]*entity.ArtifactScanBacklogAggregate, error) {
+	s.aggregateArtifactScanBacklogReq = req
+	return s.artifactScanBacklogAggregates, nil
 }
 
 func (s *recordingArtifactService) CompleteArtifactScanJob(
@@ -4243,6 +4298,14 @@ func (s *recordingThreadService) ClaimPendingRuns(ctx context.Context, req *doma
 	return s.claimedRuns, nil
 }
 
+func (s *recordingThreadService) AggregateRunBacklog(
+	ctx context.Context,
+	req *domainservice.AggregateRunBacklogRequest,
+) ([]*entity.RunBacklogAggregate, error) {
+	s.aggregateRunBacklogReq = req
+	return s.runBacklogAggregates, nil
+}
+
 func (s *recordingThreadService) ClaimQueuedResumeRuns(ctx context.Context, req *domainservice.ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
 	s.claimQueuedResumeRunsReq = req
 	return s.claimedQueuedResumeRuns, nil
@@ -4410,6 +4473,14 @@ func (s *recordingThreadService) ClaimMemoryFlushJobs(
 ) ([]*entity.MemoryFlushJob, error) {
 	s.claimMemoryFlushReq = req
 	return s.claimedMemoryFlushJobs, nil
+}
+
+func (s *recordingThreadService) AggregateMemoryFlushBacklog(
+	_ context.Context,
+	req *domainservice.AggregateMemoryFlushBacklogRequest,
+) ([]*entity.MemoryFlushBacklogAggregate, error) {
+	s.aggregateMemoryFlushBacklogReq = req
+	return s.memoryFlushBacklogAggregates, nil
 }
 
 func (s *recordingThreadService) CompleteMemoryFlushJob(

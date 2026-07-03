@@ -3388,6 +3388,113 @@
   text-align: center;
 }
 
+.coze-prototype-mcp-runtime-audit-panel {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgb(77 101 148 / 14%);
+  border-radius: 12px;
+}
+
+.coze-prototype-mcp-runtime-audit-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  padding: 12px 16px;
+
+  border-bottom: 1px solid rgb(77 101 148 / 10%);
+}
+
+.coze-prototype-mcp-runtime-audit-header h2 {
+  margin: 0;
+
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #232938;
+}
+
+.coze-prototype-mcp-runtime-audit-header > span {
+  margin-left: auto;
+  font-size: 12px;
+  line-height: 18px;
+  color: #747b8a;
+}
+
+.coze-prototype-mcp-runtime-audit-error {
+  margin: 12px 16px 0;
+  padding: 8px 10px;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: #b42318;
+
+  background: rgb(217 31 17 / 8%);
+  border: 1px solid rgb(217 31 17 / 14%);
+  border-radius: 8px;
+}
+
+.coze-prototype-mcp-runtime-audit-list {
+  display: grid;
+  margin: 0;
+  padding: 0 16px 14px;
+  list-style: none;
+}
+
+.coze-prototype-mcp-runtime-audit-row {
+  display: flex;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid rgb(77 101 148 / 8%);
+}
+
+.coze-prototype-mcp-runtime-audit-row:first-child {
+  border-top: 0;
+}
+
+.coze-prototype-mcp-runtime-audit-main {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.coze-prototype-mcp-runtime-audit-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+
+  min-width: 0;
+}
+
+.coze-prototype-mcp-runtime-audit-title {
+  min-width: 0;
+
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #232938;
+  overflow-wrap: anywhere;
+}
+
+.coze-prototype-mcp-runtime-audit-meta,
+.coze-prototype-mcp-runtime-audit-event-type {
+  font-size: 12px;
+  line-height: 18px;
+  color: #747b8a;
+  overflow-wrap: anywhere;
+}
+
+.coze-prototype-mcp-runtime-audit-empty {
+  padding: 18px 16px 22px;
+
+  font-size: 13px;
+  line-height: 20px;
+  color: #747b8a;
+  text-align: center;
+}
+
 .coze-prototype-runtime-doctor-panel {
   overflow: hidden;
   background: #fff;
@@ -3827,6 +3934,62 @@
 .coze-prototype-answer p,
 .coze-prototype-agent-result p {
   white-space: pre-wrap;
+}
+
+.coze-prototype-assistant-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+
+  width: fit-content;
+  margin-top: 10px;
+
+  opacity: 0;
+
+  transition: opacity 0.2s ease;
+}
+
+.coze-prototype-answer:hover .coze-prototype-assistant-actions,
+.coze-prototype-answer:focus-within .coze-prototype-assistant-actions {
+  opacity: 1;
+}
+
+.coze-prototype-assistant-action {
+  cursor: pointer;
+
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+
+  font-size: 12px;
+  line-height: 1;
+  color: #747b8a;
+
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+
+  transition:
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.coze-prototype-assistant-action:hover,
+.coze-prototype-assistant-action:focus-visible,
+.coze-prototype-assistant-action[data-selected='true'] {
+  color: #232938;
+  background: rgba(29, 28, 35, 6%);
+  outline: none;
+}
+
+.coze-prototype-assistant-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .coze-prototype-answer-loading {

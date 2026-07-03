@@ -39,13 +39,14 @@ type MCPRuntimeAuditRepository interface {
 	ListMCPRuntimeAuditEvents(
 		ctx context.Context,
 		req ListMCPRuntimeAuditEventsRequest,
-	) ([]*entity.MCPRuntimeAuditEvent, error)
+	) ([]*entity.MCPRuntimeAuditEvent, int64, error)
 }
 
 type ListMCPRuntimeAuditEventsRequest struct {
-	RunID  int64
-	Limit  int32
-	Offset int32
+	ThreadID int64
+	RunID    int64
+	Limit    int32
+	Offset   int32
 }
 
 type mcpRuntimeAuditEventPO struct {
@@ -84,25 +85,32 @@ func (r *threadRepository) CreateMCPRuntimeAuditEvent(
 func (r *threadRepository) ListMCPRuntimeAuditEvents(
 	ctx context.Context,
 	req ListMCPRuntimeAuditEventsRequest,
-) ([]*entity.MCPRuntimeAuditEvent, error) {
+) ([]*entity.MCPRuntimeAuditEvent, int64, error) {
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 20
 	}
-	query := r.db.WithContext(ctx).
+	base := r.db.WithContext(ctx).
 		Model(&mcpRuntimeAuditEventPO{}).
-		Order("created_at ASC, id ASC").
-		Limit(int(limit))
-	if req.Offset > 0 {
-		query = query.Offset(int(req.Offset))
+		Order("created_at ASC, id ASC")
+	if req.ThreadID > 0 {
+		base = base.Where("thread_id = ?", req.ThreadID)
 	}
 	if req.RunID > 0 {
-		query = query.Where("run_id = ?", req.RunID)
+		base = base.Where("run_id = ?", req.RunID)
+	}
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	query := base.Limit(int(limit))
+	if req.Offset > 0 {
+		query = query.Offset(int(req.Offset))
 	}
 
 	pos := make([]*mcpRuntimeAuditEventPO, 0, limit)
 	if err := query.Find(&pos).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	events := make([]*entity.MCPRuntimeAuditEvent, 0, len(pos))
@@ -110,7 +118,7 @@ func (r *threadRepository) ListMCPRuntimeAuditEvents(
 		events = append(events, po.toEntity())
 	}
 
-	return events, nil
+	return events, total, nil
 }
 
 func newMCPRuntimeAuditEventPO(

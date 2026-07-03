@@ -143,8 +143,8 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-P1 active workstreams are closed for this stabilization pass. Prepare code
-review and commit for the accumulated P1-D/P1-E/P1-G/P1-H changes, then decide
-whether to merge to `dev` after user review. P1-F Skills/MCP/Tools policy
-history is intentionally deferred to P2 because current visible behavior was
-accepted as good enough.
+P1 active workstreams are closed for this stabilization pass and have been
+merged to `dev` in commit `c584ff6c2`. Continue Phase 2 in
+`docs/superpowers/plans/2026-07-02-deerflow-p2-hardening-tracker.md`.
+P1-F Skills/MCP/Tools policy history remains intentionally deferred to P2
+because current visible behavior was accepted as good enough.

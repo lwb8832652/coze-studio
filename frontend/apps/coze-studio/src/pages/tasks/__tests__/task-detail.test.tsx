@@ -47,6 +47,7 @@ const mockGetWorkbenchRuntimeDoctor = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMemories = vi.hoisted(() => vi.fn());
 const mockListTaskThreadGuardrailAuditEvents = vi.hoisted(() => vi.fn());
 const mockExportTaskThreadGuardrailAuditEvents = vi.hoisted(() => vi.fn());
+const mockListTaskThreadMCPRuntimeAuditEvents = vi.hoisted(() => vi.fn());
 const mockListTaskThreadArtifacts = vi.hoisted(() => vi.fn());
 const mockListTaskThreadArtifactScanJobs = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadArtifactScanJob = vi.hoisted(() => vi.fn());
@@ -70,13 +71,18 @@ const mockGetTaskThreadRunEventsStreamURL = vi.hoisted(() =>
 );
 const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
+const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 const mockResumeTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadSubagentRun = vi.hoisted(() => vi.fn());
 const mockListTaskEvents = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockGetWorkbenchLLMModels = vi.hoisted(() => vi.fn());
+const mockListWorkbenchKnowledgeResources = vi.hoisted(() => vi.fn());
+const mockListWorkbenchDatabaseResources = vi.hoisted(() => vi.fn());
+const mockListWorkbenchWorkflowResources = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
+const mockListMCPToolRegistryEntries = vi.hoisted(() => vi.fn());
 const mockMermaidRender = vi.hoisted(() =>
   vi.fn((id: string) =>
     Promise.resolve({
@@ -107,6 +113,7 @@ vi.mock('../service', () => ({
   listTaskThreadGuardrailAuditEvents: mockListTaskThreadGuardrailAuditEvents,
   exportTaskThreadGuardrailAuditEvents:
     mockExportTaskThreadGuardrailAuditEvents,
+  listTaskThreadMCPRuntimeAuditEvents: mockListTaskThreadMCPRuntimeAuditEvents,
   updateTaskThreadMemory: mockUpdateTaskThreadMemory,
   deleteTaskThreadMemory: mockDeleteTaskThreadMemory,
   clearTaskThreadMemories: mockClearTaskThreadMemories,
@@ -131,6 +138,7 @@ vi.mock('../service', () => ({
   restoreTaskThreadArtifact: mockRestoreTaskThreadArtifact,
   appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThreadRun: mockCreateTaskThreadRun,
+  uploadTaskThreadFiles: mockUploadTaskThreadFiles,
   resumeTaskThreadRun: mockResumeTaskThreadRun,
   cancelTaskThreadRun: mockCancelTaskThreadRun,
   retryTaskThreadSubagentRun: mockRetryTaskThreadSubagentRun,
@@ -140,10 +148,17 @@ vi.mock('../service', () => ({
 
 vi.mock('../../workbench/service', () => ({
   getWorkbenchLLMModels: mockGetWorkbenchLLMModels,
+  listWorkbenchDatabaseResources: mockListWorkbenchDatabaseResources,
+  listWorkbenchKnowledgeResources: mockListWorkbenchKnowledgeResources,
+  listWorkbenchWorkflowResources: mockListWorkbenchWorkflowResources,
 }));
 
 vi.mock('../../skill/service', () => ({
   listSkills: mockListSkills,
+}));
+
+vi.mock('../../tools/service', () => ({
+  listMCPToolRegistryEntries: mockListMCPToolRegistryEntries,
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -397,6 +412,10 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozSendFill: () => <span />,
   IconCozSetting: () => <span />,
   IconCozTrashCan: () => <span />,
+  IconCozThumbdown: () => <span />,
+  IconCozThumbdownFill: () => <span />,
+  IconCozThumbsup: () => <span />,
+  IconCozThumbsupFill: () => <span />,
   IconCozUpload: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
@@ -561,6 +580,7 @@ describe('TaskDetailPage', () => {
     mockListTaskThreadMemories.mockReset();
     mockListTaskThreadGuardrailAuditEvents.mockReset();
     mockExportTaskThreadGuardrailAuditEvents.mockReset();
+    mockListTaskThreadMCPRuntimeAuditEvents.mockReset();
     mockListTaskThreadArtifacts.mockReset();
     mockListTaskThreadArtifactScanJobs.mockReset();
     mockRetryTaskThreadArtifactScanJob.mockReset();
@@ -578,6 +598,15 @@ describe('TaskDetailPage', () => {
     mockRestoreTaskThreadArtifact.mockReset();
     mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
+    mockUploadTaskThreadFiles.mockReset();
+    mockUploadTaskThreadFiles.mockResolvedValue({
+      data: {
+        files: [],
+        skipped_files: [],
+      },
+      code: 0,
+      msg: '',
+    });
     mockResumeTaskThreadRun.mockReset();
     mockCancelTaskThreadRun.mockReset();
     mockRetryTaskThreadSubagentRun.mockReset();
@@ -585,7 +614,48 @@ describe('TaskDetailPage', () => {
     mockNavigate.mockReset();
     mockSendWorkbenchChat.mockReset();
     mockGetWorkbenchLLMModels.mockReset();
+    mockListWorkbenchKnowledgeResources.mockReset();
+    mockListWorkbenchKnowledgeResources.mockResolvedValue([
+      {
+        id: 'kb-1',
+        name: '项目知识库',
+        description: 'DeerFlow parity docs',
+      },
+    ]);
+    mockListWorkbenchDatabaseResources.mockReset();
+    mockListWorkbenchDatabaseResources.mockResolvedValue([
+      {
+        id: 'db-1',
+        name: '任务数据库',
+        description: 'Task database',
+      },
+    ]);
+    mockListWorkbenchWorkflowResources.mockReset();
+    mockListWorkbenchWorkflowResources.mockResolvedValue([
+      {
+        id: 'workflow-1',
+        name: '任务工作流',
+        description: 'Task workflow',
+      },
+    ]);
     mockListSkills.mockReset();
+    mockListMCPToolRegistryEntries.mockReset();
+    mockListMCPToolRegistryEntries.mockResolvedValue({
+      data: {
+        tools: [
+          {
+            id: 'mcp-tool-1',
+            name: 'query_weather',
+            description: 'Query weather',
+            server_id: 'weather',
+            server_name: 'Weather',
+            enabled: true,
+          },
+        ],
+      },
+      code: 0,
+      msg: '',
+    });
     mockMermaidRender.mockClear();
     mockGetWorkbenchLLMModels.mockResolvedValue([
       {
@@ -642,6 +712,14 @@ describe('TaskDetailPage', () => {
       msg: '',
     });
     mockListTaskThreadGuardrailAuditEvents.mockResolvedValue({
+      data: {
+        events: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMCPRuntimeAuditEvents.mockResolvedValue({
       data: {
         events: [],
         total: 0,
@@ -1555,6 +1633,217 @@ describe('TaskDetailPage', () => {
     }
   });
 
+  it('keeps invalid Mermaid diagrams bounded and copyable without SVG download', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteText,
+      },
+    });
+    mockMermaidRender.mockRejectedValueOnce(new Error('parse failed'));
+
+    const invalidMermaidSource = [
+      'sequenceDiagram',
+      '  User->>Agent: start',
+      '  Agent-->>: broken target',
+    ].join('\n');
+    const mermaidAnswer = [
+      '下面是一张错误图：',
+      '',
+      '```mermaid',
+      invalidMermaidSource,
+      '```',
+    ].join('\n');
+
+    mockGetTask.mockResolvedValue({
+      data: {
+        id: 'task-mermaid-error-1',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Mermaid 错误态',
+        status: workbenchTask.TaskStatus.Succeeded,
+        progress: 100,
+        input: JSON.stringify({
+          message: '请绘制一张错误 Mermaid 图',
+          execution_type: 'Agent',
+        }),
+        result: JSON.stringify({
+          message: mermaidAnswer,
+          result_type: 'answer',
+          execution_type: 'Agent',
+        }),
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+
+      const mermaidDiagram = container.querySelector(
+        '[data-testid="task-mermaid-diagram"]',
+      );
+      const copyButton = container.querySelector(
+        'button[aria-label="复制 Mermaid 源码"]',
+      );
+
+      expect(mermaidDiagram?.getAttribute('data-status')).toBe('error');
+      expect(mermaidDiagram?.textContent).toContain(
+        'Mermaid 图表渲染失败，已保留源码',
+      );
+      expect(mermaidDiagram?.textContent).toContain(invalidMermaidSource);
+      expect(
+        container.querySelector('button[aria-label="下载 Mermaid SVG"]'),
+      ).toBeNull();
+      expect(copyButton).toBeTruthy();
+
+      await act(async () => {
+        Simulate.click(copyButton as Element);
+        await Promise.resolve();
+      });
+      expect(clipboardWriteText).toHaveBeenCalledWith(invalidMermaidSource);
+    } finally {
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('renders DeerFlow-style assistant reply actions and copies visible answer text', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+    const previousClipboard = navigator.clipboard;
+    const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: clipboardWriteText,
+      },
+    });
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-assistant-actions-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-assistant-actions-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '助手回复操作',
+        status: 'succeeded',
+        source: 'task',
+        progress: 100,
+        last_user_message: '请总结项目进展',
+        last_agent_message: '本周完成了任务详情对齐。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            content: '请总结项目进展',
+            created_at: 1717000100000,
+            message_id: 'msg-actions-user-1',
+            metadata: '',
+            role: 'user',
+            run_id: 'run-actions-1',
+            thread_id: 'thread-assistant-actions-1',
+          },
+          {
+            content:
+              '本周完成了任务详情对齐。\n<think>不要复制这段隐藏思考</think>',
+            created_at: 1717000200000,
+            message_id: 'msg-actions-assistant-1',
+            metadata: '',
+            role: 'assistant',
+            run_id: 'run-actions-1',
+            thread_id: 'thread-assistant-actions-1',
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const actions = container.querySelector(
+        '[data-testid="task-assistant-message-actions"]',
+      );
+      const copyButton = container.querySelector(
+        'button[aria-label="复制回复"]',
+      );
+      const likeButton = container.querySelector('button[aria-label="赞"]');
+      const dislikeButton = container.querySelector('button[aria-label="踩"]');
+
+      expect(actions).toBeTruthy();
+      expect(copyButton).toBeTruthy();
+      expect(likeButton).toBeTruthy();
+      expect(dislikeButton).toBeTruthy();
+      expect(actions?.textContent).not.toContain('不要复制这段隐藏思考');
+
+      await act(async () => {
+        Simulate.click(copyButton!);
+        await Promise.resolve();
+      });
+      expect(clipboardWriteText).toHaveBeenCalledWith(
+        '本周完成了任务详情对齐。',
+      );
+
+      act(() => {
+        Simulate.click(likeButton!);
+      });
+      expect(likeButton?.getAttribute('data-selected')).toBe('true');
+      expect(dislikeButton?.getAttribute('data-selected')).toBe('false');
+
+      act(() => {
+        Simulate.click(dislikeButton!);
+      });
+      expect(likeButton?.getAttribute('data-selected')).toBe('false');
+      expect(dislikeButton?.getAttribute('data-selected')).toBe('true');
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: previousClipboard,
+      });
+      act(() => {
+        root?.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('resolves canonical chat route params through task thread detail', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -1770,6 +2059,7 @@ describe('TaskDetailPage', () => {
       followUpComposer?.querySelector('[data-testid="task-todo-dock"]'),
     ).toBeTruthy();
     expectDeerFlowTaskComposer(followUpComposer);
+    expect(mockGetWorkbenchLLMModels).toHaveBeenCalledWith('space-1');
 
     const atButton = followUpComposer?.querySelector(
       'button[aria-label="添加上下文"]',
@@ -1821,6 +2111,9 @@ describe('TaskDetailPage', () => {
         ?.querySelector('.chat-workbench-extension-panel')
         ?.getAttribute('data-placement'),
     ).toBe('top');
+    expect(mockListMCPToolRegistryEntries).toHaveBeenCalledWith({
+      space_id: 'space-1',
+    });
 
     const modelButton = followUpComposer?.querySelector(
       'button[aria-label="选择模型"]',
@@ -2170,6 +2463,105 @@ describe('TaskDetailPage', () => {
       URL.revokeObjectURL = previousRevokeObjectURL;
       anchorClick.mockRestore();
     }
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders MCP runtime audit records with metadata-only fields in the inspector', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-mcp-audit-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-mcp-audit-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '工具调用审计任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请查询天气并生成摘要',
+        last_agent_message: '已完成工具调用',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMCPRuntimeAuditEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            created_at: 1717000200000,
+            elapsed_millis: 1234,
+            error_code: '',
+            event_id: 'mcp-audit-event-1',
+            event_type: 'tool.completed',
+            output_bytes: 2048,
+            run_id: 'run-mcp-audit-1',
+            runtime_tool_name: 'openmeteo.get_forecast',
+            server_id: 'server-weather',
+            space_id: 'space-1',
+            thread_id: 'thread-mcp-audit-1',
+          },
+          {
+            created_at: 1717000100000,
+            elapsed_millis: 560,
+            error_code: 'timeout',
+            event_id: 'mcp-audit-event-2',
+            event_type: 'tool.failed',
+            output_bytes: 0,
+            run_id: 'run-mcp-audit-1',
+            runtime_tool_name: 'github.search_repositories',
+            server_id: 'server-github',
+            space_id: 'space-1',
+            thread_id: 'thread-mcp-audit-1',
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await openTaskDetailInspector(container);
+
+    expect(mockListTaskThreadMCPRuntimeAuditEvents).toHaveBeenCalledWith({
+      thread_id: 'thread-mcp-audit-1',
+      page: 1,
+      page_size: 20,
+    });
+    expect(container.textContent).toContain('工具调用');
+    expect(container.textContent).toContain('2 条');
+    expect(container.textContent).toContain('openmeteo.get_forecast');
+    expect(container.textContent).toContain('github.search_repositories');
+    expect(container.textContent).toContain('tool.completed');
+    expect(container.textContent).toContain('tool.failed');
+    expect(container.textContent).toContain('server-weather');
+    expect(container.textContent).toContain('server-github');
+    expect(container.textContent).toContain('耗时 1234ms');
+    expect(container.textContent).toContain('输出 2 KB');
+    expect(container.textContent).toContain('timeout');
+    expect(container.textContent).not.toContain('tool_arguments');
+    expect(container.textContent).not.toContain('secret-token');
+    expect(container.textContent).not.toContain('provider_raw');
+    expect(container.textContent).not.toContain('checkpoint');
+    expect(container.textContent).not.toContain('/mnt/user-data');
 
     act(() => {
       root?.unmount();
@@ -7596,6 +7988,9 @@ describe('TaskDetailPage', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
+    const followUpFile = new File(['name,score'], 'customer-feedback.csv', {
+      type: 'text/csv',
+    });
     const makeTopLevelRun = (status: string) => ({
       run_id: 'run-followup-1',
       thread_id: 'thread-only-1',
@@ -7632,6 +8027,23 @@ describe('TaskDetailPage', () => {
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
       thread_id: 'thread-only-1',
+    });
+    mockUploadTaskThreadFiles.mockResolvedValue({
+      data: {
+        files: [
+          {
+            file_id: 'file-followup-1',
+            file_name: 'customer-feedback.csv',
+            virtual_path: '/mnt/user-data/uploads/customer-feedback.csv',
+            content_type: 'text/csv',
+            size_bytes: 10,
+            created_at: 1717000390000,
+          },
+        ],
+        skipped_files: [],
+      },
+      code: 0,
+      msg: '',
     });
     mockGetTaskThread.mockResolvedValue({
       data: {
@@ -7851,6 +8263,15 @@ describe('TaskDetailPage', () => {
         target: { value: '请追加行动建议' },
       } as unknown as Event);
     });
+    const fileInput = container.querySelector(
+      'input[aria-label="选择附件"]',
+    ) as HTMLInputElement;
+    act(() => {
+      Simulate.change(fileInput, {
+        target: { files: [followUpFile] },
+      } as unknown as Event);
+    });
+    expect(container.textContent).toContain('customer-feedback.csv');
 
     const sendButton = container.querySelector(
       'button[aria-label="发送任务"]',
@@ -7863,6 +8284,10 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
+    expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
+      thread_id: 'thread-only-1',
+      files: [followUpFile],
+    });
     expect(mockAppendTaskThreadMessage).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
       role: 'user',
@@ -7876,6 +8301,12 @@ describe('TaskDetailPage', () => {
       metadata: expect.any(String),
       idempotency_key: expect.any(String),
     });
+    expect(mockUploadTaskThreadFiles.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAppendTaskThreadMessage.mock.invocationCallOrder[0],
+    );
+    expect(
+      mockAppendTaskThreadMessage.mock.invocationCallOrder[0],
+    ).toBeLessThan(mockCreateTaskThreadRun.mock.invocationCallOrder[0]);
     expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
 
     const appendRequest = mockAppendTaskThreadMessage.mock.calls[0]?.[0];
@@ -7914,6 +8345,13 @@ describe('TaskDetailPage', () => {
           role: 'user',
           content: '请追加行动建议',
           message_id: 'msg-appended-1',
+        },
+      ],
+      uploaded_files: [
+        {
+          file_id: 'file-followup-1',
+          file_name: 'customer-feedback.csv',
+          virtual_path: '/mnt/user-data/uploads/customer-feedback.csv',
         },
       ],
     });

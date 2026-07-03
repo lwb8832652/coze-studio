@@ -76,3 +76,9 @@ type ArtifactScanJob struct {
 	CreatedAt      int64
 	UpdatedAt      int64
 }
+
+type ArtifactScanBacklogAggregate struct {
+	Scanner string
+	Status  ArtifactScanJobStatus
+	Count   int64
+}

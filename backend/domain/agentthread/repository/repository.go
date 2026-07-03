@@ -35,6 +35,7 @@ type ThreadRepository interface {
 	GetRun(ctx context.Context, id int64) (*entity.Run, error)
 	GetRunByIdempotencyKey(ctx context.Context, spaceID int64, idempotencyKey string) (*entity.Run, error)
 	ListRuns(ctx context.Context, req ListRunsRequest) ([]*entity.Run, int64, error)
+	AggregateRunBacklog(ctx context.Context, req AggregateRunBacklogRequest) ([]*entity.RunBacklogAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
@@ -77,6 +78,7 @@ type ThreadRepository interface {
 		job *entity.MemoryFlushJob,
 	) (*entity.MemoryFlushJob, bool, error)
 	ClaimMemoryFlushJobs(ctx context.Context, req ClaimMemoryFlushJobsRequest) ([]*entity.MemoryFlushJob, error)
+	AggregateMemoryFlushBacklog(ctx context.Context, req AggregateMemoryFlushBacklogRequest) ([]*entity.MemoryFlushBacklogAggregate, error)
 	CompleteMemoryFlushJob(ctx context.Context, req CompleteMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
 	RetryMemoryFlushJob(ctx context.Context, req RetryMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
 	FailMemoryFlushJob(ctx context.Context, req FailMemoryFlushJobRequest) (*entity.MemoryFlushJob, bool, error)
@@ -123,6 +125,10 @@ type ListRunsRequest struct {
 	Status           *entity.RunStatus
 	Page             int32
 	PageSize         int32
+}
+
+type AggregateRunBacklogRequest struct {
+	Statuses []entity.RunStatus
 }
 
 type ListRunEventsRequest struct {
@@ -215,6 +221,10 @@ type ClaimMemoryFlushJobsRequest struct {
 	Limit          int32
 	Now            int64
 	LeaseExpiresAt int64
+}
+
+type AggregateMemoryFlushBacklogRequest struct {
+	Statuses []entity.MemoryFlushJobStatus
 }
 
 type CompleteMemoryFlushJobRequest struct {

@@ -148,6 +148,12 @@ type Run struct {
 	UpdatedAt         int64
 }
 
+type RunBacklogAggregate struct {
+	Status RunStatus
+	Config string
+	Count  int64
+}
+
 type Message struct {
 	ID        int64
 	ThreadID  int64
@@ -252,6 +258,11 @@ type MemoryFlushJob struct {
 	EndedAt              int64
 	CreatedAt            int64
 	UpdatedAt            int64
+}
+
+type MemoryFlushBacklogAggregate struct {
+	Status MemoryFlushJobStatus
+	Count  int64
 }
 
 type TokenUsage struct {

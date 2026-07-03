@@ -100,6 +100,7 @@ interface WorkbenchComposerToolbarProps {
   onResourceSelectionChange: (selection: WorkbenchResourceSelection) => void;
   onRuntimeSettingsChange: WorkbenchRuntimeSettingsChange;
   onSelectedModelTypeChange: (modelType: number) => void;
+  onAttachClick?: () => void;
   onSubmit: () => void;
 }
 
@@ -125,9 +126,43 @@ const DEERFLOW_MODE_OPTIONS: Array<{
   },
 ];
 
+const WorkbenchComposerAttachments = ({
+  files,
+  onFileRemove,
+}: {
+  files?: File[];
+  onFileRemove?: (file: File) => void;
+}) => {
+  if (!files?.length) {
+    return null;
+  }
+
+  return (
+    <div className="chat-workbench-attachments" aria-label="附件列表">
+      {files.map((file, index) => (
+        <span
+          className="chat-workbench-attachment-chip"
+          key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+        >
+          <IconCozUpload />
+          <span>{file.name}</span>
+          <button
+            type="button"
+            aria-label={`移除附件 ${file.name}`}
+            onClick={() => onFileRemove?.(file)}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+};
+
 export const WorkbenchComposerBody = ({
   atDraft,
   atSegments,
+  files,
   value,
   mode,
   presentation,
@@ -143,11 +178,13 @@ export const WorkbenchComposerBody = ({
   onAtDraftCancel,
   onAtAnchorRectChange,
   onAtSegmentRemove,
+  onFileRemove,
   onTextareaBlur,
   onTextareaFocus,
 }: {
   atDraft?: WorkbenchAtDraft | null;
   atSegments?: WorkbenchAtSegment[];
+  files?: File[];
   value: string;
   mode: WorkbenchMode;
   presentation: WorkbenchComposerPresentation;
@@ -163,11 +200,14 @@ export const WorkbenchComposerBody = ({
   onAtDraftCancel?: () => void;
   onAtAnchorRectChange?: (rect: DOMRect) => void;
   onAtSegmentRemove?: (segment: WorkbenchAtSegment) => void;
+  onFileRemove?: (file: File) => void;
   onTextareaBlur?: () => void;
   onTextareaFocus?: () => void;
 }) => {
   const isDeerFlow = presentation === 'deerflow';
-  const hasRichContent = Boolean(atSegments?.length || atDraft);
+  const hasRichContent = Boolean(
+    atSegments?.length || atDraft || files?.length,
+  );
   const richInputRef = useRef<HTMLDivElement>(null);
   const hadDraftRef = useRef(Boolean(atDraft));
 
@@ -222,6 +262,10 @@ export const WorkbenchComposerBody = ({
         </div>
       ) : null}
       <div className="chat-workbench-rich-input" ref={richInputRef}>
+        <WorkbenchComposerAttachments
+          files={files}
+          onFileRemove={onFileRemove}
+        />
         <WorkbenchAtSegments
           segments={atSegments}
           onSegmentRemove={onAtSegmentRemove}
@@ -421,6 +465,7 @@ export const WorkbenchComposerToolbar = ({
   onResourceSelectionChange,
   onRuntimeSettingsChange,
   onSelectedModelTypeChange,
+  onAttachClick,
   onSubmit,
 }: WorkbenchComposerToolbarProps) => {
   const isDeerFlow = presentation === 'deerflow';
@@ -463,6 +508,7 @@ export const WorkbenchComposerToolbar = ({
             type="button"
             className="chat-workbench-icon-action"
             aria-label="添加附件"
+            onClick={onAttachClick}
           >
             <IconCozUpload />
           </button>

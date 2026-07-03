@@ -350,6 +350,108 @@ func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing
 	require.NotContains(t, body, "s3://")
 }
 
+func TestListTaskThreadMCPRuntimeAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
+		workbenchSessionMiddlewareForTest(2),
+		ListTaskThreadMCPRuntimeAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	recorder := appagentthread.NewApplicationADKMCPRuntimeAuditRecorder(
+		appagentthread.ApplicationADKMCPRuntimeAuditRecorderOptions{
+			Repository: appagentthread.SVC.MCPRuntimeAuditRepository,
+			IDGen:      &sequentialIDGen{next: 9201},
+			NowMillis:  func() int64 { return 6000 },
+		},
+	)
+	err := recorder.RecordADKMCPRuntimeAudit(
+		context.Background(),
+		appagentthread.ADKMCPRuntimeAuditRecord{
+			SpaceID:         1,
+			ThreadID:        1,
+			RunID:           2,
+			ServerID:        100,
+			RuntimeToolName: "mcp_100_get_weather",
+			EventType:       "mcp.tool.completed",
+			ErrorCode:       "provider_raw_secret_should_not_include_payload",
+			ElapsedMillis:   33,
+			OutputBytes:     128,
+		},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/mcp_runtime_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"code":0`)
+	require.Contains(t, body, `"total":1`)
+	require.Contains(t, body, `"event_id":"9201"`)
+	require.Contains(t, body, `"runtime_tool_name":"mcp_100_get_weather"`)
+	require.Contains(t, body, `"event_type":"mcp.tool.completed"`)
+	require.Contains(t, body, `"elapsed_millis":33`)
+	require.Contains(t, body, `"output_bytes":128`)
+	require.NotContains(t, body, "secret prompt")
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "sk-")
+	require.NotContains(t, body, "/mnt/raw")
+	require.NotContains(t, body, "s3://")
+}
+
+func TestListTaskThreadMCPRuntimeAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
+		workbenchSessionMiddlewareForTest(2),
+		ListTaskThreadMCPRuntimeAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	authorizer := &recordingWorkbenchMCPRuntimeAuditAuthorizer{}
+	appagentthread.SVC.MCPRuntimeAuditAuthorizer = authorizer
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/mcp_runtime_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, appagentthread.MCPRuntimeAuditAccessOperationList, authorizer.req.Operation)
+	require.Equal(t, int64(1), authorizer.req.ThreadID)
+	require.Equal(t, int64(2), authorizer.req.ViewerID)
+}
+
+func TestListTaskThreadMCPRuntimeAuditEventsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
+	h := server.Default()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
+		ListTaskThreadMCPRuntimeAuditEvents,
+	)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.MCPRuntimeAuditAuthorizer = &recordingWorkbenchMCPRuntimeAuditAuthorizer{
+		err: appagentthread.ErrMCPRuntimeAuditAccessDenied,
+	}
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/mcp_runtime_audit_events?run_id=2&page=1&page_size=20",
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, body, "mcp runtime audit access denied")
+	require.NotContains(t, body, "internal server error")
+}
+
 func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *testing.T) {
 	h := server.Default()
 	h.GET(
@@ -2423,6 +2525,8 @@ func installAgentThreadTestService(t *testing.T) {
 	prevMemoryAuthorizer := appagentthread.SVC.MemoryAuthorizer
 	prevGuardrailAuditRepository := appagentthread.SVC.GuardrailAuditRepository
 	prevGuardrailAuditAuthorizer := appagentthread.SVC.GuardrailAuditAuthorizer
+	prevMCPRuntimeAuditRepository := appagentthread.SVC.MCPRuntimeAuditRepository
+	prevMCPRuntimeAuditAuthorizer := appagentthread.SVC.MCPRuntimeAuditAuthorizer
 	prevArtifactScannerStatus := appagentthread.SVC.ArtifactScannerStatus
 	prevArtifactReviewClock := appagentthread.SVC.ArtifactReviewClock
 	t.Cleanup(func() {
@@ -2435,6 +2539,8 @@ func installAgentThreadTestService(t *testing.T) {
 		appagentthread.SVC.MemoryAuthorizer = prevMemoryAuthorizer
 		appagentthread.SVC.GuardrailAuditRepository = prevGuardrailAuditRepository
 		appagentthread.SVC.GuardrailAuditAuthorizer = prevGuardrailAuditAuthorizer
+		appagentthread.SVC.MCPRuntimeAuditRepository = prevMCPRuntimeAuditRepository
+		appagentthread.SVC.MCPRuntimeAuditAuthorizer = prevMCPRuntimeAuditAuthorizer
 		appagentthread.SVC.ArtifactScannerStatus = prevArtifactScannerStatus
 		appagentthread.SVC.ArtifactReviewClock = prevArtifactReviewClock
 	})
@@ -2500,6 +2606,19 @@ type recordingWorkbenchGuardrailAuditAuthorizer struct {
 func (a *recordingWorkbenchGuardrailAuditAuthorizer) AuthorizeGuardrailAuditAccess(
 	_ context.Context,
 	req appagentthread.GuardrailAuditAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type recordingWorkbenchMCPRuntimeAuditAuthorizer struct {
+	req appagentthread.MCPRuntimeAuditAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchMCPRuntimeAuditAuthorizer) AuthorizeMCPRuntimeAuditAccess(
+	_ context.Context,
+	req appagentthread.MCPRuntimeAuditAccessRequest,
 ) error {
 	a.req = req
 	return a.err
@@ -2733,6 +2852,19 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			provider text,
 			reason_code text,
 			rule_ids text,
+			created_at integer
+		);
+		CREATE TABLE agent_mcp_runtime_audit_events (
+			id integer PRIMARY KEY,
+			space_id integer,
+			thread_id integer,
+			run_id integer,
+			server_id integer,
+			runtime_tool_name text,
+			event_type text,
+			error_code text,
+			elapsed_ms integer,
+			output_bytes integer,
 			created_at integer
 		);
 		CREATE TABLE agent_token_usage (

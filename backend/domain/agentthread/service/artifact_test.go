@@ -769,6 +769,7 @@ type recordingArtifactRepository struct {
 	restored                *entity.AgentArtifact
 	scanJob                 *entity.ArtifactScanJob
 	claimedScanJobs         []*entity.ArtifactScanJob
+	artifactScanBacklog     []*entity.ArtifactScanBacklogAggregate
 	listScanJobs            []*entity.ArtifactScanJob
 	listScanJobsTotal       int64
 	cleanupCandidates       []*entity.AgentArtifact
@@ -784,6 +785,7 @@ type recordingArtifactRepository struct {
 	updateMetadata          string
 	updateScannedAt         int64
 	claimScanJobsReq        repository.ClaimArtifactScanJobsRequest
+	aggregateScanBacklogReq repository.AggregateArtifactScanBacklogRequest
 	completeScanJobReq      repository.CompleteArtifactScanJobRequest
 	retryScanJobReq         repository.RetryArtifactScanJobRequest
 	requeueFailedScanJobReq repository.RequeueFailedArtifactScanJobRequest
@@ -817,6 +819,14 @@ func (r *recordingArtifactRepository) ClaimArtifactScanJobs(
 ) ([]*entity.ArtifactScanJob, error) {
 	r.claimScanJobsReq = req
 	return r.claimedScanJobs, nil
+}
+
+func (r *recordingArtifactRepository) AggregateArtifactScanBacklog(
+	_ context.Context,
+	req repository.AggregateArtifactScanBacklogRequest,
+) ([]*entity.ArtifactScanBacklogAggregate, error) {
+	r.aggregateScanBacklogReq = req
+	return r.artifactScanBacklog, nil
 }
 
 func (r *recordingArtifactRepository) GetArtifactScanJob(

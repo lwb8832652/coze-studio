@@ -23,6 +23,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 const defaultRunProcessorWorkerID = "agent-harness"
@@ -82,19 +85,21 @@ type RunTitleGenerator interface {
 }
 
 type RunProcessorOptions struct {
-	WorkerID       string
-	BatchSize      int32
-	EventSink      RunEventSink
-	TitleGenerator RunTitleGenerator
+	WorkerID         string
+	BatchSize        int32
+	EventSink        RunEventSink
+	TitleGenerator   RunTitleGenerator
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type RunProcessor struct {
-	app            *ApplicationService
-	executor       RunExecutor
-	eventSink      RunEventSink
-	titleGenerator RunTitleGenerator
-	workerID       string
-	batchSize      int32
+	app              *ApplicationService
+	executor         RunExecutor
+	eventSink        RunEventSink
+	titleGenerator   RunTitleGenerator
+	metricsCollector RuntimeMetricsCollector
+	workerID         string
+	batchSize        int32
 }
 
 type RunProcessResult struct {
@@ -133,12 +138,13 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 	}
 
 	return &RunProcessor{
-		app:            app,
-		executor:       executor,
-		eventSink:      eventSink,
-		titleGenerator: opts.TitleGenerator,
-		workerID:       workerID,
-		batchSize:      batchSize,
+		app:              app,
+		executor:         executor,
+		eventSink:        eventSink,
+		titleGenerator:   opts.TitleGenerator,
+		metricsCollector: opts.MetricsCollector,
+		workerID:         workerID,
+		batchSize:        batchSize,
 	}
 }
 
@@ -166,7 +172,9 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 	}
 
 	result.ClaimedRuns = len(claimed.Runs)
+	p.recordRuntimeRunBacklog(ctx)
 	for _, run := range claimed.Runs {
+		p.recordRuntimeRunQueueDelay(ctx, run)
 		outcome, err := p.processRun(ctx, run)
 		switch outcome {
 		case runProcessInterrupted:
@@ -211,14 +219,14 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProc
 			if isSubagentRetryUnsupportedError(err) {
 				p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 
-				return runProcessFailed, p.failRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+				return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 			}
 
 			return p.finalizeRunExecution(ctx, run, result, err)
 		}
 		p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 
-		return runProcessFailed, p.failRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+		return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 	}
 
 	result, err := p.executor.Execute(ctx, run)
@@ -236,33 +244,42 @@ func (p *RunProcessor) finalizeRunExecution(
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
 			p.emitRunCanceledEvent(ctx, run)
+			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return runProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
-			if _, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
+			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
 				RunID:    run.RunID,
 				From:     RunStatusRunning,
 				WorkerID: p.workerID,
-			}); transitionErr != nil {
+			})
+			if transitionErr != nil {
 				return runProcessErrored, transitionErr
 			}
 			if !interrupted.EventPersisted {
 				p.emitRunInterruptedEvent(ctx, run, interrupted)
 			}
+			p.recordRuntimeRunTerminal(
+				ctx,
+				run,
+				updateRunStatusResponseRun(transitionResp),
+				runtimeMetricResultInterrupted,
+				runtimeMetricErrorNone,
+			)
 
 			return runProcessInterrupted, nil
 		}
 		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
 
-		return runProcessFailed, p.failRun(ctx, run, "executor_error", err.Error())
+		return p.finalizeFailedRun(ctx, run, "executor_error", err.Error())
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
 		p.emitRunFailedEvent(ctx, run, "empty_executor_result", "executor returned empty assistant message")
 
-		return runProcessFailed, p.failRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
+		return p.finalizeFailedRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
 	}
 
 	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
@@ -274,16 +291,17 @@ func (p *RunProcessor) finalizeRunExecution(
 	}); err != nil {
 		p.emitRunFailedEvent(ctx, run, "append_message_failed", err.Error())
 
-		return runProcessFailed, p.failRun(ctx, run, "append_message_failed", err.Error())
+		return p.finalizeFailedRun(ctx, run, "append_message_failed", err.Error())
 	}
 
 	p.syncGeneratedThreadTitle(ctx, run, result)
 
-	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
 		RunID:    run.RunID,
 		From:     RunStatusRunning,
 		WorkerID: p.workerID,
-	}); err != nil {
+	})
+	if err != nil {
 		return runProcessErrored, err
 	}
 
@@ -291,6 +309,13 @@ func (p *RunProcessor) finalizeRunExecution(
 		"status":    string(RunStatusSucceeded),
 		"worker_id": p.workerID,
 	})
+	p.recordRuntimeRunTerminal(
+		ctx,
+		run,
+		updateRunStatusResponseRun(completeResp),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+	)
 
 	return runProcessSucceeded, nil
 }
@@ -314,8 +339,23 @@ func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSumm
 	p.emitRunEvent(ctx, run, "run.interrupted", payload)
 }
 
-func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) error {
-	_, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
+func (p *RunProcessor) finalizeFailedRun(
+	ctx context.Context,
+	run *RunSummary,
+	code string,
+	message string,
+) (runProcessOutcome, error) {
+	terminalRun, err := p.failRun(ctx, run, code, message)
+	if err != nil {
+		return runProcessFailed, err
+	}
+	p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultFailed, code)
+
+	return runProcessFailed, nil
+}
+
+func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) (*RunSummary, error) {
+	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
 		RunID:        run.RunID,
 		From:         RunStatusRunning,
 		WorkerID:     p.workerID,
@@ -323,7 +363,11 @@ func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, messa
 		ErrorMessage: message,
 	})
 
-	return err
+	if err != nil {
+		return nil, err
+	}
+
+	return updateRunStatusResponseRun(resp), nil
 }
 
 func (p *RunProcessor) emitRunFailedEvent(ctx context.Context, run *RunSummary, code, message string) {
@@ -346,6 +390,55 @@ func (p *RunProcessor) emitRunEvent(ctx context.Context, run *RunSummary, eventT
 		EventType: eventType,
 		Payload:   encodeRunEventPayload(ctx, payload),
 	})
+}
+
+func (p *RunProcessor) recordRuntimeRunTerminal(
+	ctx context.Context,
+	run *RunSummary,
+	terminalRun *RunSummary,
+	result string,
+	errorCode string,
+) {
+	if p == nil {
+		return
+	}
+	recordRuntimeRunTerminal(ctx, p.metricsCollector, run, terminalRun, "", result, errorCode)
+}
+
+func (p *RunProcessor) recordRuntimeRunQueueDelay(
+	ctx context.Context,
+	run *RunSummary,
+) {
+	if p == nil {
+		return
+	}
+	recordRuntimeRunQueueDelay(ctx, p.metricsCollector, run)
+}
+
+func (p *RunProcessor) recordRuntimeRunBacklog(ctx context.Context) {
+	if p == nil || p.metricsCollector == nil || p.app == nil || p.app.ThreadSVC == nil {
+		return
+	}
+	aggregates, err := p.app.ThreadSVC.AggregateRunBacklog(ctx, &domainservice.AggregateRunBacklogRequest{
+		Statuses: []entity.RunStatus{
+			entity.RunStatusPending,
+			entity.RunStatusQueued,
+			entity.RunStatusRunning,
+			entity.RunStatusInterrupted,
+		},
+	})
+	if err != nil {
+		return
+	}
+	recordRuntimeRunBacklog(ctx, p.metricsCollector, aggregates)
+}
+
+func updateRunStatusResponseRun(resp *UpdateRunStatusResponse) *RunSummary {
+	if resp == nil {
+		return nil
+	}
+
+	return resp.Run
 }
 
 func resultMessage(result *RunExecutionResult) string {

@@ -151,6 +151,64 @@
   padding: 8px;
 }
 
+.chat-workbench-file-input {
+  display: none;
+}
+
+.chat-workbench-attachments {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-workbench-attachment-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+
+  max-width: 100%;
+  height: 26px;
+  padding: 0 8px;
+
+  font-size: 13px;
+  line-height: 18px;
+  color: #344054;
+
+  background: #f2f4f7;
+  border: 1px solid rgb(77 101 148 / 12%);
+  border-radius: 6px;
+}
+
+.chat-workbench-attachment-chip > span {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-workbench-attachment-chip button {
+  cursor: pointer;
+
+  display: inline-grid;
+  place-items: center;
+
+  width: 18px;
+  height: 18px;
+  padding: 0;
+
+  color: #667085;
+
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+}
+
+.chat-workbench-attachment-chip button:hover {
+  color: #101828;
+  background: rgb(15 23 42 / 6%);
+}
+
 .chat-workbench-input-text {
   max-width: 100%;
   min-height: 24px;
