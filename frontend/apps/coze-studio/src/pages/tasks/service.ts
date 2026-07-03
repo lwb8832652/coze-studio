@@ -36,6 +36,8 @@ export const listTaskThreads = workbenchTask.ListTaskThreads;
 export const createTaskThread = workbenchTask.CreateTaskThread;
 export const getTaskThread = workbenchTask.GetTaskThread;
 export const listTaskThreadMessages = workbenchTask.ListTaskThreadMessages;
+export const generateTaskThreadSuggestions =
+  workbenchTask.GenerateTaskThreadSuggestions;
 export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
 export const listTaskThreadRuns = workbenchTask.ListTaskThreadRuns;
 export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;

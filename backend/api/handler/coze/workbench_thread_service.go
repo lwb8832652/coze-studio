@@ -33,6 +33,7 @@ import (
 	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
+	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
@@ -291,10 +292,14 @@ func GetTaskThread(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	thread := taskThreadToAPI(resp.Thread)
+	if thread != nil {
+		thread.Values = taskThreadValuesToAPI(ctx, resp.Thread)
+	}
 	c.JSON(consts.StatusOK, &threadapi.GetTaskThreadResponse{
 		Code: 0,
 		Msg:  "success",
-		Data: taskThreadToAPI(resp.Thread),
+		Data: thread,
 	})
 }
 
@@ -324,6 +329,57 @@ func ListTaskThreadMessages(ctx context.Context, c *app.RequestContext) {
 			Messages: taskThreadMessagesToAPI(resp.Messages),
 			Total:    resp.Total,
 		},
+	})
+}
+
+// GenerateTaskThreadSuggestions .
+// @router /api/workbench/task_threads/:thread_id/suggestions [POST]
+func GenerateTaskThreadSuggestions(ctx context.Context, c *app.RequestContext) {
+	var req threadapi.GenerateTaskThreadSuggestionsRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	if _, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID}); err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return
+	}
+
+	messages := make([]appworkbench.SuggestionMessage, 0, len(req.Messages))
+	for _, message := range req.Messages {
+		if message == nil {
+			continue
+		}
+		messages = append(messages, appworkbench.SuggestionMessage{
+			Role:    message.Role,
+			Content: message.Content,
+		})
+	}
+
+	resp, err := appworkbench.SVC.GenerateSuggestions(ctx, &appworkbench.GenerateSuggestionsRequest{
+		Messages:  messages,
+		N:         int(req.N),
+		ModelName: req.ModelName,
+		ModelType: req.ModelType,
+	})
+	if err != nil {
+		logs.CtxWarnf(ctx, "generate task thread suggestions failed: %v", err)
+		c.JSON(consts.StatusOK, &threadapi.GenerateTaskThreadSuggestionsResponse{
+			Suggestions: []string{},
+		})
+		return
+	}
+
+	if resp == nil {
+		c.JSON(consts.StatusOK, &threadapi.GenerateTaskThreadSuggestionsResponse{
+			Suggestions: []string{},
+		})
+		return
+	}
+
+	c.JSON(consts.StatusOK, &threadapi.GenerateTaskThreadSuggestionsResponse{
+		Suggestions: resp.Suggestions,
 	})
 }
 
@@ -1728,6 +1784,201 @@ func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread
 		LastAgentMessage: thread.LastAgentMessage,
 		CreatedAt:        thread.CreatedAt,
 		UpdatedAt:        thread.UpdatedAt,
+	}
+}
+
+func taskThreadValuesToAPI(
+	ctx context.Context,
+	thread *appagentthread.ThreadSummary,
+) *threadapi.TaskThreadValues {
+	if thread == nil || thread.ThreadID <= 0 {
+		return nil
+	}
+
+	todos := taskThreadTodosFromLatestCheckpoint(ctx, thread.ThreadID)
+	if len(todos) == 0 {
+		todos = taskThreadTodosFromJSON(thread.Metadata)
+	}
+	if len(todos) == 0 {
+		return nil
+	}
+
+	return &threadapi.TaskThreadValues{
+		Todos: todos,
+	}
+}
+
+func taskThreadTodosFromLatestCheckpoint(
+	ctx context.Context,
+	threadID int64,
+) []*threadapi.TaskThreadTodo {
+	resp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
+		ThreadID: threadID,
+		Limit:    1,
+	})
+	if err != nil {
+		logs.CtxWarnf(ctx, "list task thread checkpoints for values failed, thread_id=%d, err=%v", threadID, err)
+		return nil
+	}
+	if resp == nil || len(resp.Checkpoints) == 0 || resp.Checkpoints[0] == nil {
+		return nil
+	}
+
+	return taskThreadTodosFromJSON(resp.Checkpoints[0].ChannelValues)
+}
+
+func taskThreadTodosFromJSON(raw string) []*threadapi.TaskThreadTodo {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	var values map[string]any
+	if err := sonic.UnmarshalString(raw, &values); err != nil {
+		return nil
+	}
+
+	return taskThreadTodosFromValue(taskThreadTodosValue(values))
+}
+
+func taskThreadTodosValue(values map[string]any) any {
+	if values == nil {
+		return nil
+	}
+	if todos, ok := values["todos"]; ok {
+		return todos
+	}
+	if nested, ok := taskThreadMapValue(values["values"]); ok {
+		if todos, exists := nested["todos"]; exists {
+			return todos
+		}
+	}
+	if thread, ok := taskThreadMapValue(values["thread"]); ok {
+		if nested, exists := taskThreadMapValue(thread["values"]); exists {
+			if todos, ok := nested["todos"]; ok {
+				return todos
+			}
+		}
+	}
+
+	return nil
+}
+
+func taskThreadTodosFromValue(value any) []*threadapi.TaskThreadTodo {
+	switch typed := value.(type) {
+	case []any:
+		return taskThreadTodosFromList(typed)
+	case map[string]any:
+		if items, ok := typed["items"].([]any); ok {
+			return taskThreadTodosFromList(items)
+		}
+		if items, ok := typed["todos"].([]any); ok {
+			return taskThreadTodosFromList(items)
+		}
+	}
+
+	return nil
+}
+
+func taskThreadTodosFromList(items []any) []*threadapi.TaskThreadTodo {
+	todos := make([]*threadapi.TaskThreadTodo, 0, len(items))
+	for index, item := range items {
+		todoMap, ok := taskThreadMapValue(item)
+		if !ok {
+			continue
+		}
+
+		title := taskThreadFirstString(todoMap, "title", "content", "task", "text", "description")
+		if title == "" {
+			continue
+		}
+		id := taskThreadFirstString(todoMap, "id", "todo_id", "task_id")
+		if id == "" {
+			id = "todo-" + strconv.Itoa(index+1)
+		}
+		status := taskThreadNormalizeTodoStatus(taskThreadFirstString(todoMap, "status", "state"))
+		if status == "" {
+			if done, ok := taskThreadBoolValue(todoMap["done"]); ok && done {
+				status = "completed"
+			} else {
+				status = "pending"
+			}
+		}
+
+		todos = append(todos, &threadapi.TaskThreadTodo{
+			ID:     id,
+			Title:  title,
+			Status: status,
+		})
+	}
+
+	return todos
+}
+
+func taskThreadMapValue(value any) (map[string]any, bool) {
+	mapped, ok := value.(map[string]any)
+
+	return mapped, ok
+}
+
+func taskThreadFirstString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value := strings.TrimSpace(taskThreadStringValue(values[key]))
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func taskThreadStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	default:
+		return ""
+	}
+}
+
+func taskThreadBoolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "done", "completed", "success", "succeeded":
+			return true, true
+		case "false", "pending", "todo", "running", "in_progress":
+			return false, true
+		}
+	}
+
+	return false, false
+}
+
+func taskThreadNormalizeTodoStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "complete", "done", "success", "succeeded":
+		return "completed"
+	case "running", "in_progress", "in-progress", "doing":
+		return "running"
+	case "failed", "error":
+		return "failed"
+	case "canceled", "cancelled":
+		return "canceled"
+	case "pending", "todo", "created", "queued", "":
+		return status
+	default:
+		return "pending"
 	}
 }
 

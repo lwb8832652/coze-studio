@@ -266,6 +266,13 @@ func (r *recordingAgentThreadService) ClaimMemoryFlushJobs(
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) AggregateMemoryFlushBacklog(
+	context.Context,
+	*agentthreadsvc.AggregateMemoryFlushBacklogRequest,
+) ([]*agentthreadentity.MemoryFlushBacklogAggregate, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) CompleteMemoryFlushJob(
 	context.Context,
 	*agentthreadsvc.CompleteMemoryFlushJobRequest,
@@ -300,6 +307,13 @@ func (r *recordingAgentThreadService) GetThreadTokenUsage(context.Context, *agen
 }
 
 func (r *recordingAgentThreadService) ClaimPendingRuns(context.Context, *agentthreadsvc.ClaimPendingRunsRequest) ([]*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) AggregateRunBacklog(
+	context.Context,
+	*agentthreadsvc.AggregateRunBacklogRequest,
+) ([]*agentthreadentity.RunBacklogAggregate, error) {
 	return nil, nil
 }
 

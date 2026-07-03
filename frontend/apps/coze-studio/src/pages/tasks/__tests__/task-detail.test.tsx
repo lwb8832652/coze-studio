@@ -52,6 +52,7 @@ const mockListTaskThreadArtifacts = vi.hoisted(() => vi.fn());
 const mockListTaskThreadArtifactScanJobs = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadArtifactScanJob = vi.hoisted(() => vi.fn());
 const mockReviewTaskThreadArtifactScan = vi.hoisted(() => vi.fn());
+const mockGenerateTaskThreadSuggestions = vi.hoisted(() => vi.fn());
 const mockUpdateTaskThreadMemory = vi.hoisted(() => vi.fn());
 const mockDeleteTaskThreadMemory = vi.hoisted(() => vi.fn());
 const mockClearTaskThreadMemories = vi.hoisted(() => vi.fn());
@@ -124,6 +125,7 @@ vi.mock('../service', () => ({
   listTaskThreadArtifactScanJobs: mockListTaskThreadArtifactScanJobs,
   retryTaskThreadArtifactScanJob: mockRetryTaskThreadArtifactScanJob,
   reviewTaskThreadArtifactScan: mockReviewTaskThreadArtifactScan,
+  generateTaskThreadSuggestions: mockGenerateTaskThreadSuggestions,
   fetchTaskThreadArtifactContent: mockFetchTaskThreadArtifactContent,
   getTaskThreadArtifactSignedURL: mockGetTaskThreadArtifactSignedURL,
   isTaskThreadArtifactSafeError: (err: unknown) =>
@@ -585,6 +587,10 @@ describe('TaskDetailPage', () => {
     mockListTaskThreadArtifactScanJobs.mockReset();
     mockRetryTaskThreadArtifactScanJob.mockReset();
     mockReviewTaskThreadArtifactScan.mockReset();
+    mockGenerateTaskThreadSuggestions.mockReset();
+    mockGenerateTaskThreadSuggestions.mockResolvedValue({
+      suggestions: [],
+    });
     mockUpdateTaskThreadMemory.mockReset();
     mockDeleteTaskThreadMemory.mockReset();
     mockClearTaskThreadMemories.mockReset();
@@ -2188,7 +2194,10 @@ describe('TaskDetailPage', () => {
     );
     expect(workspacePrototypeStyles).toContain('min-width: 0 !important');
     expect(workspacePrototypeStyles).toContain(
-      '.coze-prototype-task-detail-page:has(.coze-prototype-artifact-side-preview)',
+      ".coze-prototype-detail-split[data-artifact-open='true']",
+    );
+    expect(workspacePrototypeStyles).toContain(
+      '.coze-prototype-artifact-resize-handle',
     );
   });
 
@@ -3930,6 +3939,13 @@ describe('TaskDetailPage', () => {
       const sidePreview = container.querySelector(
         '[data-testid="task-artifact-side-preview"]',
       );
+      const detailSplit = container.querySelector(
+        '.coze-prototype-detail-split',
+      );
+      expect(detailSplit?.getAttribute('data-artifact-open')).toBe('true');
+      expect(
+        container.querySelector('button[aria-label="调整产物面板宽度"]'),
+      ).toBeTruthy();
       expect(sidePreview?.getAttribute('data-layout')).toBe('deerflow-split');
       expect(sidePreview?.getAttribute('data-width-mode')).toBe(
         'deerflow-60-40',
@@ -5616,6 +5632,68 @@ describe('TaskDetailPage', () => {
         'img[data-testid="task-artifact-inline-preview-image"]',
       ),
     ).toBeNull();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('renders persisted thread todos from task thread values after refresh', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-values-todo-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-values-todo-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '持久待办任务',
+        status: 'completed',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '请生成计划',
+        last_agent_message: '计划已完成',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+        values: {
+          todos: [
+            {
+              id: 'todo-persisted-1',
+              title: '刷新后保留的待办',
+              status: 'completed',
+            },
+          ],
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [],
+        total: 0,
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('To-dos');
+    expect(container.textContent).toContain('刷新后保留的待办');
 
     act(() => {
       root?.unmount();
@@ -7563,6 +7641,147 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('generates DeerFlow-style follow-up suggestions after a completed thread turn', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-suggestions-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-suggestions-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '武汉3日游攻略',
+        status: 'succeeded',
+        source: 'agent',
+        progress: 100,
+        last_user_message: '帮我制定武汉3日游攻略',
+        last_agent_message: '已经整理了路线和预算。',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-suggestions-user-1',
+            thread_id: 'thread-suggestions-1',
+            run_id: 'run-suggestions-1',
+            role: 'user',
+            content: '帮我制定武汉3日游攻略',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+          {
+            message_id: 'msg-suggestions-assistant-1',
+            thread_id: 'thread-suggestions-1',
+            run_id: 'run-suggestions-1',
+            role: 'assistant',
+            content: '已经整理了路线和预算。',
+            metadata: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      data: {
+        runs: [
+          {
+            run_id: 'run-suggestions-1',
+            thread_id: 'thread-suggestions-1',
+            parent_run_id: '0',
+            space_id: 'space-1',
+            creator_id: 'user-1',
+            assistant_id: 'default',
+            run_kind: 'task',
+            status: 'succeeded',
+            command: '{}',
+            input: '{"messages":[]}',
+            config:
+              '{"model_name":"deepseek-v4-pro","model_type":100002,"runtime":"eino_adk"}',
+            context: '{}',
+            metadata: '{}',
+            stream_mode: '["messages","updates"]',
+            multitask_strategy: 'enqueue',
+            on_disconnect: 'continue',
+            durability: 'async',
+            idempotency_key: '',
+            worker_id: '',
+            error_code: '',
+            error_message: '',
+            started_at: 1717000100000,
+            ended_at: 1717000200000,
+            created_at: 1717000100000,
+            updated_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGenerateTaskThreadSuggestions.mockResolvedValue({
+      suggestions: ['能补充预算表吗？', '可以导出 Markdown 吗？'],
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(mockGenerateTaskThreadSuggestions).toHaveBeenCalledWith({
+      thread_id: 'thread-suggestions-1',
+      messages: [
+        { role: 'user', content: '帮我制定武汉3日游攻略' },
+        { role: 'assistant', content: '已经整理了路线和预算。' },
+      ],
+      n: 3,
+      model_name: 'deepseek-v4-pro',
+      model_type: '100002',
+    });
+    expect(container.textContent).toContain('能补充预算表吗？');
+    expect(container.textContent).toContain('可以导出 Markdown 吗？');
+
+    const suggestionButton = Array.from(
+      container.querySelectorAll('.coze-prototype-followup-suggestion'),
+    ).find(button => button.textContent === '能补充预算表吗？') as
+      | HTMLButtonElement
+      | undefined;
+
+    act(() => {
+      suggestionButton?.click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+
+    expect(textarea.value).toBe('能补充预算表吗？');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('retries failed canonical thread runs without mutating historical runs', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -8399,7 +8618,7 @@ describe('TaskDetailPage', () => {
     expect(mockListTaskThreadMessages).toHaveBeenNthCalledWith(2, {
       thread_id: 'thread-only-1',
       page: 1,
-      page_size: 50,
+      page_size: 200,
     });
     expect(container.textContent).toContain('请追加行动建议');
     expect(container.textContent).not.toContain(

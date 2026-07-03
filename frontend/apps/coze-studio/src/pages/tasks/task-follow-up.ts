@@ -31,6 +31,7 @@ import {
 } from './service';
 
 const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
+const THREAD_FOLLOW_UP_HISTORY_PAGE_SIZE = 200;
 
 export interface CanonicalThreadFollowUpResult {
   kind: 'thread';
@@ -124,13 +125,27 @@ const getThreadFollowUpRunInput = ({
 };
 
 const listThreadFollowUpHistory = async (threadId: string) => {
-  const response = await listTaskThreadMessages({
-    thread_id: threadId,
-    page: 1,
-    page_size: 50,
-  });
+  const messages: workbenchTask.TaskThreadMessage[] = [];
+  let page = 1;
+  let total = 0;
 
-  return response.data?.messages ?? [];
+  do {
+    const response = await listTaskThreadMessages({
+      thread_id: threadId,
+      page,
+      page_size: THREAD_FOLLOW_UP_HISTORY_PAGE_SIZE,
+    });
+    const pageMessages = response.data?.messages ?? [];
+
+    messages.push(...pageMessages);
+    total = response.data?.total ?? messages.length;
+    if (!pageMessages.length) {
+      break;
+    }
+    page += 1;
+  } while (messages.length < total);
+
+  return messages;
 };
 
 const getThreadFollowUpRunMetadata = (

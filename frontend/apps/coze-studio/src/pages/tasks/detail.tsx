@@ -17,7 +17,15 @@
 /* eslint-disable max-lines -- P0 DeerFlow parity wiring; split after parity stabilizes. */
 
 import { useParams } from 'react-router-dom';
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
@@ -80,6 +88,7 @@ import {
   type TaskArtifactActions,
   useTaskArtifactActions,
 } from './task-artifact-actions';
+import { generateTaskThreadSuggestions } from './service';
 import {
   getTaskExecutionType,
   getTaskInputText,
@@ -115,6 +124,11 @@ interface MessageArtifactGroups {
 
 const TASK_DETAIL_SKELETON_STAGGER_MS = 60;
 const TASK_DETAIL_RESPONSIVE_PAGE_CLASS = 'coze-task-detail-responsive-page';
+const ARTIFACT_SPLIT_DEFAULT_WIDTH = 40;
+const ARTIFACT_SPLIT_MIN_WIDTH = 30;
+const ARTIFACT_SPLIT_MAX_WIDTH = 55;
+const TASK_DETAIL_SUGGESTION_COUNT = 3;
+const TASK_DETAIL_SUGGESTION_HISTORY_LIMIT = 6;
 
 const normalizeThreadRunID = (runID?: string) => {
   const value = String(runID ?? '').trim();
@@ -342,6 +356,44 @@ const getThreadTranscriptMessages = (
 
   return transcript;
 };
+
+const getLatestAssistantTranscriptKey = (
+  transcript: ThreadTranscriptMessage[],
+) => {
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const message = transcript[index];
+    if (message.role !== 'assistant') {
+      continue;
+    }
+
+    return (
+      message.message_id ||
+      [
+        normalizeThreadRunID(message.run_id),
+        message.created_at || 0,
+        message.content.length,
+      ].join(':')
+    );
+  }
+
+  return '';
+};
+
+const getThreadSuggestionMessages = (
+  transcript: ThreadTranscriptMessage[],
+): workbenchTask.TaskThreadSuggestionMessage[] =>
+  transcript
+    .slice(-TASK_DETAIL_SUGGESTION_HISTORY_LIMIT)
+    .map(message => ({
+      role: message.role,
+      content: message.content,
+    }))
+    .filter(message => message.content.trim());
+
+const normalizeTaskFollowUpSuggestions = (suggestions?: string[]) =>
+  [
+    ...new Set((suggestions ?? []).map(item => item.trim()).filter(Boolean)),
+  ].slice(0, TASK_DETAIL_SUGGESTION_COUNT);
 
 const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
   threadId ? 'thread' : 'auto';
@@ -920,11 +972,13 @@ const TaskTranscript = ({
   taskRunActionLoading,
   tokenUsageByRunID,
   tokenUsageViewMode,
+  artifactActions,
   onHumanInteractionSubmit,
   onRetrySubagentRun,
   onRetryTaskRun,
 }: {
   artifacts: workbenchTask.TaskThreadArtifact[];
+  artifactActions: TaskArtifactActions;
   events: TaskEvent[];
   humanInteractionError?: string;
   humanInteractionLoading: boolean;
@@ -945,100 +999,72 @@ const TaskTranscript = ({
   ) => void | Promise<void>;
   onRetrySubagentRun: (runId: string) => void | Promise<void>;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
-}) => {
-  const artifactActions = useTaskArtifactActions({
-    spaceId: task.space_id,
-    threadId: taskDetailSource === 'thread' ? task.id : undefined,
-  });
-
-  useEffect(() => {
-    const inlineArtifactID = artifactActions.inlinePreview?.artifactId;
-    if (!inlineArtifactID) {
-      return;
-    }
-
-    const artifact = artifacts.find(
-      item => item.artifact_id === inlineArtifactID,
-    );
-    if (shouldClearArtifactPreviewForScanStatus(artifact)) {
-      artifactActions.clearInlinePreview();
-    }
-  }, [artifactActions, artifacts]);
-
-  return (
-    <section
-      className="coze-prototype-chat-transcript"
-      data-testid="task-chat-transcript"
-    >
-      <TaskRunActionBar
+}) => (
+  <section
+    className="coze-prototype-chat-transcript"
+    data-testid="task-chat-transcript"
+  >
+    <TaskRunActionBar
+      task={task}
+      latestRunID={latestTaskRunID}
+      loading={taskRunActionLoading}
+      error={taskRunActionError}
+      taskDetailSource={taskDetailSource}
+      onRetryTaskRun={onRetryTaskRun}
+    />
+    {taskDetailSource === 'thread' && messages.length ? (
+      <TaskThreadConversation
+        artifactActions={artifactActions}
+        artifacts={artifacts}
+        events={events}
+        latestTaskRunID={latestTaskRunID}
+        messages={messages}
         task={task}
-        latestRunID={latestTaskRunID}
-        loading={taskRunActionLoading}
-        error={taskRunActionError}
-        taskDetailSource={taskDetailSource}
-        onRetryTaskRun={onRetryTaskRun}
+        tokenUsageByRunID={tokenUsageByRunID}
+        tokenUsageViewMode={tokenUsageViewMode}
       />
-      {taskDetailSource === 'thread' && messages.length ? (
-        <TaskThreadConversation
-          artifactActions={artifactActions}
-          artifacts={artifacts}
-          events={events}
-          latestTaskRunID={latestTaskRunID}
-          messages={messages}
+    ) : (
+      <>
+        <TaskConversation task={task} />
+        {events.length ||
+        parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
+          <TaskEventsSection events={events} task={task} />
+        ) : null}
+        <TaskResultSection
           task={task}
-          tokenUsageByRunID={tokenUsageByRunID}
+          events={events}
+          tokenUsage={tokenUsageByRunID?.[getLatestAssistantRunID(messages)]}
           tokenUsageViewMode={tokenUsageViewMode}
         />
-      ) : (
-        <>
-          <TaskConversation task={task} />
-          {events.length ||
-          parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
-            <TaskEventsSection events={events} task={task} />
-          ) : null}
-          <TaskResultSection
-            task={task}
-            events={events}
-            tokenUsage={tokenUsageByRunID?.[getLatestAssistantRunID(messages)]}
-            tokenUsageViewMode={tokenUsageViewMode}
+        {taskDetailSource === 'thread' ? (
+          <TaskArtifactMessageList
+            artifactActions={artifactActions}
+            artifacts={artifacts}
+            autoPreview={true}
+            renderFeedback={false}
+            renderReviewActions={false}
+            spaceId={task.space_id}
+            threadId={task.id}
           />
-          {taskDetailSource === 'thread' ? (
-            <TaskArtifactMessageList
-              artifactActions={artifactActions}
-              artifacts={artifacts}
-              autoPreview={true}
-              renderFeedback={false}
-              renderReviewActions={false}
-              spaceId={task.space_id}
-              threadId={task.id}
-            />
-          ) : null}
-        </>
-      )}
-      <TaskSubagentRunsSection
-        subagentRuns={subagentRuns}
-        retryError={subagentRetryError}
-        retryingRunId={retryingSubagentRunId}
-        onRetrySubagentRun={onRetrySubagentRun}
+        ) : null}
+      </>
+    )}
+    <TaskSubagentRunsSection
+      subagentRuns={subagentRuns}
+      retryError={subagentRetryError}
+      retryingRunId={retryingSubagentRunId}
+      onRetrySubagentRun={onRetrySubagentRun}
+    />
+    {pendingHumanInteraction ? (
+      <TaskHumanInterruptCard
+        pending={pendingHumanInteraction}
+        loading={humanInteractionLoading}
+        error={humanInteractionError}
+        onSubmit={onHumanInteractionSubmit}
       />
-      {pendingHumanInteraction ? (
-        <TaskHumanInterruptCard
-          pending={pendingHumanInteraction}
-          loading={humanInteractionLoading}
-          error={humanInteractionError}
-          onSubmit={onHumanInteractionSubmit}
-        />
-      ) : null}
-      {taskDetailSource === 'thread' ? (
-        <TaskArtifactFeedback
-          clearInlinePreview={artifactActions.clearInlinePreview}
-          error={artifactActions.error}
-          inlinePreview={artifactActions.inlinePreview}
-        />
-      ) : null}
-    </section>
-  );
-};
+    ) : null}
+  </section>
+);
 
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps task detail orchestration together.
 const TaskDetailPage = () => {
@@ -1069,8 +1095,11 @@ const TaskDetailPage = () => {
     loading,
     messages,
     refreshArtifacts,
+    suggestionModelName,
+    suggestionModelType,
     subagentRuns,
     task,
+    todos,
     tokenUsage,
     tokenUsageByRunID,
   } = useTaskDetailData({
@@ -1080,6 +1109,12 @@ const TaskDetailPage = () => {
   });
   const [tokenUsageViewMode, setTokenUsageViewMode] =
     useState<TaskTokenUsageViewMode>(loadTaskTokenUsageViewMode);
+  const [followUpSuggestions, setFollowUpSuggestions] = useState<string[]>([]);
+  const [followUpSuggestionsLoading, setFollowUpSuggestionsLoading] =
+    useState(false);
+  const [followUpSuggestionsHidden, setFollowUpSuggestionsHidden] =
+    useState(false);
+  const generatedSuggestionMessageKeyRef = useRef('');
 
   useEffect(() => {
     saveTaskTokenUsageViewMode(tokenUsageViewMode);
@@ -1125,6 +1160,7 @@ const TaskDetailPage = () => {
     task,
     taskDetailId: activeTaskDetailId,
     taskDetailSource: activeTaskDetailSource,
+    todos,
     tokenUsage,
     tokenUsageByRunID,
   });
@@ -1133,6 +1169,146 @@ const TaskDetailPage = () => {
     task,
     taskDetailSource: activeTaskDetailSource,
   });
+  const splitRef = useRef<HTMLElement | null>(null);
+  const [artifactPanelWidth, setArtifactPanelWidth] = useState(
+    ARTIFACT_SPLIT_DEFAULT_WIDTH,
+  );
+  const artifactActions = useTaskArtifactActions({
+    onArtifactsChanged: refreshArtifacts,
+    spaceId: space_id,
+    threadId:
+      activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined,
+  });
+  const artifactPanelOpen =
+    activeTaskDetailSource === 'thread' &&
+    Boolean(artifactActions.inlinePreview);
+  const artifactSplitStyle: CSSProperties = {
+    '--coze-prototype-artifact-side-preview-width': `${artifactPanelWidth}%`,
+  };
+
+  useEffect(() => {
+    if (
+      activeTaskDetailSource !== 'thread' ||
+      !activeTaskDetailId ||
+      !task ||
+      loading ||
+      !isTaskTerminalStatus(task.status)
+    ) {
+      setFollowUpSuggestions([]);
+      setFollowUpSuggestionsLoading(false);
+      return;
+    }
+
+    const transcript = getThreadTranscriptMessages(messages);
+    const latestAssistantKey = [
+      activeTaskDetailId,
+      getLatestAssistantTranscriptKey(transcript),
+      suggestionModelType,
+      suggestionModelName,
+    ]
+      .filter(Boolean)
+      .join(':');
+    if (
+      !latestAssistantKey ||
+      latestAssistantKey === generatedSuggestionMessageKeyRef.current
+    ) {
+      return;
+    }
+
+    const suggestionMessages = getThreadSuggestionMessages(transcript);
+    if (!suggestionMessages.length) {
+      return;
+    }
+
+    let canceled = false;
+    generatedSuggestionMessageKeyRef.current = latestAssistantKey;
+    setFollowUpSuggestions([]);
+    setFollowUpSuggestionsHidden(false);
+    setFollowUpSuggestionsLoading(true);
+
+    void generateTaskThreadSuggestions({
+      thread_id: activeTaskDetailId,
+      messages: suggestionMessages,
+      n: TASK_DETAIL_SUGGESTION_COUNT,
+      ...(suggestionModelName ? { model_name: suggestionModelName } : {}),
+      ...(suggestionModelType ? { model_type: suggestionModelType } : {}),
+    })
+      .then(response => {
+        if (!canceled) {
+          setFollowUpSuggestions(
+            normalizeTaskFollowUpSuggestions(response.suggestions),
+          );
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setFollowUpSuggestions([]);
+        }
+      })
+      .finally(() => {
+        if (!canceled) {
+          setFollowUpSuggestionsLoading(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    activeTaskDetailId,
+    activeTaskDetailSource,
+    loading,
+    messages,
+    suggestionModelName,
+    suggestionModelType,
+    task,
+  ]);
+
+  useEffect(() => {
+    const inlineArtifactID = artifactActions.inlinePreview?.artifactId;
+    if (!inlineArtifactID) {
+      return;
+    }
+
+    const artifact = artifacts.find(
+      item => item.artifact_id === inlineArtifactID,
+    );
+    if (shouldClearArtifactPreviewForScanStatus(artifact)) {
+      artifactActions.clearInlinePreview();
+    }
+  }, [artifactActions, artifacts]);
+
+  const handleArtifactResizePointerDown = useCallback(
+    (event: PointerEvent<HTMLButtonElement>) => {
+      const container = splitRef.current;
+      if (!container) {
+        return;
+      }
+
+      event.preventDefault();
+      const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
+        const rect = container.getBoundingClientRect();
+        if (rect.width <= 0) {
+          return;
+        }
+        const nextWidth = ((rect.right - moveEvent.clientX) / rect.width) * 100;
+        setArtifactPanelWidth(
+          Math.min(
+            ARTIFACT_SPLIT_MAX_WIDTH,
+            Math.max(ARTIFACT_SPLIT_MIN_WIDTH, nextWidth),
+          ),
+        );
+      };
+      const handlePointerUp = () => {
+        document.removeEventListener('pointermove', handlePointerMove);
+        document.removeEventListener('pointerup', handlePointerUp);
+      };
+
+      document.addEventListener('pointermove', handlePointerMove);
+      document.addEventListener('pointerup', handlePointerUp);
+    },
+    [],
+  );
 
   return (
     <main className="coze-prototype-page coze-prototype-task-detail-page">
@@ -1152,55 +1328,96 @@ const TaskDetailPage = () => {
           tokenUsageViewMode={tokenUsageViewMode}
         />
       ) : null}
-      <section className="coze-prototype-detail-inner">
-        <section
-          className="coze-prototype-detail-scroll"
-          data-testid="task-detail-scroll"
-        >
-          {loading ? <TaskDetailLoadingSkeleton /> : null}
-          {error ? <div className="coze-prototype-error">{error}</div> : null}
-          {!loading && !error && !task ? (
-            <div className="coze-prototype-empty">未找到任务</div>
-          ) : null}
+      <section
+        ref={splitRef}
+        className="coze-prototype-detail-split"
+        data-artifact-open={artifactPanelOpen}
+        style={artifactSplitStyle}
+      >
+        <section className="coze-prototype-detail-inner">
+          <section
+            className="coze-prototype-detail-scroll"
+            data-testid="task-detail-scroll"
+          >
+            {loading ? <TaskDetailLoadingSkeleton /> : null}
+            {error ? <div className="coze-prototype-error">{error}</div> : null}
+            {!loading && !error && !task ? (
+              <div className="coze-prototype-empty">未找到任务</div>
+            ) : null}
+            {task ? (
+              <TaskTranscript
+                artifactActions={artifactActions}
+                artifacts={artifacts}
+                events={events}
+                humanInteractionError={humanInteractionError}
+                humanInteractionLoading={humanInteractionLoading}
+                latestTaskRunID={latestTaskRunID}
+                messages={messages}
+                pendingHumanInteraction={pendingHumanInteraction}
+                retryingSubagentRunId={retryingSubagentRunId}
+                subagentRetryError={subagentRetryError}
+                subagentRuns={subagentRuns}
+                task={task}
+                taskDetailSource={activeTaskDetailSource}
+                taskRunActionError={taskRunActionError}
+                taskRunActionLoading={taskRunActionLoading}
+                tokenUsageByRunID={tokenUsageByRunID}
+                tokenUsageViewMode={tokenUsageViewMode}
+                onHumanInteractionSubmit={handleHumanInteractionSubmit}
+                onRetrySubagentRun={handleRetrySubagentRun}
+                onRetryTaskRun={handleRetryTaskRun}
+              />
+            ) : null}
+          </section>
           {task ? (
-            <TaskTranscript
-              artifacts={artifacts}
-              events={events}
-              humanInteractionError={humanInteractionError}
-              humanInteractionLoading={humanInteractionLoading}
-              latestTaskRunID={latestTaskRunID}
-              messages={messages}
-              pendingHumanInteraction={pendingHumanInteraction}
-              retryingSubagentRunId={retryingSubagentRunId}
-              subagentRetryError={subagentRetryError}
-              subagentRuns={subagentRuns}
-              task={task}
-              taskDetailSource={activeTaskDetailSource}
-              taskRunActionError={taskRunActionError}
-              taskRunActionLoading={taskRunActionLoading}
-              tokenUsageByRunID={tokenUsageByRunID}
-              tokenUsageViewMode={tokenUsageViewMode}
-              onHumanInteractionSubmit={handleHumanInteractionSubmit}
-              onRetrySubagentRun={handleRetrySubagentRun}
-              onRetryTaskRun={handleRetryTaskRun}
+            <TaskFollowUpComposer
+              value={followUpValue}
+              mode={followUpMode}
+              loading={followUpLoading}
+              error={followUpError}
+              spaceId={space_id}
+              taskId={task?.id ?? activeTaskDetailId}
+              todoDock={
+                <TaskExecutionTodoDock
+                  events={events}
+                  task={task}
+                  todos={todos}
+                />
+              }
+              suggestions={followUpSuggestions}
+              suggestionsHidden={followUpSuggestionsHidden}
+              suggestionsLoading={followUpSuggestionsLoading}
+              stopLoading={taskRunActionLoading === 'cancel'}
+              stopMode={canStopLatestTaskRun}
+              onDismissSuggestions={() => setFollowUpSuggestionsHidden(true)}
+              onSuggestionClick={suggestion => {
+                setFollowUpValue(currentValue =>
+                  currentValue.trim()
+                    ? `${currentValue.trimEnd()}\n${suggestion}`
+                    : suggestion,
+                );
+                setFollowUpSuggestionsHidden(true);
+              }}
+              onValueChange={setFollowUpValue}
+              onModeChange={setFollowUpMode}
+              onStop={() => handleCancelTaskRun(latestTaskRunID)}
+              onSubmit={handleFollowUpSubmit}
             />
           ) : null}
         </section>
-        {task ? (
-          <TaskFollowUpComposer
-            value={followUpValue}
-            mode={followUpMode}
-            loading={followUpLoading}
-            error={followUpError}
-            spaceId={space_id}
-            taskId={task?.id ?? activeTaskDetailId}
-            todoDock={<TaskExecutionTodoDock events={events} task={task} />}
-            stopLoading={taskRunActionLoading === 'cancel'}
-            stopMode={canStopLatestTaskRun}
-            onValueChange={setFollowUpValue}
-            onModeChange={setFollowUpMode}
-            onStop={() => handleCancelTaskRun(latestTaskRunID)}
-            onSubmit={handleFollowUpSubmit}
+        {artifactPanelOpen ? (
+          <button
+            type="button"
+            aria-label="调整产物面板宽度"
+            className="coze-prototype-artifact-resize-handle"
+            onPointerDown={handleArtifactResizePointerDown}
+          />
+        ) : null}
+        {activeTaskDetailSource === 'thread' ? (
+          <TaskArtifactFeedback
+            clearInlinePreview={artifactActions.clearInlinePreview}
+            error={artifactActions.error}
+            inlinePreview={artifactActions.inlinePreview}
           />
         ) : null}
       </section>

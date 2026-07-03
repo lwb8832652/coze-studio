@@ -63,6 +63,15 @@ export interface TaskThread {
   last_agent_message: string;
   created_at: number;
   updated_at: number;
+  values?: TaskThreadValues;
+}
+export interface TaskThreadTodo {
+  id: string;
+  title: string;
+  status: string;
+}
+export interface TaskThreadValues {
+  todos?: Array<TaskThreadTodo>;
 }
 export interface TaskThreadMessage {
   message_id: string;
@@ -335,6 +344,17 @@ export interface ListTaskThreadMessagesRequest {
   page?: number;
   page_size?: number;
 }
+export interface TaskThreadSuggestionMessage {
+  role: string;
+  content: string;
+}
+export interface GenerateTaskThreadSuggestionsRequest {
+  thread_id: string;
+  messages: TaskThreadSuggestionMessage[];
+  n?: number;
+  model_name?: string;
+  model_type?: string;
+}
 export interface AppendTaskThreadMessageRequest {
   thread_id: string;
   run_id?: string;
@@ -518,6 +538,9 @@ export interface ListTaskThreadMessagesResponse {
   data?: ListTaskThreadMessagesData;
   code: number;
   msg: string;
+}
+export interface GenerateTaskThreadSuggestionsResponse {
+  suggestions: string[];
 }
 export interface AppendTaskThreadMessageResponse {
   data?: TaskThreadMessage;
@@ -829,6 +852,22 @@ export const ListTaskThreadMessages = /*#__PURE__*/ createAPI<
     query: ['page', 'page_size'],
   },
   resType: 'ListTaskThreadMessagesResponse',
+  schemaRoot: 'api://schemas/idl_workbench_task',
+  service: 'workbenchTask',
+});
+export const GenerateTaskThreadSuggestions = /*#__PURE__*/ createAPI<
+  GenerateTaskThreadSuggestionsRequest,
+  GenerateTaskThreadSuggestionsResponse
+>({
+  url: '/api/workbench/task_threads/:thread_id/suggestions',
+  method: 'POST',
+  name: 'GenerateTaskThreadSuggestions',
+  reqType: 'GenerateTaskThreadSuggestionsRequest',
+  reqMapping: {
+    path: ['thread_id'],
+    body: ['messages', 'n', 'model_name'],
+  },
+  resType: 'GenerateTaskThreadSuggestionsResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
   service: 'workbenchTask',
 });

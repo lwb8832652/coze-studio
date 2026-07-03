@@ -17,18 +17,29 @@
 package thread
 
 type TaskThread struct {
-	ThreadID         int64  `json:"thread_id,string"`
-	LegacyTaskID     int64  `json:"legacy_task_id,string"`
-	SpaceID          int64  `json:"space_id,string"`
-	CreatorID        int64  `json:"creator_id,string"`
-	Title            string `json:"title"`
-	Status           string `json:"status"`
-	Source           string `json:"source"`
-	Progress         int32  `json:"progress"`
-	LastUserMessage  string `json:"last_user_message"`
-	LastAgentMessage string `json:"last_agent_message"`
-	CreatedAt        int64  `json:"created_at"`
-	UpdatedAt        int64  `json:"updated_at"`
+	ThreadID         int64             `json:"thread_id,string"`
+	LegacyTaskID     int64             `json:"legacy_task_id,string"`
+	SpaceID          int64             `json:"space_id,string"`
+	CreatorID        int64             `json:"creator_id,string"`
+	Title            string            `json:"title"`
+	Status           string            `json:"status"`
+	Source           string            `json:"source"`
+	Progress         int32             `json:"progress"`
+	LastUserMessage  string            `json:"last_user_message"`
+	LastAgentMessage string            `json:"last_agent_message"`
+	CreatedAt        int64             `json:"created_at"`
+	UpdatedAt        int64             `json:"updated_at"`
+	Values           *TaskThreadValues `json:"values,omitempty"`
+}
+
+type TaskThreadTodo struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+type TaskThreadValues struct {
+	Todos []*TaskThreadTodo `json:"todos,omitempty"`
 }
 
 type TaskThreadMessage struct {
@@ -278,6 +289,19 @@ type ListTaskThreadMessagesRequest struct {
 	ThreadID int64 `path:"thread_id,required"`
 	Page     int32 `query:"page"`
 	PageSize int32 `query:"page_size"`
+}
+
+type TaskThreadSuggestionMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type GenerateTaskThreadSuggestionsRequest struct {
+	ThreadID  int64                          `path:"thread_id,required" json:"-"`
+	Messages  []*TaskThreadSuggestionMessage `json:"messages"`
+	N         int32                          `json:"n,omitempty"`
+	ModelName string                         `json:"model_name,omitempty"`
+	ModelType int64                          `json:"model_type,string,omitempty"`
 }
 
 type AppendTaskThreadMessageRequest struct {
@@ -716,6 +740,10 @@ type GetTaskThreadResponse struct {
 	Data *TaskThread `json:"data,omitempty"`
 	Code int64       `json:"code"`
 	Msg  string      `json:"msg"`
+}
+
+type GenerateTaskThreadSuggestionsResponse struct {
+	Suggestions []string `json:"suggestions"`
 }
 
 type UploadTaskThreadFilesResponse struct {

@@ -60,6 +60,17 @@ quality. P1 must prioritize these two capabilities before broad hardening.
 | P1-F Skills/MCP/Tools 策略与历史 | 延后(P2) | Adds policy controls, invocation history, output budgets, and deeper transport management where DeerFlow-visible workflows need it. | User accepted current Skills/MCP P0 behavior as good enough and asked to move later issues to phase 2; keep this as hardening unless a visible P1 regression appears. |
 | P1-G Token 成本与调试视图 | 已完成 | Adds pricing-ready cost snapshots only when backend has safe positive cost and a single currency, plus provider/model breakdowns. | 2026-07-02 completed frontend aggregate/popover slice. Evidence: `notes/P1-G-token-cost-debug-view.md`. Passed: `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "token"`; `npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx`; `npx tsc --noEmit --project tsconfig.json`; `git diff --check`. Cost renders only for positive complete single-currency usage; mixed or paginated-incomplete currencies suppress cost; debug mode shows bounded call/source/provider-model metadata without raw usage or hidden config. |
 | P1-H Web Search Provider Hardening | 已完成 | Documents and tests provider selection/fallback for DuckDuckGo v2, Wikipedia, Brave HTML, and configured HTTP search. | 2026-07-02 verified existing provider chain and safety tests; evidence recorded in `notes/P1-H-web-search-provider-hardening.md`. Server provider defaults to safe `auto`, but tool exposure remains run-config gated. Direct CommandLine/HTTPRequest tools are deferred until separate sandbox/audit/output-budget policy exists. |
+| P1-K 任务详情源码级对齐收口 | 已完成 | Todo、Artifacts、suggestions、思考组件、多轮追问上下文这 5 个用户确认的差异点必须和 DeerFlow 源码/运行态对齐。 | 2026-07-03 completed source-first alignment for the 5 forced gaps. Coze now exposes safe `thread.values.todos` and uses it as Todo primary source; Artifacts content area uses a 60/40 draggable split and keeps scan controls out of the DeerFlow main card visual; Workbench suggestions API mirrors DeerFlow shape and auto-renders follow-up chips after terminal assistant turns; ChainOfThought spacing/icons/collapse motion were tightened against DeerFlow source; follow-up history pagination no longer stops at 50 messages. Detailed evidence is in `docs/superpowers/specs/2026-07-03-deerflow-task-detail-source-alignment.md`. |
+
+## P1-K Checklist: 任务详情源码级对齐收口
+
+| Case | Status | Required Evidence |
+| --- | --- | --- |
+| P1-K-001 Todo thread values | 已完成 | 后端 `TaskThread.values.todos` 安全投影自 latest checkpoint/channel values 或 thread metadata，前端 Todo dock 优先使用持久态，事件推导只做 fallback。验证：`go test ./api/handler/coze -run TestGetTaskThreadHandlerReturnsThreadValuesTodos -count=1 -gcflags="all=-N -l"`；`npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "renders persisted thread todos"`；完整 `task-detail.test.tsx` 通过。 |
+| P1-K-002 Artifact resizable split | 已完成 | 任务详情内容区改为 DeerFlow-style 60/40 可拖拽 split，关闭预览时 chat 100%，文件卡统一触发右侧 preview；主消息卡默认不渲染 release/quarantine/block，安全能力保留在次级/治理入口。验证：`npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "keeps task detail responsive overrides|renders generated document artifacts"`；完整 `task-detail.test.tsx` 通过。 |
+| P1-K-003 Follow-up suggestions | 已完成 | 新增 `POST /api/workbench/task_threads/:thread_id/suggestions`，响应直接 `{suggestions:[...]}`，失败返回空数组；前端终态 assistant turn 后取最近 6 条 user/assistant 消息自动生成 chips，点击填入追问输入；2026-07-03 代码审核补齐 latest run `model_name/model_type` 到 suggestions 请求的白名单透传，并把模型字段纳入生成 key，避免异步状态补齐后仍复用空模型请求。验证：`go test ./application/workbench -run TestGenerateSuggestions -count=1`；`go test ./api/handler/coze -run TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape -count=1 -gcflags="all=-N -l"`；`npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "generates DeerFlow-style follow-up suggestions"`。 |
+| P1-K-004 Thinking/Todo visual system | 已完成 | 重新核对 DeerFlow `ChainOfThought` 源码后调整 Coze chain container、step row、timeline rail、current-color icon、running/pending/failed 状态、chevron rotate 和 fade/slide entry motion；Todo dock 仍保留已有 DeerFlow-style dock 结构。验证：`npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "renders DeerFlow-style reasoning|renders ADK reasoning"`；完整 `task-detail.test.tsx` 通过。 |
+| P1-K-005 Full follow-up context | 已完成 | canonical follow-up history loader 从固定 `page_size=50` 改为 `page_size=200` 分页循环，直到拉完 thread messages；run input 按时间顺序包含完整历史后追加当前用户消息。验证：`npm run test -- src/pages/tasks/__tests__/task-follow-up.test.ts`；`npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "sends canonical thread follow-up messages"`。 |
 
 ## P1-I Checklist: 记忆系统运行时对齐
 
@@ -143,8 +154,6 @@ Before marking a P1 slice `已完成`, record:
 
 ## Current Next Step
 
-P1 active workstreams are closed for this stabilization pass and have been
-merged to `dev` in commit `c584ff6c2`. Continue Phase 2 in
-`docs/superpowers/plans/2026-07-02-deerflow-p2-hardening-tracker.md`.
-P1-F Skills/MCP/Tools policy history remains intentionally deferred to P2
-because current visible behavior was accepted as good enough.
+P1-K 任务详情源码级对齐收口已完成并有 targeted tests + full task-detail test
+coverage. The remaining user-accepted Skills/MCP/tools policy-history hardening
+stays in P2 unless a visible regression appears.
