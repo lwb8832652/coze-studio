@@ -22,7 +22,7 @@ export const WorkspacePageTopBar = () => (
   <header className="flex h-[52px] shrink-0 items-center justify-end gap-[12px] px-[24px]">
     <div className="flex items-center gap-[6px] text-[12px] leading-[18px] text-[#444c5c]">
       <span className="h-[6px] w-[6px] rounded-full bg-[#2a9e06]" />
-      <span>Aime 专属助理准备好,先聊聊吧~</span>
+      <span>NewX AI 专属助理准备好,先聊聊吧~</span>
     </div>
     <button
       type="button"

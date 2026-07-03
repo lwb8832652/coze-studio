@@ -20,23 +20,51 @@ import { GlobalLayoutAccountDropdown } from '@coze-foundation/layout';
 import { useLogout } from '@coze-foundation/account-ui-adapter';
 import { I18n } from '@coze-arch/i18n';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
-import { IconCozExit, IconCozSetting } from '@coze-arch/coze-design/icons';
+import {
+  IconCozExit,
+  IconCozPlugin,
+  IconCozSetting,
+} from '@coze-arch/coze-design/icons';
 import { Dropdown } from '@coze-arch/coze-design';
 
 import { UserInfoMenu } from './user-info-menu';
-import { useAccountSettings } from './account-settings';
+import {
+  type AccountSettingsExtraTab,
+  useAccountSettings,
+} from './account-settings';
 
-export const AccountDropdown = () => {
+interface AccountDropdownProps {
+  extraSettingsTabs?: AccountSettingsExtraTab[];
+}
+
+export const AccountDropdown = ({
+  extraSettingsTabs = [],
+}: AccountDropdownProps) => {
   const [visible, setVisible] = useState(false);
   const userInfo = useUserInfo();
   const { node: logoutModal, open: openLogoutModal } = useLogout();
 
   const { node: accountSettingsNode, open: openAccountSettings } =
-    useAccountSettings();
+    useAccountSettings(extraSettingsTabs);
 
   if (!userInfo) {
     return null;
   }
+
+  const extraSettingsMenus = extraSettingsTabs.map((item, index) => {
+    if (item === 'divider') {
+      return <Dropdown.Divider key={`extra-settings-divider-${index}`} />;
+    }
+
+    return {
+      prefixIcon: <IconCozPlugin />,
+      title: item.tabName,
+      onClick: () => {
+        openAccountSettings(item.id);
+      },
+      dataTestId: `layout_avatar_${item.id}`,
+    };
+  });
 
   return (
     <GlobalLayoutAccountDropdown
@@ -51,6 +79,7 @@ export const AccountDropdown = () => {
           },
           dataTestId: 'layout_avatar_api-auth',
         },
+        ...extraSettingsMenus,
         {
           prefixIcon: <IconCozSetting />,
           title: I18n.t('navi_bar_account_settings'),

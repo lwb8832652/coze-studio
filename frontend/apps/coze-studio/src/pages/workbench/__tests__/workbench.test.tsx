@@ -469,7 +469,7 @@ describe('WorkbenchPage', () => {
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
     expect(markup).toContain('欢迎来到 刘文波 的工作空间');
-    expect(markup).toContain('Aime 专属助理准备好,先聊聊吧~');
+    expect(markup).toContain('NewX AI 专属助理准备好,先聊聊吧~');
     expect(markup).toContain('去聊天专属助理');
     expect(markup).toContain('aria-label="任务描述"');
     expect(markup).toContain('data-composer-style="deerflow"');
@@ -651,7 +651,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('renders Coze @ references as inline resource tokens in the DeerFlow composer', async () => {
+  it('renders NewX AI @ references as inline resource tokens in the DeerFlow composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const restoreRects = installWorkbenchAtAnchorRectMock();
@@ -787,7 +787,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('anchors the Coze @ resource menu above the inline marker in the detail composer', async () => {
+  it('anchors the NewX AI @ resource menu above the inline marker in the detail composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const restoreRects = installWorkbenchAtAnchorRectMock();
@@ -832,7 +832,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('opens the Coze @ resource reference flow when typing @ in the composer', async () => {
+  it('opens the NewX AI @ resource reference flow when typing @ in the composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -936,7 +936,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('supports keyboard navigation in the Coze @ resource menu', async () => {
+  it('supports keyboard navigation in the NewX AI @ resource menu', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;

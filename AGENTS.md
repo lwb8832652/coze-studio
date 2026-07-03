@@ -91,10 +91,10 @@
 
 ## 项目上下文
 
-Coze Studio 是 React + TypeScript + Go 的 AI Agent 平台，前端由 Rush.js 管理，
+NewX AI 是基于 Coze Studio 改造的 React + TypeScript + Go AI Agent 平台，前端由 Rush.js 管理，
 后端使用 Hertz 和 DDD 风格分层。
 
-当前集成目标是在 Coze Studio 基础上复刻 DeerFlow 2.x 的可见能力：
+当前集成目标是在 NewX AI 基础上复刻 DeerFlow 2.x 的可见能力：
 
 - 任务创建、列表、最近任务、任务详情、追问、取消、重试、流式输出；
 - Agent、子智能体、Skill、MCP、工具配置和运行；
@@ -143,7 +143,7 @@ go test ./application/agentthread ./api/handler/coze ./api/router/coze -run Test
 
 ## 本地测试账号
 
-Coze Studio 和本地 DeerFlow 使用同一个功能测试账号：
+NewX AI 和本地 DeerFlow 使用同一个功能测试账号：
 
 - Email: `840582614@qq.com`
 - Password: `z8832652`
@@ -152,7 +152,7 @@ DeerFlow 参考任务详情：
 
 - `http://localhost:2026/workspace/chats/c155a732-f475-4cf9-aa49-13fd26b29888`
 
-本地 Coze 常用地址：
+本地 NewX AI 常用地址：
 
 - Frontend: `http://localhost:8080`
 - Backend: `http://localhost:8888`
