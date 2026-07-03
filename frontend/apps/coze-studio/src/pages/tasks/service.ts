@@ -24,6 +24,10 @@ import {
   taskThreadArtifactPayloadError,
   taskThreadArtifactServiceError,
 } from './task-artifact-safe-error';
+export {
+  uploadTaskThreadFiles,
+  type TaskThreadUploadedFile,
+} from '../workbench/service';
 export { isTaskThreadArtifactSafeError } from './task-artifact-safe-error';
 
 export const listTasks = workbenchTask.ListTasks;
@@ -51,6 +55,8 @@ export const listTaskThreadMemoryAuditEvents =
   workbenchTask.ListTaskThreadMemoryAuditEvents;
 export const listTaskThreadGuardrailAuditEvents =
   workbenchTask.ListTaskThreadGuardrailAuditEvents;
+export const listTaskThreadMCPRuntimeAuditEvents =
+  workbenchTask.ListTaskThreadMCPRuntimeAuditEvents;
 export const exportTaskThreadMemories = workbenchTask.ExportTaskThreadMemories;
 export const exportTaskThreadGuardrailAuditEvents =
   workbenchTask.ExportTaskThreadGuardrailAuditEvents;
@@ -66,6 +72,8 @@ export type TaskThreadMemoryAuditEvent =
   workbenchTask.TaskThreadMemoryAuditEvent;
 export type TaskThreadGuardrailAuditEvent =
   workbenchTask.TaskThreadGuardrailAuditEvent;
+export type TaskThreadMCPRuntimeAuditEvent =
+  workbenchTask.TaskThreadMCPRuntimeAuditEvent;
 export type ListTaskThreadMemoriesResponse =
   workbenchTask.ListTaskThreadMemoriesResponse;
 export type UpdateTaskThreadMemoryResponse =
@@ -80,6 +88,8 @@ export type ListTaskThreadMemoryAuditEventsResponse =
   workbenchTask.ListTaskThreadMemoryAuditEventsResponse;
 export type ListTaskThreadGuardrailAuditEventsResponse =
   workbenchTask.ListTaskThreadGuardrailAuditEventsResponse;
+export type ListTaskThreadMCPRuntimeAuditEventsResponse =
+  workbenchTask.ListTaskThreadMCPRuntimeAuditEventsResponse;
 export type ExportTaskThreadMemoriesResponse =
   workbenchTask.ExportTaskThreadMemoriesResponse;
 export type ExportTaskThreadMemoriesData =

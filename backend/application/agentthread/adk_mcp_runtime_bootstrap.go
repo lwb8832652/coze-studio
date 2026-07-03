@@ -46,6 +46,13 @@ const (
 	agentThreadMCPStdioLeaseTTLMsEnv        = "AGENT_THREAD_MCP_STDIO_LEASE_TTL_MS"
 	agentThreadMCPStdioMaxConfigBytesEnv    = "AGENT_THREAD_MCP_STDIO_MAX_CONFIG_BYTES"
 	agentThreadMCPStdioDryRunOutputBytesEnv = "AGENT_THREAD_MCP_STDIO_DRY_RUN_OUTPUT_BYTES"
+
+	agentThreadMCPRemoteEinoEnabledEnv       = "AGENT_THREAD_MCP_REMOTE_EINO_ENABLED"
+	agentThreadMCPRemoteAllowedHostsEnv      = "AGENT_THREAD_MCP_REMOTE_ALLOWED_HOSTS"
+	agentThreadMCPRemoteAllowInsecureHTTPEnv = "AGENT_THREAD_MCP_REMOTE_ALLOW_HTTP"
+	agentThreadMCPRemoteMaxConfigBytesEnv    = "AGENT_THREAD_MCP_REMOTE_MAX_CONFIG_BYTES"
+	agentThreadMCPRemoteMaxHeadersEnv        = "AGENT_THREAD_MCP_REMOTE_MAX_HEADERS"
+	agentThreadMCPRemoteMaxHeaderBytesEnv    = "AGENT_THREAD_MCP_REMOTE_MAX_HEADER_BYTES"
 )
 
 const (
@@ -71,6 +78,13 @@ type ADKMCPRuntimeBootstrapConfig struct {
 	StdioLeaseTTLMillis    int64
 	StdioMaxConfigBytes    int
 	StdioDryRunOutputBytes int
+
+	RemoteEinoEnabled       bool
+	RemoteAllowedHosts      []string
+	RemoteAllowInsecureHTTP bool
+	RemoteMaxConfigBytes    int
+	RemoteMaxHeaders        int
+	RemoteMaxHeaderBytes    int
 
 	ExecutorTimeout        time.Duration
 	ExecutorMaxOutputBytes int
@@ -108,24 +122,44 @@ func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error)
 	if err != nil {
 		return ADKMCPRuntimeBootstrapConfig{}, err
 	}
+	remoteEinoEnabled, err := adkMCPRuntimeBoolEnv(
+		agentThreadMCPRemoteEinoEnabledEnv,
+		false,
+	)
+	if err != nil {
+		return ADKMCPRuntimeBootstrapConfig{}, err
+	}
+	remoteAllowInsecureHTTP, err := adkMCPRuntimeBoolEnv(
+		agentThreadMCPRemoteAllowInsecureHTTPEnv,
+		false,
+	)
+	if err != nil {
+		return ADKMCPRuntimeBootstrapConfig{}, err
+	}
 
 	config := ADKMCPRuntimeBootstrapConfig{
-		Enabled:                enabled,
-		StdioDryRunEnabled:     stdioDryRunEnabled,
-		StdioEinoEnabled:       stdioEinoEnabled,
-		StdioWorkdirRoot:       strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkdirRootEnv)),
-		StdioWorkerID:          strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkerIDEnv)),
-		StdioAllowedCommands:   adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedCommandsEnv),
-		StdioAllowedEnvKeys:    adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedEnvKeysEnv),
-		StdioMaxArgs:           defaultADKMCPRuntimeStdioMaxArgs,
-		StdioMaxArgBytes:       defaultADKMCPRuntimeStdioMaxArgBytes,
-		StdioMaxEnvVars:        defaultADKMCPRuntimeStdioMaxEnvVars,
-		StdioMaxEnvValueBytes:  defaultADKMCPRuntimeStdioMaxEnvValueBytes,
-		StdioLeaseTTLMillis:    defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis,
-		StdioMaxConfigBytes:    defaultADKMCPRuntimeStdioMaxConfigBytes,
-		StdioDryRunOutputBytes: defaultADKMCPRuntimeStdioDryRunMaxOutputBytes,
-		ExecutorTimeout:        defaultADKMCPRuntimeExecutorTimeout,
-		ExecutorMaxOutputBytes: defaultADKMCPRuntimeExecutorMaxOutputBytes,
+		Enabled:                 enabled,
+		StdioDryRunEnabled:      stdioDryRunEnabled,
+		StdioEinoEnabled:        stdioEinoEnabled,
+		StdioWorkdirRoot:        strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkdirRootEnv)),
+		StdioWorkerID:           strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkerIDEnv)),
+		StdioAllowedCommands:    adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedCommandsEnv),
+		StdioAllowedEnvKeys:     adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedEnvKeysEnv),
+		StdioMaxArgs:            defaultADKMCPRuntimeStdioMaxArgs,
+		StdioMaxArgBytes:        defaultADKMCPRuntimeStdioMaxArgBytes,
+		StdioMaxEnvVars:         defaultADKMCPRuntimeStdioMaxEnvVars,
+		StdioMaxEnvValueBytes:   defaultADKMCPRuntimeStdioMaxEnvValueBytes,
+		StdioLeaseTTLMillis:     defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis,
+		StdioMaxConfigBytes:     defaultADKMCPRuntimeStdioMaxConfigBytes,
+		StdioDryRunOutputBytes:  defaultADKMCPRuntimeStdioDryRunMaxOutputBytes,
+		RemoteEinoEnabled:       remoteEinoEnabled,
+		RemoteAllowedHosts:      adkMCPRuntimeListEnv(agentThreadMCPRemoteAllowedHostsEnv),
+		RemoteAllowInsecureHTTP: remoteAllowInsecureHTTP,
+		RemoteMaxConfigBytes:    defaultADKMCPRuntimeRemoteMaxConfigBytes,
+		RemoteMaxHeaders:        defaultADKMCPRuntimeRemoteMaxHeaders,
+		RemoteMaxHeaderBytes:    defaultADKMCPRuntimeRemoteMaxHeaderBytes,
+		ExecutorTimeout:         defaultADKMCPRuntimeExecutorTimeout,
+		ExecutorMaxOutputBytes:  defaultADKMCPRuntimeExecutorMaxOutputBytes,
 	}
 
 	if err := adkMCPRuntimeParseBootstrapIntegers(&config); err != nil {
@@ -142,20 +176,29 @@ func NewADKMCPRuntimeToolExecutorFromConfig(
 	deps ADKMCPRuntimeBootstrapDependencies,
 ) ADKMCPRuntimeToolExecutor {
 	config := deps.Config.withDefaults()
-	if !config.Enabled || (!config.StdioDryRunEnabled && !config.StdioEinoEnabled) {
+	if !config.Enabled || !config.hasEnabledMCPRuntimeTransport() {
 		return nil
 	}
-	if deps.Resolver == nil || deps.LeaseRepository == nil || deps.IDGen == nil {
+	if deps.Resolver == nil {
+		return nil
+	}
+	if config.stdioEnabled() && (deps.LeaseRepository == nil || deps.IDGen == nil) {
 		return nil
 	}
 	if err := config.validate(); err != nil {
 		return nil
 	}
 
-	stdio := newADKMCPRuntimeStdioTransportFromBootstrap(config, deps)
-	router := NewADKMCPRuntimeTransportRouter(
-		ADKMCPRuntimeTransportRouterOptions{Stdio: stdio},
-	)
+	routerOptions := ADKMCPRuntimeTransportRouterOptions{}
+	if config.stdioEnabled() {
+		routerOptions.Stdio = newADKMCPRuntimeStdioTransportFromBootstrap(config, deps)
+	}
+	if config.RemoteEinoEnabled {
+		remote := newADKMCPRuntimeRemoteTransportFromBootstrap(config)
+		routerOptions.SSE = remote
+		routerOptions.StreamableHTTP = remote
+	}
+	router := NewADKMCPRuntimeTransportRouter(routerOptions)
 
 	return NewADKMCPRuntimeExecutor(
 		deps.Resolver,
@@ -164,9 +207,21 @@ func NewADKMCPRuntimeToolExecutorFromConfig(
 		WithADKMCPRuntimeExecutorMaxOutputBytes(config.ExecutorMaxOutputBytes),
 		WithADKMCPRuntimeExecutorEventSink(deps.EventSink),
 		WithADKMCPRuntimeExecutorAuditRecorder(deps.AuditRecorder),
-		WithADKMCPRuntimeExecutorHealthReporter(deps.HealthReporter),
+		WithADKMCPRuntimeExecutorHealthReporter(
+			newADKMCPRuntimeHealthReporterFromEnv(deps.HealthReporter),
+		),
 		WithADKMCPRuntimeExecutorOutputOffloader(deps.OutputOffloader),
 	)
+}
+
+func newADKMCPRuntimeHealthReporterFromEnv(
+	base ADKMCPRuntimeHealthReporter,
+) ADKMCPRuntimeHealthReporter {
+	collector := NewRuntimePrometheusMetricsCollectorFromEnv()
+	if collector == nil {
+		return base
+	}
+	return newADKMCPRuntimeHealthReporterWithMetrics(base, collector)
 }
 
 func adkMCPRuntimeParseBootstrapIntegers(
@@ -228,6 +283,30 @@ func adkMCPRuntimeParseBootstrapIntegers(
 	} else {
 		config.StdioDryRunOutputBytes = value
 	}
+	if value, err := adkMCPRuntimePositiveIntEnv(
+		agentThreadMCPRemoteMaxConfigBytesEnv,
+		config.RemoteMaxConfigBytes,
+	); err != nil {
+		return err
+	} else {
+		config.RemoteMaxConfigBytes = value
+	}
+	if value, err := adkMCPRuntimePositiveIntEnv(
+		agentThreadMCPRemoteMaxHeadersEnv,
+		config.RemoteMaxHeaders,
+	); err != nil {
+		return err
+	} else {
+		config.RemoteMaxHeaders = value
+	}
+	if value, err := adkMCPRuntimePositiveIntEnv(
+		agentThreadMCPRemoteMaxHeaderBytesEnv,
+		config.RemoteMaxHeaderBytes,
+	); err != nil {
+		return err
+	} else {
+		config.RemoteMaxHeaderBytes = value
+	}
 	if value, err := adkMCPRuntimePositiveInt64Env(
 		agentThreadMCPRuntimeTimeoutMsEnv,
 		int64(config.ExecutorTimeout/time.Millisecond),
@@ -259,7 +338,30 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 			agentThreadMCPStdioEinoEnabledEnv,
 		)
 	}
-	if !c.StdioDryRunEnabled && !c.StdioEinoEnabled {
+	if !c.hasEnabledMCPRuntimeTransport() {
+		return nil
+	}
+	if c.ExecutorTimeout <= 0 {
+		return fmt.Errorf("%s must be positive", agentThreadMCPRuntimeTimeoutMsEnv)
+	}
+	if c.ExecutorMaxOutputBytes <= 0 {
+		return fmt.Errorf("%s must be positive", agentThreadMCPRuntimeMaxOutputBytesEnv)
+	}
+	if c.RemoteEinoEnabled {
+		if len(adkMCPRuntimeStringSet(c.RemoteAllowedHosts)) == 0 {
+			return fmt.Errorf("%s is required", agentThreadMCPRemoteAllowedHostsEnv)
+		}
+		if c.RemoteMaxConfigBytes <= 0 {
+			return fmt.Errorf("%s must be positive", agentThreadMCPRemoteMaxConfigBytesEnv)
+		}
+		if c.RemoteMaxHeaders <= 0 {
+			return fmt.Errorf("%s must be positive", agentThreadMCPRemoteMaxHeadersEnv)
+		}
+		if c.RemoteMaxHeaderBytes <= 0 {
+			return fmt.Errorf("%s must be positive", agentThreadMCPRemoteMaxHeaderBytesEnv)
+		}
+	}
+	if !c.stdioEnabled() {
 		return nil
 	}
 	if strings.TrimSpace(c.StdioWorkdirRoot) == "" ||
@@ -293,12 +395,6 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	if c.StdioDryRunOutputBytes <= 0 {
 		return fmt.Errorf("%s must be positive", agentThreadMCPStdioDryRunOutputBytesEnv)
 	}
-	if c.ExecutorTimeout <= 0 {
-		return fmt.Errorf("%s must be positive", agentThreadMCPRuntimeTimeoutMsEnv)
-	}
-	if c.ExecutorMaxOutputBytes <= 0 {
-		return fmt.Errorf("%s must be positive", agentThreadMCPRuntimeMaxOutputBytesEnv)
-	}
 
 	return nil
 }
@@ -325,6 +421,15 @@ func (c ADKMCPRuntimeBootstrapConfig) withDefaults() ADKMCPRuntimeBootstrapConfi
 	if c.StdioDryRunOutputBytes == 0 {
 		c.StdioDryRunOutputBytes = defaultADKMCPRuntimeStdioDryRunMaxOutputBytes
 	}
+	if c.RemoteMaxConfigBytes == 0 {
+		c.RemoteMaxConfigBytes = defaultADKMCPRuntimeRemoteMaxConfigBytes
+	}
+	if c.RemoteMaxHeaders == 0 {
+		c.RemoteMaxHeaders = defaultADKMCPRuntimeRemoteMaxHeaders
+	}
+	if c.RemoteMaxHeaderBytes == 0 {
+		c.RemoteMaxHeaderBytes = defaultADKMCPRuntimeRemoteMaxHeaderBytes
+	}
 	if c.ExecutorTimeout == 0 {
 		c.ExecutorTimeout = defaultADKMCPRuntimeExecutorTimeout
 	}
@@ -333,6 +438,14 @@ func (c ADKMCPRuntimeBootstrapConfig) withDefaults() ADKMCPRuntimeBootstrapConfi
 	}
 
 	return c
+}
+
+func (c ADKMCPRuntimeBootstrapConfig) hasEnabledMCPRuntimeTransport() bool {
+	return c.stdioEnabled() || c.RemoteEinoEnabled
+}
+
+func (c ADKMCPRuntimeBootstrapConfig) stdioEnabled() bool {
+	return c.StdioDryRunEnabled || c.StdioEinoEnabled
 }
 
 func newADKMCPRuntimeStdioTransportFromBootstrap(
@@ -377,6 +490,32 @@ func newADKMCPRuntimeStdioTransportFromBootstrap(
 	)
 
 	return NewADKMCPRuntimeStdioRuntimeTransport(options)
+}
+
+func newADKMCPRuntimeRemoteTransportFromBootstrap(
+	config ADKMCPRuntimeBootstrapConfig,
+) *ADKMCPRuntimeRemoteTransport {
+	return NewADKMCPRuntimeRemoteTransport(
+		ADKMCPRuntimeRemoteTransportOptions{
+			Runner: NewADKMCPRuntimeRemoteEinoRunner(
+				ADKMCPRuntimeRemoteEinoRunnerOptions{
+					ClientFactory: NewADKMCPRuntimeRemoteEinoMCPClientFactory(
+						ADKMCPRuntimeRemoteEinoMCPClientFactoryOptions{
+							Timeout: config.ExecutorTimeout,
+						},
+					),
+					ToolProvider:   &ADKMCPRuntimeRemoteEinoMCPToolProvider{},
+					MaxOutputBytes: config.ExecutorMaxOutputBytes,
+					Timeout:        config.ExecutorTimeout,
+				},
+			),
+			AllowedHosts:      config.RemoteAllowedHosts,
+			AllowInsecureHTTP: config.RemoteAllowInsecureHTTP,
+			MaxConfigBytes:    config.RemoteMaxConfigBytes,
+			MaxHeaders:        config.RemoteMaxHeaders,
+			MaxHeaderBytes:    config.RemoteMaxHeaderBytes,
+		},
+	)
 }
 
 func adkMCPRuntimeBoolEnv(key string, defaultValue bool) (bool, error) {

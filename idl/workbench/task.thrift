@@ -262,6 +262,7 @@ struct CreateTaskThreadRequest {
     11: optional string on_disconnect
     12: optional string durability
     13: optional string idempotency_key
+    14: optional bool defer_start
     255: optional base.Base Base (api.none="true")
 }
 
@@ -273,6 +274,73 @@ struct CreateTaskThreadData {
 
 struct CreateTaskThreadResponse {
     1: optional CreateTaskThreadData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct TaskThreadUploadFile {
+    1: required i64 file_id (agw.js_conv="str", api.js_conv="true")
+    2: required string filename
+    3: required string path
+    4: required string virtual_path
+    5: required string content_type
+    6: required i64 size
+    7: required i64 created_at
+}
+
+struct ListTaskThreadUploadFilesRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 space_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct UploadTaskThreadFilesRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 space_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct DeleteTaskThreadUploadFileRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required string filename (api.path="filename")
+    3: optional i64 space_id (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
+struct UploadTaskThreadFilesData {
+    1: required bool success
+    2: required list<TaskThreadUploadFile> files
+    3: required string message
+    4: required list<string> skipped_files
+}
+
+struct ListTaskThreadUploadFilesData {
+    1: required list<TaskThreadUploadFile> files
+    2: required i64 count
+}
+
+struct DeleteTaskThreadUploadFileData {
+    1: required bool deleted
+    2: optional TaskThreadUploadFile file
+}
+
+struct UploadTaskThreadFilesResponse {
+    1: optional UploadTaskThreadFilesData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct ListTaskThreadUploadFilesResponse {
+    1: optional ListTaskThreadUploadFilesData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct DeleteTaskThreadUploadFileResponse {
+    1: optional DeleteTaskThreadUploadFileData data
     253: required i64 code
     254: required string msg
     255: optional base.BaseResp BaseResp (api.none="true")
@@ -581,6 +649,20 @@ struct TaskThreadGuardrailAuditEvent {
     16: required i64 created_at
 }
 
+struct TaskThreadMCPRuntimeAuditEvent {
+    1: required i64 event_id (agw.js_conv="str", api.js_conv="true")
+    2: required i64 space_id (agw.js_conv="str", api.js_conv="true")
+    3: required i64 thread_id (agw.js_conv="str", api.js_conv="true")
+    4: required i64 run_id (agw.js_conv="str", api.js_conv="true")
+    5: required i64 server_id (agw.js_conv="str", api.js_conv="true")
+    6: required string runtime_tool_name
+    7: required string event_type
+    8: required string error_code
+    9: required i64 elapsed_millis
+    10: required i64 output_bytes
+    11: required i64 created_at
+}
+
 struct ListTaskThreadMemoriesRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
@@ -783,6 +865,26 @@ struct ListTaskThreadGuardrailAuditEventsResponse {
     255: optional base.BaseResp BaseResp (api.none="true")
 }
 
+struct ListTaskThreadMCPRuntimeAuditEventsRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
+    3: optional i32 page
+    4: optional i32 page_size
+    255: optional base.Base Base (api.none="true")
+}
+
+struct ListTaskThreadMCPRuntimeAuditEventsData {
+    1: required list<TaskThreadMCPRuntimeAuditEvent> events
+    2: required i64 total
+}
+
+struct ListTaskThreadMCPRuntimeAuditEventsResponse {
+    1: optional ListTaskThreadMCPRuntimeAuditEventsData data
+    253: required i64 code
+    254: required string msg
+    255: optional base.BaseResp BaseResp (api.none="true")
+}
+
 struct ExportTaskThreadGuardrailAuditEventsRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
@@ -891,6 +993,10 @@ service WorkbenchTaskService {
     )
     ExportTaskThreadGuardrailAuditEventsResponse ExportTaskThreadGuardrailAuditEvents(1: ExportTaskThreadGuardrailAuditEventsRequest request)(
         api.get="/api/workbench/task_threads/:thread_id/guardrail_audit_events/export",
+        api.category="workbench"
+    )
+    ListTaskThreadMCPRuntimeAuditEventsResponse ListTaskThreadMCPRuntimeAuditEvents(1: ListTaskThreadMCPRuntimeAuditEventsRequest request)(
+        api.get="/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
         api.category="workbench"
     )
     ListTaskThreadArtifactsResponse ListTaskThreadArtifacts(1: ListTaskThreadArtifactsRequest request)(

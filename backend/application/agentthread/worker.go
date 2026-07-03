@@ -20,6 +20,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	"github.com/coze-dev/coze-studio/backend/pkg/envkey"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
@@ -73,12 +75,14 @@ const (
 type RunWorkerOptions struct {
 	Interval         time.Duration
 	TurnLoopRegistry *ADKTurnLoopRegistry
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type RunWorker struct {
 	processor        *RunProcessor
 	interval         time.Duration
 	turnLoopRegistry *ADKTurnLoopRegistry
+	metricsCollector RuntimeMetricsCollector
 }
 
 func NewRunWorker(processor *RunProcessor, opts RunWorkerOptions) *RunWorker {
@@ -95,6 +99,7 @@ func NewRunWorker(processor *RunProcessor, opts RunWorkerOptions) *RunWorker {
 		processor:        processor,
 		interval:         interval,
 		turnLoopRegistry: turnLoopRegistry,
+		metricsCollector: opts.MetricsCollector,
 	}
 }
 
@@ -130,6 +135,7 @@ func (w *RunWorker) RunOnce(ctx context.Context) RunProcessResult {
 		return RunProcessResult{}
 	}
 
+	startedAt := time.Now()
 	result, err := w.processor.ProcessPendingRunsWithResult(ctx)
 	if err != nil {
 		logs.CtxErrorf(
@@ -141,6 +147,15 @@ func (w *RunWorker) RunOnce(ctx context.Context) RunProcessResult {
 			result.FailedRuns,
 			result.ErroredRuns,
 			err,
+		)
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeRun,
+			int64(result.ClaimedRuns),
+			runtimeMetricResultFailed,
+			runtimeMetricErrorProcessFailed,
+			startedAt,
 		)
 
 		return result
@@ -155,6 +170,15 @@ func (w *RunWorker) RunOnce(ctx context.Context) RunProcessResult {
 			result.FailedRuns,
 		)
 	}
+	recordRuntimeWorkerTick(
+		ctx,
+		w.metricsCollector,
+		runtimeWorkerTypeRun,
+		int64(result.ClaimedRuns),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+		startedAt,
+	)
 
 	return result
 }
@@ -177,7 +201,8 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 		TitleGenerator: NewModelRunTitleGenerator(DefaultChatModelProvider),
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{
-		Interval: time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,
+		Interval:         time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,
+		MetricsCollector: NewRuntimePrometheusMetricsCollectorFromEnv(),
 	})
 	worker.Start(ctx)
 
@@ -185,12 +210,14 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 }
 
 type ResumeRunWorkerOptions struct {
-	Interval time.Duration
+	Interval         time.Duration
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type ResumeRunWorker struct {
-	processor *ResumeRunProcessor
-	interval  time.Duration
+	processor        *ResumeRunProcessor
+	interval         time.Duration
+	metricsCollector RuntimeMetricsCollector
 }
 
 func NewResumeRunWorker(processor *ResumeRunProcessor, opts ResumeRunWorkerOptions) *ResumeRunWorker {
@@ -200,8 +227,9 @@ func NewResumeRunWorker(processor *ResumeRunProcessor, opts ResumeRunWorkerOptio
 	}
 
 	return &ResumeRunWorker{
-		processor: processor,
-		interval:  interval,
+		processor:        processor,
+		interval:         interval,
+		metricsCollector: opts.MetricsCollector,
 	}
 }
 
@@ -229,6 +257,7 @@ func (w *ResumeRunWorker) RunOnce(ctx context.Context) ResumeRunProcessResult {
 		return ResumeRunProcessResult{}
 	}
 
+	startedAt := time.Now()
 	result, err := w.processor.ProcessQueuedResumeRunsWithResult(ctx)
 	if err != nil {
 		logs.CtxErrorf(
@@ -240,6 +269,15 @@ func (w *ResumeRunWorker) RunOnce(ctx context.Context) ResumeRunProcessResult {
 			result.FailedRuns,
 			result.ErroredRuns,
 			err,
+		)
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeResume,
+			int64(result.ClaimedRuns),
+			runtimeMetricResultFailed,
+			runtimeMetricErrorProcessFailed,
+			startedAt,
 		)
 
 		return result
@@ -254,6 +292,15 @@ func (w *ResumeRunWorker) RunOnce(ctx context.Context) ResumeRunProcessResult {
 			result.FailedRuns,
 		)
 	}
+	recordRuntimeWorkerTick(
+		ctx,
+		w.metricsCollector,
+		runtimeWorkerTypeResume,
+		int64(result.ClaimedRuns),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+		startedAt,
+	)
 
 	return result
 }
@@ -276,7 +323,8 @@ func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, e
 		Executor:  executor,
 	})
 	worker := NewResumeRunWorker(processor, ResumeRunWorkerOptions{
-		Interval: time.Duration(envkey.GetIntD(agentThreadResumeWorkerIntervalMsEnv, int(defaultResumeRunWorkerInterval/time.Millisecond))) * time.Millisecond,
+		Interval:         time.Duration(envkey.GetIntD(agentThreadResumeWorkerIntervalMsEnv, int(defaultResumeRunWorkerInterval/time.Millisecond))) * time.Millisecond,
+		MetricsCollector: NewRuntimePrometheusMetricsCollectorFromEnv(),
 	})
 	worker.Start(ctx)
 
@@ -284,12 +332,13 @@ func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, e
 }
 
 type MemoryFlushWorkerOptions struct {
-	WorkerID     string
-	BatchSize    int32
-	LeaseTTL     time.Duration
-	Interval     time.Duration
-	MaxAttempts  int32
-	RetryBackoff time.Duration
+	WorkerID         string
+	BatchSize        int32
+	LeaseTTL         time.Duration
+	Interval         time.Duration
+	MaxAttempts      int32
+	RetryBackoff     time.Duration
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type MemoryFlushWorkerResult struct {
@@ -302,13 +351,14 @@ type MemoryFlushWorkerResult struct {
 }
 
 type MemoryFlushWorker struct {
-	app          *ApplicationService
-	workerID     string
-	batchSize    int32
-	leaseTTL     time.Duration
-	interval     time.Duration
-	maxAttempts  int32
-	retryBackoff time.Duration
+	app              *ApplicationService
+	workerID         string
+	batchSize        int32
+	leaseTTL         time.Duration
+	interval         time.Duration
+	maxAttempts      int32
+	retryBackoff     time.Duration
+	metricsCollector RuntimeMetricsCollector
 }
 
 func NewMemoryFlushWorker(app *ApplicationService, opts MemoryFlushWorkerOptions) *MemoryFlushWorker {
@@ -338,13 +388,14 @@ func NewMemoryFlushWorker(app *ApplicationService, opts MemoryFlushWorkerOptions
 	}
 
 	return &MemoryFlushWorker{
-		app:          app,
-		workerID:     workerID,
-		batchSize:    batchSize,
-		leaseTTL:     leaseTTL,
-		interval:     interval,
-		maxAttempts:  maxAttempts,
-		retryBackoff: retryBackoff,
+		app:              app,
+		workerID:         workerID,
+		batchSize:        batchSize,
+		leaseTTL:         leaseTTL,
+		interval:         interval,
+		maxAttempts:      maxAttempts,
+		retryBackoff:     retryBackoff,
+		metricsCollector: opts.MetricsCollector,
 	}
 }
 
@@ -372,6 +423,7 @@ func (w *MemoryFlushWorker) RunOnce(ctx context.Context) MemoryFlushWorkerResult
 		return MemoryFlushWorkerResult{}
 	}
 
+	startedAt := time.Now()
 	resp, err := w.app.ProcessMemoryFlushJobs(ctx, &ProcessMemoryFlushJobsRequest{
 		WorkerID:           w.workerID,
 		Limit:              w.batchSize,
@@ -387,9 +439,28 @@ func (w *MemoryFlushWorker) RunOnce(ctx context.Context) MemoryFlushWorkerResult
 			err,
 		)
 
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeMemoryFlush,
+			0,
+			runtimeMetricResultFailed,
+			runtimeMetricErrorProcessFailed,
+			startedAt,
+		)
+
 		return MemoryFlushWorkerResult{Errored: true}
 	}
 	if resp == nil {
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeMemoryFlush,
+			0,
+			runtimeMetricResultSuccess,
+			runtimeMetricErrorNone,
+			startedAt,
+		)
 		return MemoryFlushWorkerResult{}
 	}
 	result := MemoryFlushWorkerResult{
@@ -410,8 +481,41 @@ func (w *MemoryFlushWorker) RunOnce(ctx context.Context) MemoryFlushWorkerResult
 			result.SkippedJobs,
 		)
 	}
+	for _, metric := range resp.JobMetrics {
+		recordRuntimeMemoryFlushJob(ctx, w.metricsCollector, metric)
+	}
+	recordRuntimeMemoryFacts(ctx, w.metricsCollector, resp.FactMetrics)
+	w.recordRuntimeMemoryFlushBacklog(ctx)
+	recordRuntimeWorkerTick(
+		ctx,
+		w.metricsCollector,
+		runtimeWorkerTypeMemoryFlush,
+		int64(result.ClaimedJobs),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+		startedAt,
+	)
 
 	return result
+}
+
+func (w *MemoryFlushWorker) recordRuntimeMemoryFlushBacklog(ctx context.Context) {
+	if w == nil || w.metricsCollector == nil || w.app == nil || w.app.ThreadSVC == nil {
+		return
+	}
+	aggregates, err := w.app.ThreadSVC.AggregateMemoryFlushBacklog(
+		ctx,
+		&domainservice.AggregateMemoryFlushBacklogRequest{
+			Statuses: []entity.MemoryFlushJobStatus{
+				entity.MemoryFlushJobStatusPending,
+				entity.MemoryFlushJobStatusProcessing,
+			},
+		},
+	)
+	if err != nil {
+		return
+	}
+	recordRuntimeMemoryFlushBacklog(ctx, w.metricsCollector, aggregates)
 }
 
 func StartMemoryFlushWorkerFromEnv(ctx context.Context, app *ApplicationService) *MemoryFlushWorker {
@@ -430,12 +534,13 @@ func StartMemoryFlushWorkerFromEnv(ctx context.Context, app *ApplicationService)
 	}
 
 	worker := NewMemoryFlushWorker(app, MemoryFlushWorkerOptions{
-		WorkerID:     envkey.GetStringD(agentMemoryFlushWorkerIDEnv, defaultMemoryFlushWorkerID),
-		BatchSize:    envkey.GetI32D(agentMemoryFlushWorkerBatchSizeEnv, defaultMemoryFlushWorkerBatch),
-		LeaseTTL:     time.Duration(envkey.GetIntD(agentMemoryFlushWorkerLeaseTTLMsEnv, int(defaultMemoryFlushWorkerTTL/time.Millisecond))) * time.Millisecond,
-		Interval:     time.Duration(envkey.GetIntD(agentMemoryFlushWorkerIntervalMsEnv, int(defaultMemoryFlushWorkerTick/time.Millisecond))) * time.Millisecond,
-		MaxAttempts:  envkey.GetI32D(agentMemoryFlushWorkerMaxAttemptsEnv, defaultMemoryFlushWorkerMaxAttempts),
-		RetryBackoff: time.Duration(envkey.GetIntD(agentMemoryFlushWorkerRetryBackoffMsEnv, int(defaultMemoryFlushWorkerRetryBackoff/time.Millisecond))) * time.Millisecond,
+		WorkerID:         envkey.GetStringD(agentMemoryFlushWorkerIDEnv, defaultMemoryFlushWorkerID),
+		BatchSize:        envkey.GetI32D(agentMemoryFlushWorkerBatchSizeEnv, defaultMemoryFlushWorkerBatch),
+		LeaseTTL:         time.Duration(envkey.GetIntD(agentMemoryFlushWorkerLeaseTTLMsEnv, int(defaultMemoryFlushWorkerTTL/time.Millisecond))) * time.Millisecond,
+		Interval:         time.Duration(envkey.GetIntD(agentMemoryFlushWorkerIntervalMsEnv, int(defaultMemoryFlushWorkerTick/time.Millisecond))) * time.Millisecond,
+		MaxAttempts:      envkey.GetI32D(agentMemoryFlushWorkerMaxAttemptsEnv, defaultMemoryFlushWorkerMaxAttempts),
+		RetryBackoff:     time.Duration(envkey.GetIntD(agentMemoryFlushWorkerRetryBackoffMsEnv, int(defaultMemoryFlushWorkerRetryBackoff/time.Millisecond))) * time.Millisecond,
+		MetricsCollector: NewRuntimePrometheusMetricsCollectorFromEnv(),
 	})
 	worker.Start(ctx)
 
@@ -443,13 +548,14 @@ func StartMemoryFlushWorkerFromEnv(ctx context.Context, app *ApplicationService)
 }
 
 type ArtifactScanWorkerOptions struct {
-	Scanner      string
-	WorkerID     string
-	BatchSize    int32
-	LeaseTTL     time.Duration
-	Interval     time.Duration
-	MaxAttempts  int32
-	RetryBackoff time.Duration
+	Scanner          string
+	WorkerID         string
+	BatchSize        int32
+	LeaseTTL         time.Duration
+	Interval         time.Duration
+	MaxAttempts      int32
+	RetryBackoff     time.Duration
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type ArtifactScanWorkerResult struct {
@@ -469,14 +575,15 @@ type ArtifactScanWorkerEnvStatus struct {
 }
 
 type ArtifactScanWorker struct {
-	app          *ApplicationService
-	scanner      string
-	workerID     string
-	batchSize    int32
-	leaseTTL     time.Duration
-	interval     time.Duration
-	maxAttempts  int32
-	retryBackoff time.Duration
+	app              *ApplicationService
+	scanner          string
+	workerID         string
+	batchSize        int32
+	leaseTTL         time.Duration
+	interval         time.Duration
+	maxAttempts      int32
+	retryBackoff     time.Duration
+	metricsCollector RuntimeMetricsCollector
 }
 
 func NewArtifactScanWorker(app *ApplicationService, opts ArtifactScanWorkerOptions) *ArtifactScanWorker {
@@ -510,14 +617,15 @@ func NewArtifactScanWorker(app *ApplicationService, opts ArtifactScanWorkerOptio
 	}
 
 	return &ArtifactScanWorker{
-		app:          app,
-		scanner:      scanner,
-		workerID:     workerID,
-		batchSize:    batchSize,
-		leaseTTL:     leaseTTL,
-		interval:     interval,
-		maxAttempts:  maxAttempts,
-		retryBackoff: retryBackoff,
+		app:              app,
+		scanner:          scanner,
+		workerID:         workerID,
+		batchSize:        batchSize,
+		leaseTTL:         leaseTTL,
+		interval:         interval,
+		maxAttempts:      maxAttempts,
+		retryBackoff:     retryBackoff,
+		metricsCollector: opts.MetricsCollector,
 	}
 }
 
@@ -545,6 +653,7 @@ func (w *ArtifactScanWorker) RunOnce(ctx context.Context) ArtifactScanWorkerResu
 		return ArtifactScanWorkerResult{}
 	}
 
+	startedAt := time.Now()
 	resp, err := w.app.ProcessArtifactScanJobs(ctx, &ProcessArtifactScanJobsRequest{
 		Scanner:            w.scanner,
 		WorkerID:           w.workerID,
@@ -562,9 +671,28 @@ func (w *ArtifactScanWorker) RunOnce(ctx context.Context) ArtifactScanWorkerResu
 			err,
 		)
 
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeArtifactScan,
+			0,
+			runtimeMetricResultFailed,
+			runtimeMetricErrorProcessFailed,
+			startedAt,
+		)
+
 		return ArtifactScanWorkerResult{Errored: true}
 	}
 	if resp == nil {
+		recordRuntimeWorkerTick(
+			ctx,
+			w.metricsCollector,
+			runtimeWorkerTypeArtifactScan,
+			0,
+			runtimeMetricResultSuccess,
+			runtimeMetricErrorNone,
+			startedAt,
+		)
 		return ArtifactScanWorkerResult{}
 	}
 	result := ArtifactScanWorkerResult{
@@ -585,8 +713,40 @@ func (w *ArtifactScanWorker) RunOnce(ctx context.Context) ArtifactScanWorkerResu
 			result.SkippedJobs,
 		)
 	}
+	for _, metric := range resp.JobMetrics {
+		recordRuntimeArtifactScanJob(ctx, w.metricsCollector, metric)
+	}
+	w.recordRuntimeArtifactScanBacklog(ctx)
+	recordRuntimeWorkerTick(
+		ctx,
+		w.metricsCollector,
+		runtimeWorkerTypeArtifactScan,
+		int64(result.ClaimedJobs),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+		startedAt,
+	)
 
 	return result
+}
+
+func (w *ArtifactScanWorker) recordRuntimeArtifactScanBacklog(ctx context.Context) {
+	if w == nil || w.metricsCollector == nil || w.app == nil || w.app.ArtifactSVC == nil {
+		return
+	}
+	aggregates, err := w.app.ArtifactSVC.AggregateArtifactScanBacklog(
+		ctx,
+		&domainservice.AggregateArtifactScanBacklogRequest{
+			Statuses: []entity.ArtifactScanJobStatus{
+				entity.ArtifactScanJobStatusPending,
+				entity.ArtifactScanJobStatusProcessing,
+			},
+		},
+	)
+	if err != nil {
+		return
+	}
+	recordRuntimeArtifactScanBacklog(ctx, w.metricsCollector, aggregates)
 }
 
 func StartArtifactScanWorkerFromEnv(ctx context.Context, app *ApplicationService) *ArtifactScanWorker {
@@ -634,16 +794,38 @@ func StartArtifactScanWorkerFromEnvWithStatus(
 	}
 
 	worker := NewArtifactScanWorker(app, ArtifactScanWorkerOptions{
-		Scanner:      envkey.GetStringD(agentArtifactScanWorkerScannerEnv, defaultApplicationArtifactScanner),
-		WorkerID:     envkey.GetStringD(agentArtifactScanWorkerIDEnv, defaultArtifactScanWorkerID),
-		BatchSize:    envkey.GetI32D(agentArtifactScanWorkerBatchSizeEnv, defaultArtifactScanWorkerBatch),
-		LeaseTTL:     time.Duration(envkey.GetIntD(agentArtifactScanWorkerLeaseTTLMsEnv, int(defaultArtifactScanWorkerTTL/time.Millisecond))) * time.Millisecond,
-		Interval:     time.Duration(envkey.GetIntD(agentArtifactScanWorkerIntervalMsEnv, int(defaultArtifactScanWorkerTick/time.Millisecond))) * time.Millisecond,
-		MaxAttempts:  envkey.GetI32D(agentArtifactScanWorkerMaxAttemptsEnv, defaultArtifactScanWorkerMaxAttempts),
-		RetryBackoff: time.Duration(envkey.GetIntD(agentArtifactScanWorkerRetryBackoffMsEnv, int(defaultArtifactScanWorkerRetryBackoff/time.Millisecond))) * time.Millisecond,
+		Scanner:          envkey.GetStringD(agentArtifactScanWorkerScannerEnv, defaultApplicationArtifactScanner),
+		WorkerID:         envkey.GetStringD(agentArtifactScanWorkerIDEnv, defaultArtifactScanWorkerID),
+		BatchSize:        envkey.GetI32D(agentArtifactScanWorkerBatchSizeEnv, defaultArtifactScanWorkerBatch),
+		LeaseTTL:         time.Duration(envkey.GetIntD(agentArtifactScanWorkerLeaseTTLMsEnv, int(defaultArtifactScanWorkerTTL/time.Millisecond))) * time.Millisecond,
+		Interval:         time.Duration(envkey.GetIntD(agentArtifactScanWorkerIntervalMsEnv, int(defaultArtifactScanWorkerTick/time.Millisecond))) * time.Millisecond,
+		MaxAttempts:      envkey.GetI32D(agentArtifactScanWorkerMaxAttemptsEnv, defaultArtifactScanWorkerMaxAttempts),
+		RetryBackoff:     time.Duration(envkey.GetIntD(agentArtifactScanWorkerRetryBackoffMsEnv, int(defaultArtifactScanWorkerRetryBackoff/time.Millisecond))) * time.Millisecond,
+		MetricsCollector: NewRuntimePrometheusMetricsCollectorFromEnv(),
 	})
 	worker.Start(ctx)
 	status.Started = true
 
 	return worker, status
+}
+
+func recordRuntimeWorkerTick(
+	ctx context.Context,
+	collector RuntimeMetricsCollector,
+	workerType string,
+	claimed int64,
+	result string,
+	errorCode string,
+	startedAt time.Time,
+) {
+	if collector == nil {
+		return
+	}
+	collector.RecordRuntimeWorkerTick(ctx, RuntimeWorkerTickMetricsObservation{
+		WorkerType: workerType,
+		Result:     result,
+		ErrorCode:  errorCode,
+		Claimed:    claimed,
+		ElapsedMs:  time.Since(startedAt).Milliseconds(),
+	})
 }

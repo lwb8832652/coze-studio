@@ -106,8 +106,9 @@ func (e *ModelExecutor) Execute(ctx context.Context, run *RunSummary) (*RunExecu
 }
 
 type modelExecutorRunInput struct {
-	Messages []*schema.Message `json:"messages"`
-	Message  string            `json:"message"`
+	Messages      []*schema.Message                `json:"messages"`
+	Message       string                           `json:"message"`
+	UploadedFiles []*TaskThreadUploadedFileSummary `json:"uploaded_files,omitempty"`
 }
 
 type modelExecutorConfig struct {

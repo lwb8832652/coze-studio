@@ -26,6 +26,8 @@ import {
   createTaskThreadRun,
   listTaskThreadMessages,
   sendWorkbenchChat,
+  uploadTaskThreadFiles,
+  type TaskThreadUploadedFile,
 } from './service';
 
 const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
@@ -80,15 +82,23 @@ const appendThreadRunInputMessage = (
   messages.push(message);
 };
 
-const getThreadFollowUpRunInput = (
-  payload: WorkbenchComposerSubmitPayload,
-  messageId: string,
-  historyMessages: Array<{
+interface ThreadFollowUpRunInputOptions {
+  payload: WorkbenchComposerSubmitPayload;
+  messageId: string;
+  historyMessages?: Array<{
     role?: string;
     content?: string;
     message_id?: string;
-  }> = [],
-) => {
+  }>;
+  uploadedFiles?: TaskThreadUploadedFile[];
+}
+
+const getThreadFollowUpRunInput = ({
+  payload,
+  messageId,
+  historyMessages = [],
+  uploadedFiles = [],
+}: ThreadFollowUpRunInputOptions) => {
   const messages: ThreadRunInputMessage[] = [];
 
   historyMessages.forEach(message => {
@@ -109,6 +119,7 @@ const getThreadFollowUpRunInput = (
 
   return JSON.stringify({
     messages,
+    uploaded_files: uploadedFiles,
   });
 };
 
@@ -147,6 +158,10 @@ export const sendFollowUpMessage = async ({
 }) => {
   if (isCanonicalThreadDetail) {
     const historyMessages = await listThreadFollowUpHistory(threadId);
+    const uploadResponse = await uploadTaskThreadFiles({
+      thread_id: threadId,
+      files: payload.files ?? [],
+    });
     const appendResponse = await appendTaskThreadMessage({
       thread_id: threadId,
       role: 'user',
@@ -157,11 +172,12 @@ export const sendFollowUpMessage = async ({
 
     const runResponse = await createTaskThreadRun({
       thread_id: threadId,
-      input: getThreadFollowUpRunInput(
+      input: getThreadFollowUpRunInput({
         payload,
-        appendedMessageId,
+        messageId: appendedMessageId,
         historyMessages,
-      ),
+        uploadedFiles: uploadResponse.data?.files ?? [],
+      }),
       config: getThreadFollowUpMetadata(payload),
       metadata: getThreadFollowUpRunMetadata(payload, appendedMessageId),
       idempotency_key: `${threadId}:${appendedMessageId}:followup`,
@@ -172,6 +188,10 @@ export const sendFollowUpMessage = async ({
       message: appendResponse.data,
       run: runResponse.data,
     } satisfies CanonicalThreadFollowUpResult;
+  }
+
+  if (payload.files?.length) {
+    throw new Error('当前任务详情暂不支持附件追问');
   }
 
   await sendWorkbenchChat({

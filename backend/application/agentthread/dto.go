@@ -233,6 +233,20 @@ type GuardrailAuditEventSummary struct {
 	CreatedAt  int64
 }
 
+type MCPRuntimeAuditEventSummary struct {
+	EventID         int64
+	SpaceID         int64
+	ThreadID        int64
+	RunID           int64
+	ServerID        int64
+	RuntimeToolName string
+	EventType       string
+	ErrorCode       string
+	ElapsedMillis   int64
+	OutputBytes     int64
+	CreatedAt       int64
+}
+
 const GuardrailAuditExportSchema = "coze.task_thread_guardrail_audit.export.v1"
 
 type ExportGuardrailAuditEventsRequest struct {
@@ -433,6 +447,7 @@ type CreateTaskThreadRequest struct {
 	UserID            int64
 	Message           string
 	Title             string
+	DeferStart        bool
 	AssistantID       string
 	Command           string
 	Config            string
@@ -809,6 +824,19 @@ type ListGuardrailAuditEventsResponse struct {
 	Total  int64
 }
 
+type ListMCPRuntimeAuditEventsRequest struct {
+	ThreadID int64
+	RunID    int64
+	ViewerID int64
+	Page     int32
+	PageSize int32
+}
+
+type ListMCPRuntimeAuditEventsResponse struct {
+	Events []*MCPRuntimeAuditEventSummary
+	Total  int64
+}
+
 type PersistTranscriptSnapshotRequest struct {
 	ThreadID       int64
 	RunID          int64
@@ -1083,11 +1111,24 @@ type ProcessArtifactScanJobsRequest struct {
 }
 
 type ProcessArtifactScanJobsResponse struct {
-	Claimed   int32
-	Succeeded int32
-	Retried   int32
-	Failed    int32
-	Skipped   int32
+	Claimed    int32
+	Succeeded  int32
+	Retried    int32
+	Failed     int32
+	Skipped    int32
+	JobMetrics []*ArtifactScanJobMetricsSummary
+}
+
+type ArtifactScanJobMetricsSummary struct {
+	Scanner           string
+	ContentFamily     string
+	Result            string
+	ErrorCode         string
+	CreatedAt         int64
+	StartedAt         int64
+	EndedAt           int64
+	ObserveLatency    bool
+	ObserveQueueDelay bool
 }
 
 type ProcessMemoryFlushJobsRequest struct {
@@ -1099,11 +1140,27 @@ type ProcessMemoryFlushJobsRequest struct {
 }
 
 type ProcessMemoryFlushJobsResponse struct {
-	Claimed   int32
-	Succeeded int32
-	Retried   int32
-	Failed    int32
-	Skipped   int32
+	Claimed     int32
+	Succeeded   int32
+	Retried     int32
+	Failed      int32
+	Skipped     int32
+	JobMetrics  []*MemoryFlushJobMetricsSummary
+	FactMetrics []*MemoryFactMetricsSummary
+}
+
+type MemoryFlushJobMetricsSummary struct {
+	Result         string
+	ErrorCode      string
+	StartedAt      int64
+	EndedAt        int64
+	ObserveLatency bool
+}
+
+type MemoryFactMetricsSummary struct {
+	Operation string
+	Result    string
+	Count     int64
 }
 
 type ReadArtifactContentResponse struct {

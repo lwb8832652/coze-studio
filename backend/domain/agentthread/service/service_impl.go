@@ -1424,6 +1424,29 @@ func (s *threadService) ClaimMemoryFlushJobs(
 	})
 }
 
+func (s *threadService) AggregateMemoryFlushBacklog(
+	ctx context.Context,
+	req *AggregateMemoryFlushBacklogRequest,
+) ([]*entity.MemoryFlushBacklogAggregate, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	statuses := defaultMemoryFlushBacklogStatuses()
+	if req != nil && len(req.Statuses) > 0 {
+		statuses = append([]entity.MemoryFlushJobStatus(nil), req.Statuses...)
+	}
+	return s.repo.AggregateMemoryFlushBacklog(ctx, repository.AggregateMemoryFlushBacklogRequest{
+		Statuses: statuses,
+	})
+}
+
+func defaultMemoryFlushBacklogStatuses() []entity.MemoryFlushJobStatus {
+	return []entity.MemoryFlushJobStatus{
+		entity.MemoryFlushJobStatusPending,
+		entity.MemoryFlushJobStatusProcessing,
+	}
+}
+
 func (s *threadService) CompleteMemoryFlushJob(
 	ctx context.Context,
 	req *CompleteMemoryFlushJobRequest,
@@ -1707,6 +1730,32 @@ func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingR
 		WorkerID: workerID,
 		Limit:    limit,
 	})
+}
+
+func (s *threadService) AggregateRunBacklog(
+	ctx context.Context,
+	req *AggregateRunBacklogRequest,
+) ([]*entity.RunBacklogAggregate, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	statuses := defaultRunBacklogStatuses()
+	if req != nil && len(req.Statuses) > 0 {
+		statuses = append([]entity.RunStatus(nil), req.Statuses...)
+	}
+
+	return s.repo.AggregateRunBacklog(ctx, repository.AggregateRunBacklogRequest{
+		Statuses: statuses,
+	})
+}
+
+func defaultRunBacklogStatuses() []entity.RunStatus {
+	return []entity.RunStatus{
+		entity.RunStatusPending,
+		entity.RunStatusQueued,
+		entity.RunStatusRunning,
+		entity.RunStatusInterrupted,
+	}
 }
 
 func (s *threadService) ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {

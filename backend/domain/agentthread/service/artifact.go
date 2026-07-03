@@ -106,6 +106,10 @@ type ClaimArtifactScanJobsRequest struct {
 	LeaseTTLMillis int64
 }
 
+type AggregateArtifactScanBacklogRequest struct {
+	Statuses []entity.ArtifactScanJobStatus
+}
+
 type CompleteArtifactScanJobRequest struct {
 	JobID          int64
 	WorkerID       string
@@ -172,6 +176,10 @@ type ArtifactService interface {
 		ctx context.Context,
 		req *ClaimArtifactScanJobsRequest,
 	) ([]*entity.ArtifactScanJob, error)
+	AggregateArtifactScanBacklog(
+		ctx context.Context,
+		req *AggregateArtifactScanBacklogRequest,
+	) ([]*entity.ArtifactScanBacklogAggregate, error)
 	CompleteArtifactScanJob(
 		ctx context.Context,
 		req *CompleteArtifactScanJobRequest,
@@ -620,6 +628,32 @@ func (s *artifactService) ClaimArtifactScanJobs(
 			LeaseExpiresAt: now + leaseTTL,
 		},
 	)
+}
+
+func (s *artifactService) AggregateArtifactScanBacklog(
+	ctx context.Context,
+	req *AggregateArtifactScanBacklogRequest,
+) ([]*entity.ArtifactScanBacklogAggregate, error) {
+	if s == nil || s.artifactRepo == nil {
+		return nil, InvalidArgumentErrorf(
+			"artifact service is not configured",
+		)
+	}
+	statuses := defaultArtifactScanBacklogStatuses()
+	if req != nil && len(req.Statuses) > 0 {
+		statuses = append([]entity.ArtifactScanJobStatus(nil), req.Statuses...)
+	}
+
+	return s.artifactRepo.AggregateArtifactScanBacklog(ctx, repository.AggregateArtifactScanBacklogRequest{
+		Statuses: statuses,
+	})
+}
+
+func defaultArtifactScanBacklogStatuses() []entity.ArtifactScanJobStatus {
+	return []entity.ArtifactScanJobStatus{
+		entity.ArtifactScanJobStatusPending,
+		entity.ArtifactScanJobStatusProcessing,
+	}
 }
 
 func (s *artifactService) CompleteArtifactScanJob(

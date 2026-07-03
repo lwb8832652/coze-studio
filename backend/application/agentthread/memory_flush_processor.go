@@ -127,7 +127,7 @@ func (s *ApplicationService) ProcessMemoryFlushJobs(
 	}
 	resp := &ProcessMemoryFlushJobsResponse{Claimed: int32(len(jobs))}
 	for _, job := range jobs {
-		outcome, err := s.processMemoryFlushJob(
+		outcome, updatedJob, factMetrics, err := s.processMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -137,6 +137,10 @@ func (s *ApplicationService) ProcessMemoryFlushJobs(
 		if err != nil {
 			return nil, err
 		}
+		if metric := memoryFlushJobMetricSummary(job, updatedJob, outcome); metric != nil {
+			resp.JobMetrics = append(resp.JobMetrics, metric)
+		}
+		resp.FactMetrics = append(resp.FactMetrics, factMetrics...)
 		switch outcome {
 		case memoryFlushJobProcessSucceeded:
 			resp.Succeeded++
@@ -157,9 +161,9 @@ func (s *ApplicationService) processMemoryFlushJob(
 	workerID string,
 	maxAttempts int32,
 	retryBackoffMillis int64,
-) (memoryFlushJobProcessOutcome, error) {
+) (memoryFlushJobProcessOutcome, *domainentity.MemoryFlushJob, []*MemoryFactMetricsSummary, error) {
 	if job == nil {
-		return memoryFlushJobProcessSkipped, nil
+		return memoryFlushJobProcessSkipped, nil, nil, nil
 	}
 	snapshot, err := s.ThreadSVC.GetTranscriptSnapshot(
 		ctx,
@@ -168,7 +172,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 		},
 	)
 	if err != nil {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -176,9 +180,10 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 	if !memoryFlushSnapshotMatchesJob(snapshot, job) {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -186,11 +191,12 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 
 	currentMemory, err := s.memoryFlushCurrentMemoryState(ctx, job)
 	if err != nil {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -198,6 +204,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 
 	updates, err := extractMemoryUpdates(ctx, s.MemoryExtractor, MemoryExtractionRequest{
@@ -214,7 +221,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 		CurrentMemory:  currentMemory,
 	})
 	if err != nil {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -222,6 +229,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 	if updates == nil {
 		updates = &MemoryExtractionResult{}
@@ -229,7 +237,7 @@ func (s *ApplicationService) processMemoryFlushJob(
 
 	removed, removeSkipped, err := s.removeExtractedMemoryFacts(ctx, job, updates.FactsToRemove)
 	if err != nil {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -237,11 +245,12 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 
 	written, skipped, err := s.rememberExtractedMemoryFacts(ctx, job, snapshot, updates.Facts)
 	if err != nil {
-		return s.failClaimedMemoryFlushJob(
+		outcome, updated, err := s.failClaimedMemoryFlushJob(
 			ctx,
 			job,
 			workerID,
@@ -249,9 +258,10 @@ func (s *ApplicationService) processMemoryFlushJob(
 			maxAttempts,
 			retryBackoffMillis,
 		)
+		return outcome, updated, nil, err
 	}
 	now := time.Now().UnixMilli()
-	_, ok, err := s.ThreadSVC.CompleteMemoryFlushJob(
+	completed, ok, err := s.ThreadSVC.CompleteMemoryFlushJob(
 		ctx,
 		&domainservice.CompleteMemoryFlushJobRequest{
 			JobID:    job.ID,
@@ -260,10 +270,10 @@ func (s *ApplicationService) processMemoryFlushJob(
 		},
 	)
 	if err != nil {
-		return memoryFlushJobProcessSkipped, err
+		return memoryFlushJobProcessSkipped, nil, nil, err
 	}
 	if !ok {
-		return memoryFlushJobProcessSkipped, nil
+		return memoryFlushJobProcessSkipped, nil, nil, nil
 	}
 	s.emitMemoryFlushEvent(ctx, job, snapshot, memoryFlushCompletedEvent, map[string]any{
 		"status":               "succeeded",
@@ -272,7 +282,86 @@ func (s *ApplicationService) processMemoryFlushJob(
 		"facts_removed":        removed,
 		"facts_remove_skipped": removeSkipped,
 	})
-	return memoryFlushJobProcessSucceeded, nil
+	return memoryFlushJobProcessSucceeded, completed, memoryFactMetricSummaries(written, skipped, removed, removeSkipped), nil
+}
+
+func memoryFactMetricSummaries(
+	written int32,
+	skipped int32,
+	removed int32,
+	removeSkipped int32,
+) []*MemoryFactMetricsSummary {
+	metrics := make([]*MemoryFactMetricsSummary, 0, 3)
+	if written > 0 {
+		metrics = append(metrics, &MemoryFactMetricsSummary{
+			Operation: "upsert",
+			Result:    runtimeMetricResultSuccess,
+			Count:     int64(written),
+		})
+	}
+	if removed > 0 {
+		metrics = append(metrics, &MemoryFactMetricsSummary{
+			Operation: "remove",
+			Result:    runtimeMetricResultSuccess,
+			Count:     int64(removed),
+		})
+	}
+	totalSkipped := skipped + removeSkipped
+	if totalSkipped > 0 {
+		metrics = append(metrics, &MemoryFactMetricsSummary{
+			Operation: "skip",
+			Result:    "skipped",
+			Count:     int64(totalSkipped),
+		})
+	}
+	return metrics
+}
+
+func memoryFlushJobMetricSummary(
+	claimed *domainentity.MemoryFlushJob,
+	updated *domainentity.MemoryFlushJob,
+	outcome memoryFlushJobProcessOutcome,
+) *MemoryFlushJobMetricsSummary {
+	if claimed == nil {
+		return nil
+	}
+	result := "skipped"
+	errorCode := runtimeMetricErrorNone
+	observeLatency := false
+	switch outcome {
+	case memoryFlushJobProcessSucceeded:
+		result = runtimeMetricResultSuccess
+		observeLatency = true
+	case memoryFlushJobProcessRetried:
+		result = "retried"
+		errorCode = runtimeMetricErrorProcessFailed
+	case memoryFlushJobProcessFailed:
+		result = runtimeMetricResultFailed
+		errorCode = runtimeMetricErrorProcessFailed
+		observeLatency = true
+	default:
+		result = "skipped"
+	}
+
+	startedAt := claimed.StartedAt
+	endedAt := int64(0)
+	if updated != nil {
+		if updated.StartedAt > 0 {
+			startedAt = updated.StartedAt
+		}
+		endedAt = updated.EndedAt
+	}
+	if observeLatency && endedAt <= 0 {
+		observeLatency = false
+	}
+
+	return &MemoryFlushJobMetricsSummary{
+		Result:         result,
+		ErrorCode:      errorCode,
+		StartedAt:      startedAt,
+		EndedAt:        endedAt,
+		ObserveLatency: observeLatency,
+	}
 }
 
 func extractMemoryUpdates(
@@ -563,13 +652,13 @@ func (s *ApplicationService) failClaimedMemoryFlushJob(
 	errorText string,
 	maxAttempts int32,
 	retryBackoffMillis int64,
-) (memoryFlushJobProcessOutcome, error) {
+) (memoryFlushJobProcessOutcome, *domainentity.MemoryFlushJob, error) {
 	if job == nil {
-		return memoryFlushJobProcessSkipped, nil
+		return memoryFlushJobProcessSkipped, nil, nil
 	}
 	now := time.Now().UnixMilli()
 	if shouldRetryMemoryFlushJob(job, maxAttempts) {
-		_, ok, err := s.ThreadSVC.RetryMemoryFlushJob(
+		retried, ok, err := s.ThreadSVC.RetryMemoryFlushJob(
 			ctx,
 			&domainservice.RetryMemoryFlushJobRequest{
 				JobID:       job.ID,
@@ -580,14 +669,14 @@ func (s *ApplicationService) failClaimedMemoryFlushJob(
 			},
 		)
 		if err != nil {
-			return memoryFlushJobProcessSkipped, err
+			return memoryFlushJobProcessSkipped, nil, err
 		}
 		if !ok {
-			return memoryFlushJobProcessSkipped, nil
+			return memoryFlushJobProcessSkipped, nil, nil
 		}
-		return memoryFlushJobProcessRetried, nil
+		return memoryFlushJobProcessRetried, retried, nil
 	}
-	_, ok, err := s.ThreadSVC.FailMemoryFlushJob(
+	failed, ok, err := s.ThreadSVC.FailMemoryFlushJob(
 		ctx,
 		&domainservice.FailMemoryFlushJobRequest{
 			JobID:     job.ID,
@@ -597,16 +686,16 @@ func (s *ApplicationService) failClaimedMemoryFlushJob(
 		},
 	)
 	if err != nil {
-		return memoryFlushJobProcessSkipped, err
+		return memoryFlushJobProcessSkipped, nil, err
 	}
 	if !ok {
-		return memoryFlushJobProcessSkipped, nil
+		return memoryFlushJobProcessSkipped, nil, nil
 	}
 	s.emitMemoryFlushEvent(ctx, job, nil, memoryFlushFailedEvent, map[string]any{
 		"status": "failed",
 		"error":  errorText,
 	})
-	return memoryFlushJobProcessFailed, nil
+	return memoryFlushJobProcessFailed, failed, nil
 }
 
 func (s *ApplicationService) emitMemoryFlushEvent(

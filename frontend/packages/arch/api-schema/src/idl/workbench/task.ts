@@ -216,6 +216,19 @@ export interface TaskThreadGuardrailAuditEvent {
   rule_ids: string;
   created_at: number;
 }
+export interface TaskThreadMCPRuntimeAuditEvent {
+  event_id: string;
+  space_id: string;
+  thread_id: string;
+  run_id: string;
+  server_id: string;
+  runtime_tool_name: string;
+  event_type: string;
+  error_code: string;
+  elapsed_millis: number;
+  output_bytes: number;
+  created_at: number;
+}
 export interface TaskThreadArtifact {
   artifact_id: string;
   thread_id: string;
@@ -287,6 +300,7 @@ export interface CreateTaskThreadRequest {
   space_id: string;
   message: string;
   title?: string;
+  defer_start?: boolean;
   assistant_id?: string;
   command?: string;
   config?: string;
@@ -377,6 +391,12 @@ export interface ListTaskThreadMemoryAuditEventsRequest {
   page_size?: number;
 }
 export interface ListTaskThreadGuardrailAuditEventsRequest {
+  thread_id: string;
+  run_id?: string;
+  page?: number;
+  page_size?: number;
+}
+export interface ListTaskThreadMCPRuntimeAuditEventsRequest {
   thread_id: string;
   run_id?: string;
   page?: number;
@@ -613,6 +633,15 @@ export interface ListTaskThreadGuardrailAuditEventsResponse {
   code: number;
   msg: string;
 }
+export interface ListTaskThreadMCPRuntimeAuditEventsData {
+  events: TaskThreadMCPRuntimeAuditEvent[];
+  total: number;
+}
+export interface ListTaskThreadMCPRuntimeAuditEventsResponse {
+  data?: ListTaskThreadMCPRuntimeAuditEventsData;
+  code: number;
+  msg: string;
+}
 export interface ExportTaskThreadGuardrailAuditEventsData {
   schema: string;
   thread_id: string;
@@ -755,6 +784,7 @@ export const CreateTaskThread = /*#__PURE__*/ createAPI<
       'space_id',
       'message',
       'title',
+      'defer_start',
       'assistant_id',
       'command',
       'config',
@@ -1034,6 +1064,22 @@ export const ListTaskThreadGuardrailAuditEvents = /*#__PURE__*/ createAPI<
     query: ['run_id', 'page', 'page_size'],
   },
   resType: 'ListTaskThreadGuardrailAuditEventsResponse',
+  schemaRoot: 'api://schemas/idl_workbench_task',
+  service: 'workbenchTask',
+});
+export const ListTaskThreadMCPRuntimeAuditEvents = /*#__PURE__*/ createAPI<
+  ListTaskThreadMCPRuntimeAuditEventsRequest,
+  ListTaskThreadMCPRuntimeAuditEventsResponse
+>({
+  url: '/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events',
+  method: 'GET',
+  name: 'ListTaskThreadMCPRuntimeAuditEvents',
+  reqType: 'ListTaskThreadMCPRuntimeAuditEventsRequest',
+  reqMapping: {
+    path: ['thread_id'],
+    query: ['run_id', 'page', 'page_size'],
+  },
+  resType: 'ListTaskThreadMCPRuntimeAuditEventsResponse',
   schemaRoot: 'api://schemas/idl_workbench_task',
   service: 'workbenchTask',
 });

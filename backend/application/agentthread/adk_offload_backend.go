@@ -38,6 +38,7 @@ import (
 
 const (
 	adkOffloadVirtualPathPrefix = "/mnt/user-data/workspace/.coze/tool-results/runs"
+	adkUploadVirtualPathPrefix  = "/mnt/user-data/uploads/"
 	defaultADKMaxOffloadBytes   = 16 * 1024 * 1024
 	defaultADKReadBytes         = 64 * 1024
 	defaultADKMaxReadBytes      = 256 * 1024
@@ -485,10 +486,6 @@ func (b *ADKOffloadBackend) ReadRange(
 	if b == nil || b.run == nil {
 		return nil, fmt.Errorf("runtime offload backend is invalid")
 	}
-	parsed, err := parseADKOffloadVirtualPath(virtualPath)
-	if err != nil {
-		return nil, err
-	}
 	if offsetByte < 0 {
 		return nil, fmt.Errorf("runtime offload read offset is invalid")
 	}
@@ -498,12 +495,20 @@ func (b *ADKOffloadBackend) ReadRange(
 	if limitBytes < 0 || limitBytes > b.limits.MaxReadBytes {
 		return nil, fmt.Errorf("runtime offload read limit is invalid")
 	}
+	resolveRunID := b.run.RunID
+	if !strings.HasPrefix(virtualPath, adkUploadVirtualPathPrefix) {
+		parsed, err := parseADKOffloadVirtualPath(virtualPath)
+		if err != nil {
+			return nil, err
+		}
+		resolveRunID = parsed.RunID
+	}
 	file, err := b.registry.ResolveRuntimeFile(
 		ctx,
 		&ResolveRuntimeFileRequest{
 			SpaceID:     b.run.SpaceID,
 			ThreadID:    b.run.ThreadID,
-			RunID:       parsed.RunID,
+			RunID:       resolveRunID,
 			VirtualPath: virtualPath,
 		},
 	)

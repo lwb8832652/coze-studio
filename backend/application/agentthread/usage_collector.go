@@ -43,12 +43,27 @@ type UsageCollector interface {
 	Record(ctx context.Context, run *RunSummary, usage AgentTokenUsage) error
 }
 
+type ThreadUsageCollectorOptions struct {
+	MetricsCollector RuntimeMetricsCollector
+}
+
 type ThreadUsageCollector struct {
-	app *ApplicationService
+	app              *ApplicationService
+	metricsCollector RuntimeMetricsCollector
 }
 
 func NewThreadUsageCollector(app *ApplicationService) *ThreadUsageCollector {
-	return &ThreadUsageCollector{app: app}
+	return NewThreadUsageCollectorWithOptions(app, ThreadUsageCollectorOptions{})
+}
+
+func NewThreadUsageCollectorWithOptions(
+	app *ApplicationService,
+	opts ThreadUsageCollectorOptions,
+) *ThreadUsageCollector {
+	return &ThreadUsageCollector{
+		app:              app,
+		metricsCollector: opts.MetricsCollector,
+	}
 }
 
 func (c *ThreadUsageCollector) Record(ctx context.Context, run *RunSummary, usage AgentTokenUsage) error {
@@ -71,7 +86,7 @@ func (c *ThreadUsageCollector) Record(ctx context.Context, run *RunSummary, usag
 		stepName = usage.ToolName
 	}
 
-	_, err := c.app.RecordTokenUsage(ctx, &RecordTokenUsageRequest{
+	resp, err := c.app.RecordTokenUsage(ctx, &RecordTokenUsageRequest{
 		RunID:        run.RunID,
 		Source:       source,
 		StepID:       usage.StepID,
@@ -88,6 +103,27 @@ func (c *ThreadUsageCollector) Record(ctx context.Context, run *RunSummary, usag
 		RawUsage:     usage.RawUsage,
 		Metadata:     usage.Metadata,
 	})
+	if err != nil {
+		return err
+	}
+	recorded := recordTokenUsageResponseUsage(resp)
+	recordRuntimeTokenUsage(
+		ctx,
+		c.metricsCollector,
+		run,
+		recorded.Source,
+		recorded.ModelName,
+		recorded.InputTokens,
+		recorded.OutputTokens,
+	)
 
-	return err
+	return nil
+}
+
+func recordTokenUsageResponseUsage(resp *RecordTokenUsageResponse) TokenUsageSummary {
+	if resp == nil || resp.Usage == nil {
+		return TokenUsageSummary{}
+	}
+
+	return *resp.Usage
 }

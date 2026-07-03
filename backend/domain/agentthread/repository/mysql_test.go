@@ -368,6 +368,98 @@ func TestRuntimeFileRepositoryUpsertsByRunAndVirtualPath(t *testing.T) {
 	require.Equal(t, agentFileVirtualPathHash(first.VirtualPath), storedPO.VirtualPathHash)
 }
 
+func TestRuntimeFileRepositoryManagesThreadUploads(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&agentFilePO{}))
+
+	repo := NewRuntimeFileRepository(db).(*threadRepository)
+	first := &entity.AgentFile{
+		ID:               1,
+		SpaceID:          30,
+		UserID:           40,
+		ThreadID:         10,
+		RunID:            0,
+		FileName:         "first.md",
+		OriginalFileName: "first.md",
+		FileKind:         entity.AgentFileKindUpload,
+		VirtualPath:      "/mnt/user-data/uploads/first.md",
+		ObjectURI:        "agent-runtime/30/10/uploads/first.md",
+		ContentType:      "text/markdown; charset=utf-8",
+		SizeBytes:        10,
+		Digest:           strings.Repeat("a", 64),
+		Status:           entity.AgentFileStatusActive,
+		Metadata:         `{}`,
+		CreatedAt:        100,
+		UpdatedAt:        100,
+	}
+	second := *first
+	second.ID = 2
+	second.FileName = "second.md"
+	second.OriginalFileName = "second.md"
+	second.VirtualPath = "/mnt/user-data/uploads/second.md"
+	second.ObjectURI = "agent-runtime/30/10/uploads/second.md"
+	second.CreatedAt = 110
+	second.UpdatedAt = 110
+	require.NoError(t, repo.CreateRuntimeFile(context.Background(), first))
+	require.NoError(t, repo.CreateRuntimeFile(context.Background(), &second))
+
+	files, err := repo.ListThreadUploadFiles(
+		context.Background(),
+		ListThreadUploadFilesRequest{
+			SpaceID:  30,
+			UserID:   40,
+			ThreadID: 10,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+	require.Equal(t, "first.md", files[0].FileName)
+	require.Equal(t, "second.md", files[1].FileName)
+
+	deleted, ok, err := repo.MarkThreadUploadFileDeleted(
+		context.Background(),
+		MarkThreadUploadFileDeletedRequest{
+			SpaceID:   30,
+			UserID:    40,
+			ThreadID:  10,
+			FileName:  "first.md",
+			DeletedAt: 200,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, deleted)
+	require.Equal(t, entity.AgentFileStatusDeleted, deleted.Status)
+	require.Equal(t, int64(200), deleted.UpdatedAt)
+
+	files, err = repo.ListThreadUploadFiles(
+		context.Background(),
+		ListThreadUploadFilesRequest{
+			SpaceID:  30,
+			UserID:   40,
+			ThreadID: 10,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "second.md", files[0].FileName)
+
+	deleted, ok, err = repo.MarkThreadUploadFileDeleted(
+		context.Background(),
+		MarkThreadUploadFileDeletedRequest{
+			SpaceID:   30,
+			UserID:    40,
+			ThreadID:  10,
+			FileName:  "missing.md",
+			DeletedAt: 210,
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, deleted)
+}
+
 func TestArtifactRepositoryUpsertsByFileAndListsByThread(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1162,6 +1254,83 @@ func TestThreadRepositoryListRunsDefaultsToTopLevelAndCanListSubagents(t *testin
 	require.Equal(t, int64(2), children[0].ID)
 }
 
+func TestThreadRepositoryAggregateRunBacklogGroupsActiveStatusesByConfig(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	einoConfig := `{"runtime":"eino_adk"}`
+	legacyConfig := `{"runtime":"legacy"}`
+	runs := []*entity.Run{
+		newRepositoryTestRun(1, 10, entity.RunStatusPending, 100),
+		newRepositoryTestRun(2, 11, entity.RunStatusPending, 101),
+		newRepositoryTestRun(3, 12, entity.RunStatusQueued, 102),
+		newRepositoryTestRun(4, 13, entity.RunStatusRunning, 103),
+		newRepositoryTestRun(5, 14, entity.RunStatusInterrupted, 104),
+		newRepositoryTestRun(6, 15, entity.RunStatusSucceeded, 105),
+	}
+	runs[0].Config = einoConfig
+	runs[1].Config = einoConfig
+	runs[2].Config = einoConfig
+	runs[3].Config = legacyConfig
+	runs[4].Config = einoConfig
+	runs[5].Config = einoConfig
+	for _, run := range runs {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	got, err := repo.AggregateRunBacklog(context.Background(), AggregateRunBacklogRequest{
+		Statuses: []entity.RunStatus{
+			entity.RunStatusPending,
+			entity.RunStatusQueued,
+			entity.RunStatusRunning,
+			entity.RunStatusInterrupted,
+		},
+	})
+
+	require.NoError(t, err)
+	require.ElementsMatch(t, []*entity.RunBacklogAggregate{
+		{Status: entity.RunStatusPending, Config: einoConfig, Count: 2},
+		{Status: entity.RunStatusQueued, Config: einoConfig, Count: 1},
+		{Status: entity.RunStatusRunning, Config: legacyConfig, Count: 1},
+		{Status: entity.RunStatusInterrupted, Config: einoConfig, Count: 1},
+	}, got)
+}
+
+func TestArtifactRepositoryAggregateArtifactScanBacklogGroupsActiveStatusesByScanner(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&agentArtifactScanJobPO{}))
+
+	repo := NewArtifactRepository(db)
+	jobs := []*entity.ArtifactScanJob{
+		{ID: 101, ThreadID: 10, ArtifactID: 1001, Scanner: "clamav", IdempotencyKey: "scan-101", Status: entity.ArtifactScanJobStatusPending, CreatedAt: 100},
+		{ID: 102, ThreadID: 10, ArtifactID: 1002, Scanner: "clamav", IdempotencyKey: "scan-102", Status: entity.ArtifactScanJobStatusPending, CreatedAt: 101},
+		{ID: 103, ThreadID: 11, ArtifactID: 1003, Scanner: "clamav", IdempotencyKey: "scan-103", Status: entity.ArtifactScanJobStatusProcessing, CreatedAt: 102},
+		{ID: 104, ThreadID: 12, ArtifactID: 1004, Scanner: "http", IdempotencyKey: "scan-104", Status: entity.ArtifactScanJobStatusPending, CreatedAt: 103},
+		{ID: 105, ThreadID: 13, ArtifactID: 1005, Scanner: "clamav", IdempotencyKey: "scan-105", Status: entity.ArtifactScanJobStatusSucceeded, CreatedAt: 104},
+	}
+	for _, job := range jobs {
+		_, _, err := repo.CreateOrGetArtifactScanJob(context.Background(), job)
+		require.NoError(t, err)
+	}
+
+	got, err := repo.AggregateArtifactScanBacklog(context.Background(), AggregateArtifactScanBacklogRequest{
+		Statuses: []entity.ArtifactScanJobStatus{
+			entity.ArtifactScanJobStatusPending,
+			entity.ArtifactScanJobStatusProcessing,
+		},
+	})
+
+	require.NoError(t, err)
+	require.ElementsMatch(t, []*entity.ArtifactScanBacklogAggregate{
+		{Scanner: "clamav", Status: entity.ArtifactScanJobStatusPending, Count: 2},
+		{Scanner: "clamav", Status: entity.ArtifactScanJobStatusProcessing, Count: 1},
+		{Scanner: "http", Status: entity.ArtifactScanJobStatusPending, Count: 1},
+	}, got)
+}
+
 func TestThreadRepositoryCreateAndListRunEvents(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1948,6 +2117,39 @@ func TestThreadRepositoryClaimMemoryFlushJobsMarksDuePendingProcessing(t *testin
 	require.Equal(t, int64(200), claimed[0].StartedAt)
 	require.Equal(t, int32(3), claimed[1].AttemptCount)
 	require.Equal(t, "worker-a", claimed[1].WorkerID)
+}
+
+func TestThreadRepositoryAggregateMemoryFlushBacklogGroupsActiveStatuses(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&memoryFlushJobPO{}))
+
+	repo := NewThreadRepository(db)
+	jobs := []*entity.MemoryFlushJob{
+		{ID: 2151, ThreadID: 10, RunID: 20, SpaceID: 30, IdempotencyKey: "summary_input:" + strings.Repeat("a", 64), Status: entity.MemoryFlushJobStatusPending, CreatedAt: 100},
+		{ID: 2152, ThreadID: 11, RunID: 21, SpaceID: 30, IdempotencyKey: "summary_input:" + strings.Repeat("b", 64), Status: entity.MemoryFlushJobStatusPending, CreatedAt: 101},
+		{ID: 2153, ThreadID: 12, RunID: 22, SpaceID: 30, IdempotencyKey: "summary_input:" + strings.Repeat("c", 64), Status: entity.MemoryFlushJobStatusProcessing, CreatedAt: 102},
+		{ID: 2154, ThreadID: 13, RunID: 23, SpaceID: 30, IdempotencyKey: "summary_input:" + strings.Repeat("d", 64), Status: entity.MemoryFlushJobStatusSucceeded, CreatedAt: 103},
+		{ID: 2155, ThreadID: 14, RunID: 24, SpaceID: 30, IdempotencyKey: "summary_input:" + strings.Repeat("e", 64), Status: entity.MemoryFlushJobStatusFailed, CreatedAt: 104},
+	}
+	for _, job := range jobs {
+		_, created, err := repo.CreateOrGetMemoryFlushJob(context.Background(), job)
+		require.NoError(t, err)
+		require.True(t, created)
+	}
+
+	got, err := repo.AggregateMemoryFlushBacklog(context.Background(), AggregateMemoryFlushBacklogRequest{
+		Statuses: []entity.MemoryFlushJobStatus{
+			entity.MemoryFlushJobStatusPending,
+			entity.MemoryFlushJobStatusProcessing,
+		},
+	})
+
+	require.NoError(t, err)
+	require.ElementsMatch(t, []*entity.MemoryFlushBacklogAggregate{
+		{Status: entity.MemoryFlushJobStatusPending, Count: 2},
+		{Status: entity.MemoryFlushJobStatusProcessing, Count: 1},
+	}, got)
 }
 
 func TestThreadRepositoryFinishMemoryFlushJobUsesWorkerLease(t *testing.T) {

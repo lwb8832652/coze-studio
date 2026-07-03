@@ -101,6 +101,45 @@ func TestADKMCPRuntimeBootstrapConfigFromEnvParsesEinoStdio(t *testing.T) {
 	require.Equal(t, 8192, config.ExecutorMaxOutputBytes)
 }
 
+func TestADKMCPRuntimeBootstrapConfigFromEnvParsesRemoteEino(t *testing.T) {
+	clearADKMCPRuntimeBootstrapEnv(t)
+	t.Setenv(agentThreadMCPRuntimeEnabledEnv, "true")
+	t.Setenv(agentThreadMCPRemoteEinoEnabledEnv, "true")
+	t.Setenv(agentThreadMCPRemoteAllowedHostsEnv, "mcp.example.test,localhost:3030")
+	t.Setenv(agentThreadMCPRemoteAllowInsecureHTTPEnv, "true")
+	t.Setenv(agentThreadMCPRemoteMaxConfigBytesEnv, "8192")
+	t.Setenv(agentThreadMCPRemoteMaxHeadersEnv, "8")
+	t.Setenv(agentThreadMCPRemoteMaxHeaderBytesEnv, "2048")
+
+	config, err := ADKMCPRuntimeBootstrapConfigFromEnv()
+
+	require.NoError(t, err)
+	require.True(t, config.Enabled)
+	require.True(t, config.RemoteEinoEnabled)
+	require.Equal(
+		t,
+		[]string{"mcp.example.test", "localhost:3030"},
+		config.RemoteAllowedHosts,
+	)
+	require.True(t, config.RemoteAllowInsecureHTTP)
+	require.Equal(t, 8192, config.RemoteMaxConfigBytes)
+	require.Equal(t, 8, config.RemoteMaxHeaders)
+	require.Equal(t, 2048, config.RemoteMaxHeaderBytes)
+}
+
+func TestADKMCPRuntimeBootstrapConfigFromEnvRejectsIncompleteRemote(
+	t *testing.T,
+) {
+	clearADKMCPRuntimeBootstrapEnv(t)
+	t.Setenv(agentThreadMCPRuntimeEnabledEnv, "true")
+	t.Setenv(agentThreadMCPRemoteEinoEnabledEnv, "true")
+
+	_, err := ADKMCPRuntimeBootstrapConfigFromEnv()
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), agentThreadMCPRemoteAllowedHostsEnv)
+}
+
 func TestADKMCPRuntimeBootstrapConfigFromEnvRejectsMultipleStdioModes(
 	t *testing.T,
 ) {
@@ -378,6 +417,36 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigBuildsEinoStdio(
 	require.NotNil(t, executor)
 }
 
+func TestNewADKMCPRuntimeToolExecutorFromConfigBuildsRemoteHTTP(
+	t *testing.T,
+) {
+	executor := NewADKMCPRuntimeToolExecutorFromConfig(
+		ADKMCPRuntimeBootstrapDependencies{
+			Resolver: &recordingADKMCPRuntimeServerResolver{},
+			Config: ADKMCPRuntimeBootstrapConfig{
+				Enabled:                 true,
+				RemoteEinoEnabled:       true,
+				RemoteAllowedHosts:      []string{"mcp.example.test"},
+				RemoteMaxConfigBytes:    8192,
+				RemoteMaxHeaders:        8,
+				RemoteMaxHeaderBytes:    2048,
+				ExecutorTimeout:         50 * time.Millisecond,
+				ExecutorMaxOutputBytes:  4096,
+				StdioLeaseTTLMillis:     120000,
+				StdioMaxArgBytes:        128,
+				StdioMaxEnvValueBytes:   128,
+				StdioDryRunOutputBytes:  4096,
+				StdioMaxConfigBytes:     4096,
+				StdioMaxArgs:            4,
+				StdioMaxEnvVars:         4,
+				RemoteAllowInsecureHTTP: false,
+			},
+		},
+	)
+
+	require.NotNil(t, executor)
+}
+
 func clearADKMCPRuntimeBootstrapEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
@@ -397,6 +466,12 @@ func clearADKMCPRuntimeBootstrapEnv(t *testing.T) {
 		agentThreadMCPStdioLeaseTTLMsEnv,
 		agentThreadMCPStdioMaxConfigBytesEnv,
 		agentThreadMCPStdioDryRunOutputBytesEnv,
+		agentThreadMCPRemoteEinoEnabledEnv,
+		agentThreadMCPRemoteAllowedHostsEnv,
+		agentThreadMCPRemoteAllowInsecureHTTPEnv,
+		agentThreadMCPRemoteMaxConfigBytesEnv,
+		agentThreadMCPRemoteMaxHeadersEnv,
+		agentThreadMCPRemoteMaxHeaderBytesEnv,
 	} {
 		t.Setenv(key, "")
 	}

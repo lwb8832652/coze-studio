@@ -99,6 +99,15 @@ export interface WorkbenchLLMModel {
   endpoint_name?: string;
 }
 
+export interface WorkbenchUploadedFile {
+  file_id?: string;
+  file_name: string;
+  virtual_path: string;
+  content_type?: string;
+  size_bytes?: number;
+  created_at?: number;
+}
+
 export interface WorkbenchComposerSubmitPayload
   extends Omit<
     WorkbenchResourceSelection,
@@ -111,6 +120,7 @@ export interface WorkbenchComposerSubmitPayload
   modelType?: number;
   modelName?: string;
   runtimeSettings: WorkbenchRuntimeSettings;
+  files?: File[];
 }
 
 export interface CreateWorkbenchSubmitPayloadInput {
@@ -121,6 +131,7 @@ export interface CreateWorkbenchSubmitPayloadInput {
   models: WorkbenchLLMModel[];
   resourceSelection: WorkbenchResourceSelection;
   runtimeSettings: WorkbenchRuntimeSettings;
+  files?: File[];
 }
 
 export const DEFAULT_WORKBENCH_MODE: WorkbenchMode = 'pro';
@@ -295,6 +306,7 @@ export const createWorkbenchSubmitPayload = ({
   models,
   resourceSelection,
   runtimeSettings,
+  files,
 }: CreateWorkbenchSubmitPayloadInput): WorkbenchComposerSubmitPayload => {
   const modelType = selectedModel
     ? workbenchModelTypeToNumber(selectedModel)
@@ -336,6 +348,7 @@ export const createWorkbenchSubmitPayload = ({
     modelType,
     modelName: selectedModel?.model_name || selectedModel?.name,
     runtimeSettings: nextRuntimeSettings,
+    files,
     enable_skills: enableSkills,
     enable_mcp: nextRuntimeSettings.mcp_tools.enabled
       ? [...resourceSelection.enable_mcp]

@@ -188,19 +188,21 @@ const TaskMermaidBlock = ({ source }: { source: string }) => {
       data-status={status}
       data-testid="task-mermaid-diagram"
     >
-      {status === 'ready' ? (
+      {status === 'ready' || status === 'error' ? (
         <div
           className="coze-prototype-mermaid-actions"
           aria-label="Mermaid 图表操作"
         >
-          <button
-            type="button"
-            className="coze-prototype-mermaid-action"
-            aria-label="下载 Mermaid SVG"
-            onClick={handleDownloadSVG}
-          >
-            <IconCozDownload className="text-[14px]" />
-          </button>
+          {status === 'ready' ? (
+            <button
+              type="button"
+              className="coze-prototype-mermaid-action"
+              aria-label="下载 Mermaid SVG"
+              onClick={handleDownloadSVG}
+            >
+              <IconCozDownload className="text-[14px]" />
+            </button>
+          ) : null}
           <button
             type="button"
             className="coze-prototype-mermaid-action"

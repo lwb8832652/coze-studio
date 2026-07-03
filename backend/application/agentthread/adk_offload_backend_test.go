@@ -188,6 +188,48 @@ func TestADKOffloadBackendWritesRegistersAndReadsHistoricalRun(t *testing.T) {
 	require.Equal(t, int64(len("first\nsecond\nthird")), chunk.TotalBytes)
 }
 
+func TestADKOffloadBackendReadsUploadedThreadFile(t *testing.T) {
+	objectStorage := newRecordingADKOffloadStorage()
+	objectStorage.objects["agent-runtime/30/10/uploads/report.md"] = []byte(
+		"# report\nhello upload",
+	)
+	registry := &recordingADKRuntimeFileRegistry{
+		resolved: map[string]*RuntimeFileSummary{
+			"/mnt/user-data/uploads/report.md": {
+				FileID:    90,
+				ObjectURI: "agent-runtime/30/10/uploads/report.md",
+			},
+		},
+	}
+	backend, err := NewADKOffloadBackend(
+		&RunSummary{
+			RunID:     20,
+			ThreadID:  10,
+			SpaceID:   30,
+			CreatorID: 40,
+		},
+		objectStorage,
+		registry,
+		&recordingRunEventSink{},
+		ADKOffloadLimits{},
+	)
+	require.NoError(t, err)
+
+	chunk, err := backend.ReadRange(
+		context.Background(),
+		"/mnt/user-data/uploads/report.md",
+		0,
+		8,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "# report", chunk.Content)
+	require.Equal(t, int64(8), chunk.NextOffsetByte)
+	require.Equal(t, int64(len("# report\nhello upload")), chunk.TotalBytes)
+	require.Equal(t, int64(20), registry.resolveReq.RunID)
+	require.Equal(t, "/mnt/user-data/uploads/report.md", registry.resolveReq.VirtualPath)
+}
+
 func TestADKOffloadBackendRejectsCrossRunWriteAndLimits(t *testing.T) {
 	objectStorage := newRecordingADKOffloadStorage()
 	registry := &recordingADKRuntimeFileRegistry{}
@@ -575,9 +617,11 @@ func (s *recordingADKOffloadStorage) DeleteObject(
 }
 
 type recordingADKRuntimeFileRegistry struct {
-	mu    sync.Mutex
-	calls []*RegisterRuntimeFileRequest
-	err   error
+	mu         sync.Mutex
+	calls      []*RegisterRuntimeFileRequest
+	resolved   map[string]*RuntimeFileSummary
+	resolveReq *ResolveRuntimeFileRequest
+	err        error
 }
 
 func (r *recordingADKRuntimeFileRegistry) RegisterRuntimeFile(
@@ -600,8 +644,16 @@ func (r *recordingADKRuntimeFileRegistry) ResolveRuntimeFile(
 ) (*RuntimeFileSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	clonedReq := *req
+	r.resolveReq = &clonedReq
 	if r.err != nil {
 		return nil, r.err
+	}
+	if r.resolved != nil {
+		if file := r.resolved[req.VirtualPath]; file != nil {
+			cloned := *file
+			return &cloned, nil
+		}
 	}
 	for index, call := range r.calls {
 		if call.RunID == req.RunID && call.VirtualPath == req.VirtualPath {

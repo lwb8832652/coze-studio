@@ -36,18 +36,20 @@ const (
 )
 
 type ResumeRunProcessorOptions struct {
-	WorkerID  string
-	BatchSize int32
-	EventSink RunEventSink
-	Executor  ResumeRunExecutor
+	WorkerID         string
+	BatchSize        int32
+	EventSink        RunEventSink
+	Executor         ResumeRunExecutor
+	MetricsCollector RuntimeMetricsCollector
 }
 
 type ResumeRunProcessor struct {
-	app       *ApplicationService
-	executor  ResumeRunExecutor
-	eventSink RunEventSink
-	workerID  string
-	batchSize int32
+	app              *ApplicationService
+	executor         ResumeRunExecutor
+	eventSink        RunEventSink
+	metricsCollector RuntimeMetricsCollector
+	workerID         string
+	batchSize        int32
 }
 
 type ResumeRunProcessResult struct {
@@ -130,11 +132,12 @@ func NewResumeRunProcessor(app *ApplicationService, opts ResumeRunProcessorOptio
 	}
 
 	return &ResumeRunProcessor{
-		app:       app,
-		executor:  executor,
-		eventSink: eventSink,
-		workerID:  workerID,
-		batchSize: batchSize,
+		app:              app,
+		executor:         executor,
+		eventSink:        eventSink,
+		metricsCollector: opts.MetricsCollector,
+		workerID:         workerID,
+		batchSize:        batchSize,
 	}
 }
 
@@ -198,15 +201,15 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	resume, err := parseResumeRunPayload(run.Command)
 	p.emitResumeRunStarted(ctx, run, resume)
 	if err != nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunPayloadInvalidCode, err.Error())
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunPayloadInvalidCode, err.Error())
 	}
 
 	checkpointResp, err := p.app.GetCheckpoint(ctx, &GetCheckpointRequest{CheckpointID: resume.CheckpointID})
 	if err != nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
 	}
 	if checkpointResp == nil || checkpointResp.Checkpoint == nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, "checkpoint is missing")
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, "checkpoint is missing")
 	}
 
 	checkpoint := checkpointResp.Checkpoint
@@ -215,7 +218,7 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	}
 	resumeInput, err := loadResumeInput(run, resume, checkpoint)
 	if err != nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunCheckpointInvalidCode, err.Error())
 	}
 	p.emitResumeRunLoaded(ctx, run, resumeInput)
 
@@ -224,29 +227,38 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
 			p.emitResumeRunCanceled(ctx, run, resume)
+			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return resumeRunProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
-			if _, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
+			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
 				RunID:    run.RunID,
 				From:     RunStatusRunning,
 				WorkerID: p.workerID,
-			}); transitionErr != nil {
+			})
+			if transitionErr != nil {
 				return resumeRunProcessErrored, transitionErr
 			}
 			if !interrupted.EventPersisted {
 				p.emitResumeRunInterrupted(ctx, run, resume, interrupted)
 			}
+			p.recordRuntimeRunTerminal(
+				ctx,
+				run,
+				updateRunStatusResponseRun(transitionResp),
+				runtimeMetricResultInterrupted,
+				runtimeMetricErrorNone,
+			)
 
 			return resumeRunProcessInterrupted, nil
 		}
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunExecutorErrorCode, err.Error())
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunExecutorErrorCode, err.Error())
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunEmptyResultCode, "resume executor returned empty assistant message")
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunEmptyResultCode, "resume executor returned empty assistant message")
 	}
 
 	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
@@ -256,18 +268,26 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 		Content:  message,
 		Metadata: resultMetadata(result),
 	}); err != nil {
-		return resumeRunProcessFailed, p.failResumeRun(ctx, run, resume, resumeRunAppendMessageErrorCode, err.Error())
+		return p.finalizeFailedResumeRun(ctx, run, resume, resumeRunAppendMessageErrorCode, err.Error())
 	}
 
-	if _, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
 		RunID:    run.RunID,
 		From:     RunStatusRunning,
 		WorkerID: p.workerID,
-	}); err != nil {
+	})
+	if err != nil {
 		return resumeRunProcessErrored, err
 	}
 
 	p.emitResumeRunCompleted(ctx, run, resume)
+	p.recordRuntimeRunTerminal(
+		ctx,
+		run,
+		updateRunStatusResponseRun(completeResp),
+		runtimeMetricResultSuccess,
+		runtimeMetricErrorNone,
+	)
 
 	return resumeRunProcessSucceeded, nil
 }
@@ -871,10 +891,10 @@ func (p *ResumeRunProcessor) failResumeRun(
 	resume resumeRunPayload,
 	code string,
 	message string,
-) error {
+) (*RunSummary, error) {
 	p.emitResumeRunFailed(ctx, run, resume, code, message)
 
-	_, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
+	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
 		RunID:        run.RunID,
 		From:         RunStatusRunning,
 		WorkerID:     p.workerID,
@@ -882,7 +902,40 @@ func (p *ResumeRunProcessor) failResumeRun(
 		ErrorMessage: message,
 	})
 
-	return err
+	if err != nil {
+		return nil, err
+	}
+
+	return updateRunStatusResponseRun(resp), nil
+}
+
+func (p *ResumeRunProcessor) finalizeFailedResumeRun(
+	ctx context.Context,
+	run *RunSummary,
+	resume resumeRunPayload,
+	code string,
+	message string,
+) (resumeRunProcessOutcome, error) {
+	terminalRun, err := p.failResumeRun(ctx, run, resume, code, message)
+	if err != nil {
+		return resumeRunProcessFailed, err
+	}
+	p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultFailed, code)
+
+	return resumeRunProcessFailed, nil
+}
+
+func (p *ResumeRunProcessor) recordRuntimeRunTerminal(
+	ctx context.Context,
+	run *RunSummary,
+	terminalRun *RunSummary,
+	result string,
+	errorCode string,
+) {
+	if p == nil {
+		return
+	}
+	recordRuntimeRunTerminal(ctx, p.metricsCollector, run, terminalRun, "resume", result, errorCode)
 }
 
 func (p *ResumeRunProcessor) emitResumeRunStarted(ctx context.Context, run *RunSummary, resume resumeRunPayload) {

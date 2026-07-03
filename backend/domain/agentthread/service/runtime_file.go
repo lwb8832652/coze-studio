@@ -18,7 +18,6 @@ package service
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"path"
 	"regexp"
@@ -401,11 +400,8 @@ func (s *runtimeFileService) RegisterRuntimeFile(
 		)
 	}
 	digest := strings.TrimSpace(req.Digest)
-	decodedDigest, err := hex.DecodeString(digest)
-	if err != nil || len(decodedDigest) != 32 || strings.ToLower(digest) != digest {
-		return nil, false, InvalidArgumentErrorf(
-			"runtime file digest must be lowercase sha256",
-		)
+	if err := validateRuntimeFileDigest(digest); err != nil {
+		return nil, false, err
 	}
 	metadata := strings.TrimSpace(req.Metadata)
 	if metadata == "" {
@@ -479,6 +475,7 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 	var expectedFileName string
 	var expectedPhase string
 	var expectedOutputRelativePath string
+	expectedRunID := req.RunID
 	if strings.HasPrefix(virtualPath, RuntimeOutputVirtualPathPrefix) {
 		parsedPath, err := parseRuntimeOutputVirtualPath(virtualPath)
 		if err != nil {
@@ -487,6 +484,14 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 		expectedKind = entity.AgentFileKindOutput
 		expectedFileName = parsedPath.FileName
 		expectedOutputRelativePath = parsedPath.RelativePath
+	} else if strings.HasPrefix(virtualPath, RuntimeUploadVirtualPathPrefix) {
+		parsedPath, err := parseRuntimeUploadVirtualPath(virtualPath)
+		if err != nil {
+			return nil, err
+		}
+		expectedKind = entity.AgentFileKindUpload
+		expectedFileName = parsedPath.FileName
+		expectedRunID = 0
 	} else {
 		parsedPath, err := parseRuntimeOffloadVirtualPath(virtualPath)
 		if err != nil || parsedPath.RunID != req.RunID {
@@ -499,14 +504,14 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 		expectedPhase = parsedPath.Phase
 	}
 
-	file, err := s.fileRepo.GetRuntimeFile(ctx, req.RunID, virtualPath)
+	file, err := s.fileRepo.GetRuntimeFile(ctx, expectedRunID, virtualPath)
 	if err != nil {
 		return nil, err
 	}
 	if file == nil ||
 		file.SpaceID != req.SpaceID ||
 		file.ThreadID != req.ThreadID ||
-		file.RunID != req.RunID ||
+		file.RunID != expectedRunID ||
 		file.FileKind != expectedKind ||
 		file.Status != entity.AgentFileStatusActive ||
 		file.VirtualPath != virtualPath ||
@@ -545,6 +550,18 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 				"runtime output object uri is invalid",
 			)
 		}
+	case entity.AgentFileKindUpload:
+		parsedObjectURI, err := parseRuntimeUploadObjectURI(
+			strings.TrimSpace(file.ObjectURI),
+		)
+		if err != nil ||
+			parsedObjectURI.SpaceID != req.SpaceID ||
+			parsedObjectURI.ThreadID != req.ThreadID ||
+			parsedObjectURI.FileName != expectedFileName {
+			return nil, InvalidArgumentErrorf(
+				"runtime upload object uri is invalid",
+			)
+		}
 	}
 	if file.SizeBytes <= 0 {
 		return nil, InvalidArgumentErrorf(
@@ -552,11 +569,8 @@ func (s *runtimeFileService) ResolveRuntimeFile(
 		)
 	}
 	digest := strings.TrimSpace(file.Digest)
-	decodedDigest, err := hex.DecodeString(digest)
-	if err != nil || len(decodedDigest) != 32 || strings.ToLower(digest) != digest {
-		return nil, InvalidArgumentErrorf(
-			"runtime offload digest must be lowercase sha256",
-		)
+	if err := validateRuntimeFileDigest(digest); err != nil {
+		return nil, err
 	}
 	metadata := strings.TrimSpace(file.Metadata)
 	if metadata != "" && !json.Valid([]byte(metadata)) {

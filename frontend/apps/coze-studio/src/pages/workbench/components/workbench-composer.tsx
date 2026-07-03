@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ChangeEvent,
   type Dispatch,
   type KeyboardEvent,
   type SetStateAction,
@@ -488,6 +489,7 @@ const createSubmitHandler = ({
   resourceSelection,
   runtimeSettings,
   selectedModel,
+  files,
   stopLoading,
   stopMode,
   taskId,
@@ -501,6 +503,7 @@ const createSubmitHandler = ({
   resourceSelection: ReturnType<typeof createDefaultWorkbenchResourceSelection>;
   runtimeSettings: ReturnType<typeof createDefaultWorkbenchRuntimeSettings>;
   selectedModel?: WorkbenchLLMModel;
+  files?: File[];
   stopLoading?: boolean;
   stopMode?: boolean;
   taskId?: string;
@@ -528,6 +531,7 @@ const createSubmitHandler = ({
       models,
       resourceSelection,
       runtimeSettings,
+      files,
     }),
   );
 };
@@ -633,7 +637,9 @@ export const WorkbenchComposer = ({
   const [atMenuAnchorPosition, setAtMenuAnchorPosition] =
     useState<CSSProperties>();
   const [atSegments, setAtSegments] = useState<WorkbenchAtSegment[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
   const composerRef = useRef<HTMLElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [resourceSelection, setResourceSelection] = useState(
     () =>
       readStoredExtensionUsage(spaceId)?.resourceSelection ??
@@ -869,6 +875,7 @@ export const WorkbenchComposer = ({
 
   const handleSubmit = () => {
     createSubmitHandler({
+      files,
       loading,
       mode,
       models,
@@ -882,6 +889,22 @@ export const WorkbenchComposer = ({
       taskId,
       value: composerMessage,
     });
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFiles = Array.from(event.target.files ?? []);
+    if (nextFiles.length > 0) {
+      setFiles(prevFiles => [...prevFiles, ...nextFiles].slice(0, 10));
+    }
+    event.target.value = '';
+  };
+
+  const handleFileRemove = (targetFile: File) => {
+    setFiles(prevFiles => prevFiles.filter(file => file !== targetFile));
   };
 
   return (
@@ -926,10 +949,20 @@ export const WorkbenchComposer = ({
           onAtDraftCancel={closeAtResourceSelection}
           onAtDraftQueryChange={handleAtDraftQueryChange}
           onAtSegmentRemove={handleAtSegmentRemove}
+          files={files}
+          onFileRemove={handleFileRemove}
           onTextareaBlur={() => setTextareaFocused(false)}
           onTextareaFocus={() => setTextareaFocused(true)}
         />
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="chat-workbench-file-input"
+          aria-label="选择附件"
+          onChange={handleFileInputChange}
+        />
         <WorkbenchComposerToolbar
           atMenuOpen={atMenuOpen}
           canSend={canSend}
@@ -953,6 +986,7 @@ export const WorkbenchComposer = ({
           onAtMenuOpenChange={open =>
             open ? startAtResourceSelection(value) : closeAtResourceSelection()
           }
+          onAttachClick={handleAttachClick}
           onExtensionsOpenChange={open =>
             setActiveOverlay(open ? 'extensions' : null)
           }

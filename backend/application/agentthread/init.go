@@ -38,6 +38,7 @@ func InitService(c *ServiceComponents) *ApplicationService {
 
 	repo := repository.NewThreadRepository(c.DB)
 	guardrailAuditRepo := repository.NewGuardrailAuditRepository(c.DB)
+	mcpRuntimeAuditRepo := repository.NewMCPRuntimeAuditRepository(c.DB)
 	SVC.ThreadSVC = domainservice.NewService(&domainservice.Components{
 		Repo:  repo,
 		IDGen: c.IDGen,
@@ -47,6 +48,13 @@ func InitService(c *ServiceComponents) *ApplicationService {
 			RunReader: repo,
 			FileRepo:  repository.NewRuntimeFileRepository(c.DB),
 			IDGen:     c.IDGen,
+		},
+	)
+	SVC.UploadFileSVC = domainservice.NewUploadFileService(
+		&domainservice.UploadFileComponents{
+			ThreadReader: repo,
+			FileRepo:     repository.NewThreadUploadFileRepository(c.DB),
+			IDGen:        c.IDGen,
 		},
 	)
 	SVC.PlanSVC = domainservice.NewPlanService(
@@ -68,6 +76,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	SVC.MemoryAuthorizer = NewThreadOwnerMemoryAuthorizer(SVC.ThreadSVC)
 	SVC.GuardrailAuditRepository = guardrailAuditRepo
 	SVC.GuardrailAuditAuthorizer = NewThreadOwnerGuardrailAuditAuthorizer(SVC.ThreadSVC)
+	SVC.MCPRuntimeAuditRepository = mcpRuntimeAuditRepo
+	SVC.MCPRuntimeAuditAuthorizer = NewThreadOwnerMCPRuntimeAuditAuthorizer(SVC.ThreadSVC)
 	SVC.ArtifactScanner, SVC.ArtifactScannerStatus = NewArtifactContentScannerFromEnvWithStatus()
 	SVC.ArtifactScanReadPolicy = NewArtifactScanReadPolicyConfigFromEnv()
 	SVC.MemoryExtractor = NewModelMemoryExtractorFromEnv(NewThreadUsageCollector(SVC))

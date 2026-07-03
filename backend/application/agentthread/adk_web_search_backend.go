@@ -110,20 +110,129 @@ func ADKWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {
 	}
 	switch provider {
 	case adkWebSearchProviderAuto:
-		return ADKAutoWebSearchBackendFromEnv()
+		backend, enabled, err := ADKAutoWebSearchBackendFromEnv()
+		return adkWebSearchBackendFromEnvWithMetrics(
+			provider,
+			backend,
+			enabled,
+			err,
+		)
 	case adkWebSearchProviderDuckDuckGo:
-		return ADKDuckDuckGoWebSearchBackendFromEnv()
+		backend, enabled, err := ADKDuckDuckGoWebSearchBackendFromEnv()
+		return adkWebSearchBackendFromEnvWithMetrics(
+			provider,
+			backend,
+			enabled,
+			err,
+		)
 	case adkWebSearchProviderBrave:
-		return ADKBraveWebSearchBackendFromEnv()
+		backend, enabled, err := ADKBraveWebSearchBackendFromEnv()
+		return adkWebSearchBackendFromEnvWithMetrics(
+			provider,
+			backend,
+			enabled,
+			err,
+		)
 	case adkWebSearchProviderWikipedia:
-		return ADKWikipediaWebSearchBackendFromEnv()
+		backend, enabled, err := ADKWikipediaWebSearchBackendFromEnv()
+		return adkWebSearchBackendFromEnvWithMetrics(
+			provider,
+			backend,
+			enabled,
+			err,
+		)
 	case adkWebSearchProviderHTTP:
-		return ADKHTTPWebSearchBackendFromEnv()
+		backend, enabled, err := ADKHTTPWebSearchBackendFromEnv()
+		return adkWebSearchBackendFromEnvWithMetrics(
+			provider,
+			backend,
+			enabled,
+			err,
+		)
 	case adkWebSearchProviderDisabled:
 		return nil, false, nil
 	default:
 		return nil, true, fmt.Errorf("unsupported web search provider: %s", provider)
 	}
+}
+
+func adkWebSearchBackendFromEnvWithMetrics(
+	provider string,
+	backend ADKWebSearchBackend,
+	enabled bool,
+	err error,
+) (ADKWebSearchBackend, bool, error) {
+	if err != nil || backend == nil {
+		return backend, enabled, err
+	}
+	collector := NewRuntimePrometheusMetricsCollectorFromEnv()
+	if collector == nil {
+		return backend, enabled, nil
+	}
+	return NewADKInstrumentedWebSearchBackend(backend, provider, collector), enabled, nil
+}
+
+type ADKInstrumentedWebSearchBackend struct {
+	backend   ADKWebSearchBackend
+	provider  string
+	collector RuntimeMetricsCollector
+}
+
+func NewADKInstrumentedWebSearchBackend(
+	backend ADKWebSearchBackend,
+	provider string,
+	collector RuntimeMetricsCollector,
+) ADKWebSearchBackend {
+	if backend == nil || collector == nil {
+		return backend
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = "unknown"
+	}
+	return &ADKInstrumentedWebSearchBackend{
+		backend:   backend,
+		provider:  provider,
+		collector: collector,
+	}
+}
+
+func (b *ADKInstrumentedWebSearchBackend) SearchADKWeb(
+	ctx context.Context,
+	request ADKWebSearchRequest,
+) (*ADKWebSearchResponse, error) {
+	if b == nil || b.backend == nil {
+		return nil, fmt.Errorf("web search backend is not configured")
+	}
+	startedAt := time.Now()
+	response, err := b.backend.SearchADKWeb(ctx, request)
+	result := runtimeMetricResultSuccess
+	errorCode := runtimeMetricErrorNone
+	resultCount := int64(0)
+	observeCount := true
+	if err != nil {
+		result = runtimeMetricResultFailed
+		errorCode = "search_failed"
+		observeCount = false
+	} else if response == nil {
+		result = runtimeMetricResultFailed
+		errorCode = "empty_response"
+		observeCount = false
+	} else {
+		resultCount = int64(len(response.Results))
+	}
+	if b.collector != nil {
+		b.collector.RecordRuntimeWebSearch(ctx, RuntimeWebSearchMetricsObservation{
+			Provider:     b.provider,
+			Result:       result,
+			ErrorCode:    errorCode,
+			LatencyMs:    time.Since(startedAt).Milliseconds(),
+			ResultCount:  resultCount,
+			ObserveCount: observeCount,
+		})
+	}
+
+	return response, err
 }
 
 func ADKAutoWebSearchBackendFromEnv() (ADKWebSearchBackend, bool, error) {

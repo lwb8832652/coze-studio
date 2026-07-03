@@ -20,6 +20,7 @@ import { SideSheet } from '@coze-arch/coze-design';
 
 import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
 import { TaskMemorySection } from './task-memory-section';
+import { TaskMCPRuntimeAuditSection } from './task-mcp-runtime-audit-section';
 import { TaskGuardrailAuditSection } from './task-guardrail-audit-section';
 
 export const TaskDetailInspector = ({
@@ -54,6 +55,7 @@ export const TaskDetailInspector = ({
           {artifactAction}
           <TaskRuntimeDoctorSection spaceId={spaceId} />
           <TaskGuardrailAuditSection threadId={threadId} />
+          <TaskMCPRuntimeAuditSection threadId={threadId} />
           <TaskMemorySection readOnly={memoryReadOnly} threadId={threadId} />
         </div>
       </SideSheet>

@@ -33,6 +33,7 @@ type ADKMCPRuntimeAuditRecord struct {
 	RunID           int64
 	ServerID        int64
 	RuntimeToolName string
+	Transport       string
 	EventType       string
 	ErrorCode       string
 	ElapsedMillis   int64
@@ -47,15 +48,17 @@ type ADKMCPRuntimeAuditRecorder interface {
 }
 
 type ApplicationADKMCPRuntimeAuditRecorderOptions struct {
-	Repository domainrepo.MCPRuntimeAuditRepository
-	IDGen      idgen.IDGenerator
-	NowMillis  func() int64
+	Repository       domainrepo.MCPRuntimeAuditRepository
+	IDGen            idgen.IDGenerator
+	MetricsCollector RuntimeMetricsCollector
+	NowMillis        func() int64
 }
 
 type ApplicationADKMCPRuntimeAuditRecorder struct {
-	repository domainrepo.MCPRuntimeAuditRepository
-	idGen      idgen.IDGenerator
-	nowMillis  func() int64
+	repository       domainrepo.MCPRuntimeAuditRepository
+	idGen            idgen.IDGenerator
+	metricsCollector RuntimeMetricsCollector
+	nowMillis        func() int64
 }
 
 func NewApplicationADKMCPRuntimeAuditRecorder(
@@ -67,9 +70,10 @@ func NewApplicationADKMCPRuntimeAuditRecorder(
 	}
 
 	return &ApplicationADKMCPRuntimeAuditRecorder{
-		repository: options.Repository,
-		idGen:      options.IDGen,
-		nowMillis:  nowMillis,
+		repository:       options.Repository,
+		idGen:            options.IDGen,
+		metricsCollector: options.MetricsCollector,
+		nowMillis:        nowMillis,
 	}
 }
 
@@ -103,6 +107,7 @@ func (r *ApplicationADKMCPRuntimeAuditRecorder) RecordADKMCPRuntimeAudit(
 	if err := r.repository.CreateMCPRuntimeAuditEvent(ctx, event); err != nil {
 		return errors.New("mcp runtime audit record failed")
 	}
+	recordRuntimeMCPInvocation(ctx, r.metricsCollector, record)
 
 	return nil
 }

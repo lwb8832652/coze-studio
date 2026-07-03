@@ -46,24 +46,27 @@ var ErrArtifactSignedURLNotSupported = errors.New(
 )
 
 type ApplicationService struct {
-	ThreadSVC                domainservice.ThreadService
-	RuntimeFileSVC           domainservice.RuntimeFileService
-	PlanSVC                  domainservice.PlanService
-	ArtifactSVC              domainservice.ArtifactService
-	ADKCancelRegistry        *ADKCancelRegistry
-	RuntimePolicy            *RuntimePolicy
-	ArtifactObjectStorage    ArtifactObjectStorage
-	ArtifactAuthorizer       ArtifactAuthorizer
-	MemoryAuthorizer         MemoryAuthorizer
-	GuardrailAuditRepository domainrepo.GuardrailAuditRepository
-	GuardrailAuditAuthorizer GuardrailAuditAuthorizer
-	GuardrailProviderStatus  GuardrailProviderEnvStatus
-	ArtifactScanner          ArtifactContentScanner
-	ArtifactScannerStatus    ArtifactScannerEnvStatus
-	ArtifactScanReadPolicy   ArtifactScanReadPolicyConfig
-	ArtifactReviewClock      func() int64
-	ArtifactCleanupNowFunc   func() int64
-	MemoryExtractor          MemoryExtractor
+	ThreadSVC                 domainservice.ThreadService
+	RuntimeFileSVC            domainservice.RuntimeFileService
+	UploadFileSVC             domainservice.UploadFileService
+	PlanSVC                   domainservice.PlanService
+	ArtifactSVC               domainservice.ArtifactService
+	ADKCancelRegistry         *ADKCancelRegistry
+	RuntimePolicy             *RuntimePolicy
+	ArtifactObjectStorage     ArtifactObjectStorage
+	ArtifactAuthorizer        ArtifactAuthorizer
+	MemoryAuthorizer          MemoryAuthorizer
+	GuardrailAuditRepository  domainrepo.GuardrailAuditRepository
+	GuardrailAuditAuthorizer  GuardrailAuditAuthorizer
+	MCPRuntimeAuditRepository domainrepo.MCPRuntimeAuditRepository
+	MCPRuntimeAuditAuthorizer MCPRuntimeAuditAuthorizer
+	GuardrailProviderStatus   GuardrailProviderEnvStatus
+	ArtifactScanner           ArtifactContentScanner
+	ArtifactScannerStatus     ArtifactScannerEnvStatus
+	ArtifactScanReadPolicy    ArtifactScanReadPolicyConfig
+	ArtifactReviewClock       func() int64
+	ArtifactCleanupNowFunc    func() int64
+	MemoryExtractor           MemoryExtractor
 }
 
 type ArtifactObjectStorage interface {
@@ -181,6 +184,11 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}
 	if threadResp == nil || threadResp.Thread == nil {
 		return nil, fmt.Errorf("agent thread service returned empty thread")
+	}
+	if req.DeferStart {
+		return &CreateTaskThreadResponse{
+			Thread: threadResp.Thread,
+		}, nil
 	}
 
 	input, err := taskThreadRunInputFromMessage(message)
@@ -1195,6 +1203,54 @@ func (s *ApplicationService) ListGuardrailAuditEvents(
 	return resp, nil
 }
 
+func (s *ApplicationService) ListMCPRuntimeAuditEvents(
+	ctx context.Context,
+	req *ListMCPRuntimeAuditEventsRequest,
+) (*ListMCPRuntimeAuditEventsResponse, error) {
+	if err := s.requireMCPRuntimeAuditRepository(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list mcp runtime audit events request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, fmt.Errorf("thread id is required")
+	}
+	if req.RunID < 0 {
+		return nil, fmt.Errorf("run id is invalid")
+	}
+	if err := s.authorizeMCPRuntimeAuditAccess(ctx, MCPRuntimeAuditAccessRequest{
+		ThreadID:  req.ThreadID,
+		RunID:     req.RunID,
+		ViewerID:  req.ViewerID,
+		Operation: MCPRuntimeAuditAccessOperationList,
+	}); err != nil {
+		return nil, err
+	}
+
+	limit, offset := normalizeGuardrailAuditPage(req.Page, req.PageSize)
+	events, total, err := s.MCPRuntimeAuditRepository.ListMCPRuntimeAuditEvents(
+		ctx,
+		domainrepo.ListMCPRuntimeAuditEventsRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Limit:    limit,
+			Offset:   offset,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListMCPRuntimeAuditEventsResponse{
+		Events: make([]*MCPRuntimeAuditEventSummary, 0, len(events)),
+		Total:  total,
+	}
+	for _, event := range events {
+		resp.Events = append(resp.Events, DomainMCPRuntimeAuditEventToSummary(event))
+	}
+	return resp, nil
+}
+
 func (s *ApplicationService) ExportGuardrailAuditEvents(
 	ctx context.Context,
 	req *ExportGuardrailAuditEventsRequest,
@@ -1872,7 +1928,7 @@ func (s *ApplicationService) ProcessArtifactScanJobs(
 	}
 	resp := &ProcessArtifactScanJobsResponse{Claimed: int32(len(jobs))}
 	for _, job := range jobs {
-		outcome, err := s.processArtifactScanJob(
+		outcome, updatedJob, contentFamily, err := s.processArtifactScanJob(
 			ctx,
 			job,
 			workerID,
@@ -1882,6 +1938,9 @@ func (s *ApplicationService) ProcessArtifactScanJobs(
 		)
 		if err != nil {
 			return nil, err
+		}
+		if metric := artifactScanJobMetricSummary(job, updatedJob, contentFamily, scannerName, outcome); metric != nil {
+			resp.JobMetrics = append(resp.JobMetrics, metric)
 		}
 		switch outcome {
 		case artifactScanJobProcessSucceeded:
@@ -2080,9 +2139,9 @@ func (s *ApplicationService) processArtifactScanJob(
 	defaultScanner string,
 	maxAttempts int32,
 	retryBackoffMillis int64,
-) (artifactScanJobProcessOutcome, error) {
+) (artifactScanJobProcessOutcome, *domainentity.ArtifactScanJob, string, error) {
 	if job == nil {
-		return artifactScanJobProcessSkipped, nil
+		return artifactScanJobProcessSkipped, nil, "", nil
 	}
 	artifact, err := s.ArtifactSVC.GetArtifact(
 		ctx,
@@ -2092,8 +2151,9 @@ func (s *ApplicationService) processArtifactScanJob(
 		},
 	)
 	if err != nil {
-		return artifactScanJobProcessSkipped, err
+		return artifactScanJobProcessSkipped, nil, "", err
 	}
+	contentFamily := artifactScanContentFamily(artifact)
 	if artifact == nil {
 		return s.failClaimedArtifactScanJob(
 			ctx,
@@ -2102,6 +2162,7 @@ func (s *ApplicationService) processArtifactScanJob(
 			"artifact scan artifact missing",
 			maxAttempts,
 			retryBackoffMillis,
+			contentFamily,
 		)
 	}
 	objectURI := strings.TrimSpace(artifact.ObjectURI)
@@ -2113,6 +2174,7 @@ func (s *ApplicationService) processArtifactScanJob(
 			"artifact scan object missing",
 			maxAttempts,
 			retryBackoffMillis,
+			contentFamily,
 		)
 	}
 	content, err := s.ArtifactObjectStorage.GetObject(ctx, objectURI)
@@ -2124,6 +2186,7 @@ func (s *ApplicationService) processArtifactScanJob(
 			"artifact scan storage read failed",
 			maxAttempts,
 			retryBackoffMillis,
+			contentFamily,
 		)
 	}
 	scannerName := strings.TrimSpace(job.Scanner)
@@ -2153,6 +2216,7 @@ func (s *ApplicationService) processArtifactScanJob(
 			"artifact scan failed",
 			maxAttempts,
 			retryBackoffMillis,
+			contentFamily,
 		)
 	}
 	if result == nil || strings.TrimSpace(result.ScanStatus) == "" {
@@ -2163,11 +2227,12 @@ func (s *ApplicationService) processArtifactScanJob(
 			"artifact scan result invalid",
 			maxAttempts,
 			retryBackoffMillis,
+			contentFamily,
 		)
 	}
 	scannedAt := time.Now().UnixMilli()
 
-	_, ok, err := s.ArtifactSVC.CompleteArtifactScanJob(
+	completed, ok, err := s.ArtifactSVC.CompleteArtifactScanJob(
 		ctx,
 		&domainservice.CompleteArtifactScanJobRequest{
 			JobID:          job.ID,
@@ -2179,18 +2244,18 @@ func (s *ApplicationService) processArtifactScanJob(
 		},
 	)
 	if err != nil {
-		return artifactScanJobProcessSkipped, err
+		return artifactScanJobProcessSkipped, nil, contentFamily, err
 	}
 	if !ok {
-		return artifactScanJobProcessSkipped, nil
+		return artifactScanJobProcessSkipped, nil, contentFamily, nil
 	}
 	if err := s.auditArtifactScanCompleted(
 		ctx,
 		artifactScanAuditArtifact(artifact, result, scannerName, scannedAt),
 	); err != nil {
-		return artifactScanJobProcessSkipped, err
+		return artifactScanJobProcessSkipped, nil, contentFamily, err
 	}
-	return artifactScanJobProcessSucceeded, nil
+	return artifactScanJobProcessSucceeded, completed, contentFamily, nil
 }
 
 func (s *ApplicationService) failClaimedArtifactScanJob(
@@ -2200,13 +2265,14 @@ func (s *ApplicationService) failClaimedArtifactScanJob(
 	errorText string,
 	maxAttempts int32,
 	retryBackoffMillis int64,
-) (artifactScanJobProcessOutcome, error) {
+	contentFamily string,
+) (artifactScanJobProcessOutcome, *domainentity.ArtifactScanJob, string, error) {
 	if job == nil {
-		return artifactScanJobProcessSkipped, nil
+		return artifactScanJobProcessSkipped, nil, "", nil
 	}
 	if shouldRetryArtifactScanJob(job, maxAttempts) {
 		now := time.Now().UnixMilli()
-		_, ok, err := s.ArtifactSVC.RetryArtifactScanJob(
+		retried, ok, err := s.ArtifactSVC.RetryArtifactScanJob(
 			ctx,
 			&domainservice.RetryArtifactScanJobRequest{
 				JobID:       job.ID,
@@ -2217,14 +2283,14 @@ func (s *ApplicationService) failClaimedArtifactScanJob(
 			},
 		)
 		if err != nil {
-			return artifactScanJobProcessSkipped, err
+			return artifactScanJobProcessSkipped, nil, contentFamily, err
 		}
 		if !ok {
-			return artifactScanJobProcessSkipped, nil
+			return artifactScanJobProcessSkipped, nil, contentFamily, nil
 		}
-		return artifactScanJobProcessRetried, nil
+		return artifactScanJobProcessRetried, retried, contentFamily, nil
 	}
-	_, ok, err := s.ArtifactSVC.FailArtifactScanJob(
+	failed, ok, err := s.ArtifactSVC.FailArtifactScanJob(
 		ctx,
 		&domainservice.FailArtifactScanJobRequest{
 			JobID:     job.ID,
@@ -2234,12 +2300,101 @@ func (s *ApplicationService) failClaimedArtifactScanJob(
 		},
 	)
 	if err != nil {
-		return artifactScanJobProcessSkipped, err
+		return artifactScanJobProcessSkipped, nil, contentFamily, err
 	}
 	if !ok {
-		return artifactScanJobProcessSkipped, nil
+		return artifactScanJobProcessSkipped, nil, contentFamily, nil
 	}
-	return artifactScanJobProcessFailed, nil
+	return artifactScanJobProcessFailed, failed, contentFamily, nil
+}
+
+func artifactScanJobMetricSummary(
+	claimed *domainentity.ArtifactScanJob,
+	updated *domainentity.ArtifactScanJob,
+	contentFamily string,
+	defaultScanner string,
+	outcome artifactScanJobProcessOutcome,
+) *ArtifactScanJobMetricsSummary {
+	if claimed == nil {
+		return nil
+	}
+	scanner := strings.TrimSpace(claimed.Scanner)
+	if scanner == "" {
+		scanner = strings.TrimSpace(defaultScanner)
+	}
+	result := "skipped"
+	errorCode := runtimeMetricErrorNone
+	observeLatency := false
+	switch outcome {
+	case artifactScanJobProcessSucceeded:
+		result = runtimeMetricResultSuccess
+		observeLatency = true
+	case artifactScanJobProcessRetried:
+		result = "retried"
+		errorCode = runtimeMetricErrorProcessFailed
+	case artifactScanJobProcessFailed:
+		result = runtimeMetricResultFailed
+		errorCode = runtimeMetricErrorProcessFailed
+		observeLatency = true
+	default:
+		result = "skipped"
+	}
+
+	startedAt := claimed.StartedAt
+	endedAt := int64(0)
+	if updated != nil {
+		if updated.Scanner != "" {
+			scanner = updated.Scanner
+		}
+		if updated.StartedAt > 0 {
+			startedAt = updated.StartedAt
+		}
+		endedAt = updated.EndedAt
+	}
+	if observeLatency && endedAt <= 0 {
+		observeLatency = false
+	}
+	observeQueueDelay := claimed.CreatedAt > 0 && startedAt > 0
+
+	return &ArtifactScanJobMetricsSummary{
+		Scanner:           scanner,
+		ContentFamily:     contentFamily,
+		Result:            result,
+		ErrorCode:         errorCode,
+		CreatedAt:         claimed.CreatedAt,
+		StartedAt:         startedAt,
+		EndedAt:           endedAt,
+		ObserveLatency:    observeLatency,
+		ObserveQueueDelay: observeQueueDelay,
+	}
+}
+
+func artifactScanContentFamily(artifact *domainentity.AgentArtifact) string {
+	if artifact == nil {
+		return "unknown"
+	}
+	contentType := strings.ToLower(strings.TrimSpace(artifact.ContentType))
+	if slash := strings.Index(contentType, "/"); slash > 0 {
+		contentType = contentType[:slash]
+	}
+	switch contentType {
+	case "text", "image", "audio", "video":
+		return contentType
+	case "application":
+		normalized := strings.ToLower(strings.TrimSpace(artifact.ContentType))
+		switch {
+		case strings.Contains(normalized, "json"):
+			return "json"
+		case strings.Contains(normalized, "pdf"):
+			return "pdf"
+		default:
+			return "binary"
+		}
+	case "":
+		return "unknown"
+	default:
+		return "binary"
+	}
 }
 
 func shouldRetryArtifactScanJob(
@@ -3066,6 +3221,14 @@ func (s *ApplicationService) requireArtifactSVC() error {
 func (s *ApplicationService) requireGuardrailAuditRepository() error {
 	if s == nil || s.GuardrailAuditRepository == nil {
 		return fmt.Errorf("guardrail audit repository is not initialized")
+	}
+
+	return nil
+}
+
+func (s *ApplicationService) requireMCPRuntimeAuditRepository() error {
+	if s == nil || s.MCPRuntimeAuditRepository == nil {
+		return fmt.Errorf("mcp runtime audit repository is not initialized")
 	}
 
 	return nil
