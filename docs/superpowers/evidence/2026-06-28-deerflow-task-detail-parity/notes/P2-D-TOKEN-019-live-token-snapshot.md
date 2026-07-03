@@ -72,14 +72,11 @@ cd frontend/apps/coze-studio
 npm run test -- src/pages/tasks/__tests__/task-detail-loader.test.ts
 ```
 
-This check did not run any tests because the suite is currently blocked during
-collection by the existing `lottie-web` canvas mock error:
-`TypeError: canvas.getContext is not a function`.
+## Closed Boundary
 
-## Residual Work
-
-- This is a persisted-usage snapshot, not provider-level token-by-token
-  increments. True provider live deltas require a separate model callback
-  contract if a supported provider exposes safe partial usage.
-- Mobile visual E2E remains intentionally out of scope per current product
-  decision.
+This slice intentionally stays at the same visible-product layer as the current
+DeerFlow task-detail token UI: aggregate and per-turn usage are rendered from
+safe usage metadata snapshots. It does not fabricate provider-level
+token-by-token deltas. If a provider later exposes safe partial usage callbacks,
+that can be added as a separate runtime contract without changing the Workbench
+UI data shape.
