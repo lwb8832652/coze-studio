@@ -60,3 +60,9 @@ values-dev.yaml
 
 *.tsbuildinfo
 .trae/*
+
+# Local Codex/debug artifacts
+.codex/config.toml
+crash.log
+opencoze
+opencoze.pid

@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { mergeJournalTaskEvents } from '../task-detail-loader';
+import { mergeJournalTaskEvents } from '../task-detail-journal-events';
 
 describe('mergeJournalTaskEvents', () => {
   it('prefers journal-backed message and tool steps while keeping non-message events', () => {
