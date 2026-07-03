@@ -18,6 +18,10 @@ import { useEffect, type Dispatch, type SetStateAction } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
+import {
+  parseTaskTokenUsageSnapshotEvent,
+  type TaskTokenUsageSnapshot,
+} from './task-detail-token-usage';
 import { mapTaskThreadRunEventToTaskEvent } from './task-detail-loader';
 import { getTaskThreadRunEventsStreamURL } from './service';
 
@@ -105,11 +109,16 @@ const getThreadTitleUpdate = (
 
 export const useTaskThreadRunEventStream = ({
   enabled,
+  onTokenUsageSnapshot,
   onThreadTitleUpdated,
   setEvents,
   threadId,
 }: {
   enabled: boolean;
+  onTokenUsageSnapshot?: (
+    snapshot: TaskTokenUsageSnapshot,
+    event: TaskThreadRunEvent,
+  ) => void;
   onThreadTitleUpdated?: (update: ThreadTitleUpdate) => void;
   setEvents: Dispatch<SetStateAction<TaskEvent[]>>;
   threadId?: string;
@@ -133,6 +142,12 @@ export const useTaskThreadRunEventStream = ({
         onThreadTitleUpdated?.(titleUpdate);
       }
 
+      const tokenUsageSnapshot = parseTaskTokenUsageSnapshotEvent(runEvent);
+      if (tokenUsageSnapshot) {
+        onTokenUsageSnapshot?.(tokenUsageSnapshot, runEvent);
+        return;
+      }
+
       setEvents(current =>
         mergeTaskEvents(current, [mapTaskThreadRunEventToTaskEvent(runEvent)]),
       );
@@ -149,5 +164,11 @@ export const useTaskThreadRunEventStream = ({
       eventSource.removeEventListener('done', handleDone);
       eventSource.close();
     };
-  }, [enabled, onThreadTitleUpdated, setEvents, threadId]);
+  }, [
+    enabled,
+    onThreadTitleUpdated,
+    onTokenUsageSnapshot,
+    setEvents,
+    threadId,
+  ]);
 };

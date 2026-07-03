@@ -25,18 +25,20 @@
 ## Decision
 
 Do not fabricate live token usage in the UI. Keep persisted/per-run token
-display as the production baseline and defer active streaming token evidence to
-P2-D observability/runtime event work.
+display as the production baseline.
+
+This gap is now closed by `P2-D-TOKEN-019`: Coze emits a safe
+`token_usage.snapshot` run event only after usage is persisted, then the UI
+merges that snapshot into the existing DeerFlow-style token display.
 
 ## Follow-Up Contract
 
-P2-D should add a bounded runtime event such as `token_usage.delta` or
-`token_usage.snapshot` with:
+P2-D added a bounded `token_usage.snapshot` runtime event with:
 
 - thread id and run id;
 - source category;
 - input/output/total deltas or current snapshot;
 - no raw provider body, prompt, completion, tool args/results, or credentials.
 
-The UI can then merge the active run usage with persisted usage and capture
-browser evidence while a run is still streaming.
+The UI merges the active run usage with persisted usage while keeping
+`token_usage.snapshot` out of the visible execution-step stream.

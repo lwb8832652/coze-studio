@@ -6501,6 +6501,150 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
+  it('merges streaming token usage snapshots without rendering them as execution steps', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-stream-1',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-stream-1',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: 'Token 流式统计任务',
+        status: 'running',
+        source: 'agent',
+        progress: 35,
+        last_user_message: '请统计模型用量',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'msg-token-stream-1',
+            thread_id: 'thread-token-stream-1',
+            run_id: 'run-token-stream-1',
+            role: 'user',
+            content: '请统计模型用量',
+            metadata: '',
+            created_at: 1717000100000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: 'event-step-token-stream-1',
+            thread_id: 'thread-token-stream-1',
+            run_id: 'run-token-stream-1',
+            event_type: 'step.started',
+            payload: JSON.stringify({
+              step_name: 'generate_answer',
+              step_index: 0,
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [],
+        total: 0,
+        aggregate: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          cost_micros: 0,
+          call_count: 0,
+          lead_agent_tokens: 0,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('button.coze-prototype-token-usage'),
+    ).toBeNull();
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    act(() => {
+      MockEventSource.instances[0].emit(
+        'run.event',
+        JSON.stringify({
+          event_id: 'event-token-snapshot-1',
+          thread_id: 'thread-token-stream-1',
+          run_id: 'run-token-stream-1',
+          event_type: 'token_usage.snapshot',
+          payload: JSON.stringify({
+            usage_id: 401,
+            source: 'lead_agent',
+            step_id: 'model-1',
+            step_name: 'generate_answer',
+            model_name: 'gpt-test',
+            provider: 'openai-compatible',
+            input_tokens: 12,
+            output_tokens: 8,
+            total_tokens: 20,
+            cost_micros: 123,
+            currency: 'USD',
+            estimated: false,
+          }),
+          created_at: 1717000300000,
+        }),
+      );
+    });
+
+    const tokenUsage = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(tokenUsage).toBeTruthy();
+    expectTextFragments(tokenUsage?.textContent, ['Tokens', '20']);
+    expect(tokenUsage?.getAttribute('title')).toBe(
+      '输入 12 · 输出 8 · 总计 20',
+    );
+    const executionFeedText =
+      container.querySelector('.coze-prototype-execution-feed')?.textContent ??
+      '';
+    expect(executionFeedText).toContain('开始执行 generate_answer');
+    expect(executionFeedText).not.toContain('token_usage.snapshot');
+    expect(executionFeedText).not.toContain('Token 流式统计');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('updates thread title from hidden title sync events without rendering them as steps', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

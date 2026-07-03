@@ -15,7 +15,7 @@
  */
 /* eslint-disable max-lines -- Task detail orchestration remains grouped during DeerFlow parity stabilization. */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
@@ -32,6 +32,11 @@ import {
   sendFollowUpMessage,
   type CanonicalThreadFollowUpResult,
 } from './task-follow-up';
+import {
+  mergeTaskTokenUsageSnapshot,
+  mergeTaskTokenUsageSnapshotByRunID,
+  type TaskTokenUsageSnapshot,
+} from './task-detail-token-usage';
 import {
   fetchTaskDetail,
   type LoadedTaskDetailSource,
@@ -316,6 +321,7 @@ export const useTaskDetailData = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pollingVersion, setPollingVersion] = useState(0);
+  const seenTokenUsageSnapshotIDs = useRef<Set<string>>(new Set());
   const { handleThreadTitleUpdated, setCurrentTask } = useTaskThreadTitleSync({
     setTask,
     spaceID,
@@ -340,6 +346,21 @@ export const useTaskDetailData = ({
       }
     },
     [setCurrentTask],
+  );
+  const handleTokenUsageSnapshot = useCallback(
+    (snapshot: TaskTokenUsageSnapshot) => {
+      const snapshotID =
+        snapshot.usageID || `${snapshot.runID}:${snapshot.createdAt}`;
+      if (seenTokenUsageSnapshotIDs.current.has(snapshotID)) {
+        return;
+      }
+      seenTokenUsageSnapshotIDs.current.add(snapshotID);
+      setTokenUsage(current => mergeTaskTokenUsageSnapshot(current, snapshot));
+      setTokenUsageByRunID(current =>
+        mergeTaskTokenUsageSnapshotByRunID(current, snapshot),
+      );
+    },
+    [],
   );
   const refreshArtifacts = useCallback(async () => {
     if (!loadedThreadId || loadedTaskDetailSource !== 'thread') {
@@ -376,10 +397,15 @@ export const useTaskDetailData = ({
 
   useTaskThreadRunEventStream({
     enabled: loadedTaskDetailSource === 'thread' && Boolean(loadedThreadId),
+    onTokenUsageSnapshot: handleTokenUsageSnapshot,
     onThreadTitleUpdated: handleThreadTitleUpdated,
     setEvents,
     threadId: loadedThreadId,
   });
+
+  useEffect(() => {
+    seenTokenUsageSnapshotIDs.current.clear();
+  }, [loadedThreadId]);
 
   return {
     applyTaskDetail,
