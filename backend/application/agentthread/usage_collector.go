@@ -45,11 +45,13 @@ type UsageCollector interface {
 
 type ThreadUsageCollectorOptions struct {
 	MetricsCollector RuntimeMetricsCollector
+	EventSink        RunEventSink
 }
 
 type ThreadUsageCollector struct {
 	app              *ApplicationService
 	metricsCollector RuntimeMetricsCollector
+	eventSink        RunEventSink
 }
 
 func NewThreadUsageCollector(app *ApplicationService) *ThreadUsageCollector {
@@ -63,6 +65,7 @@ func NewThreadUsageCollectorWithOptions(
 	return &ThreadUsageCollector{
 		app:              app,
 		metricsCollector: opts.MetricsCollector,
+		eventSink:        opts.EventSink,
 	}
 }
 
@@ -116,8 +119,51 @@ func (c *ThreadUsageCollector) Record(ctx context.Context, run *RunSummary, usag
 		recorded.InputTokens,
 		recorded.OutputTokens,
 	)
+	c.emitTokenUsageSnapshot(ctx, run, recorded)
 
 	return nil
+}
+
+func (c *ThreadUsageCollector) emitTokenUsageSnapshot(
+	ctx context.Context,
+	run *RunSummary,
+	usage TokenUsageSummary,
+) {
+	if c == nil || c.eventSink == nil || run == nil || usage.TotalTokens <= 0 {
+		return
+	}
+
+	threadID := usage.ThreadID
+	if threadID <= 0 {
+		threadID = run.ThreadID
+	}
+	runID := usage.RunID
+	if runID <= 0 {
+		runID = run.RunID
+	}
+
+	emitRunEvent(ctx, c.eventSink, RunEvent{
+		ThreadID:  threadID,
+		RunID:     runID,
+		EventType: "token_usage.snapshot",
+		Payload: encodeRunEventPayload(ctx, map[string]any{
+			"usage_id":      usage.UsageID,
+			"run_id":        runID,
+			"source":        string(usage.Source),
+			"step_id":       usage.StepID,
+			"step_index":    usage.StepIndex,
+			"step_name":     usage.StepName,
+			"model_name":    usage.ModelName,
+			"provider":      usage.Provider,
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"total_tokens":  usage.TotalTokens,
+			"cost_micros":   usage.CostMicros,
+			"currency":      usage.Currency,
+			"estimated":     usage.Estimated,
+			"created_at":    usage.CreatedAt,
+		}),
+	})
 }
 
 func recordTokenUsageResponseUsage(resp *RecordTokenUsageResponse) TokenUsageSummary {

@@ -171,12 +171,15 @@ func NewApplicationHarnessExecutor(app *ApplicationService, skillProviders ...Sk
 	if len(skillProviders) > 0 {
 		skillProvider = skillProviders[0]
 	}
+	eventSink := NewApplicationRunEventSink(app)
 
 	return NewHarnessExecutor(nil, nil, HarnessExecutorOptions{
-		EventSink:      NewApplicationRunEventSink(app),
+		EventSink:      eventSink,
 		MemoryProvider: NewThreadMemoryProvider(app, 8),
 		SkillProvider:  skillProvider,
-		UsageCollector: NewThreadUsageCollector(app),
+		UsageCollector: NewThreadUsageCollectorWithOptions(app, ThreadUsageCollectorOptions{
+			EventSink: eventSink,
+		}),
 		CheckpointSink: NewThreadCheckpointSink(app),
 	})
 }

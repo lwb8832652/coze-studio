@@ -19,6 +19,7 @@ import type { workbenchTask } from '@coze-studio/api-schema';
 type TaskThreadTokenUsageAggregate =
   workbenchTask.TaskThreadTokenUsageAggregate;
 type TaskThreadTokenUsage = workbenchTask.TaskThreadTokenUsage;
+type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
 export type TaskTokenUsageViewMode = 'off' | 'summary' | 'per_turn' | 'debug';
 
@@ -67,6 +68,178 @@ const emptyTaskDetailTokenUsage = (): TaskDetailTokenUsage => ({
 
 const getSafeTokenUsageAttributionPart = (value?: string): string =>
   (value ?? '').trim().slice(0, 80);
+
+const toSafeNumber = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+
+const toSafeString = (value: unknown, maxLength = 80): string =>
+  typeof value === 'string'
+    ? value.trim().slice(0, maxLength)
+    : typeof value === 'number' && Number.isFinite(value)
+      ? String(value).slice(0, maxLength)
+      : '';
+
+const parseTaskTokenUsageSnapshotPayload = (
+  payload?: string,
+): Record<string, unknown> | undefined => {
+  const trimmed = payload?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const taskTokenUsageSourceBuckets: Record<
+  string,
+  keyof Pick<
+    TaskDetailTokenUsage,
+    'leadAgentTokens' | 'subagentTokens' | 'middlewareTokens' | 'toolTokens'
+  >
+> = {
+  lead_agent: 'leadAgentTokens',
+  subagent: 'subagentTokens',
+  middleware: 'middlewareTokens',
+  tool: 'toolTokens',
+};
+
+export interface TaskTokenUsageSnapshot {
+  usageID: string;
+  runID: string;
+  source: string;
+  stepID: string;
+  stepName: string;
+  modelName: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costMicros: number;
+  currency: string;
+  estimated: boolean;
+  createdAt: number;
+}
+
+export const parseTaskTokenUsageSnapshotEvent = (
+  event: TaskThreadRunEvent,
+): TaskTokenUsageSnapshot | undefined => {
+  if (event.event_type !== 'token_usage.snapshot') {
+    return undefined;
+  }
+
+  const payload = parseTaskTokenUsageSnapshotPayload(event.payload);
+  if (!payload) {
+    return undefined;
+  }
+
+  const totalTokens = toSafeNumber(payload.total_tokens);
+  if (totalTokens <= 0) {
+    return undefined;
+  }
+
+  const runID = toSafeString(payload.run_id) || String(event.run_id ?? '');
+  if (!runID) {
+    return undefined;
+  }
+
+  return {
+    usageID:
+      toSafeString(payload.usage_id) ||
+      `${runID}:${toSafeString(event.event_id)}`,
+    runID,
+    source: toSafeString(payload.source) || 'lead_agent',
+    stepID: toSafeString(payload.step_id),
+    stepName: toSafeString(payload.step_name),
+    modelName: toSafeString(payload.model_name),
+    provider: toSafeString(payload.provider),
+    inputTokens: toSafeNumber(payload.input_tokens),
+    outputTokens: toSafeNumber(payload.output_tokens),
+    totalTokens,
+    costMicros: toSafeNumber(payload.cost_micros),
+    currency: toSafeString(payload.currency, 16).toUpperCase(),
+    estimated: payload.estimated === true,
+    createdAt: toSafeNumber(payload.created_at) || event.created_at,
+  };
+};
+
+const getSnapshotModelAttribution = (snapshot: TaskTokenUsageSnapshot) => {
+  const provider = getSafeTokenUsageAttributionPart(snapshot.provider);
+  const modelName = getSafeTokenUsageAttributionPart(snapshot.modelName);
+
+  if (provider && modelName) {
+    return `${provider} / ${modelName}`;
+  }
+
+  return provider || modelName;
+};
+
+const mergeTokenUsageCurrency = (
+  currentCurrency: string,
+  currentTotalTokens: number,
+  snapshot: TaskTokenUsageSnapshot,
+) => {
+  if (!snapshot.currency) {
+    return currentCurrency;
+  }
+  if (currentTotalTokens <= 0) {
+    return snapshot.currency;
+  }
+
+  return currentCurrency === snapshot.currency ? currentCurrency : '';
+};
+
+export const mergeTaskTokenUsageSnapshot = (
+  current: TaskDetailTokenUsage | undefined,
+  snapshot: TaskTokenUsageSnapshot,
+): TaskDetailTokenUsage => {
+  const merged = current
+    ? {
+        ...current,
+        modelAttributions: [...current.modelAttributions],
+      }
+    : emptyTaskDetailTokenUsage();
+  const bucket = taskTokenUsageSourceBuckets[snapshot.source];
+  const attribution = getSnapshotModelAttribution(snapshot);
+  const currentTotalTokens = merged.totalTokens;
+
+  merged.inputTokens += snapshot.inputTokens;
+  merged.outputTokens += snapshot.outputTokens;
+  merged.totalTokens += snapshot.totalTokens;
+  merged.costMicros += snapshot.costMicros;
+  merged.callCount += 1;
+  merged.currency = mergeTokenUsageCurrency(
+    merged.currency,
+    currentTotalTokens,
+    snapshot,
+  );
+  if (bucket) {
+    merged[bucket] += snapshot.totalTokens;
+  }
+  if (attribution && !merged.modelAttributions.includes(attribution)) {
+    merged.modelAttributions.push(attribution);
+  }
+
+  return merged;
+};
+
+export const mergeTaskTokenUsageSnapshotByRunID = (
+  current: Record<string, TaskDetailTokenUsage>,
+  snapshot: TaskTokenUsageSnapshot,
+): Record<string, TaskDetailTokenUsage> => ({
+  ...current,
+  [snapshot.runID]: mergeTaskTokenUsageSnapshot(
+    current[snapshot.runID],
+    snapshot,
+  ),
+});
 
 const getModelAttribution = (row: TaskThreadTokenUsage): string => {
   const provider = getSafeTokenUsageAttributionPart(row.provider);

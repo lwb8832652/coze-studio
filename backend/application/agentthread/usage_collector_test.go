@@ -18,6 +18,8 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -66,6 +68,94 @@ func TestThreadUsageCollectorRecordsApplicationUsage(t *testing.T) {
 	require.Equal(t, int64(12), domainSVC.recordTokenUsageReq.InputTokens)
 	require.Equal(t, int64(8), domainSVC.recordTokenUsageReq.OutputTokens)
 	require.Equal(t, `{"prompt_tokens":12,"completion_tokens":8}`, domainSVC.recordTokenUsageReq.RawUsage)
+}
+
+func TestThreadUsageCollectorEmitsSafeTokenUsageSnapshotRunEvent(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		recordedTokenUsage: &entity.TokenUsage{
+			ID:           401,
+			ThreadID:     10,
+			RunID:        20,
+			SpaceID:      30,
+			Source:       entity.TokenUsageSourceLeadAgent,
+			StepID:       "model-1",
+			StepName:     "generate_answer",
+			ModelName:    "gpt-test",
+			Provider:     "openai-compatible",
+			InputTokens:  12,
+			OutputTokens: 8,
+			TotalTokens:  20,
+			CostMicros:   123,
+			Currency:     "USD",
+			CreatedAt:    1717000200000,
+		},
+	}
+	var events []RunEvent
+	collector := NewThreadUsageCollectorWithOptions(
+		&ApplicationService{ThreadSVC: domainSVC},
+		ThreadUsageCollectorOptions{
+			EventSink: RunEventSinkFunc(func(_ context.Context, event RunEvent) error {
+				events = append(events, event)
+				return nil
+			}),
+		},
+	)
+
+	err := collector.Record(context.Background(), &RunSummary{
+		RunID:    20,
+		ThreadID: 10,
+		SpaceID:  30,
+	}, AgentTokenUsage{
+		Source:       TokenUsageSourceLeadAgent,
+		StepID:       "model-1",
+		StepName:     "generate_answer",
+		ModelName:    "gpt-test",
+		Provider:     "openai-compatible",
+		InputTokens:  12,
+		OutputTokens: 8,
+		TotalTokens:  20,
+		RawUsage:     `{"prompt_tokens":12,"completion_tokens":8,"api_key":"sk-secret"}`,
+		Metadata:     `{"hidden":"metadata"}`,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, int64(10), events[0].ThreadID)
+	require.Equal(t, int64(20), events[0].RunID)
+	require.Equal(t, "token_usage.snapshot", events[0].EventType)
+	require.NotContains(t, events[0].Payload, "raw_usage")
+	require.NotContains(t, events[0].Payload, "prompt_tokens")
+	require.NotContains(t, events[0].Payload, "completion_tokens")
+	require.NotContains(t, strings.ToLower(events[0].Payload), "secret")
+
+	var payload struct {
+		UsageID      int64  `json:"usage_id"`
+		RunID        int64  `json:"run_id"`
+		Source       string `json:"source"`
+		StepID       string `json:"step_id"`
+		StepName     string `json:"step_name"`
+		ModelName    string `json:"model_name"`
+		Provider     string `json:"provider"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
+		TotalTokens  int64  `json:"total_tokens"`
+		CostMicros   int64  `json:"cost_micros"`
+		Currency     string `json:"currency"`
+		Estimated    bool   `json:"estimated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(events[0].Payload), &payload))
+	require.Equal(t, int64(401), payload.UsageID)
+	require.Equal(t, int64(20), payload.RunID)
+	require.Equal(t, "lead_agent", payload.Source)
+	require.Equal(t, "model-1", payload.StepID)
+	require.Equal(t, "generate_answer", payload.StepName)
+	require.Equal(t, "gpt-test", payload.ModelName)
+	require.Equal(t, "openai-compatible", payload.Provider)
+	require.Equal(t, int64(12), payload.InputTokens)
+	require.Equal(t, int64(8), payload.OutputTokens)
+	require.Equal(t, int64(20), payload.TotalTokens)
+	require.Equal(t, int64(123), payload.CostMicros)
+	require.Equal(t, "USD", payload.Currency)
 }
 
 func TestADKUsageFailoverAndResumePersistEachProviderCallOnce(t *testing.T) {
