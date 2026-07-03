@@ -489,6 +489,7 @@ func Register(r *server.Hertz) {
 			_task_threads.DELETE("/:thread_id/uploads/:filename", coze.DeleteTaskThreadUploadFile)
 			_task_threads.GET("/:thread_id/messages", coze.ListTaskThreadMessages)
 			_task_threads.POST("/:thread_id/messages", coze.AppendTaskThreadMessage)
+			_task_threads.POST("/:thread_id/suggestions", coze.GenerateTaskThreadSuggestions)
 			_task_threads.GET("/:thread_id/runs", coze.ListTaskThreadRuns)
 			_task_threads.POST("/:thread_id/runs", coze.CreateTaskThreadRun)
 			_task_threads.POST("/:thread_id/runs/:run_id/resume", coze.ResumeTaskThreadRun)

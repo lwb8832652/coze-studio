@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable max-lines -- Task detail orchestration remains grouped during DeerFlow parity stabilization. */
 
 import { useCallback, useEffect, useState } from 'react';
 
@@ -46,6 +47,7 @@ type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
+type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 const RUN_TERMINAL_STATUSES = new Set([
@@ -228,6 +230,7 @@ const buildOptimisticFollowUpDetail = ({
   subagentRuns,
   task,
   threadId,
+  todos,
   tokenUsage,
   tokenUsageByRunID,
 }: {
@@ -239,6 +242,7 @@ const buildOptimisticFollowUpDetail = ({
   subagentRuns: TaskDetailSubagentRun[];
   task?: ChatTask;
   threadId: string;
+  todos: TaskThreadTodo[];
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
 }): TaskDetail | undefined => {
@@ -276,6 +280,7 @@ const buildOptimisticFollowUpDetail = ({
     latestTaskRunStatus: followUpResult.run?.status || 'running',
     messages: appendOptimisticMessage(messages, optimisticUserMessage),
     subagentRuns,
+    todos,
     tokenUsage,
     tokenUsageByRunID,
   };
@@ -293,10 +298,13 @@ export const useTaskDetailData = ({
   const [task, setTask] = useState<ChatTask | undefined>();
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [messages, setMessages] = useState<TaskThreadMessage[]>([]);
+  const [todos, setTodos] = useState<TaskThreadTodo[]>([]);
   const [artifacts, setArtifacts] = useState<
     workbenchTask.TaskThreadArtifact[]
   >([]);
   const [latestTaskRunID, setLatestTaskRunID] = useState('');
+  const [suggestionModelName, setSuggestionModelName] = useState('');
+  const [suggestionModelType, setSuggestionModelType] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
   const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
   const [tokenUsageByRunID, setTokenUsageByRunID] = useState<
@@ -319,8 +327,11 @@ export const useTaskDetailData = ({
       setCurrentTask(detail.task);
       setEvents(detail.events);
       setMessages(detail.messages ?? []);
+      setTodos(detail.todos ?? []);
       setArtifacts(detail.artifacts ?? []);
       setLatestTaskRunID(detail.latestTaskRunID ?? '');
+      setSuggestionModelName(detail.suggestionModelName ?? '');
+      setSuggestionModelType(detail.suggestionModelType ?? '');
       setSubagentRuns(detail.subagentRuns ?? []);
       setTokenUsage(detail.tokenUsage);
       setTokenUsageByRunID(detail.tokenUsageByRunID ?? {});
@@ -377,12 +388,15 @@ export const useTaskDetailData = ({
     events,
     messages,
     latestTaskRunID,
+    suggestionModelName,
+    suggestionModelType,
     loadedTaskDetailSource,
     loadedThreadId,
     loading,
     refreshArtifacts,
     subagentRuns,
     task,
+    todos,
     tokenUsage,
     tokenUsageByRunID,
   };
@@ -399,6 +413,7 @@ interface TaskDetailActionsOptions {
   task?: ChatTask;
   taskDetailId?: string;
   taskDetailSource: LoadedTaskDetailSource;
+  todos: TaskThreadTodo[];
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
 }
@@ -414,6 +429,7 @@ export const useTaskDetailActions = ({
   task,
   taskDetailId,
   taskDetailSource,
+  todos,
   tokenUsage,
   tokenUsageByRunID,
 }: TaskDetailActionsOptions) => {
@@ -465,6 +481,7 @@ export const useTaskDetailActions = ({
             subagentRuns,
             task,
             threadId: taskDetailId,
+            todos,
             tokenUsage,
             tokenUsageByRunID,
           })

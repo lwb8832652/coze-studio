@@ -31,8 +31,13 @@ export const TaskFollowUpComposer = ({
   spaceId,
   taskId,
   todoDock,
+  suggestions = [],
+  suggestionsHidden = false,
+  suggestionsLoading = false,
   stopLoading,
   stopMode,
+  onDismissSuggestions,
+  onSuggestionClick,
   onValueChange,
   onModeChange,
   onStop,
@@ -45,33 +50,73 @@ export const TaskFollowUpComposer = ({
   spaceId?: string;
   taskId?: string;
   todoDock?: ReactNode;
+  suggestions?: string[];
+  suggestionsHidden?: boolean;
+  suggestionsLoading?: boolean;
   stopLoading?: boolean;
   stopMode?: boolean;
+  onDismissSuggestions?: () => void;
+  onSuggestionClick?: (suggestion: string) => void;
   onValueChange: (value: string) => void;
   onModeChange: (mode: WorkbenchMode) => void;
   onStop?: () => void | Promise<void>;
   onSubmit: (payload: WorkbenchComposerSubmitPayload) => void | Promise<void>;
-}) => (
-  <section className="coze-prototype-followup">
-    <div className="coze-prototype-followup-stack">
-      {todoDock}
-      <WorkbenchComposer
-        value={value}
-        mode={mode}
-        loading={loading}
-        error={error}
-        variant="detail"
-        presentation="deerflow"
-        spaceId={spaceId}
-        taskId={taskId}
-        stopLoading={stopLoading}
-        stopMode={stopMode}
-        modelLoader={getWorkbenchLLMModels}
-        onValueChange={onValueChange}
-        onModeChange={onModeChange}
-        onStop={onStop}
-        onSubmit={onSubmit}
-      />
-    </div>
-  </section>
-);
+}) => {
+  const showSuggestions =
+    !suggestionsHidden && (suggestionsLoading || suggestions.length > 0);
+
+  return (
+    <section className="coze-prototype-followup">
+      <div className="coze-prototype-followup-stack">
+        {todoDock}
+        {showSuggestions ? (
+          <div className="coze-prototype-followup-suggestions">
+            {suggestionsLoading ? (
+              <span className="coze-prototype-followup-suggestion-loading">
+                正在生成可能的后续问题...
+              </span>
+            ) : (
+              <>
+                {suggestions.map(suggestion => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="coze-prototype-followup-suggestion"
+                    onClick={() => onSuggestionClick?.(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  aria-label="关闭推荐追问"
+                  className="coze-prototype-followup-suggestion-close"
+                  onClick={onDismissSuggestions}
+                >
+                  x
+                </button>
+              </>
+            )}
+          </div>
+        ) : null}
+        <WorkbenchComposer
+          value={value}
+          mode={mode}
+          loading={loading}
+          error={error}
+          variant="detail"
+          presentation="deerflow"
+          spaceId={spaceId}
+          taskId={taskId}
+          stopLoading={stopLoading}
+          stopMode={stopMode}
+          modelLoader={getWorkbenchLLMModels}
+          onValueChange={onValueChange}
+          onModeChange={onModeChange}
+          onStop={onStop}
+          onSubmit={onSubmit}
+        />
+      </div>
+    </section>
+  );
+};

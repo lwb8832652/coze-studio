@@ -23,6 +23,7 @@ import { isTaskTerminalStatus } from './helpers';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
+type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
 const parseTaskEventPayload = (payload?: string): Record<string, unknown> => {
   try {
@@ -53,14 +54,23 @@ const isTodoExecutionEvent = (event: TaskEvent) => {
 export const TaskExecutionTodoDock = ({
   events,
   task,
+  todos,
 }: {
   events: TaskEvent[];
   task: ChatTask;
+  todos?: TaskThreadTodo[];
 }) => {
   const [collapsed, setCollapsed] = useState(true);
   const eventItems = projectTaskExecutionEvents(events);
   const hasStructuredItems = eventItems.some(item => item.display.structured);
-  const todoItems = (
+  const persistedTodoItems = (todos ?? [])
+    .map((todo, index) => ({
+      id: todo.id || `todo-${index + 1}`,
+      status: todo.status || 'pending',
+      title: todo.title,
+    }))
+    .filter(todo => todo.title);
+  const eventTodoItems = (
     hasStructuredItems
       ? eventItems.filter(item => item.display.structured)
       : eventItems
@@ -78,6 +88,9 @@ export const TaskExecutionTodoDock = ({
         title: item.display.title,
       };
     });
+  const todoItems = persistedTodoItems.length
+    ? persistedTodoItems
+    : eventTodoItems;
 
   if (!todoItems.length) {
     return null;

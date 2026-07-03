@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
@@ -35,10 +37,12 @@ import (
 
 	threadapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/thread"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/internal/testutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
@@ -73,6 +77,65 @@ func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
 	require.Contains(t, body, `"title":"任务列表"`)
 }
 
+func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
+	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID:    1,
+		AssistantID: "assistant-a",
+		Input:       `{"messages":[{"role":"user","content":"请生成计划"}]}`,
+		Config:      `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID:        1,
+		RunID:           runResp.Run.RunID,
+		CheckpointNS:    "eino.adk",
+		RuntimeType:     "eino_adk",
+		RuntimeKey:      "checkpoint-todos",
+		EnvelopeVersion: 1,
+		ChannelValues: `{
+			"todos": [
+				{
+					"id": "todo-1",
+					"title": "收集资料",
+					"status": "completed",
+					"prompt": "secret prompt",
+					"tool_args": {"api_key": "secret"}
+				},
+				{
+					"id": "todo-2",
+					"content": "输出报告",
+					"done": false,
+					"tool_result": "secret result"
+				}
+			]
+		}`,
+		ChannelVersions: `{}`,
+		PendingSends:    `[]`,
+		Metadata:        `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"values"`)
+	require.Contains(t, body, `"todos"`)
+	require.Contains(t, body, `"id":"todo-1"`)
+	require.Contains(t, body, `"title":"收集资料"`)
+	require.Contains(t, body, `"status":"completed"`)
+	require.Contains(t, body, `"id":"todo-2"`)
+	require.Contains(t, body, `"title":"输出报告"`)
+	require.Contains(t, body, `"status":"pending"`)
+	require.NotContains(t, body, "secret prompt")
+	require.NotContains(t, body, "tool_args")
+	require.NotContains(t, body, "secret result")
+}
+
 func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	h := server.Default()
 	h.GET("/api/workbench/task_threads/:thread_id/messages", ListTaskThreadMessages)
@@ -102,6 +165,53 @@ func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	require.Contains(t, body, `"content":"请分析客户反馈"`)
 	require.Contains(t, body, `"role":"assistant"`)
 	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
+}
+
+func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) {
+	h := server.Default()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/suggestions",
+		GenerateTaskThreadSuggestions,
+	)
+	installAgentThreadTestService(t)
+	appworkbench.InitService(&appworkbench.ServiceComponents{
+		ChatModelProvider: func(_ context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+			require.Equal(t, int64(100002), modelType)
+			return &testutil.UTChatModel{
+				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
+					require.Len(t, in, 2)
+					require.Contains(t, in[1].Content, "User: 请生成武汉三日游攻略")
+					return schema.AssistantMessage(`["能补充预算表吗？","可以导出成 Markdown 吗？"]`, nil), nil
+				},
+			}, true, nil
+		},
+	})
+
+	payload, err := json.Marshal(map[string]any{
+		"messages": []map[string]string{
+			{"role": "user", "content": "请生成武汉三日游攻略"},
+			{"role": "assistant", "content": "已经生成路线。"},
+		},
+		"n": 2,
+		"model_type": "100002",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/suggestions",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"suggestions"`)
+	require.Contains(t, body, `"能补充预算表吗？"`)
+	require.Contains(t, body, `"可以导出成 Markdown 吗？"`)
+	require.NotContains(t, body, `"code"`)
+	require.NotContains(t, body, `"data"`)
 }
 
 func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) {

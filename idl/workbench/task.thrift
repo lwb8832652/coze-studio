@@ -51,6 +51,17 @@ struct TaskThread {
     10: required string last_agent_message
     11: required i64 created_at
     12: required i64 updated_at
+    13: optional TaskThreadValues values
+}
+
+struct TaskThreadTodo {
+    1: required string id
+    2: required string title
+    3: required string status
+}
+
+struct TaskThreadValues {
+    1: optional list<TaskThreadTodo> todos
 }
 
 struct TaskThreadMessage {
@@ -365,6 +376,20 @@ struct ListTaskThreadMessagesRequest {
     255: optional base.Base Base (api.none="true")
 }
 
+struct TaskThreadSuggestionMessage {
+    1: required string role
+    2: required string content
+}
+
+struct GenerateTaskThreadSuggestionsRequest {
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required list<TaskThreadSuggestionMessage> messages
+    3: optional i32 n
+    4: optional string model_name
+    5: optional i64 model_type (agw.js_conv="str", api.js_conv="true")
+    255: optional base.Base Base (api.none="true")
+}
+
 struct AppendTaskThreadMessageRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: optional i64 run_id (agw.js_conv="str", api.js_conv="true")
@@ -481,6 +506,10 @@ struct ListTaskThreadMessagesResponse {
     253: required i64 code
     254: required string msg
     255: optional base.BaseResp BaseResp (api.none="true")
+}
+
+struct GenerateTaskThreadSuggestionsResponse {
+    1: required list<string> suggestions
 }
 
 struct AppendTaskThreadMessageResponse {
@@ -937,6 +966,10 @@ service WorkbenchTaskService {
     )
     ListTaskThreadMessagesResponse ListTaskThreadMessages(1: ListTaskThreadMessagesRequest request)(
         api.get="/api/workbench/task_threads/:thread_id/messages",
+        api.category="workbench"
+    )
+    GenerateTaskThreadSuggestionsResponse GenerateTaskThreadSuggestions(1: GenerateTaskThreadSuggestionsRequest request)(
+        api.post="/api/workbench/task_threads/:thread_id/suggestions",
         api.category="workbench"
     )
     AppendTaskThreadMessageResponse AppendTaskThreadMessage(1: AppendTaskThreadMessageRequest request)(

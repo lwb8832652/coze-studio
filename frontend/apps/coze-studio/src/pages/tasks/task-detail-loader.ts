@@ -54,6 +54,7 @@ type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRun = workbenchTask.TaskThreadRun;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 type TaskThreadRunJournalMessage = workbenchTask.TaskThreadRunJournalMessage;
+type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
 export type LoadedTaskDetailSource = 'task' | 'thread';
 export type TaskDetailSource = LoadedTaskDetailSource | 'auto';
@@ -66,7 +67,10 @@ export interface TaskDetail {
   latestTaskRunID?: string;
   latestTaskRunStatus?: string;
   messages?: TaskThreadMessage[];
+  suggestionModelName?: string;
+  suggestionModelType?: string;
   threadId?: string;
+  todos?: TaskThreadTodo[];
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>;
   subagentRuns?: TaskDetailSubagentRun[];
@@ -216,6 +220,21 @@ const parseJSONObject = (
 
 const normalizeJSONString = (value?: string) =>
   JSON.stringify(parseJSONObject(value) ?? {});
+
+const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
+  const config = parseJSONObject(run?.config);
+  const modelType = config?.model_type;
+  const modelName = config?.model_name;
+
+  return {
+    suggestionModelName:
+      typeof modelName === 'string' ? modelName.trim() : undefined,
+    suggestionModelType:
+      typeof modelType === 'string' || typeof modelType === 'number'
+        ? String(modelType).trim()
+        : undefined,
+  };
+};
 
 const mapTaskThreadRunJournalMessageToTaskEvent = (
   message: TaskThreadRunJournalMessage,
@@ -383,6 +402,7 @@ const fetchTaskThreadDetail = async (
   const rawRunEvents = runEventsResponse.data?.events ?? [];
   const latestTopLevelRun: TaskThreadRun | undefined =
     topLevelRunsResponse.data?.runs?.[0];
+  const suggestionModel = getLatestRunSuggestionModel(latestTopLevelRun);
   const subagentRuns = await fetchTaskThreadSubagentRuns(
     threadID,
     getSubagentLifecycleByChildRunID(rawRunEvents),
@@ -393,6 +413,7 @@ const fetchTaskThreadDetail = async (
     source: 'thread',
     threadId: thread.thread_id,
     messages: messagesResponse.data?.messages ?? [],
+    todos: thread.values?.todos ?? [],
     task: mapTaskThreadToTask(
       thread,
       messagesResponse.data?.messages ?? [],
@@ -405,6 +426,8 @@ const fetchTaskThreadDetail = async (
     }),
     latestTaskRunID: latestTopLevelRun?.run_id ?? '',
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
+    suggestionModelName: suggestionModel.suggestionModelName,
+    suggestionModelType: suggestionModel.suggestionModelType,
     tokenUsage: mapTaskThreadTokenUsageAggregate(
       tokenUsageResponse.data?.aggregate,
       tokenUsageResponse.data?.usage,
