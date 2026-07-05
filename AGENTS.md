@@ -5,47 +5,59 @@
 
 ## 先读清单
 
-- P0 主线任务跟踪：
-  `docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md`
-- DeerFlow 2.x 完整能力路线：
-  `docs/superpowers/plans/2026-06-18-deerflow-2x-parity-master-roadmap.md`
-- DeerFlow 主线工作上下文：
-  `docs/superpowers/specs/2026-06-28-deerflow-parity-working-context.md`
-- Eino Agent Runtime 约束：
-  `docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
+- 当前一期功能方向：
+  在 Coze Studio 基础上参考 `/Users/liuwenbo/code/BuildingAI/nuwax-ai`，
+  优先完成个人中心、工作空间、系统管理相关闭环。
+- 当前一期菜单约定：
+  左上角做工作空间下拉，支持切换个人/团队空间、创建团队空间，并为系统管
+  理员提供系统管理入口；工作空间侧边菜单使用 `工作空间`，放在 `全部任务`
+  上方；系统管理使用独立 `/system` 页面和二级菜单。
 - 本地调试、账号、Atlas、MySQL：
   `docs/superpowers/runbooks/local-debug-and-test.md`
+- 只有任务明确涉及 Agent Runtime 时，再读：
+  `docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
 
-做 DeerFlow 主线任务前，先更新 P0 tracker 中对应子任务为 `进行中`，写清
-预期验证方式。完成一个大主线切片后，提交前必须回写状态、验证证据、遗留
-问题和 P1/P2 延后项。
+做当前一期功能前，先明确本次只覆盖哪个闭环、参考 `nuwax-ai` 哪些页面/服
+务、Coze 当前差异和预期验证方式。若需要长期跟踪，在
+`docs/superpowers/plans/` 或 `docs/superpowers/specs/` 中创建/更新对应文档。
 
 ## 核心原则
 
-- 主线优先：优先完全复刻 DeerFlow 2.x 可见能力，不要偏移到平台增强。
-- 核实优先：任何 DeerFlow 对齐改动都不能靠推断或截图猜测修改；必须先核实
-  DeerFlow 参照功能源码、运行时行为和接口/数据契约。
-- 任务命名保持原型：使用 `新建任务`、`全部任务`、`我的任务`、`任务详情`、
-  `任务记忆`，不要把主界面改叫 `对话`。
-- Go 原生目标：最终使用 Go-native Agent Harness + Eino ADK，不引入 Python
-  sidecar。
-- Eino 优先：新增 Agent loop、重试、压缩、工具修复、动态工具搜索、Skill、
-  MCP、文件系统、子智能体前，先确认 Eino ADK 是否已有原语。
+- 当前主线优先：优先在 Coze Studio 内参考 `nuwax-ai` 完成个人中心、工作空
+  间、系统管理的一期可用闭环，不要顺手扩展完整 RBAC、支付、订阅、IM 或
+  其他平台增强。
+- 核实优先：任何参考 `nuwax-ai` 的改动都不能靠截图猜测；必须先核实
+  `nuwax-ai` 参照功能源码、接口/数据契约和 Coze 当前实现差异。
+- 菜单命名保持当前约定：工作空间侧边菜单使用 `工作空间`，不是
+  `成员与设置`；`工作空间` 放在 `全部任务` 上方；不要恢复已移动到设置下
+  的 `工具` 菜单。
+- 系统管理边界清晰：一级菜单保持不变；系统管理通过独立 `/system` 页面和
+  二级菜单承载，仅系统管理员可见，后端仍需强校验。
+- Go 原生目标：涉及后端能力时保持 Go-native 实现；涉及 Agent Runtime 时
+  优先使用 Go-native Agent Harness + Eino ADK，不引入 Python sidecar。
+- Eino 优先：只有任务涉及 Agent loop、重试、压缩、工具修复、动态工具搜
+  索、Skill、MCP、文件系统、子智能体时，先确认 Eino ADK 是否已有原语。
 - 质量第一：代码质量、租户隔离、权限、安全边界和可测试性不可妥协。
 - 透明记录：关键决策、任务状态、验证命令和已知风险必须能在文档或提交中
   追溯。
 - 不做 IM Channels：不新增 Telegram、Slack、Discord、飞书、钉钉、微信等
   channel 适配、设置、菜单、凭据或 worker。
 
-## DeerFlow 对齐硬规则
+## 当前功能对齐硬规则
 
-- 修改任务详情、消息渲染、执行步骤、思考块、Artifacts、Token、输入框或导出
-  前，必须先完成并记录四类证据：DeerFlow 源码调用链、DeerFlow 后端接口和
-  请求/响应、运行时页面或网络证据、Coze 当前差异。
+- 修改左上角工作空间下拉、账号下拉、工作空间菜单、系统管理入口、系统管
+  理二级菜单、工作空间成员/设置前，必须先核实三类证据：
+  `nuwax-ai` 参照实现、Coze 当前入口/路由/store/API、后端真实权限和数据合
+  同。
+- 系统管理员可见性以后端事实为准。前端可以根据当前用户信息隐藏入口，但
+  `/api/admin/*` 或系统管理 API 必须继续使用服务端权限校验，不能只靠前端
+  `role` 字段。
+- 工作空间成员/设置必须使用真实空间角色。不要继续依赖前端把当前用户硬编
+  码为 `Owner` 的逻辑；权限应来自 `space_user.role_type` 或后端等价投影。
+- 对齐顺序固定为：先补等价数据契约和后端投影，再对齐前端路由、菜单、组件
+  和样式；旧 Coze stub 只能作为兼容兜底，不能当作主数据源。
 - 不确定时先补验证清单或测试用例，不直接实现；源码和运行时现象不一致时，
   继续沿入口追根因，不做猜测式补丁。
-- 对齐顺序固定为：先补等价数据契约和后端投影，再对齐前端组件和样式；旧
-  Coze 事件或 stub 只能作为兼容兜底，不能当作 DeerFlow parity 主数据源。
 
 ## 工作流程
 
@@ -78,8 +90,8 @@
 - 改后端：跑相关 Go package 的 targeted tests；Mockey 相关测试需要按仓库
   现有方式加 `-gcflags="all=-l -N"`。
 - 改迁移：用本地 Atlas `v0.35.0` 校验 hash/validate。
-- 改 DeerFlow 任务体验：用同一测试用例在 DeerFlow 和 Coze 中对比浏览器可见
-  行为。
+- 改 `nuwax-ai` 参考功能：用同一关键流程在 `nuwax-ai` 和 Coze 中对比浏览器
+  可见行为、接口字段和权限结果；若无法运行参考项目，记录源码证据和差异。
 - 后台单测或长命令要设置合理超时或及时轮询，避免进程长时间卡住。
 
 ### 5. 记录和提交
@@ -87,18 +99,25 @@
 - 一个大的主线任务完成后提交一次代码。
 - 提交前更新 tracker 和相关专题文档。
 - 不提交 `.codex/config.toml`，除非用户明确要求。
-- 推送到测试前，先给用户代码审核；用户确认后再把开发分支合并到 `dev`。
+- 推送、合并或转测试前，先给用户代码审核；用户确认后按本次明确授权的
+  流程执行，不默认合并到固定分支。
 
 ## 项目上下文
 
 Coze Studio 是 React + TypeScript + Go 的 AI Agent 平台，前端由 Rush.js 管理，
 后端使用 Hertz 和 DDD 风格分层。
 
-当前集成目标是在 Coze Studio 基础上复刻 DeerFlow 2.x 的可见能力：
+当前集成目标是在 Coze Studio 基础上参考 `nuwax-ai` 完成后台管理和工作空间
+能力的一期闭环：
 
-- 任务创建、列表、最近任务、任务详情、追问、取消、重试、流式输出；
-- Agent、子智能体、Skill、MCP、工具配置和运行；
-- 任务记忆、Token 用量、Artifacts、Runtime Doctor、设置面板；
+- 左上角工作空间下拉：切换个人/团队空间、创建团队空间、系统管理员进入
+  系统管理；
+- 工作空间菜单：新增 `工作空间`，放在 `全部任务` 上方，承载成员管理和空
+  间基础设置；
+- 系统管理：独立 `/system` 页面，内部二级菜单承载工作空间管理、用户管理、
+  系统配置等后台管理员能力；
+- 个人中心：保留账号身份能力边界，个人资料、API 授权、退出登录等仍属于账
+  号下拉/个人中心范畴；
 - 前后端都必须是生产级边界，不接受只做 UI 壳或内存 stub。
 
 ## 常用命令
@@ -143,14 +162,16 @@ go test ./application/agentthread ./api/handler/coze ./api/router/coze -run Test
 
 ## 本地测试账号
 
-Coze Studio 和本地 DeerFlow 使用同一个功能测试账号：
+Coze Studio 本地功能测试账号：
 
 - Email: `840582614@qq.com`
 - Password: `z8832652`
 
-DeerFlow 参考任务详情：
+nuwax-ai 演示环境用于页面样式和交互对齐：
 
-- `http://localhost:2026/workspace/chats/c155a732-f475-4cf9-aa49-13fd26b29888`
+- URL: `https://agent.nuwax.com`
+- Account: `13129924662`
+- Password: `z8832652`
 
 本地 Coze 常用地址：
 
@@ -159,11 +180,10 @@ DeerFlow 参考任务详情：
 
 ## 分支策略
 
-- 日常开发分支：`codex/deerflow-parity-mainline`。
-- `dev` 是测试环境验证分支，不要让当前 Codex worktree 长期停在 `dev`。
-- 转测试流程：开发分支完成并提交 -> 用户审核 -> 合并到 `dev` -> 推送
-  `origin/dev` -> 切回开发分支。
-- 如果 `dev` 已被其他 worktree 占用，报告占用路径，不要强制 checkout。
+- 日常开发分支：`codex/coze-nuwax-management-mainline`。
+- 不默认合并、推送或切换到任何测试分支；转测试流程必须以用户本次明确
+  确认的分支和步骤为准。
+- 如果目标分支已被其他 worktree 占用，报告占用路径，不要强制 checkout。
 
 ## 前端规则
 
@@ -176,8 +196,8 @@ DeerFlow 参考任务详情：
 - 保留 Semi 自带的键盘行为、焦点、ARIA、loading、disabled、校验、空态和
   错误态。
 - 页面功能要像真实产品，不做只有说明文字的占位页面。
-- DeerFlow parity 页面对比时，优先关注用户能看到的任务详情、消息渲染、
-  Mermaid、Artifacts、Token、思考块和追问体验。
+- `nuwax-ai` 参考功能对比时，优先关注用户能看到的空间切换、创建团队空间、
+  工作空间成员/设置、系统管理二级菜单、管理员可见性和权限失败体验。
 
 ## 后端规则
 
@@ -247,7 +267,7 @@ atlas migrate validate --dir file://docker/atlas/migrations
 
 - 删除、移动、批量改写大量文件；
 - 数据库删除、批量更新、结构变更、迁移 apply；
-- 推送、合并到 `dev`、创建/更新远程分支；
+- 推送、合并分支、创建/更新远程分支；
 - 发送敏感数据到外部服务或生产环境 API；
 - 全局安装/卸载工具，或大版本升级核心依赖；
 - 任何可能破坏用户未提交工作的操作。

@@ -38,6 +38,11 @@ func Register(r *server.Hertz) {
 		{
 			_admin := _api.Group("/admin", _adminMw()...)
 			{
+				_admin.GET("/auth/status", coze.GetAdminAuthStatus)
+				_admin.POST("/workspaces/list", coze.ListAdminWorkspaces)
+				_admin.POST("/workspaces/members", coze.ListAdminWorkspaceMembers)
+				_admin.POST("/users/list", coze.ListAdminUsers)
+				_admin.POST("/users/spaces", coze.ListAdminUserSpaces)
 				_config := _admin.Group("/config", _configMw()...)
 				{
 					_basic := _config.Group("/basic", _basicMw()...)
@@ -55,6 +60,21 @@ func Register(r *server.Hertz) {
 					_model.POST("/delete", append(_deletemodelMw(), coze.DeleteModel)...)
 					_model.GET("/list", append(_getmodellistMw(), coze.GetModelList)...)
 				}
+			}
+		}
+		{
+			_workspace := _api.Group("/workspace")
+			{
+				_space := _workspace.Group("/space")
+				_space.GET("/detail", coze.GetWorkspaceDetail)
+				_space.POST("/members", coze.ListWorkspaceMembers)
+				_space.POST("/users/search", coze.SearchWorkspaceUsers)
+				_space.POST("/update", coze.UpdateWorkspace)
+				_space.POST("/members/add", coze.AddWorkspaceMembers)
+				_space.POST("/member/role", coze.UpdateWorkspaceMemberRole)
+				_space.POST("/member/remove", coze.RemoveWorkspaceMember)
+				_space.POST("/transfer", coze.TransferWorkspace)
+				_space.POST("/delete", coze.DeleteWorkspace)
 			}
 		}
 		{
@@ -342,6 +362,7 @@ func Register(r *server.Hertz) {
 			{
 				_space := _playground_api.Group("/space", _spaceMw()...)
 				_space.POST("/list", append(_getspacelistv2Mw(), coze.GetSpaceListV2)...)
+				_space.POST("/save", append(_savespacev2Mw(), coze.SaveSpaceV2)...)
 			}
 		}
 		{

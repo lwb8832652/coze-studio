@@ -39,9 +39,32 @@ import (
 
 var UserApplicationSVC = &UserApplicationService{}
 
+const defaultMaxTeamSpaceNum int32 = 3
+
 type UserApplicationService struct {
 	oss       storage.Storage
 	DomainSVC user.User
+}
+
+type SaveSpaceV2Request struct {
+	SpaceID        string               `json:"space_id,omitempty" form:"space_id"`
+	Name           string               `json:"name" form:"name"`
+	Description    string               `json:"description" form:"description"`
+	IconURI        string               `json:"icon_uri" form:"icon_uri"`
+	SpaceType      playground.SpaceType `json:"space_type" form:"space_type"`
+	EnterpriseID   string               `json:"enterprise_id,omitempty" form:"enterprise_id"`
+	OrganizationID string               `json:"organization_id,omitempty" form:"organization_id"`
+}
+
+type SaveSpaceRet struct {
+	ID           string `json:"id,omitempty"`
+	CheckNotPass bool   `json:"check_not_pass"`
+}
+
+type SaveSpaceV2Response struct {
+	Data *SaveSpaceRet `json:"data,omitempty"`
+	Code int64         `json:"code"`
+	Msg  string        `json:"msg"`
 }
 
 // Add a simple email verification function
@@ -238,27 +261,86 @@ func (u *UserApplicationService) GetSpaceListV2(ctx context.Context, req *playgr
 		return nil, err
 	}
 
-	botSpaces := langSlices.Transform(spaces, func(space *entity.Space) *playground.BotSpaceV2 {
-		return &playground.BotSpaceV2{
-			ID:          space.ID,
-			Name:        space.Name,
-			Description: space.Description,
-			SpaceType:   playground.SpaceType(space.SpaceType),
-			IconURL:     space.IconURL,
+	botSpaces := langSlices.Transform(spaces, spaceDo2BotSpaceV2)
+	hasPersonalSpace := false
+	teamSpaceNum := int32(0)
+	for _, space := range spaces {
+		if space.SpaceType == entity.SpaceTypePersonal {
+			hasPersonalSpace = true
+			continue
 		}
-	})
+		if space.SpaceType == entity.SpaceTypeTeam {
+			teamSpaceNum++
+		}
+	}
 
 	return &playground.GetSpaceListV2Response{
 		Data: &playground.SpaceInfo{
 			BotSpaceList:          botSpaces,
-			HasPersonalSpace:      true,
-			TeamSpaceNum:          0,
+			HasPersonalSpace:      hasPersonalSpace,
+			TeamSpaceNum:          teamSpaceNum,
+			MaxTeamSpaceNum:       defaultMaxTeamSpaceNum,
 			RecentlyUsedSpaceList: botSpaces,
 			Total:                 ptr.Of(int32(len(botSpaces))),
 			HasMore:               ptr.Of(false),
 		},
 		Code: 0,
 	}, nil
+}
+
+func (u *UserApplicationService) SaveSpaceV2(ctx context.Context, req *SaveSpaceV2Request) (*SaveSpaceV2Response, error) {
+	if req == nil {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "missing request"))
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "space name cannot be empty"))
+	}
+
+	spaceType := entity.SpaceType(req.SpaceType)
+	if spaceType == 0 {
+		spaceType = entity.SpaceTypeTeam
+	}
+	if spaceType != entity.SpaceTypePersonal && spaceType != entity.SpaceTypeTeam {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid space type"))
+	}
+
+	space, err := u.DomainSVC.CreateSpace(ctx, &user.CreateSpaceRequest{
+		UserID:      ctxutil.MustGetUIDFromCtx(ctx),
+		Name:        name,
+		Description: strings.TrimSpace(req.Description),
+		IconURI:     strings.TrimSpace(req.IconURI),
+		SpaceType:   spaceType,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &SaveSpaceV2Response{
+		Data: &SaveSpaceRet{
+			ID:           strconv.FormatInt(space.ID, 10),
+			CheckNotPass: false,
+		},
+		Code: 0,
+		Msg:  "",
+	}, nil
+}
+
+func spaceDo2BotSpaceV2(space *entity.Space) *playground.BotSpaceV2 {
+	return &playground.BotSpaceV2{
+		ID:             space.ID,
+		Name:           space.Name,
+		Description:    space.Description,
+		SpaceType:      playground.SpaceType(space.SpaceType),
+		IconURL:        space.IconURL,
+		RoleType:       space.RoleType,
+		SpaceRoleType:  playground.SpaceRoleType(space.RoleType),
+		OwnerUserID:    ptr.Of(space.OwnerID),
+		TotalMemberNum: ptr.Of(space.MemberCount),
+		AllowDevelop:   space.AllowDevelop,
+		ReceivePublish: space.ReceivePublish,
+	}
 }
 
 func (u *UserApplicationService) MGetUserBasicInfo(ctx context.Context, req *playground.MGetUserBasicInfoRequest) (

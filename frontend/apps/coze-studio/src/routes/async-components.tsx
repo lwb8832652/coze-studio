@@ -58,6 +58,15 @@ export const SkillPage = lazy(() => import('../pages/skill'));
 // tools configuration page
 export const ToolsPage = lazy(() => import('../pages/tools'));
 
+// workspace settings page
+export const WorkspacePage = lazy(() => import('../pages/workspace'));
+
+// personal center page
+export const PersonalCenterPage = lazy(() => import('../pages/profile'));
+
+// system management page
+export const SystemManagementPage = lazy(() => import('../pages/system'));
+
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));
 

@@ -26,6 +26,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/permission"
 
 	"github.com/coze-dev/coze-studio/backend/application/agentthread"
+	"github.com/coze-dev/coze-studio/backend/application/admin"
 	"github.com/coze-dev/coze-studio/backend/application/app"
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
 	"github.com/coze-dev/coze-studio/backend/application/connector"
@@ -393,6 +394,7 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	modelMgrSVC := modelmgr.InitService(infra.OSS)
 	connectorSVC := connector.InitService(infra.OSS)
 	userSVC := user.InitService(ctx, infra.DB, infra.OSS, infra.IDGenSVC)
+	admin.InitService(userSVC.DomainSVC)
 	templateSVC := template.InitService(ctx, &template.ServiceComponents{
 		DB:      infra.DB,
 		IDGen:   infra.IDGenSVC,

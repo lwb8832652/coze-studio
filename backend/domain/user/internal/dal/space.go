@@ -18,6 +18,8 @@ package dal
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -39,8 +41,47 @@ func (dao *SpaceDAO) CreateSpace(ctx context.Context, space *model.Space) error 
 	return dao.query.Space.WithContext(ctx).Create(space)
 }
 
+func (dao *SpaceDAO) UpdateSpace(ctx context.Context, spaceID int64, updates map[string]any) error {
+	if _, ok := updates["updated_at"]; !ok {
+		updates["updated_at"] = time.Now().UnixMilli()
+	}
+
+	_, err := dao.query.Space.WithContext(ctx).Where(
+		dao.query.Space.ID.Eq(spaceID),
+	).Updates(updates)
+	return err
+}
+
+func (dao *SpaceDAO) UpdateSpaceOwner(ctx context.Context, spaceID int64, ownerID int64) error {
+	_, err := dao.query.Space.WithContext(ctx).Where(
+		dao.query.Space.ID.Eq(spaceID),
+	).Updates(map[string]interface{}{
+		"owner_id":   ownerID,
+		"updated_at": time.Now().UnixMilli(),
+	})
+	return err
+}
+
+func (dao *SpaceDAO) DeleteSpace(ctx context.Context, spaceID int64) error {
+	_, err := dao.query.Space.WithContext(ctx).Where(
+		dao.query.Space.ID.Eq(spaceID),
+	).Delete()
+	return err
+}
+
 func (dao *SpaceDAO) GetSpaceByIDs(ctx context.Context, spaceIDs []int64) ([]*model.Space, error) {
 	return dao.query.Space.WithContext(ctx).Where(
 		dao.query.Space.ID.In(spaceIDs...),
 	).Find()
+}
+
+func (dao *SpaceDAO) ListSpaces(ctx context.Context, keyword string, offset int, limit int) ([]*model.Space, int64, error) {
+	q := dao.query.Space.WithContext(ctx)
+	if normalized := strings.TrimSpace(keyword); normalized != "" {
+		pattern := "%" + normalized + "%"
+		q = q.Where(dao.query.Space.Name.Like(pattern)).
+			Or(dao.query.Space.Description.Like(pattern))
+	}
+
+	return q.Order(dao.query.Space.CreatedAt.Desc()).FindByPage(offset, limit)
 }

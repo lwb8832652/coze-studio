@@ -74,7 +74,18 @@ vi.mock('@coze-arch/coze-design/icons', () => {
 
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
 import { WorkspaceTaskList } from '../workspace-task-list';
-import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
+import {
+  ASSISTANT_BADGE,
+  ASSISTANT_LABEL,
+  ACCOUNT_ACTION_ENTRIES,
+  ACCOUNT_SETTINGS_ENTRY,
+  PERSONAL_CENTER_ENTRY,
+  SIGN_OUT_ENTRY,
+  SYSTEM_MANAGEMENT_ENTRY,
+  getVisibleWorkspaceMenuMeta,
+  shouldShowSystemManagementEntry,
+  WORKSPACE_MENU_META,
+} from '../menu';
 
 describe('Coze Studio WorkspaceSubMenu', () => {
   beforeEach(() => {
@@ -97,7 +108,7 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       '资源配置',
       '技能配置',
       '开发配置',
-      '工具',
+      '工作空间',
       '全部任务',
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
@@ -110,10 +121,90 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       path: 'chats',
     });
     expect(WORKSPACE_MENU_META[4]).toMatchObject({
-      label: '工具',
-      path: 'tools',
+      label: '工作空间',
+      path: 'workspace',
     });
+    expect(paths).not.toContain('tools');
     expect(paths).not.toContain('task-trigger');
+  });
+
+  it('hides developer feature menus for regular members when workspace development is disabled', () => {
+    const memberLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 3,
+    }).map(item => item.label);
+    const adminLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 2,
+    }).map(item => item.label);
+    const ownerLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 1,
+    }).map(item => item.label);
+
+    expect(memberLabels).toEqual(['新建任务', '全部任务']);
+    expect(adminLabels).toEqual(WORKSPACE_MENU_META.map(item => item.label));
+    expect(ownerLabels).toEqual(WORKSPACE_MENU_META.map(item => item.label));
+  });
+
+  it('hides workspace settings for personal spaces and regular team members', () => {
+    const personalLabels = getVisibleWorkspaceMenuMeta({
+      space_type: 1,
+      role_type: 1,
+    }).map(item => item.label);
+    const teamMemberLabels = getVisibleWorkspaceMenuMeta({
+      space_type: 2,
+      role_type: 3,
+      allow_develop: true,
+    }).map(item => item.label);
+
+    expect(personalLabels).not.toContain('工作空间');
+    expect(teamMemberLabels).not.toContain('工作空间');
+    expect(teamMemberLabels).toContain('资源配置');
+  });
+
+  it('defines the system management quick entry outside workspace navigation', () => {
+    expect(SYSTEM_MANAGEMENT_ENTRY).toMatchObject({
+      label: '系统管理',
+      path: '/system/overview',
+    });
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: false,
+        isSystemAdmin: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: true,
+        isSystemAdmin: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: true,
+        isSystemAdmin: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('defines account actions for the workspace switcher dropdown', () => {
+    expect(ACCOUNT_SETTINGS_ENTRY).toMatchObject({
+      label: '账号设置',
+      path: '/profile',
+    });
+    expect(PERSONAL_CENTER_ENTRY).toMatchObject({
+      label: '个人中心',
+      path: '/profile',
+    });
+    expect(SIGN_OUT_ENTRY).toMatchObject({
+      label: '退出登录',
+      action: 'logout',
+    });
+    expect(ACCOUNT_ACTION_ENTRIES.map(item => item.label)).toEqual([
+      '账号设置',
+      '退出登录',
+    ]);
   });
 
   it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {

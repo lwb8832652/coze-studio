@@ -50,6 +50,9 @@ import {
   Workbench,
   SkillPage,
   ToolsPage,
+  WorkspacePage,
+  PersonalCenterPage,
+  SystemManagementPage,
   TaskDetailPage,
   TasksPage,
 } from './async-components';
@@ -244,6 +247,15 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   }),
                 },
 
+                // Workspace Settings
+                {
+                  path: 'workspace',
+                  Component: WorkspacePage,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.WORKSPACE,
+                  }),
+                },
+
                 // Tasks
                 {
                   path: 'tasks/:task_id',
@@ -327,6 +339,28 @@ export const router: ReturnType<typeof createBrowserRouter> =
               ],
             },
           ],
+        },
+
+        // System Management
+        {
+          path: 'profile',
+          Component: PersonalCenterPage,
+          loader: () => ({
+            hasSider: false,
+            requireAuth: true,
+          }),
+        },
+        {
+          path: 'system',
+          element: <Navigate to="/system/overview" replace />,
+        },
+        {
+          path: 'system/:section',
+          Component: SystemManagementPage,
+          loader: () => ({
+            hasSider: false,
+            requireAuth: true,
+          }),
         },
 
         // workflow routing

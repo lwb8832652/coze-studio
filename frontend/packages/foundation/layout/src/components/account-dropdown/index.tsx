@@ -15,6 +15,7 @@
  */
 
 import {
+  Fragment,
   type FC,
   isValidElement,
   type ReactNode,
@@ -84,9 +85,9 @@ export const GlobalLayoutAccountDropdown: FC<
             className={classNames(style.menu, 'w-[250px]')}
             mode="menu"
           >
-            {menus?.map(item =>
+            {menus?.map((item, index) =>
               isReactNode(item) ? (
-                item
+                <Fragment key={`custom-menu-${index}`}>{item}</Fragment>
               ) : (
                 <Dropdown.Item
                   key={item.title}

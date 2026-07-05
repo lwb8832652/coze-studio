@@ -17,14 +17,56 @@
 export const ASSISTANT_LABEL = '专属助理';
 export const ASSISTANT_BADGE = 'Beta';
 
+export const SYSTEM_MANAGEMENT_ENTRY = {
+  label: '系统管理',
+  path: '/system/overview',
+} as const;
+
+export const PERSONAL_CENTER_ENTRY = {
+  label: '个人中心',
+  path: '/profile',
+} as const;
+
+export const ACCOUNT_SETTINGS_ENTRY = {
+  label: '账号设置',
+  path: '/profile',
+} as const;
+
+export const SIGN_OUT_ENTRY = {
+  label: '退出登录',
+  action: 'logout',
+} as const;
+
+export const ACCOUNT_ACTION_ENTRIES = [
+  ACCOUNT_SETTINGS_ENTRY,
+  SIGN_OUT_ENTRY,
+] as const;
+
 export const SPACE_SUB_MODULE = {
   WORKBENCH: 'chats/new',
   LIBRARY: 'library',
   SKILL: 'skill',
   DEVELOP: 'develop',
   TOOLS: 'tools',
+  WORKSPACE: 'workspace',
   TASKS: 'chats',
 } as const;
+
+export interface WorkspaceMenuPolicySpace {
+  allow_develop?: boolean | number;
+  role_type?: number;
+  space_role_type?: number;
+  space_type?: number;
+  type?: number;
+}
+
+const SPACE_MANAGER_ROLE_TYPES = new Set([1, 2]);
+const PERSONAL_SPACE_TYPE = 1;
+const DEVELOPER_FEATURE_MENU_PATHS = new Set<string>([
+  SPACE_SUB_MODULE.LIBRARY,
+  SPACE_SUB_MODULE.SKILL,
+  SPACE_SUB_MODULE.DEVELOP,
+]);
 
 export const WORKSPACE_MENU_META = [
   {
@@ -49,9 +91,9 @@ export const WORKSPACE_MENU_META = [
     dataTestId: 'navigation_workspace_develop',
   },
   {
-    label: '工具',
-    path: SPACE_SUB_MODULE.TOOLS,
-    dataTestId: 'navigation_workspace_tools',
+    label: '工作空间',
+    path: SPACE_SUB_MODULE.WORKSPACE,
+    dataTestId: 'navigation_workspace_settings',
   },
   {
     label: '全部任务',
@@ -59,3 +101,60 @@ export const WORKSPACE_MENU_META = [
     dataTestId: 'navigation_workspace_tasks',
   },
 ];
+
+const isDeveloperFeatureDisabledForMember = (
+  space?: WorkspaceMenuPolicySpace,
+) => {
+  if (!space) {
+    return false;
+  }
+
+  const allowDevelop = space.allow_develop;
+  if (allowDevelop !== false && allowDevelop !== 0) {
+    return false;
+  }
+
+  const roleType = space.role_type || space.space_role_type;
+  return !SPACE_MANAGER_ROLE_TYPES.has(roleType || 0);
+};
+
+const shouldHideWorkspaceSettingsForSpace = (
+  space?: WorkspaceMenuPolicySpace,
+) => {
+  if (!space) {
+    return false;
+  }
+
+  if (
+    space.space_type === PERSONAL_SPACE_TYPE ||
+    space.type === PERSONAL_SPACE_TYPE
+  ) {
+    return true;
+  }
+
+  const roleType = space.role_type || space.space_role_type;
+  if (!roleType) {
+    return false;
+  }
+
+  return !SPACE_MANAGER_ROLE_TYPES.has(roleType);
+};
+
+export const getVisibleWorkspaceMenuMeta = (
+  space?: WorkspaceMenuPolicySpace,
+) =>
+  WORKSPACE_MENU_META.filter(
+    item =>
+      (item.path !== SPACE_SUB_MODULE.WORKSPACE ||
+        !shouldHideWorkspaceSettingsForSpace(space)) &&
+      (!isDeveloperFeatureDisabledForMember(space) ||
+        !DEVELOPER_FEATURE_MENU_PATHS.has(item.path)),
+  );
+
+export const shouldShowSystemManagementEntry = ({
+  hasUser,
+  isSystemAdmin,
+}: {
+  hasUser?: boolean;
+  isSystemAdmin?: boolean;
+}) => Boolean(hasUser && isSystemAdmin);

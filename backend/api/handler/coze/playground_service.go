@@ -202,6 +202,26 @@ func GetSpaceListV2(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// SaveSpaceV2 .
+// @router /api/playground_api/space/save [POST]
+func SaveSpaceV2(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req user.SaveSpaceV2Request
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := user.UserApplicationSVC.SaveSpaceV2(ctx, &req)
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
 // GetImagexShortUrl .
 // @router /api/playground_api/get_imagex_url [POST]
 func GetImagexShortUrl(ctx context.Context, c *app.RequestContext) {

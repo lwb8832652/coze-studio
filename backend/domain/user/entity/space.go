@@ -24,13 +24,27 @@ const (
 )
 
 type Space struct {
-	ID          int64
-	Name        string
-	Description string
-	IconURL     string
-	SpaceType   SpaceType
-	OwnerID     int64
-	CreatorID   int64
-	CreatedAt   int64
-	UpdatedAt   int64
+	ID             int64
+	Name           string
+	Description    string
+	IconURL        string
+	SpaceType      SpaceType
+	OwnerID        int64
+	CreatorID      int64
+	AllowDevelop   bool
+	ReceivePublish bool
+	RoleType       int32
+	MemberCount    int64
+	CreatedAt      int64
+	UpdatedAt      int64
+}
+
+type SpaceMember struct {
+	UserID     int64
+	Name       string
+	UniqueName string
+	Email      string
+	AvatarURL  string
+	RoleType   int32
+	JoinedAt   int64
 }

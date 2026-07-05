@@ -59,6 +59,29 @@ type CreateUserRequest struct {
 	Locale      string
 }
 
+type CreateSpaceRequest struct {
+	UserID      int64
+	Name        string
+	Description string
+	IconURI     string
+	SpaceType   entity.SpaceType
+}
+
+type UpdateSpaceRequest struct {
+	SpaceID        int64
+	Name           *string
+	Description    *string
+	IconURI        *string
+	AllowDevelop   *bool
+	ReceivePublish *bool
+}
+
+type AddSpaceMemberRequest struct {
+	SpaceID  int64
+	UserID   int64
+	RoleType int32
+}
+
 type CreateUserResponse struct {
 	UserID int64
 }
@@ -77,8 +100,18 @@ type User interface {
 	GetUserProfiles(ctx context.Context, userID int64) (user *entity.User, err error)
 	MGetUserProfiles(ctx context.Context, userIDs []int64) (users []*entity.User, err error)
 	ValidateSession(ctx context.Context, sessionKey string) (session *entity.Session, exist bool, err error)
+	CreateSpace(ctx context.Context, req *CreateSpaceRequest) (space *entity.Space, err error)
+	UpdateSpace(ctx context.Context, req *UpdateSpaceRequest) (err error)
+	TransferSpace(ctx context.Context, spaceID int64, targetUserID int64) (err error)
+	DeleteSpace(ctx context.Context, spaceID int64) (err error)
 	GetUserSpaceList(ctx context.Context, userID int64) (spaces []*entity.Space, err error)
 	GetUserSpaceBySpaceID(ctx context.Context, spaceID []int64) (space []*entity.Space, err error)
+	ListAllUsers(ctx context.Context, keyword string, offset int, limit int) (users []*entity.User, total int64, err error)
+	ListAllSpaces(ctx context.Context, keyword string, offset int, limit int) (spaces []*entity.Space, total int64, err error)
+	GetSpaceMembers(ctx context.Context, spaceID int64) (members []*entity.SpaceMember, err error)
+	AddSpaceMembers(ctx context.Context, members []*AddSpaceMemberRequest) (err error)
+	UpdateSpaceMemberRole(ctx context.Context, spaceID int64, userID int64, roleType int32) (err error)
+	RemoveSpaceMember(ctx context.Context, spaceID int64, userID int64) (err error)
 }
 
 type SaasUserProvider interface {
