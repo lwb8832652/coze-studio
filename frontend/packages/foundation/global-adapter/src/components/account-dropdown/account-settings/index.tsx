@@ -16,12 +16,17 @@
 
 import { PatBody } from '@coze-studio/open-auth';
 import {
+  type TabItem,
   useAccountSettings as useBaseAccountSettings,
   UserInfoPanel,
 } from '@coze-foundation/account-ui-base';
 import { I18n } from '@coze-arch/i18n';
 
-export const useAccountSettings = () => {
+export type AccountSettingsExtraTab = TabItem | 'divider';
+
+export const useAccountSettings = (
+  extraTabs: AccountSettingsExtraTab[] = [],
+) => {
   const tabs = [
     {
       id: 'account',
@@ -33,6 +38,7 @@ export const useAccountSettings = () => {
       tabName: I18n.t('settings_api_authorization'),
       content: () => <PatBody size="small" type="primary" />,
     },
+    ...extraTabs,
   ];
 
   const { node, open } = useBaseAccountSettings({

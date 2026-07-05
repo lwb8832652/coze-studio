@@ -1147,7 +1147,7 @@ describe('TaskDetailPage', () => {
     expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(container.textContent).toContain('生成周报');
-    expect(container.textContent).toContain('Aime · Agent 已为你启动工作流');
+    expect(container.textContent).toContain('NewX AI · Agent 已为你启动工作流');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
     expect(container.textContent).toContain('Agent 最终结果');

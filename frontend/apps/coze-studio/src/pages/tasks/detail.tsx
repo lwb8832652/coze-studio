@@ -532,7 +532,7 @@ const TaskConversation = ({ task }: { task: ChatTask }) => {
 
       <div className="coze-prototype-assistant-line">
         <AssistantMark />
-        <span>Aime · {executionType} 已为你启动工作流</span>
+        <span>NewX AI · {executionType} 已为你启动工作流</span>
       </div>
     </>
   );
@@ -541,7 +541,7 @@ const TaskConversation = ({ task }: { task: ChatTask }) => {
 const TaskAssistantLine = ({ task }: { task: ChatTask }) => (
   <div className="coze-prototype-assistant-line">
     <AssistantMark />
-    <span>Aime · {getTaskExecutionType(task.input)} 已为你启动工作流</span>
+    <span>NewX AI · {getTaskExecutionType(task.input)} 已为你启动工作流</span>
   </div>
 );
 

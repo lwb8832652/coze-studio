@@ -16,9 +16,13 @@
 
 import type { ReactNode } from 'react';
 
+import { act } from 'react-dom/test-utils';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createRoot, type Root } from 'react-dom/client';
 
 import { GlobalLayoutSider } from '../sider';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@coze-arch/bot-hooks', () => ({
   useRouteConfig: () => ({
@@ -55,5 +59,50 @@ describe('GlobalLayoutSider', () => {
 
     expect(markup).toContain('Secondary workspace menu');
     expect(markup).not.toContain('Main logo');
+  });
+
+  it('collapses the secondary workspace menu width from a DeerFlow-style sidebar event', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <GlobalLayoutSider hidePrimarySider={true} subMenuDefaultWidth={300} />,
+      );
+      await Promise.resolve();
+    });
+
+    const subMenuPanel = container.querySelector(
+      '[data-testid="global-layout-sub-menu-panel"]',
+    ) as HTMLElement | null;
+
+    expect(subMenuPanel).not.toBeNull();
+    expect(subMenuPanel?.style.width).toBe('300px');
+    expect(subMenuPanel?.getAttribute('data-collapsed')).toBe('false');
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('coze-workspace-submenu-collapse-change', {
+          detail: {
+            storageKey: 'workspace-submenu-width',
+            collapsed: true,
+          },
+        }),
+      );
+    });
+
+    expect(subMenuPanel?.style.width).toBe('56px');
+    expect(subMenuPanel?.getAttribute('data-collapsed')).toBe('true');
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      'workspace-submenu-width:collapsed',
+      'true',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 });

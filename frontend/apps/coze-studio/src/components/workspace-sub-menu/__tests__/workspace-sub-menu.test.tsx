@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -23,11 +24,59 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListTaskThreads = vi.hoisted(() => vi.fn());
+const mockUseRouteConfig = vi.hoisted(() =>
+  vi.fn(() => ({ subMenuKey: 'chats/new' })),
+);
+const mockSetSpace = vi.hoisted(() => vi.fn());
+const mockCreateSpace = vi.hoisted(() => vi.fn());
+const mockFetchSpaces = vi.hoisted(() => vi.fn());
+const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
 const mockUseSpaceStore = vi.hoisted(() =>
-  vi.fn((selector: (state: { space: { id: string } }) => unknown) =>
-    selector({ space: { id: 'space-1' } }),
+  vi.fn((selector: (state: unknown) => unknown) =>
+    selector({
+      space: {
+        id: 'space-1',
+        name: '畅享AI',
+        role_type: 1,
+        space_type: 2,
+      },
+      spaceList: [
+        {
+          id: 'space-1',
+          name: '畅享AI',
+          role_type: 1,
+          space_type: 2,
+        },
+        {
+          id: 'space-2',
+          name: '个人空间',
+          role_type: 1,
+          space_type: 1,
+        },
+      ],
+      setSpace: mockSetSpace,
+      createSpace: mockCreateSpace,
+      fetchSpaces: mockFetchSpaces,
+    }),
   ),
 );
+const capturedWorkspaceSubMenuProps = vi.hoisted(() => ({
+  current: undefined as
+    | {
+        menus: Array<{ label: string; path: string }>;
+        header?: ReactNode;
+        footer?: ReactNode;
+        collapsed?: boolean;
+      }
+    | undefined,
+}));
+const capturedAccountDropdownProps = vi.hoisted(() => ({
+  current: undefined as
+    | {
+        extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+      }
+    | undefined,
+}));
 
 let latestIntersectionCallback:
   | ((entries: Array<Partial<IntersectionObserverEntry>>) => void)
@@ -44,11 +93,84 @@ class MockIntersectionObserver {
 }
 
 vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/space/space-1/chats/new', search: '' }),
   useNavigate: () => mockNavigate,
 }));
 
+/* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror package component names. */
+vi.mock('@coze-foundation/space-ui-base', () => ({
+  WorkspaceSubMenu: (props: {
+    menus: Array<{ label: string; path: string }>;
+    header?: ReactNode;
+    footer?: ReactNode;
+    collapsed?: boolean;
+  }) => {
+    capturedWorkspaceSubMenuProps.current = props;
+
+    return (
+      <aside
+        data-testid="workspace-sub-menu"
+        data-collapsed={String(Boolean(props.collapsed))}
+      >
+        {props.header}
+        <nav>
+          {props.menus.map(item => (
+            <button key={item.path} type="button">
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        {props.footer}
+      </aside>
+    );
+  },
+}));
+
+vi.mock('@coze-foundation/global-adapter', () => ({
+  AccountDropdown: (props: {
+    extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+  }) => {
+    capturedAccountDropdownProps.current = props;
+    return <span data-testid="account-dropdown" />;
+  },
+}));
+
+vi.mock('@coze-foundation/account-ui-adapter', () => ({
+  useLogout: () => ({
+    node: <span data-testid="logout-modal" />,
+    open: vi.fn(),
+  }),
+}));
+/* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after package mocks. */
+
 vi.mock('@coze-foundation/space-store', () => ({
   useSpaceStore: mockUseSpaceStore,
+}));
+
+vi.mock('@coze-arch/bot-hooks', () => ({
+  useRouteConfig: mockUseRouteConfig,
+}));
+
+vi.mock('@coze-arch/foundation-sdk', () => ({
+  useUserInfo: () => ({ name: '刘文波', screen_name: 'wb' }),
+}));
+
+vi.mock('@coze-arch/bot-api/developer_api', () => ({
+  SpaceType: {
+    Personal: 1,
+    Team: 2,
+  },
+}));
+
+vi.mock('../../../pages/system/service', () => ({
+  getSystemAdminStatus: mockGetSystemAdminStatus,
+}));
+
+vi.mock('../../../pages/tools/mcp-settings-panel', () => ({
+  MCP_TOOL_SETTINGS_TAB_ID: 'mcp-tools',
+  MCPToolSettingsPanel: ({ spaceId }: { spaceId?: string }) => (
+    <span data-testid="mcp-settings-panel">{spaceId}</span>
+  ),
 }));
 
 vi.mock('../../../pages/tasks/service', () => ({
@@ -58,17 +180,94 @@ vi.mock('../../../pages/tasks/service', () => ({
 vi.mock('@coze-arch/coze-design', () => {
   const loadingComponent = ({ loading }: { loading: boolean }) =>
     loading ? <span data-testid="loading" /> : null;
+  const typographyText = ({
+    children,
+    className,
+  }: {
+    children?: ReactNode;
+    className?: string;
+  }) => <span className={className}>{children}</span>;
+  const inputComponent = ({
+    value,
+    placeholder,
+    maxLength,
+    onChange,
+  }: {
+    value?: string;
+    placeholder?: string;
+    maxLength?: number;
+    onChange?: (value: string) => void;
+  }) => (
+    <input
+      value={value}
+      placeholder={placeholder}
+      maxLength={maxLength}
+      onChange={event => onChange?.(event.target.value)}
+    />
+  );
+  const modalComponent = ({
+    visible,
+    title,
+    children,
+    onOk,
+    onCancel,
+    okText,
+    cancelText,
+  }: {
+    visible: boolean;
+    title: string;
+    children?: ReactNode;
+    onOk?: () => void;
+    onCancel?: () => void;
+    okText?: string;
+    cancelText?: string;
+  }) =>
+    visible ? (
+      <div role="dialog">
+        <h2>{title}</h2>
+        {children}
+        <button type="button" onClick={onCancel}>
+          {cancelText}
+        </button>
+        <button type="button" onClick={onOk}>
+          {okText}
+        </button>
+      </div>
+    ) : null;
 
   return {
+    ['Input']: inputComponent,
     ['Loading']: loadingComponent,
+    ['Modal']: modalComponent,
+    ['Toast']: {
+      error: vi.fn(),
+      success: vi.fn(),
+    },
+    ['Typography']: {
+      Text: typographyText,
+    },
   };
 });
 
 vi.mock('@coze-arch/coze-design/icons', () => {
-  const taskIcon = () => <span data-testid="task-icon" />;
+  const icon = ({ className }: { className?: string }) => (
+    <span className={className} data-testid="coze-icon" />
+  );
 
   return {
-    ['IconCozAsynchronousTask']: taskIcon,
+    ['IconCozArrowDown']: icon,
+    ['IconCozAsynchronousTask']: icon,
+    ['IconCozAsynchronousTaskFill']: icon,
+    ['IconCozCode']: icon,
+    ['IconCozCodeFill']: icon,
+    ['IconCozExit']: icon,
+    ['IconCozKnowledge']: icon,
+    ['IconCozKnowledgeFill']: icon,
+    ['IconCozMore']: icon,
+    ['IconCozPlus']: icon,
+    ['IconCozSetting']: icon,
+    ['IconCozSettingFill']: icon,
+    ['IconCozSideExpand']: icon,
   };
 });
 
@@ -86,10 +285,12 @@ import {
   shouldShowSystemManagementEntry,
   WORKSPACE_MENU_META,
 } from '../menu';
+import { WorkspaceSubMenu } from '../index';
 
-describe('Coze Studio WorkspaceSubMenu', () => {
+describe('NewX AI WorkspaceSubMenu', () => {
   beforeEach(() => {
     latestIntersectionCallback = undefined;
+    mockGetSystemAdminStatus.mockResolvedValue({ is_admin: false });
     Object.defineProperty(globalThis, 'IntersectionObserver', {
       configurable: true,
       writable: true,
@@ -97,7 +298,7 @@ describe('Coze Studio WorkspaceSubMenu', () => {
     });
   });
 
-  it('defines the Figma workspace navigation structure', () => {
+  it('defines the workspace navigation structure', () => {
     const labels = WORKSPACE_MENU_META.map(item => item.label);
     const paths = WORKSPACE_MENU_META.map(item => item.path);
 
@@ -205,6 +406,104 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       '账号设置',
       '退出登录',
     ]);
+  });
+
+  it('moves MCP configuration out of primary navigation into account settings dropdown', async () => {
+    mockNavigate.mockReset();
+    capturedWorkspaceSubMenuProps.current = undefined;
+    capturedAccountDropdownProps.current = undefined;
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    expect(
+      capturedWorkspaceSubMenuProps.current?.menus.map(item => item.label),
+    ).toEqual([
+      '新建任务',
+      '资源配置',
+      '技能配置',
+      '开发配置',
+      '工作空间',
+      '全部任务',
+    ]);
+    expect(container.textContent).not.toContain('工具');
+    expect(
+      container.querySelector('[data-testid="workspace_settings_button"]'),
+    ).toBe(null);
+    expect(container.textContent).not.toContain('功能菜单');
+    expect(capturedAccountDropdownProps.current?.extraSettingsTabs).toEqual([
+      expect.objectContaining({
+        id: 'mcp-tools',
+        tabName: 'MCP 配置',
+      }),
+    ]);
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('toggles the compact sidebar from the header trigger', async () => {
+    const collapseEvents: Array<CustomEvent> = [];
+    const handleCollapseEvent = (event: Event) => {
+      collapseEvents.push(event as CustomEvent);
+    };
+    window.addEventListener(
+      'coze-workspace-submenu-collapse-change',
+      handleCollapseEvent,
+    );
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    const sidebar = container.querySelector(
+      '[data-testid="workspace-sub-menu"]',
+    );
+    const collapseButton = container.querySelector(
+      '[data-testid="workspace_sidebar_collapse_button"]',
+    ) as HTMLButtonElement | null;
+
+    expect(collapseButton).not.toBeNull();
+    expect(collapseButton?.getAttribute('aria-expanded')).toBe('true');
+    expect(sidebar?.getAttribute('data-collapsed')).toBe('false');
+    expect(capturedWorkspaceSubMenuProps.current?.collapsed).toBe(false);
+
+    act(() => {
+      collapseButton?.click();
+    });
+
+    expect(collapseButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(sidebar?.getAttribute('data-collapsed')).toBe('true');
+    expect(capturedWorkspaceSubMenuProps.current?.collapsed).toBe(true);
+    expect(collapseEvents.at(-1)?.detail).toEqual({
+      storageKey: 'workspace-submenu-width',
+      collapsed: true,
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    window.removeEventListener(
+      'coze-workspace-submenu-collapse-change',
+      handleCollapseEvent,
+    );
+    container.remove();
   });
 
   it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {

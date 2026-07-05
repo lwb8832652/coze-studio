@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { WorkspaceSubMenu as BaseWorkspaceSubMenu } from '@coze-foundation/space-ui-base';
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { useLogout } from '@coze-foundation/account-ui-adapter';
-import { AccountDropdown } from '@coze-foundation/global-adapter';
+import {
+  AccountDropdown,
+  type AccountSettingsExtraTab,
+} from '@coze-foundation/global-adapter';
 import { useRouteConfig } from '@coze-arch/bot-hooks';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
 import { Input, Modal, Toast, Typography } from '@coze-arch/coze-design';
@@ -35,13 +38,17 @@ import {
   IconCozKnowledge,
   IconCozKnowledgeFill,
   IconCozMore,
-  IconCozPlugin,
   IconCozPlus,
   IconCozSetting,
   IconCozSettingFill,
   IconCozSideExpand,
 } from '@coze-arch/coze-design/icons';
 
+import {
+  MCP_TOOL_SETTINGS_TAB_ID,
+  MCPToolSettingsPanel,
+} from '../../pages/tools/mcp-settings-panel';
+import { getSystemAdminStatus } from '../../pages/system/service';
 import {
   ASSISTANT_BADGE,
   ASSISTANT_LABEL,
@@ -54,7 +61,6 @@ import {
   type WorkspaceMenuPolicySpace,
 } from './menu';
 import { WorkspaceTaskList } from './workspace-task-list';
-import { getSystemAdminStatus } from '../../pages/system/service';
 
 import '../workspace-prototype.less';
 
@@ -75,10 +81,6 @@ const MENU_ICONS = {
     icon: <IconCozCode />,
     activeIcon: <IconCozCodeFill />,
   },
-  [SPACE_SUB_MODULE.TOOLS]: {
-    icon: <IconCozPlugin />,
-    activeIcon: <IconCozPlugin />,
-  },
   [SPACE_SUB_MODULE.WORKSPACE]: {
     icon: <IconCozSetting />,
     activeIcon: <IconCozSettingFill />,
@@ -90,13 +92,27 @@ const MENU_ICONS = {
 };
 
 const SPACE_SEARCH_THRESHOLD = 10;
+const WORKSPACE_SUBMENU_STORAGE_KEY = 'workspace-submenu-width';
+const WORKSPACE_SUBMENU_COLLAPSE_EVENT =
+  'coze-workspace-submenu-collapse-change';
+
+const readStoredSidebarCollapsed = () => {
+  try {
+    return (
+      localStorage.getItem(`${WORKSPACE_SUBMENU_STORAGE_KEY}:collapsed`) ===
+      'true'
+    );
+  } catch (error) {
+    console.warn('Failed to read workspace sidebar collapsed state.', error);
+
+    return false;
+  }
+};
 
 const WorkspaceMark = () => (
   <span className="coze-prototype-workspace-mark" aria-hidden="true">
     <svg viewBox="0 0 24 24" className="h-[16px] w-[16px]" fill="currentColor">
-      <path
-        d="M12 2 2 22h20L12 2zm0 6 6 12H6l6-12z"
-      />
+      <path d="M12 2 2 22h20L12 2zm0 6 6 12H6l6-12z" />
     </svg>
   </span>
 );
@@ -142,12 +158,16 @@ interface WorkspaceSwitcherProps {
   currentSpace?: BotSpace;
   fallbackName?: string;
   showSystemManagementEntry?: boolean;
+  sidebarCollapsed?: boolean;
+  onToggleSidebarCollapsed?: () => void;
 }
 
 const WorkspaceSwitcher = ({
   currentSpace,
   fallbackName,
   showSystemManagementEntry,
+  sidebarCollapsed,
+  onToggleSidebarCollapsed,
 }: WorkspaceSwitcherProps) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -326,38 +346,51 @@ const WorkspaceSwitcher = ({
   return (
     <>
       <div className="coze-prototype-workspace-switcher">
-        <button
-          type="button"
-          className="coze-prototype-sidebar-header coze-prototype-sidebar-header-button"
-          aria-haspopup="menu"
-          aria-expanded={dropdownOpen}
-          onClick={() => {
-            setDropdownOpen(open => {
-              const nextOpen = !open;
-              if (!nextOpen) {
-                setSpaceSearchKeyword('');
-              }
-              return nextOpen;
-            });
-          }}
-        >
-          <WorkspaceMark />
-          <Typography.Text
-            ellipsis={{ showTooltip: true, rows: 1 }}
-            className="coze-prototype-workspace-title"
+        <div className="coze-prototype-sidebar-header coze-prototype-sidebar-header-button">
+          <button
+            type="button"
+            className="coze-prototype-workspace-trigger"
+            aria-haspopup="menu"
+            aria-expanded={dropdownOpen}
+            onClick={() => {
+              setDropdownOpen(open => {
+                const nextOpen = !open;
+                if (!nextOpen) {
+                  setSpaceSearchKeyword('');
+                }
+                return nextOpen;
+              });
+            }}
           >
-            {currentSpaceName}
-          </Typography.Text>
-          <span className="coze-prototype-header-icon-button" aria-hidden="true">
-            <IconCozArrowDown
-              className="text-[14px]"
-              data-open={dropdownOpen}
-            />
-          </span>
-          <span className="coze-prototype-header-icon-button" aria-hidden="true">
+            <WorkspaceMark />
+            <Typography.Text
+              ellipsis={{ showTooltip: true, rows: 1 }}
+              className="coze-prototype-workspace-title"
+            >
+              {currentSpaceName}
+            </Typography.Text>
+            <span
+              className="coze-prototype-header-icon-button"
+              aria-hidden="true"
+            >
+              <IconCozArrowDown
+                className="text-[14px]"
+                data-open={dropdownOpen}
+              />
+            </span>
+          </button>
+          <button
+            type="button"
+            className="coze-prototype-header-icon-button coze-prototype-sidebar-collapse-button"
+            aria-label={sidebarCollapsed ? '展开菜单' : '折叠菜单'}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? '展开菜单' : '折叠菜单'}
+            data-testid="workspace_sidebar_collapse_button"
+            onClick={onToggleSidebarCollapsed}
+          >
             <IconCozSideExpand className="text-[14px]" />
-          </span>
-        </button>
+          </button>
+        </div>
 
         {dropdownOpen ? (
           <div className="coze-prototype-space-dropdown" role="menu">
@@ -504,11 +537,13 @@ export const WorkspaceSubMenu = () => {
   const { subMenuKey } = useRouteConfig();
   const currentSpace = useSpaceStore(state => state.space);
   const userInfo = useUserInfo();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    readStoredSidebarCollapsed,
+  );
   const userDisplayName = userInfo?.name || userInfo?.screen_name;
-  const workspaceDisplayName =
-    userDisplayName
-      ? `${userDisplayName} 的工作空间`
-      : currentSpace?.name || '';
+  const workspaceDisplayName = userDisplayName
+    ? `${userDisplayName} 的工作空间`
+    : currentSpace?.name || '';
 
   const menus = getVisibleWorkspaceMenuMeta(
     currentSpace as WorkspaceMenuPolicySpace | undefined,
@@ -521,6 +556,32 @@ export const WorkspaceSubMenu = () => {
       ) : undefined,
     title: () => item.label,
   }));
+  const mcpSettingsTabs = useMemo<AccountSettingsExtraTab[]>(
+    () => [
+      {
+        id: MCP_TOOL_SETTINGS_TAB_ID,
+        tabName: 'MCP 配置',
+        content: () => <MCPToolSettingsPanel spaceId={currentSpace?.id} />,
+      },
+    ],
+    [currentSpace?.id],
+  );
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(current => {
+      const nextCollapsed = !current;
+
+      window.dispatchEvent(
+        new CustomEvent(WORKSPACE_SUBMENU_COLLAPSE_EVENT, {
+          detail: {
+            storageKey: WORKSPACE_SUBMENU_STORAGE_KEY,
+            collapsed: nextCollapsed,
+          },
+        }),
+      );
+
+      return nextCollapsed;
+    });
+  }, []);
 
   const headerNode = (
     <div className="w-full">
@@ -528,6 +589,8 @@ export const WorkspaceSubMenu = () => {
         currentSpace={currentSpace}
         fallbackName={workspaceDisplayName}
         showSystemManagementEntry={Boolean(userInfo)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebarCollapsed={toggleSidebarCollapsed}
       />
       <div className="coze-prototype-sidebar-section">
         <div className="coze-prototype-assistant-card">
@@ -544,7 +607,7 @@ export const WorkspaceSubMenu = () => {
   const footerNode = userInfo ? (
     <div className="coze-prototype-sidebar-footer">
       <div className="flex min-w-0 items-center gap-[8px]">
-        <AccountDropdown />
+        <AccountDropdown extraSettingsTabs={mcpSettingsTabs} />
         <Typography.Text
           ellipsis={{ showTooltip: true, rows: 1 }}
           className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500] text-[#232938]"
@@ -562,6 +625,7 @@ export const WorkspaceSubMenu = () => {
       currentSubMenu={subMenuKey}
       bottomPanel={<WorkspaceTaskList />}
       footer={footerNode}
+      collapsed={sidebarCollapsed}
     />
   );
 };

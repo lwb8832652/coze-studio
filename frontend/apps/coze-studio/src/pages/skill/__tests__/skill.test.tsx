@@ -291,7 +291,7 @@ describe('SkillPage', () => {
     });
 
     expect(container.textContent).toContain('技能');
-    expect(container.textContent).not.toContain('Aime 专属助理准备好');
+    expect(container.textContent).not.toContain('NewX AI 专属助理准备好');
     expect(container.textContent).not.toContain('去聊天专属助理');
     expect(container.textContent).toContain(
       '管理 Agent Skill 配置和启用状态。',
