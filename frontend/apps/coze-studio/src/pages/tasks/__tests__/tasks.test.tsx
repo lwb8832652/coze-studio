@@ -111,7 +111,7 @@ describe('TasksPage helpers', () => {
     });
 
     expect(container.textContent).toContain('全部任务');
-    expect(container.textContent).toContain('Aime 专属助理准备好');
+    expect(container.textContent).toContain('NewX AI 专属助理准备好');
     expect(container.textContent).toContain('去聊天专属助理');
     expect(container.textContent).toContain(
       '这里收纳您当前工作空间内的全部任务',

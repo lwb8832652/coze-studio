@@ -32,6 +32,7 @@ interface IWorkspaceSubMenuProps {
   currentSubMenu?: string;
   bottomPanel?: ReactNode;
   footer?: ReactNode;
+  collapsed?: boolean;
 }
 
 export const WorkspaceSubMenu = ({
@@ -40,6 +41,7 @@ export const WorkspaceSubMenu = ({
   currentSubMenu,
   bottomPanel,
   footer,
+  collapsed = false,
 }: IWorkspaceSubMenuProps) => {
   const { spaceList, loading } = useSpaceStore(
     useShallow(state => ({
@@ -54,14 +56,17 @@ export const WorkspaceSubMenu = ({
 
   return (
     <Skeleton loading={loading} active placeholder={<Skeleton.Paragraph />}>
-      <div className="coze-prototype-sidebar">
+      <div
+        className="coze-prototype-sidebar"
+        data-collapsed={String(collapsed)}
+      >
         <div className="w-full flex-none">{header}</div>
         {hasSpace ? (
           <>
             <div className="w-full flex-none">
               <WorkspaceList menus={menus} currentSubMenu={currentSubMenu} />
             </div>
-            <div className="mt-[16px] min-h-0 w-full flex-1 overflow-y-auto">
+            <div className="coze-prototype-sidebar-lower-panel mt-[16px] min-h-0 w-full flex-1 overflow-y-auto">
               {lowerPanel}
             </div>
             {footer ? <div className="w-full flex-none">{footer}</div> : null}

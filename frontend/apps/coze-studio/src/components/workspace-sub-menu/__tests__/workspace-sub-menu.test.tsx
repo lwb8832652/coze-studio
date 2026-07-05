@@ -23,11 +23,31 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListTaskThreads = vi.hoisted(() => vi.fn());
+const mockUseRouteConfig = vi.hoisted(() =>
+  vi.fn(() => ({ subMenuKey: 'chats/new' })),
+);
 const mockUseSpaceStore = vi.hoisted(() =>
   vi.fn((selector: (state: { space: { id: string } }) => unknown) =>
     selector({ space: { id: 'space-1' } }),
   ),
 );
+const capturedWorkspaceSubMenuProps = vi.hoisted(() => ({
+  current: undefined as
+    | {
+        menus: Array<{ label: string; path: string }>;
+        header?: React.ReactNode;
+        footer?: React.ReactNode;
+        collapsed?: boolean;
+      }
+    | undefined,
+}));
+const capturedAccountDropdownProps = vi.hoisted(() => ({
+  current: undefined as
+    | {
+        extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+      }
+    | undefined,
+}));
 
 let latestIntersectionCallback:
   | ((entries: Array<Partial<IntersectionObserverEntry>>) => void)
@@ -47,8 +67,55 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }));
 
+/* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror package component names. */
+vi.mock('@coze-foundation/space-ui-base', () => ({
+  WorkspaceSubMenu: (props: {
+    menus: Array<{ label: string; path: string }>;
+    header?: React.ReactNode;
+    footer?: React.ReactNode;
+    collapsed?: boolean;
+  }) => {
+    capturedWorkspaceSubMenuProps.current = props;
+
+    return (
+      <aside
+        data-testid="workspace-sub-menu"
+        data-collapsed={String(Boolean(props.collapsed))}
+      >
+        {props.header}
+        <nav>
+          {props.menus.map(item => (
+            <button key={item.path} type="button">
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        {props.footer}
+      </aside>
+    );
+  },
+}));
+
+vi.mock('@coze-foundation/global-adapter', () => ({
+  AccountDropdown: (props: {
+    extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+  }) => {
+    capturedAccountDropdownProps.current = props;
+    return <span data-testid="account-dropdown" />;
+  },
+}));
+/* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after package mocks. */
+
 vi.mock('@coze-foundation/space-store', () => ({
   useSpaceStore: mockUseSpaceStore,
+}));
+
+vi.mock('@coze-arch/bot-hooks', () => ({
+  useRouteConfig: mockUseRouteConfig,
+}));
+
+vi.mock('@coze-arch/foundation-sdk', () => ({
+  useUserInfo: () => ({ name: '刘文波', screen_name: 'wb' }),
 }));
 
 vi.mock('../../../pages/tasks/service', () => ({
@@ -58,25 +125,50 @@ vi.mock('../../../pages/tasks/service', () => ({
 vi.mock('@coze-arch/coze-design', () => {
   const loadingComponent = ({ loading }: { loading: boolean }) =>
     loading ? <span data-testid="loading" /> : null;
+  const typographyText = ({
+    children,
+    className,
+  }: {
+    children?: React.ReactNode;
+    className?: string;
+  }) => <span className={className}>{children}</span>;
 
   return {
     ['Loading']: loadingComponent,
+    ['Typography']: {
+      Text: typographyText,
+    },
   };
 });
 
 vi.mock('@coze-arch/coze-design/icons', () => {
-  const taskIcon = () => <span data-testid="task-icon" />;
+  const icon = ({ className }: { className?: string }) => (
+    <span className={className} data-testid="coze-icon" />
+  );
 
   return {
-    ['IconCozAsynchronousTask']: taskIcon,
+    ['IconCozArrowDown']: icon,
+    ['IconCozAsynchronousTask']: icon,
+    ['IconCozAsynchronousTaskFill']: icon,
+    ['IconCozCode']: icon,
+    ['IconCozCodeFill']: icon,
+    ['IconCozKnowledge']: icon,
+    ['IconCozKnowledgeFill']: icon,
+    ['IconCozMore']: icon,
+    ['IconCozPlugin']: icon,
+    ['IconCozPlus']: icon,
+    ['IconCozSetting']: icon,
+    ['IconCozSettingFill']: icon,
+    ['IconCozSideExpand']: icon,
   };
 });
 
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
 import { WorkspaceTaskList } from '../workspace-task-list';
 import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
+import { WorkspaceSubMenu } from '../index';
 
-describe('Coze Studio WorkspaceSubMenu', () => {
+describe('NewX AI WorkspaceSubMenu', () => {
   beforeEach(() => {
     latestIntersectionCallback = undefined;
     Object.defineProperty(globalThis, 'IntersectionObserver', {
@@ -97,7 +189,6 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       '资源配置',
       '技能配置',
       '开发配置',
-      '工具',
       '全部任务',
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
@@ -109,11 +200,99 @@ describe('Coze Studio WorkspaceSubMenu', () => {
       label: '全部任务',
       path: 'chats',
     });
-    expect(WORKSPACE_MENU_META[4]).toMatchObject({
-      label: '工具',
-      path: 'tools',
-    });
+    expect(paths).not.toContain('tools');
     expect(paths).not.toContain('task-trigger');
+  });
+
+  it('moves MCP configuration out of primary navigation into account settings dropdown', async () => {
+    mockNavigate.mockReset();
+    capturedWorkspaceSubMenuProps.current = undefined;
+    capturedAccountDropdownProps.current = undefined;
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    expect(
+      capturedWorkspaceSubMenuProps.current?.menus.map(item => item.label),
+    ).toEqual(['新建任务', '资源配置', '技能配置', '开发配置', '全部任务']);
+    expect(container.textContent).not.toContain('工具');
+    expect(
+      container.querySelector('[data-testid="workspace_settings_button"]'),
+    ).toBe(null);
+    expect(container.textContent).not.toContain('功能菜单');
+    expect(capturedAccountDropdownProps.current?.extraSettingsTabs).toEqual([
+      expect.objectContaining({
+        id: 'mcp-tools',
+        tabName: 'MCP 配置',
+      }),
+    ]);
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('toggles the DeerFlow-style compact sidebar from the header trigger', async () => {
+    const collapseEvents: Array<CustomEvent> = [];
+    const handleCollapseEvent = (event: Event) => {
+      collapseEvents.push(event as CustomEvent);
+    };
+    window.addEventListener(
+      'coze-workspace-submenu-collapse-change',
+      handleCollapseEvent,
+    );
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    const sidebar = container.querySelector(
+      '[data-testid="workspace-sub-menu"]',
+    );
+    const collapseButton = container.querySelector(
+      '[data-testid="workspace_sidebar_collapse_button"]',
+    ) as HTMLButtonElement | null;
+
+    expect(collapseButton).not.toBeNull();
+    expect(collapseButton?.getAttribute('aria-expanded')).toBe('true');
+    expect(sidebar?.getAttribute('data-collapsed')).toBe('false');
+    expect(capturedWorkspaceSubMenuProps.current?.collapsed).toBe(false);
+
+    act(() => {
+      collapseButton?.click();
+    });
+
+    expect(collapseButton?.getAttribute('aria-expanded')).toBe('false');
+    expect(sidebar?.getAttribute('data-collapsed')).toBe('true');
+    expect(capturedWorkspaceSubMenuProps.current?.collapsed).toBe(true);
+    expect(collapseEvents.at(-1)?.detail).toEqual({
+      storageKey: 'workspace-submenu-width',
+      collapsed: true,
+    });
+
+    act(() => {
+      root?.unmount();
+    });
+    window.removeEventListener(
+      'coze-workspace-submenu-collapse-change',
+      handleCollapseEvent,
+    );
+    container.remove();
   });
 
   it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {

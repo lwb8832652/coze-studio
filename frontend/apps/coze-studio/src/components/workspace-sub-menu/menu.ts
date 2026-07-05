@@ -49,11 +49,6 @@ export const WORKSPACE_MENU_META = [
     dataTestId: 'navigation_workspace_develop',
   },
   {
-    label: '工具',
-    path: SPACE_SUB_MODULE.TOOLS,
-    dataTestId: 'navigation_workspace_tools',
-  },
-  {
     label: '全部任务',
     path: SPACE_SUB_MODULE.TASKS,
     dataTestId: 'navigation_workspace_tasks',

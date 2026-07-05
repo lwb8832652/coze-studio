@@ -190,7 +190,7 @@ const WorkbenchTopbar = () => (
   <header className="chat-workbench-topbar" aria-label="工作台状态">
     <div className="chat-workbench-assistant-status">
       <span className="chat-workbench-status-dot" />
-      <span>Aime 专属助理准备好,先聊聊吧~</span>
+      <span>NewX AI 专属助理准备好,先聊聊吧~</span>
       <button type="button">去聊天专属助理</button>
     </div>
     <button

@@ -26,6 +26,11 @@
   background: #fafbfc;
 }
 
+.coze-prototype-sidebar,
+.coze-prototype-sidebar * {
+  box-sizing: border-box;
+}
+
 .coze-prototype-sidebar-header {
   display: flex;
   flex: 0 0 auto;
@@ -68,11 +73,28 @@
 
   width: 24px;
   height: 24px;
+  padding: 0;
 
   color: #444c5c;
 
+  background: #fff;
   border: 1px solid rgb(77 101 148 / 20%);
   border-radius: 4px;
+}
+
+.coze-prototype-sidebar-collapse-button {
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.2s ease;
+}
+
+.coze-prototype-sidebar-collapse-button:hover {
+  color: #060e1f;
+  background: rgb(91 100 117 / 8%);
+  border-color: rgb(77 101 148 / 32%);
 }
 
 .coze-prototype-workspace-title {
@@ -215,6 +237,53 @@
   height: 16px;
 
   color: #747b8a;
+}
+
+.coze-prototype-sidebar[data-collapsed='true'] {
+  overflow: hidden;
+}
+
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-sidebar-header {
+  gap: 0;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-workspace-mark,
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-workspace-title,
+.coze-prototype-sidebar[data-collapsed='true']
+  .coze-prototype-sidebar-header
+  .coze-prototype-header-icon-button[aria-hidden='true'],
+.coze-prototype-sidebar[data-collapsed='true']
+  .coze-prototype-sidebar-section,
+.coze-prototype-sidebar[data-collapsed='true']
+  .coze-prototype-sidebar-lower-panel,
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-sidebar-footer,
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-nav-title,
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-nav-suffix {
+  display: none;
+}
+
+.coze-prototype-sidebar[data-collapsed='true']
+  .coze-prototype-sidebar-collapse-button {
+  transform: rotate(180deg);
+}
+
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-nav-list {
+  align-items: center;
+  margin-top: 12px;
+  padding: 0;
+}
+
+.coze-prototype-sidebar[data-collapsed='true'] .coze-prototype-nav-item {
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+}
+
+.coze-prototype-sidebar[data-collapsed='true']
+  .coze-prototype-nav-item-primary {
+  width: 32px;
 }
 
 .coze-prototype-sidebar-task-list {
