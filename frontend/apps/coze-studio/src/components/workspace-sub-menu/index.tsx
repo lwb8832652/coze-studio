@@ -14,27 +14,25 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function -- Cohesive orchestrator. */
+/* eslint-disable max-lines -- Cohesive orchestrator. */
+
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { WorkspaceSubMenu as BaseWorkspaceSubMenu } from '@coze-foundation/space-ui-base';
 import { useSpaceStore } from '@coze-foundation/space-store';
-import { useLogout } from '@coze-foundation/account-ui-adapter';
 import {
   AccountDropdown,
   type AccountSettingsExtraTab,
 } from '@coze-foundation/global-adapter';
-import { useRouteConfig } from '@coze-arch/bot-hooks';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
-import { Input, Modal, Toast, Typography } from '@coze-arch/coze-design';
-import { SpaceType, type BotSpace } from '@coze-arch/bot-api/developer_api';
 import {
   IconCozArrowDown,
   IconCozAsynchronousTask,
   IconCozAsynchronousTaskFill,
   IconCozCode,
   IconCozCodeFill,
-  IconCozExit,
   IconCozKnowledge,
   IconCozKnowledgeFill,
   IconCozMore,
@@ -43,24 +41,25 @@ import {
   IconCozSettingFill,
   IconCozSideExpand,
 } from '@coze-arch/coze-design/icons';
+import { Input, Modal, Toast, Typography } from '@coze-arch/coze-design';
+import { useRouteConfig } from '@coze-arch/bot-hooks';
+import { SpaceType, type BotSpace } from '@coze-arch/bot-api/developer_api';
 
 import {
   MCP_TOOL_SETTINGS_TAB_ID,
   MCPToolSettingsPanel,
 } from '../../pages/tools/mcp-settings-panel';
 import { getSystemAdminStatus } from '../../pages/system/service';
+import { WorkspaceTaskList } from './workspace-task-list';
 import {
   ASSISTANT_BADGE,
   ASSISTANT_LABEL,
-  ACCOUNT_SETTINGS_ENTRY,
   SPACE_SUB_MODULE,
-  SIGN_OUT_ENTRY,
   SYSTEM_MANAGEMENT_ENTRY,
   getVisibleWorkspaceMenuMeta,
   shouldShowSystemManagementEntry,
   type WorkspaceMenuPolicySpace,
 } from './menu';
-import { WorkspaceTaskList } from './workspace-task-list';
 
 import '../workspace-prototype.less';
 
@@ -72,6 +71,10 @@ const MENU_ICONS = {
   [SPACE_SUB_MODULE.LIBRARY]: {
     icon: <IconCozKnowledge />,
     activeIcon: <IconCozKnowledgeFill />,
+  },
+  [SPACE_SUB_MODULE.APP_DEV]: {
+    icon: <IconCozCode />,
+    activeIcon: <IconCozCodeFill />,
   },
   [SPACE_SUB_MODULE.SKILL]: {
     icon: <IconCozSetting />,
@@ -117,11 +120,19 @@ const WorkspaceMark = () => (
   </span>
 );
 
-const getSpaceDisplayName = (space?: BotSpace, fallbackName?: string) =>
-  space?.name || fallbackName || '工作空间';
+const getSpaceDisplayName = (space?: BotSpace, fallbackName?: string) => {
+  if (space?.space_type === SpaceType.Personal) {
+    return '个人空间';
+  }
+
+  return space?.name || fallbackName || '工作空间';
+};
 
 const getSpaceTypeLabel = (space?: BotSpace) =>
   space?.space_type === SpaceType.Personal ? '个人空间' : '团队空间';
+
+const shouldShowSpaceTypeLabel = (space?: BotSpace, fallbackName?: string) =>
+  getSpaceDisplayName(space, fallbackName) !== getSpaceTypeLabel(space);
 
 const buildSpaceSwitchPath = ({
   currentSpaceId,
@@ -157,7 +168,6 @@ const buildSpaceSwitchPath = ({
 interface WorkspaceSwitcherProps {
   currentSpace?: BotSpace;
   fallbackName?: string;
-  showSystemManagementEntry?: boolean;
   sidebarCollapsed?: boolean;
   onToggleSidebarCollapsed?: () => void;
 }
@@ -165,13 +175,11 @@ interface WorkspaceSwitcherProps {
 const WorkspaceSwitcher = ({
   currentSpace,
   fallbackName,
-  showSystemManagementEntry,
   sidebarCollapsed,
   onToggleSidebarCollapsed,
 }: WorkspaceSwitcherProps) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { node: logoutModal, open: openLogoutModal } = useLogout();
   const spaceList = useSpaceStore(state => state.spaceList);
   const setSpace = useSpaceStore(state => state.setSpace);
   const createSpace = useSpaceStore(state => state.createSpace);
@@ -183,7 +191,6 @@ const WorkspaceSwitcher = ({
   const [spaceSearchKeyword, setSpaceSearchKeyword] = useState('');
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState('');
-  const [isSystemAdmin, setIsSystemAdmin] = useState(false);
   const currentSpaceId = currentSpace?.id;
   const currentSpaceName = getSpaceDisplayName(currentSpace, fallbackName);
   const allSpaces = useMemo(() => {
@@ -207,33 +214,6 @@ const WorkspaceSwitcher = ({
           .includes(normalizedSpaceKeyword),
       )
     : otherSpaces;
-
-  useEffect(() => {
-    let canceled = false;
-
-    if (!showSystemManagementEntry) {
-      setIsSystemAdmin(false);
-      return () => {
-        canceled = true;
-      };
-    }
-
-    void getSystemAdminStatus()
-      .then(status => {
-        if (!canceled) {
-          setIsSystemAdmin(status.is_admin);
-        }
-      })
-      .catch(() => {
-        if (!canceled) {
-          setIsSystemAdmin(false);
-        }
-      });
-
-    return () => {
-      canceled = true;
-    };
-  }, [showSystemManagementEntry]);
 
   const switchSpace = (space: BotSpace) => {
     if (!space.id) {
@@ -335,9 +315,11 @@ const WorkspaceSwitcher = ({
           <span className="coze-prototype-space-row-name">
             {getSpaceDisplayName(space)}
           </span>
-          <span className="coze-prototype-space-row-type">
-            {getSpaceTypeLabel(space)}
-          </span>
+          {shouldShowSpaceTypeLabel(space) ? (
+            <span className="coze-prototype-space-row-type">
+              {getSpaceTypeLabel(space)}
+            </span>
+          ) : null}
         </span>
       </button>
     );
@@ -405,9 +387,11 @@ const WorkspaceSwitcher = ({
                 <span className="coze-prototype-space-row-name">
                   {currentSpaceName}
                 </span>
-                <span className="coze-prototype-space-row-type">
-                  {getSpaceTypeLabel(currentSpace)}
-                </span>
+                {shouldShowSpaceTypeLabel(currentSpace, fallbackName) ? (
+                  <span className="coze-prototype-space-row-type">
+                    {getSpaceTypeLabel(currentSpace)}
+                  </span>
+                ) : null}
               </span>
             </div>
             {showSpaceSearch ? (
@@ -436,47 +420,6 @@ const WorkspaceSwitcher = ({
               <IconCozPlus className="text-[14px]" />
               <span>创建团队空间</span>
             </button>
-            <div className="coze-prototype-space-dropdown-actions">
-              <button
-                type="button"
-                className="coze-prototype-space-system-row"
-                onClick={() => {
-                  setDropdownOpen(false);
-                  navigate(ACCOUNT_SETTINGS_ENTRY.path);
-                }}
-              >
-                <IconCozSetting className="text-[14px]" />
-                <span>{ACCOUNT_SETTINGS_ENTRY.label}</span>
-              </button>
-              <button
-                type="button"
-                className="coze-prototype-space-system-row"
-                onClick={() => {
-                  setDropdownOpen(false);
-                  openLogoutModal();
-                }}
-              >
-                <IconCozExit className="text-[14px]" />
-                <span>{SIGN_OUT_ENTRY.label}</span>
-              </button>
-            </div>
-            {shouldShowSystemManagementEntry({
-              hasUser: showSystemManagementEntry,
-              isSystemAdmin,
-            }) ? (
-              <button
-                type="button"
-                className="coze-prototype-space-system-row"
-                onClick={() => {
-                  setDropdownOpen(false);
-                  setSpaceSearchKeyword('');
-                  navigate(SYSTEM_MANAGEMENT_ENTRY.path);
-                }}
-              >
-                <IconCozSetting className="text-[14px]" />
-                <span>{SYSTEM_MANAGEMENT_ENTRY.label}</span>
-              </button>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -528,18 +471,20 @@ const WorkspaceSwitcher = ({
           ) : null}
         </div>
       </Modal>
-      {logoutModal}
     </>
   );
 };
 
 export const WorkspaceSubMenu = () => {
   const { subMenuKey } = useRouteConfig();
+  const navigate = useNavigate();
   const currentSpace = useSpaceStore(state => state.space);
   const userInfo = useUserInfo();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     readStoredSidebarCollapsed,
   );
+  const [isSystemAdmin, setIsSystemAdmin] = useState(false);
+  const hasUser = Boolean(userInfo);
   const userDisplayName = userInfo?.name || userInfo?.screen_name;
   const workspaceDisplayName = userDisplayName
     ? `${userDisplayName} 的工作空间`
@@ -566,6 +511,52 @@ export const WorkspaceSubMenu = () => {
     ],
     [currentSpace?.id],
   );
+  const accountExtraMenuItems = useMemo(
+    () =>
+      shouldShowSystemManagementEntry({
+        hasUser,
+        isSystemAdmin,
+      })
+        ? [
+            {
+              key: 'system-management',
+              prefixIcon: <IconCozSetting />,
+              title: SYSTEM_MANAGEMENT_ENTRY.label,
+              onClick: () => {
+                navigate(SYSTEM_MANAGEMENT_ENTRY.path);
+              },
+              dataTestId: 'layout_avatar_system-management',
+            },
+          ]
+        : [],
+    [hasUser, isSystemAdmin, navigate],
+  );
+  useEffect(() => {
+    let canceled = false;
+
+    if (!hasUser) {
+      setIsSystemAdmin(false);
+      return () => {
+        canceled = true;
+      };
+    }
+
+    void getSystemAdminStatus()
+      .then(status => {
+        if (!canceled) {
+          setIsSystemAdmin(status.is_admin);
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setIsSystemAdmin(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [hasUser]);
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsed(current => {
       const nextCollapsed = !current;
@@ -588,7 +579,6 @@ export const WorkspaceSubMenu = () => {
       <WorkspaceSwitcher
         currentSpace={currentSpace}
         fallbackName={workspaceDisplayName}
-        showSystemManagementEntry={Boolean(userInfo)}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebarCollapsed={toggleSidebarCollapsed}
       />
@@ -607,7 +597,10 @@ export const WorkspaceSubMenu = () => {
   const footerNode = userInfo ? (
     <div className="coze-prototype-sidebar-footer">
       <div className="flex min-w-0 items-center gap-[8px]">
-        <AccountDropdown extraSettingsTabs={mcpSettingsTabs} />
+        <AccountDropdown
+          extraSettingsTabs={mcpSettingsTabs}
+          extraMenuItems={accountExtraMenuItems}
+        />
         <Typography.Text
           ellipsis={{ showTooltip: true, rows: 1 }}
           className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500] text-[#232938]"

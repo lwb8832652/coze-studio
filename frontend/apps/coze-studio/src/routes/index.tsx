@@ -48,6 +48,8 @@ import {
   ExploreTemplatePage,
   OAuthConsentConfirmPage,
   Workbench,
+  AppDev,
+  AppDevIDE,
   SkillPage,
   ToolsPage,
   WorkspacePage,
@@ -226,6 +228,22 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   Component: Library,
                   loader: () => ({
                     subMenuKey: SpaceSubModuleEnum.LIBRARY,
+                  }),
+                },
+
+                // Web App Development
+                {
+                  path: 'app-dev',
+                  Component: AppDev,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.APP_DEV,
+                  }),
+                },
+                {
+                  path: 'app-dev/:project_id',
+                  Component: AppDevIDE,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.APP_DEV,
                   }),
                 },
 

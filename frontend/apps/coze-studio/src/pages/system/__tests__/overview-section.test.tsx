@@ -63,6 +63,12 @@ describe('OverviewSection', () => {
               owner_name: 'Owner',
               total_member_num: 2,
             },
+            {
+              id: '102',
+              name: 'Personal Space',
+              owner_name: 'Member',
+              total_member_num: 1,
+            },
           ]}
         />,
       );
@@ -79,6 +85,8 @@ describe('OverviewSection', () => {
     expect(container.textContent).toContain('owner@example.test');
     expect(container.textContent).toContain('最近工作空间');
     expect(container.textContent).toContain('畅享 AI');
+    expect(container.textContent).toContain('个人空间');
+    expect(container.textContent).not.toContain('Personal Space');
   });
 
   it('renders empty snapshot hints when overview lists are empty', () => {

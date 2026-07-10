@@ -39,6 +39,26 @@ type listAdminUserSpacesRequest struct {
 	UserID int64 `json:"user_id,string"`
 }
 
+type createAdminUserRequest struct {
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Name       string `json:"name"`
+	UniqueName string `json:"user_unique_name"`
+	Locale     string `json:"locale"`
+}
+
+type updateAdminUserRequest struct {
+	UserID     int64  `json:"user_id,string"`
+	Name       string `json:"name"`
+	UniqueName string `json:"user_unique_name"`
+	Locale     string `json:"locale"`
+}
+
+type resetAdminUserPasswordRequest struct {
+	UserID   int64  `json:"user_id,string"`
+	Password string `json:"password"`
+}
+
 func ListAdminWorkspaces(ctx context.Context, c *app.RequestContext) {
 	var req listAdminResourcesRequest
 	if err := c.BindAndValidate(&req); err != nil {
@@ -50,6 +70,68 @@ func ListAdminWorkspaces(ctx context.Context, c *app.RequestContext) {
 		Keyword: req.Keyword,
 		Page:    req.Page,
 		Size:    req.Size,
+	})
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+func CreateAdminUser(ctx context.Context, c *app.RequestContext) {
+	var req createAdminUserRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appadmin.ManagementApplicationSVC.CreateAdminUser(ctx, &appadmin.CreateAdminUserRequest{
+		Email:      req.Email,
+		Password:   req.Password,
+		Name:       req.Name,
+		UniqueName: req.UniqueName,
+		Locale:     req.Locale,
+	})
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+func UpdateAdminUser(ctx context.Context, c *app.RequestContext) {
+	var req updateAdminUserRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appadmin.ManagementApplicationSVC.UpdateAdminUser(ctx, &appadmin.UpdateAdminUserRequest{
+		UserID:     req.UserID,
+		Name:       req.Name,
+		UniqueName: req.UniqueName,
+		Locale:     req.Locale,
+	})
+	if err != nil {
+		internalServerErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+func ResetAdminUserPassword(ctx context.Context, c *app.RequestContext) {
+	var req resetAdminUserPasswordRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+
+	resp, err := appadmin.ManagementApplicationSVC.ResetAdminUserPassword(ctx, &appadmin.ResetAdminUserPasswordRequest{
+		UserID:   req.UserID,
+		Password: req.Password,
 	})
 	if err != nil {
 		internalServerErrorResponse(ctx, c, err)

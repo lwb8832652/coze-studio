@@ -25,9 +25,10 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/application/permission"
 
-	"github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/admin"
+	"github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/app"
+	appdevapp "github.com/coze-dev/coze-studio/backend/application/appdev"
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
 	"github.com/coze-dev/coze-studio/backend/application/connector"
 	"github.com/coze-dev/coze-studio/backend/application/conversation"
@@ -81,6 +82,7 @@ import (
 	crossworkflow "github.com/coze-dev/coze-studio/backend/crossdomain/workflow"
 	workflowImpl "github.com/coze-dev/coze-studio/backend/crossdomain/workflow/impl"
 	threadrepository "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	infraappdev "github.com/coze-dev/coze-studio/backend/infra/appdev"
 	"github.com/coze-dev/coze-studio/backend/infra/checkpoint"
 	"github.com/coze-dev/coze-studio/backend/infra/document/progressbar"
 	progressBarImpl "github.com/coze-dev/coze-studio/backend/infra/document/progressbar/impl/progressbar"
@@ -395,6 +397,11 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	connectorSVC := connector.InitService(infra.OSS)
 	userSVC := user.InitService(ctx, infra.DB, infra.OSS, infra.IDGenSVC)
 	admin.InitService(userSVC.DomainSVC)
+	appdevapp.InitService(
+		infraappdev.NewConfiguredStore(infra.DB, infra.OSS),
+		infraappdev.NewConfiguredRuntimeManager(),
+		infraappdev.NewChatBrokerWithPersistence(infraappdev.NewPersistentChatRepository(infra.DB)),
+	)
 	templateSVC := template.InitService(ctx, &template.ServiceComponents{
 		DB:      infra.DB,
 		IDGen:   infra.IDGenSVC,

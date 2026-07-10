@@ -50,6 +50,17 @@ type GetWorkspaceDetailRequest struct {
 	CurrentUserID int64
 }
 
+type CheckWorkspaceMembershipRequest struct {
+	SpaceID       int64
+	CurrentUserID int64
+}
+
+type CheckWorkspaceAppDevAccessRequest struct {
+	SpaceID        int64
+	CurrentUserID  int64
+	RequireManager bool
+}
+
 type ListWorkspaceMembersRequest struct {
 	SpaceID       int64
 	CurrentUserID int64
@@ -215,6 +226,55 @@ func (s *ApplicationService) GetWorkspaceDetail(
 		Code: 0,
 		Msg:  "success",
 	}, nil
+}
+
+func (s *ApplicationService) CheckWorkspaceMembership(
+	ctx context.Context,
+	req *CheckWorkspaceMembershipRequest,
+) error {
+	if req == nil || req.SpaceID <= 0 || req.CurrentUserID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid workspace membership request"))
+	}
+
+	domain, err := s.userDomain()
+	if err != nil {
+		return err
+	}
+
+	_, err = s.requireMembership(ctx, domain, req.SpaceID, req.CurrentUserID)
+	return err
+}
+
+func (s *ApplicationService) CheckWorkspaceAppDevAccess(
+	ctx context.Context,
+	req *CheckWorkspaceAppDevAccessRequest,
+) error {
+	if req == nil || req.SpaceID <= 0 || req.CurrentUserID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid workspace appdev access request"))
+	}
+
+	resp, err := s.GetWorkspaceDetail(ctx, &GetWorkspaceDetailRequest{
+		SpaceID:       req.SpaceID,
+		CurrentUserID: req.CurrentUserID,
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil || resp.Data == nil {
+		return errorx.New(errno.ErrUserPermissionCode, errorx.KV("msg", "workspace access is unavailable"))
+	}
+
+	return validateAppDevAccess(resp.Data, req.RequireManager)
+}
+
+func validateAppDevAccess(detail *WorkspaceDetail, requireManager bool) error {
+	if detail == nil || !detail.AllowDevelop {
+		return errorx.New(errno.ErrUserPermissionCode, errorx.KV("msg", "workspace does not allow development"))
+	}
+	if requireManager && detail.CurrentUserRole != workspaceRoleOwner && detail.CurrentUserRole != workspaceRoleAdmin {
+		return errorx.New(errno.ErrUserPermissionCode, errorx.KV("msg", "workspace owner or admin role is required"))
+	}
+	return nil
 }
 
 func (s *ApplicationService) ListWorkspaceMembers(

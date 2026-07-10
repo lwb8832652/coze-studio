@@ -18,6 +18,7 @@ package admin
 
 import (
 	"context"
+	"strings"
 
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	userservice "github.com/coze-dev/coze-studio/backend/domain/user/service"
@@ -32,6 +33,10 @@ type UserDomain interface {
 	MGetUserProfiles(ctx context.Context, userIDs []int64) ([]*userentity.User, error)
 	GetSpaceMembers(ctx context.Context, spaceID int64) ([]*userentity.SpaceMember, error)
 	GetUserSpaceList(ctx context.Context, userID int64) ([]*userentity.Space, error)
+	Create(ctx context.Context, req *userservice.CreateUserRequest) (*userentity.User, error)
+	UpdateProfile(ctx context.Context, req *userservice.UpdateProfileRequest) error
+	ResetPassword(ctx context.Context, email string, password string) error
+	GetUserInfo(ctx context.Context, userID int64) (*userentity.User, error)
 }
 
 type ManagementApplicationService struct {
@@ -63,6 +68,26 @@ type ListAdminWorkspaceMembersRequest struct {
 
 type ListAdminUserSpacesRequest struct {
 	UserID int64
+}
+
+type CreateAdminUserRequest struct {
+	Email      string
+	Password   string
+	Name       string
+	UniqueName string
+	Locale     string
+}
+
+type UpdateAdminUserRequest struct {
+	UserID     int64
+	Name       string
+	UniqueName string
+	Locale     string
+}
+
+type ResetAdminUserPasswordRequest struct {
+	UserID   int64
+	Password string
 }
 
 type AdminWorkspace struct {
@@ -132,6 +157,12 @@ type ListAdminUserSpacesResponse struct {
 	Msg    string            `json:"msg"`
 }
 
+type MutateAdminUserResponse struct {
+	User *AdminUser `json:"user,omitempty"`
+	Code int64      `json:"code"`
+	Msg  string     `json:"msg"`
+}
+
 func (s *ManagementApplicationService) ListAdminWorkspaces(
 	ctx context.Context,
 	req *ListAdminWorkspacesRequest,
@@ -178,6 +209,117 @@ func (s *ManagementApplicationService) ListAdminWorkspaces(
 		Total:      total,
 		Code:       0,
 		Msg:        "success",
+	}, nil
+}
+
+func (s *ManagementApplicationService) CreateAdminUser(
+	ctx context.Context,
+	req *CreateAdminUserRequest,
+) (*MutateAdminUserResponse, error) {
+	if req == nil {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "missing admin user create request"))
+	}
+
+	email := strings.TrimSpace(req.Email)
+	password := strings.TrimSpace(req.Password)
+	if email == "" {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "email cannot be empty"))
+	}
+	if len(password) < 6 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "password must be at least 6 characters"))
+	}
+
+	locale := strings.TrimSpace(req.Locale)
+	if locale == "" {
+		locale = "zh-CN"
+	}
+
+	user, err := s.UserDomainSVC.Create(ctx, &userservice.CreateUserRequest{
+		Email:      email,
+		Password:   password,
+		Name:       strings.TrimSpace(req.Name),
+		UniqueName: strings.TrimSpace(req.UniqueName),
+		Locale:     locale,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &MutateAdminUserResponse{
+		User: toAdminUser(user),
+		Code: 0,
+		Msg:  "success",
+	}, nil
+}
+
+func (s *ManagementApplicationService) UpdateAdminUser(
+	ctx context.Context,
+	req *UpdateAdminUserRequest,
+) (*MutateAdminUserResponse, error) {
+	if req == nil || req.UserID <= 0 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid admin user update request"))
+	}
+
+	name := strings.TrimSpace(req.Name)
+	uniqueName := strings.TrimSpace(req.UniqueName)
+	locale := strings.TrimSpace(req.Locale)
+	updateReq := &userservice.UpdateProfileRequest{
+		UserID: req.UserID,
+	}
+	if name != "" {
+		updateReq.Name = &name
+	}
+	if uniqueName != "" {
+		updateReq.UniqueName = &uniqueName
+	}
+	if locale != "" {
+		updateReq.Locale = &locale
+	}
+
+	if err := s.UserDomainSVC.UpdateProfile(ctx, updateReq); err != nil {
+		return nil, err
+	}
+
+	user, err := s.UserDomainSVC.GetUserInfo(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &MutateAdminUserResponse{
+		User: toAdminUser(user),
+		Code: 0,
+		Msg:  "success",
+	}, nil
+}
+
+func (s *ManagementApplicationService) ResetAdminUserPassword(
+	ctx context.Context,
+	req *ResetAdminUserPasswordRequest,
+) (*MutateAdminUserResponse, error) {
+	if req == nil || req.UserID <= 0 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid admin user password reset request"))
+	}
+	password := strings.TrimSpace(req.Password)
+	if len(password) < 6 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "password must be at least 6 characters"))
+	}
+
+	user, err := s.UserDomainSVC.GetUserInfo(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(user.Email) == "" {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "user email cannot be empty"))
+	}
+
+	if err := s.UserDomainSVC.ResetPassword(ctx, user.Email, password); err != nil {
+		return nil, err
+	}
+
+	return &MutateAdminUserResponse{
+		User: toAdminUser(user),
+		Code: 0,
+		Msg:  "success",
 	}, nil
 }
 
@@ -279,14 +421,7 @@ func (s *ManagementApplicationService) ListAdminUsers(
 
 	adminUsers := make([]*AdminUser, 0, len(users))
 	for _, user := range users {
-		adminUsers = append(adminUsers, &AdminUser{
-			UserID:     user.UserID,
-			Name:       user.Name,
-			Email:      user.Email,
-			UniqueName: user.UniqueName,
-			AvatarURL:  user.IconURL,
-			CreatedAt:  user.CreatedAt,
-		})
+		adminUsers = append(adminUsers, toAdminUser(user))
 	}
 
 	return &ListAdminUsersResponse{
@@ -295,6 +430,21 @@ func (s *ManagementApplicationService) ListAdminUsers(
 		Code:  0,
 		Msg:   "success",
 	}, nil
+}
+
+func toAdminUser(user *userentity.User) *AdminUser {
+	if user == nil {
+		return nil
+	}
+
+	return &AdminUser{
+		UserID:     user.UserID,
+		Name:       user.Name,
+		Email:      user.Email,
+		UniqueName: user.UniqueName,
+		AvatarURL:  user.IconURL,
+		CreatedAt:  user.CreatedAt,
+	}
 }
 
 func normalizePagination(page int32, size int32) (int32, int32) {

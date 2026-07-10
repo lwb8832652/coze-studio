@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
+/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function -- Cohesive orchestrator. */
+/* eslint-disable max-lines -- Cohesive orchestrator. */
+
 import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import '../../components/workspace-prototype.less';
-import { SYSTEM_SECTIONS } from './content';
-import { ModelConfigSection } from './model-config-section';
-import { OverviewSection } from './overview-section';
-import { SystemSettingsSection } from './system-settings-section';
-import { UserManagementSection } from './user-management-section';
 import { WorkspaceManagementSection } from './workspace-management-section';
+import { getActiveSystemSection, getSystemSectionContent } from './view-model';
+import { UserManagementSection } from './user-management-section';
+import { SystemSettingsSection } from './system-settings-section';
 import {
   createAdminModel,
+  createAdminUser,
   deleteAdminModel,
   getSystemAdminStatus,
   getAdminBasicConfig,
@@ -35,19 +37,24 @@ import {
   listAdminWorkspaceMembers,
   listAdminUsers,
   listAdminWorkspaces,
+  resetAdminUserPassword,
+  saveAdminBasicConfig,
+  updateAdminUser,
   type AdminCreateModelPayload,
+  type AdminCreateUserPayload,
   type AdminBasicConfig,
   type AdminKnowledgeConfig,
   type AdminProviderModelListItem,
+  type AdminResetUserPasswordPayload,
+  type AdminUpdateUserPayload,
   type AdminUserSpace,
   type AdminUser,
   type AdminWorkspace,
   type AdminWorkspaceMember,
 } from './service';
-import {
-  getActiveSystemSection,
-  getSystemSectionContent,
-} from './view-model';
+import { OverviewSection } from './overview-section';
+import { ModelConfigSection } from './model-config-section';
+import { SYSTEM_SECTIONS } from './content';
 
 const ADMIN_PAGE_SIZE = 20;
 
@@ -86,6 +93,10 @@ const SystemManagementPage = () => {
   const [modelSaving, setModelSaving] = useState(false);
   const [modelRefreshing, setModelRefreshing] = useState(false);
   const [modelMessage, setModelMessage] = useState('');
+  const [basicConfigSaving, setBasicConfigSaving] = useState(false);
+  const [basicConfigMessage, setBasicConfigMessage] = useState('');
+  const [userMutating, setUserMutating] = useState(false);
+  const [userActionMessage, setUserActionMessage] = useState('');
   const activeSection = getActiveSystemSection(section);
   const content = getSystemSectionContent(section);
 
@@ -143,25 +154,20 @@ const SystemManagementPage = () => {
         }
         setAccessDenied(false);
 
-        const [
-          workspaceResp,
-          userResp,
-          configResp,
-          modelResp,
-          knowledgeResp,
-        ] = await Promise.all([
-          listAdminWorkspaces({
-            page: 1,
-            size: ADMIN_PAGE_SIZE,
-          }),
-          listAdminUsers({
-            page: 1,
-            size: ADMIN_PAGE_SIZE,
-          }),
-          getAdminBasicConfig(),
-          getAdminModelList(),
-          getAdminKnowledgeConfig(),
-        ]);
+        const [workspaceResp, userResp, configResp, modelResp, knowledgeResp] =
+          await Promise.all([
+            listAdminWorkspaces({
+              page: 1,
+              size: ADMIN_PAGE_SIZE,
+            }),
+            listAdminUsers({
+              page: 1,
+              size: ADMIN_PAGE_SIZE,
+            }),
+            getAdminBasicConfig(),
+            getAdminModelList(),
+            getAdminKnowledgeConfig(),
+          ]);
         if (canceled) {
           return;
         }
@@ -220,6 +226,73 @@ const SystemManagementPage = () => {
     }
   };
 
+  const refreshUsers = async () => {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      await loadUsers({
+        keyword: userKeyword,
+        page: userPage,
+      });
+    } catch (error) {
+      setErrorMessage('刷新用户列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateAdminUser = async (payload: AdminCreateUserPayload) => {
+    setUserMutating(true);
+    setUserActionMessage('');
+    try {
+      await createAdminUser(payload);
+      await loadUsers({
+        keyword: userKeyword,
+        page: userPage,
+      });
+      setUserActionMessage('用户已新增');
+    } catch (error) {
+      setUserActionMessage('新增用户失败，请检查邮箱、用户名和密码。');
+      throw error;
+    } finally {
+      setUserMutating(false);
+    }
+  };
+
+  const handleUpdateAdminUser = async (payload: AdminUpdateUserPayload) => {
+    setUserMutating(true);
+    setUserActionMessage('');
+    try {
+      await updateAdminUser(payload);
+      await loadUsers({
+        keyword: userKeyword,
+        page: userPage,
+      });
+      setUserActionMessage('用户信息已更新');
+    } catch (error) {
+      setUserActionMessage('更新用户失败，请检查用户名是否重复。');
+      throw error;
+    } finally {
+      setUserMutating(false);
+    }
+  };
+
+  const handleResetAdminUserPassword = async (
+    payload: AdminResetUserPasswordPayload,
+  ) => {
+    setUserMutating(true);
+    setUserActionMessage('');
+    try {
+      await resetAdminUserPassword(payload);
+      setUserActionMessage('用户密码已重置');
+    } catch (error) {
+      setUserActionMessage('重置密码失败，请确认用户邮箱有效。');
+      throw error;
+    } finally {
+      setUserMutating(false);
+    }
+  };
+
   const showUserSpaces = async (user: AdminUser) => {
     setSelectedUser(user);
     setUserSpaces([]);
@@ -262,6 +335,21 @@ const SystemManagementPage = () => {
       });
     } catch (error) {
       setErrorMessage('加载工作空间列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshWorkspaces = async () => {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      await loadWorkspaces({
+        keyword: workspaceKeyword,
+        page: workspacePage,
+      });
+    } catch (error) {
+      setErrorMessage('刷新工作空间列表失败');
     } finally {
       setLoading(false);
     }
@@ -340,6 +428,26 @@ const SystemManagementPage = () => {
     }
   };
 
+  const handleSaveBasicConfig = async (updates: AdminBasicConfig) => {
+    setBasicConfigSaving(true);
+    setBasicConfigMessage('');
+    const nextConfig = {
+      ...basicConfig,
+      ...updates,
+    };
+    try {
+      await saveAdminBasicConfig(nextConfig);
+      const configResp = await getAdminBasicConfig();
+      setBasicConfig(configResp.configuration ?? nextConfig);
+      setBasicConfigMessage('系统基础配置已保存');
+    } catch (error) {
+      setBasicConfigMessage('保存系统基础配置失败，请检查服务地址和配置格式');
+      throw error;
+    } finally {
+      setBasicConfigSaving(false);
+    }
+  };
+
   const renderOverview = () => (
     <OverviewSection
       userTotal={userTotal}
@@ -361,10 +469,18 @@ const SystemManagementPage = () => {
       userSpacesLoading={userSpacesLoading}
       userTotal={userTotal}
       users={users}
+      isLoading={loading}
+      isUserMutating={userMutating}
+      userActionMessage={userActionMessage}
       onKeywordChange={setUserKeyword}
+      onCreateUser={handleCreateAdminUser}
+      onOpenWorkspace={spaceID => navigate(`/space/${spaceID}/workspace`)}
+      onRefresh={refreshUsers}
+      onResetUserPassword={handleResetAdminUserPassword}
       onSearch={searchUsers}
       onShowUserSpaces={showUserSpaces}
       onTurnPage={turnUserPage}
+      onUpdateUser={handleUpdateAdminUser}
     />
   );
 
@@ -379,7 +495,10 @@ const SystemManagementPage = () => {
       workspacePage={workspacePage}
       workspaceTotal={workspaceTotal}
       workspaces={workspaces}
+      isLoading={loading}
       onKeywordChange={setWorkspaceKeyword}
+      onOpenWorkspace={spaceID => navigate(`/space/${spaceID}/workspace`)}
+      onRefresh={refreshWorkspaces}
       onSearch={searchWorkspaces}
       onShowWorkspaceMembers={showWorkspaceMembers}
       onTurnPage={turnWorkspacePage}
@@ -389,7 +508,10 @@ const SystemManagementPage = () => {
   const renderSettings = () => (
     <SystemSettingsSection
       basicConfig={basicConfig}
+      basicConfigMessage={basicConfigMessage}
+      basicConfigSaving={basicConfigSaving}
       knowledgeConfig={knowledgeConfig}
+      onSaveBasicConfig={handleSaveBasicConfig}
     />
   );
 

@@ -43,6 +43,9 @@ func Register(r *server.Hertz) {
 				_admin.POST("/workspaces/members", coze.ListAdminWorkspaceMembers)
 				_admin.POST("/users/list", coze.ListAdminUsers)
 				_admin.POST("/users/spaces", coze.ListAdminUserSpaces)
+				_admin.POST("/users/create", coze.CreateAdminUser)
+				_admin.POST("/users/update", coze.UpdateAdminUser)
+				_admin.POST("/users/password/reset", coze.ResetAdminUserPassword)
 				_config := _admin.Group("/config", _configMw()...)
 				{
 					_basic := _config.Group("/basic", _basicMw()...)
@@ -75,6 +78,52 @@ func Register(r *server.Hertz) {
 				_space.POST("/member/remove", coze.RemoveWorkspaceMember)
 				_space.POST("/transfer", coze.TransferWorkspace)
 				_space.POST("/delete", coze.DeleteWorkspace)
+			}
+		}
+		{
+			_appDev := _api.Group("/app-dev")
+			{
+				_spaces := _appDev.Group("/spaces")
+				{
+					_space := _spaces.Group("/:space_id")
+					{
+						_space.GET("/models", coze.ListAppDevModels)
+						_projects := _space.Group("/projects")
+						_projects.GET("", coze.ListAppDevProjects)
+						_projects.POST("", coze.CreateAppDevProject)
+						_projects.POST("/import", coze.ImportAppDevProject)
+						{
+							_project := _projects.Group("/:project_id")
+							_project.GET("", coze.GetAppDevProject)
+							_project.POST("", coze.UpdateAppDevProject)
+							_project.POST("/duplicate", coze.DuplicateAppDevProject)
+							_project.DELETE("", coze.ArchiveAppDevProject)
+							_project.GET("/export", coze.ExportAppDevProject)
+							_project.POST("/build", coze.BuildAppDevProject)
+							_project.GET("/release", coze.DownloadAppDevRelease)
+							_project.GET("/files", coze.ListAppDevFiles)
+							_project.DELETE("/files", coze.DeleteAppDevFile)
+							_project.GET("/files/content", coze.GetAppDevFileContent)
+							_project.POST("/files/content", coze.SaveAppDevFileContent)
+							_project.POST("/files/upload", coze.UploadAppDevFiles)
+							_project.POST("/files/rename", coze.RenameAppDevFile)
+							_project.GET("/snapshots", coze.ListAppDevSnapshots)
+							_project.POST("/snapshots", coze.CreateAppDevSnapshot)
+							_project.POST("/snapshots/:snapshot_id/restore", coze.RestoreAppDevSnapshot)
+							_project.POST("/runtime/start", coze.StartAppDevRuntime)
+							_project.GET("/runtime/status", coze.GetAppDevRuntimeStatus)
+							_project.POST("/runtime/keep-alive", coze.KeepAliveAppDevRuntime)
+							_project.POST("/runtime/restart", coze.RestartAppDevRuntime)
+							_project.POST("/runtime/stop", coze.StopAppDevRuntime)
+							_project.GET("/runtime/logs", coze.ListAppDevRuntimeLogs)
+							_project.POST("/chat", coze.SendAppDevChatMessage)
+							_project.GET("/chat/events", coze.SubscribeAppDevChatEvents)
+							_project.POST("/chat/cancel", coze.CancelAppDevChat)
+							_project.GET("/chat/history", coze.ListAppDevChatHistory)
+							_project.GET("/chat/status", coze.GetAppDevChatStatus)
+						}
+					}
+				}
 			}
 		}
 		{

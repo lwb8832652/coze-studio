@@ -18,11 +18,13 @@ package mysql
 
 import (
 	"fmt"
+	stdlog "log"
 	"os"
 	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/coze-dev/coze-studio/backend/pkg/envkey"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
@@ -30,9 +32,9 @@ import (
 
 func New() (*gorm.DB, error) {
 	dsn := os.Getenv("MYSQL_DSN")
-	db, err := gorm.Open(mysql.Open(dsn))
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: newGormLogger()})
 	if err != nil {
-		return nil, fmt.Errorf("mysql open, dsn: %s, err: %w", dsn, err)
+		return nil, fmt.Errorf("mysql open: %w", err)
 	}
 
 	sqlDB, err := db.DB()
@@ -48,4 +50,17 @@ func New() (*gorm.DB, error) {
 	sqlDB.SetConnMaxIdleTime(time.Duration(envkey.GetIntD("MYSQL_CONN_MAX_IDLE_TIME", 600)) * time.Second)
 
 	return db, nil
+}
+
+func newGormLogger() gormlogger.Interface {
+	return gormlogger.New(
+		stdlog.New(os.Stdout, "\r\n", stdlog.LstdFlags),
+		gormlogger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  gormlogger.Warn,
+			IgnoreRecordNotFoundError: false,
+			Colorful:                  true,
+			ParameterizedQueries:      true,
+		},
+	)
 }

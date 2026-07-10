@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/require-await -- Async mocks mirror production contracts. */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createAdminModel,
+  createAdminUser,
   deleteAdminModel,
   getAdminBasicConfig,
   getAdminKnowledgeConfig,
@@ -27,6 +30,9 @@ import {
   listAdminWorkspaceMembers,
   listAdminUsers,
   listAdminWorkspaces,
+  resetAdminUserPassword,
+  saveAdminBasicConfig,
+  updateAdminUser,
 } from '../service';
 
 describe('system service', () => {
@@ -162,6 +168,114 @@ describe('system service', () => {
     });
   });
 
+  it('creates admin user', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        user: {
+          user_id: '99',
+          email: 'new@example.test',
+        },
+      }),
+    });
+    globalThis.fetch = fetchMock as never;
+
+    await expect(
+      createAdminUser({
+        email: 'new@example.test',
+        password: 'secret1',
+        name: 'New User',
+        user_unique_name: 'new-user',
+        locale: 'zh-CN',
+      }),
+    ).resolves.toMatchObject({
+      user: {
+        user_id: '99',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/users/create', {
+      body: JSON.stringify({
+        email: 'new@example.test',
+        password: 'secret1',
+        name: 'New User',
+        user_unique_name: 'new-user',
+        locale: 'zh-CN',
+      }),
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+  });
+
+  it('updates admin user', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        msg: 'success',
+      }),
+    });
+    globalThis.fetch = fetchMock as never;
+
+    await expect(
+      updateAdminUser({
+        user_id: '9',
+        name: 'Owner Edited',
+        user_unique_name: 'owner-edited',
+        locale: 'zh-CN',
+      }),
+    ).resolves.toMatchObject({
+      msg: 'success',
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/users/update', {
+      body: JSON.stringify({
+        user_id: '9',
+        name: 'Owner Edited',
+        user_unique_name: 'owner-edited',
+        locale: 'zh-CN',
+      }),
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+  });
+
+  it('resets admin user password', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        msg: 'success',
+      }),
+    });
+    globalThis.fetch = fetchMock as never;
+
+    await expect(
+      resetAdminUserPassword({
+        user_id: '9',
+        password: 'secret2',
+      }),
+    ).resolves.toMatchObject({
+      msg: 'success',
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/users/password/reset', {
+      body: JSON.stringify({
+        user_id: '9',
+        password: 'secret2',
+      }),
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
+    });
+  });
+
   it('posts admin workspace member lookup', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -269,6 +383,47 @@ describe('system service', () => {
     });
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/basic/get', {
       credentials: 'include',
+    });
+  });
+
+  it('saves admin basic config', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    globalThis.fetch = fetchMock as never;
+
+    await expect(
+      saveAdminBasicConfig({
+        admin_emails: 'owner@example.test',
+        allow_registration_email: 'example.test',
+        code_runner_type: 1,
+        disable_user_registration: true,
+        plugin_configuration: {
+          mode: 'kept',
+        },
+        server_host: 'https://agent.example.test',
+      }),
+    ).resolves.toEqual({});
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/basic/save', {
+      body: JSON.stringify({
+        configuration: {
+          admin_emails: 'owner@example.test',
+          allow_registration_email: 'example.test',
+          code_runner_type: 1,
+          disable_user_registration: true,
+          plugin_configuration: {
+            mode: 'kept',
+          },
+          server_host: 'https://agent.example.test',
+        },
+      }),
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+      },
+      method: 'POST',
     });
   });
 

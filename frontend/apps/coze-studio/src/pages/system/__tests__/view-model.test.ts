@@ -18,9 +18,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   getActiveSystemSection,
+  formatAdminTime,
   getI18nText,
   getRoleLabel,
   getSystemSectionContent,
+  getWorkspaceDisplayDescription,
+  getWorkspaceDisplayName,
 } from '../view-model';
 
 describe('system view model helpers', () => {
@@ -54,5 +57,30 @@ describe('system view model helpers', () => {
     expect(getSystemSectionContent('models').heading).toBe('模型配置');
     expect(getSystemSectionContent('settings').heading).toBe('系统配置');
     expect(getSystemSectionContent('unknown').heading).toBe('系统管理概览');
+  });
+
+  it('localizes default personal workspace display values', () => {
+    expect(
+      getWorkspaceDisplayName({
+        name: 'Personal Space',
+      }),
+    ).toBe('个人空间');
+    expect(
+      getWorkspaceDisplayDescription({
+        name: 'Personal Space',
+        description: 'This is your personal space',
+      }),
+    ).toBe('默认个人空间');
+    expect(
+      getWorkspaceDisplayName({
+        name: '畅享 AI',
+      }),
+    ).toBe('畅享 AI');
+  });
+
+  it('formats both second and millisecond timestamps', () => {
+    expect(formatAdminTime(1710000000)).not.toContain('584');
+    expect(formatAdminTime(1710000000000)).not.toContain('561');
+    expect(formatAdminTime()).toBe('-');
   });
 });

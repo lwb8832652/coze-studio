@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { getWorkspaceDisplayName } from './view-model';
 import type { AdminBasicConfig, AdminUser, AdminWorkspace } from './service';
 
 interface OverviewSectionProps {
@@ -79,7 +80,7 @@ export const OverviewSection = ({
           {workspaces.length ? (
             workspaces.slice(0, 3).map(workspace => (
               <p key={workspace.id}>
-                {workspace.name} ·{' '}
+                {getWorkspaceDisplayName(workspace)} ·{' '}
                 {workspace.owner_name || workspace.owner_user_id || '-'}
               </p>
             ))

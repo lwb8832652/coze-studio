@@ -26,6 +26,7 @@ export interface AdminWorkspace {
   id: string;
   name: string;
   description?: string;
+  space_type?: number;
   owner_user_id: string;
   owner_name?: string;
   total_member_num?: number;
@@ -39,6 +40,32 @@ export interface AdminUser {
   user_unique_name?: string;
   avatar_url?: string;
   created_at?: number;
+}
+
+export interface AdminCreateUserPayload {
+  email: string;
+  password: string;
+  name?: string;
+  user_unique_name?: string;
+  locale?: string;
+}
+
+export interface AdminUpdateUserPayload {
+  user_id: string;
+  name?: string;
+  user_unique_name?: string;
+  locale?: string;
+}
+
+export interface AdminResetUserPasswordPayload {
+  user_id: string;
+  password: string;
+}
+
+export interface AdminUserMutationResponse {
+  user?: AdminUser;
+  code?: number;
+  msg?: string;
 }
 
 export interface AdminWorkspaceMember {
@@ -66,6 +93,10 @@ export interface AdminUserSpace {
 export interface AdminBasicConfig {
   admin_emails?: string;
   disable_user_registration?: boolean;
+  allow_registration_email?: string;
+  code_runner_type?: number;
+  plugin_configuration?: unknown;
+  sandbox_config?: unknown;
   server_host?: string;
 }
 
@@ -198,6 +229,20 @@ export const listAdminUsers = (params: {
     params,
   );
 
+export const createAdminUser = (payload: AdminCreateUserPayload) =>
+  postJSON<AdminUserMutationResponse>('/api/admin/users/create', payload);
+
+export const updateAdminUser = (payload: AdminUpdateUserPayload) =>
+  postJSON<AdminUserMutationResponse>('/api/admin/users/update', payload);
+
+export const resetAdminUserPassword = (
+  payload: AdminResetUserPasswordPayload,
+) =>
+  postJSON<AdminUserMutationResponse>(
+    '/api/admin/users/password/reset',
+    payload,
+  );
+
 export const listAdminWorkspaceMembers = (params: { space_id: string }) =>
   postJSON<{ members: AdminWorkspaceMember[] }>(
     '/api/admin/workspaces/members',
@@ -222,6 +267,11 @@ export const getAdminBasicConfig = async (): Promise<{
     configuration?: AdminBasicConfig;
   }>;
 };
+
+export const saveAdminBasicConfig = (configuration: AdminBasicConfig) =>
+  postJSON<Record<string, never>>('/api/admin/config/basic/save', {
+    configuration,
+  });
 
 export const getAdminModelList = async (): Promise<AdminModelListResponse> => {
   const response = await fetch('/api/admin/config/model/list', {

@@ -14,7 +14,12 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror package names. */
+
+/* eslint-disable @typescript-eslint/require-await -- Async mocks mirror production contracts. */
+
 import type { ReactNode } from 'react';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -309,8 +314,10 @@ describe('WorkspacePage', () => {
       await Promise.resolve();
     });
 
-    const candidateButton = Array.from(container.querySelectorAll('button')).find(
-      button => button.textContent?.includes('New User'),
+    const candidateButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button =>
+      button.textContent?.includes('New User'),
     ) as HTMLButtonElement;
     expect(candidateButton).toBeTruthy();
 
@@ -355,6 +362,12 @@ describe('WorkspacePage', () => {
 
     expect(container.textContent).toContain('开发者功能');
     expect(container.textContent).toContain('接受来自外部空间的发布');
+    expect(container.textContent).toContain('开发配置');
+    expect(container.textContent).toContain('资源配置');
+    expect(container.textContent).toContain('技能配置');
+    expect(container.textContent).not.toContain('智能体开发');
+    expect(container.textContent).not.toContain('组件库');
+    expect(container.textContent).not.toContain('广场');
     expect(
       container.querySelectorAll('.coze-prototype-space-setting-section')
         .length,
@@ -444,6 +457,12 @@ describe('WorkspacePage', () => {
     await renderPage();
 
     expect(container.textContent).toContain('成员管理');
+    expect(container.textContent).toContain('个人空间');
+    expect(container.textContent).toContain(
+      '个人空间暂不支持成员邀请、角色调整和移除操作',
+    );
+    expect(container.textContent).not.toContain('Personal Space');
+    expect(container.textContent).not.toContain('This is your personal space');
     expect(container.textContent).not.toContain('空间设置');
     expect(container.textContent).not.toContain('添加成员');
   });

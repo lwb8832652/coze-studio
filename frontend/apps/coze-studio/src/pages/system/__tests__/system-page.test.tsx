@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/require-await -- Async mocks mirror production contracts. */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -31,7 +33,11 @@ const mockGetAdminModelList = vi.hoisted(() => vi.fn());
 const mockGetAdminKnowledgeConfig = vi.hoisted(() => vi.fn());
 const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
 const mockCreateAdminModel = vi.hoisted(() => vi.fn());
+const mockCreateAdminUser = vi.hoisted(() => vi.fn());
 const mockDeleteAdminModel = vi.hoisted(() => vi.fn());
+const mockSaveAdminBasicConfig = vi.hoisted(() => vi.fn());
+const mockResetAdminUserPassword = vi.hoisted(() => vi.fn());
+const mockUpdateAdminUser = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -40,6 +46,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../service', () => ({
   createAdminModel: mockCreateAdminModel,
+  createAdminUser: mockCreateAdminUser,
   deleteAdminModel: mockDeleteAdminModel,
   getAdminBasicConfig: mockGetAdminBasicConfig,
   getAdminKnowledgeConfig: mockGetAdminKnowledgeConfig,
@@ -49,6 +56,9 @@ vi.mock('../service', () => ({
   listAdminWorkspaceMembers: mockListAdminWorkspaceMembers,
   listAdminUsers: mockListAdminUsers,
   listAdminWorkspaces: mockListAdminWorkspaces,
+  resetAdminUserPassword: mockResetAdminUserPassword,
+  saveAdminBasicConfig: mockSaveAdminBasicConfig,
+  updateAdminUser: mockUpdateAdminUser,
 }));
 
 import SystemManagementPage from '../index';
@@ -115,7 +125,12 @@ describe('SystemManagementPage', () => {
     mockGetAdminBasicConfig.mockResolvedValue({
       configuration: {
         admin_emails: 'owner@example.test',
+        allow_registration_email: 'example.test',
+        code_runner_type: 1,
         disable_user_registration: true,
+        plugin_configuration: {
+          mode: 'kept',
+        },
         server_host: 'http://localhost:8888',
       },
     });
@@ -147,6 +162,18 @@ describe('SystemManagementPage', () => {
           type: 1,
         },
       },
+    });
+    mockSaveAdminBasicConfig.mockResolvedValue({});
+    mockCreateAdminUser.mockResolvedValue({
+      user: {
+        user_id: '99',
+      },
+    });
+    mockUpdateAdminUser.mockResolvedValue({
+      msg: 'success',
+    });
+    mockResetAdminUserPassword.mockResolvedValue({
+      msg: 'success',
     });
   });
 
@@ -273,6 +300,21 @@ describe('SystemManagementPage', () => {
       page: 2,
       size: 20,
     });
+
+    const refreshButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="刷新用户列表"]',
+    );
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      Simulate.click(refreshButton!);
+    });
+
+    expect(mockListAdminUsers).toHaveBeenLastCalledWith({
+      keyword: 'owner',
+      page: 2,
+      size: 20,
+    });
   });
 
   it('loads user workspaces from the users section', async () => {
@@ -295,6 +337,131 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('所属空间详情');
     expect(container.textContent).toContain('畅享 AI');
     expect(container.textContent).toContain('管理员');
+
+    const openSpaceButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="进入用户所属空间-101"]',
+    );
+    expect(openSpaceButton).not.toBeNull();
+
+    await act(async () => {
+      Simulate.click(openSpaceButton!);
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/space/101/workspace');
+  });
+
+  it('creates, updates and resets users from the users section', async () => {
+    mockUseParams.mockReturnValue({ section: 'users' });
+
+    await renderPage();
+
+    const addButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="新增用户"]',
+    );
+    expect(addButton).not.toBeNull();
+
+    await act(async () => {
+      Simulate.click(addButton!);
+    });
+
+    await act(async () => {
+      const emailInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="新增用户邮箱"]',
+      )!;
+      emailInput.value = 'new@example.test';
+      Simulate.change(emailInput);
+      const passwordInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="新增用户密码"]',
+      )!;
+      passwordInput.value = 'secret1';
+      Simulate.change(passwordInput);
+      const nameInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="新增用户昵称"]',
+      )!;
+      nameInput.value = 'New User';
+      Simulate.change(nameInput);
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="提交新增用户"]',
+        )!,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateAdminUser).toHaveBeenCalledWith({
+      email: 'new@example.test',
+      locale: 'zh-CN',
+      name: 'New User',
+      password: 'secret1',
+      user_unique_name: '',
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="编辑用户-9"]',
+        )!,
+      );
+    });
+
+    await act(async () => {
+      const nameInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="编辑用户昵称"]',
+      )!;
+      nameInput.value = 'Owner Edited';
+      Simulate.change(nameInput);
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="提交编辑用户"]',
+        )!,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpdateAdminUser).toHaveBeenCalledWith({
+      locale: 'zh-CN',
+      name: 'Owner Edited',
+      user_id: '9',
+      user_unique_name: 'owner',
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="重置用户密码-9"]',
+        )!,
+      );
+    });
+
+    await act(async () => {
+      const passwordInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="重置用户密码"]',
+      )!;
+      passwordInput.value = 'secret2';
+      Simulate.change(passwordInput);
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="提交重置密码"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(mockResetAdminUserPassword).toHaveBeenCalledWith({
+      password: 'secret2',
+      user_id: '9',
+    });
   });
 
   it('renders workspaces section rows', async () => {
@@ -328,6 +495,17 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('Owner');
     expect(container.textContent).toContain('owner@example.test');
     expect(container.textContent).toContain('管理员');
+
+    const openSpaceButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="进入工作空间-101"]',
+    );
+    expect(openSpaceButton).not.toBeNull();
+
+    await act(async () => {
+      Simulate.click(openSpaceButton!);
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/space/101/workspace');
   });
 
   it('searches and paginates workspaces', async () => {
@@ -388,6 +566,21 @@ describe('SystemManagementPage', () => {
       page: 2,
       size: 20,
     });
+
+    const refreshButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="刷新工作空间列表"]',
+    );
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      Simulate.click(refreshButton!);
+    });
+
+    expect(mockListAdminWorkspaces).toHaveBeenLastCalledWith({
+      keyword: '畅享',
+      page: 2,
+      size: 20,
+    });
   });
 
   it('renders settings section from basic config', async () => {
@@ -396,11 +589,53 @@ describe('SystemManagementPage', () => {
     await renderPage();
 
     expect(container.textContent).toContain('系统配置');
-    expect(container.textContent).toContain('http://localhost:8888');
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[aria-label="系统服务地址"]',
+      )?.value,
+    ).toBe('http://localhost:8888');
     expect(container.textContent).toContain('已关闭');
+    expect(container.textContent).toContain('基础配置');
+    expect(container.textContent).toContain('保存基础配置');
     expect(container.textContent).toContain('知识库配置');
     expect(container.textContent).toContain('内置模型 ID');
     expect(container.textContent).toContain('42');
+  });
+
+  it('saves basic config from settings section without dropping hidden fields', async () => {
+    mockUseParams.mockReturnValue({ section: 'settings' });
+
+    await renderPage();
+
+    const serverHostInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="系统服务地址"]',
+    );
+    const saveButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="保存系统基础配置"]',
+    );
+
+    await act(async () => {
+      serverHostInput!.value = 'https://agent.example.test';
+      Simulate.change(serverHostInput!);
+    });
+
+    await act(async () => {
+      Simulate.click(saveButton!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockSaveAdminBasicConfig).toHaveBeenCalledWith({
+      admin_emails: 'owner@example.test',
+      allow_registration_email: 'example.test',
+      code_runner_type: 1,
+      disable_user_registration: true,
+      plugin_configuration: {
+        mode: 'kept',
+      },
+      server_host: 'https://agent.example.test',
+    });
+    expect(container.textContent).toContain('系统基础配置已保存');
   });
 
   it('renders model config section from model APIs', async () => {

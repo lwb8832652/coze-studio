@@ -140,14 +140,13 @@ export const SECTION_CONTENT: Record<
       {
         title: '注册策略',
         description: '查看账号注册开关和管理员白名单。',
-        value: '只读',
+        value: '可保存',
       },
     ],
   },
   models: {
     heading: '模型配置',
-    summary:
-      '集中管理公共模型供应商、模型接入信息、密钥状态和删除保护。',
+    summary: '集中管理公共模型供应商、模型接入信息、密钥状态和删除保护。',
     cards: [
       {
         title: '供应商分组',

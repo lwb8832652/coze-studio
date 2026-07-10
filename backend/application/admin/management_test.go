@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
+	userservice "github.com/coze-dev/coze-studio/backend/domain/user/service"
 )
 
 func TestListAdminWorkspacesReturnsOwnerAndMemberCount(t *testing.T) {
@@ -96,6 +97,74 @@ func TestListAdminUsersReturnsUserBasics(t *testing.T) {
 	require.Equal(t, "owner", resp.Users[0].UniqueName)
 }
 
+func TestCreateAdminUserCreatesUserWithPersonalSpace(t *testing.T) {
+	t.Parallel()
+
+	domain := &fakeAdminUserDomain{}
+	app := &ManagementApplicationService{
+		UserDomainSVC: domain,
+	}
+
+	resp, err := app.CreateAdminUser(context.Background(), &CreateAdminUserRequest{
+		Email:      "new@example.test",
+		Password:   "secret1",
+		Name:       "New User",
+		UniqueName: "new-user",
+		Locale:     "zh-CN",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(99), resp.User.UserID)
+	require.Equal(t, "new@example.test", domain.createdUser.Email)
+	require.Equal(t, "secret1", domain.createdUser.Password)
+	require.Equal(t, "New User", domain.createdUser.Name)
+	require.Equal(t, "new-user", domain.createdUser.UniqueName)
+}
+
+func TestUpdateAdminUserUpdatesProfileFields(t *testing.T) {
+	t.Parallel()
+
+	domain := &fakeAdminUserDomain{}
+	app := &ManagementApplicationService{
+		UserDomainSVC: domain,
+	}
+
+	_, err := app.UpdateAdminUser(context.Background(), &UpdateAdminUserRequest{
+		UserID:     9,
+		Name:       "Owner Edited",
+		UniqueName: "owner-edited",
+		Locale:     "zh-CN",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(9), domain.updatedProfile.UserID)
+	require.Equal(t, "Owner Edited", *domain.updatedProfile.Name)
+	require.Equal(t, "owner-edited", *domain.updatedProfile.UniqueName)
+	require.Equal(t, "zh-CN", *domain.updatedProfile.Locale)
+}
+
+func TestResetAdminUserPasswordUsesUserEmail(t *testing.T) {
+	t.Parallel()
+
+	domain := &fakeAdminUserDomain{
+		usersByID: map[int64]*userentity.User{
+			9: {UserID: 9, Email: "owner@example.test"},
+		},
+	}
+	app := &ManagementApplicationService{
+		UserDomainSVC: domain,
+	}
+
+	_, err := app.ResetAdminUserPassword(context.Background(), &ResetAdminUserPasswordRequest{
+		UserID:   9,
+		Password: "secret2",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "owner@example.test", domain.resetPasswordEmail)
+	require.Equal(t, "secret2", domain.resetPasswordValue)
+}
+
 func TestListAdminWorkspaceMembersReturnsMemberBasics(t *testing.T) {
 	t.Parallel()
 
@@ -163,12 +232,16 @@ func TestListAdminUserSpacesReturnsSpaceRoles(t *testing.T) {
 }
 
 type fakeAdminUserDomain struct {
-	users      []*userentity.User
-	usersByID  map[int64]*userentity.User
-	spaces     []*userentity.Space
-	userSpaces []*userentity.Space
-	members    []*userentity.SpaceMember
-	total      int64
+	users              []*userentity.User
+	usersByID          map[int64]*userentity.User
+	spaces             []*userentity.Space
+	userSpaces         []*userentity.Space
+	members            []*userentity.SpaceMember
+	total              int64
+	createdUser        *userservice.CreateUserRequest
+	updatedProfile     *userservice.UpdateProfileRequest
+	resetPasswordEmail string
+	resetPasswordValue string
 }
 
 func (d *fakeAdminUserDomain) ListAllUsers(context.Context, string, int, int) ([]*userentity.User, int64, error) {
@@ -195,4 +268,33 @@ func (d *fakeAdminUserDomain) GetSpaceMembers(context.Context, int64) ([]*useren
 
 func (d *fakeAdminUserDomain) GetUserSpaceList(context.Context, int64) ([]*userentity.Space, error) {
 	return d.userSpaces, nil
+}
+
+func (d *fakeAdminUserDomain) Create(_ context.Context, req *userservice.CreateUserRequest) (*userentity.User, error) {
+	d.createdUser = req
+	return &userentity.User{
+		UserID:     99,
+		Name:       req.Name,
+		UniqueName: req.UniqueName,
+		Email:      req.Email,
+		Locale:     req.Locale,
+	}, nil
+}
+
+func (d *fakeAdminUserDomain) UpdateProfile(_ context.Context, req *userservice.UpdateProfileRequest) error {
+	d.updatedProfile = req
+	return nil
+}
+
+func (d *fakeAdminUserDomain) ResetPassword(_ context.Context, email string, password string) error {
+	d.resetPasswordEmail = email
+	d.resetPasswordValue = password
+	return nil
+}
+
+func (d *fakeAdminUserDomain) GetUserInfo(_ context.Context, userID int64) (*userentity.User, error) {
+	if user := d.usersByID[userID]; user != nil {
+		return user, nil
+	}
+	return &userentity.User{UserID: userID, Email: "fallback@example.test"}, nil
 }

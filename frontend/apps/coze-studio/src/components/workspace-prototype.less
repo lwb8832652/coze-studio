@@ -114,15 +114,14 @@
   align-items: center;
 
   min-height: 36px;
-  padding: 6px 8px;
   margin-bottom: 4px;
+  padding: 6px 8px;
 
   border-radius: 8px;
 }
 
 .coze-prototype-space-dropdown-row,
-.coze-prototype-space-create-row,
-.coze-prototype-space-system-row {
+.coze-prototype-space-create-row {
   cursor: pointer;
 
   display: flex;
@@ -141,8 +140,7 @@
 }
 
 .coze-prototype-space-dropdown-row:hover,
-.coze-prototype-space-create-row:hover,
-.coze-prototype-space-system-row:hover {
+.coze-prototype-space-create-row:hover {
   background: rgb(91 100 117 / 8%);
 }
 
@@ -162,8 +160,8 @@
 }
 
 .coze-prototype-space-row-main {
-  display: flex;
   overflow: hidden;
+  display: flex;
   flex: 1 1 auto;
   flex-direction: column;
 }
@@ -190,12 +188,6 @@
   color: #232938;
 }
 
-.coze-prototype-space-system-row {
-  margin-top: 4px;
-  color: #111827;
-  border-radius: 8px;
-}
-
 .coze-prototype-space-search-row {
   padding: 4px 0 8px;
 }
@@ -214,15 +206,8 @@
 .coze-prototype-space-empty-row {
   min-height: 32px;
   padding: 7px 8px;
-
   font-size: 13px;
   color: #8b93a3;
-}
-
-.coze-prototype-space-dropdown-actions {
-  padding-top: 4px;
-  margin-top: 4px;
-  border-top: 1px solid rgb(77 101 148 / 10%);
 }
 
 .coze-prototype-create-space-form {
@@ -265,7 +250,6 @@
 .coze-prototype-create-space-avatar {
   width: 68px;
   height: 68px;
-
   font-size: 26px;
   font-weight: 700;
 }
@@ -281,6 +265,8 @@
 }
 
 .coze-prototype-create-space-field textarea {
+  resize: vertical;
+
   min-height: 96px;
   padding: 10px 12px;
 
@@ -288,7 +274,6 @@
   line-height: 20px;
   color: #232938;
 
-  resize: vertical;
   background: #fff;
   border: 1px solid #d8dde8;
   border-radius: 8px;
@@ -629,7 +614,6 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-
   margin-top: 16px;
 }
 
@@ -657,7 +641,6 @@
 
 .coze-prototype-workspace-settings-row p {
   margin: 4px 0 0;
-
   font-size: 13px;
   line-height: 20px;
   color: #747b8a;
@@ -683,6 +666,7 @@
   top: 24px;
 
   align-self: start;
+
   padding: 12px 10px;
 
   background: #fff;
@@ -707,7 +691,6 @@
 
 .coze-prototype-system-brand p {
   margin: 4px 0 0;
-
   font-size: 12px;
   line-height: 18px;
   color: #747b8a;
@@ -717,7 +700,6 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-
   margin-top: 12px;
 }
 
@@ -794,7 +776,6 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-
   margin-top: 18px;
 }
 
@@ -818,7 +799,6 @@
 
 .coze-prototype-system-card p {
   margin: 8px 0 0;
-
   font-size: 13px;
   line-height: 20px;
   color: #747b8a;
@@ -5317,7 +5297,6 @@
   display: flex;
   gap: 10px;
   align-items: center;
-
   margin-bottom: 10px;
 }
 
@@ -5337,7 +5316,6 @@
 
 .coze-prototype-team-summary p {
   margin: 0;
-
   font-size: 14px;
   line-height: 20px;
   color: #6b7280;
@@ -5354,20 +5332,18 @@
 .coze-prototype-space-setting-primary {
   cursor: pointer;
 
+  font-weight: 500;
+
   border: 0;
   border-radius: 8px;
-
-  font-weight: 500;
 
   transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .coze-prototype-team-edit-button {
   padding: 4px 9px;
-
   font-size: 12px;
   color: #5147ff;
-
   background: rgb(81 71 255 / 8%);
 }
 
@@ -5408,6 +5384,7 @@
 
 .coze-prototype-team-tab {
   cursor: pointer;
+
   position: relative;
 
   height: 42px;
@@ -5487,6 +5464,19 @@
   border-radius: 999px;
 }
 
+.coze-prototype-member-readonly-banner {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+
+  font-size: 13px;
+  line-height: 20px;
+  color: #5f6675;
+
+  background: #f3f6fb;
+  border: 1px solid rgb(77 101 148 / 10%);
+  border-radius: 10px;
+}
+
 .coze-prototype-member-toolbar {
   display: flex;
   gap: 16px;
@@ -5537,6 +5527,19 @@
 
   background: #5147ff;
   box-shadow: 0 10px 22px rgb(81 71 255 / 18%);
+}
+
+.coze-prototype-member-add-button:disabled,
+.coze-prototype-add-member-search-button:disabled,
+.coze-prototype-space-setting-primary:disabled {
+  cursor: not-allowed;
+
+  transform: none;
+
+  color: #a5adba;
+
+  background: #eef1f6;
+  box-shadow: none;
 }
 
 .coze-prototype-member-table {
@@ -5609,10 +5612,8 @@
 
 .coze-prototype-member-row {
   min-height: 64px;
-
   font-size: 13px;
   color: #374151;
-
   border-bottom: 1px solid rgb(77 101 148 / 8%);
 }
 
@@ -5624,7 +5625,6 @@
   display: flex;
   gap: 10px;
   align-items: center;
-
   min-width: 0;
 }
 
@@ -5638,7 +5638,6 @@
 .coze-prototype-add-member-name,
 .coze-prototype-add-member-selected-name {
   overflow: hidden;
-
   display: block;
 
   max-width: 210px;
@@ -5651,7 +5650,6 @@
 .coze-prototype-member-profile small,
 .coze-prototype-add-member-name small {
   overflow: hidden;
-
   display: block;
 
   max-width: 220px;
@@ -5679,6 +5677,13 @@
   width: 96px;
 }
 
+.coze-prototype-inline-role-select:disabled,
+.coze-prototype-add-member-selected-row select:disabled {
+  cursor: not-allowed;
+  color: #8b93a3;
+  background: #f5f7fb;
+}
+
 .coze-prototype-member-danger-action,
 .coze-prototype-member-muted-action {
   font-size: 13px;
@@ -5686,11 +5691,14 @@
 
 .coze-prototype-member-danger-action {
   cursor: pointer;
-
   color: #d14343;
-
   background: transparent;
   border: 0;
+}
+
+.coze-prototype-member-danger-action:disabled {
+  cursor: not-allowed;
+  color: #a5adba;
 }
 
 .coze-prototype-member-muted-action {
@@ -5700,7 +5708,6 @@
 .coze-prototype-member-empty,
 .coze-prototype-add-member-empty {
   padding: 34px 18px;
-
   font-size: 13px;
   color: #8b93a3;
   text-align: center;
@@ -5710,7 +5717,6 @@
   display: grid;
   grid-template-columns: 1fr 300px;
   gap: 20px;
-
   min-width: 600px;
 }
 
@@ -5745,7 +5751,6 @@
 
 .coze-prototype-add-member-list {
   overflow: auto;
-
   max-height: 280px;
   margin-top: 10px;
 }
@@ -5771,17 +5776,20 @@
   background: rgb(81 71 255 / 6%);
 }
 
+.coze-prototype-add-member-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .coze-prototype-add-member-checkbox {
   width: 14px;
   height: 14px;
-
   border: 1px solid #c8ceda;
   border-radius: 3px;
 }
 
 .coze-prototype-add-member-right h3 {
   margin: 0 0 15px;
-
   font-size: 15px;
   font-weight: 600;
   color: #1f2937;
@@ -5814,6 +5822,11 @@
   border: 0;
 }
 
+.coze-prototype-add-member-remove:disabled {
+  cursor: not-allowed;
+  color: #a5adba;
+}
+
 .coze-prototype-add-member-error,
 .coze-prototype-create-space-error {
   grid-column: 1 / -1;
@@ -5833,21 +5846,19 @@
 }
 
 .coze-prototype-space-setting-section {
-  padding: 0 0 20px;
   margin-bottom: 20px;
-
+  padding: 0 0 20px;
   border-bottom: 1px solid rgb(77 101 148 / 10%);
 }
 
 .coze-prototype-space-setting-section:last-child {
-  padding-bottom: 0;
   margin-bottom: 0;
+  padding-bottom: 0;
   border-bottom: 0;
 }
 
 .coze-prototype-space-setting-section h2 {
   margin: 0 0 8px;
-
   font-size: 15px;
   font-weight: 600;
   color: #1f2937;
@@ -5889,10 +5900,10 @@
 }
 
 .coze-prototype-space-setting-switch input {
+  cursor: inherit;
+
   position: absolute;
   inset: 0;
-
-  cursor: inherit;
 
   width: 100%;
   height: 100%;
@@ -5915,6 +5926,7 @@
 
   background: #d7dde8;
   border-radius: 999px;
+
   transition: background 0.16s ease;
 }
 
@@ -5931,6 +5943,7 @@
   background: #fff;
   border-radius: 999px;
   box-shadow: 0 2px 6px rgb(15 23 42 / 18%);
+
   transition: transform 0.16s ease;
 }
 
@@ -5975,7 +5988,6 @@
 
 .coze-prototype-edit-workspace-intro p {
   margin: 0;
-
   font-size: 13px;
   line-height: 21px;
   color: #6b7280;
@@ -5992,6 +6004,8 @@
 }
 
 .coze-prototype-edit-workspace-form textarea {
+  resize: vertical;
+
   min-height: 120px;
   padding: 10px 12px;
 
@@ -5999,7 +6013,6 @@
   line-height: 20px;
   color: #1f2937;
 
-  resize: vertical;
   background: #fff;
   border: 1px solid #d8dde8;
   border-radius: 8px;
@@ -6008,7 +6021,6 @@
 
 .coze-prototype-remove-member-confirm {
   margin: 10px 0 0;
-
   font-size: 14px;
   line-height: 24px;
   color: #374151;
@@ -6017,8 +6029,8 @@
 @media (max-width: 900px) {
   .coze-prototype-member-toolbar,
   .coze-prototype-member-search-group {
-    align-items: stretch;
     flex-direction: column;
+    align-items: stretch;
   }
 
   .coze-prototype-member-search,
@@ -6034,7 +6046,6 @@
   .coze-prototype-member-row {
     grid-template-columns: 1fr;
     gap: 8px;
-
     padding: 14px;
   }
 
@@ -6077,7 +6088,6 @@
 .coze-prototype-transfer-space-form p,
 .coze-prototype-delete-space-form p {
   margin: 0;
-
   font-size: 14px;
   line-height: 22px;
   color: #374151;

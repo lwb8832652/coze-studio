@@ -33,6 +33,15 @@ const workspaces: AdminWorkspace[] = [
     total_member_num: 3,
     created_at: 1710000000,
   },
+  {
+    id: '102',
+    name: 'Personal Space',
+    description: 'This is your personal space',
+    owner_user_id: '10',
+    owner_name: 'Member',
+    total_member_num: 1,
+    created_at: 1710000000000,
+  },
 ];
 
 const workspaceMembers: AdminWorkspaceMember[] = [
@@ -50,6 +59,8 @@ describe('WorkspaceManagementSection', () => {
   let container: HTMLDivElement;
   let root: Root;
   const onKeywordChange = vi.fn();
+  const onOpenWorkspace = vi.fn();
+  const onRefresh = vi.fn();
   const onSearch = vi.fn();
   const onShowWorkspaceMembers = vi.fn();
   const onTurnPage = vi.fn();
@@ -81,7 +92,10 @@ describe('WorkspaceManagementSection', () => {
           workspacePage={1}
           workspaceTotal={25}
           workspaces={workspaces}
+          isLoading={false}
           onKeywordChange={onKeywordChange}
+          onOpenWorkspace={onOpenWorkspace}
+          onRefresh={onRefresh}
           onSearch={onSearch}
           onShowWorkspaceMembers={onShowWorkspaceMembers}
           onTurnPage={onTurnPage}
@@ -96,7 +110,8 @@ describe('WorkspaceManagementSection', () => {
 
     expect(container.textContent).toContain('工作空间总览');
     expect(container.textContent).toContain('共 25 个空间');
-    expect(container.textContent).toContain('本页 1 个空间');
+    expect(container.textContent).toContain('本页 2 个空间');
+    expect(container.textContent).toContain('团队 / 个人');
     expect(container.textContent).toContain('已选 畅享 AI');
     expect(container.textContent).toContain('已展开 1 位成员');
     expect(container.textContent).toContain('筛选工作空间');
@@ -104,7 +119,13 @@ describe('WorkspaceManagementSection', () => {
     expect(container.textContent).toContain('创建时间');
     expect(container.textContent).toContain('畅享 AI');
     expect(container.textContent).toContain('团队协作空间');
+    expect(container.textContent).toContain('团队空间');
+    expect(container.textContent).toContain('个人空间');
+    expect(container.textContent).not.toContain('Personal Space');
+    expect(container.textContent).not.toContain('This is your personal space');
     expect(container.textContent).toContain('成员详情');
+    expect(container.textContent).toContain('成员数：3 人');
+    expect(container.textContent).toContain('进入空间');
     expect(container.textContent).toContain('Owner');
     expect(container.textContent).toContain('管理员');
     expect(container.textContent).toContain('第 1 页，共 25 个工作空间。');
@@ -122,8 +143,14 @@ describe('WorkspaceManagementSection', () => {
     const searchButton = container.querySelector(
       'button[aria-label="执行工作空间搜索"]',
     ) as HTMLButtonElement;
+    const refreshButton = container.querySelector(
+      'button[aria-label="刷新工作空间列表"]',
+    ) as HTMLButtonElement;
     const viewButton = container.querySelector(
       'button[aria-label="查看工作空间成员-101"]',
+    ) as HTMLButtonElement;
+    const openButton = container.querySelector(
+      'button[aria-label="进入工作空间-101"]',
     ) as HTMLButtonElement;
     const nextButton = container.querySelector(
       'button[aria-label="下一页工作空间"]',
@@ -136,13 +163,37 @@ describe('WorkspaceManagementSection', () => {
         },
       } as unknown as Event);
       Simulate.click(searchButton);
+      Simulate.click(refreshButton);
       Simulate.click(viewButton);
+      Simulate.click(openButton);
       Simulate.click(nextButton);
     });
 
     expect(onKeywordChange).toHaveBeenCalledWith('团队协作');
     expect(onSearch).toHaveBeenCalled();
+    expect(onRefresh).toHaveBeenCalled();
     expect(onShowWorkspaceMembers).toHaveBeenCalledWith(workspaces[0]);
+    expect(onOpenWorkspace).toHaveBeenCalledWith('101');
     expect(onTurnPage).toHaveBeenCalledWith(2);
+  });
+
+  it('disables workspace list actions while loading', () => {
+    renderSection({
+      isLoading: true,
+      selectedWorkspace: null,
+      workspaceMembers: [],
+    });
+
+    expect(container.textContent).toContain('正在加载工作空间...');
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="执行工作空间搜索"]',
+      )?.disabled,
+    ).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="刷新工作空间列表"]',
+      )?.disabled,
+    ).toBe(true);
   });
 });

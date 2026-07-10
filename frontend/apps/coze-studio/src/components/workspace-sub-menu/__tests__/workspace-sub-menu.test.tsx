@@ -15,6 +15,7 @@
  */
 
 import type { ReactNode } from 'react';
+
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -49,7 +50,7 @@ const mockUseSpaceStore = vi.hoisted(() =>
         },
         {
           id: 'space-2',
-          name: '个人空间',
+          name: 'Personal Space',
           role_type: 1,
           space_type: 1,
         },
@@ -74,6 +75,11 @@ const capturedAccountDropdownProps = vi.hoisted(() => ({
   current: undefined as
     | {
         extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+        extraMenuItems?: Array<{
+          key: string;
+          title: string;
+          onClick: () => void;
+        }>;
       }
     | undefined,
 }));
@@ -129,6 +135,11 @@ vi.mock('@coze-foundation/space-ui-base', () => ({
 vi.mock('@coze-foundation/global-adapter', () => ({
   AccountDropdown: (props: {
     extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+    extraMenuItems?: Array<{
+      key: string;
+      title: string;
+      onClick: () => void;
+    }>;
   }) => {
     capturedAccountDropdownProps.current = props;
     return <span data-testid="account-dropdown" />;
@@ -168,6 +179,7 @@ vi.mock('../../../pages/system/service', () => ({
 
 vi.mock('../../../pages/tools/mcp-settings-panel', () => ({
   MCP_TOOL_SETTINGS_TAB_ID: 'mcp-tools',
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
   MCPToolSettingsPanel: ({ spaceId }: { spaceId?: string }) => (
     <span data-testid="mcp-settings-panel">{spaceId}</span>
   ),
@@ -307,6 +319,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     expect(labels).toEqual([
       '新建任务',
       '资源配置',
+      '网页应用开发',
       '技能配置',
       '开发配置',
       '工作空间',
@@ -321,7 +334,11 @@ describe('NewX AI WorkspaceSubMenu', () => {
       label: '全部任务',
       path: 'chats',
     });
-    expect(WORKSPACE_MENU_META[4]).toMatchObject({
+    expect(WORKSPACE_MENU_META[2]).toMatchObject({
+      label: '网页应用开发',
+      path: 'app-dev',
+    });
+    expect(WORKSPACE_MENU_META[5]).toMatchObject({
       label: '工作空间',
       path: 'workspace',
     });
@@ -329,7 +346,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     expect(paths).not.toContain('task-trigger');
   });
 
-  it('hides developer feature menus for regular members when workspace development is disabled', () => {
+  it('hides developer feature menus for every role when workspace development is disabled', () => {
     const memberLabels = getVisibleWorkspaceMenuMeta({
       allow_develop: false,
       role_type: 3,
@@ -343,12 +360,12 @@ describe('NewX AI WorkspaceSubMenu', () => {
       role_type: 1,
     }).map(item => item.label);
 
-    expect(memberLabels).toEqual(['新建任务', '全部任务']);
-    expect(adminLabels).toEqual(WORKSPACE_MENU_META.map(item => item.label));
-    expect(ownerLabels).toEqual(WORKSPACE_MENU_META.map(item => item.label));
+    expect(memberLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+    expect(adminLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+    expect(ownerLabels).toEqual(['新建任务', '工作空间', '全部任务']);
   });
 
-  it('hides workspace settings for personal spaces and regular team members', () => {
+  it('keeps workspace settings visible for personal spaces and regular team members', () => {
     const personalLabels = getVisibleWorkspaceMenuMeta({
       space_type: 1,
       role_type: 1,
@@ -359,9 +376,10 @@ describe('NewX AI WorkspaceSubMenu', () => {
       allow_develop: true,
     }).map(item => item.label);
 
-    expect(personalLabels).not.toContain('工作空间');
-    expect(teamMemberLabels).not.toContain('工作空间');
+    expect(personalLabels).toContain('工作空间');
+    expect(teamMemberLabels).toContain('工作空间');
     expect(teamMemberLabels).toContain('资源配置');
+    expect(teamMemberLabels).toContain('网页应用开发');
   });
 
   it('defines the system management quick entry outside workspace navigation', () => {
@@ -389,7 +407,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     ).toBe(true);
   });
 
-  it('defines account actions for the workspace switcher dropdown', () => {
+  it('keeps account action metadata for the bottom-left account menu', () => {
     expect(ACCOUNT_SETTINGS_ENTRY).toMatchObject({
       label: '账号设置',
       path: '/profile',
@@ -406,6 +424,77 @@ describe('NewX AI WorkspaceSubMenu', () => {
       '账号设置',
       '退出登录',
     ]);
+  });
+
+  it('keeps account actions out of the workspace switcher dropdown', async () => {
+    mockNavigate.mockReset();
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    const switcherButton = container.querySelector(
+      '[aria-haspopup="menu"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      switcherButton?.click();
+    });
+
+    expect(container.textContent).toContain('创建团队空间');
+    expect(container.textContent).toContain('个人空间');
+    expect(container.textContent).not.toContain('Personal Space');
+    expect(container.textContent).not.toContain('账号设置');
+    expect(container.textContent).not.toContain('退出登录');
+    expect(container.textContent).not.toContain('系统管理');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('places system management in the bottom-left account dropdown for admins', async () => {
+    mockNavigate.mockReset();
+    mockGetSystemAdminStatus.mockResolvedValueOnce({ is_admin: true });
+    capturedAccountDropdownProps.current = undefined;
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const systemManagementEntry =
+      capturedAccountDropdownProps.current?.extraMenuItems?.find(
+        item => item.key === 'system-management',
+      );
+
+    expect(systemManagementEntry).toMatchObject({
+      title: '系统管理',
+    });
+
+    act(() => {
+      systemManagementEntry?.onClick();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/system/overview');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 
   it('moves MCP configuration out of primary navigation into account settings dropdown', async () => {
@@ -428,6 +517,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     ).toEqual([
       '新建任务',
       '资源配置',
+      '网页应用开发',
       '技能配置',
       '开发配置',
       '工作空间',

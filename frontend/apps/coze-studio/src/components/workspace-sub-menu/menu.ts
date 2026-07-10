@@ -45,6 +45,7 @@ export const ACCOUNT_ACTION_ENTRIES = [
 export const SPACE_SUB_MODULE = {
   WORKBENCH: 'chats/new',
   LIBRARY: 'library',
+  APP_DEV: 'app-dev',
   SKILL: 'skill',
   DEVELOP: 'develop',
   TOOLS: 'tools',
@@ -60,10 +61,9 @@ export interface WorkspaceMenuPolicySpace {
   type?: number;
 }
 
-const SPACE_MANAGER_ROLE_TYPES = new Set([1, 2]);
-const PERSONAL_SPACE_TYPE = 1;
 const DEVELOPER_FEATURE_MENU_PATHS = new Set<string>([
   SPACE_SUB_MODULE.LIBRARY,
+  SPACE_SUB_MODULE.APP_DEV,
   SPACE_SUB_MODULE.SKILL,
   SPACE_SUB_MODULE.DEVELOP,
 ]);
@@ -79,6 +79,11 @@ export const WORKSPACE_MENU_META = [
     label: '资源配置',
     path: SPACE_SUB_MODULE.LIBRARY,
     dataTestId: 'navigation_workspace_library',
+  },
+  {
+    label: '网页应用开发',
+    path: SPACE_SUB_MODULE.APP_DEV,
+    dataTestId: 'navigation_workspace_app_dev',
   },
   {
     label: '技能配置',
@@ -102,9 +107,7 @@ export const WORKSPACE_MENU_META = [
   },
 ];
 
-const isDeveloperFeatureDisabledForMember = (
-  space?: WorkspaceMenuPolicySpace,
-) => {
+const isDeveloperFeatureDisabled = (space?: WorkspaceMenuPolicySpace) => {
   if (!space) {
     return false;
   }
@@ -114,41 +117,14 @@ const isDeveloperFeatureDisabledForMember = (
     return false;
   }
 
-  const roleType = space.role_type || space.space_role_type;
-  return !SPACE_MANAGER_ROLE_TYPES.has(roleType || 0);
+  return true;
 };
 
-const shouldHideWorkspaceSettingsForSpace = (
-  space?: WorkspaceMenuPolicySpace,
-) => {
-  if (!space) {
-    return false;
-  }
-
-  if (
-    space.space_type === PERSONAL_SPACE_TYPE ||
-    space.type === PERSONAL_SPACE_TYPE
-  ) {
-    return true;
-  }
-
-  const roleType = space.role_type || space.space_role_type;
-  if (!roleType) {
-    return false;
-  }
-
-  return !SPACE_MANAGER_ROLE_TYPES.has(roleType);
-};
-
-export const getVisibleWorkspaceMenuMeta = (
-  space?: WorkspaceMenuPolicySpace,
-) =>
+export const getVisibleWorkspaceMenuMeta = (space?: WorkspaceMenuPolicySpace) =>
   WORKSPACE_MENU_META.filter(
     item =>
-      (item.path !== SPACE_SUB_MODULE.WORKSPACE ||
-        !shouldHideWorkspaceSettingsForSpace(space)) &&
-      (!isDeveloperFeatureDisabledForMember(space) ||
-        !DEVELOPER_FEATURE_MENU_PATHS.has(item.path)),
+      !isDeveloperFeatureDisabled(space) ||
+      !DEVELOPER_FEATURE_MENU_PATHS.has(item.path),
   );
 
 export const shouldShowSystemManagementEntry = ({

@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
-import { useMemo, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function -- Cohesive orchestrator. */
+/* eslint-disable max-lines, complexity -- Cohesive orchestrator. */
 
-import { Input, Loading, Modal, Toast } from '@coze-arch/coze-design';
+import { useParams } from 'react-router-dom';
+import { useMemo, useEffect, useState } from 'react';
+
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
+import { Input, Loading, Modal, Toast } from '@coze-arch/coze-design';
 import { SpaceType } from '@coze-arch/bot-api/developer_api';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
@@ -94,7 +97,10 @@ const matchesMemberKeyword = (member: WorkspaceMember, keyword: string) => {
 };
 
 const candidateDisplayName = (candidate: WorkspaceUserCandidate) =>
-  candidate.name || candidate.email || candidate.user_unique_name || candidate.user_id;
+  candidate.name ||
+  candidate.email ||
+  candidate.user_unique_name ||
+  candidate.user_id;
 
 const memberDisplayName = (member: WorkspaceMember) =>
   member.name || member.email || member.user_unique_name || member.user_id;
@@ -121,15 +127,19 @@ const WorkspacePage = () => {
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [userKeyword, setUserKeyword] = useState('');
   const [userSearchLoading, setUserSearchLoading] = useState(false);
-  const [userCandidates, setUserCandidates] = useState<WorkspaceUserCandidate[]>(
-    [],
-  );
+  const [userCandidates, setUserCandidates] = useState<
+    WorkspaceUserCandidate[]
+  >([]);
   const [selectedUsers, setSelectedUsers] = useState<WorkspaceUserCandidate[]>(
     [],
   );
   const [addMemberError, setAddMemberError] = useState('');
   const [addingMembers, setAddingMembers] = useState(false);
   const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [updatingMemberRoleUserID, setUpdatingMemberRoleUserID] = useState('');
+  const [removingMemberUserID, setRemovingMemberUserID] = useState('');
+  const [transferringWorkspace, setTransferringWorkspace] = useState(false);
+  const [deletingWorkspace, setDeletingWorkspace] = useState(false);
   const [savingSettingKey, setSavingSettingKey] = useState<
     'allow_develop' | 'receive_publish' | ''
   >('');
@@ -137,24 +147,21 @@ const WorkspacePage = () => {
   const [editDescription, setEditDescription] = useState('');
   const resolvedSpace =
     spaceList.find(space => space.id === space_id) || currentSpace;
-  const workspaceName =
+  const workspaceSpaceType = detail?.space_type ?? resolvedSpace?.space_type;
+  const rawWorkspaceName =
     detail?.name ||
     resolvedSpace?.name ||
     userInfo?.name ||
     userInfo?.screen_name ||
     '工作空间';
-  const workspaceType = getWorkspaceTypeText(
-    detail?.space_type ?? resolvedSpace?.space_type,
-  );
-  const isPersonal =
-    (detail?.space_type ?? resolvedSpace?.space_type) === SpaceType.Personal;
+  const isPersonal = workspaceSpaceType === SpaceType.Personal;
+  const workspaceName = isPersonal ? '个人空间' : rawWorkspaceName;
+  const workspaceType = getWorkspaceTypeText(workspaceSpaceType);
   const currentRole = detail?.current_user_role;
   const canManageMembers =
-    !isPersonal &&
-    (currentRole === ROLE_OWNER || currentRole === ROLE_ADMIN);
+    !isPersonal && (currentRole === ROLE_OWNER || currentRole === ROLE_ADMIN);
   const canEditWorkspace =
-    !isPersonal &&
-    (currentRole === ROLE_OWNER || currentRole === ROLE_ADMIN);
+    !isPersonal && (currentRole === ROLE_OWNER || currentRole === ROLE_ADMIN);
   const canViewSpaceSetting = !isPersonal && currentRole === ROLE_OWNER;
 
   const refreshWorkspace = async () => {
@@ -318,6 +325,10 @@ const WorkspacePage = () => {
   };
 
   const submitAddMembers = async () => {
+    if (addingMembers) {
+      return;
+    }
+
     if (!space_id || selectedUsers.length === 0) {
       setAddMemberError('请先选择要加入工作空间的成员');
       return;
@@ -345,11 +356,20 @@ const WorkspacePage = () => {
     }
   };
 
-  const changeMemberRole = async (member: WorkspaceMember, roleType: number) => {
-    if (!space_id || roleType === member.role_type) {
+  const changeMemberRole = async (
+    member: WorkspaceMember,
+    roleType: number,
+  ) => {
+    if (
+      !space_id ||
+      roleType === member.role_type ||
+      updatingMemberRoleUserID === member.user_id
+    ) {
       return;
     }
 
+    const previousMembers = members;
+    setUpdatingMemberRoleUserID(member.user_id);
     setMembers(prev =>
       prev.map(item =>
         item.user_id === member.user_id
@@ -369,15 +389,19 @@ const WorkspacePage = () => {
       Toast.success({ content: '成员角色已更新' });
       await refreshWorkspace();
     } catch (error) {
+      setMembers(previousMembers);
       Toast.error({ content: '成员角色更新失败' });
       await refreshWorkspace();
+    } finally {
+      setUpdatingMemberRoleUserID('');
     }
   };
 
   const submitRemoveMember = async () => {
-    if (!space_id || !removeCandidate) {
+    if (!space_id || !removeCandidate || removingMemberUserID) {
       return;
     }
+    setRemovingMemberUserID(removeCandidate.user_id);
     try {
       await removeWorkspaceMember({
         space_id,
@@ -388,10 +412,16 @@ const WorkspacePage = () => {
       await refreshWorkspace();
     } catch (error) {
       Toast.error({ content: '移除成员失败' });
+    } finally {
+      setRemovingMemberUserID('');
     }
   };
 
   const submitUpdateWorkspace = async () => {
+    if (savingWorkspace) {
+      return;
+    }
+
     if (!space_id) {
       return;
     }
@@ -422,7 +452,7 @@ const WorkspacePage = () => {
     key: 'allow_develop' | 'receive_publish',
     checked: boolean,
   ) => {
-    if (!space_id) {
+    if (!space_id || savingSettingKey) {
       return;
     }
 
@@ -452,10 +482,15 @@ const WorkspacePage = () => {
   };
 
   const submitTransferWorkspace = async () => {
+    if (transferringWorkspace) {
+      return;
+    }
+
     if (!space_id || !transferTargetUserID) {
       Toast.error({ content: '请选择新的空间所有者' });
       return;
     }
+    setTransferringWorkspace(true);
     try {
       await transferWorkspace({
         space_id,
@@ -467,14 +502,21 @@ const WorkspacePage = () => {
       await refreshWorkspace();
     } catch (error) {
       Toast.error({ content: '转让工作空间失败' });
+    } finally {
+      setTransferringWorkspace(false);
     }
   };
 
   const submitDeleteWorkspace = async () => {
+    if (deletingWorkspace) {
+      return;
+    }
+
     if (!space_id || deleteConfirmName !== workspaceName) {
       Toast.error({ content: '请输入完整工作空间名称确认删除' });
       return;
     }
+    setDeletingWorkspace(true);
     try {
       await deleteWorkspace({
         space_id,
@@ -484,6 +526,7 @@ const WorkspacePage = () => {
       window.location.href = '/';
     } catch (error) {
       Toast.error({ content: '删除工作空间失败' });
+      setDeletingWorkspace(false);
     }
   };
 
@@ -520,7 +563,9 @@ const WorkspacePage = () => {
               </span>
               <span className="coze-prototype-team-summary-divider">/</span>
               {workspaceType}
-              {detail?.description ? ` / ${detail.description}` : ''}
+              {!isPersonal && detail?.description
+                ? ` / ${detail.description}`
+                : ''}
             </p>
           </div>
         </header>
@@ -557,7 +602,9 @@ const WorkspacePage = () => {
               <div>
                 <h2>成员管理</h2>
                 <p>
-                  管理当前团队空间的协作者、角色和访问权限，成员变更会即时生效。
+                  {isPersonal
+                    ? '个人空间用于承载你的个人任务和资源，成员信息仅供查看。'
+                    : '管理当前团队空间的协作者、角色和访问权限，成员变更会即时生效。'}
                 </p>
               </div>
               <span>
@@ -565,6 +612,13 @@ const WorkspacePage = () => {
                 {canManageMembers ? '，可添加新成员' : '，仅可查看'}
               </span>
             </div>
+            {!canManageMembers ? (
+              <div className="coze-prototype-member-readonly-banner">
+                {isPersonal
+                  ? '个人空间暂不支持成员邀请、角色调整和移除操作。如需协作，请创建或切换到团队空间。'
+                  : '当前身份暂无成员管理权限，可以查看成员列表；如需调整角色或成员，请联系空间所有者或管理员。'}
+              </div>
+            ) : null}
             <div className="coze-prototype-member-toolbar">
               <div className="coze-prototype-member-search-group">
                 <input
@@ -618,7 +672,9 @@ const WorkspacePage = () => {
               {paginatedVisibleMembers.map(member => {
                 const isOwner = member.role_type === ROLE_OWNER;
                 const canOperateMember =
-                  canManageMembers && !isOwner && member.user_id !== detail?.owner_user_id;
+                  canManageMembers &&
+                  !isOwner &&
+                  member.user_id !== detail?.owner_user_id;
 
                 return (
                   <div
@@ -644,6 +700,10 @@ const WorkspacePage = () => {
                         <select
                           aria-label={`调整 ${memberDisplayName(member)} 的角色`}
                           className="coze-prototype-inline-role-select"
+                          disabled={
+                            updatingMemberRoleUserID === member.user_id ||
+                            Boolean(removingMemberUserID)
+                          }
                           value={member.role_type}
                           onChange={event =>
                             void changeMemberRole(
@@ -670,10 +730,16 @@ const WorkspacePage = () => {
                       {canOperateMember ? (
                         <button
                           className="coze-prototype-member-danger-action"
+                          disabled={
+                            removingMemberUserID === member.user_id ||
+                            updatingMemberRoleUserID === member.user_id
+                          }
                           type="button"
                           onClick={() => setRemoveCandidate(member)}
                         >
-                          删除
+                          {removingMemberUserID === member.user_id
+                            ? '移除中'
+                            : '移除'}
                         </button>
                       ) : (
                         <span className="coze-prototype-member-muted-action">
@@ -744,13 +810,13 @@ const WorkspacePage = () => {
             <article className="coze-prototype-space-setting-section">
               <h2>开发者功能</h2>
               <p>
-                关闭后，用户将无法看见&quot;智能体开发&quot;和&quot;组件库&quot;，创建者和管理员不受影响。
+                关闭后，所有成员将无法访问&quot;资源配置&quot;、&quot;网页应用开发&quot;、&quot;技能配置&quot;和&quot;开发配置&quot;。
               </p>
               <label className="coze-prototype-space-setting-switch">
                 <input
                   aria-label="开发者功能"
                   checked={detail?.allow_develop ?? true}
-                  disabled={savingSettingKey === 'allow_develop'}
+                  disabled={Boolean(savingSettingKey)}
                   type="checkbox"
                   onChange={event =>
                     void submitWorkspaceSetting(
@@ -765,13 +831,13 @@ const WorkspacePage = () => {
             <article className="coze-prototype-space-setting-section">
               <h2>接受来自外部空间的发布</h2>
               <p>
-                打开后，拥有该空间权限的用户在其他空间完成开发的智能体、插件、工作流，可以发布到该空间的广场上。
+                打开后，拥有权限的用户可以将其他空间完成开发的智能体、插件、工作流发布到当前团队空间的协作资源中。
               </p>
               <label className="coze-prototype-space-setting-switch">
                 <input
                   aria-label="接受来自外部空间的发布"
                   checked={detail?.receive_publish ?? false}
-                  disabled={savingSettingKey === 'receive_publish'}
+                  disabled={Boolean(savingSettingKey)}
                   type="checkbox"
                   onChange={event =>
                     void submitWorkspaceSetting(
@@ -812,6 +878,7 @@ const WorkspacePage = () => {
               />
               <button
                 className="coze-prototype-add-member-search-button"
+                disabled={userSearchLoading}
                 type="button"
                 onClick={() => void handleSearchUsers()}
               >
@@ -821,7 +888,7 @@ const WorkspacePage = () => {
             <button
               className="coze-prototype-add-member-check-all"
               type="button"
-              disabled={visibleCandidates.length === 0}
+              disabled={visibleCandidates.length === 0 || addingMembers}
               onClick={selectAllVisibleCandidates}
             >
               全选
@@ -829,13 +896,18 @@ const WorkspacePage = () => {
             <div className="coze-prototype-add-member-list">
               {visibleCandidates.length === 0 ? (
                 <div className="coze-prototype-add-member-empty">
-                  搜索并选择要加入的成员
+                  {userSearchLoading
+                    ? '正在搜索用户...'
+                    : userKeyword.trim()
+                      ? '没有可添加的用户'
+                      : '搜索并选择要加入的成员'}
                 </div>
               ) : null}
               {visibleCandidates.map(candidate => (
                 <button
                   key={candidate.user_id}
                   className="coze-prototype-add-member-option"
+                  disabled={addingMembers}
                   type="button"
                   onClick={() => selectUser(candidate)}
                 >
@@ -849,7 +921,9 @@ const WorkspacePage = () => {
                   </span>
                   <span className="coze-prototype-add-member-name">
                     {candidateDisplayName(candidate)}
-                    <small>{candidate.email || candidate.user_unique_name}</small>
+                    <small>
+                      {candidate.email || candidate.user_unique_name}
+                    </small>
                   </span>
                 </button>
               ))}
@@ -879,9 +953,13 @@ const WorkspacePage = () => {
                 </span>
                 <select
                   aria-label={`设置 ${candidateDisplayName(user)} 的角色`}
+                  disabled={addingMembers}
                   value={user.role_type || ROLE_MEMBER}
                   onChange={event =>
-                    changeSelectedUserRole(user.user_id, Number(event.target.value))
+                    changeSelectedUserRole(
+                      user.user_id,
+                      Number(event.target.value),
+                    )
                   }
                 >
                   <option value={ROLE_ADMIN}>管理员</option>
@@ -889,6 +967,7 @@ const WorkspacePage = () => {
                 </select>
                 <button
                   className="coze-prototype-add-member-remove"
+                  disabled={addingMembers}
                   type="button"
                   onClick={() => removeSelectedUser(user.user_id)}
                 >
@@ -947,7 +1026,7 @@ const WorkspacePage = () => {
       <Modal
         title="删除成员"
         visible={Boolean(removeCandidate)}
-        okText="删除"
+        okText={removingMemberUserID ? '移除中...' : '移除'}
         cancelText="取消"
         maskClosable={false}
         onOk={() => void submitRemoveMember()}
@@ -962,7 +1041,7 @@ const WorkspacePage = () => {
       <Modal
         title="转让空间"
         visible={transferOpen}
-        okText="确认转让"
+        okText={transferringWorkspace ? '转让中...' : '确认转让'}
         cancelText="取消"
         maskClosable={false}
         onOk={() => void submitTransferWorkspace()}
@@ -975,13 +1054,15 @@ const WorkspacePage = () => {
           <p>选择一位成员作为新的空间所有者。</p>
           <select
             aria-label="选择新的空间所有者"
+            disabled={transferringWorkspace}
             value={transferTargetUserID}
             onChange={event => setTransferTargetUserID(event.target.value)}
           >
             <option value="">请选择成员</option>
             {transferCandidates.map(member => (
               <option key={member.user_id} value={member.user_id}>
-                {memberDisplayName(member)} / {getWorkspaceRoleText(member.role_type)}
+                {memberDisplayName(member)} /{' '}
+                {getWorkspaceRoleText(member.role_type)}
               </option>
             ))}
           </select>
@@ -996,7 +1077,7 @@ const WorkspacePage = () => {
       <Modal
         title="删除空间"
         visible={deleteOpen}
-        okText="确认删除"
+        okText={deletingWorkspace ? '删除中...' : '确认删除'}
         cancelText="取消"
         maskClosable={false}
         onOk={() => void submitDeleteWorkspace()}

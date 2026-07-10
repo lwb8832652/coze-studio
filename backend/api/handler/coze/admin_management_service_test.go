@@ -28,6 +28,7 @@ import (
 
 	appadmin "github.com/coze-dev/coze-studio/backend/application/admin"
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
+	userservice "github.com/coze-dev/coze-studio/backend/domain/user/service"
 )
 
 func TestAdminManagementHandlersReturnWorkspacesAndUsers(t *testing.T) {
@@ -37,6 +38,9 @@ func TestAdminManagementHandlersReturnWorkspacesAndUsers(t *testing.T) {
 	h.POST("/api/admin/workspaces/members", ListAdminWorkspaceMembers)
 	h.POST("/api/admin/users/list", ListAdminUsers)
 	h.POST("/api/admin/users/spaces", ListAdminUserSpaces)
+	h.POST("/api/admin/users/create", CreateAdminUser)
+	h.POST("/api/admin/users/update", UpdateAdminUser)
+	h.POST("/api/admin/users/password/reset", ResetAdminUserPassword)
 	installAdminManagementTestService(t)
 
 	workspacesResp := ut.PerformRequest(
@@ -106,6 +110,52 @@ func TestAdminManagementHandlersReturnWorkspacesAndUsers(t *testing.T) {
 	require.Contains(t, userSpacesBody, `"id":"101"`)
 	require.Contains(t, userSpacesBody, `"name":"畅享 AI"`)
 	require.Contains(t, userSpacesBody, `"role_type":2`)
+
+	createUserResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/users/create",
+		&ut.Body{
+			Body: bytes.NewBufferString(`{"email":"new@example.test","password":"secret1","name":"New User","user_unique_name":"new-user","locale":"zh-CN"}`),
+			Len:  len(`{"email":"new@example.test","password":"secret1","name":"New User","user_unique_name":"new-user","locale":"zh-CN"}`),
+		},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+	createUserBody := string(createUserResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, createUserResp.Code)
+	require.Contains(t, createUserBody, `"user_id":"99"`)
+	require.Contains(t, createUserBody, `"email":"new@example.test"`)
+
+	updateUserResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/users/update",
+		&ut.Body{
+			Body: bytes.NewBufferString(`{"user_id":"9","name":"Owner Edited","user_unique_name":"owner-edited","locale":"zh-CN"}`),
+			Len:  len(`{"user_id":"9","name":"Owner Edited","user_unique_name":"owner-edited","locale":"zh-CN"}`),
+		},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+	updateUserBody := string(updateUserResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, updateUserResp.Code)
+	require.Contains(t, updateUserBody, `"msg":"success"`)
+
+	resetPasswordResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/admin/users/password/reset",
+		&ut.Body{
+			Body: bytes.NewBufferString(`{"user_id":"9","password":"secret2"}`),
+			Len:  len(`{"user_id":"9","password":"secret2"}`),
+		},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
+	resetPasswordBody := string(resetPasswordResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, resetPasswordResp.Code)
+	require.Contains(t, resetPasswordBody, `"msg":"success"`)
 }
 
 func installAdminManagementTestService(t *testing.T) {
@@ -201,4 +251,29 @@ func (d *adminManagementUserDomain) GetSpaceMembers(context.Context, int64) ([]*
 
 func (d *adminManagementUserDomain) GetUserSpaceList(context.Context, int64) ([]*userentity.Space, error) {
 	return d.userSpaces, nil
+}
+
+func (d *adminManagementUserDomain) Create(_ context.Context, req *userservice.CreateUserRequest) (*userentity.User, error) {
+	return &userentity.User{
+		UserID:     99,
+		Name:       req.Name,
+		UniqueName: req.UniqueName,
+		Email:      req.Email,
+		Locale:     req.Locale,
+	}, nil
+}
+
+func (d *adminManagementUserDomain) UpdateProfile(context.Context, *userservice.UpdateProfileRequest) error {
+	return nil
+}
+
+func (d *adminManagementUserDomain) ResetPassword(context.Context, string, string) error {
+	return nil
+}
+
+func (d *adminManagementUserDomain) GetUserInfo(_ context.Context, userID int64) (*userentity.User, error) {
+	if user := d.usersByID[userID]; user != nil {
+		return user, nil
+	}
+	return &userentity.User{UserID: userID, Email: "owner@example.test"}, nil
 }

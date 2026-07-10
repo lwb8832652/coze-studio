@@ -92,6 +92,12 @@
 - 改迁移：用本地 Atlas `v0.35.0` 校验 hash/validate。
 - 改 `nuwax-ai` 参考功能：用同一关键流程在 `nuwax-ai` 和 Coze 中对比浏览器
   可见行为、接口字段和权限结果；若无法运行参考项目，记录源码证据和差异。
+- 页面验收默认使用 Codex 自带 in-app browser。不要把 Chrome、外部浏览器或
+  只跑 API 脚本当成等价页面验收；只有用户明确要求或内置浏览器工具不可用
+  且用户同意兜底时，才使用其它浏览器，并在结论里标明验收口径。
+- 页面验收必须记录具体 URL、登录账号/空间、关键可见状态、核心交互结果和
+  控制台错误；若因会话过期、工具连接超时或本地服务异常导致无法继续，先
+  说明阻塞原因，不要声称页面已验收通过。
 - 后台单测或长命令要设置合理超时或及时轮询，避免进程长时间卡住。
 
 ### 5. 记录和提交
@@ -169,9 +175,9 @@ Coze Studio 本地功能测试账号：
 
 nuwax-ai 演示环境用于页面样式和交互对齐：
 
-- URL: `https://agent.nuwax.com`
-- Account: `13129924662`
-- Password: `z8832652`
+- URL: `http://localhost/`
+- Email: `admin@nuwax.com`
+- Password: `123456`
 
 本地 Coze 常用地址：
 
@@ -239,6 +245,13 @@ nuwax-ai 演示环境用于页面样式和交互对齐：
 
 - 从 `bin` 启动后端时使用 `APP_ENV=debug`，否则可能加载 `bin/.env` 而不是
   `bin/.env.debug`。
+- AppDev 本机运行时只允许在 `APP_ENV=debug` 且
+  `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；生产和共享测试环境必须配置
+  `APP_DEV_RUNNER_ENDPOINT`、`APP_DEV_RUNNER_TOKEN` 和 HTTPS
+  `APP_DEV_PREVIEW_GATEWAY_BASE_URL`，缺失时按 fail-closed 处理。
+- 前端页面调试和验收优先使用当前 Codex 线程的 in-app browser。需要重新登
+  录时，优先在 in-app browser 内恢复会话；不要因为会话过期或自动化连接
+  抖动就切换到 Chrome 作为默认验证路径。
 - debug MySQL 使用忽略文件中的外部测试数据库配置；默认不要拉取或启动本地
   MySQL 镜像。
 - 不提交 MySQL 密码。

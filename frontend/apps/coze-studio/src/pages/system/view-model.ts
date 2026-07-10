@@ -45,3 +45,60 @@ export const getRoleLabel = (roleType?: number) => {
 
 export const getI18nText = (text?: { zh_cn?: string; en_us?: string }) =>
   text?.zh_cn || text?.en_us || '-';
+
+export const isDefaultPersonalWorkspaceName = (name?: string) =>
+  name?.trim().toLowerCase() === 'personal space';
+
+export const isDefaultPersonalWorkspaceDescription = (description?: string) =>
+  description?.trim().toLowerCase() === 'this is your personal space';
+
+export const isPersonalWorkspace = (workspace?: {
+  name?: string;
+  space_type?: number;
+}) =>
+  workspace?.space_type === 1 ||
+  isDefaultPersonalWorkspaceName(workspace?.name);
+
+export const getWorkspaceTypeLabel = (workspace?: {
+  name?: string;
+  space_type?: number;
+}) => (isPersonalWorkspace(workspace) ? '个人空间' : '团队空间');
+
+export const getWorkspaceDisplayName = (workspace?: {
+  name?: string;
+  space_type?: number;
+}) => {
+  if (isPersonalWorkspace(workspace)) {
+    return '个人空间';
+  }
+
+  return workspace?.name || '-';
+};
+
+export const getWorkspaceDisplayDescription = (workspace?: {
+  description?: string;
+  name?: string;
+  space_type?: number;
+}) => {
+  if (
+    isPersonalWorkspace(workspace) ||
+    isDefaultPersonalWorkspaceDescription(workspace?.description)
+  ) {
+    return '默认个人空间';
+  }
+
+  return workspace?.description || '暂无描述';
+};
+
+export const formatAdminTime = (timestamp?: number) => {
+  if (!timestamp) {
+    return '-';
+  }
+
+  const normalizedTimestamp =
+    timestamp < 1000000000000 ? timestamp * 1000 : timestamp;
+
+  return new Date(normalizedTimestamp).toLocaleString('zh-CN', {
+    hour12: false,
+  });
+};
