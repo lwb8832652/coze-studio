@@ -63,6 +63,22 @@ Every implementation slice must update this document:
 
 ## Recent Slice Notes
 
+- 2026-07-11 `AR-PARITY-001` (进行中): restarted the backend Agent runtime
+  parity audit against the locked, locally deployed DeerFlow baseline
+  `5851f825`. Static tracing confirmed that current NewX AI has a real Eino ADK
+  path but is not yet fully equivalent: ADK is not the server default, several
+  declared middleware slots are reserved no-ops, plan mode is not used to gate
+  Todo, the generic Agent sandbox lacks DeerFlow filesystem/shell semantics,
+  memory evolution workers are default-off, and the durable run layer still
+  has authorization, redaction, lease/recovery, cancellation, retry scheduling
+  and Workbench SSE pagination gaps. The approved design and exit gate are in
+  `docs/superpowers/specs/2026-07-11-deerflow-backend-agent-runtime-parity-design.md`.
+  Planned verification: targeted tests across `application/agentthread`,
+  `domain/agentthread/service`, `domain/agentthread/repository`, Workbench and
+  LangGraph handlers/routes; Atlas hash/validate for migrations; paired live
+  DeerFlow/NewX AI acceptance for direct, search, Pro, Ultra, Skill, MCP,
+  upload, artifact, interrupt and memory cases.
+
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
   keeps `@` / `@资源类型：` as plain prefix text, applies the gray pill only to
