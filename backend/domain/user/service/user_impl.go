@@ -64,6 +64,11 @@ type userImpl struct {
 	*Components
 }
 
+const (
+	defaultPersonalSpaceName        = "Personal Space"
+	defaultPersonalSpaceDescription = "This is your personal space"
+)
+
 func (u *userImpl) Login(ctx context.Context, email, password string) (user *userEntity.User, err error) {
 	userModel, exist, err := u.UserRepo.GetUsersByEmail(ctx, email)
 	if err != nil {
@@ -296,14 +301,16 @@ func (u *userImpl) Create(ctx context.Context, req *CreateUserRequest) (user *us
 		}
 
 		err = u.SpaceRepo.CreateSpace(ctx, &model.Space{
-			ID:          sid,
-			Name:        "Personal Space",
-			Description: "This is your personal space",
-			IconURI:     uploadEntity.EnterpriseIconURI,
-			OwnerID:     userID,
-			CreatorID:   userID,
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             sid,
+			Name:           defaultPersonalSpaceName,
+			Description:    defaultPersonalSpaceDescription,
+			IconURI:        uploadEntity.EnterpriseIconURI,
+			OwnerID:        userID,
+			CreatorID:      userID,
+			AllowDevelop:   true,
+			ReceivePublish: false,
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create personal space failed: %w", err)
@@ -348,6 +355,244 @@ func (u *userImpl) Create(ctx context.Context, req *CreateUserRequest) (user *us
 	}
 
 	return userPo2Do(newUser, iconURL), nil
+}
+
+func (u *userImpl) CreateSpace(ctx context.Context, req *CreateSpaceRequest) (*userEntity.Space, error) {
+	if req == nil {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "missing request"))
+	}
+	if req.UserID <= 0 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid user id"))
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "space name cannot be empty"))
+	}
+
+	spaceType := req.SpaceType
+	if spaceType == 0 {
+		spaceType = userEntity.SpaceTypeTeam
+	}
+	if spaceType != userEntity.SpaceTypePersonal && spaceType != userEntity.SpaceTypeTeam {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid space type"))
+	}
+
+	iconURI := strings.TrimSpace(req.IconURI)
+	if iconURI == "" {
+		iconURI = uploadEntity.EnterpriseIconURI
+	}
+
+	spaceID, err := u.IDGen.GenID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gen space id failed: %w", err)
+	}
+
+	now := time.Now().UnixMilli()
+	spaceModel := &model.Space{
+		ID:             spaceID,
+		Name:           name,
+		Description:    strings.TrimSpace(req.Description),
+		IconURI:        iconURI,
+		OwnerID:        req.UserID,
+		CreatorID:      req.UserID,
+		AllowDevelop:   true,
+		ReceivePublish: false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := u.SpaceRepo.CreateSpace(ctx, spaceModel); err != nil {
+		return nil, fmt.Errorf("create space failed: %w", err)
+	}
+
+	if err := u.SpaceRepo.AddSpaceUser(ctx, &model.SpaceUser{
+		SpaceID:   spaceID,
+		UserID:    req.UserID,
+		RoleType:  1,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		return nil, fmt.Errorf("add space owner failed: %w", err)
+	}
+
+	iconURL, err := u.IconOSS.GetObjectUrl(ctx, iconURI)
+	if err != nil {
+		return nil, fmt.Errorf("get space icon url failed: %w", err)
+	}
+
+	space := spacePo2Do(spaceModel, iconURL)
+	space.SpaceType = spaceType
+	space.RoleType = 1
+	space.MemberCount = 1
+	return space, nil
+}
+
+func (u *userImpl) UpdateSpace(ctx context.Context, req *UpdateSpaceRequest) error {
+	if req == nil {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "missing request"))
+	}
+	if req.SpaceID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid space id"))
+	}
+
+	updates := map[string]any{}
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "space name cannot be empty"))
+		}
+		updates["name"] = name
+	}
+	if req.Description != nil {
+		updates["description"] = strings.TrimSpace(*req.Description)
+	}
+	if req.IconURI != nil {
+		iconURI := strings.TrimSpace(*req.IconURI)
+		if iconURI != "" {
+			updates["icon_uri"] = iconURI
+		}
+	}
+	if req.AllowDevelop != nil {
+		updates["allow_develop"] = *req.AllowDevelop
+	}
+	if req.ReceivePublish != nil {
+		updates["receive_publish"] = *req.ReceivePublish
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	return u.SpaceRepo.UpdateSpace(ctx, req.SpaceID, updates)
+}
+
+func (u *userImpl) AddSpaceMembers(ctx context.Context, members []*AddSpaceMemberRequest) error {
+	if len(members) == 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "members cannot be empty"))
+	}
+
+	spaceID := members[0].SpaceID
+	if spaceID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid space id"))
+	}
+
+	userIDs := make([]int64, 0, len(members))
+	seen := make(map[int64]bool, len(members))
+	for _, member := range members {
+		if member == nil || member.SpaceID != spaceID || member.UserID <= 0 {
+			return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
+		}
+		if member.RoleType != 2 && member.RoleType != 3 {
+			return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid role type"))
+		}
+		if seen[member.UserID] {
+			continue
+		}
+		seen[member.UserID] = true
+		userIDs = append(userIDs, member.UserID)
+	}
+
+	userModels, err := u.UserRepo.GetUsersByIDs(ctx, userIDs)
+	if err != nil {
+		return err
+	}
+	if len(userModels) != len(userIDs) {
+		return errorx.New(errno.ErrUserResourceNotFound, errorx.KV("type", "user"))
+	}
+
+	existingMembers, err := u.SpaceRepo.GetSpaceUsersBySpaceID(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+	existingByUserID := slices.ToMap(existingMembers, func(member *model.SpaceUser) (int64, bool) {
+		return member.UserID, true
+	})
+
+	now := time.Now().UnixMilli()
+	for _, member := range members {
+		if existingByUserID[member.UserID] {
+			continue
+		}
+		if err := u.SpaceRepo.AddSpaceUser(ctx, &model.SpaceUser{
+			SpaceID:   spaceID,
+			UserID:    member.UserID,
+			RoleType:  member.RoleType,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		existingByUserID[member.UserID] = true
+	}
+
+	return nil
+}
+
+func (u *userImpl) UpdateSpaceMemberRole(ctx context.Context, spaceID int64, userID int64, roleType int32) error {
+	if spaceID <= 0 || userID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
+	}
+	if roleType != 2 && roleType != 3 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid role type"))
+	}
+
+	return u.SpaceRepo.UpdateSpaceUserRole(ctx, spaceID, userID, roleType)
+}
+
+func (u *userImpl) RemoveSpaceMember(ctx context.Context, spaceID int64, userID int64) error {
+	if spaceID <= 0 || userID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
+	}
+
+	return u.SpaceRepo.RemoveSpaceUser(ctx, spaceID, userID)
+}
+
+func (u *userImpl) TransferSpace(ctx context.Context, spaceID int64, targetUserID int64) error {
+	if spaceID <= 0 || targetUserID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid transfer request"))
+	}
+
+	spaces, err := u.SpaceRepo.GetSpaceByIDs(ctx, []int64{spaceID})
+	if err != nil {
+		return err
+	}
+	if len(spaces) == 0 {
+		return errorx.New(errno.ErrUserResourceNotFound, errorx.KV("type", "space"))
+	}
+
+	spaceUsers, err := u.SpaceRepo.GetSpaceUsersBySpaceID(ctx, spaceID)
+	if err != nil {
+		return err
+	}
+
+	targetIsMember := false
+	for _, spaceUser := range spaceUsers {
+		if spaceUser.UserID == targetUserID {
+			targetIsMember = true
+			break
+		}
+	}
+	if !targetIsMember {
+		return errorx.New(errno.ErrUserResourceNotFound, errorx.KV("type", "space member"))
+	}
+
+	oldOwnerID := spaces[0].OwnerID
+	if err := u.SpaceRepo.UpdateSpaceOwner(ctx, spaceID, targetUserID); err != nil {
+		return err
+	}
+	if oldOwnerID > 0 && oldOwnerID != targetUserID {
+		if err := u.SpaceRepo.UpdateSpaceUserRole(ctx, spaceID, oldOwnerID, 2); err != nil {
+			return err
+		}
+	}
+	return u.SpaceRepo.UpdateSpaceUserRole(ctx, spaceID, targetUserID, 1)
+}
+
+func (u *userImpl) DeleteSpace(ctx context.Context, spaceID int64) error {
+	if spaceID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid space id"))
+	}
+
+	return u.SpaceRepo.DeleteSpace(ctx, spaceID)
 }
 
 func (u *userImpl) getUniqueNameFormEmail(ctx context.Context, email string) string {
@@ -443,8 +688,15 @@ func (u *userImpl) GetUserSpaceList(ctx context.Context, userID int64) (spaces [
 	spaceIDs := slices.Transform(userSpaces, func(us *model.SpaceUser) int64 {
 		return us.SpaceID
 	})
+	roleBySpaceID := slices.ToMap(userSpaces, func(us *model.SpaceUser) (int64, int32) {
+		return us.SpaceID, us.RoleType
+	})
 
 	spaceModels, err := u.SpaceRepo.GetSpaceByIDs(ctx, spaceIDs)
+	if err != nil {
+		return nil, err
+	}
+	memberCounts, err := u.SpaceRepo.CountSpaceUsers(ctx, spaceIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +713,10 @@ func (u *userImpl) GetUserSpaceList(ctx context.Context, userID int64) (spaces [
 		urls[uri] = url
 	}
 	return slices.Transform(spaceModels, func(sm *model.Space) *userEntity.Space {
-		return spacePo2Do(sm, urls[sm.IconURI])
+		space := spacePo2Do(sm, urls[sm.IconURI])
+		space.RoleType = roleBySpaceID[sm.ID]
+		space.MemberCount = memberCounts[sm.ID]
+		return space
 	}), nil
 }
 
@@ -499,18 +754,146 @@ func (u *userImpl) GetUserSpaceBySpaceID(ctx context.Context, spaceID []int64) (
 	}), nil
 }
 
+func (u *userImpl) GetSpaceMembers(ctx context.Context, spaceID int64) ([]*userEntity.SpaceMember, error) {
+	if spaceID <= 0 {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "spaceID cannot be empty"))
+	}
+
+	spaceUsers, err := u.SpaceRepo.GetSpaceUsersBySpaceID(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	if len(spaceUsers) == 0 {
+		return []*userEntity.SpaceMember{}, nil
+	}
+
+	userIDs := slices.Transform(spaceUsers, func(su *model.SpaceUser) int64 {
+		return su.UserID
+	})
+	userModels, err := u.UserRepo.GetUsersByIDs(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	uris := slices.ToMap(userModels, func(um *model.User) (string, bool) {
+		return um.IconURI, false
+	})
+	urls := make(map[string]string, len(uris))
+	for uri := range uris {
+		if uri == "" {
+			continue
+		}
+		url, err := u.IconOSS.GetObjectUrl(ctx, uri)
+		if err != nil {
+			return nil, err
+		}
+		urls[uri] = url
+	}
+
+	userByID := slices.ToMap(userModels, func(um *model.User) (int64, *model.User) {
+		return um.ID, um
+	})
+	members := make([]*userEntity.SpaceMember, 0, len(spaceUsers))
+	for _, su := range spaceUsers {
+		um := userByID[su.UserID]
+		if um == nil {
+			continue
+		}
+		members = append(members, &userEntity.SpaceMember{
+			UserID:     su.UserID,
+			Name:       um.Name,
+			UniqueName: um.UniqueName,
+			Email:      um.Email,
+			AvatarURL:  urls[um.IconURI],
+			RoleType:   su.RoleType,
+			JoinedAt:   su.CreatedAt,
+		})
+	}
+
+	return members, nil
+}
+
+func (u *userImpl) ListAllUsers(ctx context.Context, keyword string, offset int, limit int) ([]*userEntity.User, int64, error) {
+	userModels, total, err := u.UserRepo.ListUsers(ctx, keyword, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	users := make([]*userEntity.User, 0, len(userModels))
+	for _, userModel := range userModels {
+		iconURL := ""
+		if userModel.IconURI != "" {
+			url, err := u.IconOSS.GetObjectUrl(ctx, userModel.IconURI)
+			if err != nil {
+				return nil, 0, err
+			}
+			iconURL = url
+		}
+		users = append(users, userPo2Do(userModel, iconURL))
+	}
+
+	return users, total, nil
+}
+
+func (u *userImpl) ListAllSpaces(ctx context.Context, keyword string, offset int, limit int) ([]*userEntity.Space, int64, error) {
+	spaceModels, total, err := u.SpaceRepo.ListSpaces(ctx, keyword, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	spaceIDs := slices.Transform(spaceModels, func(sm *model.Space) int64 {
+		return sm.ID
+	})
+	memberCounts, err := u.SpaceRepo.CountSpaceUsers(ctx, spaceIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	spaces := make([]*userEntity.Space, 0, len(spaceModels))
+	for _, spaceModel := range spaceModels {
+		iconURL := ""
+		if spaceModel.IconURI != "" {
+			url, err := u.IconOSS.GetObjectUrl(ctx, spaceModel.IconURI)
+			if err != nil {
+				return nil, 0, err
+			}
+			iconURL = url
+		}
+		space := spacePo2Do(spaceModel, iconURL)
+		space.MemberCount = memberCounts[spaceModel.ID]
+		spaces = append(spaces, space)
+	}
+
+	return spaces, total, nil
+}
+
 func spacePo2Do(space *model.Space, iconUrl string) *userEntity.Space {
 	return &userEntity.Space{
-		ID:          space.ID,
-		Name:        space.Name,
-		Description: space.Description,
-		IconURL:     iconUrl,
-		SpaceType:   userEntity.SpaceTypePersonal,
-		OwnerID:     space.OwnerID,
-		CreatorID:   space.CreatorID,
-		CreatedAt:   space.CreatedAt,
-		UpdatedAt:   space.UpdatedAt,
+		ID:             space.ID,
+		Name:           space.Name,
+		Description:    space.Description,
+		IconURL:        iconUrl,
+		SpaceType:      inferSpaceType(space),
+		OwnerID:        space.OwnerID,
+		CreatorID:      space.CreatorID,
+		AllowDevelop:   space.AllowDevelop,
+		ReceivePublish: space.ReceivePublish,
+		CreatedAt:      space.CreatedAt,
+		UpdatedAt:      space.UpdatedAt,
 	}
+}
+
+func inferSpaceType(space *model.Space) userEntity.SpaceType {
+	if space == nil {
+		return userEntity.SpaceTypeTeam
+	}
+	if space.Name == defaultPersonalSpaceName && space.Description == defaultPersonalSpaceDescription {
+		return userEntity.SpaceTypePersonal
+	}
+	if space.Name == "Personal" && space.Description == "Personal Space" {
+		return userEntity.SpaceTypePersonal
+	}
+	return userEntity.SpaceTypeTeam
 }
 
 // Argon2id parameter

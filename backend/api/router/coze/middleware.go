@@ -825,6 +825,11 @@ func _getspacelistv2Mw() []app.HandlerFunc {
 	return nil
 }
 
+func _savespacev2Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _userMw() []app.HandlerFunc {
 	// your code...
 	return nil

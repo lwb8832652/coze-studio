@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useEffect } from 'react';
 
 import { useRequest } from 'ahooks';
@@ -24,6 +24,8 @@ import {
   useLoginStatus,
   type UserInfo,
 } from '@coze-foundation/account-adapter';
+
+import { resolveLoginRedirect } from './redirect';
 
 export const useLoginService = ({
   email,
@@ -62,12 +64,14 @@ export const useLoginService = ({
 
   const loginStatus = useLoginStatus();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirect = searchParams.get('redirect');
 
   useEffect(() => {
     if (loginStatus === 'logined') {
-      navigate('/');
+      navigate(resolveLoginRedirect(redirect), { replace: true });
     }
-  }, [loginStatus]);
+  }, [loginStatus, navigate, redirect]);
 
   return {
     login: loginService.run,

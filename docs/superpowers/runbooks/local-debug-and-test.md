@@ -1,65 +1,67 @@
 # Local Debug And Test Runbook
 
-This runbook holds local-only setup details that are useful for DeerFlow
-parity testing. Keep secrets out of tracked files unless the user explicitly
-asks otherwise for a test-only account.
+本手册只记录 Coze Studio 当前主线的本地调试、nuwax-ai 页面参照和验收口径。
+不要写入真实生产密钥，也不要恢复已经移除的 DeerFlow 对齐流程。
 
-## Test Accounts
+## 测试账号与地址
 
-Coze Studio and the local DeerFlow reference use the same functional test
-account for browser parity verification:
-
-- Email: `840582614@qq.com`
-- Password: `z8832652`
-
-Reference task-detail page in DeerFlow:
-
-- `http://localhost:2026/workspace/chats/c155a732-f475-4cf9-aa49-13fd26b29888`
-
-Local Coze Studio development targets:
+Coze Studio 本地功能测试：
 
 - Frontend: `http://localhost:8080`
 - Backend API: `http://localhost:8888`
+- Email: `840582614@qq.com`
+- Password: `z8832652`
 
-## Debug Environment
+nuwax-ai 本地参照环境：
 
-Use `APP_ENV=debug` when starting the local backend from `bin`; otherwise the
-server can load `bin/.env` instead of `bin/.env.debug` and reject requests that
-select `{"runtime":"eino_adk"}`.
+- URL: `http://localhost/`
+- Email: `admin@nuwax.com`
+- Password: `123456`
 
-Recommended local backend command from `bin`:
+页面功能与样式验收默认使用 Codex in-app browser。验收时记录具体 URL、账号、
+空间、关键交互结果和控制台错误，不用 Chrome 或单纯 API 请求替代页面验收。
+
+## Debug 环境
+
+从 `bin` 启动后端时必须设置 `APP_ENV=debug`，否则可能加载 `bin/.env` 而不是
+`bin/.env.debug`。
+
+AppDev 本机运行时会执行项目依赖，只允许在显式 Debug 模式启用：
 
 ```bash
 APP_ENV=debug \
-AGENT_THREAD_RUNTIME_DEFAULT=eino_adk \
-AGENT_THREAD_EINO_ADK_ENABLED=true \
-AGENT_THREAD_WORKER_ENABLED=true \
-AGENT_THREAD_WORKER_INTERVAL_MS=2000 \
-AGENT_MEMORY_FLUSH_WORKER_ENABLED=true \
-AGENT_MEMORY_EXTRACTOR_ENABLED=true \
-AGENT_MEMORY_EXTRACTOR_MODEL_ID=100002 \
-AGENT_MEMORY_EXTRACTOR_MODEL_NAME=deepseek-v4-pro \
+APP_DEV_HOST_RUNTIME_ENABLED=true \
+APP_DEV_LOCAL_STORE_ENABLED=true \
 ./opencoze -start
 ```
 
-Confirm the startup log contains:
+启动日志应包含：
 
 ```text
 load env file: .env.debug
 ```
 
-For DeerFlow memory parity tests, the memory flush worker and model extractor
-must be enabled together. If `AGENT_MEMORY_FLUSH_WORKER_ENABLED=true` but
-`AGENT_MEMORY_EXTRACTOR_ENABLED=false`, terminal transcripts will enqueue
-`agent_memory_flush_jobs` but no durable memory records will be written.
+生产和共享测试环境禁止启用 `APP_DEV_HOST_RUNTIME_ENABLED`。必须配置隔离 Runner
+和独立 HTTPS Preview Gateway：
 
-### Local Web Search Proxy
+```bash
+APP_DEV_RUNNER_ENDPOINT=https://runner.internal.example.com
+APP_DEV_RUNNER_TOKEN=replace-with-secret-manager-value
+APP_DEV_PREVIEW_GATEWAY_BASE_URL=https://preview.example.com/apps
+```
 
-DeerFlow's Python/DDGS path can pick up the host proxy in the local Docker
-environment, but Go `net/http` does not automatically read macOS system proxy
-settings. If local `web_search` hangs or reports provider request failures,
-put explicit proxy variables in the ignored `bin/.env.debug` used by the
-backend:
+未配置隔离 Runner 时，AppDev 运行和构建按 fail-closed 处理，不回退到宿主机
+执行。隔离 Runner 需实现 `/v1/appdev/runtimes/*` 与 `/v1/appdev/builds` 合同，并
+将构建产物写入请求限定的 OSS 前缀。`APP_DEV_RUNNER_TOKEN` 只能来自部署环境的
+密钥管理，不写入 tracked 文件。
+
+只有任务明确涉及 Agent Runtime 时，才额外启用 Eino ADK 相关变量；AppDev 页面
+调试不依赖这些变量。
+
+## 本地 Web Search Proxy
+
+Go `net/http` 不会自动读取 macOS 系统代理。若本地 `web_search` 请求失败，可在
+忽略的 `bin/.env.debug` 中配置：
 
 ```bash
 export HTTP_PROXY="http://127.0.0.1:7893"
@@ -70,29 +72,18 @@ export https_proxy="http://127.0.0.1:7893"
 export no_proxy="localhost,127.0.0.1,::1"
 ```
 
-Keep this local-only. `bin/.env.debug` is ignored, and production/test
-environments should configure their own approved outbound proxy or search
-provider instead of relying on a developer machine port.
+该配置只用于本机，生产和共享测试环境应使用各自获批的出口代理或搜索服务。
 
 ## Debug MySQL
 
-- Do not start or pull the local MySQL image for the normal debug path.
-- Debug middleware should use the external MySQL-compatible test database
-  configured in ignored env files such as `docker/.env.debug` and
-  `bin/.env.debug`.
-- Keep real MySQL passwords in ignored env files. Do not paste full
-  `docker compose config --env-file docker/.env.debug` output into chat or
-  logs, because Compose can print resolved credentials.
-- `make env` should keep the non-secret P0 runtime switches normalized in
-  `docker/.env.debug`:
-  - `AGENT_THREAD_RUNTIME_DEFAULT=eino_adk`
-  - `AGENT_THREAD_EINO_ADK_ENABLED=true`
-  - `AGENT_THREAD_WORKER_ENABLED=true`
+- 正常 Debug 路径不要拉取或启动本地 MySQL 镜像。
+- 使用 `docker/.env.debug`、`bin/.env.debug` 中配置的外部测试数据库。
+- 数据库密码只放在 ignored env 文件，不在日志、文档或对话中输出解析后的完整
+  Compose 配置。
 
 ## Atlas CLI
 
-Use the local Atlas CLI when available. This worktree expects Atlas Community
-`v0.35.0`.
+本仓库使用 Atlas Community `v0.35.0`：
 
 ```bash
 atlas version
@@ -100,21 +91,11 @@ atlas version
 atlas migrate validate --dir file://docker/atlas/migrations
 ```
 
-Only fall back to the pinned Docker image or temporary installer if local
-Atlas is missing or no longer reports `v0.35.0`.
+不要手工编辑 `docker/atlas/migrations/atlas.sum`。
 
-Never hand-edit `docker/atlas/migrations/atlas.sum`.
+## 分支与转测试
 
-## Branch And Test Promotion
-
-- Day-to-day Codex work stays on `codex/deerflow-parity-mainline` unless the
-  user explicitly chooses another branch.
-- `dev` is the test-environment validation branch. Do not keep this Codex
-  worktree checked out on `dev`, because the user's local tools may need that
-  branch.
-- Before promoting to test, commit the development branch and let the user
-  review the diff.
-- Promotion means merging the development branch into `dev`, pushing
-  `origin/dev`, and switching this worktree back to the development branch.
-- If `dev` is already used by another worktree, report the conflicting path
-  instead of forcing checkout.
+- 日常开发分支为 `codex/coze-nuwax-management-mainline`。
+- 不默认合并、推送或切换到 `dev`。
+- 转测试前先完成代码审核，再按用户本次明确授权的目标分支和步骤执行。
+- 目标分支被其他 worktree 占用时，报告占用路径，不强制 checkout。

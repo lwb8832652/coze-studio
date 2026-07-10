@@ -1673,6 +1673,18 @@ export interface BotSpace {
   hide_operation?: boolean;
   /** 是否显示端侧插件创建入口 */
   display_local_plugin?: boolean;
+  /** 团队角色 1-owner 2-admin 3-member */
+  role_type?: number;
+  /** 团队角色枚举 */
+  space_role_type?: number;
+  /** 空间所有者 */
+  owner_user_id?: string;
+  /** 空间成员数量 */
+  total_member_num?: string;
+  /** 是否开启开发者功能 */
+  allow_develop?: boolean;
+  /** 是否接受来自外部空间的发布 */
+  receive_publish?: boolean;
   /** 空间模式 */
   space_mode?: SpaceMode;
   /** 空间标签 */

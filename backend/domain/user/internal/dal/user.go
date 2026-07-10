@@ -19,6 +19,7 @@ package dal
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -159,4 +160,16 @@ func (dao *UserDAO) GetUsersByIDs(ctx context.Context, userIDs []int64) ([]*mode
 	return dao.query.User.WithContext(ctx).Where(
 		dao.query.User.ID.In(userIDs...),
 	).Find()
+}
+
+func (dao *UserDAO) ListUsers(ctx context.Context, keyword string, offset int, limit int) ([]*model.User, int64, error) {
+	q := dao.query.User.WithContext(ctx)
+	if normalized := strings.TrimSpace(keyword); normalized != "" {
+		pattern := "%" + normalized + "%"
+		q = q.Where(dao.query.User.Name.Like(pattern)).
+			Or(dao.query.User.Email.Like(pattern)).
+			Or(dao.query.User.UniqueName.Like(pattern))
+	}
+
+	return q.Order(dao.query.User.CreatedAt.Desc()).FindByPage(offset, limit)
 }

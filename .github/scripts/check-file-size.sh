@@ -26,6 +26,7 @@ EXCLUDE_PATTERNS=(
   'packages/arch/bot-api/src/auto-generate/**'
   'apps/bot-op/src/services/bam-auto-generate/**'
   'apps/prompt-platform/src/services/auto-generate/**'
+  'backend/api/model/playground/playground.go'
   "**/lib/**"
   "**/.*/**"
   '**/__tests__/**'

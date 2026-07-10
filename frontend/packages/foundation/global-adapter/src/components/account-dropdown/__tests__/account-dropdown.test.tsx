@@ -21,6 +21,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 const mockOpenAccountSettings = vi.hoisted(() => vi.fn());
 const mockOpenLogoutModal = vi.hoisted(() => vi.fn());
+const mockOpenSystemManagement = vi.hoisted(() => vi.fn());
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror package component names. */
 vi.mock('@coze-foundation/layout', () => ({
@@ -112,6 +113,7 @@ describe('AccountDropdown', () => {
   beforeEach(() => {
     mockOpenAccountSettings.mockReset();
     mockOpenLogoutModal.mockReset();
+    mockOpenSystemManagement.mockReset();
   });
 
   it('renders extra settings tabs as account dropdown entries', () => {
@@ -131,5 +133,25 @@ describe('AccountDropdown', () => {
 
     expect(screen.getByText('MCP 配置')).toBeTruthy();
     expect(mockOpenAccountSettings).toHaveBeenCalledWith('mcp-tools');
+  });
+
+  it('renders extra account menu entries as standalone actions', () => {
+    render(
+      <AccountDropdown
+        extraMenuItems={[
+          {
+            key: 'system-management',
+            title: '系统管理',
+            onClick: mockOpenSystemManagement,
+            dataTestId: 'layout_avatar_system-management',
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '系统管理' }));
+
+    expect(screen.getByTestId('layout_avatar_system-management')).toBeTruthy();
+    expect(mockOpenSystemManagement).toHaveBeenCalledTimes(1);
   });
 });

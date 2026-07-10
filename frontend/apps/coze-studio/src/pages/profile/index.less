@@ -1,0 +1,262 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.profile-page {
+  min-height: 100vh;
+  padding: 40px;
+  color: #1f2329;
+  background:
+    radial-gradient(circle at top left, rgba(44, 98, 255, 12%), transparent 32%),
+    linear-gradient(135deg, #f8fbff 0%, #f5f7fb 52%, #eef4ff 100%);
+}
+
+.profile-page__shell {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.profile-page__eyebrow {
+  margin-bottom: 8px;
+
+  font-size: 13px;
+  font-weight: 600;
+  color: #4e5969;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.profile-page__title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 760;
+  line-height: 1.18;
+}
+
+.profile-page__subtitle {
+  max-width: 620px;
+  margin: 12px 0 28px;
+
+  font-size: 15px;
+  line-height: 1.7;
+  color: #4e5969;
+}
+
+.profile-page__grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.profile-page__card {
+  overflow: hidden;
+
+  background: rgba(255, 255, 255, 86%);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(23, 43, 77, 8%);
+  border-radius: 22px;
+  box-shadow: 0 24px 60px rgba(30, 55, 100, 12%);
+}
+
+.profile-page__summary {
+  padding: 28px;
+}
+
+.profile-page__avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 72px;
+  height: 72px;
+  margin-bottom: 18px;
+
+  font-size: 28px;
+  font-weight: 760;
+  color: #fff;
+
+  background: linear-gradient(135deg, #155eef, #0ba5ec);
+  border-radius: 24px;
+}
+
+.profile-page__name {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 720;
+}
+
+.profile-page__email {
+  margin: 0 0 22px;
+  font-size: 14px;
+  color: #667085;
+}
+
+.profile-page__meta {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-page__meta-row {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+
+  padding: 12px 0;
+
+  font-size: 14px;
+  color: #344054;
+
+  border-top: 1px solid rgba(29, 41, 57, 8%);
+}
+
+.profile-page__meta-label {
+  color: #667085;
+}
+
+.profile-page__form {
+  padding: 28px;
+}
+
+.profile-page__section-title {
+  margin: 0 0 18px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.profile-page__field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.profile-page__label {
+  font-size: 14px;
+  font-weight: 650;
+  color: #344054;
+}
+
+.profile-page__input,
+.profile-page__textarea {
+  width: 100%;
+
+  font-size: 15px;
+  color: #1d2939;
+
+  background: #fff;
+  border: 1px solid #d0d5dd;
+  border-radius: 14px;
+  outline: none;
+
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.profile-page__input {
+  height: 44px;
+  padding: 0 14px;
+}
+
+.profile-page__textarea {
+  resize: vertical;
+  min-height: 128px;
+  padding: 12px 14px;
+  line-height: 1.6;
+}
+
+.profile-page__input:focus,
+.profile-page__textarea:focus {
+  border-color: #155eef;
+  box-shadow: 0 0 0 4px rgba(21, 94, 239, 12%);
+}
+
+.profile-page__hint {
+  margin: -6px 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #667085;
+}
+
+.profile-page__status {
+  min-height: 22px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  color: #039855;
+}
+
+.profile-page__status--error {
+  color: #d92d20;
+}
+
+.profile-page__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.profile-page__button {
+  cursor: pointer;
+
+  height: 42px;
+  padding: 0 22px;
+
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+
+  background: #155eef;
+  border: none;
+  border-radius: 999px;
+
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.profile-page__button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(21, 94, 239, 24%);
+}
+
+.profile-page__button:disabled {
+  cursor: not-allowed;
+  background: #98a2b3;
+}
+
+.profile-page__loading,
+.profile-page__empty {
+  padding: 32px;
+
+  color: #4e5969;
+
+  background: rgba(255, 255, 255, 82%);
+  border: 1px solid rgba(23, 43, 77, 8%);
+  border-radius: 22px;
+}
+
+@media (max-width: 768px) {
+  .profile-page {
+    padding: 24px 16px;
+  }
+
+  .profile-page__title {
+    font-size: 28px;
+  }
+
+  .profile-page__grid {
+    grid-template-columns: 1fr;
+  }
+}

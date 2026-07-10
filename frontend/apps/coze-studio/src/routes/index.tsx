@@ -48,8 +48,13 @@ import {
   ExploreTemplatePage,
   OAuthConsentConfirmPage,
   Workbench,
+  AppDev,
+  AppDevIDE,
   SkillPage,
   ToolsPage,
+  WorkspacePage,
+  PersonalCenterPage,
+  SystemManagementPage,
   TaskDetailPage,
   TasksPage,
 } from './async-components';
@@ -226,6 +231,22 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   }),
                 },
 
+                // Web App Development
+                {
+                  path: 'app-dev',
+                  Component: AppDev,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.APP_DEV,
+                  }),
+                },
+                {
+                  path: 'app-dev/:project_id',
+                  Component: AppDevIDE,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.APP_DEV,
+                  }),
+                },
+
                 // Skill Configuration
                 {
                   path: 'skill',
@@ -241,6 +262,15 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   Component: ToolsPage,
                   loader: () => ({
                     subMenuKey: SPACE_SUB_MODULE.TOOLS,
+                  }),
+                },
+
+                // Workspace Settings
+                {
+                  path: 'workspace',
+                  Component: WorkspacePage,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.WORKSPACE,
                   }),
                 },
 
@@ -327,6 +357,28 @@ export const router: ReturnType<typeof createBrowserRouter> =
               ],
             },
           ],
+        },
+
+        // System Management
+        {
+          path: 'profile',
+          Component: PersonalCenterPage,
+          loader: () => ({
+            hasSider: false,
+            requireAuth: true,
+          }),
+        },
+        {
+          path: 'system',
+          element: <Navigate to="/system/overview" replace />,
+        },
+        {
+          path: 'system/:section',
+          Component: SystemManagementPage,
+          loader: () => ({
+            hasSider: false,
+            requireAuth: true,
+          }),
         },
 
         // workflow routing

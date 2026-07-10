@@ -19,6 +19,9 @@ package idgen
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
@@ -29,9 +32,16 @@ import (
 const (
 	counterKeyExpirationTime = 10 * time.Minute
 	maxCounterPosition       = 255
+	debugLocalServerID       = 1
 )
 
 type IDGenerator = idgen.IDGenerator
+
+var debugLocalIDGen = struct {
+	sync.Mutex
+	lastMs  int64
+	counter int64
+}{}
 
 func New(client cache.Cmdable) (idgen.IDGenerator, error) {
 	// Initialization code.
@@ -73,6 +83,9 @@ func (i *idGenImpl) GenMultiIDs(ctx context.Context, counts int) ([]int64, error
 
 		counterPosition, err := i.IncrBy(ctx, redisKey, leftNum)
 		if err != nil {
+			if debugIDGenFallbackEnabled() {
+				return genDebugLocalIDs(counts), nil
+			}
 			return nil, err
 		}
 
@@ -138,6 +151,41 @@ func (i *idGenImpl) Expire(ctx context.Context, key string) {
 func genIDKey(space string, svrID int64, ms int64) string {
 	// Once the format of this key is determined, it cannot be changed
 	return fmt.Sprintf("id_generator:%v:%v:%v", space, svrID, ms)
+}
+
+func debugIDGenFallbackEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("COZE_DEBUG_IDGEN_FALLBACK"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func genDebugLocalIDs(counts int) []int64 {
+	debugLocalIDGen.Lock()
+	defer debugLocalIDGen.Unlock()
+
+	ids := make([]int64, 0, counts)
+	for len(ids) < counts {
+		ms := time.Now().UnixNano() / int64(time.Millisecond)
+		if ms != debugLocalIDGen.lastMs {
+			debugLocalIDGen.lastMs = ms
+			debugLocalIDGen.counter = 0
+		}
+		if debugLocalIDGen.counter > maxCounterPosition {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+
+		seconds := ms / 1000
+		millis := ms % 1000
+		id := (seconds << 32) + (millis << 22) + (debugLocalIDGen.counter << 14) + debugLocalServerID
+		ids = append(ids, id)
+		debugLocalIDGen.counter++
+	}
+
+	return ids
 }
 
 func maxInt64(a, b int64) int64 {

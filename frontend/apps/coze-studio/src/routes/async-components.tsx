@@ -27,7 +27,9 @@ export const LoginPage = lazy(() =>
 export const Redirect = lazy(() => import('../pages/redirect'));
 
 // Workspace Sidebar Component
-export const spaceSubMenu = lazy(() => import('../components/workspace-sub-menu'));
+export const spaceSubMenu = lazy(
+  () => import('../components/workspace-sub-menu'),
+);
 
 // Workspace Layout Component
 export const SpaceLayout = lazy(() =>
@@ -49,6 +51,10 @@ export const Develop = lazy(() => import('../pages/develop'));
 // resource library page
 export const Library = lazy(() => import('../pages/library'));
 
+// app development page
+export const AppDev = lazy(() => import('../pages/app-dev'));
+export const AppDevIDE = lazy(() => import('../pages/app-dev/ide'));
+
 // chat workbench page
 export const Workbench = lazy(() => import('../pages/workbench'));
 
@@ -57,6 +63,15 @@ export const SkillPage = lazy(() => import('../pages/skill'));
 
 // tools configuration page
 export const ToolsPage = lazy(() => import('../pages/tools'));
+
+// workspace settings page
+export const WorkspacePage = lazy(() => import('../pages/workspace'));
+
+// personal center page
+export const PersonalCenterPage = lazy(() => import('../pages/profile'));
+
+// system management page
+export const SystemManagementPage = lazy(() => import('../pages/system'));
 
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));

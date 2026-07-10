@@ -18,6 +18,7 @@ package dal
 
 import (
 	"context"
+	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/user/internal/dal/model"
 )
@@ -26,8 +27,53 @@ func (dao *SpaceDAO) AddSpaceUser(ctx context.Context, spaceUser *model.SpaceUse
 	return dao.query.SpaceUser.WithContext(ctx).Create(spaceUser)
 }
 
+func (dao *SpaceDAO) UpdateSpaceUserRole(ctx context.Context, spaceID int64, userID int64, roleType int32) error {
+	_, err := dao.query.SpaceUser.WithContext(ctx).Where(
+		dao.query.SpaceUser.SpaceID.Eq(spaceID),
+		dao.query.SpaceUser.UserID.Eq(userID),
+	).Updates(map[string]interface{}{
+		"role_type":  roleType,
+		"updated_at": time.Now().UnixMilli(),
+	})
+	return err
+}
+
+func (dao *SpaceDAO) RemoveSpaceUser(ctx context.Context, spaceID int64, userID int64) error {
+	_, err := dao.query.SpaceUser.WithContext(ctx).Where(
+		dao.query.SpaceUser.SpaceID.Eq(spaceID),
+		dao.query.SpaceUser.UserID.Eq(userID),
+	).Delete()
+	return err
+}
+
 func (dao *SpaceDAO) GetSpaceList(ctx context.Context, userID int64) ([]*model.SpaceUser, error) {
 	return dao.query.SpaceUser.WithContext(ctx).Where(
 		dao.query.SpaceUser.UserID.Eq(userID),
 	).Find()
+}
+
+func (dao *SpaceDAO) GetSpaceUsersBySpaceID(ctx context.Context, spaceID int64) ([]*model.SpaceUser, error) {
+	return dao.query.SpaceUser.WithContext(ctx).Where(
+		dao.query.SpaceUser.SpaceID.Eq(spaceID),
+	).Find()
+}
+
+func (dao *SpaceDAO) CountSpaceUsers(ctx context.Context, spaceIDs []int64) (map[int64]int64, error) {
+	result := make(map[int64]int64, len(spaceIDs))
+	if len(spaceIDs) == 0 {
+		return result, nil
+	}
+
+	spaceUsers, err := dao.query.SpaceUser.WithContext(ctx).Where(
+		dao.query.SpaceUser.SpaceID.In(spaceIDs...),
+	).Find()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, spaceUser := range spaceUsers {
+		result[spaceUser.SpaceID]++
+	}
+
+	return result, nil
 }

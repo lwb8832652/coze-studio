@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
@@ -53,9 +54,15 @@ func New(ctx context.Context, conf *config.KnowledgeConfig, es es.Client) ([]Man
 }
 
 func getVectorStore(ctx context.Context, conf *config.KnowledgeConfig) (searchstore.Manager, error) {
-	vsType := os.Getenv("VECTOR_STORE_TYPE")
+	if envkey.GetBoolD("COZE_DEBUG_SKIP_VECTOR_STORE", false) {
+		return newNoopVectorManager(), nil
+	}
+
+	vsType := strings.ToLower(strings.TrimSpace(os.Getenv("VECTOR_STORE_TYPE")))
 
 	switch vsType {
+	case "none", "noop", "disabled":
+		return newNoopVectorManager(), nil
 	case "milvus":
 		ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()

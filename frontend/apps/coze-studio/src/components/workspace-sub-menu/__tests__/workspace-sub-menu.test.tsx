@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
+
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -26,17 +28,45 @@ const mockListTaskThreads = vi.hoisted(() => vi.fn());
 const mockUseRouteConfig = vi.hoisted(() =>
   vi.fn(() => ({ subMenuKey: 'chats/new' })),
 );
+const mockSetSpace = vi.hoisted(() => vi.fn());
+const mockCreateSpace = vi.hoisted(() => vi.fn());
+const mockFetchSpaces = vi.hoisted(() => vi.fn());
+const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
 const mockUseSpaceStore = vi.hoisted(() =>
-  vi.fn((selector: (state: { space: { id: string } }) => unknown) =>
-    selector({ space: { id: 'space-1' } }),
+  vi.fn((selector: (state: unknown) => unknown) =>
+    selector({
+      space: {
+        id: 'space-1',
+        name: '畅享AI',
+        role_type: 1,
+        space_type: 2,
+      },
+      spaceList: [
+        {
+          id: 'space-1',
+          name: '畅享AI',
+          role_type: 1,
+          space_type: 2,
+        },
+        {
+          id: 'space-2',
+          name: 'Personal Space',
+          role_type: 1,
+          space_type: 1,
+        },
+      ],
+      setSpace: mockSetSpace,
+      createSpace: mockCreateSpace,
+      fetchSpaces: mockFetchSpaces,
+    }),
   ),
 );
 const capturedWorkspaceSubMenuProps = vi.hoisted(() => ({
   current: undefined as
     | {
         menus: Array<{ label: string; path: string }>;
-        header?: React.ReactNode;
-        footer?: React.ReactNode;
+        header?: ReactNode;
+        footer?: ReactNode;
         collapsed?: boolean;
       }
     | undefined,
@@ -45,6 +75,11 @@ const capturedAccountDropdownProps = vi.hoisted(() => ({
   current: undefined as
     | {
         extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+        extraMenuItems?: Array<{
+          key: string;
+          title: string;
+          onClick: () => void;
+        }>;
       }
     | undefined,
 }));
@@ -64,6 +99,7 @@ class MockIntersectionObserver {
 }
 
 vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/space/space-1/chats/new', search: '' }),
   useNavigate: () => mockNavigate,
 }));
 
@@ -71,8 +107,8 @@ vi.mock('react-router-dom', () => ({
 vi.mock('@coze-foundation/space-ui-base', () => ({
   WorkspaceSubMenu: (props: {
     menus: Array<{ label: string; path: string }>;
-    header?: React.ReactNode;
-    footer?: React.ReactNode;
+    header?: ReactNode;
+    footer?: ReactNode;
     collapsed?: boolean;
   }) => {
     capturedWorkspaceSubMenuProps.current = props;
@@ -99,10 +135,22 @@ vi.mock('@coze-foundation/space-ui-base', () => ({
 vi.mock('@coze-foundation/global-adapter', () => ({
   AccountDropdown: (props: {
     extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+    extraMenuItems?: Array<{
+      key: string;
+      title: string;
+      onClick: () => void;
+    }>;
   }) => {
     capturedAccountDropdownProps.current = props;
     return <span data-testid="account-dropdown" />;
   },
+}));
+
+vi.mock('@coze-foundation/account-ui-adapter', () => ({
+  useLogout: () => ({
+    node: <span data-testid="logout-modal" />,
+    open: vi.fn(),
+  }),
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after package mocks. */
 
@@ -118,6 +166,25 @@ vi.mock('@coze-arch/foundation-sdk', () => ({
   useUserInfo: () => ({ name: '刘文波', screen_name: 'wb' }),
 }));
 
+vi.mock('@coze-arch/bot-api/developer_api', () => ({
+  SpaceType: {
+    Personal: 1,
+    Team: 2,
+  },
+}));
+
+vi.mock('../../../pages/system/service', () => ({
+  getSystemAdminStatus: mockGetSystemAdminStatus,
+}));
+
+vi.mock('../../../pages/tools/mcp-settings-panel', () => ({
+  MCP_TOOL_SETTINGS_TAB_ID: 'mcp-tools',
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
+  MCPToolSettingsPanel: ({ spaceId }: { spaceId?: string }) => (
+    <span data-testid="mcp-settings-panel">{spaceId}</span>
+  ),
+}));
+
 vi.mock('../../../pages/tasks/service', () => ({
   listTaskThreads: mockListTaskThreads,
 }));
@@ -129,12 +196,65 @@ vi.mock('@coze-arch/coze-design', () => {
     children,
     className,
   }: {
-    children?: React.ReactNode;
+    children?: ReactNode;
     className?: string;
   }) => <span className={className}>{children}</span>;
+  const inputComponent = ({
+    value,
+    placeholder,
+    maxLength,
+    onChange,
+  }: {
+    value?: string;
+    placeholder?: string;
+    maxLength?: number;
+    onChange?: (value: string) => void;
+  }) => (
+    <input
+      value={value}
+      placeholder={placeholder}
+      maxLength={maxLength}
+      onChange={event => onChange?.(event.target.value)}
+    />
+  );
+  const modalComponent = ({
+    visible,
+    title,
+    children,
+    onOk,
+    onCancel,
+    okText,
+    cancelText,
+  }: {
+    visible: boolean;
+    title: string;
+    children?: ReactNode;
+    onOk?: () => void;
+    onCancel?: () => void;
+    okText?: string;
+    cancelText?: string;
+  }) =>
+    visible ? (
+      <div role="dialog">
+        <h2>{title}</h2>
+        {children}
+        <button type="button" onClick={onCancel}>
+          {cancelText}
+        </button>
+        <button type="button" onClick={onOk}>
+          {okText}
+        </button>
+      </div>
+    ) : null;
 
   return {
+    ['Input']: inputComponent,
     ['Loading']: loadingComponent,
+    ['Modal']: modalComponent,
+    ['Toast']: {
+      error: vi.fn(),
+      success: vi.fn(),
+    },
     ['Typography']: {
       Text: typographyText,
     },
@@ -152,10 +272,10 @@ vi.mock('@coze-arch/coze-design/icons', () => {
     ['IconCozAsynchronousTaskFill']: icon,
     ['IconCozCode']: icon,
     ['IconCozCodeFill']: icon,
+    ['IconCozExit']: icon,
     ['IconCozKnowledge']: icon,
     ['IconCozKnowledgeFill']: icon,
     ['IconCozMore']: icon,
-    ['IconCozPlugin']: icon,
     ['IconCozPlus']: icon,
     ['IconCozSetting']: icon,
     ['IconCozSettingFill']: icon,
@@ -165,12 +285,24 @@ vi.mock('@coze-arch/coze-design/icons', () => {
 
 import { getWorkspaceTaskStatusMeta } from '../workspace-task-status';
 import { WorkspaceTaskList } from '../workspace-task-list';
-import { ASSISTANT_BADGE, ASSISTANT_LABEL, WORKSPACE_MENU_META } from '../menu';
+import {
+  ASSISTANT_BADGE,
+  ASSISTANT_LABEL,
+  ACCOUNT_ACTION_ENTRIES,
+  ACCOUNT_SETTINGS_ENTRY,
+  PERSONAL_CENTER_ENTRY,
+  SIGN_OUT_ENTRY,
+  SYSTEM_MANAGEMENT_ENTRY,
+  getVisibleWorkspaceMenuMeta,
+  shouldShowSystemManagementEntry,
+  WORKSPACE_MENU_META,
+} from '../menu';
 import { WorkspaceSubMenu } from '../index';
 
 describe('NewX AI WorkspaceSubMenu', () => {
   beforeEach(() => {
     latestIntersectionCallback = undefined;
+    mockGetSystemAdminStatus.mockResolvedValue({ is_admin: false });
     Object.defineProperty(globalThis, 'IntersectionObserver', {
       configurable: true,
       writable: true,
@@ -178,7 +310,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     });
   });
 
-  it('defines the Figma workspace navigation structure', () => {
+  it('defines the workspace navigation structure', () => {
     const labels = WORKSPACE_MENU_META.map(item => item.label);
     const paths = WORKSPACE_MENU_META.map(item => item.path);
 
@@ -187,8 +319,10 @@ describe('NewX AI WorkspaceSubMenu', () => {
     expect(labels).toEqual([
       '新建任务',
       '资源配置',
+      '网页应用开发',
       '技能配置',
       '开发配置',
+      '工作空间',
       '全部任务',
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
@@ -200,8 +334,167 @@ describe('NewX AI WorkspaceSubMenu', () => {
       label: '全部任务',
       path: 'chats',
     });
+    expect(WORKSPACE_MENU_META[2]).toMatchObject({
+      label: '网页应用开发',
+      path: 'app-dev',
+    });
+    expect(WORKSPACE_MENU_META[5]).toMatchObject({
+      label: '工作空间',
+      path: 'workspace',
+    });
     expect(paths).not.toContain('tools');
     expect(paths).not.toContain('task-trigger');
+  });
+
+  it('hides developer feature menus for every role when workspace development is disabled', () => {
+    const memberLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 3,
+    }).map(item => item.label);
+    const adminLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 2,
+    }).map(item => item.label);
+    const ownerLabels = getVisibleWorkspaceMenuMeta({
+      allow_develop: false,
+      role_type: 1,
+    }).map(item => item.label);
+
+    expect(memberLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+    expect(adminLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+    expect(ownerLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+  });
+
+  it('keeps workspace settings visible for personal spaces and regular team members', () => {
+    const personalLabels = getVisibleWorkspaceMenuMeta({
+      space_type: 1,
+      role_type: 1,
+    }).map(item => item.label);
+    const teamMemberLabels = getVisibleWorkspaceMenuMeta({
+      space_type: 2,
+      role_type: 3,
+      allow_develop: true,
+    }).map(item => item.label);
+
+    expect(personalLabels).toContain('工作空间');
+    expect(teamMemberLabels).toContain('工作空间');
+    expect(teamMemberLabels).toContain('资源配置');
+    expect(teamMemberLabels).toContain('网页应用开发');
+  });
+
+  it('defines the system management quick entry outside workspace navigation', () => {
+    expect(SYSTEM_MANAGEMENT_ENTRY).toMatchObject({
+      label: '系统管理',
+      path: '/system/overview',
+    });
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: false,
+        isSystemAdmin: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: true,
+        isSystemAdmin: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSystemManagementEntry({
+        hasUser: true,
+        isSystemAdmin: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps account action metadata for the bottom-left account menu', () => {
+    expect(ACCOUNT_SETTINGS_ENTRY).toMatchObject({
+      label: '账号设置',
+      path: '/profile',
+    });
+    expect(PERSONAL_CENTER_ENTRY).toMatchObject({
+      label: '个人中心',
+      path: '/profile',
+    });
+    expect(SIGN_OUT_ENTRY).toMatchObject({
+      label: '退出登录',
+      action: 'logout',
+    });
+    expect(ACCOUNT_ACTION_ENTRIES.map(item => item.label)).toEqual([
+      '账号设置',
+      '退出登录',
+    ]);
+  });
+
+  it('keeps account actions out of the workspace switcher dropdown', async () => {
+    mockNavigate.mockReset();
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+    });
+
+    const switcherButton = container.querySelector(
+      '[aria-haspopup="menu"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      switcherButton?.click();
+    });
+
+    expect(container.textContent).toContain('创建团队空间');
+    expect(container.textContent).toContain('个人空间');
+    expect(container.textContent).not.toContain('Personal Space');
+    expect(container.textContent).not.toContain('账号设置');
+    expect(container.textContent).not.toContain('退出登录');
+    expect(container.textContent).not.toContain('系统管理');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('places system management in the bottom-left account dropdown for admins', async () => {
+    mockNavigate.mockReset();
+    mockGetSystemAdminStatus.mockResolvedValueOnce({ is_admin: true });
+    capturedAccountDropdownProps.current = undefined;
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceSubMenu />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const systemManagementEntry =
+      capturedAccountDropdownProps.current?.extraMenuItems?.find(
+        item => item.key === 'system-management',
+      );
+
+    expect(systemManagementEntry).toMatchObject({
+      title: '系统管理',
+    });
+
+    act(() => {
+      systemManagementEntry?.onClick();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/system/overview');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
   });
 
   it('moves MCP configuration out of primary navigation into account settings dropdown', async () => {
@@ -221,7 +514,15 @@ describe('NewX AI WorkspaceSubMenu', () => {
 
     expect(
       capturedWorkspaceSubMenuProps.current?.menus.map(item => item.label),
-    ).toEqual(['新建任务', '资源配置', '技能配置', '开发配置', '全部任务']);
+    ).toEqual([
+      '新建任务',
+      '资源配置',
+      '网页应用开发',
+      '技能配置',
+      '开发配置',
+      '工作空间',
+      '全部任务',
+    ]);
     expect(container.textContent).not.toContain('工具');
     expect(
       container.querySelector('[data-testid="workspace_settings_button"]'),
@@ -241,7 +542,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     container.remove();
   });
 
-  it('toggles the DeerFlow-style compact sidebar from the header trigger', async () => {
+  it('toggles the compact sidebar from the header trigger', async () => {
     const collapseEvents: Array<CustomEvent> = [];
     const handleCollapseEvent = (event: Event) => {
       collapseEvents.push(event as CustomEvent);

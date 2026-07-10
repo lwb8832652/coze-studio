@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import { GlobalLayoutAccountDropdown } from '@coze-foundation/layout';
 import { useLogout } from '@coze-foundation/account-ui-adapter';
@@ -35,10 +35,20 @@ import {
 
 interface AccountDropdownProps {
   extraSettingsTabs?: AccountSettingsExtraTab[];
+  extraMenuItems?: AccountDropdownExtraMenuItem[];
+}
+
+export interface AccountDropdownExtraMenuItem {
+  key: string;
+  prefixIcon?: ReactNode;
+  title: string;
+  onClick: () => void;
+  dataTestId?: string;
 }
 
 export const AccountDropdown = ({
   extraSettingsTabs = [],
+  extraMenuItems = [],
 }: AccountDropdownProps) => {
   const [visible, setVisible] = useState(false);
   const userInfo = useUserInfo();
@@ -65,6 +75,12 @@ export const AccountDropdown = ({
       dataTestId: `layout_avatar_${item.id}`,
     };
   });
+  const accountExtraMenus = extraMenuItems.map(item => ({
+    prefixIcon: item.prefixIcon,
+    title: item.title,
+    onClick: item.onClick,
+    dataTestId: item.dataTestId,
+  }));
 
   return (
     <GlobalLayoutAccountDropdown
@@ -88,6 +104,12 @@ export const AccountDropdown = ({
           },
           dataTestId: 'layout_avatar_profile-settings',
         },
+        ...(accountExtraMenus.length
+          ? [
+              <Dropdown.Divider key="extra-menu-divider" />,
+              ...accountExtraMenus,
+            ]
+          : []),
         <Dropdown.Divider />,
         {
           prefixIcon: <IconCozExit />,

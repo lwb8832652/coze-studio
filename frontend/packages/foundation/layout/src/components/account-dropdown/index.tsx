@@ -15,6 +15,7 @@
  */
 
 import {
+  Fragment,
   type FC,
   isValidElement,
   type ReactNode,
@@ -22,8 +23,8 @@ import {
 } from 'react';
 
 import classNames from 'classnames';
-import { Avatar, Badge, Dropdown } from '@coze-arch/coze-design';
 import { useUserInfo } from '@coze-foundation/account-adapter';
+import { Avatar, Badge, Dropdown } from '@coze-arch/coze-design';
 
 import { reportNavClick } from '../global-layout/utils';
 import { type LayoutAccountMenuItem } from '../global-layout/types';
@@ -84,9 +85,9 @@ export const GlobalLayoutAccountDropdown: FC<
             className={classNames(style.menu, 'w-[250px]')}
             mode="menu"
           >
-            {menus?.map(item =>
+            {menus?.map((item, index) =>
               isReactNode(item) ? (
-                item
+                <Fragment key={`custom-menu-${index}`}>{item}</Fragment>
               ) : (
                 <Dropdown.Item
                   key={item.title}

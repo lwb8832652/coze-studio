@@ -19,7 +19,6 @@ package middleware
 import (
 	"context"
 	"os"
-	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 
@@ -100,12 +99,9 @@ func AdminAuthMW() app.HandlerFunc {
 			logs.CtxWarnf(c, "[AdminAuthMW] admin emails is empty, you can set it by env %s", consts.AllowRegistrationEmail)
 		}
 
-		adminEmails := strings.Split(baseConf.AdminEmails, ",")
-		for _, adminEmail := range adminEmails {
-			if strings.EqualFold(adminEmail, session.UserEmail) {
-				ctx.Next(c)
-				return
-			}
+		if user.IsSystemAdminEmail(session.UserEmail, baseConf.AdminEmails) {
+			ctx.Next(c)
+			return
 		}
 
 		httputil.Unauthorized(ctx, "the account does not have permission to access")
