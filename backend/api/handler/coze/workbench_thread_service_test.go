@@ -1916,10 +1916,12 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	installAgentThreadTestService(t)
 
 	payload, err := json.Marshal(map[string]any{
-		"input":           `{"messages":[{"role":"user","content":"请追加行动建议"}]}`,
-		"config":          `{"mode":"Auto"}`,
-		"metadata":        `{"source":"test"}`,
-		"idempotency_key": "thread-only-1-msg-1",
+		"input":            `{"messages":[{"role":"user","content":"请追加行动建议"}]}`,
+		"config":           `{"mode":"Auto"}`,
+		"metadata":         `{"source":"test"}`,
+		"message_content":  "请追加行动建议",
+		"message_metadata": `{"source":"test_followup"}`,
+		"idempotency_key":  "thread-only-1-msg-1",
 	})
 	require.NoError(t, err)
 	w := ut.PerformRequest(
@@ -1935,7 +1937,8 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"status":"pending"`)
-	require.NotContains(t, body, `"content":"请追加行动建议"`)
+	require.Contains(t, body, `"message"`)
+	require.Contains(t, body, `"content":"请追加行动建议"`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
 		ThreadID: 1,
@@ -1948,6 +1951,17 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Contains(t, resp.Runs[0].Input, `"content":"请追加行动建议"`)
 	require.Equal(t, `{"mode":"Auto"}`, resp.Runs[0].Config)
 	require.Equal(t, "thread-only-1-msg-1", resp.Runs[0].IdempotencyKey)
+
+	messages, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), messages.Total)
+	require.Equal(t, resp.Runs[0].RunID, messages.Messages[0].RunID)
+	require.Equal(t, "请追加行动建议", messages.Messages[0].Content)
+	require.Equal(t, `{"source":"test_followup"}`, messages.Messages[0].Metadata)
 }
 
 func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {

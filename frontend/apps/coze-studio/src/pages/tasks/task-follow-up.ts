@@ -22,16 +22,13 @@ import {
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import {
-  appendTaskThreadMessage,
   createTaskThreadRun,
-  listTaskThreadMessages,
   sendWorkbenchChat,
   uploadTaskThreadFiles,
   type TaskThreadUploadedFile,
 } from './service';
 
 const getThreadFollowUpMetadata = stringifyWorkbenchRunConfig;
-const THREAD_FOLLOW_UP_HISTORY_PAGE_SIZE = 200;
 
 export interface CanonicalThreadFollowUpResult {
   kind: 'thread';
@@ -39,124 +36,35 @@ export interface CanonicalThreadFollowUpResult {
   run?: workbenchTask.TaskThreadRun;
 }
 
-interface ThreadRunInputMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  message_id?: string;
-}
-
-const normalizeThreadMessageForRunInput = (message: {
-  role?: string;
-  content?: string;
-  message_id?: string;
-}): ThreadRunInputMessage | undefined => {
-  const role = String(message.role ?? '')
-    .trim()
-    .toLowerCase();
-  if (role !== 'user' && role !== 'assistant') {
-    return undefined;
-  }
-
-  const content = String(message.content ?? '');
-  if (!content.trim()) {
-    return undefined;
-  }
-
-  return {
-    role,
-    content,
-    ...(message.message_id ? { message_id: message.message_id } : {}),
-  };
-};
-
-const appendThreadRunInputMessage = (
-  messages: ThreadRunInputMessage[],
-  message: ThreadRunInputMessage,
-) => {
-  const previous = messages[messages.length - 1];
-
-  if (message.role === 'user' && previous?.role === 'user') {
-    messages[messages.length - 1] = message;
-    return;
-  }
-
-  messages.push(message);
-};
-
 interface ThreadFollowUpRunInputOptions {
   payload: WorkbenchComposerSubmitPayload;
-  messageId: string;
-  historyMessages?: Array<{
-    role?: string;
-    content?: string;
-    message_id?: string;
-  }>;
   uploadedFiles?: TaskThreadUploadedFile[];
 }
 
 const getThreadFollowUpRunInput = ({
   payload,
-  messageId,
-  historyMessages = [],
   uploadedFiles = [],
-}: ThreadFollowUpRunInputOptions) => {
-  const messages: ThreadRunInputMessage[] = [];
-
-  historyMessages.forEach(message => {
-    const normalizedMessage = normalizeThreadMessageForRunInput(message);
-
-    if (!normalizedMessage) {
-      return;
-    }
-
-    appendThreadRunInputMessage(messages, normalizedMessage);
-  });
-
-  appendThreadRunInputMessage(messages, {
-    role: 'user',
-    content: payload.message,
-    message_id: messageId,
-  });
-
-  return JSON.stringify({
-    messages,
+}: ThreadFollowUpRunInputOptions) =>
+  JSON.stringify({
+    messages: [{ role: 'user', content: payload.message }],
     uploaded_files: uploadedFiles,
   });
-};
-
-const listThreadFollowUpHistory = async (threadId: string) => {
-  const messages: workbenchTask.TaskThreadMessage[] = [];
-  let page = 1;
-  let total = 0;
-
-  do {
-    const response = await listTaskThreadMessages({
-      thread_id: threadId,
-      page,
-      page_size: THREAD_FOLLOW_UP_HISTORY_PAGE_SIZE,
-    });
-    const pageMessages = response.data?.messages ?? [];
-
-    messages.push(...pageMessages);
-    total = response.data?.total ?? messages.length;
-    if (!pageMessages.length) {
-      break;
-    }
-    page += 1;
-  } while (messages.length < total);
-
-  return messages;
-};
 
 const getThreadFollowUpRunMetadata = (
   payload: WorkbenchComposerSubmitPayload,
-  messageId: string,
 ) =>
   JSON.stringify({
     source: 'workbench_detail_followup',
-    appended_message_id: messageId,
     mode: payload.mode,
   });
+
+const createFollowUpIdempotencyKey = (threadId: string) => {
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  return `${threadId}:${requestId}:followup`;
+};
 
 export const sendFollowUpMessage = async ({
   activeTaskId,
@@ -172,35 +80,26 @@ export const sendFollowUpMessage = async ({
   threadId: string;
 }) => {
   if (isCanonicalThreadDetail) {
-    const historyMessages = await listThreadFollowUpHistory(threadId);
     const uploadResponse = await uploadTaskThreadFiles({
       thread_id: threadId,
       files: payload.files ?? [],
     });
-    const appendResponse = await appendTaskThreadMessage({
-      thread_id: threadId,
-      role: 'user',
-      content: payload.message,
-      metadata: getThreadFollowUpMetadata(payload),
-    });
-    const appendedMessageId = appendResponse.data?.message_id || 'pending';
-
     const runResponse = await createTaskThreadRun({
       thread_id: threadId,
       input: getThreadFollowUpRunInput({
         payload,
-        messageId: appendedMessageId,
-        historyMessages,
         uploadedFiles: uploadResponse.data?.files ?? [],
       }),
       config: getThreadFollowUpMetadata(payload),
-      metadata: getThreadFollowUpRunMetadata(payload, appendedMessageId),
-      idempotency_key: `${threadId}:${appendedMessageId}:followup`,
+      metadata: getThreadFollowUpRunMetadata(payload),
+      message_content: payload.message,
+      message_metadata: getThreadFollowUpMetadata(payload),
+      idempotency_key: createFollowUpIdempotencyKey(threadId),
     });
 
     return {
       kind: 'thread',
-      message: appendResponse.data,
+      message: runResponse.message,
       run: runResponse.data,
     } satisfies CanonicalThreadFollowUpResult;
   }

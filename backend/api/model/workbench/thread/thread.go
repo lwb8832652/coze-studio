@@ -536,6 +536,8 @@ type CreateTaskThreadRunRequest struct {
 	OnDisconnect      string `json:"on_disconnect,omitempty"`
 	Durability        string `json:"durability,omitempty"`
 	IdempotencyKey    string `json:"idempotency_key,omitempty"`
+	MessageContent    string `json:"message_content,omitempty"`
+	MessageMetadata   string `json:"message_metadata,omitempty"`
 }
 
 type HumanInteractionResponse struct {
@@ -901,9 +903,10 @@ type GetTaskThreadArtifactSignedURLResponse struct {
 }
 
 type CreateTaskThreadRunResponse struct {
-	Data *TaskThreadRun `json:"data,omitempty"`
-	Code int64          `json:"code"`
-	Msg  string         `json:"msg"`
+	Data    *TaskThreadRun     `json:"data,omitempty"`
+	Message *TaskThreadMessage `json:"message,omitempty"`
+	Code    int64              `json:"code"`
+	Msg     string             `json:"msg"`
 }
 
 type ResumeTaskThreadRunResponse struct {

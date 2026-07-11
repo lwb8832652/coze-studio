@@ -102,6 +102,94 @@ func (s *threadService) CreateThread(ctx context.Context, req *CreateThreadReque
 	return thread, nil
 }
 
+func (s *threadService) CreateThreadRunMessage(
+	ctx context.Context,
+	req *CreateThreadRunMessageRequest,
+) (*CreateThreadRunMessageResult, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("create thread run message request is required")
+	}
+	title := strings.TrimSpace(req.Thread.Title)
+	if title == "" {
+		return nil, InvalidArgumentErrorf("thread title is required")
+	}
+	input := strings.TrimSpace(req.Run.Input)
+	if input == "" {
+		return nil, InvalidArgumentErrorf("run input is required")
+	}
+	if req.Run.ParentRunID > 0 {
+		return nil, InvalidArgumentErrorf("new thread run cannot have parent run")
+	}
+	runKind, err := normalizeRunKind(req.Run.RunKind, req.Run.ParentRunID)
+	if err != nil {
+		return nil, err
+	}
+	status, err := normalizeInitialRunStatus(req.Run.Status, runKind)
+	if err != nil {
+		return nil, err
+	}
+	if !isValidMessageRole(req.Message.Role) {
+		return nil, InvalidArgumentErrorf("message role is invalid")
+	}
+	messageContent := strings.TrimSpace(req.Message.Content)
+	if messageContent == "" {
+		return nil, InvalidArgumentErrorf("message content is required")
+	}
+
+	ids, err := s.idGen.GenMultiIDs(ctx, 3)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) != 3 {
+		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected 3", len(ids))
+	}
+	now := time.Now().UnixMilli()
+	source := req.Thread.Source
+	if source == "" {
+		source = entity.ThreadSourceWeb
+	}
+	thread := &entity.Thread{
+		ID:            ids[0],
+		SpaceID:       req.Thread.SpaceID,
+		CreatorID:     req.Thread.UserID,
+		AgentID:       req.Thread.AgentID,
+		Title:         title,
+		Status:        entity.ThreadStatusIdle,
+		Source:        source,
+		LegacyTaskID:  req.Thread.LegacyTaskID,
+		Metadata:      req.Thread.Metadata,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		LastMessageAt: now,
+	}
+	run := newRunEntity(&req.Run, ids[1], thread, runKind, status, input, now)
+	message := &entity.Message{
+		ID:        ids[2],
+		ThreadID:  thread.ID,
+		RunID:     run.ID,
+		Role:      req.Message.Role,
+		Content:   messageContent,
+		Metadata:  req.Message.Metadata,
+		CreatedAt: now,
+	}
+	result, err := s.repo.CreateThreadBundle(ctx, repository.CreateThreadBundleRequest{
+		Thread: thread, Run: run, Message: message,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Thread == nil || result.Run == nil || result.Message == nil {
+		return nil, fmt.Errorf("agent thread repository returned incomplete thread bundle")
+	}
+
+	return &CreateThreadRunMessageResult{
+		Thread: result.Thread, Run: result.Run, Message: result.Message,
+	}, nil
+}
+
 func (s *threadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
@@ -340,9 +428,141 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	run := newRunEntity(req, id, thread, runKind, status, input, now)
+	if err := s.repo.CreateRun(ctx, run); err != nil {
+		return nil, err
+	}
+
+	return run, nil
+}
+
+func (s *threadService) CreateRunBundle(
+	ctx context.Context,
+	req *CreateRunBundleRequest,
+) (*CreateRunBundleResult, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("create run bundle request is required")
+	}
+	if req.Message == nil && req.Event == nil {
+		return nil, InvalidArgumentErrorf("run bundle message or event is required")
+	}
+	if req.Run.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+	input := strings.TrimSpace(req.Run.Input)
+	if input == "" {
+		return nil, InvalidArgumentErrorf("run input is required")
+	}
+
+	thread, err := s.repo.GetThread(ctx, req.Run.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	runKind, err := normalizeRunKind(req.Run.RunKind, req.Run.ParentRunID)
+	if err != nil {
+		return nil, err
+	}
+	if req.Run.ParentRunID > 0 {
+		parent, err := s.repo.GetRun(ctx, req.Run.ParentRunID)
+		if err != nil {
+			return nil, err
+		}
+		if parent.ThreadID != req.Run.ThreadID {
+			return nil, InvalidArgumentErrorf("parent run thread does not match run thread")
+		}
+	}
+	status, err := normalizeInitialRunStatus(req.Run.Status, runKind)
+	if err != nil {
+		return nil, err
+	}
+	if req.Message != nil {
+		if !isValidMessageRole(req.Message.Role) {
+			return nil, InvalidArgumentErrorf("message role is invalid")
+		}
+		if strings.TrimSpace(req.Message.Content) == "" {
+			return nil, InvalidArgumentErrorf("message content is required")
+		}
+	}
+	if req.Event != nil {
+		if strings.TrimSpace(req.Event.EventType) == "" {
+			return nil, InvalidArgumentErrorf("run event type is required")
+		}
+		if req.Event.PayloadBuilder == nil {
+			return nil, InvalidArgumentErrorf("run event payload builder is required")
+		}
+	}
+
+	entityCount := 1
+	if req.Message != nil {
+		entityCount++
+	}
+	if req.Event != nil {
+		entityCount++
+	}
+	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) != entityCount {
+		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected %d", len(ids), entityCount)
+	}
+	now := time.Now().UnixMilli()
+	run := newRunEntity(&req.Run, ids[0], thread, runKind, status, input, now)
+	nextID := 1
+	var message *entity.Message
+	if req.Message != nil {
+		message = &entity.Message{
+			ID:        ids[nextID],
+			ThreadID:  run.ThreadID,
+			RunID:     run.ID,
+			Role:      req.Message.Role,
+			Content:   strings.TrimSpace(req.Message.Content),
+			Metadata:  req.Message.Metadata,
+			CreatedAt: now,
+		}
+		nextID++
+	}
+	var event *entity.RunEvent
+	if req.Event != nil {
+		event = &entity.RunEvent{
+			ID:        ids[nextID],
+			ThreadID:  run.ThreadID,
+			RunID:     run.ID,
+			EventType: strings.TrimSpace(req.Event.EventType),
+			Payload:   defaultJSON(req.Event.PayloadBuilder(run.ID), "{}"),
+			CreatedAt: now,
+		}
+	}
+
+	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
+		Run: run, Message: message, Event: event,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("agent thread repository returned empty run bundle")
+	}
+	return &CreateRunBundleResult{
+		Run: result.Run, Message: result.Message, Event: result.Event, Created: result.Created,
+	}, nil
+}
+
+func newRunEntity(
+	req *CreateRunRequest,
+	id int64,
+	thread *entity.Thread,
+	runKind entity.RunKind,
+	status entity.RunStatus,
+	input string,
+	now int64,
+) *entity.Run {
 	run := &entity.Run{
 		ID:                id,
-		ThreadID:          req.ThreadID,
+		ThreadID:          thread.ID,
 		ParentRunID:       req.ParentRunID,
 		SpaceID:           thread.SpaceID,
 		CreatorID:         thread.CreatorID,
@@ -365,11 +585,7 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	if status == entity.RunStatusRunning {
 		run.StartedAt = now
 	}
-	if err := s.repo.CreateRun(ctx, run); err != nil {
-		return nil, err
-	}
-
-	return run, nil
+	return run
 }
 
 func normalizeInitialRunStatus(

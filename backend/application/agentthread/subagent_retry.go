@@ -96,40 +96,32 @@ func (s *ApplicationService) RetrySubagentRun(
 		return nil, err
 	}
 
-	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		AssistantID:       parentRun.AssistantID,
-		RunKind:           domainentity.RunKindTask,
-		Status:            domainentity.RunStatusQueued,
-		Command:           command,
-		Input:             `{"messages":[]}`,
-		Config:            parentRun.Config,
-		Context:           parentRun.Context,
-		Metadata:          metadata,
-		StreamMode:        parentRun.StreamMode,
-		MultitaskStrategy: parentRun.MultitaskStrategy,
-		OnDisconnect:      parentRun.OnDisconnect,
-		Durability:        parentRun.Durability,
-		IdempotencyKey:    idempotencyKey,
+	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		Run: domainservice.CreateRunRequest{
+			ThreadID: req.ThreadID, AssistantID: parentRun.AssistantID,
+			RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusQueued,
+			Command: command, Input: `{"messages":[]}`, Config: parentRun.Config,
+			Context: parentRun.Context, Metadata: metadata, StreamMode: parentRun.StreamMode,
+			MultitaskStrategy: parentRun.MultitaskStrategy, OnDisconnect: parentRun.OnDisconnect,
+			Durability: parentRun.Durability, IdempotencyKey: idempotencyKey,
+		},
+		Event: &domainservice.CreateRunEventSpec{
+			EventType: subagentRetryRequestedEventType,
+			PayloadBuilder: func(runID int64) string {
+				return encodeRunEventPayload(ctx, subagentRetryRequestedPayload(
+					parentRun, sourceRun, runID, requestedAt,
+				))
+			},
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if run == nil {
-		return nil, fmt.Errorf("agent thread service returned empty run")
+	if bundle == nil || bundle.Run == nil || bundle.Event == nil {
+		return nil, fmt.Errorf("agent thread service returned incomplete subagent retry bundle")
 	}
 
-	payload := subagentRetryRequestedPayload(parentRun, sourceRun, run.ID, requestedAt)
-	if _, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     run.ID,
-		EventType: subagentRetryRequestedEventType,
-		Payload:   encodeRunEventPayload(ctx, payload),
-	}); err != nil {
-		return nil, err
-	}
-
-	return &RetrySubagentRunResponse{Run: DomainRunToSummary(run)}, nil
+	return &RetrySubagentRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }
 
 func subagentRetryIdempotencyKey(req *RetrySubagentRunRequest) (string, error) {

@@ -30,7 +30,6 @@ const mockUseSearchParams = vi.hoisted(() =>
 );
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCreateTaskThread = vi.hoisted(() => vi.fn());
-const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 const mockGetTypeList = vi.hoisted(() => vi.fn());
@@ -47,7 +46,6 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../service', () => ({
-  appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThread: mockCreateTaskThread,
   createTaskThreadRun: mockCreateTaskThreadRun,
   getWorkbenchLLMModels: mockGetTypeList,
@@ -339,7 +337,6 @@ describe('WorkbenchPage', () => {
     mockUseSearchParams.mockReturnValue([new URLSearchParams(), vi.fn()]);
     mockNavigate.mockReset();
     mockCreateTaskThread.mockReset();
-    mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
     mockUploadTaskThreadFiles.mockReset();
     mockGetTypeList.mockReset();
@@ -1483,24 +1480,20 @@ describe('WorkbenchPage', () => {
       code: 0,
       msg: '',
     });
-    mockAppendTaskThreadMessage.mockResolvedValue({
-      data: {
-        message_id: 'msg-upload-1',
-        thread_id: 'thread-upload-1',
-        run_id: '',
-        role: 'user',
-        content: '请总结附件',
-        metadata: '{}',
-        created_at: 1717000000,
-      },
-      code: 0,
-      msg: '',
-    });
     mockCreateTaskThreadRun.mockResolvedValue({
       data: {
         run_id: 'run-upload-1',
         thread_id: 'thread-upload-1',
         status: 'queued',
+      },
+      message: {
+        message_id: 'msg-upload-1',
+        thread_id: 'thread-upload-1',
+        run_id: 'run-upload-1',
+        role: 'user',
+        content: '请总结附件',
+        metadata: '{}',
+        created_at: 1717000000,
       },
       code: 0,
       msg: '',
@@ -1546,18 +1539,14 @@ describe('WorkbenchPage', () => {
       thread_id: 'thread-upload-1',
       files: [file],
     });
-    expect(mockAppendTaskThreadMessage).toHaveBeenCalledWith({
-      thread_id: 'thread-upload-1',
-      role: 'user',
-      content: '请总结附件',
-      metadata: expect.any(String),
-    });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
       thread_id: 'thread-upload-1',
       input: expect.any(String),
       config: expect.any(String),
       metadata: expect.any(String),
       idempotency_key: expect.any(String),
+      message_content: '请总结附件',
+      message_metadata: expect.any(String),
     });
     expect(
       JSON.parse(mockCreateTaskThreadRun.mock.calls[0]?.[0].input),
@@ -1566,7 +1555,6 @@ describe('WorkbenchPage', () => {
         {
           role: 'user',
           content: '请总结附件',
-          message_id: 'msg-upload-1',
         },
       ],
       uploaded_files: [

@@ -381,6 +381,141 @@ func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thre
 	return r.db.WithContext(ctx).Create(po).Error
 }
 
+func (r *threadRepository) CreateThreadBundle(
+	ctx context.Context,
+	req CreateThreadBundleRequest,
+) (*CreateThreadBundleResult, error) {
+	if req.Thread == nil || req.Run == nil || req.Message == nil {
+		return nil, fmt.Errorf("thread, run and message are required")
+	}
+	if req.Run.ThreadID != req.Thread.ID || req.Message.ThreadID != req.Thread.ID {
+		return nil, fmt.Errorf("thread bundle records do not share a thread")
+	}
+	if req.Message.RunID != req.Run.ID {
+		return nil, fmt.Errorf("thread bundle message does not belong to run")
+	}
+	if req.Run.SpaceID != req.Thread.SpaceID || req.Run.CreatorID != req.Thread.CreatorID {
+		return nil, fmt.Errorf("thread bundle run ownership does not match thread")
+	}
+
+	now := time.Now().UnixMilli()
+	thread := *req.Thread
+	if thread.CreatedAt == 0 {
+		thread.CreatedAt = now
+	}
+	if thread.UpdatedAt == 0 {
+		thread.UpdatedAt = thread.CreatedAt
+	}
+	if thread.LastMessageAt == 0 {
+		thread.LastMessageAt = thread.UpdatedAt
+	}
+	run := *req.Run
+	if run.CreatedAt == 0 {
+		run.CreatedAt = thread.CreatedAt
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+	message := *req.Message
+	if message.CreatedAt == 0 {
+		message.CreatedAt = run.CreatedAt
+	}
+
+	threadPO, err := threadToPO(&thread)
+	if err != nil {
+		return nil, err
+	}
+	runPO, err := runToPO(&run)
+	if err != nil {
+		return nil, err
+	}
+	messagePO, err := messageToPO(&message)
+	if err != nil {
+		return nil, err
+	}
+
+	normalized := CreateThreadBundleRequest{Thread: &thread, Run: &run, Message: &message}
+	var result *CreateThreadBundleResult
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var found bool
+		var err error
+		result, found, err = findExistingThreadBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+		if err := tx.Create(threadPO).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(runPO).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(messagePO).Error; err != nil {
+			return err
+		}
+		result = &CreateThreadBundleResult{
+			Thread: &thread, Run: &run, Message: &message, Created: true,
+		}
+		return nil
+	})
+	if err == nil {
+		return result, nil
+	}
+
+	replayed, found, replayErr := findExistingThreadBundle(r.db.WithContext(ctx), normalized)
+	if replayErr != nil {
+		return nil, replayErr
+	}
+	if found {
+		return replayed, nil
+	}
+	return nil, err
+}
+
+func findExistingThreadBundle(
+	db *gorm.DB,
+	req CreateThreadBundleRequest,
+) (*CreateThreadBundleResult, bool, error) {
+	key := strings.TrimSpace(req.Run.IdempotencyKey)
+	if key == "" {
+		return nil, false, nil
+	}
+
+	var run runPO
+	err := db.Where("space_id = ? AND idempotency_key = ?", req.Run.SpaceID, key).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if run.SpaceID != req.Thread.SpaceID || run.CreatorID != req.Thread.CreatorID ||
+		run.ParentRunID != 0 || run.RunKind != string(entity.RunKindTask) {
+		return nil, false, fmt.Errorf("idempotency key belongs to a different thread request")
+	}
+
+	var thread threadPO
+	if err := db.Where("id = ?", run.ThreadID).First(&thread).Error; err != nil {
+		return nil, false, fmt.Errorf("idempotent thread bundle is missing thread: %w", err)
+	}
+	var message messagePO
+	err = db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).
+		Order("id ASC").First(&message).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, fmt.Errorf("idempotent thread bundle is missing message")
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	return &CreateThreadBundleResult{
+		Thread: thread.toEntity(), Run: run.toEntity(), Message: message.toEntity(),
+	}, true, nil
+}
+
 func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
 	var po threadPO
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&po).Error; err != nil {
@@ -622,6 +757,167 @@ func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error
 	}
 
 	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) CreateRunBundle(
+	ctx context.Context,
+	req CreateRunBundleRequest,
+) (*CreateRunBundleResult, error) {
+	if req.Run == nil {
+		return nil, fmt.Errorf("run is required")
+	}
+	if req.Message == nil && req.Event == nil {
+		return nil, fmt.Errorf("run bundle message or event is required")
+	}
+	if req.Message != nil &&
+		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle message does not belong to run")
+	}
+	if req.Event != nil &&
+		(req.Event.ThreadID != req.Run.ThreadID || req.Event.RunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle event does not belong to run")
+	}
+
+	now := time.Now().UnixMilli()
+	run := *req.Run
+	if run.CreatedAt == 0 {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+	normalized := CreateRunBundleRequest{Run: &run}
+	if req.Message != nil {
+		message := *req.Message
+		if message.CreatedAt == 0 {
+			message.CreatedAt = run.CreatedAt
+		}
+		normalized.Message = &message
+	}
+	if req.Event != nil {
+		event := *req.Event
+		if event.CreatedAt == 0 {
+			event.CreatedAt = run.CreatedAt
+		}
+		normalized.Event = &event
+	}
+
+	var result *CreateRunBundleResult
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var found bool
+		var err error
+		result, found, err = findExistingRunBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+
+		var thread threadPO
+		if err := tx.Where("id = ?", normalized.Run.ThreadID).First(&thread).Error; err != nil {
+			return err
+		}
+		if normalized.Run.SpaceID != thread.SpaceID || normalized.Run.CreatorID != thread.CreatorID {
+			return fmt.Errorf("run bundle ownership does not match thread")
+		}
+
+		runPO, err := runToPO(normalized.Run)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(runPO).Error; err != nil {
+			return err
+		}
+		if normalized.Message != nil {
+			messagePO, err := messageToPO(normalized.Message)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(messagePO).Error; err != nil {
+				return err
+			}
+		}
+		if normalized.Event != nil {
+			eventPO, err := runEventToPO(normalized.Event)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(eventPO).Error; err != nil {
+				return err
+			}
+		}
+		result = &CreateRunBundleResult{
+			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event, Created: true,
+		}
+		return nil
+	})
+	if err == nil {
+		return result, nil
+	}
+
+	// A concurrent request can win the unique idempotency key while this
+	// transaction is waiting. Once the winner commits, return its complete
+	// aggregate instead of surfacing a duplicate-key failure.
+	replayed, found, replayErr := findExistingRunBundle(r.db.WithContext(ctx), normalized)
+	if replayErr != nil {
+		return nil, replayErr
+	}
+	if found {
+		return replayed, nil
+	}
+	return nil, err
+}
+
+func findExistingRunBundle(
+	db *gorm.DB,
+	req CreateRunBundleRequest,
+) (*CreateRunBundleResult, bool, error) {
+	key := strings.TrimSpace(req.Run.IdempotencyKey)
+	if key == "" {
+		return nil, false, nil
+	}
+
+	var run runPO
+	err := db.Where("space_id = ? AND idempotency_key = ?", req.Run.SpaceID, key).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if run.ThreadID != req.Run.ThreadID || run.ParentRunID != req.Run.ParentRunID ||
+		run.RunKind != string(req.Run.RunKind) {
+		return nil, false, fmt.Errorf("idempotency key belongs to a different run request")
+	}
+
+	result := &CreateRunBundleResult{Run: run.toEntity()}
+	if req.Message != nil {
+		var message messagePO
+		err := db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).
+			Order("id ASC").First(&message).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, fmt.Errorf("idempotent run bundle is missing message")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		result.Message = message.toEntity()
+	}
+	if req.Event != nil {
+		var event runEventPO
+		err := db.Where("thread_id = ? AND run_id = ? AND event_type = ?", run.ThreadID, run.ID, req.Event.EventType).
+			Order("id ASC").First(&event).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, fmt.Errorf("idempotent run bundle is missing event")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		result.Event = event.toEntity()
+	}
+	return result, true, nil
 }
 
 func (r *threadRepository) GetRun(ctx context.Context, id int64) (*entity.Run, error) {

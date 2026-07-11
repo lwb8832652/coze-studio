@@ -560,10 +560,13 @@ type CreateRunRequest struct {
 	OnDisconnect      string
 	Durability        string
 	IdempotencyKey    string
+	MessageContent    string
+	MessageMetadata   string
 }
 
 type CreateRunResponse struct {
-	Run *RunSummary
+	Run     *RunSummary
+	Message *MessageSummary
 }
 
 type ResumeHumanInteractionRequest struct {

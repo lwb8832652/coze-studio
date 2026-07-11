@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,20 +139,9 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	if req == nil {
 		return nil, fmt.Errorf("create thread request is required")
 	}
-	userID := req.UserID
-	if viewerID, public, err := s.publicThreadViewerID(ctx); err != nil {
+	userID, err := s.resolveThreadCreator(ctx, req.SpaceID, req.UserID)
+	if err != nil {
 		return nil, err
-	} else if public {
-		if req.SpaceID <= 0 {
-			return nil, ErrThreadAccessDenied
-		}
-		if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
-			ViewerID: viewerID,
-			SpaceID:  req.SpaceID,
-		}); err != nil {
-			return nil, err
-		}
-		userID = viewerID
 	}
 
 	thread, err := s.ThreadSVC.CreateThread(ctx, &domainservice.CreateThreadRequest{
@@ -173,6 +163,30 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	return &CreateThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
 }
 
+func (s *ApplicationService) resolveThreadCreator(
+	ctx context.Context,
+	spaceID int64,
+	requestedUserID int64,
+) (int64, error) {
+	viewerID, public, err := s.publicThreadViewerID(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !public {
+		return requestedUserID, nil
+	}
+	if spaceID <= 0 {
+		return 0, ErrThreadAccessDenied
+	}
+	if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
+		ViewerID: viewerID,
+		SpaceID:  spaceID,
+	}); err != nil {
+		return 0, err
+	}
+	return viewerID, nil
+}
+
 func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTaskThreadRequest) (*CreateTaskThreadResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -190,20 +204,20 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}
 
 	title := taskThreadTitle(req.Title, message)
-	threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
-		SpaceID:  req.SpaceID,
-		UserID:   req.UserID,
-		Title:    title,
-		Source:   ThreadSourceWeb,
-		Metadata: `{"source":"workbench_new_task"}`,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if threadResp == nil || threadResp.Thread == nil {
-		return nil, fmt.Errorf("agent thread service returned empty thread")
-	}
 	if req.DeferStart {
+		threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   req.UserID,
+			Title:    title,
+			Source:   ThreadSourceWeb,
+			Metadata: `{"source":"workbench_new_task"}`,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if threadResp == nil || threadResp.Thread == nil {
+			return nil, fmt.Errorf("agent thread service returned empty thread")
+		}
 		return &CreateTaskThreadResponse{
 			Thread: threadResp.Thread,
 		}, nil
@@ -213,46 +227,38 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if err != nil {
 		return nil, err
 	}
-	runResp, err := s.CreateRun(ctx, &CreateRunRequest{
-		ThreadID:          threadResp.Thread.ThreadID,
-		AssistantID:       req.AssistantID,
-		RunKind:           RunKindTask,
-		Command:           req.Command,
-		Input:             input,
-		Config:            req.Config,
-		Context:           req.Context,
-		Metadata:          req.Metadata,
-		StreamMode:        req.StreamMode,
-		MultitaskStrategy: req.MultitaskStrategy,
-		OnDisconnect:      req.OnDisconnect,
-		Durability:        req.Durability,
-		IdempotencyKey:    req.IdempotencyKey,
+	userID, err := s.resolveThreadCreator(ctx, req.SpaceID, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{
+		Thread: domainservice.CreateThreadRequest{
+			SpaceID: req.SpaceID, UserID: userID, Title: title,
+			Source: domainentity.ThreadSourceWeb, Metadata: `{"source":"workbench_new_task"}`,
+		},
+		Run: domainservice.CreateRunRequest{
+			AssistantID: req.AssistantID, RunKind: domainentity.RunKindTask,
+			Command: req.Command, Input: input, Config: req.Config,
+			Context: req.Context, Metadata: req.Metadata, StreamMode: req.StreamMode,
+			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+		},
+		Message: domainservice.CreateMessageSpec{
+			Role: domainentity.MessageRoleUser, Content: message,
+			Metadata: `{"source":"workbench_new_task"}`,
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if runResp == nil || runResp.Run == nil {
-		return nil, fmt.Errorf("agent thread service returned empty run")
-	}
-
-	messageResp, err := s.AppendMessage(ctx, &AppendMessageRequest{
-		ThreadID: threadResp.Thread.ThreadID,
-		RunID:    runResp.Run.RunID,
-		Role:     MessageRoleUser,
-		Content:  message,
-		Metadata: `{"source":"workbench_new_task"}`,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if messageResp == nil || messageResp.Message == nil {
-		return nil, fmt.Errorf("agent thread service returned empty message")
+	if bundle == nil || bundle.Thread == nil || bundle.Run == nil || bundle.Message == nil {
+		return nil, fmt.Errorf("agent thread service returned incomplete task thread bundle")
 	}
 
 	return &CreateTaskThreadResponse{
-		Thread:  threadResp.Thread,
-		Message: messageResp.Message,
-		Run:     runResp.Run,
+		Thread:  DomainThreadToSummary(bundle.Thread),
+		Message: DomainMessageToSummary(bundle.Message),
+		Run:     DomainRunToSummary(bundle.Run),
 	}, nil
 }
 
@@ -541,6 +547,45 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
 		return nil, err
 	}
+	messageContent := strings.TrimSpace(req.MessageContent)
+	if messageContent == "" && strings.TrimSpace(req.MessageMetadata) != "" {
+		return nil, fmt.Errorf("run message content is required when message metadata is set")
+	}
+	if messageContent != "" {
+		authoritativeInput, err := s.buildAuthoritativeRunInput(
+			ctx,
+			req.ThreadID,
+			messageContent,
+			req.Input,
+		)
+		if err != nil {
+			return nil, err
+		}
+		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+			Run: domainservice.CreateRunRequest{
+				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
+				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
+				Status: domainentity.RunStatus(req.Status), Command: req.Command,
+				Input: authoritativeInput, Config: req.Config, Context: req.Context,
+				Metadata: req.Metadata, StreamMode: req.StreamMode,
+				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			},
+			Message: &domainservice.CreateMessageSpec{
+				Role: domainentity.MessageRoleUser, Content: messageContent,
+				Metadata: req.MessageMetadata,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bundle == nil || bundle.Run == nil || bundle.Message == nil {
+			return nil, fmt.Errorf("agent thread service returned incomplete run bundle")
+		}
+		return &CreateRunResponse{
+			Run: DomainRunToSummary(bundle.Run), Message: DomainMessageToSummary(bundle.Message),
+		}, nil
+	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
 		ThreadID:          req.ThreadID,
@@ -567,6 +612,162 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}
 
 	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+const authoritativeRunHistoryPageSize int32 = 200
+const authoritativeRunPageSize int32 = 200
+
+type authoritativeRunInputMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type authoritativeRunInput struct {
+	Messages      []authoritativeRunInputMessage   `json:"messages"`
+	UploadedFiles []*TaskThreadUploadedFileSummary `json:"uploaded_files,omitempty"`
+}
+
+func (s *ApplicationService) buildAuthoritativeRunInput(
+	ctx context.Context,
+	threadID int64,
+	currentMessage string,
+	rawInput string,
+) (string, error) {
+	var submitted struct {
+		UploadedFiles []*TaskThreadUploadedFileSummary `json:"uploaded_files"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rawInput)), &submitted); err != nil {
+		return "", fmt.Errorf("parse run input failed: %w", err)
+	}
+
+	historyMessages := make([]*domainentity.Message, 0)
+	hasLegacyUnboundMessages := false
+	page := int32(1)
+	for {
+		rows, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
+			ThreadID: threadID,
+			Page:     page,
+			PageSize: authoritativeRunHistoryPageSize,
+		})
+		if err != nil {
+			return "", err
+		}
+		for _, message := range rows {
+			if message != nil && message.ID > 0 {
+				historyMessages = append(historyMessages, message)
+				if message.RunID <= 0 {
+					hasLegacyUnboundMessages = true
+				}
+			}
+		}
+		if len(rows) == 0 || int64(page)*int64(authoritativeRunHistoryPageSize) >= total {
+			break
+		}
+		page++
+	}
+
+	legacyCommittedMessageIDs := map[int64]struct{}{}
+	if hasLegacyUnboundMessages {
+		var err error
+		legacyCommittedMessageIDs, err = s.listLegacyCommittedMessageIDs(ctx, threadID)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	messages := make([]authoritativeRunInputMessage, 0, len(historyMessages)+1)
+	seen := make(map[int64]struct{}, len(historyMessages))
+	for _, message := range historyMessages {
+		if _, ok := seen[message.ID]; ok {
+			continue
+		}
+		seen[message.ID] = struct{}{}
+		if message.RunID <= 0 {
+			if message.Role != domainentity.MessageRoleUser {
+				continue
+			}
+			if _, ok := legacyCommittedMessageIDs[message.ID]; !ok {
+				continue
+			}
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		switch message.Role {
+		case domainentity.MessageRoleUser:
+			messages = append(messages, authoritativeRunInputMessage{Role: "user", Content: content})
+		case domainentity.MessageRoleAssistant:
+			messages = append(messages, authoritativeRunInputMessage{Role: "assistant", Content: content})
+		}
+	}
+	messages = append(messages, authoritativeRunInputMessage{
+		Role: "user", Content: strings.TrimSpace(currentMessage),
+	})
+
+	encoded, err := json.Marshal(authoritativeRunInput{
+		Messages:      messages,
+		UploadedFiles: normalizeADKUploadedFiles(submitted.UploadedFiles),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal authoritative run input: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func (s *ApplicationService) listLegacyCommittedMessageIDs(
+	ctx context.Context,
+	threadID int64,
+) (map[int64]struct{}, error) {
+	messageIDs := make(map[int64]struct{})
+	page := int32(1)
+	for {
+		runs, total, err := s.ThreadSVC.ListRuns(ctx, &domainservice.ListRunsRequest{
+			ThreadID: threadID,
+			Page:     page,
+			PageSize: authoritativeRunPageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, run := range runs {
+			if run == nil || run.ThreadID != threadID {
+				continue
+			}
+			if messageID := legacyAppendedMessageID(run.Metadata); messageID > 0 {
+				messageIDs[messageID] = struct{}{}
+			}
+		}
+		if len(runs) == 0 || int64(page)*int64(authoritativeRunPageSize) >= total {
+			break
+		}
+		page++
+	}
+	return messageIDs, nil
+}
+
+func legacyAppendedMessageID(metadata string) int64 {
+	var value struct {
+		AppendedMessageID json.RawMessage `json:"appended_message_id"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(metadata)), &value) != nil || len(value.AppendedMessageID) == 0 {
+		return 0
+	}
+
+	var stringID string
+	if json.Unmarshal(value.AppendedMessageID, &stringID) == nil {
+		id, err := strconv.ParseInt(strings.TrimSpace(stringID), 10, 64)
+		if err == nil && id > 0 {
+			return id
+		}
+		return 0
+	}
+
+	var numericID int64
+	if json.Unmarshal(value.AppendedMessageID, &numericID) == nil && numericID > 0 {
+		return numericID
+	}
+	return 0
 }
 
 func (s *ApplicationService) validateRunRuntimeConfig(config string) error {

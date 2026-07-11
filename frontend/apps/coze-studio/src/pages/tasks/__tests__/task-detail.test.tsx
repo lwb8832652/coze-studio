@@ -7699,19 +7699,6 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockAppendTaskThreadMessage.mockResolvedValue({
-      data: {
-        message_id: 'msg-weather-followup-1',
-        thread_id: 'thread-followup-pending-1',
-        run_id: '',
-        role: 'user',
-        content: '继续查询明天武汉天气',
-        metadata: '',
-        created_at: 1717000400000,
-      },
-      code: 0,
-      msg: '',
-    });
     mockCreateTaskThreadRun.mockResolvedValue({
       data: {
         run_id: 'run-weather-followup-1',
@@ -7739,6 +7726,15 @@ describe('TaskDetailPage', () => {
         ended_at: 0,
         created_at: 1717000400000,
         updated_at: 1717000400000,
+      },
+      message: {
+        message_id: 'msg-weather-followup-1',
+        thread_id: 'thread-followup-pending-1',
+        run_id: 'run-weather-followup-1',
+        role: 'user',
+        content: '继续查询明天武汉天气',
+        metadata: '',
+        created_at: 1717000400000,
       },
       code: 0,
       msg: '',
@@ -8346,7 +8342,7 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('sends canonical thread follow-up messages through the message API', async () => {
+  it('sends canonical thread follow-up messages through one atomic run API', async () => {
     vi.useFakeTimers();
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -8404,6 +8400,20 @@ describe('TaskDetailPage', () => {
           },
         ],
         skipped_files: [],
+      },
+      code: 0,
+      msg: '',
+    });
+    mockCreateTaskThreadRun.mockResolvedValue({
+      data: makeTopLevelRun('running'),
+      message: {
+        message_id: 'msg-appended-1',
+        thread_id: 'thread-only-1',
+        run_id: 'run-followup-1',
+        role: 'user',
+        content: '请追加行动建议',
+        metadata: '',
+        created_at: 1717000400000,
       },
       code: 0,
       msg: '',
@@ -8476,51 +8486,6 @@ describe('TaskDetailPage', () => {
               run_id: '0',
               role: 'user',
               content: '旧失败追问也不能重复提交',
-              metadata: '',
-              created_at: 1717000350000,
-            },
-          ],
-          total: 4,
-        },
-        code: 0,
-        msg: '',
-      })
-      .mockResolvedValueOnce({
-        data: {
-          messages: [
-            {
-              message_id: 'msg-1',
-              thread_id: 'thread-only-1',
-              run_id: 'run-1',
-              role: 'user',
-              content: '请基于真实消息分析客户反馈',
-              metadata: '',
-              created_at: 1717000100000,
-            },
-            {
-              message_id: 'msg-2',
-              thread_id: 'thread-only-1',
-              run_id: 'run-1',
-              role: 'assistant',
-              content: '真实消息显示响应速度最重要',
-              metadata: '',
-              created_at: 1717000200000,
-            },
-            {
-              message_id: 'msg-history-orphan-empty-run',
-              thread_id: 'thread-only-1',
-              run_id: '',
-              role: 'user',
-              content: '历史里的失败追问不应进入新 run',
-              metadata: '',
-              created_at: 1717000300000,
-            },
-            {
-              message_id: 'msg-history-orphan-zero-run',
-              thread_id: 'thread-only-1',
-              run_id: '0',
-              role: 'user',
-              content: '历史里的旧失败追问也不能重复提交',
               metadata: '',
               created_at: 1717000350000,
             },
@@ -8651,30 +8616,24 @@ describe('TaskDetailPage', () => {
       thread_id: 'thread-only-1',
       files: [followUpFile],
     });
-    expect(mockAppendTaskThreadMessage).toHaveBeenCalledWith({
-      thread_id: 'thread-only-1',
-      role: 'user',
-      content: '请追加行动建议',
-      metadata: expect.any(String),
-    });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
       input: expect.any(String),
       config: expect.any(String),
       metadata: expect.any(String),
       idempotency_key: expect.any(String),
+      message_content: '请追加行动建议',
+      message_metadata: expect.any(String),
     });
     expect(mockUploadTaskThreadFiles.mock.invocationCallOrder[0]).toBeLessThan(
-      mockAppendTaskThreadMessage.mock.invocationCallOrder[0],
+      mockCreateTaskThreadRun.mock.invocationCallOrder[0],
     );
-    expect(
-      mockAppendTaskThreadMessage.mock.invocationCallOrder[0],
-    ).toBeLessThan(mockCreateTaskThreadRun.mock.invocationCallOrder[0]);
+    expect(mockAppendTaskThreadMessage).not.toHaveBeenCalled();
     expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
 
-    const appendRequest = mockAppendTaskThreadMessage.mock.calls[0]?.[0];
-    const appendMetadata = JSON.parse(appendRequest.metadata);
-    expect(appendMetadata).toMatchObject({
+    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    const messageMetadata = JSON.parse(runRequest.message_metadata);
+    expect(messageMetadata).toMatchObject({
       mode: 'pro',
       thinking_enabled: true,
       is_plan_mode: true,
@@ -8688,26 +8647,16 @@ describe('TaskDetailPage', () => {
       },
     });
     expect(
-      Object.prototype.hasOwnProperty.call(appendMetadata, 'enable_skills'),
+      Object.prototype.hasOwnProperty.call(messageMetadata, 'enable_skills'),
     ).toBe(false);
     expect(
-      Object.prototype.hasOwnProperty.call(appendMetadata, 'reasoning_effort'),
+      Object.prototype.hasOwnProperty.call(messageMetadata, 'reasoning_effort'),
     ).toBe(false);
-    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     expect(JSON.parse(runRequest.input)).toMatchObject({
       messages: [
         {
           role: 'user',
-          content: '请基于真实消息分析客户反馈',
-        },
-        {
-          role: 'assistant',
-          content: '真实消息显示响应速度最重要',
-        },
-        {
-          role: 'user',
           content: '请追加行动建议',
-          message_id: 'msg-appended-1',
         },
       ],
       uploaded_files: [
@@ -8753,17 +8702,9 @@ describe('TaskDetailPage', () => {
     ).toBe(false);
     expect(JSON.parse(runRequest.metadata)).toMatchObject({
       source: 'workbench_detail_followup',
-      appended_message_id: 'msg-appended-1',
     });
-    expect(runRequest.idempotency_key).toBe(
-      'thread-only-1:msg-appended-1:followup',
-    );
-    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(3);
-    expect(mockListTaskThreadMessages).toHaveBeenNthCalledWith(2, {
-      thread_id: 'thread-only-1',
-      page: 1,
-      page_size: 200,
-    });
+    expect(runRequest.idempotency_key).toMatch(/^thread-only-1:.+:followup$/);
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain('请追加行动建议');
     expect(container.textContent).not.toContain(
       '建议优先安排线上客服，并在 48 小时内复盘。',
@@ -8776,7 +8717,7 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(4);
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(3);
     expect(container.textContent).toContain(
       '建议优先安排线上客服，并在 48 小时内复盘。',
     );

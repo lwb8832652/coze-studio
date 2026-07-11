@@ -1320,6 +1320,8 @@ func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
 		IdempotencyKey:    req.IdempotencyKey,
+		MessageContent:    req.MessageContent,
+		MessageMetadata:   req.MessageMetadata,
 	})
 	if err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
@@ -1327,9 +1329,10 @@ func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, &threadapi.CreateTaskThreadRunResponse{
-		Code: 0,
-		Msg:  "success",
-		Data: taskThreadRunToAPI(resp.Run),
+		Code:    0,
+		Msg:     "success",
+		Data:    taskThreadRunToAPI(resp.Run),
+		Message: taskThreadMessageToAPI(resp.Message),
 	})
 }
 

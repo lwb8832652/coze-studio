@@ -33,7 +33,6 @@ import {
   buildTaskThreadListPath,
 } from '../chats/task-thread-routes';
 import {
-  appendTaskThreadMessage as appendWorkbenchTaskThreadMessage,
   createTaskThread,
   createTaskThreadRun,
   getWorkbenchLLMModels,
@@ -90,11 +89,9 @@ const activateSkillCreator = (
 
 const buildNewTaskRunInput = ({
   message,
-  messageId,
   uploadedFiles,
 }: {
   message: string;
-  messageId: string;
   uploadedFiles?: TaskThreadUploadedFile[];
 }) =>
   JSON.stringify({
@@ -102,24 +99,24 @@ const buildNewTaskRunInput = ({
       {
         role: 'user',
         content: message,
-        message_id: messageId,
       },
     ],
     uploaded_files: uploadedFiles ?? [],
   });
 
-const getNewTaskRunMetadata = ({
-  messageId,
-  mode,
-}: {
-  messageId: string;
-  mode: WorkbenchMode;
-}) =>
+const getNewTaskRunMetadata = ({ mode }: { mode: WorkbenchMode }) =>
   JSON.stringify({
     source: 'workbench_new_task',
-    appended_message_id: messageId,
     mode,
   });
+
+const createNewTaskRunIdempotencyKey = (threadId: string) => {
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  return `${threadId}:${requestId}:new-task`;
+};
 
 const TEMPLATE_CARDS = [
   {
@@ -365,28 +362,19 @@ const WorkbenchPage = () => {
           thread_id: thread.thread_id,
           files,
         });
-        const appendResponse = await appendWorkbenchTaskThreadMessage({
-          thread_id: thread.thread_id,
-          role: 'user',
-          content: submitPayload.message,
-          metadata: stringifyWorkbenchRunConfig(submitPayload),
-        });
-        const appendedMessageId =
-          appendResponse.data?.message_id || `${thread.thread_id}:message`;
-
         await createTaskThreadRun({
           thread_id: thread.thread_id,
           input: buildNewTaskRunInput({
             message: submitPayload.message,
-            messageId: appendedMessageId,
             uploadedFiles: uploadResponse.data?.files,
           }),
           config: stringifyWorkbenchRunConfig(submitPayload),
           metadata: getNewTaskRunMetadata({
-            messageId: appendedMessageId,
             mode: submitPayload.mode,
           }),
-          idempotency_key: `${thread.thread_id}:${appendedMessageId}:new-task`,
+          message_content: submitPayload.message,
+          message_metadata: stringifyWorkbenchRunConfig(submitPayload),
+          idempotency_key: createNewTaskRunIdempotencyKey(thread.thread_id),
         });
 
         setValue('');

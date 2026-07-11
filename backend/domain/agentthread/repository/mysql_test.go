@@ -3432,6 +3432,222 @@ func TestThreadRepositoryRequestRunCancellationRejectsMismatchedEventThread(t *t
 	require.Zero(t, total)
 }
 
+func TestThreadRepositoryCreateThreadBundleCommitsAllRecords(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	thread := &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "atomic task",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(20, 10, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	run.IdempotencyKey = "new-task-key"
+	message := &entity.Message{
+		ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+		Content: "start atomically", Metadata: `{}`, CreatedAt: 100,
+	}
+
+	created, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread:  thread,
+		Run:     run,
+		Message: message,
+	})
+
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, thread.ID, created.Thread.ID)
+	storedThread, err := repo.GetThread(context.Background(), thread.ID)
+	require.NoError(t, err)
+	require.Equal(t, thread.Title, storedThread.Title)
+	storedRun, err := repo.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.ThreadID, storedRun.ThreadID)
+	messages, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: thread.ID, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, message.ID, messages[0].ID)
+
+	replayed, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: &entity.Thread{
+			ID: 11, SpaceID: 1, CreatorID: 2, Title: "retry",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{}`, CreatedAt: 101, UpdatedAt: 101, LastMessageAt: 101,
+		},
+		Run: &entity.Run{
+			ID: 21, ThreadID: 11, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			Input: `{}`, Command: `{}`, Config: `{}`, Context: `{}`,
+			Metadata: `{}`, StreamMode: `[]`, IdempotencyKey: "new-task-key",
+		},
+		Message: &entity.Message{
+			ID: 31, ThreadID: 11, RunID: 21, Role: entity.MessageRoleUser,
+			Content: "start atomically", Metadata: `{}`, CreatedAt: 101,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, replayed.Created)
+	require.Equal(t, thread.ID, replayed.Thread.ID)
+	require.Equal(t, run.ID, replayed.Run.ID)
+	require.Equal(t, message.ID, replayed.Message.ID)
+	_, err = repo.GetThread(context.Background(), 11)
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+		ID: 30, ThreadID: 999, RunID: 999, Role: entity.MessageRoleUser,
+		Content: "existing", Metadata: `{}`, CreatedAt: 90,
+	}))
+	thread := &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "must roll back",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(20, 10, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+
+	_, err = repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: thread,
+		Run:    run,
+		Message: &entity.Message{
+			ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+			Content: "duplicate id", Metadata: `{}`, CreatedAt: 100,
+		},
+	})
+
+	require.Error(t, err)
+	_, err = repo.GetThread(context.Background(), thread.ID)
+	require.Error(t, err)
+	_, err = repo.GetRun(context.Background(), run.ID)
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryCreateRunBundleCommitsAndReplaysAtomically(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "existing thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	run := newRepositoryTestRun(20, 10, entity.RunStatusQueued, 200)
+	run.SpaceID = 1
+	run.CreatorID = 2
+	run.IdempotencyKey = "resume-20"
+	message := &entity.Message{
+		ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+		Content: "resume", Metadata: `{}`, CreatedAt: 200,
+	}
+	event := &entity.RunEvent{
+		ID: 40, ThreadID: 10, RunID: 20,
+		EventType: "human.interaction.resolved", Payload: `{}`, CreatedAt: 200,
+	}
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: run, Message: message, Event: event,
+	})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, run.ID, created.Run.ID)
+	require.Equal(t, message.ID, created.Message.ID)
+	require.Equal(t, event.ID, created.Event.ID)
+
+	replayed, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: &entity.Run{
+			ID: 21, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusQueued,
+			Input: `{}`, Command: `{}`, Config: `{}`, Context: `{}`,
+			Metadata: `{}`, StreamMode: `[]`, IdempotencyKey: "resume-20",
+		},
+		Message: &entity.Message{
+			ID: 31, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser,
+			Content: "resume", Metadata: `{}`, CreatedAt: 201,
+		},
+		Event: &entity.RunEvent{
+			ID: 41, ThreadID: 10, RunID: 21,
+			EventType: "human.interaction.resolved", Payload: `{}`, CreatedAt: 201,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, replayed.Created)
+	require.Equal(t, run.ID, replayed.Run.ID)
+	require.Equal(t, message.ID, replayed.Message.ID)
+	require.Equal(t, event.ID, replayed.Event.ID)
+
+	_, runTotal, err := repo.ListRuns(context.Background(), ListRunsRequest{
+		ThreadID: 10, IncludeChildRuns: true, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runTotal)
+	_, messageTotal, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), messageTotal)
+	_, eventTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), eventTotal)
+}
+
+func TestThreadRepositoryCreateRunBundleRollsBackOnEventFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "existing thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 40, ThreadID: 999, RunID: 999, EventType: "existing",
+		Payload: `{}`, CreatedAt: 100,
+	}))
+	run := newRepositoryTestRun(20, 10, entity.RunStatusQueued, 200)
+	run.SpaceID = 1
+	run.CreatorID = 2
+
+	_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: run,
+		Message: &entity.Message{
+			ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+			Content: "must roll back", Metadata: `{}`, CreatedAt: 200,
+		},
+		Event: &entity.RunEvent{
+			ID: 40, ThreadID: 10, RunID: 20, EventType: "retry.requested",
+			Payload: `{}`, CreatedAt: 200,
+		},
+	})
+
+	require.Error(t, err)
+	_, err = repo.GetRun(context.Background(), run.ID)
+	require.Error(t, err)
+	_, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
 func TestThreadRepositoryFinalizeRunSuccessCommitsMessageTitleAndStatusTogether(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

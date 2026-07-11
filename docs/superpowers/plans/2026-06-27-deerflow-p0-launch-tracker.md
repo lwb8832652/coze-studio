@@ -164,6 +164,25 @@ Every implementation slice must update this document:
     suites, and serial full backend
     `go test -p 1 -gcflags="all=-N -l" ./... -count=1` passed. Targeted race,
     `go vet`, formatting and diff checks also passed before commit.
+  - `AR-PARITY-001.6` Transactional run creation and follow-up persistence
+    (已完成): replaced sequential thread/run/message and run/message/event
+    writes with repository-backed aggregate transactions. The scope covers
+    ordinary new-task creation, canonical task-detail follow-up, human
+    interaction resume and subagent retry. File uploads remain an external
+    prerequisite, but the subsequent run and user-message write must commit or
+    roll back together. Existing lease recovery keeps its idempotent
+    create-before-reconcile compensation contract from `AR-PARITY-001.4` and is
+    not broadened into an unrelated cross-state transaction in this slice.
+    Follow-up clients now submit only the current turn; the server rebuilds the
+    authoritative transcript from all persisted message pages, restores only
+    run-referenced legacy unbound messages and excludes failed orphan writes.
+    Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-transactional-creation.md`.
+    Verification: repository rollback/replay, generated-ID and ownership
+    validation, application and handler contracts, 200+ message pagination,
+    legacy compatibility, 93 frontend tests, generated-client mapping contract,
+    TypeScript, targeted race/vet, formatting/diff checks and serial full
+    backend all passed before commit.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

@@ -121,48 +121,36 @@ func (s *ApplicationService) ResumeHumanInteraction(
 		return nil, err
 	}
 
-	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		AssistantID:       sourceRun.AssistantID,
-		Status:            domainentity.RunStatusQueued,
-		Command:           resumeCommand,
-		Input:             `{"messages":[]}`,
-		Config:            sourceRun.Config,
-		Context:           sourceRun.Context,
-		Metadata:          metadata,
-		StreamMode:        sourceRun.StreamMode,
-		MultitaskStrategy: sourceRun.MultitaskStrategy,
-		OnDisconnect:      sourceRun.OnDisconnect,
-		Durability:        sourceRun.Durability,
-		IdempotencyKey:    idempotencyKey,
+	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		Run: domainservice.CreateRunRequest{
+			ThreadID: req.ThreadID, AssistantID: sourceRun.AssistantID,
+			Status: domainentity.RunStatusQueued, Command: resumeCommand,
+			Input: `{"messages":[]}`, Config: sourceRun.Config, Context: sourceRun.Context,
+			Metadata: metadata, StreamMode: sourceRun.StreamMode,
+			MultitaskStrategy: sourceRun.MultitaskStrategy, OnDisconnect: sourceRun.OnDisconnect,
+			Durability: sourceRun.Durability, IdempotencyKey: idempotencyKey,
+		},
+		Message: &domainservice.CreateMessageSpec{
+			Role:     domainentity.MessageRoleUser,
+			Content:  humanInteractionUserMessageContent(response),
+			Metadata: humanInteractionMessageMetadata(req.SourceRunID, interruptID, response),
+		},
+		Event: &domainservice.CreateRunEventSpec{
+			EventType: humanInteractionResolvedEventType,
+			PayloadBuilder: func(runID int64) string {
+				resolved["resume_run_id"] = runID
+				return encodeRunEventPayload(ctx, resolved)
+			},
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if run == nil {
-		return nil, fmt.Errorf("agent thread service returned empty run")
+	if bundle == nil || bundle.Run == nil || bundle.Message == nil || bundle.Event == nil {
+		return nil, fmt.Errorf("agent thread service returned incomplete human resume bundle")
 	}
 
-	resolved["resume_run_id"] = run.ID
-	if _, err := s.ThreadSVC.AppendMessage(ctx, &domainservice.AppendMessageRequest{
-		ThreadID: req.ThreadID,
-		RunID:    run.ID,
-		Role:     domainentity.MessageRoleUser,
-		Content:  humanInteractionUserMessageContent(response),
-		Metadata: humanInteractionMessageMetadata(req.SourceRunID, interruptID, response),
-	}); err != nil {
-		return nil, err
-	}
-	if _, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     run.ID,
-		EventType: humanInteractionResolvedEventType,
-		Payload:   encodeRunEventPayload(ctx, resolved),
-	}); err != nil {
-		return nil, err
-	}
-
-	return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(run)}, nil
+	return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }
 
 func (s *ApplicationService) latestActiveADKCheckpoint(

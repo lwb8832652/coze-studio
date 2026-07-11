@@ -60,4 +60,17 @@ describe('workbench task api contract source', () => {
       url: '/api/workbench/task_threads/:thread_id/runs',
     });
   });
+
+  it('maps the atomic follow-up message fields only on run creation', () => {
+    expect(workbenchTask.CreateTaskThreadRun.meta.reqMapping).toMatchObject({
+      path: ['thread_id'],
+      body: expect.arrayContaining(['message_content', 'message_metadata']),
+    });
+    expect(workbenchTask.CreateTaskThread.meta.reqMapping.body).not.toContain(
+      'message_content',
+    );
+    expect(workbenchTask.CreateTaskThread.meta.reqMapping.body).not.toContain(
+      'message_metadata',
+    );
+  });
 });

@@ -111,6 +111,13 @@ func (r *recordingAgentThreadService) CreateThread(_ context.Context, req *agent
 	}, nil
 }
 
+func (r *recordingAgentThreadService) CreateThreadRunMessage(
+	context.Context,
+	*agentthreadsvc.CreateThreadRunMessageRequest,
+) (*agentthreadsvc.CreateThreadRunMessageResult, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) GetThread(context.Context, int64) (*agentthreadentity.Thread, error) {
 	return nil, nil
 }
@@ -146,6 +153,13 @@ func (r *recordingAgentThreadService) ListMessages(context.Context, *agentthread
 }
 
 func (r *recordingAgentThreadService) CreateRun(context.Context, *agentthreadsvc.CreateRunRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) CreateRunBundle(
+	context.Context,
+	*agentthreadsvc.CreateRunBundleRequest,
+) (*agentthreadsvc.CreateRunBundleResult, error) {
 	return nil, nil
 }
 

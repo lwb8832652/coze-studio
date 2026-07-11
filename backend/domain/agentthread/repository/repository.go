@@ -30,6 +30,7 @@ var (
 
 type ThreadRepository interface {
 	CreateThread(ctx context.Context, thread *entity.Thread) error
+	CreateThreadBundle(ctx context.Context, req CreateThreadBundleRequest) (*CreateThreadBundleResult, error)
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
 	UpdateThreadTitle(ctx context.Context, req UpdateThreadTitleRequest) (*entity.Thread, bool, error)
 	UpdateThreadMetadata(ctx context.Context, req UpdateThreadMetadataRequest) (*entity.Thread, bool, error)
@@ -38,6 +39,7 @@ type ThreadRepository interface {
 	CreateMessage(ctx context.Context, message *entity.Message) error
 	ListMessages(ctx context.Context, req ListMessagesRequest) ([]*entity.Message, int64, error)
 	CreateRun(ctx context.Context, run *entity.Run) error
+	CreateRunBundle(ctx context.Context, req CreateRunBundleRequest) (*CreateRunBundleResult, error)
 	GetRun(ctx context.Context, id int64) (*entity.Run, error)
 	GetRunByIdempotencyKey(ctx context.Context, spaceID int64, idempotencyKey string) (*entity.Run, error)
 	ListRuns(ctx context.Context, req ListRunsRequest) ([]*entity.Run, int64, error)
@@ -98,6 +100,32 @@ type ThreadRepository interface {
 	ListTokenUsage(ctx context.Context, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error)
 	AggregateTokenUsage(ctx context.Context, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error)
 	AggregateTokenUsageByRun(ctx context.Context, req AggregateTokenUsageRequest) ([]*entity.RunTokenUsageAggregate, error)
+}
+
+type CreateThreadBundleRequest struct {
+	Thread  *entity.Thread
+	Run     *entity.Run
+	Message *entity.Message
+}
+
+type CreateThreadBundleResult struct {
+	Thread  *entity.Thread
+	Run     *entity.Run
+	Message *entity.Message
+	Created bool
+}
+
+type CreateRunBundleRequest struct {
+	Run     *entity.Run
+	Message *entity.Message
+	Event   *entity.RunEvent
+}
+
+type CreateRunBundleResult struct {
+	Run     *entity.Run
+	Message *entity.Message
+	Event   *entity.RunEvent
+	Created bool
 }
 
 type ListThreadsRequest struct {

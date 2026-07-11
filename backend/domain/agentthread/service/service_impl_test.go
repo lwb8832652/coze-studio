@@ -90,6 +90,98 @@ func TestCreateThreadTrimsTitleAndPreservesSource(t *testing.T) {
 	require.Equal(t, `{"channel":"slack"}`, thread.Metadata)
 }
 
+func TestCreateThreadRunMessageCreatesOneAtomicAggregate(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(901)})
+
+	result, err := svc.CreateThreadRunMessage(
+		context.Background(),
+		&CreateThreadRunMessageRequest{
+			Thread: CreateThreadRequest{
+				SpaceID: 1, UserID: 2, Title: "atomic task",
+			},
+			Run: CreateRunRequest{
+				Input:  `{"messages":[{"role":"user","content":"start"}]}`,
+				Config: `{"runtime":"eino_adk"}`,
+			},
+			Message: CreateMessageSpec{
+				Role: entity.MessageRoleUser, Content: " start ", Metadata: `{"source":"new_task"}`,
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(901), result.Thread.ID)
+	require.Equal(t, int64(902), result.Run.ID)
+	require.Equal(t, int64(903), result.Message.ID)
+	require.Equal(t, result.Thread.ID, result.Run.ThreadID)
+	require.Equal(t, result.Thread.SpaceID, result.Run.SpaceID)
+	require.Equal(t, result.Thread.CreatorID, result.Run.CreatorID)
+	require.Equal(t, result.Thread.ID, result.Message.ThreadID)
+	require.Equal(t, result.Run.ID, result.Message.RunID)
+	require.Equal(t, "start", result.Message.Content)
+	require.Equal(t, result.Thread.CreatedAt, result.Run.CreatedAt)
+	require.Equal(t, result.Run.CreatedAt, result.Message.CreatedAt)
+	require.Equal(t, 1, repo.createThreadBundleCalls)
+	require.Len(t, repo.threads, 1)
+	require.Len(t, repo.runs[result.Thread.ID], 1)
+	require.Len(t, repo.messages[result.Thread.ID], 1)
+}
+
+func TestCreateThreadRunMessageAllocatesBeforePersistence(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{
+		Repo:  repo,
+		IDGen: failingIDGen{err: errors.New("id generator unavailable")},
+	})
+
+	result, err := svc.CreateThreadRunMessage(
+		context.Background(),
+		&CreateThreadRunMessageRequest{
+			Thread:  CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "atomic task"},
+			Run:     CreateRunRequest{Input: `{"messages":[{"role":"user","content":"start"}]}`},
+			Message: CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+		},
+	)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "id generator unavailable")
+	require.Zero(t, repo.createThreadBundleCalls)
+	require.Empty(t, repo.threads)
+}
+
+func TestCreateRunBundleBindsMessageAndEventToGeneratedRun(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(2001)})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10, Status: entity.RunStatusQueued,
+			Input: `{"messages":[]}`, IdempotencyKey: "resume-key",
+		},
+		Message: &CreateMessageSpec{
+			Role: entity.MessageRoleUser, Content: "resume",
+		},
+		Event: &CreateRunEventSpec{
+			EventType: "human.interaction.resolved",
+			PayloadBuilder: func(runID int64) string {
+				return fmt.Sprintf(`{"resume_run_id":%d}`, runID)
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Created)
+	require.Equal(t, int64(2001), result.Run.ID)
+	require.Equal(t, int64(2002), result.Message.ID)
+	require.Equal(t, int64(2003), result.Event.ID)
+	require.Equal(t, result.Run.ID, result.Message.RunID)
+	require.Equal(t, result.Run.ID, result.Event.RunID)
+	require.JSONEq(t, `{"resume_run_id":2001}`, result.Event.Payload)
+	require.Equal(t, 1, repo.createRunBundleCalls)
+}
+
 func TestListThreadsNormalizesPaging(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(901)})
@@ -1819,6 +1911,8 @@ type memoryRepo struct {
 	lastRequestRunCancellationReq      repository.RequestRunCancellationRequest
 	lastFinalizeRunSuccessReq          repository.FinalizeRunSuccessRequest
 	lastUpdateRunReq                   repository.UpdateRunStatusRequest
+	createThreadBundleCalls            int
+	createRunBundleCalls               int
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -1842,6 +1936,44 @@ func (r *memoryRepo) CreateThread(ctx context.Context, thread *entity.Thread) er
 	}
 	r.threads[thread.ID] = cloneThread(thread)
 	return nil
+}
+
+func (r *memoryRepo) CreateThreadBundle(
+	ctx context.Context,
+	req repository.CreateThreadBundleRequest,
+) (*repository.CreateThreadBundleResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.createThreadBundleCalls++
+	if req.Thread == nil || req.Run == nil || req.Message == nil {
+		return nil, fmt.Errorf("incomplete thread bundle")
+	}
+	if req.Run.IdempotencyKey != "" {
+		for threadID, runs := range r.runs {
+			for _, run := range runs {
+				if run.SpaceID != req.Run.SpaceID || run.IdempotencyKey != req.Run.IdempotencyKey {
+					continue
+				}
+				if len(r.messages[threadID]) == 0 {
+					return nil, fmt.Errorf("idempotent thread bundle is missing message")
+				}
+				return &repository.CreateThreadBundleResult{
+					Thread: cloneThread(r.threads[threadID]), Run: cloneRun(run),
+					Message: cloneMessage(r.messages[threadID][0]),
+				}, nil
+			}
+		}
+	}
+	if _, ok := r.threads[req.Thread.ID]; ok {
+		return nil, fmt.Errorf("thread %d already exists", req.Thread.ID)
+	}
+	r.threads[req.Thread.ID] = cloneThread(req.Thread)
+	r.runs[req.Thread.ID] = append(r.runs[req.Thread.ID], cloneRun(req.Run))
+	r.messages[req.Thread.ID] = append(r.messages[req.Thread.ID], cloneMessage(req.Message))
+	return &repository.CreateThreadBundleResult{
+		Thread: cloneThread(req.Thread), Run: cloneRun(req.Run),
+		Message: cloneMessage(req.Message), Created: true,
+	}, nil
 }
 
 func (r *memoryRepo) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
@@ -1987,6 +2119,62 @@ func (r *memoryRepo) CreateRun(ctx context.Context, run *entity.Run) error {
 	defer r.mu.Unlock()
 	r.runs[run.ThreadID] = append(r.runs[run.ThreadID], cloneRun(run))
 	return nil
+}
+
+func (r *memoryRepo) CreateRunBundle(
+	ctx context.Context,
+	req repository.CreateRunBundleRequest,
+) (*repository.CreateRunBundleResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.createRunBundleCalls++
+	if req.Run == nil {
+		return nil, fmt.Errorf("run is required")
+	}
+	if req.Run.IdempotencyKey != "" {
+		for _, runs := range r.runs {
+			for _, run := range runs {
+				if run.SpaceID != req.Run.SpaceID || run.IdempotencyKey != req.Run.IdempotencyKey {
+					continue
+				}
+				result := &repository.CreateRunBundleResult{Run: cloneRun(run)}
+				if req.Message != nil {
+					for _, message := range r.messages[run.ThreadID] {
+						if message.RunID == run.ID && message.Role == req.Message.Role {
+							result.Message = cloneMessage(message)
+							break
+						}
+					}
+					if result.Message == nil {
+						return nil, fmt.Errorf("idempotent run bundle is missing message")
+					}
+				}
+				if req.Event != nil {
+					for _, event := range r.runEvents[run.ID] {
+						if event.EventType == req.Event.EventType {
+							result.Event = cloneRunEvent(event)
+							break
+						}
+					}
+					if result.Event == nil {
+						return nil, fmt.Errorf("idempotent run bundle is missing event")
+					}
+				}
+				return result, nil
+			}
+		}
+	}
+
+	r.runs[req.Run.ThreadID] = append(r.runs[req.Run.ThreadID], cloneRun(req.Run))
+	if req.Message != nil {
+		r.messages[req.Run.ThreadID] = append(r.messages[req.Run.ThreadID], cloneMessage(req.Message))
+	}
+	if req.Event != nil {
+		r.runEvents[req.Run.ID] = append(r.runEvents[req.Run.ID], cloneRunEvent(req.Event))
+	}
+	return &repository.CreateRunBundleResult{
+		Run: cloneRun(req.Run), Message: cloneMessage(req.Message), Event: cloneRunEvent(req.Event), Created: true,
+	}, nil
 }
 
 func (r *memoryRepo) GetRun(ctx context.Context, id int64) (*entity.Run, error) {

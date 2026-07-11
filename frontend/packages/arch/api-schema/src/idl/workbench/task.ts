@@ -501,6 +501,8 @@ export interface CreateTaskThreadRunRequest {
   on_disconnect?: string;
   durability?: string;
   idempotency_key?: string;
+  message_content?: string;
+  message_metadata?: string;
 }
 export interface HumanInteractionResponse {
   schema: string;
@@ -702,6 +704,7 @@ export interface GetTaskThreadArtifactSignedURLResponse {
 }
 export interface CreateTaskThreadRunResponse {
   data?: TaskThreadRun;
+  message?: TaskThreadMessage;
   code: number;
   msg: string;
 }
@@ -1192,6 +1195,8 @@ export const CreateTaskThreadRun = /*#__PURE__*/ createAPI<
       'on_disconnect',
       'durability',
       'idempotency_key',
+      'message_content',
+      'message_metadata',
     ],
   },
   resType: 'CreateTaskThreadRunResponse',

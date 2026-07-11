@@ -84,6 +84,44 @@ type CreateRunRequest struct {
 	IdempotencyKey    string
 }
 
+type CreateMessageSpec struct {
+	Role     entity.MessageRole
+	Content  string
+	Metadata string
+}
+
+type RunEventPayloadBuilder func(runID int64) string
+
+type CreateRunEventSpec struct {
+	EventType      string
+	PayloadBuilder RunEventPayloadBuilder
+}
+
+type CreateThreadRunMessageRequest struct {
+	Thread  CreateThreadRequest
+	Run     CreateRunRequest
+	Message CreateMessageSpec
+}
+
+type CreateThreadRunMessageResult struct {
+	Thread  *entity.Thread
+	Run     *entity.Run
+	Message *entity.Message
+}
+
+type CreateRunBundleRequest struct {
+	Run     CreateRunRequest
+	Message *CreateMessageSpec
+	Event   *CreateRunEventSpec
+}
+
+type CreateRunBundleResult struct {
+	Run     *entity.Run
+	Message *entity.Message
+	Event   *entity.RunEvent
+	Created bool
+}
+
 type GetRunRequest struct {
 	RunID int64
 }
@@ -449,6 +487,7 @@ type ListMessagesRequest struct {
 
 type ThreadService interface {
 	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
+	CreateThreadRunMessage(ctx context.Context, req *CreateThreadRunMessageRequest) (*CreateThreadRunMessageResult, error)
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
 	UpdateThreadTitle(ctx context.Context, req *UpdateThreadTitleRequest) (*entity.Thread, bool, error)
 	UpdateThreadMetadata(ctx context.Context, req *UpdateThreadMetadataRequest) (*entity.Thread, bool, error)
@@ -457,6 +496,7 @@ type ThreadService interface {
 	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
 	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
+	CreateRunBundle(ctx context.Context, req *CreateRunBundleRequest) (*CreateRunBundleResult, error)
 	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)
 	GetRunByIdempotencyKey(ctx context.Context, spaceID int64, idempotencyKey string) (*entity.Run, error)
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)

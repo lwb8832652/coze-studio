@@ -137,6 +137,46 @@ func TestApplicationCreateTaskThreadCanDeferRunStartForUploads(t *testing.T) {
 	require.Nil(t, domainSVC.appendReq)
 }
 
+func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread: &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "新建任务",
+				Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			},
+			Run: &entity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 30, ThreadID: 10, RunID: 20,
+				Role: entity.MessageRoleUser, Content: "请分析客户反馈",
+			},
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1, UserID: 2, Message: "请分析客户反馈",
+		Config: `{"runtime":"eino_adk"}`, IdempotencyKey: "new-task-key",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), resp.Thread.ThreadID)
+	require.Equal(t, int64(20), resp.Run.RunID)
+	require.Equal(t, int64(30), resp.Message.MessageID)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.Equal(t, int64(1), domainSVC.createThreadRunMessageReq.Thread.SpaceID)
+	require.Equal(t, int64(2), domainSVC.createThreadRunMessageReq.Thread.UserID)
+	require.Equal(t, entity.ThreadSourceWeb, domainSVC.createThreadRunMessageReq.Thread.Source)
+	require.JSONEq(t, `{"messages":[{"role":"user","content":"请分析客户反馈"}]}`, domainSVC.createThreadRunMessageReq.Run.Input)
+	require.Equal(t, "new-task-key", domainSVC.createThreadRunMessageReq.Run.IdempotencyKey)
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createThreadRunMessageReq.Message.Role)
+	require.Nil(t, domainSVC.createReq)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
 func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		listed: []*entity.Thread{
@@ -921,6 +961,174 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	require.Equal(t, `["messages","updates"]`, resp.Run.StreamMode)
 }
 
+func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "第一轮问题"},
+			{ID: 102, ThreadID: 10, RunID: 100, Role: entity.MessageRoleAssistant, Content: "第一轮回答"},
+			{ID: 103, ThreadID: 10, Role: entity.MessageRoleUser, Content: "孤立消息不能进入上下文"},
+		},
+		messageTotal: 3,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input: `{
+			"messages":[{"role":"user","content":"客户端伪造的历史"}],
+			"uploaded_files":[{"file_name":"report.md","virtual_path":"/mnt/user-data/uploads/report.md"}]
+		}`,
+		Config:          `{"runtime":"eino_adk"}`,
+		IdempotencyKey:  "follow-up-key",
+		MessageContent:  "继续分析",
+		MessageMetadata: `{"source":"workbench_detail_followup"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.Equal(t, int64(300), resp.Message.MessageID)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.Equal(t, int64(10), domainSVC.createRunBundleReq.Run.ThreadID)
+	require.Equal(t, "follow-up-key", domainSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.JSONEq(t, `{
+		"messages":[
+			{"role":"user","content":"第一轮问题"},
+			{"role":"assistant","content":"第一轮回答"},
+			{"role":"user","content":"继续分析"}
+		],
+		"uploaded_files":[{"file_name":"report.md","virtual_path":"/mnt/user-data/uploads/report.md"}]
+	}`, domainSVC.createRunBundleReq.Run.Input)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "客户端伪造的历史")
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "孤立消息不能进入上下文")
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createRunBundleReq.Message.Role)
+	require.Equal(t, "继续分析", domainSVC.createRunBundleReq.Message.Content)
+	require.Equal(t, `{"source":"workbench_detail_followup"}`, domainSVC.createRunBundleReq.Message.Metadata)
+	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateRunWithMessageReadsAllPersistedHistoryPages(t *testing.T) {
+	firstPage := make([]*entity.Message, 0, authoritativeRunHistoryPageSize)
+	for index := int64(1); index <= int64(authoritativeRunHistoryPageSize); index++ {
+		firstPage = append(firstPage, &entity.Message{
+			ID:       index,
+			ThreadID: 10,
+			RunID:    100,
+			Role:     entity.MessageRoleUser,
+			Content:  fmt.Sprintf("历史消息-%03d", index),
+		})
+	}
+	domainSVC := &recordingThreadService{
+		messagePages: map[int32][]*entity.Message{
+			1: firstPage,
+			2: {
+				{
+					ID:       201,
+					ThreadID: 10,
+					RunID:    100,
+					Role:     entity.MessageRoleAssistant,
+					Content:  "跨页最后一条回答",
+				},
+			},
+		},
+		messageTotal: 201,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-pagination-key",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, domainSVC.listMessagesReqs, 2)
+	require.Equal(t, int32(1), domainSVC.listMessagesReqs[0].Page)
+	require.Equal(t, authoritativeRunHistoryPageSize, domainSVC.listMessagesReqs[0].PageSize)
+	require.Equal(t, int32(2), domainSVC.listMessagesReqs[1].Page)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Len(t, input.Messages, 202)
+	require.Equal(t, "历史消息-001", input.Messages[0].Content)
+	require.Equal(t, "历史消息-200", input.Messages[199].Content)
+	require.Equal(t, "跨页最后一条回答", input.Messages[200].Content)
+	require.Equal(t, "继续分析", input.Messages[201].Content)
+}
+
+func TestApplicationCreateRunWithMessageKeepsCommittedLegacyMessages(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "原子化前的问题"},
+			{ID: 102, ThreadID: 10, Role: entity.MessageRoleUser, Content: "已成功执行的旧追问"},
+			{ID: 103, ThreadID: 10, Role: entity.MessageRoleUser, Content: "创建 run 失败后的孤立消息"},
+		},
+		messageTotal: 3,
+		runs: []*entity.Run{
+			{
+				ID:       110,
+				ThreadID: 10,
+				Metadata: `{"source":"workbench_detail_followup","appended_message_id":"102"}`,
+			},
+		},
+		runTotal: 1,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-legacy-key",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Equal(t, []authoritativeRunInputMessage{
+		{Role: "user", Content: "原子化前的问题"},
+		{Role: "user", Content: "已成功执行的旧追问"},
+		{Role: "user", Content: "继续分析"},
+	}, input.Messages)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "创建 run 失败后的孤立消息")
+}
+
 func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
@@ -1007,18 +1215,21 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 				Metadata:        `{"runtime":"eino_adk"}`,
 			},
 		},
-		createdRun: &entity.Run{
-			ID:       21,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusQueued,
-		},
-		appended: &entity.Message{ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser},
-		appendedRunEvent: &entity.RunEvent{
-			ID:        40,
-			ThreadID:  10,
-			RunID:     21,
-			EventType: "human.interaction.resolved",
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID:       21,
+				ThreadID: 10,
+				SpaceID:  1,
+				Status:   entity.RunStatusQueued,
+			},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser},
+			Event: &entity.RunEvent{
+				ID:        40,
+				ThreadID:  10,
+				RunID:     21,
+				EventType: "human.interaction.resolved",
+			},
+			Created: true,
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
@@ -1038,19 +1249,18 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
-	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(20), domainSVC.listCheckpointsReq.RunID)
-	require.JSONEq(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Contains(t, domainSVC.createRunReq.Command, `"checkpoint_id":503`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"interrupt-1"`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"answer":"最近 7 天"`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source_run_id":20`)
-	require.Equal(t, int64(21), domainSVC.appendReq.RunID)
-	require.Equal(t, entity.MessageRoleUser, domainSVC.appendReq.Role)
-	require.Contains(t, domainSVC.appendReq.Content, "最近 7 天")
-	require.Equal(t, int64(21), domainSVC.appendRunEventReq.RunID)
-	require.Equal(t, "human.interaction.resolved", domainSVC.appendRunEventReq.EventType)
+	require.JSONEq(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"checkpoint_id":503`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"interrupt-1"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"answer":"最近 7 天"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source_run_id":20`)
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createRunBundleReq.Message.Role)
+	require.Contains(t, domainSVC.createRunBundleReq.Message.Content, "最近 7 天")
+	require.Equal(t, "human.interaction.resolved", domainSVC.createRunBundleReq.Event.EventType)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"resume_run_id":21`)
 }
 
 func TestApplicationResumeHumanInteractionRejectsNonInterruptedSourceRun(t *testing.T) {
@@ -1200,20 +1410,23 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 				ErrorCode:   "subagent_timeout",
 			},
 		},
-		createdRun: &entity.Run{
-			ID:          21,
-			ThreadID:    1,
-			ParentRunID: 0,
-			SpaceID:     2,
-			AssistantID: "lead-agent",
-			RunKind:     entity.RunKindTask,
-			Status:      entity.RunStatusQueued,
-		},
-		appendedRunEvent: &entity.RunEvent{
-			ID:        40,
-			ThreadID:  1,
-			RunID:     21,
-			EventType: "subagent.retry.requested",
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID:          21,
+				ThreadID:    1,
+				ParentRunID: 0,
+				SpaceID:     2,
+				AssistantID: "lead-agent",
+				RunKind:     entity.RunKindTask,
+				Status:      entity.RunStatusQueued,
+			},
+			Event: &entity.RunEvent{
+				ID:        40,
+				ThreadID:  1,
+				RunID:     21,
+				EventType: "subagent.retry.requested",
+			},
+			Created: true,
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
@@ -1226,22 +1439,22 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
-	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
-	require.Equal(t, entity.RunKindTask, domainSVC.createRunReq.RunKind)
-	require.Zero(t, domainSVC.createRunReq.ParentRunID)
-	require.Equal(t, "lead-agent", domainSVC.createRunReq.AssistantID)
-	require.Equal(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Equal(t, `{"runtime":"eino_adk"}`, domainSVC.createRunReq.Config)
-	require.Equal(t, `{"plan_scope_run_id":10}`, domainSVC.createRunReq.Context)
-	require.Equal(t, "retry-child-20", domainSVC.createRunReq.IdempotencyKey)
-	require.Contains(t, domainSVC.createRunReq.Command, `"subagent_retry"`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"source_run_id":20`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"parent_run_id":10`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source":"subagent_retry"`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source_run_id":20`)
-	require.Equal(t, "subagent.retry.requested", domainSVC.appendRunEventReq.EventType)
-	require.Equal(t, int64(21), domainSVC.appendRunEventReq.RunID)
-	require.Contains(t, domainSVC.appendRunEventReq.Payload, `"source_run_id":20`)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
+	require.Equal(t, entity.RunKindTask, domainSVC.createRunBundleReq.Run.RunKind)
+	require.Zero(t, domainSVC.createRunBundleReq.Run.ParentRunID)
+	require.Equal(t, "lead-agent", domainSVC.createRunBundleReq.Run.AssistantID)
+	require.Equal(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
+	require.Equal(t, `{"runtime":"eino_adk"}`, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, `{"plan_scope_run_id":10}`, domainSVC.createRunBundleReq.Run.Context)
+	require.Equal(t, "retry-child-20", domainSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"subagent_retry"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"parent_run_id":10`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source":"subagent_retry"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source_run_id":20`)
+	require.Equal(t, "subagent.retry.requested", domainSVC.createRunBundleReq.Event.EventType)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"retry_run_id":21`)
 }
 
 func TestApplicationRetrySubagentRunRejectsRunningChildRun(t *testing.T) {
@@ -3959,7 +4172,9 @@ func TestThreadOwnerMemoryAuthorizerAllowsOnlyThreadCreator(t *testing.T) {
 
 type recordingThreadService struct {
 	created                        *entity.Thread
+	createdThreadRunMessage        *domainservice.CreateThreadRunMessageResult
 	createdRun                     *entity.Run
+	createdRunBundle               *domainservice.CreateRunBundleResult
 	gotRun                         *entity.Run
 	idempotentRun                  *entity.Run
 	claimedRuns                    []*entity.Run
@@ -3992,6 +4207,7 @@ type recordingThreadService struct {
 	memoryFlushUpdated             bool
 	recordedTokenUsage             *entity.TokenUsage
 	messages                       []*entity.Message
+	messagePages                   map[int32][]*entity.Message
 	runs                           []*entity.Run
 	gotRunsByID                    map[int64]*entity.Run
 	claimedQueuedResumeRuns        []*entity.Run
@@ -4020,11 +4236,14 @@ type recordingThreadService struct {
 	runTokenUsageAggregates        []*entity.RunTokenUsageAggregate
 	runBacklogAggregates           []*entity.RunBacklogAggregate
 	createReq                      *domainservice.CreateThreadRequest
+	createThreadRunMessageReq      *domainservice.CreateThreadRunMessageRequest
 	updateThreadTitleReq           *domainservice.UpdateThreadTitleRequest
 	updateThreadMetadataReq        *domainservice.UpdateThreadMetadataRequest
 	deleteThreadReq                *domainservice.DeleteThreadRequest
 	deleteThreadOK                 bool
 	createRunReq                   *domainservice.CreateRunRequest
+	createRunBundleReq             *domainservice.CreateRunBundleRequest
+	createRunBundleEventPayload    string
 	claimRunsReq                   *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
 	renewRunLeaseReq               *domainservice.RenewRunLeaseRequest
@@ -4076,6 +4295,7 @@ type recordingThreadService struct {
 	listRunEventsReq               *domainservice.ListRunEventsRequest
 	appendReq                      *domainservice.AppendMessageRequest
 	listMessagesReq                *domainservice.ListMessagesRequest
+	listMessagesReqs               []*domainservice.ListMessagesRequest
 	getID                          int64
 	getRunID                       int64
 	completeRunErr                 error
@@ -4437,6 +4657,14 @@ func (s *recordingThreadService) CreateThread(ctx context.Context, req *domainse
 	return s.created, nil
 }
 
+func (s *recordingThreadService) CreateThreadRunMessage(
+	ctx context.Context,
+	req *domainservice.CreateThreadRunMessageRequest,
+) (*domainservice.CreateThreadRunMessageResult, error) {
+	s.createThreadRunMessageReq = req
+	return s.createdThreadRunMessage, nil
+}
+
 func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
 	s.getID = id
 	return s.got, nil
@@ -4487,13 +4715,32 @@ func (s *recordingThreadService) AppendMessage(ctx context.Context, req *domains
 }
 
 func (s *recordingThreadService) ListMessages(ctx context.Context, req *domainservice.ListMessagesRequest) ([]*entity.Message, int64, error) {
-	s.listMessagesReq = req
+	if req != nil {
+		copied := *req
+		s.listMessagesReq = &copied
+		s.listMessagesReqs = append(s.listMessagesReqs, &copied)
+		if s.messagePages != nil {
+			return s.messagePages[req.Page], s.messageTotal, nil
+		}
+	}
 	return s.messages, s.messageTotal, nil
 }
 
 func (s *recordingThreadService) CreateRun(ctx context.Context, req *domainservice.CreateRunRequest) (*entity.Run, error) {
 	s.createRunReq = req
 	return s.createdRun, nil
+}
+
+func (s *recordingThreadService) CreateRunBundle(
+	ctx context.Context,
+	req *domainservice.CreateRunBundleRequest,
+) (*domainservice.CreateRunBundleResult, error) {
+	s.createRunBundleReq = req
+	if req != nil && req.Event != nil && req.Event.PayloadBuilder != nil &&
+		s.createdRunBundle != nil && s.createdRunBundle.Run != nil {
+		s.createRunBundleEventPayload = req.Event.PayloadBuilder(s.createdRunBundle.Run.ID)
+	}
+	return s.createdRunBundle, nil
 }
 
 func (s *recordingThreadService) GetRun(ctx context.Context, req *domainservice.GetRunRequest) (*entity.Run, error) {

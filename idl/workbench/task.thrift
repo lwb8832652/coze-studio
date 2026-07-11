@@ -458,6 +458,8 @@ struct CreateTaskThreadRunRequest {
     10: optional string on_disconnect
     11: optional string durability
     12: optional string idempotency_key
+    13: optional string message_content
+    14: optional string message_metadata
     255: optional base.Base Base (api.none="true")
 }
 
@@ -587,6 +589,7 @@ struct GetTaskThreadArtifactSignedURLResponse {
 
 struct CreateTaskThreadRunResponse {
     1: optional TaskThreadRun data
+    2: optional TaskThreadMessage message
     253: required i64 code
     254: required string msg
     255: optional base.BaseResp BaseResp (api.none="true")
