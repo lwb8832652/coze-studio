@@ -272,6 +272,27 @@ Every implementation slice must update this document:
     core remains `进行中`; prompt composition, conditional no-op removal,
     subagent concurrency enforcement, bounded capability-downgrade events and
     durable parity state continue as `AR-PARITY-002.2` through `.4`.
+  - `AR-PARITY-002.2` Versioned Lead Prompt Composer (已完成): verified
+    DeerFlow's stable prompt, Skill progressive-loading, dynamic-context,
+    custom-Agent, conditional Todo/subagent and deferred-tool construction
+    against baseline `5851f825`. Every Eino ADK run now receives the
+    system-owned `newx.lead_prompt.v1` contract. Request prompt text and durable
+    SingleAgent instructions are bounded, escaped, source-labelled overlays;
+    they cannot replace the stable role, clarification, workspace/output,
+    citation or completion sections. The durable provider fails closed on
+    malformed ID/version, missing snapshot and cross-space access, and applies
+    only missing model defaults. Mode and deferred-tool decisions condition the
+    prompt through the same runtime projection used by Agent construction.
+    Child subagents are explicitly persisted as Eino `flash` with thinking,
+    Plan and recursive subagent capability disabled, including retries.
+    Date/memory and full Skill/tool catalogs remain in their existing Eino
+    middleware paths. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-versioned-lead-prompt-contract.md`.
+    Verification: focused RED/GREEN suites, complete Agent and application
+    suites, targeted race, application vet, full serial backend, formatting and
+    diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
+    remains `进行中`; conditional middleware/concurrency/downgrade events and
+    durable parity state continue as `AR-PARITY-002.3` and `.4`.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

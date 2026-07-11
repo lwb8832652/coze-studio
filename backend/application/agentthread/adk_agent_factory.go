@@ -136,25 +136,55 @@ func DetectADKModelCapabilities(
 }
 
 type ApplicationADKAgentFactory struct {
-	modelProvider ChatModelProvider
-	toolProvider  ADKToolProvider
-	middlewares   ADKMiddlewareFactory
+	modelProvider         ChatModelProvider
+	toolProvider          ADKToolProvider
+	middlewares           ADKMiddlewareFactory
+	promptComposer        ADKLeadPromptComposer
+	promptOverlayProvider ADKLeadPromptOverlayProvider
+}
+
+type ApplicationADKAgentFactoryOption func(*ApplicationADKAgentFactory)
+
+func WithADKLeadPromptComposer(
+	composer ADKLeadPromptComposer,
+) ApplicationADKAgentFactoryOption {
+	return func(factory *ApplicationADKAgentFactory) {
+		if composer != nil {
+			factory.promptComposer = composer
+		}
+	}
+}
+
+func WithADKLeadPromptOverlayProvider(
+	provider ADKLeadPromptOverlayProvider,
+) ApplicationADKAgentFactoryOption {
+	return func(factory *ApplicationADKAgentFactory) {
+		factory.promptOverlayProvider = provider
+	}
 }
 
 func NewApplicationADKAgentFactory(
 	modelProvider ChatModelProvider,
 	toolProvider ADKToolProvider,
 	middlewares ADKMiddlewareFactory,
+	options ...ApplicationADKAgentFactoryOption,
 ) *ApplicationADKAgentFactory {
 	if modelProvider == nil {
 		modelProvider = DefaultChatModelProvider
 	}
 
-	return &ApplicationADKAgentFactory{
-		modelProvider: modelProvider,
-		toolProvider:  toolProvider,
-		middlewares:   middlewares,
+	factory := &ApplicationADKAgentFactory{
+		modelProvider:  modelProvider,
+		toolProvider:   toolProvider,
+		middlewares:    middlewares,
+		promptComposer: NewDefaultADKLeadPromptComposer(),
 	}
+	for _, option := range options {
+		if option != nil {
+			option(factory)
+		}
+	}
+	return factory
 }
 
 func (f *ApplicationADKAgentFactory) Build(
@@ -175,6 +205,18 @@ func (f *ApplicationADKAgentFactory) Build(
 	runtimeConfig, err := ParseDeerFlowRuntimeConfig(run.Config)
 	if err != nil {
 		return nil, err
+	}
+	overlay := ADKLeadPromptOverlay{}
+	if f.promptOverlayProvider != nil {
+		resolved, found, resolveErr := f.promptOverlayProvider.
+			ResolveADKLeadPromptOverlay(ctx, run)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("resolve lead prompt overlay: %w", resolveErr)
+		}
+		if found {
+			overlay = resolved
+			applyADKLeadPromptModelDefaults(&cfg, overlay.ModelDefaults)
+		}
 	}
 	modelRetryConfig, err := adkModelRetryConfigFromRun(run)
 	if err != nil {
@@ -258,6 +300,19 @@ func (f *ApplicationADKAgentFactory) Build(
 			}
 		}
 	}
+	promptComposer := f.promptComposer
+	if promptComposer == nil {
+		promptComposer = NewDefaultADKLeadPromptComposer()
+	}
+	leadPrompt, err := promptComposer.Compose(ADKLeadPromptComposeInput{
+		RuntimeConfig:    runtimeConfig,
+		HasDeferredTools: len(dynamicTools) > 0,
+		ClientOverlay:    cfg.SystemPrompt,
+		DurableOverlay:   overlay,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("compose eino adk lead prompt: %w", err)
+	}
 
 	bundle := ADKMiddlewareBundle{}
 	if f.middlewares != nil {
@@ -275,18 +330,24 @@ func (f *ApplicationADKAgentFactory) Build(
 	}
 
 	agentName := strings.TrimSpace(cfg.AgentName)
+	if strings.TrimSpace(overlay.AgentName) != "" {
+		agentName = leadPrompt.AgentName
+	}
 	if agentName == "" {
-		agentName = defaultADKAgentName
+		agentName = leadPrompt.AgentName
 	}
 	description := strings.TrimSpace(cfg.AgentDescription)
+	if strings.TrimSpace(overlay.AgentDescription) != "" {
+		description = leadPrompt.AgentDescription
+	}
 	if description == "" {
-		description = defaultADKAgentDescription
+		description = leadPrompt.AgentDescription
 	}
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        agentName,
 		Description: description,
-		Instruction: strings.TrimSpace(cfg.SystemPrompt),
+		Instruction: strings.TrimSpace(leadPrompt.Instruction),
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{

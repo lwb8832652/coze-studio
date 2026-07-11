@@ -143,6 +143,11 @@ func buildADKSingleAgentSubagentRunSummary(
 	child.RunKind = RunKindSubagent
 
 	configPayload := map[string]any{
+		"runtime":           string(RuntimeModeEinoADK),
+		"mode":              string(DeerFlowModeFlash),
+		"thinking_enabled":  false,
+		"is_plan_mode":      false,
+		"subagent_enabled":  false,
 		"agent_name":        definition.Name,
 		"agent_description": definition.Description,
 		"single_agent": map[string]any{

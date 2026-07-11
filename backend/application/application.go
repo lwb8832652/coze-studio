@@ -310,6 +310,11 @@ func Init(ctx context.Context) (err error) {
 				),
 				OffloadBackendFactory: adkOffloadBackendFactory,
 			}),
+			agentthread.WithADKLeadPromptOverlayProvider(
+				agentthread.NewADKSingleAgentLeadPromptOverlayProvider(
+					complexServices.singleAgentSVC.DomainSVC,
+				),
+			),
 		),
 		adkEventSink,
 		func(run *agentthread.RunSummary) (adk.CheckPointStore, error) {
