@@ -3252,6 +3252,71 @@ func TestThreadRepositoryRunLeaseHeartbeatAndExpiration(t *testing.T) {
 	require.True(t, errors.Is(err, ErrRunLeaseLost))
 }
 
+func TestThreadRepositoryReconcileExpiredRunLeaseUsesStaleFenceAndClearsLease(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 1_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	lease := claimed[0]
+
+	_, err = repo.ReconcileExpiredRunLease(context.Background(), ReconcileExpiredRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration + 1,
+		ToStatus:            entity.RunStatusInterrupted,
+		Now:                 lease.LeaseExpiresAt,
+		ErrorCode:           "run_recovered",
+		ErrorMessage:        "execution recovered from a durable checkpoint",
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	reconciled, err := repo.ReconcileExpiredRunLease(context.Background(), ReconcileExpiredRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		ToStatus:            entity.RunStatusInterrupted,
+		Now:                 lease.LeaseExpiresAt,
+		ErrorCode:           "run_recovered",
+		ErrorMessage:        "execution recovered from a durable checkpoint",
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, reconciled.Status)
+	require.Equal(t, "run_recovered", reconciled.ErrorCode)
+	require.Equal(t, "execution recovered from a durable checkpoint", reconciled.ErrorMessage)
+	require.Empty(t, reconciled.WorkerID)
+	require.Empty(t, reconciled.LeaseOwner)
+	require.Empty(t, reconciled.LeaseToken)
+	require.Zero(t, reconciled.LeaseExpiresAt)
+	require.Zero(t, reconciled.HeartbeatAt)
+	require.Equal(t, lease.ExecutionGeneration, reconciled.ExecutionGeneration)
+	require.Equal(t, lease.LeaseExpiresAt, reconciled.EndedAt)
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 lease.LeaseExpiresAt + 1,
+	})
+	require.Error(t, err)
+}
+
 func TestThreadRepositoryRunLeaseFencesTerminalTransitionAndClearsLease(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

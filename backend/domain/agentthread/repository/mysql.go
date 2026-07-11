@@ -3178,6 +3178,41 @@ func (r *threadRepository) ListExpiredRunLeases(ctx context.Context, req ListExp
 	return runs, nil
 }
 
+func (r *threadRepository) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	if req.ToStatus != entity.RunStatusInterrupted && req.ToStatus != entity.RunStatusFailed {
+		return nil, fmt.Errorf("expired run lease reconciliation requires interrupted or failed target status")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	updates := map[string]any{
+		"status":        string(req.ToStatus),
+		"error_code":    strings.TrimSpace(req.ErrorCode),
+		"error_message": strings.TrimSpace(req.ErrorMessage),
+		"ended_at":      now,
+		"updated_at":    now,
+	}
+	clearRunLeaseUpdates(updates)
+	db := r.db.WithContext(ctx).
+		Model(&runPO{}).
+		Where("id = ?", req.RunID).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("lease_owner = ?", strings.TrimSpace(req.LeaseOwner)).
+		Where("lease_token = ?", strings.TrimSpace(req.LeaseToken)).
+		Where("execution_generation = ?", req.ExecutionGeneration).
+		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
+		Updates(updates)
+	if db.Error != nil {
+		return nil, db.Error
+	}
+	if db.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: run %d expired lease cannot be reconciled", ErrRunLeaseLost, req.RunID)
+	}
+
+	return r.GetRun(ctx, req.RunID)
+}
+
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
 	updates := map[string]any{

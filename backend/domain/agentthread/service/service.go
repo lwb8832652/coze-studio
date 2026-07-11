@@ -385,6 +385,17 @@ type ListExpiredRunLeasesRequest struct {
 	Limit int32
 }
 
+type ReconcileExpiredRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
+}
+
 type UpdateRunStatusRequest struct {
 	RunID               int64
 	From                entity.RunStatus
@@ -463,6 +474,7 @@ type ThreadService interface {
 	RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*entity.Run, error)
 	ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*entity.Run, error)
 	ListExpiredRunLeases(ctx context.Context, req *ListExpiredRunLeasesRequest) ([]*entity.Run, error)
+	ReconcileExpiredRunLease(ctx context.Context, req *ReconcileExpiredRunLeaseRequest) (*entity.Run, error)
 	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

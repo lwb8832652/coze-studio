@@ -3343,6 +3343,37 @@ func (s *ApplicationService) ListExpiredRunLeases(
 	return resp, nil
 }
 
+func (s *ApplicationService) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req *ReconcileExpiredRunLeaseRequest,
+) (*ReconcileExpiredRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("reconcile expired run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.ReconcileExpiredRunLease(ctx, &domainservice.ReconcileExpiredRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            domainentity.RunStatus(req.ToStatus),
+		Now:                 req.Now,
+		ErrorCode:           req.ErrorCode,
+		ErrorMessage:        req.ErrorMessage,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty reconciled run")
+	}
+
+	return &ReconcileExpiredRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
 func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err

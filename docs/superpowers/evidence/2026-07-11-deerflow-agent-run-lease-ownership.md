@@ -125,3 +125,64 @@ Verified 2026-07-11:
 - targeted domain/application/handler/router tests and `go vet` pass;
 - serial full backend passes with
   `go test -p 1 -gcflags="all=-N -l" ./... -count=1`.
+
+## Batch Isolation, Heartbeat And Stale Recovery
+
+Completed 2026-07-11 on top of the lease contract above.
+
+DeerFlow source behavior remains the reference for the visible lifecycle:
+`RunManager.reconcile_orphaned_inflight_runs` lists persisted `pending` and
+`running` rows that have no process-local task and moves them to an explicit
+error instead of leaving the UI indefinitely active (`manager.py` lines
+635-680). DeerFlow does not have a durable owner token, heartbeat or
+multi-worker stale-write fence.
+
+NewX AI preserves that terminal guarantee and adds the controls required by its
+database-backed, horizontally scalable Go workers:
+
+- one infrastructure failure no longer aborts the rest of a claimed ordinary
+  or checkpoint-resume batch;
+- every still-owned, unfinalized ordinary run is released to `pending`; a
+  protected checkpoint-resume run is released only to `queued`;
+- ordinary and resume execution share a 60-second lease and 20-second default
+  heartbeat, with an injected clock/ticker for deterministic tests;
+- heartbeat loss cancels the active execution context; process shutdown
+  releases the lease without writing a false `failed` terminal state;
+- stale reconciliation uses a separate expired-lease CAS matching run id,
+  owner, token, generation, `running` status and expired timestamp;
+- the latest active, decodable and runtime-compatible checkpoint creates one
+  protected resume run using `run-recovery:<source_run_id>:<generation>`;
+- a retry after resume creation but before source reconciliation reuses the
+  existing idempotent run;
+- if no compatible checkpoint exists, the source becomes `failed` with bounded
+  `run_abandoned` metadata; if recovery is queued, the source becomes
+  `interrupted` with bounded `run_recovered` metadata;
+- lease credentials remain internal and are not copied into recovery command,
+  metadata, REST, SSE or LangGraph-compatible projections.
+
+Implementation:
+
+- heartbeat controller: `backend/application/agentthread/run_lease_heartbeat.go`;
+- stale recovery processor: `backend/application/agentthread/run_lease_recovery.go`;
+- batch and finalization integration: `runner.go` and `resume_runner.go`;
+- stale CAS: `backend/domain/agentthread/repository/mysql.go`;
+- worker bootstrap and environment contract:
+  `backend/application/agentthread/worker.go`, `application.go`,
+  `docker/.env.debug.example`, and
+  `docs/superpowers/runbooks/deerflow-parity-runtime-operations.md`.
+
+Verification:
+
+- RED/GREEN batch isolation for ordinary and protected resume runs;
+- RED/GREEN ordinary/resume heartbeat, lease-loss cancellation and shutdown
+  release tests;
+- RED/GREEN stale-CAS generation fence and old-worker rejection test;
+- RED/GREEN Eino ADK checkpoint selection, invalid-checkpoint skip,
+  create-before-reconcile retry idempotency and no-checkpoint abandonment tests;
+- affected repository, domain, application, Workbench and bootstrap packages;
+- targeted `go vet`, `gofmt`, and `git diff --check`;
+- serial full backend:
+  `go test -p 1 -gcflags="all=-N -l" ./... -count=1`.
+
+Cancellation intent fencing and transactional message/title/success commit are
+not claimed here; they remain the next explicit lifecycle slice.

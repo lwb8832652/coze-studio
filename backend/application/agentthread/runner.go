@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
@@ -30,6 +31,7 @@ import (
 
 const defaultRunProcessorWorkerID = "agent-harness"
 const defaultRunProcessorBatchSize int32 = 10
+const defaultRunLeaseCleanupTimeout = 5 * time.Second
 
 const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
@@ -85,11 +87,14 @@ type RunTitleGenerator interface {
 }
 
 type RunProcessorOptions struct {
-	WorkerID         string
-	BatchSize        int32
-	EventSink        RunEventSink
-	TitleGenerator   RunTitleGenerator
-	MetricsCollector RuntimeMetricsCollector
+	WorkerID          string
+	BatchSize         int32
+	EventSink         RunEventSink
+	TitleGenerator    RunTitleGenerator
+	MetricsCollector  RuntimeMetricsCollector
+	LeaseTTL          time.Duration
+	HeartbeatInterval time.Duration
+	LeaseClock        RunLeaseClock
 }
 
 type RunProcessor struct {
@@ -100,6 +105,7 @@ type RunProcessor struct {
 	metricsCollector RuntimeMetricsCollector
 	workerID         string
 	batchSize        int32
+	leaseConfig      runLeaseHeartbeatConfig
 }
 
 type RunProcessResult struct {
@@ -145,6 +151,7 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 		metricsCollector: opts.MetricsCollector,
 		workerID:         workerID,
 		batchSize:        batchSize,
+		leaseConfig:      normalizeRunLeaseHeartbeatConfig(opts.LeaseTTL, opts.HeartbeatInterval, opts.LeaseClock),
 	}
 }
 
@@ -164,8 +171,10 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 	}
 
 	claimed, err := p.app.ClaimPendingRuns(ctx, &ClaimPendingRunsRequest{
-		WorkerID: p.workerID,
-		Limit:    p.batchSize,
+		WorkerID:       p.workerID,
+		Limit:          p.batchSize,
+		Now:            p.leaseConfig.Clock.Now().UnixMilli(),
+		LeaseTTLMillis: p.leaseConfig.TTL.Milliseconds(),
 	})
 	if err != nil {
 		return result, err
@@ -173,9 +182,16 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 
 	result.ClaimedRuns = len(claimed.Runs)
 	p.recordRuntimeRunBacklog(ctx)
+	var batchErr error
 	for _, run := range claimed.Runs {
 		p.recordRuntimeRunQueueDelay(ctx, run)
-		outcome, err := p.processRun(ctx, run)
+		runCtx, heartbeat := startRunLeaseHeartbeat(ctx, p.app, run, p.leaseConfig)
+		outcome, err := p.processRun(runCtx, run, heartbeat)
+		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil {
+			outcome = runProcessErrored
+			err = heartbeatErr
+		}
+		heartbeat.Close()
 		switch outcome {
 		case runProcessInterrupted:
 			result.ProcessedRuns++
@@ -194,15 +210,54 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 		}
 		if err != nil {
 			result.ErroredRuns++
-
-			return result, err
+			batchErr = errors.Join(batchErr, fmt.Errorf("process run %d: %w", runSummaryID(run), err))
+			if releaseErr := releaseUnfinalizedRunLease(ctx, p.app, run, RunStatusPending); releaseErr != nil {
+				batchErr = errors.Join(batchErr, fmt.Errorf("release run %d lease: %w", runSummaryID(run), releaseErr))
+			}
 		}
 	}
 
-	return result, nil
+	return result, batchErr
 }
 
-func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProcessOutcome, error) {
+func releaseUnfinalizedRunLease(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	toStatus RunStatus,
+) error {
+	if app == nil || run == nil || run.RunID <= 0 {
+		return nil
+	}
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	_, err := app.ReleaseRunLease(cleanupCtx, &ReleaseRunLeaseRequest{
+		RunID:               run.RunID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ToStatus:            toStatus,
+	})
+	return err
+}
+
+func runSummaryID(run *RunSummary) int64 {
+	if run == nil {
+		return 0
+	}
+	return run.RunID
+}
+
+func (p *RunProcessor) processRun(
+	ctx context.Context,
+	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
+) (runProcessOutcome, error) {
 	if run == nil {
 		return runProcessSkipped, nil
 	}
@@ -217,38 +272,41 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProc
 		if ok {
 			result, err := retryExecutor.ExecuteSubagentRetry(ctx, run)
 			if isSubagentRetryUnsupportedError(err) {
-				p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
-
-				return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+				return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 			}
 
-			return p.finalizeRunExecution(ctx, run, result, err)
+			return p.finalizeRunExecution(ctx, run, heartbeat, result, err)
 		}
-		p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
-
-		return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+		return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 	}
 
 	result, err := p.executor.Execute(ctx, run)
 
-	return p.finalizeRunExecution(ctx, run, result, err)
+	return p.finalizeRunExecution(ctx, run, heartbeat, result, err)
 }
 
 func (p *RunProcessor) finalizeRunExecution(
 	ctx context.Context,
 	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
 	result *RunExecutionResult,
 	err error,
 ) (runProcessOutcome, error) {
 	if err != nil {
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
+			if heartbeatErr := heartbeat.Stop(); heartbeatErr != nil {
+				return runProcessErrored, heartbeatErr
+			}
 			p.emitRunCanceledEvent(ctx, run)
 			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return runProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
+			if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+				return runProcessErrored, abortErr
+			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
 				RunID:               run.RunID,
 				From:                RunStatusRunning,
@@ -273,16 +331,16 @@ func (p *RunProcessor) finalizeRunExecution(
 
 			return runProcessInterrupted, nil
 		}
-		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
-
-		return p.finalizeFailedRun(ctx, run, "executor_error", err.Error())
+		return p.finalizeFailedRun(ctx, run, heartbeat, "executor_error", err.Error())
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, cause
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
-		p.emitRunFailedEvent(ctx, run, "empty_executor_result", "executor returned empty assistant message")
-
-		return p.finalizeFailedRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
+		return p.finalizeFailedRun(ctx, run, heartbeat, "empty_executor_result", "executor returned empty assistant message")
 	}
 
 	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
@@ -292,12 +350,13 @@ func (p *RunProcessor) finalizeRunExecution(
 		Content:  message,
 		Metadata: resultMetadata(result),
 	}); err != nil {
-		p.emitRunFailedEvent(ctx, run, "append_message_failed", err.Error())
-
-		return p.finalizeFailedRun(ctx, run, "append_message_failed", err.Error())
+		return p.finalizeFailedRun(ctx, run, heartbeat, "append_message_failed", err.Error())
 	}
 
 	p.syncGeneratedThreadTitle(ctx, run, result)
+	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+		return runProcessErrored, abortErr
+	}
 
 	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
 		RunID:               run.RunID,
@@ -348,9 +407,14 @@ func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSumm
 func (p *RunProcessor) finalizeFailedRun(
 	ctx context.Context,
 	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
 	code string,
 	message string,
 ) (runProcessOutcome, error) {
+	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+		return runProcessErrored, abortErr
+	}
+	p.emitRunFailedEvent(ctx, run, code, message)
 	terminalRun, err := p.failRun(ctx, run, code, message)
 	if err != nil {
 		return runProcessFailed, err

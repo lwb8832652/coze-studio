@@ -333,6 +333,10 @@ func (r *recordingAgentThreadService) ListExpiredRunLeases(context.Context, *age
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) ReconcileExpiredRunLease(context.Context, *agentthreadsvc.ReconcileExpiredRunLeaseRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) CompleteRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
 	return nil, nil
 }

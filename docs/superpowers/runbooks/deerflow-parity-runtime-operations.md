@@ -72,10 +72,24 @@ object locations, checkpoint bytes, credentials, or raw provider payloads.
 - `AGENT_THREAD_WORKER_ID`
 - `AGENT_THREAD_WORKER_BATCH_SIZE`
 - `AGENT_THREAD_WORKER_INTERVAL_MS`
+- `AGENT_THREAD_WORKER_LEASE_TTL_MS`
+- `AGENT_THREAD_WORKER_HEARTBEAT_INTERVAL_MS`
 - `AGENT_THREAD_RESUME_WORKER_ENABLED=true|false`
 - `AGENT_THREAD_RESUME_WORKER_ID`
 - `AGENT_THREAD_RESUME_WORKER_BATCH_SIZE`
 - `AGENT_THREAD_RESUME_WORKER_INTERVAL_MS`
+- `AGENT_THREAD_RESUME_WORKER_LEASE_TTL_MS`
+- `AGENT_THREAD_RESUME_WORKER_HEARTBEAT_INTERVAL_MS`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED=true|false`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_BATCH_SIZE`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_INTERVAL_MS`
+
+Run and resume workers default to a 60-second lease with a 20-second
+heartbeat. Keep the heartbeat interval below the lease TTL. Enable the lease
+recovery worker whenever durable workers are enabled; it creates one protected,
+idempotent checkpoint resume run per source execution generation, or terminates
+an expired run with bounded `run_abandoned` metadata when no compatible
+checkpoint exists.
 
 ### Memory
 

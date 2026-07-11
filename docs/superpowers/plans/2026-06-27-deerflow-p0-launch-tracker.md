@@ -128,6 +128,24 @@ Every implementation slice must update this document:
     domain/application/handler/router suites, targeted `go vet`, Atlas v0.35.0
     hash/validate, `gofmt`, `git diff --check`, and serial full backend
     `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
+  - `AR-PARITY-001.4` Batch isolation, lease heartbeat and stale recovery
+    (已完成): claimed ordinary and protected-resume batches now continue after
+    one infrastructure failure and explicitly release any still-owned,
+    unfinalized lease. Both execution paths share an injected-clock heartbeat,
+    cancel work when renewal loses ownership, stop renewal before terminal CAS,
+    and release rather than falsely fail runs on process shutdown. A separate
+    expired-lease owner/token/generation CAS rejects old workers. The latest
+    active, decodable and runtime-compatible checkpoint creates one protected
+    resume run keyed by source run + execution generation; retry after partial
+    recovery reuses that run, while no compatible checkpoint terminates with
+    bounded `run_abandoned` metadata. Recovery and resume workers plus lease
+    timing are wired into the debug/operations profile. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-lease-ownership.md`.
+    Verification: ordinary/resume batch RED/GREEN tests, heartbeat/lease-loss/
+    shutdown tests, stale-CAS and old-worker rejection, Eino ADK invalid/latest
+    checkpoint and retry-idempotency tests, affected packages, targeted
+    `go vet`, `gofmt`, `git diff --check`, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

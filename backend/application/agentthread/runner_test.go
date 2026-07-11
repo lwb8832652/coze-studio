@@ -18,13 +18,16 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
@@ -357,6 +360,167 @@ func TestRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
 	}, result)
 }
 
+func TestRunProcessorIsolatesBatchFailureAndReleasesUnfinalizedLease(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{
+			{ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200", ExecutionGeneration: 1, Input: `{"messages":[]}`},
+			{ID: 201, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-201", ExecutionGeneration: 1, Input: `{"messages":[]}`},
+			{ID: 202, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-202", ExecutionGeneration: 1, Input: `{"messages":[]}`},
+		},
+		appended:          &entity.Message{ID: 300, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "ok"},
+		completedRun:      &entity.Run{ID: 999, ThreadID: 10, Status: entity.RunStatusSucceeded},
+		completeRunErrors: map[int64]error{200: fmt.Errorf("complete run infrastructure failure")},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	executed := make([]int64, 0, 3)
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		executed = append(executed, run.RunID)
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 3})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.ErrorContains(t, err, "complete run infrastructure failure")
+	require.Equal(t, []int64{200, 201, 202}, executed)
+	require.Equal(t, RunProcessResult{
+		ClaimedRuns:   3,
+		ProcessedRuns: 3,
+		SucceededRuns: 2,
+		ErroredRuns:   1,
+	}, result)
+	require.Len(t, domainSVC.completeRunReqs, 3)
+	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
+	require.Equal(t, int64(200), domainSVC.releaseRunLeaseReqs[0].RunID)
+	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+	require.Equal(t, "lease-200", domainSVC.releaseRunLeaseReqs[0].LeaseToken)
+}
+
+func TestRunProcessorRenewsLeaseWhileExecutionIsActive(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Input: `{"messages":[]}`,
+		}},
+		renewRunLeaseCalls: renewCalls,
+		appended:           &entity.Message{ID: 300, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "ok"},
+		completedRun:       &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		close(started)
+		<-release
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{
+		WorkerID:          "worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- processor.ProcessPendingRuns(context.Background())
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	renew := <-renewCalls
+	require.Equal(t, int64(200), renew.RunID)
+	require.Equal(t, "worker-a", renew.LeaseOwner)
+	require.Equal(t, "lease-200", renew.LeaseToken)
+	require.Equal(t, uint64(3), renew.ExecutionGeneration)
+	require.Equal(t, int64(3_000), renew.Now)
+	require.Equal(t, int64(6_000), renew.LeaseTTLMillis)
+	close(release)
+	require.NoError(t, <-done)
+	require.Equal(t, int64(1_000), domainSVC.claimRunsReq.Now)
+	require.Equal(t, int64(6_000), domainSVC.claimRunsReq.LeaseTTLMillis)
+	require.Equal(t, 2*time.Second, clock.TickerInterval())
+}
+
+func TestRunProcessorStopsExecutionWhenLeaseRenewalFails(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Input: `{"messages":[]}`,
+		}},
+		renewRunLeaseCalls: renewCalls,
+		renewRunLeaseErr:   errors.New("lease ownership lost"),
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	started := make(chan struct{})
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}), RunProcessorOptions{
+		WorkerID:          "worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- processor.ProcessPendingRuns(context.Background())
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	<-renewCalls
+	err := <-done
+	require.ErrorContains(t, err, "lease ownership lost")
+	require.Nil(t, domainSVC.failRunReq)
+	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
+	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+}
+
+func TestRunProcessorShutdownReleasesActiveLeaseWithoutFailingRun(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Input: `{"messages":[]}`,
+		}},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	started := make(chan struct{})
+	processor := NewRunProcessor(app, RunExecutorFunc(func(ctx context.Context, run *RunSummary) (*RunExecutionResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}), RunProcessorOptions{
+		WorkerID:          "worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- processor.ProcessPendingRuns(ctx)
+	}()
+
+	<-started
+	cancel()
+	err := <-done
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, domainSVC.failRunReq)
+	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
+	require.Equal(t, int64(200), domainSVC.releaseRunLeaseReqs[0].RunID)
+	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+}
+
 func TestRunProcessorReportsProcessResultWhenCompleteRunFails(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
@@ -396,6 +560,73 @@ func TestRunProcessorReportsProcessResultWhenCompleteRunFails(t *testing.T) {
 		ProcessedRuns: 1,
 		ErroredRuns:   1,
 	}, result)
+}
+
+type manualRunLeaseClock struct {
+	mu       sync.Mutex
+	now      time.Time
+	ticker   *manualRunLeaseTicker
+	interval time.Duration
+}
+
+func newManualRunLeaseClock(now time.Time) *manualRunLeaseClock {
+	return &manualRunLeaseClock{now: now}
+}
+
+func (c *manualRunLeaseClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *manualRunLeaseClock) NewTicker(interval time.Duration) RunLeaseTicker {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.interval = interval
+	c.ticker = &manualRunLeaseTicker{ch: make(chan time.Time, 4)}
+	return c.ticker
+}
+
+func (c *manualRunLeaseClock) Tick(now time.Time) {
+	c.mu.Lock()
+	c.now = now
+	ticker := c.ticker
+	c.mu.Unlock()
+	if ticker == nil {
+		panic("run lease ticker is not initialized")
+	}
+	ticker.Tick(now)
+}
+
+func (c *manualRunLeaseClock) TickerInterval() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.interval
+}
+
+type manualRunLeaseTicker struct {
+	mu      sync.Mutex
+	ch      chan time.Time
+	stopped bool
+}
+
+func (t *manualRunLeaseTicker) C() <-chan time.Time {
+	return t.ch
+}
+
+func (t *manualRunLeaseTicker) Stop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stopped = true
+}
+
+func (t *manualRunLeaseTicker) Tick(now time.Time) {
+	t.mu.Lock()
+	stopped := t.stopped
+	t.mu.Unlock()
+	if !stopped {
+		t.ch <- now
+	}
 }
 
 func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {

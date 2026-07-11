@@ -44,6 +44,7 @@ type ThreadRepository interface {
 	RenewRunLease(ctx context.Context, req RenewRunLeaseRequest) (*entity.Run, error)
 	ReleaseRunLease(ctx context.Context, req ReleaseRunLeaseRequest) (*entity.Run, error)
 	ListExpiredRunLeases(ctx context.Context, req ListExpiredRunLeasesRequest) ([]*entity.Run, error)
+	ReconcileExpiredRunLease(ctx context.Context, req ReconcileExpiredRunLeaseRequest) (*entity.Run, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
 	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
@@ -289,6 +290,17 @@ type ReleaseRunLeaseRequest struct {
 type ListExpiredRunLeasesRequest struct {
 	Now   int64
 	Limit int32
+}
+
+type ReconcileExpiredRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
 }
 
 type UpdateRunStatusRequest struct {

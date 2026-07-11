@@ -3134,6 +3134,9 @@ func TestApplicationRunLeaseOperationsMapDomainRuns(t *testing.T) {
 		expiredRunLeases: []*entity.Run{{
 			ID: 201, Status: entity.RunStatusRunning, LeaseExpiresAt: 2_000, ExecutionGeneration: 1,
 		}},
+		reconciledRunLease: &entity.Run{
+			ID: 201, Status: entity.RunStatusFailed, ErrorCode: "run_abandoned", EndedAt: 4_000,
+		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
@@ -3169,6 +3172,21 @@ func TestApplicationRunLeaseOperationsMapDomainRuns(t *testing.T) {
 	require.Len(t, expired.Runs, 1)
 	require.Equal(t, int64(201), expired.Runs[0].RunID)
 	require.Equal(t, int32(10), domainSVC.listExpiredRunLeasesReq.Limit)
+
+	reconciled, err := app.ReconcileExpiredRunLease(context.Background(), &ReconcileExpiredRunLeaseRequest{
+		RunID:               201,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-201",
+		ExecutionGeneration: 1,
+		ToStatus:            RunStatusFailed,
+		Now:                 4_000,
+		ErrorCode:           "run_abandoned",
+		ErrorMessage:        "execution lease expired without a recoverable checkpoint",
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusFailed, reconciled.Run.Status)
+	require.Equal(t, "lease-201", domainSVC.reconcileExpiredRunLeaseReq.LeaseToken)
+	require.Equal(t, entity.RunStatusFailed, domainSVC.reconcileExpiredRunLeaseReq.ToStatus)
 }
 
 func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
@@ -3869,8 +3887,11 @@ type recordingThreadService struct {
 	gotRunsByID                    map[int64]*entity.Run
 	claimedQueuedResumeRuns        []*entity.Run
 	renewedRunLease                *entity.Run
+	renewRunLeaseErr               error
+	renewRunLeaseCalls             chan *domainservice.RenewRunLeaseRequest
 	releasedRunLease               *entity.Run
 	expiredRunLeases               []*entity.Run
+	reconciledRunLease             *entity.Run
 	interruptedRun                 *entity.Run
 	runEvents                      []*entity.RunEvent
 	checkpoints                    []*entity.Checkpoint
@@ -3896,9 +3917,12 @@ type recordingThreadService struct {
 	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
 	renewRunLeaseReq               *domainservice.RenewRunLeaseRequest
 	releaseRunLeaseReq             *domainservice.ReleaseRunLeaseRequest
+	releaseRunLeaseReqs            []*domainservice.ReleaseRunLeaseRequest
 	listExpiredRunLeasesReq        *domainservice.ListExpiredRunLeasesRequest
+	reconcileExpiredRunLeaseReq    *domainservice.ReconcileExpiredRunLeaseRequest
 	aggregateRunBacklogReq         *domainservice.AggregateRunBacklogRequest
 	completeRunReq                 *domainservice.UpdateRunStatusRequest
+	completeRunReqs                []*domainservice.UpdateRunStatusRequest
 	interruptRunReq                *domainservice.UpdateRunStatusRequest
 	failRunReq                     *domainservice.UpdateRunStatusRequest
 	cancelRunReq                   *domainservice.UpdateRunStatusRequest
@@ -3941,6 +3965,7 @@ type recordingThreadService struct {
 	getID                          int64
 	getRunID                       int64
 	completeRunErr                 error
+	completeRunErrors              map[int64]error
 }
 
 type recordingArtifactService struct {
@@ -4405,6 +4430,23 @@ func (s *recordingThreadService) RenewRunLease(
 	req *domainservice.RenewRunLeaseRequest,
 ) (*entity.Run, error) {
 	s.renewRunLeaseReq = req
+	if s.renewRunLeaseCalls != nil {
+		s.renewRunLeaseCalls <- req
+	}
+	if s.renewRunLeaseErr != nil {
+		return nil, s.renewRunLeaseErr
+	}
+	if s.renewedRunLease == nil && req != nil {
+		return &entity.Run{
+			ID:                  req.RunID,
+			Status:              entity.RunStatusRunning,
+			LeaseOwner:          req.LeaseOwner,
+			LeaseToken:          req.LeaseToken,
+			HeartbeatAt:         req.Now,
+			LeaseExpiresAt:      req.Now + req.LeaseTTLMillis,
+			ExecutionGeneration: req.ExecutionGeneration,
+		}, nil
+	}
 	return s.renewedRunLease, nil
 }
 
@@ -4413,6 +4455,10 @@ func (s *recordingThreadService) ReleaseRunLease(
 	req *domainservice.ReleaseRunLeaseRequest,
 ) (*entity.Run, error) {
 	s.releaseRunLeaseReq = req
+	s.releaseRunLeaseReqs = append(s.releaseRunLeaseReqs, req)
+	if s.releasedRunLease == nil && req != nil {
+		return &entity.Run{ID: req.RunID, Status: req.ToStatus}, nil
+	}
 	return s.releasedRunLease, nil
 }
 
@@ -4424,8 +4470,20 @@ func (s *recordingThreadService) ListExpiredRunLeases(
 	return s.expiredRunLeases, nil
 }
 
+func (s *recordingThreadService) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req *domainservice.ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	s.reconcileExpiredRunLeaseReq = req
+	return s.reconciledRunLease, nil
+}
+
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
 	s.completeRunReq = req
+	s.completeRunReqs = append(s.completeRunReqs, req)
+	if req != nil && s.completeRunErrors != nil && s.completeRunErrors[req.RunID] != nil {
+		return nil, s.completeRunErrors[req.RunID]
+	}
 	if s.completeRunErr != nil {
 		return nil, s.completeRunErr
 	}

@@ -20,10 +20,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *testing.T) {
@@ -778,6 +780,106 @@ func TestResumeRunProcessorReportsProcessResultWhenCompleteRunFails(t *testing.T
 		ProcessedRuns: 1,
 		ErroredRuns:   1,
 	}, result)
+}
+
+func TestResumeRunProcessorIsolatesBatchFailureAndReleasesBackToProtectedQueue(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+			{ID: 201, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-201", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+			{ID: 202, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-202", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+		},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues: `{"messages":[],"steps":[],"memory":{"items":[]}}`, ChannelVersions: `{}`,
+			PendingSends: `[{"node":"generate_answer","step_id":"step-1"}]`, Metadata: `{}`,
+		},
+		appended:          &entity.Message{ID: 300, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "resumed"},
+		completedRun:      &entity.Run{ID: 999, ThreadID: 10, Status: entity.RunStatusSucceeded},
+		completeRunErrors: map[int64]error{200: errors.New("resume completion infrastructure failure")},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	executed := make([]int64, 0, 3)
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID: "resume-worker-a", BatchSize: 3,
+		Executor: ResumeRunExecutorFunc(func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+			executed = append(executed, run.RunID)
+			return &RunExecutionResult{Message: "resumed"}, nil
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.ErrorContains(t, err, "resume completion infrastructure failure")
+	require.Equal(t, []int64{200, 201, 202}, executed)
+	require.Equal(t, ResumeRunProcessResult{
+		ClaimedRuns:   3,
+		ProcessedRuns: 3,
+		SucceededRuns: 2,
+		ErroredRuns:   1,
+	}, result)
+	require.Len(t, domainSVC.completeRunReqs, 3)
+	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
+	require.Equal(t, int64(200), domainSVC.releaseRunLeaseReqs[0].RunID)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+	require.Equal(t, "lease-200", domainSVC.releaseRunLeaseReqs[0].LeaseToken)
+}
+
+func TestResumeRunProcessorRenewsLeaseWhileExecutionIsActive(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+			Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		renewRunLeaseCalls: renewCalls,
+		appended:           &entity.Message{ID: 301, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "resumed"},
+		completedRun:       &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:          "resume-worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+		Executor: ResumeRunExecutorFunc(func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+			close(started)
+			<-release
+			return &RunExecutionResult{Message: "resumed"}, nil
+		}),
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- processor.ProcessQueuedResumeRuns(context.Background())
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	renew := <-renewCalls
+	require.Equal(t, int64(200), renew.RunID)
+	require.Equal(t, "resume-worker-a", renew.LeaseOwner)
+	require.Equal(t, "lease-200", renew.LeaseToken)
+	require.Equal(t, uint64(4), renew.ExecutionGeneration)
+	require.Equal(t, int64(3_000), renew.Now)
+	require.Equal(t, int64(6_000), renew.LeaseTTLMillis)
+	close(release)
+	require.NoError(t, <-done)
+	require.Equal(t, int64(1_000), domainSVC.claimQueuedResumeRunsReq.Now)
+	require.Equal(t, int64(6_000), domainSVC.claimQueuedResumeRunsReq.LeaseTTLMillis)
 }
 
 type recordingResumeRunExecutor struct {

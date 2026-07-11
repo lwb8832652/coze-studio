@@ -1862,6 +1862,40 @@ func (s *threadService) ListExpiredRunLeases(
 	})
 }
 
+func (s *threadService) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req *ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("reconcile expired run lease request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	owner := strings.TrimSpace(req.LeaseOwner)
+	token := strings.TrimSpace(req.LeaseToken)
+	if owner == "" || token == "" || req.ExecutionGeneration == 0 {
+		return nil, InvalidArgumentErrorf("run lease credentials are required")
+	}
+	if req.ToStatus != entity.RunStatusInterrupted && req.ToStatus != entity.RunStatusFailed {
+		return nil, InvalidArgumentErrorf("expired run lease reconciliation target status is invalid")
+	}
+
+	return s.repo.ReconcileExpiredRunLease(ctx, repository.ReconcileExpiredRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          owner,
+		LeaseToken:          token,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            req.ToStatus,
+		Now:                 req.Now,
+		ErrorCode:           strings.TrimSpace(req.ErrorCode),
+		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
+	})
+}
+
 func (s *threadService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
 	return s.transitionRun(ctx, req, entity.RunStatusSucceeded)
 }

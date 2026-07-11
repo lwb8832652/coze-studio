@@ -636,6 +636,46 @@ func TestListExpiredRunLeasesForwardsClockAndLimit(t *testing.T) {
 	require.Equal(t, int32(5), repo.lastListExpiredRunLeasesReq.Limit)
 }
 
+func TestReconcileExpiredRunLeaseValidatesTargetAndForwardsFence(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning,
+		LeaseOwner: "worker-a", LeaseToken: "lease-1", LeaseExpiresAt: 2_000,
+		ExecutionGeneration: 2,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.ReconcileExpiredRunLease(context.Background(), &ReconcileExpiredRunLeaseRequest{
+		RunID:               1,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-1",
+		ExecutionGeneration: 2,
+		ToStatus:            entity.RunStatusSucceeded,
+		Now:                 2_001,
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+
+	reconciled, err := svc.ReconcileExpiredRunLease(context.Background(), &ReconcileExpiredRunLeaseRequest{
+		RunID:               1,
+		LeaseOwner:          " worker-a ",
+		LeaseToken:          " lease-1 ",
+		ExecutionGeneration: 2,
+		ToStatus:            entity.RunStatusFailed,
+		Now:                 2_001,
+		ErrorCode:           " run_abandoned ",
+		ErrorMessage:        " execution lease expired without a recoverable checkpoint ",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusFailed, reconciled.Status)
+	require.Equal(t, "worker-a", repo.lastReconcileExpiredRunLeaseReq.LeaseOwner)
+	require.Equal(t, "lease-1", repo.lastReconcileExpiredRunLeaseReq.LeaseToken)
+	require.Equal(t, uint64(2), repo.lastReconcileExpiredRunLeaseReq.ExecutionGeneration)
+	require.Equal(t, "run_abandoned", repo.lastReconcileExpiredRunLeaseReq.ErrorCode)
+	require.Equal(t, "execution lease expired without a recoverable checkpoint", repo.lastReconcileExpiredRunLeaseReq.ErrorMessage)
+}
+
 func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.runs[10] = []*entity.Run{
@@ -1703,6 +1743,7 @@ type memoryRepo struct {
 	lastRenewRunLeaseReq               repository.RenewRunLeaseRequest
 	lastReleaseRunLeaseReq             repository.ReleaseRunLeaseRequest
 	lastListExpiredRunLeasesReq        repository.ListExpiredRunLeasesRequest
+	lastReconcileExpiredRunLeaseReq    repository.ReconcileExpiredRunLeaseRequest
 	lastUpdateRunReq                   repository.UpdateRunStatusRequest
 }
 
@@ -2775,6 +2816,40 @@ func (r *memoryRepo) ListExpiredRunLeases(
 		}
 	}
 	return result, nil
+}
+
+func (r *memoryRepo) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req repository.ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastReconcileExpiredRunLeaseReq = req
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			if run.Status != entity.RunStatusRunning || run.LeaseOwner != req.LeaseOwner ||
+				run.LeaseToken != req.LeaseToken || run.ExecutionGeneration != req.ExecutionGeneration ||
+				run.LeaseExpiresAt <= 0 || run.LeaseExpiresAt > req.Now {
+				return nil, repository.ErrRunLeaseLost
+			}
+			run.Status = req.ToStatus
+			run.ErrorCode = req.ErrorCode
+			run.ErrorMessage = req.ErrorMessage
+			run.EndedAt = req.Now
+			run.UpdatedAt = req.Now
+			run.WorkerID = ""
+			run.LeaseOwner = ""
+			run.LeaseToken = ""
+			run.LeaseExpiresAt = 0
+			run.HeartbeatAt = 0
+			run.CancelRequestedAt = 0
+			return cloneRun(run), nil
+		}
+	}
+	return nil, fmt.Errorf("run %d not found", req.RunID)
 }
 
 func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateRunStatusRequest) error {

@@ -276,6 +276,12 @@ and the serial full backend with the required Mockey compiler flags.
 
 **Files:**
 
+- Modify: backend/domain/agentthread/repository/repository.go
+- Modify: backend/domain/agentthread/repository/mysql.go
+- Test: backend/domain/agentthread/repository/mysql_test.go
+- Modify: backend/domain/agentthread/service/service.go
+- Modify: backend/domain/agentthread/service/service_impl.go
+- Test: backend/domain/agentthread/service/service_impl_test.go
 - Modify: backend/application/agentthread/dto.go
 - Modify: backend/application/agentthread/runner.go
 - Modify: backend/application/agentthread/resume_runner.go
@@ -285,23 +291,23 @@ and the serial full backend with the required Mockey compiler flags.
 - Test: backend/application/agentthread/resume_runner_test.go
 - Test: backend/application/agentthread/worker_test.go
 
-- [ ] **Step 1: Write failing batch isolation tests**
+- [x] **Step 1: Write failing batch isolation tests**
 
 Claim three runs, make the first fail at infrastructure level, and assert the
 other two are processed or explicitly released. Repeat for resume runs.
 
-- [ ] **Step 2: Write failing heartbeat and stale recovery tests**
+- [x] **Step 2: Write failing heartbeat and stale recovery tests**
 
 With a fake clock, prove heartbeat renewal, shutdown cleanup, checkpoint-based
 recovery and bounded run_abandoned failure when no checkpoint exists.
 
-- [ ] **Step 3: Implement per-run isolation, heartbeat and reconciliation**
+- [x] **Step 3: Implement per-run isolation, heartbeat and reconciliation**
 
 Continue the batch after a single-run error. Explicitly release an unfinalized
 lease. Heartbeat active executions and periodically reconcile expired leases
 with an idempotency key based on source run and generation.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ~~~bash
 cd backend
@@ -309,6 +315,20 @@ go test ./application/agentthread -run 'Batch|Heartbeat|Stale|Abandoned|Recovery
 git add backend/application/agentthread
 git commit -m "fix: recover and isolate leased agent runs"
 ~~~
+
+Completed 2026-07-11. Ordinary and checkpoint-resume batches now continue
+after an individual infrastructure failure and release any unfinalized live
+lease to its eligible queue. Both processors use one injected-clock heartbeat
+controller, stop renewal before terminal CAS, cancel execution when ownership
+is lost, and release rather than falsely fail work during shutdown. A separate
+expired-lease CAS prevents stale workers from mutating a newer execution.
+Compatible checkpoints create one protected resume run per source generation;
+missing or invalid checkpoints end with bounded `run_abandoned` metadata. The
+recovery worker is registered in application bootstrap and is enabled in the
+debug profile together with the resume worker. Evidence:
+`docs/superpowers/evidence/2026-07-11-deerflow-agent-run-lease-ownership.md`.
+Verification passed for all affected packages, targeted `go vet`, `gofmt`,
+`git diff --check`, and the serial full backend with Mockey compiler flags.
 
 ### Task 5: Fence Cancellation And Transactional Finalization
 

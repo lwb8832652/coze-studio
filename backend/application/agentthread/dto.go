@@ -1234,6 +1234,21 @@ type ListExpiredRunLeasesResponse struct {
 	Runs []*RunSummary
 }
 
+type ReconcileExpiredRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            RunStatus
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
+}
+
+type ReconcileExpiredRunLeaseResponse struct {
+	Run *RunSummary
+}
+
 type UpdateRunStatusRequest struct {
 	RunID               int64
 	From                RunStatus
