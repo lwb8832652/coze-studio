@@ -73,16 +73,36 @@ type ADKProviderCapabilityMiddleware struct {
 func NewADKProviderCapabilityMiddleware(
 	run *RunSummary,
 	capabilities ADKModelCapabilities,
+	runtimeConfigs ...DeerFlowRuntimeConfig,
 ) (*ADKProviderCapabilityMiddleware, error) {
 	config, err := adkProviderCapabilityConfigFromRun(run, capabilities)
 	if err != nil {
 		return nil, err
+	}
+	if len(runtimeConfigs) > 0 {
+		config.Reasoning = effectiveADKReasoningRequest(
+			runtimeConfigs[0].ExecutionReasoningRequestOr(config.Reasoning),
+			capabilities,
+		)
 	}
 
 	return &ADKProviderCapabilityMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		config:                       config,
 	}, nil
+}
+
+func effectiveADKReasoningRequest(
+	request ADKReasoningRequest,
+	capabilities ADKModelCapabilities,
+) ADKReasoningRequest {
+	if !capabilities.Reasoning {
+		request.ReasoningEffort = ""
+	}
+	if !capabilities.Thinking {
+		request.ThinkingEnabled = false
+	}
+	return request
 }
 
 func (m *ADKProviderCapabilityMiddleware) BeforeModelRewriteState(

@@ -232,6 +232,7 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 			ThreadID:  10,
 			SpaceID:   30,
 			CreatorID: 40,
+			Config:    `{"mode":"pro"}`,
 		}
 		bundle, err := assembler.Build(
 			context.Background(),
@@ -318,6 +319,32 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, taskList, "No tasks found")
 	})
+}
+
+func TestADKMiddlewareDoesNotBuildPlanBackendOutsidePlanMode(t *testing.T) {
+	built := 0
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		PlanBackendFactory: ADKPlanBackendFactoryFunc(func(
+			context.Context,
+			*RunSummary,
+		) (plantask.Backend, error) {
+			built++
+			return nil, nil
+		}),
+	})
+
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run:   &RunSummary{RunID: 20, Config: `{"mode":"thinking"}`},
+		Model: &recordingChatModel{},
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, built)
+	runCtx := &adk.ChatModelAgentContext{}
+	_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
+		BeforeAgent(context.Background(), runCtx)
+	require.NoError(t, err)
+	require.Empty(t, runCtx.Tools)
 }
 
 func TestADKPlanTaskMiddlewarePrecedesContextAndPolicyWrappers(t *testing.T) {

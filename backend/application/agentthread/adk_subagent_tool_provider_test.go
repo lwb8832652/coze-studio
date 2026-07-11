@@ -30,6 +30,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestADKSubagentToolProviderSkipsDefinitionsWhenCapabilityDisabled(t *testing.T) {
+	definitionCalls := 0
+	provider := NewADKSubagentToolProvider(
+		nil,
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return []ADKSubagentDefinition{{Name: "writer", Description: "Write"}}, nil
+		}),
+		nil,
+	)
+
+	set, err := provider.ResolveToolSet(context.Background(), &RunSummary{
+		Config: `{"mode":"ultra","subagent_enabled":false}`,
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, definitionCalls)
+	require.Empty(t, set.StaticTools)
+	require.Empty(t, set.DynamicTools)
+}
+
+func TestADKSubagentToolProviderResolvesDefinitionsWhenCapabilityEnabled(t *testing.T) {
+	definitionCalls := 0
+	provider := NewADKSubagentToolProvider(
+		nil,
+		ADKSubagentDefinitionProviderFunc(func(
+			context.Context,
+			*RunSummary,
+		) ([]ADKSubagentDefinition, error) {
+			definitionCalls++
+			return nil, nil
+		}),
+		nil,
+	)
+
+	set, err := provider.ResolveToolSet(context.Background(), &RunSummary{
+		Config: `{"mode":"pro","subagent_enabled":true}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, definitionCalls)
+	require.Empty(t, set.StaticTools)
+}
+
 func TestADKRunConfigSubagentDefinitionProviderParsesDefinitions(t *testing.T) {
 	provider := NewADKRunConfigSubagentDefinitionProvider()
 	run := &RunSummary{

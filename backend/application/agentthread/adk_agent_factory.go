@@ -172,6 +172,10 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(run.Config)
+	if err != nil {
+		return nil, err
+	}
 	modelRetryConfig, err := adkModelRetryConfigFromRun(run)
 	if err != nil {
 		return nil, err
@@ -193,6 +197,7 @@ func (f *ApplicationADKAgentFactory) Build(
 		chatModel,
 		run,
 		cfg,
+		runtimeConfig,
 	)
 	if err != nil {
 		return nil, err
@@ -216,6 +221,7 @@ func (f *ApplicationADKAgentFactory) Build(
 				candidateModel,
 				run,
 				candidateConfig,
+				runtimeConfig,
 			)
 			if candidateErr != nil {
 				return nil, false, candidateErr
@@ -261,6 +267,7 @@ func (f *ApplicationADKAgentFactory) Build(
 			StaticTools:       tools,
 			DynamicTools:      dynamicTools,
 			ModelCapabilities: modelCapabilities,
+			RuntimeConfig:     runtimeConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("build eino adk middlewares: %w", err)
@@ -303,6 +310,7 @@ func prepareADKChatModelForRun(
 	chatModel model.BaseChatModel,
 	run *RunSummary,
 	cfg modelExecutorConfig,
+	runtimeConfig DeerFlowRuntimeConfig,
 ) (model.BaseChatModel, ADKModelCapabilities, error) {
 	modelCapabilities := adkModelCapabilitiesFromChatModel(chatModel)
 	providerCapabilityConfig, err := adkProviderCapabilityConfigFromRun(
@@ -312,6 +320,10 @@ func prepareADKChatModelForRun(
 	if err != nil {
 		return nil, ADKModelCapabilities{}, err
 	}
+	providerCapabilityConfig.Reasoning = effectiveADKReasoningRequest(
+		runtimeConfig.ExecutionReasoningRequestOr(providerCapabilityConfig.Reasoning),
+		modelCapabilities,
+	)
 
 	options := modelExecutorOptions(cfg)
 	reasoningOptions, err := adkReasoningModelOptions(

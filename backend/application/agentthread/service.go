@@ -204,7 +204,8 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if message == "" {
 		return nil, fmt.Errorf("task thread message is required")
 	}
-	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	if err != nil {
 		return nil, err
 	}
 
@@ -243,7 +244,7 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 		},
 		Run: domainservice.CreateRunRequest{
 			AssistantID: req.AssistantID, RunKind: domainentity.RunKindTask,
-			Command: req.Command, Input: input, Config: req.Config,
+			Command: req.Command, Input: input, Config: runConfig,
 			Context: req.Context, Metadata: req.Metadata, StreamMode: req.StreamMode,
 			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
@@ -549,7 +550,8 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	if err != nil {
 		return nil, err
 	}
 	messageContent := strings.TrimSpace(req.MessageContent)
@@ -571,7 +573,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
 				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
 				Status: domainentity.RunStatus(req.Status), Command: req.Command,
-				Input: authoritativeInput, Config: req.Config, Context: req.Context,
+				Input: authoritativeInput, Config: runConfig, Context: req.Context,
 				Metadata: req.Metadata, StreamMode: req.StreamMode,
 				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
@@ -598,7 +600,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
 				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
 				Status: domainentity.RunStatus(req.Status), Command: req.Command,
-				Input: req.Input, Config: req.Config, Context: req.Context,
+				Input: req.Input, Config: runConfig, Context: req.Context,
 				Metadata: req.Metadata, StreamMode: req.StreamMode,
 				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
@@ -622,7 +624,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		Status:            domainentity.RunStatus(req.Status),
 		Command:           req.Command,
 		Input:             req.Input,
-		Config:            req.Config,
+		Config:            runConfig,
 		Context:           req.Context,
 		Metadata:          req.Metadata,
 		StreamMode:        req.StreamMode,
@@ -837,14 +839,12 @@ func legacyAppendedMessageID(metadata string) int64 {
 	return 0
 }
 
-func (s *ApplicationService) validateRunRuntimeConfig(config string) error {
+func (s *ApplicationService) normalizeNewRunRuntimeConfig(config, runContext string) (string, error) {
 	if s.RuntimePolicy == nil {
-		return nil
+		return config, nil
 	}
-	_, err := s.RuntimePolicy.runtimeModeFromRun(&RunSummary{
-		Config: config,
-	})
-	return err
+	normalized, _, err := normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
+	return normalized, err
 }
 
 func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {

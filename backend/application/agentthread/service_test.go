@@ -83,7 +83,7 @@ func TestApplicationCreateTaskThreadRejectsRuntimeBeforeThreadPersistence(t *tes
 		},
 	}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: false,
 	}
 	app := &ApplicationService{
@@ -175,6 +175,37 @@ func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically(t *testin
 	require.Nil(t, domainSVC.createReq)
 	require.Nil(t, domainSVC.createRunReq)
 	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread:  &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2, Title: "新建任务"},
+			Run:     &entity.Run{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser},
+		},
+	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Message: "请分析客户反馈",
+		Config:  `{"mode":"thinking","skills":{"enabled":true}}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"mode":"thinking",
+		"thinking_enabled":true,
+		"reasoning_effort":"low",
+		"is_plan_mode":false,
+		"subagent_enabled":false,
+		"skills":{"enabled":true}
+	}`, domainSVC.createThreadRunMessageReq.Run.Config)
 }
 
 func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
@@ -1280,7 +1311,7 @@ func TestApplicationCreateRunWithMessageExcludesRolledBackRunHistory(t *testing.
 func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: false,
 	}
 	app := &ApplicationService{
@@ -1300,7 +1331,7 @@ func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) 
 func TestApplicationCreateRunRejectsUnknownRuntimeBeforePersistence(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: true,
 	}
 	app := &ApplicationService{
@@ -1315,6 +1346,49 @@ func TestApplicationCreateRunRejectsUnknownRuntimeBeforePersistence(t *testing.T
 
 	require.ErrorContains(t, err, "unsupported agent runtime: other")
 	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateRunRejectsLegacyRuntimeBeforePersistence(t *testing.T) {
+	domainSVC := &recordingThreadService{}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Config:   `{"runtime":"legacy"}`,
+	})
+
+	require.ErrorIs(t, err, ErrInvalidRuntimeConfig)
+	require.ErrorContains(t, err, "legacy runtime is not selectable for new runs")
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationCreateRunCanonicalizesLangGraphRuntimeContext(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2},
+		},
+	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Config:   `{}`,
+		Context:  `{"mode":"flash","model_name":"deepseek-v4-pro"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"mode":"flash",
+		"model_name":"deepseek-v4-pro",
+		"thinking_enabled":false,
+		"is_plan_mode":false,
+		"subagent_enabled":false
+	}`, domainSVC.createRunBundleReq.Run.Config)
 }
 
 func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {

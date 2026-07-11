@@ -246,6 +246,33 @@ Every implementation slice must update this document:
     Verification includes all affected suites, targeted race/vet, full serial
     backend, formatting/diff checks and `APP_ENV=debug make build_server`.
 
+- 2026-07-11 `AR-PARITY-002` Agent semantic core (进行中): Slice 1 security and
+  lifecycle work is complete. This mainline sequence will close the runtime
+  semantics required before workspace, orchestration and memory parity: one
+  production Eino ADK path, one parsed DeerFlow mode contract, a versioned lead
+  prompt, conditional middleware and durable parity state. Implementation follows
+  `docs/superpowers/specs/2026-07-11-deerflow-backend-agent-runtime-parity-design.md`.
+  - `AR-PARITY-002.1` Production runtime and mode contract (已完成): verified
+    DeerFlow Gateway context whitelisting, frontend mode projection, lead-Agent
+    construction, conditional Todo and subagent paths against baseline
+    `5851f825`. Before this slice, NewX defaulted the server to legacy,
+    persisted ambiguous missing runtime values and installed Plan capabilities
+    for every ADK run.
+    New public runs are now canonical Eino ADK while historical unmarked rows
+    and checkpoint runtime markers keep their legacy recovery interpretation.
+    One server-owned flash/thinking/pro/ultra projection now drives model
+    reasoning defaults, Plan backend construction and subagent tool resolution;
+    Workbench and LangGraph context shapes share the verified DeerFlow
+    whitelist and precedence. Invalid/legacy requests fail as bounded 400s
+    before aggregate persistence. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-production-runtime-mode-contract.md`.
+    Verification: focused RED/GREEN suites, affected application/handler/router
+    packages, targeted race and vet, full serial backend tests, formatting/diff
+    checks and `APP_ENV=debug make build_server` all passed. The Agent semantic
+    core remains `进行中`; prompt composition, conditional no-op removal,
+    subagent concurrency enforcement, bounded capability-downgrade events and
+    durable parity state continue as `AR-PARITY-002.2` through `.4`.
+
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
   keeps `@` / `@资源类型：` as plain prefix text, applies the gray pill only to

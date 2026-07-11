@@ -47,15 +47,15 @@ func TestRuntimeModeFromRunRejectsUnknownRuntime(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported agent runtime: unknown")
 }
 
-func TestRuntimePolicyFromEnvDefaultsToLegacyWithADKDisabled(t *testing.T) {
+func TestRuntimePolicyFromEnvDefaultsToEinoADKEnabled(t *testing.T) {
 	t.Setenv(agentThreadRuntimeDefaultEnv, "")
 	t.Setenv(agentThreadEinoADKEnabledEnv, "")
 
 	policy, err := RuntimePolicyFromEnv()
 
 	require.NoError(t, err)
-	require.Equal(t, RuntimeModeLegacy, policy.DefaultMode)
-	require.False(t, policy.EinoADKEnabled)
+	require.Equal(t, RuntimeModeEinoADK, policy.DefaultMode)
+	require.True(t, policy.EinoADKEnabled)
 }
 
 func TestRuntimePolicyFromEnvRejectsUnknownDefault(t *testing.T) {
@@ -75,8 +75,17 @@ func TestRuntimePolicyFromEnvRejectsDisabledADKDefault(t *testing.T) {
 	require.ErrorContains(t, err, "default eino adk runtime is disabled")
 }
 
-func TestRuntimePolicyFromEnvRejectsInvalidADKFlag(t *testing.T) {
+func TestRuntimePolicyFromEnvRejectsLegacyProductionDefault(t *testing.T) {
 	t.Setenv(agentThreadRuntimeDefaultEnv, string(RuntimeModeLegacy))
+	t.Setenv(agentThreadEinoADKEnabledEnv, "true")
+
+	_, err := RuntimePolicyFromEnv()
+
+	require.ErrorContains(t, err, "legacy runtime cannot be the production default")
+}
+
+func TestRuntimePolicyFromEnvRejectsInvalidADKFlag(t *testing.T) {
+	t.Setenv(agentThreadRuntimeDefaultEnv, string(RuntimeModeEinoADK))
 	t.Setenv(agentThreadEinoADKEnabledEnv, "sometimes")
 
 	_, err := RuntimePolicyFromEnv()
@@ -134,7 +143,7 @@ func TestRuntimeSelectorRoutesSubagentRetryToConfiguredADKExecutor(t *testing.T)
 	require.True(t, adkExecutor.retryExecuteCalled)
 }
 
-func TestRuntimeSelectorUsesPolicyDefault(t *testing.T) {
+func TestRuntimeSelectorUsesCanonicalEinoRuntimeMarker(t *testing.T) {
 	selector := NewRuntimeSelector(
 		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
 			return &RunExecutionResult{Message: "legacy"}, nil
@@ -148,10 +157,29 @@ func TestRuntimeSelectorUsesPolicyDefault(t *testing.T) {
 		},
 	)
 
-	result, err := selector.Execute(context.Background(), &RunSummary{})
+	result, err := selector.Execute(context.Background(), &RunSummary{
+		Config: `{"runtime":"eino_adk"}`,
+	})
 
 	require.NoError(t, err)
 	require.Equal(t, "adk", result.Message)
+}
+
+func TestRuntimeSelectorKeepsUnmarkedHistoricalRunsOnLegacy(t *testing.T) {
+	selector := NewRuntimeSelector(
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "legacy"}, nil
+		}),
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "adk"}, nil
+		}),
+		RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true},
+	)
+
+	result, err := selector.Execute(context.Background(), &RunSummary{})
+
+	require.NoError(t, err)
+	require.Equal(t, "legacy", result.Message)
 }
 
 func TestRuntimeSelectorRejectsADKWhenServerPolicyDisablesIt(t *testing.T) {

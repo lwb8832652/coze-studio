@@ -367,7 +367,7 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 		}),
 	)
 
-	agent, err := factory.Build(context.Background(), &RunSummary{})
+	agent, err := factory.Build(context.Background(), &RunSummary{Config: `{"mode":"flash"}`})
 
 	require.NoError(t, err)
 	require.NotNil(t, agent)
@@ -378,6 +378,61 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.File)
 	require.True(t, got.ModelCapabilities.Audio)
 	require.True(t, got.ModelCapabilities.Video)
+	require.Equal(t, DeerFlowModeFlash, got.RuntimeConfig.Mode)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+}
+
+func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{Config: `{"mode":"pro"}`})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("plan")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, ADKReasoningRequest{
+		ReasoningEffort: "medium",
+		ThinkingEnabled: true,
+	}, chatModel.reasoningRequest)
+}
+
+func TestADKAgentFactoryDowngradesUnsupportedModeReasoning(t *testing.T) {
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{"mode":"pro"}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("plan")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
 }
 
 func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
@@ -417,6 +472,44 @@ func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
 		ThinkingEnabled: true,
 	}, chatModel.reasoningRequest)
 	require.Equal(t, []string{"reasoning:high", "thinking:true"}, chatModel.options.Stop)
+}
+
+func TestADKAgentFactoryPreservesHistoricalCamelCaseReasoningOptions(t *testing.T) {
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{
+			Thinking:  true,
+			Reasoning: true,
+		},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"reasoningEffort":"high",
+			"thinkingEnabled":true
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("think")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, ADKReasoningRequest{
+		ReasoningEffort: "high",
+		ThinkingEnabled: true,
+	}, chatModel.reasoningRequest)
 }
 
 func TestADKAgentFactoryRequiresProjectorForSupportedReasoningRequest(t *testing.T) {

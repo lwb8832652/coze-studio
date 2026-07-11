@@ -94,6 +94,7 @@ type ADKModelCapabilities struct {
 
 type ADKMiddlewareBuildInput struct {
 	Run               *RunSummary
+	RuntimeConfig     DeerFlowRuntimeConfig
 	Model             model.BaseChatModel
 	StaticTools       []tool.BaseTool
 	DynamicTools      []tool.BaseTool
@@ -154,6 +155,13 @@ func (a *ADKMiddlewareAssembler) Build(
 	if input.Run == nil {
 		return ADKMiddlewareBundle{}, fmt.Errorf("run is required")
 	}
+	if !input.RuntimeConfig.resolved {
+		runtimeConfig, err := ParseDeerFlowRuntimeConfig(input.Run.Config)
+		if err != nil {
+			return ADKMiddlewareBundle{}, err
+		}
+		input.RuntimeConfig = runtimeConfig
+	}
 	if err := validateADKToolPartitions(ctx, input.StaticTools, input.DynamicTools); err != nil {
 		return ADKMiddlewareBundle{}, err
 	}
@@ -186,7 +194,7 @@ func (a *ADKMiddlewareAssembler) Build(
 			)
 		}
 	}
-	if a.planBackendFactory != nil {
+	if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {
 		input.PlanBackend, err = a.planBackendFactory.Build(ctx, input.Run)
 		if err != nil {
 			return ADKMiddlewareBundle{}, fmt.Errorf(
@@ -640,6 +648,7 @@ func defaultADKMiddlewareBuilder(
 			return NewADKProviderCapabilityMiddleware(
 				input.Run,
 				input.ModelCapabilities,
+				input.RuntimeConfig,
 			)
 		}
 	default:

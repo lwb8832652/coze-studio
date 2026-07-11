@@ -108,6 +108,60 @@ func TestLangGraphRunCreateListAndGetHandlers(t *testing.T) {
 	require.Contains(t, getBody, `"source":"langgraph_sdk"`)
 }
 
+func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/threads/:thread_id/runs", CreateLangGraphRun)
+	installAgentThreadTestService(t)
+	previousPolicy := appagentthread.SVC.RuntimePolicy
+	policy := appagentthread.RuntimePolicy{
+		DefaultMode:    appagentthread.RuntimeModeEinoADK,
+		EinoADKEnabled: true,
+	}
+	appagentthread.SVC.RuntimePolicy = &policy
+	t.Cleanup(func() { appagentthread.SVC.RuntimePolicy = previousPolicy })
+
+	payload, err := json.Marshal(map[string]any{
+		"assistant_id": "lead_agent",
+		"input": map[string]any{
+			"messages": []map[string]any{{"role": "user", "content": "analyze"}},
+		},
+		"config": map[string]any{
+			"configurable": map[string]any{"mode": "flash"},
+		},
+		"context": map[string]any{
+			"mode":                     "ultra",
+			"model_name":               "deepseek-v4-pro",
+			"max_concurrent_subagents": 4,
+		},
+	})
+	require.NoError(t, err)
+	response := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	persisted, err := appagentthread.SVC.GetRun(
+		context.Background(),
+		&appagentthread.GetRunRequest{RunID: 2},
+	)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"mode":"ultra",
+		"model_name":"deepseek-v4-pro",
+		"thinking_enabled":true,
+		"reasoning_effort":"high",
+		"is_plan_mode":true,
+		"subagent_enabled":true,
+		"max_concurrent_subagents":4,
+		"configurable":{"mode":"flash"}
+	}`, persisted.Run.Config)
+}
+
 func TestLangGraphRunGetForbiddenForDifferentViewer(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
 	h.GET(

@@ -2312,6 +2312,13 @@ func taskThreadUploadFileToAPI(
 }
 
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if errors.Is(err, appagentthread.ErrInvalidRuntimeConfig) {
+		c.JSON(consts.StatusBadRequest, map[string]any{
+			"code": consts.StatusBadRequest,
+			"msg":  "invalid agent runtime configuration",
+		})
+		return
+	}
 	if errors.Is(err, appagentthread.ErrActiveRunExists) {
 		c.JSON(consts.StatusConflict, map[string]any{
 			"code": consts.StatusConflict,

@@ -166,6 +166,16 @@ func (p *ADKSubagentToolProvider) ResolveToolSet(
 	if err != nil {
 		return ADKToolSet{}, err
 	}
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig("")
+	if run != nil {
+		runtimeConfig, err = ParseDeerFlowRuntimeConfig(run.Config)
+	}
+	if err != nil {
+		return ADKToolSet{}, err
+	}
+	if !runtimeConfig.SubagentCapabilityEnabled() {
+		return set, nil
+	}
 	if p.definition == nil {
 		return set, nil
 	}

@@ -358,6 +358,46 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Equal(t, "new-task-1", runs.Runs[0].IdempotencyKey)
 }
 
+func TestCreateTaskThreadHandlerRejectsLegacyRuntimeAsBadRequest(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	previousPolicy := appagentthread.SVC.RuntimePolicy
+	policy := appagentthread.RuntimePolicy{
+		DefaultMode:    appagentthread.RuntimeModeEinoADK,
+		EinoADKEnabled: true,
+	}
+	appagentthread.SVC.RuntimePolicy = &policy
+	t.Cleanup(func() { appagentthread.SVC.RuntimePolicy = previousPolicy })
+
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "1",
+		"message":  "test",
+		"config":   `{"runtime":"legacy"}`,
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, body, `"msg":"invalid agent runtime configuration"`)
+	require.NotContains(t, body, "legacy runtime")
+	threads, listErr := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, listErr)
+	require.Equal(t, int64(1), threads.Total)
+}
+
 func TestCreateTaskThreadHandlerRejectsUnauthorizedWorkspaceBeforeMutation(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads", CreateTaskThread)
