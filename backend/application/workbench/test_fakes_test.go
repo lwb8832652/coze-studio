@@ -337,6 +337,20 @@ func (r *recordingAgentThreadService) ReconcileExpiredRunLease(context.Context, 
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) RequestRunCancellation(
+	context.Context,
+	*agentthreadsvc.RequestRunCancellationRequest,
+) (*agentthreadsvc.RequestRunCancellationResult, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) FinalizeRunSuccess(
+	context.Context,
+	*agentthreadsvc.FinalizeRunSuccessRequest,
+) (*agentthreadsvc.FinalizeRunSuccessResult, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) CompleteRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
 	return nil, nil
 }

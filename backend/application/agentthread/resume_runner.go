@@ -24,16 +24,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
 
 const defaultResumeRunProcessorWorkerID = "agent-harness-resume"
 
 const (
-	resumeRunPayloadInvalidCode     = "checkpoint_resume_payload_invalid"
-	resumeRunCheckpointInvalidCode  = "checkpoint_resume_checkpoint_invalid"
-	resumeRunExecutorErrorCode      = "checkpoint_resume_executor_error"
-	resumeRunEmptyResultCode        = "checkpoint_resume_empty_executor_result"
-	resumeRunAppendMessageErrorCode = "checkpoint_resume_append_message_failed"
+	resumeRunPayloadInvalidCode    = "checkpoint_resume_payload_invalid"
+	resumeRunCheckpointInvalidCode = "checkpoint_resume_checkpoint_invalid"
+	resumeRunExecutorErrorCode     = "checkpoint_resume_executor_error"
+	resumeRunEmptyResultCode       = "checkpoint_resume_empty_executor_result"
 )
 
 type ResumeRunProcessorOptions struct {
@@ -177,7 +178,8 @@ func (p *ResumeRunProcessor) ProcessQueuedResumeRunsWithResult(ctx context.Conte
 	for _, run := range claimed.Runs {
 		runCtx, heartbeat := startRunLeaseHeartbeat(ctx, p.app, run, p.leaseConfig)
 		outcome, err := p.processResumeRun(runCtx, run, heartbeat)
-		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil {
+		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil &&
+			!(outcome == resumeRunProcessCanceled && errors.Is(heartbeatErr, domainrepo.ErrRunLeaseLost)) {
 			outcome = resumeRunProcessErrored
 			err = heartbeatErr
 		}
@@ -244,14 +246,30 @@ func (p *ResumeRunProcessor) processResumeRun(
 	p.emitResumeRunLoaded(ctx, run, resumeInput)
 
 	result, err := p.executor.Resume(ctx, run, resumeInput)
+	if canceledRun, canceled, lookupErr := durableCanceledRunAfterLeaseLoss(ctx, p.app, run); lookupErr != nil {
+		_ = heartbeat.Stop()
+		return resumeRunProcessErrored, lookupErr
+	} else if canceled {
+		_ = heartbeat.Stop()
+		p.recordRuntimeRunTerminal(ctx, run, canceledRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+		return resumeRunProcessCanceled, nil
+	}
 	if err != nil {
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
 			if heartbeatErr := heartbeat.Stop(); heartbeatErr != nil {
 				return resumeRunProcessErrored, heartbeatErr
 			}
-			p.emitResumeRunCanceled(ctx, run, resume)
-			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			terminalRun, cancelErr := requestDurableRunCancellation(
+				ctx,
+				p.app,
+				run,
+				p.leaseConfig.Clock.Now().UnixMilli(),
+			)
+			if cancelErr != nil {
+				return resumeRunProcessErrored, cancelErr
+			}
+			p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return resumeRunProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
@@ -295,28 +313,25 @@ func (p *ResumeRunProcessor) processResumeRun(
 		return p.finalizeFailedResumeRun(ctx, run, heartbeat, resume, resumeRunEmptyResultCode, "resume executor returned empty assistant message")
 	}
 
-	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
-		ThreadID: run.ThreadID,
-		RunID:    run.RunID,
-		Role:     MessageRoleAssistant,
-		Content:  message,
-		Metadata: resultMetadata(result),
-	}); err != nil {
-		return p.finalizeFailedResumeRun(ctx, run, heartbeat, resume, resumeRunAppendMessageErrorCode, err.Error())
-	}
 	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 		return resumeRunProcessErrored, abortErr
 	}
 
-	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+	finalized, err := p.app.FinalizeRunSuccess(ctx, &FinalizeRunSuccessRequest{
 		RunID:               run.RunID,
-		From:                RunStatusRunning,
-		WorkerID:            p.workerID,
+		ThreadID:            run.ThreadID,
 		LeaseOwner:          run.LeaseOwner,
 		LeaseToken:          run.LeaseToken,
 		ExecutionGeneration: run.ExecutionGeneration,
+		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
+		Message:             message,
+		MessageMetadata:     resultMetadata(result),
 	})
 	if err != nil {
+		if errors.Is(err, domainrepo.ErrRunCanceled) {
+			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			return resumeRunProcessCanceled, nil
+		}
 		return resumeRunProcessErrored, err
 	}
 
@@ -324,24 +339,12 @@ func (p *ResumeRunProcessor) processResumeRun(
 	p.recordRuntimeRunTerminal(
 		ctx,
 		run,
-		updateRunStatusResponseRun(completeResp),
+		finalized.Run,
 		runtimeMetricResultSuccess,
 		runtimeMetricErrorNone,
 	)
 
 	return resumeRunProcessSucceeded, nil
-}
-
-func (p *ResumeRunProcessor) emitResumeRunCanceled(
-	ctx context.Context,
-	run *RunSummary,
-	resume resumeRunPayload,
-) {
-	payload := p.resumeRunEventPayload(resume, map[string]any{
-		"status":    string(RunStatusCanceled),
-		"worker_id": p.workerID,
-	})
-	p.emitRunEvent(ctx, run, "run.canceled", payload)
 }
 
 func (p *ResumeRunProcessor) emitResumeRunInterrupted(

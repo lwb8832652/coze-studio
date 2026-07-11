@@ -621,6 +621,20 @@ func TestADKExecutorReturnsCanceledError(t *testing.T) {
 	require.Equal(t, []string{"run.canceling"}, eventSink.eventTypes())
 }
 
+func TestNormalizeADKExecutionErrorDistinguishesRunCancelFromWorkerShutdown(t *testing.T) {
+	err := normalizeADKExecutionError(context.Background(), context.Canceled)
+	var canceled *RunCanceledError
+	require.ErrorAs(t, err, &canceled)
+	require.True(t, canceled.EventPersisted)
+
+	shutdownCtx, shutdown := context.WithCancel(context.Background())
+	shutdown()
+	require.ErrorIs(t, normalizeADKExecutionError(shutdownCtx, context.Canceled), context.Canceled)
+
+	modelErr := fmt.Errorf("model failed")
+	require.ErrorIs(t, normalizeADKExecutionError(context.Background(), modelErr), modelErr)
+}
+
 func TestADKExecutorRegistersActiveExecutionForCancel(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})

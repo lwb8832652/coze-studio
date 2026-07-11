@@ -1896,6 +1896,143 @@ func (s *threadService) ReconcileExpiredRunLease(
 	})
 }
 
+func (s *threadService) RequestRunCancellation(
+	ctx context.Context,
+	req *RequestRunCancellationRequest,
+) (*RequestRunCancellationResult, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("request run cancellation request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	current, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, fmt.Errorf("run %d is missing", req.RunID)
+	}
+	if current.Status == entity.RunStatusCanceled {
+		return &RequestRunCancellationResult{
+			Run:            current,
+			PreviousStatus: entity.RunStatusCanceled,
+			Changed:        false,
+		}, nil
+	}
+	eventID, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	errorCode := strings.TrimSpace(req.ErrorCode)
+	if errorCode == "" {
+		errorCode = "run_canceled"
+	}
+	errorMessage := strings.TrimSpace(req.ErrorMessage)
+	if errorMessage == "" {
+		errorMessage = "run canceled by request"
+	}
+	payload, err := json.Marshal(map[string]any{"status": string(entity.RunStatusCanceled)})
+	if err != nil {
+		return nil, fmt.Errorf("marshal run cancellation event: %w", err)
+	}
+
+	result, err := s.repo.RequestRunCancellation(ctx, repository.RequestRunCancellationRequest{
+		RunID:        req.RunID,
+		Now:          now,
+		ErrorCode:    errorCode,
+		ErrorMessage: errorMessage,
+		Event: &entity.RunEvent{
+			ID:        eventID,
+			ThreadID:  current.ThreadID,
+			RunID:     current.ID,
+			EventType: "run.canceled",
+			Payload:   string(payload),
+			CreatedAt: now,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("run cancellation returned empty result")
+	}
+	return &RequestRunCancellationResult{
+		Run:            result.Run,
+		PreviousStatus: result.PreviousStatus,
+		Changed:        result.Changed,
+	}, nil
+}
+
+func (s *threadService) FinalizeRunSuccess(
+	ctx context.Context,
+	req *FinalizeRunSuccessRequest,
+) (*FinalizeRunSuccessResult, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("finalize run success request is required")
+	}
+	if req.RunID <= 0 || req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("run id and thread id are required")
+	}
+	owner := strings.TrimSpace(req.LeaseOwner)
+	token := strings.TrimSpace(req.LeaseToken)
+	if owner == "" || token == "" || req.ExecutionGeneration == 0 {
+		return nil, InvalidArgumentErrorf("run lease credentials are required")
+	}
+	messageContent := strings.TrimSpace(req.Message)
+	if messageContent == "" {
+		return nil, InvalidArgumentErrorf("assistant message is required")
+	}
+	messageID, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+
+	result, err := s.repo.FinalizeRunSuccess(ctx, repository.FinalizeRunSuccessRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          owner,
+		LeaseToken:          token,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 now,
+		Message: &entity.Message{
+			ID:        messageID,
+			ThreadID:  req.ThreadID,
+			RunID:     req.RunID,
+			Role:      entity.MessageRoleAssistant,
+			Content:   messageContent,
+			Metadata:  req.MessageMetadata,
+			CreatedAt: now,
+		},
+		ExpectedThreadTitle: strings.TrimSpace(req.ExpectedThreadTitle),
+		ThreadTitle:         strings.TrimSpace(req.ThreadTitle),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil || result.Message == nil {
+		return nil, fmt.Errorf("finalize run success returned empty result")
+	}
+	return &FinalizeRunSuccessResult{
+		Run:          result.Run,
+		Message:      result.Message,
+		TitleUpdated: result.TitleUpdated,
+	}, nil
+}
+
 func (s *threadService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
 	return s.transitionRun(ctx, req, entity.RunStatusSucceeded)
 }
@@ -1909,7 +2046,19 @@ func (s *threadService) FailRun(ctx context.Context, req *UpdateRunStatusRequest
 }
 
 func (s *threadService) CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error) {
-	return s.transitionRun(ctx, req, entity.RunStatusCanceled)
+	if req == nil {
+		return nil, InvalidArgumentErrorf("update run status request is required")
+	}
+	result, err := s.RequestRunCancellation(ctx, &RequestRunCancellationRequest{
+		RunID:        req.RunID,
+		Now:          req.Now,
+		ErrorCode:    req.ErrorCode,
+		ErrorMessage: req.ErrorMessage,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Run, nil
 }
 
 func (s *threadService) transitionRun(

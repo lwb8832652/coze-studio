@@ -3374,6 +3374,43 @@ func (s *ApplicationService) ReconcileExpiredRunLease(
 	return &ReconcileExpiredRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
 }
 
+func (s *ApplicationService) FinalizeRunSuccess(
+	ctx context.Context,
+	req *FinalizeRunSuccessRequest,
+) (*FinalizeRunSuccessResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("finalize run success request is required")
+	}
+
+	result, err := s.ThreadSVC.FinalizeRunSuccess(ctx, &domainservice.FinalizeRunSuccessRequest{
+		RunID:               req.RunID,
+		ThreadID:            req.ThreadID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		Message:             req.Message,
+		MessageMetadata:     req.MessageMetadata,
+		ExpectedThreadTitle: req.ExpectedThreadTitle,
+		ThreadTitle:         req.ThreadTitle,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil || result.Message == nil {
+		return nil, fmt.Errorf("agent thread service returned empty finalized run")
+	}
+
+	return &FinalizeRunSuccessResponse{
+		Run:          DomainRunToSummary(result.Run),
+		Message:      DomainMessageToSummary(result.Message),
+		TitleUpdated: result.TitleUpdated,
+	}, nil
+}
+
 func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -3402,28 +3439,64 @@ func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatus
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
 	}
+	if req == nil {
+		return nil, fmt.Errorf("update run status request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
-	resp, err := s.updateRunStatus(ctx, req, s.ThreadSVC.CancelRun)
+	result, err := s.requestRunCancellation(ctx, &domainservice.RequestRunCancellationRequest{
+		RunID:        req.RunID,
+		Now:          req.Now,
+		ErrorCode:    req.ErrorCode,
+		ErrorMessage: req.ErrorMessage,
+	})
 	if err != nil {
 		return nil, err
 	}
-	s.cancelActiveADKRun(ctx, resp)
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty canceled run")
+	}
+	resp := &UpdateRunStatusResponse{Run: DomainRunToSummary(result.Run)}
+	s.cancelActiveADKRun(ctx, result)
 
 	return resp, nil
 }
 
-func (s *ApplicationService) cancelActiveADKRun(ctx context.Context, resp *UpdateRunStatusResponse) {
-	if s == nil || s.ADKCancelRegistry == nil || resp == nil || resp.Run == nil {
+func (s *ApplicationService) requestRunCancellation(
+	ctx context.Context,
+	req *domainservice.RequestRunCancellationRequest,
+) (*domainservice.RequestRunCancellationResult, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request run cancellation request is required")
+	}
+
+	return s.ThreadSVC.RequestRunCancellation(ctx, req)
+}
+
+func (s *ApplicationService) cancelActiveADKRun(
+	ctx context.Context,
+	result *domainservice.RequestRunCancellationResult,
+) {
+	if s == nil || s.ADKCancelRegistry == nil || result == nil || result.Run == nil ||
+		!result.Changed || result.PreviousStatus != domainentity.RunStatusRunning {
 		return
 	}
-	mode, err := runtimeModeFromRun(resp.Run)
+	run := DomainRunToSummary(result.Run)
+	mode, err := runtimeModeFromRun(run)
 	if err != nil || mode != RuntimeModeEinoADK {
 		return
 	}
 
-	_ = s.ADKCancelRegistry.Cancel(
+	_ = s.ADKCancelRegistry.Request(
 		ctx,
-		resp.Run.RunID,
+		run.RunID,
 		adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
 		true,
 	)

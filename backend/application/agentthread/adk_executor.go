@@ -109,7 +109,8 @@ func (e *ADKExecutor) Execute(
 	defer cleanup()
 	iter := runner.Run(executionCtx, messages, runOptions...)
 
-	return e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	return result, normalizeADKExecutionError(ctx, err)
 }
 
 func (e *ADKExecutor) Resume(
@@ -200,7 +201,19 @@ func (e *ADKExecutor) Resume(
 		return nil, fmt.Errorf("resume eino adk runner: %w", err)
 	}
 
-	return e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	return result, normalizeADKExecutionError(ctx, err)
+}
+
+func normalizeADKExecutionError(parent context.Context, err error) error {
+	if err == nil || !errors.Is(err, context.Canceled) {
+		return err
+	}
+	if parent != nil && parent.Err() != nil {
+		return err
+	}
+
+	return &RunCanceledError{EventPersisted: true}
 }
 
 func (e *ADKExecutor) runOptions(

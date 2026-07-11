@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
@@ -111,6 +112,53 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
 	require.Contains(t, eventSink.events[2].Payload, `"status":"succeeded"`)
 	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
+}
+
+func TestResumeRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID:                  200,
+			ThreadID:            10,
+			Status:              entity.RunStatusRunning,
+			WorkerID:            "resume-worker-a",
+			LeaseOwner:          "resume-worker-a",
+			LeaseToken:          "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		finalizeRunSuccessErr: domainrepo.ErrRunCanceled,
+	}
+	eventSink := &recordingRunEventSink{}
+	processor := NewResumeRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+		Executor: ResumeRunExecutorFunc(func(
+			context.Context,
+			*RunSummary,
+			*HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "resumed answer"}, nil
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
 }
 
 func TestResumeRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
@@ -573,7 +621,6 @@ func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
 	require.Equal(t, []string{
 		"run.resume.started",
 		"run.resume.loaded",
-		"run.canceled",
 	}, eventSink.eventTypes())
 }
 
@@ -880,6 +927,69 @@ func TestResumeRunProcessorRenewsLeaseWhileExecutionIsActive(t *testing.T) {
 	require.NoError(t, <-done)
 	require.Equal(t, int64(1_000), domainSVC.claimQueuedResumeRunsReq.Now)
 	require.Equal(t, int64(6_000), domainSVC.claimQueuedResumeRunsReq.LeaseTTLMillis)
+}
+
+func TestResumeRunProcessorTreatsLeaseLossFromDurableCancellationAsCanceled(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled,
+			CancelRequestedAt: 3_000, ExecutionGeneration: 5,
+		},
+		renewRunLeaseCalls: renewCalls,
+		renewRunLeaseErr:   domainrepo.ErrRunLeaseLost,
+	}
+	started := make(chan struct{})
+	processor := NewResumeRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, ResumeRunProcessorOptions{
+		WorkerID:          "resume-worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+		Executor: ResumeRunExecutorFunc(func(
+			ctx context.Context,
+			_ *RunSummary,
+			_ *HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+	})
+	done := make(chan struct {
+		result ResumeRunProcessResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+		done <- struct {
+			result ResumeRunProcessResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	<-renewCalls
+	got := <-done
+	require.NoError(t, got.err)
+	require.Equal(t, 1, got.result.CanceledRuns)
+	require.Empty(t, domainSVC.releaseRunLeaseReqs)
+	require.Nil(t, domainSVC.failRunReq)
 }
 
 type recordingResumeRunExecutor struct {

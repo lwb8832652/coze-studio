@@ -396,6 +396,38 @@ type ReconcileExpiredRunLeaseRequest struct {
 	ErrorMessage        string
 }
 
+type RequestRunCancellationRequest struct {
+	RunID        int64
+	Now          int64
+	ErrorCode    string
+	ErrorMessage string
+}
+
+type RequestRunCancellationResult struct {
+	Run            *entity.Run
+	PreviousStatus entity.RunStatus
+	Changed        bool
+}
+
+type FinalizeRunSuccessRequest struct {
+	RunID               int64
+	ThreadID            int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	Message             string
+	MessageMetadata     string
+	ExpectedThreadTitle string
+	ThreadTitle         string
+}
+
+type FinalizeRunSuccessResult struct {
+	Run          *entity.Run
+	Message      *entity.Message
+	TitleUpdated bool
+}
+
 type UpdateRunStatusRequest struct {
 	RunID               int64
 	From                entity.RunStatus
@@ -475,6 +507,8 @@ type ThreadService interface {
 	ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*entity.Run, error)
 	ListExpiredRunLeases(ctx context.Context, req *ListExpiredRunLeasesRequest) ([]*entity.Run, error)
 	ReconcileExpiredRunLease(ctx context.Context, req *ReconcileExpiredRunLeaseRequest) (*entity.Run, error)
+	RequestRunCancellation(ctx context.Context, req *RequestRunCancellationRequest) (*RequestRunCancellationResult, error)
+	FinalizeRunSuccess(ctx context.Context, req *FinalizeRunSuccessRequest) (*FinalizeRunSuccessResult, error)
 	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

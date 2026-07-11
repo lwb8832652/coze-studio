@@ -1249,6 +1249,25 @@ type ReconcileExpiredRunLeaseResponse struct {
 	Run *RunSummary
 }
 
+type FinalizeRunSuccessRequest struct {
+	RunID               int64
+	ThreadID            int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	Message             string
+	MessageMetadata     string
+	ExpectedThreadTitle string
+	ThreadTitle         string
+}
+
+type FinalizeRunSuccessResponse struct {
+	Run          *RunSummary
+	Message      *MessageSummary
+	TitleUpdated bool
+}
+
 type UpdateRunStatusRequest struct {
 	RunID               int64
 	From                RunStatus

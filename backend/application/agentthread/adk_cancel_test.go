@@ -18,7 +18,9 @@ package agentthread
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/stretchr/testify/require"
@@ -44,7 +46,7 @@ func TestADKCancelRegistryCancelsRegisteredExecution(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, adk.CancelAfterToolCalls|adk.CancelAfterChatModel, request.mode)
 	require.True(t, request.recursive)
-	require.True(t, waiter.waited)
+	require.True(t, waiter.waited.Load())
 }
 
 func TestADKCancelRegistryStaleCleanupKeepsNewExecution(t *testing.T) {
@@ -74,12 +76,41 @@ func TestADKCancelRegistryReportsInactiveRun(t *testing.T) {
 	require.ErrorIs(t, err, ErrADKRunNotActive)
 }
 
+func TestADKCancelRegistryQueuesDurableRequestBeforeRegistration(t *testing.T) {
+	registry := NewADKCancelRegistry()
+
+	err := registry.Request(
+		context.Background(),
+		20,
+		adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
+		true,
+	)
+	require.NoError(t, err)
+
+	invoked := make(chan adkCancelRequest, 1)
+	waiter := &recordingADKCancelWaiter{}
+	cleanup := registry.register(20, func(request adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- request
+		return waiter, true
+	})
+	defer cleanup()
+
+	select {
+	case request := <-invoked:
+		require.Equal(t, adk.CancelImmediate, request.mode)
+		require.True(t, request.recursive)
+	case <-time.After(time.Second):
+		t.Fatal("queued cancellation was not applied during registration")
+	}
+	require.Eventually(t, func() bool { return waiter.waited.Load() }, time.Second, time.Millisecond)
+}
+
 type recordingADKCancelWaiter struct {
-	waited bool
+	waited atomic.Bool
 	err    error
 }
 
 func (w *recordingADKCancelWaiter) Wait() error {
-	w.waited = true
+	w.waited.Store(true)
 	return w.err
 }

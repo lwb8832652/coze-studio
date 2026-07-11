@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
@@ -102,6 +103,43 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Contains(t, eventSink.events[0].Payload, `"status":"running"`)
 	require.Contains(t, eventSink.events[0].Payload, `"worker_id":"worker-a"`)
 	require.Contains(t, eventSink.events[1].Payload, `"status":"succeeded"`)
+}
+
+func TestRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
+	userMessage := "生成文档"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{ID: 10, Title: taskThreadTitle("", userMessage)},
+		claimedRuns: []*entity.Run{{
+			ID:                  200,
+			ThreadID:            10,
+			Status:              entity.RunStatusRunning,
+			Input:               input,
+			WorkerID:            "worker-a",
+			LeaseOwner:          "worker-a",
+			LeaseToken:          "lease-200",
+			ExecutionGeneration: 3,
+		}},
+		finalizeRunSuccessErr: domainrepo.ErrRunCanceled,
+	}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "done", Title: "生成文档结果"}, nil
+		}),
+		RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1, EventSink: eventSink},
+	)
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Nil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
 func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
@@ -481,6 +519,63 @@ func TestRunProcessorStopsExecutionWhenLeaseRenewalFails(t *testing.T) {
 	require.Nil(t, domainSVC.failRunReq)
 	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
 	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+}
+
+func TestRunProcessorTreatsLeaseLossFromDurableCancellationAsCanceled(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Input: `{"messages":[]}`,
+		}},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled,
+			CancelRequestedAt: 3_000, ExecutionGeneration: 4,
+		},
+		renewRunLeaseCalls: renewCalls,
+		renewRunLeaseErr:   domainrepo.ErrRunLeaseLost,
+	}
+	started := make(chan struct{})
+	causeCh := make(chan error, 1)
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(ctx context.Context, _ *RunSummary) (*RunExecutionResult, error) {
+			close(started)
+			<-ctx.Done()
+			causeCh <- context.Cause(ctx)
+			return nil, ctx.Err()
+		}),
+		RunProcessorOptions{
+			WorkerID:          "worker-a",
+			BatchSize:         1,
+			LeaseTTL:          6 * time.Second,
+			HeartbeatInterval: 2 * time.Second,
+			LeaseClock:        clock,
+		},
+	)
+	done := make(chan struct {
+		result RunProcessResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := processor.ProcessPendingRunsWithResult(context.Background())
+		done <- struct {
+			result RunProcessResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	<-renewCalls
+	require.ErrorIs(t, <-causeCh, domainrepo.ErrRunLeaseLost)
+	got := <-done
+	require.NoError(t, got.err)
+	require.Equal(t, 1, got.result.CanceledRuns)
+	require.Empty(t, domainSVC.releaseRunLeaseReqs)
+	require.Nil(t, domainSVC.failRunReq)
 }
 
 func TestRunProcessorShutdownReleasesActiveLeaseWithoutFailingRun(t *testing.T) {
@@ -914,7 +1009,7 @@ func TestRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
 	require.Equal(t, 1, result.CanceledRuns)
 	require.Nil(t, domainSVC.failRunReq)
 	require.Nil(t, domainSVC.appendReq)
-	require.Equal(t, []string{"run.started", "run.canceled"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
 type recordingRunEventSink struct {

@@ -3213,6 +3213,177 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 	return r.GetRun(ctx, req.RunID)
 }
 
+func (r *threadRepository) RequestRunCancellation(
+	ctx context.Context,
+	req RequestRunCancellationRequest,
+) (*RequestRunCancellationResult, error) {
+	if req.RunID <= 0 {
+		return nil, fmt.Errorf("run id is required")
+	}
+	if req.Event == nil || req.Event.RunID != req.RunID || req.Event.EventType != "run.canceled" {
+		return nil, fmt.Errorf("run cancellation event is invalid")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	if req.Event.CreatedAt == 0 {
+		req.Event.CreatedAt = now
+	}
+	eventPO, err := runEventToPO(req.Event)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &RequestRunCancellationResult{}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("id = ?", req.RunID)
+		if tx.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var current runPO
+		if err := query.First(&current).Error; err != nil {
+			return err
+		}
+		if req.Event.ThreadID != current.ThreadID {
+			return fmt.Errorf("run cancellation event does not belong to run thread")
+		}
+		previous := entity.RunStatus(current.Status)
+		if previous == entity.RunStatusCanceled {
+			result.Run = current.toEntity()
+			result.PreviousStatus = previous
+			return nil
+		}
+		switch previous {
+		case entity.RunStatusPending, entity.RunStatusQueued, entity.RunStatusRunning, entity.RunStatusInterrupted:
+		default:
+			return fmt.Errorf("run %d cannot be canceled from status %s", req.RunID, previous)
+		}
+
+		updates := map[string]any{
+			"status":               string(entity.RunStatusCanceled),
+			"execution_generation": gorm.Expr("execution_generation + 1"),
+			"error_code":           strings.TrimSpace(req.ErrorCode),
+			"error_message":        strings.TrimSpace(req.ErrorMessage),
+			"ended_at":             now,
+			"updated_at":           now,
+		}
+		clearRunLeaseUpdates(updates)
+		updates["cancel_requested_at"] = now
+		updated := tx.Model(&runPO{}).
+			Where("id = ?", req.RunID).
+			Where("status = ?", current.Status).
+			Where("execution_generation = ?", current.ExecutionGeneration).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return fmt.Errorf("%w: run %d cancellation lost execution fence", ErrRunLeaseLost, req.RunID)
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return err
+		}
+
+		var canceled runPO
+		if err := tx.Where("id = ?", req.RunID).First(&canceled).Error; err != nil {
+			return err
+		}
+		result.Run = canceled.toEntity()
+		result.PreviousStatus = previous
+		result.Changed = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *threadRepository) FinalizeRunSuccess(
+	ctx context.Context,
+	req FinalizeRunSuccessRequest,
+) (*FinalizeRunSuccessResult, error) {
+	if req.RunID <= 0 || req.Message == nil || req.Message.RunID != req.RunID {
+		return nil, fmt.Errorf("run success message is invalid")
+	}
+	if req.Message.Role != entity.MessageRoleAssistant {
+		return nil, fmt.Errorf("run success message must be assistant role")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	message := *req.Message
+	if message.CreatedAt == 0 {
+		message.CreatedAt = now
+	}
+	messagePO, err := messageToPO(&message)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &FinalizeRunSuccessResult{}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{
+			"status":        string(entity.RunStatusSucceeded),
+			"error_code":    "",
+			"error_message": "",
+			"ended_at":      now,
+			"updated_at":    now,
+		}
+		clearRunLeaseUpdates(updates)
+		updated := activeRunLeaseQuery(
+			tx.Model(&runPO{}),
+			req.RunID,
+			req.LeaseOwner,
+			req.LeaseToken,
+			req.ExecutionGeneration,
+			now,
+		).
+			Where("cancel_requested_at IS NULL").
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			var current runPO
+			if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+				return err
+			}
+			if entity.RunStatus(current.Status) == entity.RunStatusCanceled || current.CancelRequestedAt != nil {
+				return fmt.Errorf("%w: run %d rejected late success", ErrRunCanceled, req.RunID)
+			}
+			return fmt.Errorf("%w: run %d cannot finalize success", ErrRunLeaseLost, req.RunID)
+		}
+
+		var completed runPO
+		if err := tx.Where("id = ?", req.RunID).First(&completed).Error; err != nil {
+			return err
+		}
+		if message.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success message does not belong to run thread")
+		}
+		if err := tx.Create(messagePO).Error; err != nil {
+			return err
+		}
+
+		expectedTitle := strings.TrimSpace(req.ExpectedThreadTitle)
+		threadTitle := strings.TrimSpace(req.ThreadTitle)
+		if threadTitle != "" && threadTitle != expectedTitle {
+			titleUpdate := tx.Model(&threadPO{}).
+				Where("id = ? AND title = ?", completed.ThreadID, expectedTitle).
+				Updates(map[string]any{"title": threadTitle, "updated_at": now})
+			if titleUpdate.Error != nil {
+				return titleUpdate.Error
+			}
+			result.TitleUpdated = titleUpdate.RowsAffected > 0
+		}
+
+		result.Run = completed.toEntity()
+		result.Message = &message
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
 	updates := map[string]any{

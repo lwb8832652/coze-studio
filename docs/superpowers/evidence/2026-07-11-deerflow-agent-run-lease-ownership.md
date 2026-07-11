@@ -185,4 +185,5 @@ Verification:
   `go test -p 1 -gcflags="all=-N -l" ./... -count=1`.
 
 Cancellation intent fencing and transactional message/title/success commit are
-not claimed here; they remain the next explicit lifecycle slice.
+recorded separately in
+`2026-07-11-deerflow-agent-run-cancellation-fence.md`.

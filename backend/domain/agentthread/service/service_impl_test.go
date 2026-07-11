@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -674,6 +675,77 @@ func TestReconcileExpiredRunLeaseValidatesTargetAndForwardsFence(t *testing.T) {
 	require.Equal(t, uint64(2), repo.lastReconcileExpiredRunLeaseReq.ExecutionGeneration)
 	require.Equal(t, "run_abandoned", repo.lastReconcileExpiredRunLeaseReq.ErrorCode)
 	require.Equal(t, "execution lease expired without a recoverable checkpoint", repo.lastReconcileExpiredRunLeaseReq.ErrorMessage)
+}
+
+func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-1",
+		LeaseExpiresAt: 5_000, ExecutionGeneration: 2,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 900}})
+
+	result, err := svc.RequestRunCancellation(context.Background(), &RequestRunCancellationRequest{
+		RunID: 1,
+		Now:   3_000,
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, entity.RunStatusRunning, result.PreviousStatus)
+	require.Equal(t, entity.RunStatusCanceled, result.Run.Status)
+	require.Equal(t, int64(3_000), result.Run.CancelRequestedAt)
+	require.Equal(t, uint64(3), result.Run.ExecutionGeneration)
+	require.NotNil(t, repo.lastRequestRunCancellationReq.Event)
+	require.Equal(t, int64(900), repo.lastRequestRunCancellationReq.Event.ID)
+	require.Equal(t, "run.canceled", repo.lastRequestRunCancellationReq.Event.EventType)
+	require.JSONEq(t, `{"status":"canceled"}`, repo.lastRequestRunCancellationReq.Event.Payload)
+}
+
+func TestRequestRunCancellationReturnsCanceledRunWithoutAllocatingEventID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusCanceled,
+		CancelRequestedAt: 3_000, ExecutionGeneration: 3,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: failingIDGen{err: errors.New("id generator unavailable")}})
+
+	result, err := svc.RequestRunCancellation(context.Background(), &RequestRunCancellationRequest{RunID: 1})
+
+	require.NoError(t, err)
+	require.False(t, result.Changed)
+	require.Equal(t, entity.RunStatusCanceled, result.PreviousStatus)
+	require.Equal(t, int64(3_000), result.Run.CancelRequestedAt)
+	require.Nil(t, repo.lastRequestRunCancellationReq.Event)
+}
+
+func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, Title: "initial title"}
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-1",
+		LeaseExpiresAt: 5_000, ExecutionGeneration: 2,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 300}})
+
+	result, err := svc.FinalizeRunSuccess(context.Background(), &FinalizeRunSuccessRequest{
+		RunID: 1, ThreadID: 10,
+		LeaseOwner: "worker-a", LeaseToken: "lease-1", ExecutionGeneration: 2,
+		Now: 3_000, Message: " final answer ", MessageMetadata: `{"source":"eino_adk"}`,
+		ExpectedThreadTitle: "initial title", ThreadTitle: "generated title",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+	require.Equal(t, int64(300), result.Message.ID)
+	require.Equal(t, "final answer", result.Message.Content)
+	require.True(t, result.TitleUpdated)
+	require.Equal(t, "lease-1", repo.lastFinalizeRunSuccessReq.LeaseToken)
+	require.Equal(t, uint64(2), repo.lastFinalizeRunSuccessReq.ExecutionGeneration)
+	require.Equal(t, "initial title", repo.lastFinalizeRunSuccessReq.ExpectedThreadTitle)
+	require.Equal(t, "generated title", repo.lastFinalizeRunSuccessReq.ThreadTitle)
 }
 
 func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
@@ -1744,6 +1816,8 @@ type memoryRepo struct {
 	lastReleaseRunLeaseReq             repository.ReleaseRunLeaseRequest
 	lastListExpiredRunLeasesReq        repository.ListExpiredRunLeasesRequest
 	lastReconcileExpiredRunLeaseReq    repository.ReconcileExpiredRunLeaseRequest
+	lastRequestRunCancellationReq      repository.RequestRunCancellationRequest
+	lastFinalizeRunSuccessReq          repository.FinalizeRunSuccessRequest
 	lastUpdateRunReq                   repository.UpdateRunStatusRequest
 }
 
@@ -2852,6 +2926,86 @@ func (r *memoryRepo) ReconcileExpiredRunLease(
 	return nil, fmt.Errorf("run %d not found", req.RunID)
 }
 
+func (r *memoryRepo) RequestRunCancellation(
+	ctx context.Context,
+	req repository.RequestRunCancellationRequest,
+) (*repository.RequestRunCancellationResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRequestRunCancellationReq = req
+	for threadID, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			previous := run.Status
+			if previous == entity.RunStatusCanceled {
+				return &repository.RequestRunCancellationResult{
+					Run: cloneRun(run), PreviousStatus: previous,
+				}, nil
+			}
+			run.Status = entity.RunStatusCanceled
+			run.ExecutionGeneration++
+			run.CancelRequestedAt = req.Now
+			run.EndedAt = req.Now
+			run.WorkerID = ""
+			run.LeaseOwner = ""
+			run.LeaseToken = ""
+			run.LeaseExpiresAt = 0
+			run.HeartbeatAt = 0
+			if req.Event != nil {
+				r.runEvents[threadID] = append(r.runEvents[threadID], cloneRunEvent(req.Event))
+			}
+			return &repository.RequestRunCancellationResult{
+				Run: cloneRun(run), PreviousStatus: previous, Changed: true,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("run %d not found", req.RunID)
+}
+
+func (r *memoryRepo) FinalizeRunSuccess(
+	ctx context.Context,
+	req repository.FinalizeRunSuccessRequest,
+) (*repository.FinalizeRunSuccessResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastFinalizeRunSuccessReq = req
+	for threadID, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			if run.Status == entity.RunStatusCanceled || run.CancelRequestedAt > 0 {
+				return nil, repository.ErrRunCanceled
+			}
+			if run.Status != entity.RunStatusRunning || run.LeaseOwner != req.LeaseOwner ||
+				run.LeaseToken != req.LeaseToken || run.ExecutionGeneration != req.ExecutionGeneration {
+				return nil, repository.ErrRunLeaseLost
+			}
+			run.Status = entity.RunStatusSucceeded
+			run.EndedAt = req.Now
+			run.WorkerID = ""
+			run.LeaseOwner = ""
+			run.LeaseToken = ""
+			run.LeaseExpiresAt = 0
+			run.HeartbeatAt = 0
+			r.messages[threadID] = append(r.messages[threadID], cloneMessage(req.Message))
+			titleUpdated := false
+			if thread := r.threads[threadID]; thread != nil &&
+				thread.Title == req.ExpectedThreadTitle && req.ThreadTitle != "" &&
+				req.ThreadTitle != req.ExpectedThreadTitle {
+				thread.Title = req.ThreadTitle
+				titleUpdated = true
+			}
+			return &repository.FinalizeRunSuccessResult{
+				Run: cloneRun(run), Message: cloneMessage(req.Message), TitleUpdated: titleUpdated,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("run %d not found", req.RunID)
+}
+
 func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateRunStatusRequest) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2958,6 +3112,18 @@ func cloneTokenUsage(usage *entity.TokenUsage) *entity.TokenUsage {
 
 type fixedIDGen struct {
 	next int64
+}
+
+type failingIDGen struct {
+	err error
+}
+
+func (g failingIDGen) GenID(context.Context) (int64, error) {
+	return 0, g.err
+}
+
+func (g failingIDGen) GenMultiIDs(context.Context, int) ([]int64, error) {
+	return nil, g.err
 }
 
 func (g fixedIDGen) GenID(ctx context.Context) (int64, error) {

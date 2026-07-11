@@ -23,7 +23,10 @@ import (
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
 
-var ErrRunLeaseLost = errors.New("agent run lease lost")
+var (
+	ErrRunLeaseLost = errors.New("agent run lease lost")
+	ErrRunCanceled  = errors.New("agent run canceled")
+)
 
 type ThreadRepository interface {
 	CreateThread(ctx context.Context, thread *entity.Thread) error
@@ -45,6 +48,8 @@ type ThreadRepository interface {
 	ReleaseRunLease(ctx context.Context, req ReleaseRunLeaseRequest) (*entity.Run, error)
 	ListExpiredRunLeases(ctx context.Context, req ListExpiredRunLeasesRequest) ([]*entity.Run, error)
 	ReconcileExpiredRunLease(ctx context.Context, req ReconcileExpiredRunLeaseRequest) (*entity.Run, error)
+	RequestRunCancellation(ctx context.Context, req RequestRunCancellationRequest) (*RequestRunCancellationResult, error)
+	FinalizeRunSuccess(ctx context.Context, req FinalizeRunSuccessRequest) (*FinalizeRunSuccessResult, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
 	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
@@ -301,6 +306,37 @@ type ReconcileExpiredRunLeaseRequest struct {
 	Now                 int64
 	ErrorCode           string
 	ErrorMessage        string
+}
+
+type RequestRunCancellationRequest struct {
+	RunID        int64
+	Now          int64
+	ErrorCode    string
+	ErrorMessage string
+	Event        *entity.RunEvent
+}
+
+type RequestRunCancellationResult struct {
+	Run            *entity.Run
+	PreviousStatus entity.RunStatus
+	Changed        bool
+}
+
+type FinalizeRunSuccessRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	Message             *entity.Message
+	ExpectedThreadTitle string
+	ThreadTitle         string
+}
+
+type FinalizeRunSuccessResult struct {
+	Run          *entity.Run
+	Message      *entity.Message
+	TitleUpdated bool
 }
 
 type UpdateRunStatusRequest struct {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/stretchr/testify/require"
@@ -3258,11 +3259,17 @@ func TestApplicationFailRunMapsErrorFields(t *testing.T) {
 
 func TestApplicationCancelRunSignalsActiveADKExecution(t *testing.T) {
 	domainSVC := &recordingThreadService{
-		canceledRun: &entity.Run{
-			ID:       200,
-			ThreadID: 10,
-			Status:   entity.RunStatusCanceled,
-			Config:   `{"runtime":"eino_adk"}`,
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusCanceled,
+				Config:              `{"runtime":"eino_adk"}`,
+				CancelRequestedAt:   4_000,
+				ExecutionGeneration: 4,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
 		},
 	}
 	registry := NewADKCancelRegistry()
@@ -3285,8 +3292,110 @@ func TestApplicationCancelRunSignalsActiveADKExecution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, RunStatusCanceled, resp.Run.Status)
+	require.Equal(t, int64(4_000), resp.Run.CancelRequestedAt)
+	require.Equal(t, uint64(4), resp.Run.ExecutionGeneration)
+	require.Equal(t, int64(200), domainSVC.requestRunCancellationReq.RunID)
 	require.Equal(t, adk.CancelAfterToolCalls|adk.CancelAfterChatModel, cancelRequest.mode)
 	require.True(t, cancelRequest.recursive)
+}
+
+func TestApplicationCancelRunDoesNotNotifyADKTwice(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusCanceled,
+				Config:   `{"runtime":"eino_adk"}`,
+			},
+			PreviousStatus: entity.RunStatusCanceled,
+			Changed:        false,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	notified := false
+	cleanup := registry.register(200, func(adkCancelRequest) (adkCancelWaiter, bool) {
+		notified = true
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	resp, err := app.CancelRun(context.Background(), &UpdateRunStatusRequest{RunID: 200})
+
+	require.NoError(t, err)
+	require.Equal(t, RunStatusCanceled, resp.Run.Status)
+	require.False(t, notified)
+}
+
+func TestApplicationCancelRunQueuesNotificationBeforeADKRegistration(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusCanceled,
+				Config:   `{"runtime":"eino_adk"}`,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	_, err := app.CancelRun(context.Background(), &UpdateRunStatusRequest{RunID: 200})
+	require.NoError(t, err)
+
+	invoked := make(chan adkCancelRequest, 1)
+	cleanup := registry.register(200, func(request adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- request
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	select {
+	case request := <-invoked:
+		require.Equal(t, adk.CancelImmediate, request.mode)
+		require.True(t, request.recursive)
+	case <-time.After(time.Second):
+		t.Fatal("durable cancellation was not delivered after ADK registration")
+	}
+}
+
+func TestApplicationFinalizeRunSuccessMapsFenceAndResult(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		finalizeRunSuccessResult: &domainservice.FinalizeRunSuccessResult{
+			Run: &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "done",
+			},
+			TitleUpdated: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.FinalizeRunSuccess(context.Background(), &FinalizeRunSuccessRequest{
+		RunID:               200,
+		ThreadID:            10,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 4_000,
+		Message:             "done",
+		MessageMetadata:     `{"source":"eino_adk"}`,
+		ExpectedThreadTitle: "new task",
+		ThreadTitle:         "generated title",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "lease-200", domainSVC.finalizeRunSuccessReq.LeaseToken)
+	require.Equal(t, uint64(3), domainSVC.finalizeRunSuccessReq.ExecutionGeneration)
+	require.Equal(t, "done", domainSVC.finalizeRunSuccessReq.Message)
+	require.Equal(t, "new task", domainSVC.finalizeRunSuccessReq.ExpectedThreadTitle)
+	require.Equal(t, "generated title", domainSVC.finalizeRunSuccessReq.ThreadTitle)
+	require.Equal(t, RunStatusSucceeded, resp.Run.Status)
+	require.Equal(t, int64(300), resp.Message.MessageID)
+	require.True(t, resp.TitleUpdated)
 }
 
 func TestApplicationAppendRunEventMapsDomainEvent(t *testing.T) {
@@ -3892,6 +4001,9 @@ type recordingThreadService struct {
 	releasedRunLease               *entity.Run
 	expiredRunLeases               []*entity.Run
 	reconciledRunLease             *entity.Run
+	requestRunCancellationResult   *domainservice.RequestRunCancellationResult
+	finalizeRunSuccessResult       *domainservice.FinalizeRunSuccessResult
+	finalizeRunSuccessErr          error
 	interruptedRun                 *entity.Run
 	runEvents                      []*entity.RunEvent
 	checkpoints                    []*entity.Checkpoint
@@ -3920,6 +4032,8 @@ type recordingThreadService struct {
 	releaseRunLeaseReqs            []*domainservice.ReleaseRunLeaseRequest
 	listExpiredRunLeasesReq        *domainservice.ListExpiredRunLeasesRequest
 	reconcileExpiredRunLeaseReq    *domainservice.ReconcileExpiredRunLeaseRequest
+	requestRunCancellationReq      *domainservice.RequestRunCancellationRequest
+	finalizeRunSuccessReq          *domainservice.FinalizeRunSuccessRequest
 	aggregateRunBacklogReq         *domainservice.AggregateRunBacklogRequest
 	completeRunReq                 *domainservice.UpdateRunStatusRequest
 	completeRunReqs                []*domainservice.UpdateRunStatusRequest
@@ -4476,6 +4590,117 @@ func (s *recordingThreadService) ReconcileExpiredRunLease(
 ) (*entity.Run, error) {
 	s.reconcileExpiredRunLeaseReq = req
 	return s.reconciledRunLease, nil
+}
+
+func (s *recordingThreadService) RequestRunCancellation(
+	ctx context.Context,
+	req *domainservice.RequestRunCancellationRequest,
+) (*domainservice.RequestRunCancellationResult, error) {
+	s.requestRunCancellationReq = req
+	if req != nil {
+		s.cancelRunReq = &domainservice.UpdateRunStatusRequest{
+			RunID:        req.RunID,
+			From:         entity.RunStatusRunning,
+			To:           entity.RunStatusCanceled,
+			Now:          req.Now,
+			ErrorCode:    req.ErrorCode,
+			ErrorMessage: req.ErrorMessage,
+		}
+	}
+	if s.requestRunCancellationResult != nil {
+		return s.requestRunCancellationResult, nil
+	}
+	if s.canceledRun == nil {
+		if req == nil {
+			return nil, nil
+		}
+		return &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:                  req.RunID,
+				Status:              entity.RunStatusCanceled,
+				CancelRequestedAt:   req.Now,
+				ExecutionGeneration: 1,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
+		}, nil
+	}
+	return &domainservice.RequestRunCancellationResult{
+		Run:            s.canceledRun,
+		PreviousStatus: entity.RunStatusRunning,
+		Changed:        true,
+	}, nil
+}
+
+func (s *recordingThreadService) FinalizeRunSuccess(
+	ctx context.Context,
+	req *domainservice.FinalizeRunSuccessRequest,
+) (*domainservice.FinalizeRunSuccessResult, error) {
+	s.finalizeRunSuccessReq = req
+	if s.finalizeRunSuccessErr != nil {
+		return nil, s.finalizeRunSuccessErr
+	}
+	if req != nil {
+		s.appendReq = &domainservice.AppendMessageRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Role:     entity.MessageRoleAssistant,
+			Content:  req.Message,
+			Metadata: req.MessageMetadata,
+		}
+		s.completeRunReq = &domainservice.UpdateRunStatusRequest{
+			RunID:               req.RunID,
+			From:                entity.RunStatusRunning,
+			To:                  entity.RunStatusSucceeded,
+			WorkerID:            req.LeaseOwner,
+			LeaseOwner:          req.LeaseOwner,
+			LeaseToken:          req.LeaseToken,
+			ExecutionGeneration: req.ExecutionGeneration,
+			Now:                 req.Now,
+		}
+		s.completeRunReqs = append(s.completeRunReqs, s.completeRunReq)
+		if strings.TrimSpace(req.ThreadTitle) != "" {
+			s.updateThreadTitleReq = &domainservice.UpdateThreadTitleRequest{
+				ThreadID:  req.ThreadID,
+				Title:     req.ThreadTitle,
+				UpdatedAt: req.Now,
+			}
+		}
+		if s.completeRunErrors != nil && s.completeRunErrors[req.RunID] != nil {
+			return nil, s.completeRunErrors[req.RunID]
+		}
+	}
+	if s.completeRunErr != nil {
+		return nil, s.completeRunErr
+	}
+	if s.finalizeRunSuccessResult != nil {
+		return s.finalizeRunSuccessResult, nil
+	}
+	completedRun := s.completedRun
+	if completedRun == nil && req != nil {
+		completedRun = &entity.Run{
+			ID:       req.RunID,
+			ThreadID: req.ThreadID,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: req.LeaseOwner,
+		}
+	}
+	message := s.appended
+	if message == nil && req != nil {
+		message = &entity.Message{
+			ID:       req.RunID + 1,
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Role:     entity.MessageRoleAssistant,
+			Content:  req.Message,
+			Metadata: req.MessageMetadata,
+		}
+	}
+	return &domainservice.FinalizeRunSuccessResult{
+		Run:          completedRun,
+		Message:      message,
+		TitleUpdated: req != nil && strings.TrimSpace(req.ThreadTitle) != "",
+	}, nil
 }
 
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {

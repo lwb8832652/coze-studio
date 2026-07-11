@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
@@ -187,7 +188,8 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 		p.recordRuntimeRunQueueDelay(ctx, run)
 		runCtx, heartbeat := startRunLeaseHeartbeat(ctx, p.app, run, p.leaseConfig)
 		outcome, err := p.processRun(runCtx, run, heartbeat)
-		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil {
+		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil &&
+			!(outcome == runProcessCanceled && errors.Is(heartbeatErr, domainrepo.ErrRunLeaseLost)) {
 			outcome = runProcessErrored
 			err = heartbeatErr
 		}
@@ -292,14 +294,30 @@ func (p *RunProcessor) finalizeRunExecution(
 	result *RunExecutionResult,
 	err error,
 ) (runProcessOutcome, error) {
+	if canceledRun, canceled, lookupErr := durableCanceledRunAfterLeaseLoss(ctx, p.app, run); lookupErr != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, lookupErr
+	} else if canceled {
+		_ = heartbeat.Stop()
+		p.recordRuntimeRunTerminal(ctx, run, canceledRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+		return runProcessCanceled, nil
+	}
 	if err != nil {
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
 			if heartbeatErr := heartbeat.Stop(); heartbeatErr != nil {
 				return runProcessErrored, heartbeatErr
 			}
-			p.emitRunCanceledEvent(ctx, run)
-			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			terminalRun, cancelErr := requestDurableRunCancellation(
+				ctx,
+				p.app,
+				run,
+				p.leaseConfig.Clock.Now().UnixMilli(),
+			)
+			if cancelErr != nil {
+				return runProcessErrored, cancelErr
+			}
+			p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return runProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
@@ -343,31 +361,34 @@ func (p *RunProcessor) finalizeRunExecution(
 		return p.finalizeFailedRun(ctx, run, heartbeat, "empty_executor_result", "executor returned empty assistant message")
 	}
 
-	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
-		ThreadID: run.ThreadID,
-		RunID:    run.RunID,
-		Role:     MessageRoleAssistant,
-		Content:  message,
-		Metadata: resultMetadata(result),
-	}); err != nil {
-		return p.finalizeFailedRun(ctx, run, heartbeat, "append_message_failed", err.Error())
-	}
-
-	p.syncGeneratedThreadTitle(ctx, run, result)
+	expectedTitle, generatedTitle := p.prepareGeneratedThreadTitle(ctx, run, result)
 	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 		return runProcessErrored, abortErr
 	}
 
-	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
+	finalized, err := p.app.FinalizeRunSuccess(ctx, &FinalizeRunSuccessRequest{
 		RunID:               run.RunID,
-		From:                RunStatusRunning,
-		WorkerID:            p.workerID,
+		ThreadID:            run.ThreadID,
 		LeaseOwner:          run.LeaseOwner,
 		LeaseToken:          run.LeaseToken,
 		ExecutionGeneration: run.ExecutionGeneration,
+		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
+		Message:             message,
+		MessageMetadata:     resultMetadata(result),
+		ExpectedThreadTitle: expectedTitle,
+		ThreadTitle:         generatedTitle,
 	})
 	if err != nil {
+		if errors.Is(err, domainrepo.ErrRunCanceled) {
+			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			return runProcessCanceled, nil
+		}
 		return runProcessErrored, err
+	}
+	if finalized.TitleUpdated {
+		p.emitRunEvent(ctx, run, "context.thread_title_updated", map[string]any{
+			"thread_title": generatedTitle,
+		})
 	}
 
 	p.emitRunEvent(ctx, run, "run.completed", map[string]any{
@@ -377,21 +398,13 @@ func (p *RunProcessor) finalizeRunExecution(
 	p.recordRuntimeRunTerminal(
 		ctx,
 		run,
-		updateRunStatusResponseRun(completeResp),
+		finalized.Run,
 		runtimeMetricResultSuccess,
 		runtimeMetricErrorNone,
 	)
 
 	return runProcessSucceeded, nil
 }
-
-func (p *RunProcessor) emitRunCanceledEvent(ctx context.Context, run *RunSummary) {
-	p.emitRunEvent(ctx, run, "run.canceled", map[string]any{
-		"status":    string(RunStatusCanceled),
-		"worker_id": p.workerID,
-	})
-}
-
 func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSummary, interrupted *RunInterruptedError) {
 	payload := map[string]any{
 		"status":    string(RunStatusInterrupted),
@@ -538,53 +551,105 @@ func resultTitle(result *RunExecutionResult) string {
 	return result.Title
 }
 
-func (p *RunProcessor) syncGeneratedThreadTitle(
+func (p *RunProcessor) prepareGeneratedThreadTitle(
 	ctx context.Context,
 	run *RunSummary,
 	result *RunExecutionResult,
-) {
+) (string, string) {
 	if p == nil || p.app == nil || run == nil {
-		return
+		return "", ""
 	}
 	if run.ParentRunID > 0 || run.RunKind == RunKindSubagent {
-		return
+		return "", ""
 	}
 
 	userMessage, ok := runtimeLatestUserInputText(run.Input)
 	if !ok {
-		return
+		return "", ""
 	}
 	userMessage = strings.TrimSpace(userMessage)
 	if userMessage == "" {
-		return
+		return "", ""
 	}
-	threadResp, err := p.app.GetThread(ctx, &GetThreadRequest{ThreadID: run.ThreadID})
-	if err != nil || threadResp == nil || threadResp.Thread == nil {
-		return
+	thread, err := p.app.ThreadSVC.GetThread(ctx, run.ThreadID)
+	if err != nil || thread == nil {
+		return "", ""
 	}
-	currentTitle := strings.TrimSpace(threadResp.Thread.Title)
+	currentTitle := strings.TrimSpace(thread.Title)
 	initialTitle := taskThreadTitle("", userMessage)
 	if currentTitle != "" && currentTitle != initialTitle {
-		return
+		return "", ""
 	}
 	title := p.generatedThreadTitle(ctx, run, userMessage, result)
 	if title == "" {
-		return
+		return "", ""
 	}
 	if currentTitle == title {
-		return
+		return "", ""
 	}
 
-	resp, err := p.app.UpdateThreadTitle(ctx, &UpdateThreadTitleRequest{
-		ThreadID: run.ThreadID,
-		Title:    title,
-	})
-	if err != nil || resp == nil || !resp.Updated {
-		return
+	return currentTitle, title
+}
+
+func requestDurableRunCancellation(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	now int64,
+) (*RunSummary, error) {
+	if app == nil || run == nil {
+		return nil, fmt.Errorf("run cancellation context is required")
 	}
-	p.emitRunEvent(ctx, run, "context.thread_title_updated", map[string]any{
-		"thread_title": title,
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	result, err := app.requestRunCancellation(cleanupCtx, &domainservice.RequestRunCancellationRequest{
+		RunID:        run.RunID,
+		Now:          now,
+		ErrorCode:    "run_canceled",
+		ErrorMessage: "run canceled by request",
 	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty canceled run")
+	}
+
+	return DomainRunToSummary(result.Run), nil
+}
+
+func durableCanceledRunAfterLeaseLoss(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+) (*RunSummary, bool, error) {
+	if !errors.Is(context.Cause(ctx), domainrepo.ErrRunLeaseLost) {
+		return nil, false, nil
+	}
+	if app == nil || app.ThreadSVC == nil || run == nil {
+		return nil, false, fmt.Errorf("load canceled run after lease loss: run context is required")
+	}
+	lookupCtx := context.Background()
+	if ctx != nil {
+		lookupCtx = context.WithoutCancel(ctx)
+	}
+	lookupCtx, cancel := context.WithTimeout(lookupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	current, err := app.ThreadSVC.GetRun(lookupCtx, &domainservice.GetRunRequest{RunID: run.RunID})
+	if err != nil {
+		return nil, false, fmt.Errorf("load run %d after lease loss: %w", run.RunID, err)
+	}
+	if current == nil || current.Status != entity.RunStatusCanceled {
+		return nil, false, nil
+	}
+
+	return DomainRunToSummary(current), true, nil
 }
 
 func (p *RunProcessor) generatedThreadTitle(

@@ -146,6 +146,24 @@ Every implementation slice must update this document:
     checkpoint and retry-idempotency tests, affected packages, targeted
     `go vet`, `gofmt`, `git diff --check`, and serial full backend
     `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
+  - `AR-PARITY-001.5` Cancellation fence and transactional success finalization
+    (已完成): cancellation is now one durable transaction that retains
+    `cancel_requested_at`, increments execution generation, clears ownership and
+    writes one terminal event before notifying the in-memory ADK handle.
+    Same-process cancellation arriving before ADK registration is retained with
+    a bounded TTL and applied as immediate recursive cancellation. Ordinary and
+    checkpoint-resume success now use one live-lease/no-cancel transaction for
+    assistant message, optional title CAS and succeeded status; cancel winning
+    the race yields no late reply, title update or completed event. Duplicate
+    cancellation remains successful without allocating another event ID, and a
+    concurrent user title edit is preserved. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-cancellation-fence.md`.
+    Verification: pending/running/duplicate cancellation, pre-registration and
+    active cancellation, shutdown distinction, ordinary/resume late-result
+    races, transaction rollback, title CAS, event uniqueness, affected package
+    suites, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` passed. Targeted race,
+    `go vet`, formatting and diff checks also passed before commit.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
