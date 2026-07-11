@@ -62,6 +62,37 @@ type threadPO struct {
 	LastMessageAt int64          `gorm:"column:last_message_at"`
 }
 
+type projectedThreadPO struct {
+	Thread          threadPO `gorm:"embedded"`
+	ProjectedStatus string   `gorm:"column:projected_status"`
+}
+
+const threadLifecycleStatusProjectionSQL = `CASE
+	WHEN EXISTS (
+		SELECT 1
+		FROM agent_runs AS active_run
+		WHERE active_run.thread_id = agent_threads.id
+			AND active_run.parent_run_id = 0
+			AND (active_run.run_kind = '' OR active_run.run_kind = 'task')
+			AND active_run.status IN ('pending', 'queued', 'running')
+	) THEN 'running'
+	ELSE COALESCE((
+		SELECT CASE latest_run.status
+			WHEN 'succeeded' THEN 'completed'
+			WHEN 'failed' THEN 'failed'
+			WHEN 'canceled' THEN 'canceled'
+			WHEN 'interrupted' THEN 'idle'
+			ELSE 'idle'
+		END
+		FROM agent_runs AS latest_run
+		WHERE latest_run.thread_id = agent_threads.id
+			AND latest_run.parent_run_id = 0
+			AND (latest_run.run_kind = '' OR latest_run.run_kind = 'task')
+		ORDER BY latest_run.created_at DESC, latest_run.id DESC
+		LIMIT 1
+	), agent_threads.status)
+END`
+
 type messagePO struct {
 	ID        int64          `gorm:"column:id;primaryKey"`
 	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_messages_thread_created"`
@@ -517,12 +548,17 @@ func findExistingThreadBundle(
 }
 
 func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
-	var po threadPO
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&po).Error; err != nil {
+	var po projectedThreadPO
+	if err := r.db.WithContext(ctx).
+		Model(&threadPO{}).
+		Select("agent_threads.*, ("+threadLifecycleStatusProjectionSQL+") AS projected_status").
+		Where("agent_threads.id = ?", id).
+		First(&po).Error; err != nil {
 		return nil, err
 	}
+	po.Thread.Status = po.ProjectedStatus
 
-	return po.toEntity(), nil
+	return po.Thread.toEntity(), nil
 }
 
 func (r *threadRepository) UpdateThreadTitle(
@@ -657,12 +693,12 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 		pageSize = 20
 	}
 
-	query := r.db.WithContext(ctx).Model(&threadPO{}).Where("space_id = ?", req.SpaceID)
+	query := r.db.WithContext(ctx).Model(&threadPO{}).Where("agent_threads.space_id = ?", req.SpaceID)
 	if req.UserID > 0 {
-		query = query.Where("creator_id = ?", req.UserID)
+		query = query.Where("agent_threads.creator_id = ?", req.UserID)
 	}
 	if req.Status != nil {
-		query = query.Where("status = ?", string(*req.Status))
+		query = query.Where("("+threadLifecycleStatusProjectionSQL+") = ?", string(*req.Status))
 	}
 
 	var total int64
@@ -670,9 +706,10 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 		return nil, 0, err
 	}
 
-	pos := make([]*threadPO, 0)
+	pos := make([]*projectedThreadPO, 0)
 	if err := query.
-		Order("updated_at DESC, id DESC").
+		Select("agent_threads.*, (" + threadLifecycleStatusProjectionSQL + ") AS projected_status").
+		Order("agent_threads.updated_at DESC, agent_threads.id DESC").
 		Limit(int(pageSize)).
 		Offset(int((page - 1) * pageSize)).
 		Find(&pos).Error; err != nil {
@@ -681,7 +718,8 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 
 	threads := make([]*entity.Thread, 0, len(pos))
 	for _, po := range pos {
-		threads = append(threads, po.toEntity())
+		po.Thread.Status = po.ProjectedStatus
+		threads = append(threads, po.Thread.toEntity())
 	}
 
 	return threads, total, nil

@@ -1293,3 +1293,12 @@ type UpdateRunStatusRequest struct {
 type UpdateRunStatusResponse struct {
 	Run *RunSummary
 }
+
+type CancelRunOnDisconnectRequest struct {
+	RunID int64
+}
+
+type CancelRunOnDisconnectResponse struct {
+	Run      *RunSummary
+	Canceled bool
+}

@@ -33,7 +33,7 @@ import (
 func TestThreadRepositoryCreateAndGet(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	thread := &entity.Thread{
@@ -71,7 +71,7 @@ func TestThreadRepositoryCreateAndGet(t *testing.T) {
 func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
@@ -102,7 +102,7 @@ func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
 func TestThreadRepositoryUpdateThreadMetadata(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
@@ -206,7 +206,7 @@ func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
 func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	status := entity.ThreadStatusRunning
@@ -235,10 +235,126 @@ func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	require.Equal(t, int64(1), got[1].ID)
 }
 
+func TestThreadRepositoryProjectsDurableTopLevelRunStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	storedStatuses := map[int64]entity.ThreadStatus{
+		1: entity.ThreadStatusIdle,
+		2: entity.ThreadStatusFailed,
+		3: entity.ThreadStatusCompleted,
+		4: entity.ThreadStatusCanceled,
+		5: entity.ThreadStatusIdle,
+		6: entity.ThreadStatusRunning,
+		7: entity.ThreadStatusCompleted,
+		8: entity.ThreadStatusIdle,
+	}
+	for id, status := range storedStatuses {
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: id, SpaceID: 10, CreatorID: 20, Title: "thread", Status: status,
+			Source: entity.ThreadSourceWeb, UpdatedAt: id,
+		}))
+	}
+
+	runs := []*entity.Run{
+		newRepositoryTestRun(101, 1, entity.RunStatusPending, 10),
+		newRepositoryTestRun(201, 2, entity.RunStatusFailed, 10),
+		newRepositoryTestRun(202, 2, entity.RunStatusSucceeded, 20),
+		newRepositoryTestRun(301, 3, entity.RunStatusFailed, 10),
+		newRepositoryTestRun(401, 4, entity.RunStatusInterrupted, 10),
+		newRepositoryTestRun(501, 5, entity.RunStatusRunning, 10),
+		newRepositoryTestRun(701, 7, entity.RunStatusCanceled, 10),
+		newRepositoryTestRun(801, 8, entity.RunStatusRunning, 10),
+		newRepositoryTestRun(802, 8, entity.RunStatusSucceeded, 20),
+	}
+	runs[5].ParentRunID = 500
+	runs[5].RunKind = entity.RunKindSubagent
+	for _, run := range runs {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	expected := map[int64]entity.ThreadStatus{
+		1: entity.ThreadStatusRunning,
+		2: entity.ThreadStatusCompleted,
+		3: entity.ThreadStatusFailed,
+		4: entity.ThreadStatusIdle,
+		5: entity.ThreadStatusIdle,
+		6: entity.ThreadStatusRunning,
+		7: entity.ThreadStatusCanceled,
+		8: entity.ThreadStatusRunning,
+	}
+	for id, status := range expected {
+		got, getErr := repo.GetThread(context.Background(), id)
+		require.NoError(t, getErr)
+		require.Equal(t, status, got.Status, "thread %d", id)
+	}
+}
+
+func TestThreadRepositoryListFiltersAndPaginatesProjectedStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, thread := range []*entity.Thread{
+		{ID: 1, SpaceID: 10, CreatorID: 20, Title: "active", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 10},
+		{ID: 2, SpaceID: 10, CreatorID: 20, Title: "finished", Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb, UpdatedAt: 20},
+		{ID: 3, SpaceID: 10, CreatorID: 20, Title: "child only", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 30},
+		{ID: 4, SpaceID: 10, CreatorID: 20, Title: "legacy running", Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb, UpdatedAt: 40},
+		{ID: 5, SpaceID: 10, CreatorID: 21, Title: "other user", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 50},
+		{ID: 6, SpaceID: 11, CreatorID: 20, Title: "other space", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 60},
+	} {
+		require.NoError(t, repo.CreateThread(context.Background(), thread))
+	}
+	runs := []*entity.Run{
+		newRepositoryTestRun(101, 1, entity.RunStatusPending, 10),
+		newRepositoryTestRun(201, 2, entity.RunStatusSucceeded, 20),
+		newRepositoryTestRun(301, 3, entity.RunStatusRunning, 30),
+		newRepositoryTestRun(501, 5, entity.RunStatusQueued, 50),
+		newRepositoryTestRun(601, 6, entity.RunStatusRunning, 60),
+	}
+	runs[2].ParentRunID = 300
+	runs[2].RunKind = entity.RunKindSubagent
+	for _, run := range runs {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	running := entity.ThreadStatusRunning
+	firstPage, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &running, Page: 1, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, firstPage, 1)
+	require.Equal(t, int64(4), firstPage[0].ID)
+	require.Equal(t, entity.ThreadStatusRunning, firstPage[0].Status)
+
+	secondPage, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &running, Page: 2, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, secondPage, 1)
+	require.Equal(t, int64(1), secondPage[0].ID)
+	require.Equal(t, entity.ThreadStatusRunning, secondPage[0].Status)
+
+	completed := entity.ThreadStatusCompleted
+	finished, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &completed, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, finished, 1)
+	require.Equal(t, int64(2), finished[0].ID)
+	require.Equal(t, entity.ThreadStatusCompleted, finished[0].Status)
+}
+
 func TestThreadRepositoryUsesStablePaginationOrder(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	for _, thread := range []*entity.Thread{

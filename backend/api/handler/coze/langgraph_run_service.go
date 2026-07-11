@@ -52,7 +52,7 @@ const (
 )
 
 type langGraphRunStreamWriter interface {
-	WriteEvent(id, eventType string, data []byte) error
+	runEventStreamWriter
 }
 
 // CreateLangGraphRun .
@@ -1695,6 +1695,14 @@ func streamLangGraphRunEvents(
 	req langgraphapi.StreamRunRequest,
 	run *appagentthread.RunSummary,
 ) {
+	trackedWriter := newDisconnectTrackingRunEventStreamWriter(writer)
+	writer = trackedWriter
+	defer func() {
+		if trackedWriter.disconnectedFrom(ctx) {
+			cancelRunAfterStreamDisconnect(ctx, req.RunID)
+		}
+	}()
+
 	afterEventID := req.AfterEventID
 	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
 	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
@@ -1746,13 +1754,23 @@ func streamLangGraphRunEvents(
 	defer ticker.Stop()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	keepAliveTicker := time.NewTicker(runEventStreamKeepAliveInterval(timeout))
+	defer keepAliveTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			if err := writer.WriteKeepAlive(); err != nil {
+				logs.CtxWarnf(ctx, "probe langgraph run stream before timeout failed, err=%v", err)
+			}
 			return
+		case <-keepAliveTicker.C:
+			if err := writer.WriteKeepAlive(); err != nil {
+				logs.CtxWarnf(ctx, "write langgraph run stream keepalive failed, err=%v", err)
+				return
+			}
 		case <-ticker.C:
 			if !sendNewEvents() {
 				return

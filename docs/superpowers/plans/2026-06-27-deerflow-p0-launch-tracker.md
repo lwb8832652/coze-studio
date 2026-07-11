@@ -232,10 +232,19 @@ Every implementation slice must update this document:
     Verification includes affected suites, targeted race and vet, formatting
     and diff checks, serial full backend tests, and `APP_ENV=debug make
     build_server`.
-  - `AR-PARITY-001.11` Server-owned disconnect and thread lifecycle (待开始):
-    align DeerFlow's `on_disconnect=cancel` default and disconnect ownership,
-    then derive thread running/idle/terminal projection from durable top-level
-    run state rather than client or stale aggregate fields.
+  - `AR-PARITY-001.11` Server-owned disconnect and thread lifecycle (已完成):
+    new runs now default to validated `on_disconnect=cancel`; only explicit
+    `continue` survives a real disconnect, while blank or legacy invalid modes
+    fail closed. Workbench and LangGraph detect canceled request contexts,
+    failed SSE writes and idle heartbeat failures, then reuse the durable
+    cancellation transaction through a detached, bounded authorization context;
+    normal timeout and terminal completion do not cancel. Thread Get/List and
+    status-filtered totals now share one durable top-level-run projection with
+    active-run precedence, terminal mapping, no-run fallback and child-subagent
+    exclusion. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-disconnect-thread-lifecycle.md`.
+    Verification includes all affected suites, targeted race/vet, full serial
+    backend, formatting/diff checks and `APP_ENV=debug make build_server`.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

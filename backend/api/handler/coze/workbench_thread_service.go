@@ -51,7 +51,7 @@ const (
 )
 
 type taskThreadRunEventStreamWriter interface {
-	WriteEvent(id, eventType string, data []byte) error
+	runEventStreamWriter
 }
 
 // ListTaskThreads .
@@ -2428,6 +2428,14 @@ func authorizeWorkbenchThreadAccess(
 }
 
 func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStreamWriter, req threadapi.StreamTaskThreadRunEventsRequest) {
+	trackedWriter := newDisconnectTrackingRunEventStreamWriter(writer)
+	writer = trackedWriter
+	defer func() {
+		if trackedWriter.disconnectedFrom(ctx) {
+			cancelRunAfterStreamDisconnect(ctx, req.RunID)
+		}
+	}()
+
 	afterEventID := req.AfterEventID
 	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
 	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
@@ -2474,13 +2482,23 @@ func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStr
 	defer ticker.Stop()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	keepAliveTicker := time.NewTicker(runEventStreamKeepAliveInterval(timeout))
+	defer keepAliveTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			if err := writer.WriteKeepAlive(); err != nil {
+				logs.CtxWarnf(ctx, "probe task thread run event stream before timeout failed, err=%v", err)
+			}
 			return
+		case <-keepAliveTicker.C:
+			if err := writer.WriteKeepAlive(); err != nil {
+				logs.CtxWarnf(ctx, "write task thread run event stream keepalive failed, err=%v", err)
+				return
+			}
 		case <-ticker.C:
 			if !sendNewEvents() {
 				return

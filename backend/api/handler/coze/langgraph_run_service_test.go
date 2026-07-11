@@ -959,6 +959,28 @@ func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: end"))
 }
 
+func TestLangGraphRunStreamCancelsPersistedCancelModeOnWriteFailure(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"disconnect"}]}`,
+	})
+	require.NoError(t, err)
+
+	streamLangGraphRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, langgraphapi.StreamRunRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 10,
+		TimeoutMs:  100,
+	}, runResp.Run)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
 func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
 	installAgentThreadTestService(t)
 
@@ -1000,8 +1022,9 @@ func TestLangGraphRunStreamReconnectReplaysEventsExactlyOnceInIDOrder(t *testing
 	installAgentThreadTestService(t)
 
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"断线续传"}]}`,
+		ThreadID:     1,
+		Input:        `{"messages":[{"role":"user","content":"断线续传"}]}`,
+		OnDisconnect: "continue",
 	})
 	require.NoError(t, err)
 
@@ -1912,5 +1935,9 @@ func (w *cursorRecordingLangGraphRunStreamWriter) WriteEvent(id, _ string, _ []b
 		return err
 	}
 	w.eventIDs = append(w.eventIDs, eventID)
+	return nil
+}
+
+func (w *cursorRecordingLangGraphRunStreamWriter) WriteKeepAlive() error {
 	return nil
 }

@@ -3692,6 +3692,85 @@ func TestApplicationCancelRunDoesNotNotifyADKTwice(t *testing.T) {
 	require.False(t, notified)
 }
 
+func TestApplicationCancelRunOnDisconnectHonorsPersistedMode(t *testing.T) {
+	t.Run("cancel mode interrupts active run", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			gotRun: &entity.Run{
+				ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+				OnDisconnect: "cancel", Config: `{"runtime":"eino_adk"}`,
+			},
+			requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+				Run: &entity.Run{
+					ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled,
+					OnDisconnect: "cancel", Config: `{"runtime":"eino_adk"}`,
+				},
+				PreviousStatus: entity.RunStatusRunning,
+				Changed:        true,
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.True(t, resp.Canceled)
+		require.Equal(t, RunStatusCanceled, resp.Run.Status)
+		require.NotNil(t, domainSVC.requestRunCancellationReq)
+		require.Equal(t, int64(200), domainSVC.requestRunCancellationReq.RunID)
+	})
+
+	t.Run("continue mode keeps active run", func(t *testing.T) {
+		domainSVC := &recordingThreadService{gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, OnDisconnect: "continue",
+		}}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.False(t, resp.Canceled)
+		require.Equal(t, RunStatusRunning, resp.Run.Status)
+		require.Nil(t, domainSVC.requestRunCancellationReq)
+	})
+
+	t.Run("unknown legacy mode fails closed", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			gotRun: &entity.Run{
+				ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, OnDisconnect: "detach",
+			},
+			requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+				Run: &entity.Run{
+					ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled, OnDisconnect: "detach",
+				},
+				PreviousStatus: entity.RunStatusRunning,
+				Changed:        true,
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.True(t, resp.Canceled)
+		require.Equal(t, RunStatusCanceled, resp.Run.Status)
+		require.NotNil(t, domainSVC.requestRunCancellationReq)
+	})
+
+	t.Run("terminal run is not canceled again", func(t *testing.T) {
+		domainSVC := &recordingThreadService{gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded, OnDisconnect: "cancel",
+		}}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.False(t, resp.Canceled)
+		require.Equal(t, RunStatusSucceeded, resp.Run.Status)
+		require.Nil(t, domainSVC.requestRunCancellationReq)
+	})
+}
+
 func TestApplicationCancelRunQueuesNotificationBeforeADKRegistration(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{

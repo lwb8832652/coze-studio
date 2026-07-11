@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -2992,6 +2993,108 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: done"))
 }
 
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnWriteFailure(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"disconnect"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, EventType: "step.started", Payload: `{}`,
+	})
+	require.NoError(t, err)
+
+	streamTaskThreadRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnRequestCancellation(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"disconnect"}]}`,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	streamTaskThreadRunEvents(ctx, &recordingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnHeartbeatFailure(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"idle disconnect"}]}`,
+	})
+	require.NoError(t, err)
+
+	streamTaskThreadRunEvents(context.Background(), heartbeatFailingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 40,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestRunEventStreamKeepAliveIntervalMatchesDeerFlow(t *testing.T) {
+	require.Equal(t, 15*time.Second, runEventStreamKeepAliveInterval(40*time.Millisecond))
+}
+
+func TestStreamTaskThreadRunEventsDoesNotCancelContinueModeOrTimeout(t *testing.T) {
+	t.Run("continue mode survives write failure", func(t *testing.T) {
+		installAgentThreadTestService(t)
+		runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+			ThreadID: 1, Input: `{"messages":[]}`, OnDisconnect: "continue",
+		})
+		require.NoError(t, err)
+		_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, EventType: "step.started", Payload: `{}`,
+		})
+		require.NoError(t, err)
+
+		streamTaskThreadRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+		})
+
+		persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+		require.NoError(t, err)
+		require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+	})
+
+	t.Run("server timeout is not a disconnect", func(t *testing.T) {
+		installAgentThreadTestService(t)
+		runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+			ThreadID: 1, Input: `{"messages":[]}`,
+		})
+		require.NoError(t, err)
+
+		streamTaskThreadRunEvents(context.Background(), &recordingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 20,
+		})
+
+		persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+		require.NoError(t, err)
+		require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+	})
+}
+
 func TestStreamTaskThreadRunEventsDrains450EventsAcrossReconnects(t *testing.T) {
 	installAgentThreadTestService(t)
 
@@ -3750,6 +3853,26 @@ type recordingTaskThreadRunEventStreamWriter struct {
 	ids    []string
 }
 
+type failingTaskThreadRunEventStreamWriter struct{}
+
+func (failingTaskThreadRunEventStreamWriter) WriteEvent(string, string, []byte) error {
+	return errors.New("stream disconnected")
+}
+
+func (failingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
+	return errors.New("stream disconnected")
+}
+
+type heartbeatFailingTaskThreadRunEventStreamWriter struct{}
+
+func (heartbeatFailingTaskThreadRunEventStreamWriter) WriteEvent(string, string, []byte) error {
+	return nil
+}
+
+func (heartbeatFailingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
+	return errors.New("stream disconnected")
+}
+
 func publicRunEventPayloadForTest(eventType, payload string) string {
 	projected := appagentthread.ProjectPublicRunEvent(&appagentthread.RunEventSummary{
 		EventType: eventType,
@@ -3780,6 +3903,10 @@ func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType strin
 	}
 	w.buffer.WriteByte('\n')
 
+	return nil
+}
+
+func (w *recordingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
 	return nil
 }
 

@@ -3738,6 +3738,55 @@ func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatus
 	return resp, nil
 }
 
+func (s *ApplicationService) CancelRunOnDisconnect(
+	ctx context.Context,
+	req *CancelRunOnDisconnectRequest,
+) (*CancelRunOnDisconnectResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil || req.RunID <= 0 {
+		return nil, fmt.Errorf("disconnect cancellation run id is required")
+	}
+
+	current, err := s.GetRun(ctx, &GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		return nil, err
+	}
+	if current == nil || current.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty disconnect run")
+	}
+	run := current.Run
+	mode := strings.TrimSpace(run.OnDisconnect)
+	if mode == "continue" || !isDisconnectCancellableRunStatus(run.Status) {
+		return &CancelRunOnDisconnectResponse{Run: run}, nil
+	}
+
+	canceled, err := s.CancelRun(ctx, &UpdateRunStatusRequest{
+		RunID:        run.RunID,
+		From:         run.Status,
+		ErrorCode:    "client_disconnected",
+		ErrorMessage: "stream client disconnected",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if canceled == nil || canceled.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty disconnected cancellation")
+	}
+
+	return &CancelRunOnDisconnectResponse{Run: canceled.Run, Canceled: true}, nil
+}
+
+func isDisconnectCancellableRunStatus(status RunStatus) bool {
+	switch status {
+	case RunStatusPending, RunStatusQueued, RunStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *ApplicationService) requestRunCancellation(
 	ctx context.Context,
 	req *domainservice.RequestRunCancellationRequest,

@@ -391,11 +391,76 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.Equal(t, `{}`, run.Metadata)
 	require.Equal(t, `["messages","updates"]`, run.StreamMode)
 	require.Equal(t, "reject", run.MultitaskStrategy)
-	require.Equal(t, "continue", run.OnDisconnect)
+	require.Equal(t, "cancel", run.OnDisconnect)
 	require.Equal(t, "async", run.Durability)
 	require.NotZero(t, run.CreatedAt)
 	require.Equal(t, run.CreatedAt, run.UpdatedAt)
 	require.Len(t, repo.runs[10], 1)
+}
+
+func TestCreateRunValidatesDisconnectModeAcrossCreationPaths(t *testing.T) {
+	t.Run("explicit continue is preserved", func(t *testing.T) {
+		repo := newMemoryRepo()
+		repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+		svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+		run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+			ThreadID: 10, Input: `{"messages":[]}`, OnDisconnect: "continue",
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, "continue", run.OnDisconnect)
+	})
+
+	t.Run("single run rejects unknown mode", func(t *testing.T) {
+		repo := newMemoryRepo()
+		repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+		svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+		run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+			ThreadID: 10, Input: `{"messages":[]}`, OnDisconnect: "detach",
+		})
+
+		require.Nil(t, run)
+		require.Error(t, err)
+		require.True(t, IsClientError(err))
+		require.Empty(t, repo.runs[10])
+	})
+
+	t.Run("run bundle rejects unknown mode", func(t *testing.T) {
+		repo := newMemoryRepo()
+		repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+		svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+		result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+			Run: CreateRunRequest{
+				ThreadID: 10, Input: `{"messages":[]}`, OnDisconnect: "detach",
+			},
+		})
+
+		require.Nil(t, result)
+		require.Error(t, err)
+		require.True(t, IsClientError(err))
+		require.Empty(t, repo.runs[10])
+	})
+
+	t.Run("new thread aggregate rejects unknown mode", func(t *testing.T) {
+		repo := newMemoryRepo()
+		svc := NewService(&Components{Repo: repo, IDGen: newSequenceIDGen(901)})
+
+		result, err := svc.CreateThreadRunMessage(context.Background(), &CreateThreadRunMessageRequest{
+			Thread: CreateThreadRequest{SpaceID: 1, UserID: 2, Title: "atomic task"},
+			Run: CreateRunRequest{
+				Input: `{"messages":[]}`, OnDisconnect: "detach",
+			},
+			Message: CreateMessageSpec{Role: entity.MessageRoleUser, Content: "start"},
+		})
+
+		require.Nil(t, result)
+		require.Error(t, err)
+		require.True(t, IsClientError(err))
+		require.Zero(t, repo.createThreadBundleCalls)
+	})
 }
 
 func TestCreateRunRejectsUnsupportedTopLevelMultitaskStrategy(t *testing.T) {

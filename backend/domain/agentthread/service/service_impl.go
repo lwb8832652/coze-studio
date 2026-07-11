@@ -131,6 +131,10 @@ func (s *threadService) CreateThreadRunMessage(
 	if err != nil {
 		return nil, err
 	}
+	onDisconnect, err := normalizeOnDisconnectMode(req.Run.OnDisconnect)
+	if err != nil {
+		return nil, err
+	}
 	status, err := normalizeInitialRunStatus(req.Run.Status, runKind)
 	if err != nil {
 		return nil, err
@@ -171,6 +175,7 @@ func (s *threadService) CreateThreadRunMessage(
 	}
 	runReq := req.Run
 	runReq.MultitaskStrategy = strategy
+	runReq.OnDisconnect = onDisconnect
 	run := newRunEntity(&runReq, ids[1], thread, runKind, status, input, now)
 	message := &entity.Message{
 		ID:        ids[2],
@@ -418,6 +423,10 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	onDisconnect, err := normalizeOnDisconnectMode(req.OnDisconnect)
+	if err != nil {
+		return nil, err
+	}
 	if req.ParentRunID > 0 {
 		parent, err := s.repo.GetRun(ctx, req.ParentRunID)
 		if err != nil {
@@ -440,6 +449,7 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	}
 	runReq := *req
 	runReq.MultitaskStrategy = strategy
+	runReq.OnDisconnect = onDisconnect
 	run := newRunEntity(&runReq, id, thread, runKind, status, input, now)
 	if err := s.repo.CreateRun(ctx, run); err != nil {
 		return nil, err
@@ -475,6 +485,10 @@ func (s *threadService) CreateRunBundle(
 		return nil, err
 	}
 	strategy, err := normalizeMultitaskStrategy(req.Run.MultitaskStrategy, runKind)
+	if err != nil {
+		return nil, err
+	}
+	onDisconnect, err := normalizeOnDisconnectMode(req.Run.OnDisconnect)
 	if err != nil {
 		return nil, err
 	}
@@ -525,6 +539,7 @@ func (s *threadService) CreateRunBundle(
 	now := time.Now().UnixMilli()
 	runReq := req.Run
 	runReq.MultitaskStrategy = strategy
+	runReq.OnDisconnect = onDisconnect
 	run := newRunEntity(&runReq, ids[0], thread, runKind, status, input, now)
 	nextID := 1
 	var message *entity.Message
@@ -597,7 +612,7 @@ func newRunEntity(
 		Metadata:          defaultJSON(req.Metadata, "{}"),
 		StreamMode:        defaultJSON(req.StreamMode, `["messages","updates"]`),
 		MultitaskStrategy: defaultString(req.MultitaskStrategy, "reject"),
-		OnDisconnect:      defaultString(req.OnDisconnect, "continue"),
+		OnDisconnect:      defaultString(req.OnDisconnect, "cancel"),
 		Durability:        defaultString(req.Durability, "async"),
 		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
 		CreatedAt:         now,
@@ -620,6 +635,16 @@ func normalizeMultitaskStrategy(strategy string, runKind entity.RunKind) (string
 		return strategy, nil
 	default:
 		return "", fmt.Errorf("%w: %q", ErrUnsupportedMultitaskStrategy, strategy)
+	}
+}
+
+func normalizeOnDisconnectMode(mode string) (string, error) {
+	mode = defaultString(mode, "cancel")
+	switch mode {
+	case "cancel", "continue":
+		return mode, nil
+	default:
+		return "", InvalidArgumentErrorf("on_disconnect must be cancel or continue")
 	}
 }
 
