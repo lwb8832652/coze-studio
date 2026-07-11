@@ -204,6 +204,25 @@ Every implementation slice must update this document:
     This closes Slice 1 only. Atomic multitask admission, durable stream-end
     ordering and server-owned thread lifecycle projection remain explicit P0
     follow-up work before complete backend Agent parity can be claimed.
+  - `AR-PARITY-001.9` Atomic same-thread multitask admission (已完成): aligned
+    the verified DeerFlow `create_or_reject` contract with a server-owned
+    `reject` default, transactional `reject / interrupt / rollback` arbitration,
+    post-commit Eino cancellation, generation fencing, rollback history and
+    checkpoint cleanup, late-worker suppression and bounded public 409/501
+    behavior before SSE headers. Pending/queued/running top-level rows block the
+    same thread, child subagents do not, idempotent replay wins before conflict,
+    and a failed new aggregate leaves the old lease untouched. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-multitask-admission.md`.
+    Verification includes affected suites, concurrent race coverage, targeted
+    vet, full serial backend tests and `APP_ENV=debug make build_server`.
+  - `AR-PARITY-001.10` Durable terminal event and stream-end ordering (待开始):
+    make terminal run state, bounded terminal event, journal completion and SSE
+    `done` observe one durable order for success, failure, interrupt, rollback
+    and cancellation.
+  - `AR-PARITY-001.11` Server-owned disconnect and thread lifecycle (待开始):
+    align DeerFlow's `on_disconnect=cancel` default and disconnect ownership,
+    then derive thread running/idle/terminal projection from durable top-level
+    run state rather than client or stale aggregate fields.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

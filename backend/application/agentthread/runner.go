@@ -294,6 +294,18 @@ func (p *RunProcessor) finalizeRunExecution(
 	result *RunExecutionResult,
 	err error,
 ) (runProcessOutcome, error) {
+	if supersededRun, superseded, lookupErr := durableMultitaskInterruptedRun(ctx, p.app, run, err); lookupErr != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, lookupErr
+	} else if superseded {
+		_ = heartbeat.Stop()
+		terminalRun, rollbackErr := finalizeMultitaskRollback(ctx, p.app, run, supersededRun)
+		if rollbackErr != nil {
+			return runProcessErrored, rollbackErr
+		}
+		p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultInterrupted, runtimeMetricErrorNone)
+		return runProcessInterrupted, nil
+	}
 	if canceledRun, canceled, lookupErr := durableCanceledRunAfterLeaseLoss(ctx, p.app, run); lookupErr != nil {
 		_ = heartbeat.Stop()
 		return runProcessErrored, lookupErr
@@ -379,6 +391,21 @@ func (p *RunProcessor) finalizeRunExecution(
 		ThreadTitle:         generatedTitle,
 	})
 	if err != nil {
+		if supersededRun, superseded, lookupErr := durableMultitaskInterruptedRun(
+			ctx,
+			p.app,
+			run,
+			err,
+		); lookupErr != nil {
+			return runProcessErrored, lookupErr
+		} else if superseded {
+			terminalRun, rollbackErr := finalizeMultitaskRollback(ctx, p.app, run, supersededRun)
+			if rollbackErr != nil {
+				return runProcessErrored, rollbackErr
+			}
+			p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultInterrupted, runtimeMetricErrorNone)
+			return runProcessInterrupted, nil
+		}
 		if errors.Is(err, domainrepo.ErrRunCanceled) {
 			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return runProcessCanceled, nil
@@ -405,6 +432,89 @@ func (p *RunProcessor) finalizeRunExecution(
 
 	return runProcessSucceeded, nil
 }
+
+func durableMultitaskInterruptedRun(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	executionErr error,
+) (*RunSummary, bool, error) {
+	if app == nil || app.ThreadSVC == nil || run == nil {
+		return nil, false, nil
+	}
+	var canceled *RunCanceledError
+	shouldCheck := errors.As(executionErr, &canceled) ||
+		errors.Is(executionErr, domainrepo.ErrRunLeaseLost) ||
+		errors.Is(context.Cause(ctx), domainrepo.ErrRunLeaseLost)
+	if !shouldCheck {
+		return nil, false, nil
+	}
+
+	lookupCtx := context.Background()
+	if ctx != nil {
+		lookupCtx = context.WithoutCancel(ctx)
+	}
+	lookupCtx, cancel := context.WithTimeout(lookupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+	current, err := app.ThreadSVC.GetRun(lookupCtx, &domainservice.GetRunRequest{RunID: run.RunID})
+	if err != nil {
+		return nil, false, fmt.Errorf("load run %d after multitask interruption: %w", run.RunID, err)
+	}
+	if current == nil || current.Status != entity.RunStatusInterrupted ||
+		!strings.HasPrefix(strings.TrimSpace(current.ErrorCode), "multitask_") {
+		return nil, false, nil
+	}
+	return DomainRunToSummary(current), true, nil
+}
+
+func finalizeMultitaskRollback(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	interrupted *RunSummary,
+) (*RunSummary, error) {
+	if app == nil || run == nil || interrupted == nil ||
+		interrupted.ErrorCode != "multitask_rollback" {
+		return interrupted, nil
+	}
+	mode, err := runtimeModeFromRun(run)
+	if err != nil {
+		return nil, fmt.Errorf("resolve rollback runtime for run %d: %w", run.RunID, err)
+	}
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+	var checkpointErr error
+	if mode == RuntimeModeEinoADK {
+		checkpointErr = app.DeleteRuntimeCheckpoint(cleanupCtx, &DeleteRuntimeCheckpointRequest{
+			ThreadID:    run.ThreadID,
+			RunID:       run.RunID,
+			RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey:  adkCheckpointKeyForRun(run.RunID),
+		})
+	}
+	failed, err := app.FailRun(cleanupCtx, &UpdateRunStatusRequest{
+		RunID:        run.RunID,
+		From:         RunStatusInterrupted,
+		Now:          time.Now().UnixMilli(),
+		ErrorCode:    "multitask_rollback",
+		ErrorMessage: "run rolled back by a newer thread run",
+	})
+	if err != nil {
+		return nil, errors.Join(checkpointErr, err)
+	}
+	if failed == nil || failed.Run == nil {
+		return nil, errors.Join(
+			checkpointErr,
+			fmt.Errorf("finalize rollback run %d returned empty run", run.RunID),
+		)
+	}
+	return failed.Run, checkpointErr
+}
+
 func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSummary, interrupted *RunInterruptedError) {
 	payload := map[string]any{
 		"status":    string(RunStatusInterrupted),

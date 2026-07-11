@@ -1003,8 +1003,8 @@ func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
 	require.Equal(t, "follow-up-key", domainSVC.createRunBundleReq.Run.IdempotencyKey)
 	require.JSONEq(t, `{
 		"messages":[
-			{"role":"user","content":"第一轮问题"},
-			{"role":"assistant","content":"第一轮回答"},
+			{"_run_id":100,"role":"user","content":"第一轮问题"},
+			{"_run_id":100,"role":"assistant","content":"第一轮回答"},
 			{"role":"user","content":"继续分析"}
 		],
 		"uploaded_files":[{"file_name":"report.md","virtual_path":"/mnt/user-data/uploads/report.md"}]
@@ -1015,6 +1015,107 @@ func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
 	require.Equal(t, "继续分析", domainSVC.createRunBundleReq.Message.Content)
 	require.Equal(t, `{"source":"workbench_detail_followup"}`, domainSVC.createRunBundleReq.Message.Metadata)
 	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateTopLevelRunUsesAdmissionBundleAndCancelsSupersededADK(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			InterruptedRuns: []*entity.Run{{
+				ID: 100, ThreadID: 10, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusInterrupted, Config: `{"runtime":"eino_adk"}`,
+				ErrorCode: "multitask_interrupt",
+			}},
+			Created: true,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	invoked := make(chan adkCancelRequest, 1)
+	cleanup := registry.register(100, func(request adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- request
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[{"role":"user","content":"next"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.Nil(t, domainSVC.createRunBundleReq.Message)
+	require.Nil(t, domainSVC.createRunBundleReq.Event)
+	require.Nil(t, domainSVC.createRunReq)
+	select {
+	case request := <-invoked:
+		require.True(t, request.recursive)
+	case <-time.After(time.Second):
+		t.Fatal("superseded Eino run did not receive cancellation")
+	}
+}
+
+func TestApplicationCreateTopLevelRunDoesNotWaitForSupersededADKShutdown(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			InterruptedRuns: []*entity.Run{{
+				ID: 100, ThreadID: 10, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusInterrupted, Config: `{"runtime":"eino_adk"}`,
+				ErrorCode: "multitask_interrupt",
+			}},
+			Created: true,
+		},
+	}
+	release := make(chan struct{})
+	invoked := make(chan struct{}, 1)
+	registry := NewADKCancelRegistry()
+	cleanup := registry.register(100, func(adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- struct{}{}
+		return blockingADKCancelWaiter{release: release}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+	done := make(chan error, 1)
+	go func() {
+		_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+			ThreadID: 10,
+			Input:    `{"messages":[{"role":"user","content":"next"}]}`,
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		t.Fatal("new run creation waited for superseded ADK shutdown")
+	}
+	select {
+	case <-invoked:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("superseded Eino run did not receive cancellation")
+	}
+	close(release)
+}
+
+type blockingADKCancelWaiter struct {
+	release <-chan struct{}
+}
+
+func (w blockingADKCancelWaiter) Wait() error {
+	<-w.release
+	return nil
 }
 
 func TestApplicationCreateRunWithMessageReadsAllPersistedHistoryPages(t *testing.T) {
@@ -1122,11 +1223,58 @@ func TestApplicationCreateRunWithMessageKeepsCommittedLegacyMessages(t *testing.
 	var input authoritativeRunInput
 	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
 	require.Equal(t, []authoritativeRunInputMessage{
-		{Role: "user", Content: "原子化前的问题"},
+		{RunID: 100, Role: "user", Content: "原子化前的问题"},
 		{Role: "user", Content: "已成功执行的旧追问"},
 		{Role: "user", Content: "继续分析"},
 	}, input.Messages)
 	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "创建 run 失败后的孤立消息")
+}
+
+func TestApplicationCreateRunWithMessageExcludesRolledBackRunHistory(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "应被回滚的问题"},
+			{ID: 102, ThreadID: 10, RunID: 101, Role: entity.MessageRoleUser, Content: "保留的问题"},
+			{ID: 103, ThreadID: 10, RunID: 101, Role: entity.MessageRoleAssistant, Content: "保留的回答"},
+		},
+		messageTotal: 3,
+		runs: []*entity.Run{
+			{ID: 100, ThreadID: 10, Status: entity.RunStatusFailed, ErrorCode: "multitask_rollback"},
+			{ID: 101, ThreadID: 10, Status: entity.RunStatusSucceeded},
+		},
+		runTotal: 2,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-after-rollback",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Equal(t, []authoritativeRunInputMessage{
+		{RunID: 101, Role: "user", Content: "保留的问题"},
+		{RunID: 101, Role: "assistant", Content: "保留的回答"},
+		{Role: "user", Content: "继续分析"},
+	}, input.Messages)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "应被回滚的问题")
 }
 
 func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) {
@@ -4271,6 +4419,7 @@ type recordingThreadService struct {
 	getLatestCheckpointReq         *domainservice.GetLatestCheckpointRequest
 	getLatestRuntimeReq            *domainservice.GetLatestRuntimeCheckpointRequest
 	deleteRuntimeReq               *domainservice.DeleteRuntimeCheckpointRequest
+	deleteRuntimeErr               error
 	rememberMemoryReq              *domainservice.RememberMemoryRequest
 	rememberMemoryReqs             []*domainservice.RememberMemoryRequest
 	importMemoriesReq              *domainservice.ImportMemoriesRequest
@@ -5043,7 +5192,7 @@ func (s *recordingThreadService) DeleteRuntimeCheckpoint(
 	req *domainservice.DeleteRuntimeCheckpointRequest,
 ) error {
 	s.deleteRuntimeReq = req
-	return nil
+	return s.deleteRuntimeErr
 }
 
 func (s *recordingThreadService) RememberMemory(ctx context.Context, req *domainservice.RememberMemoryRequest) (*entity.Memory, error) {

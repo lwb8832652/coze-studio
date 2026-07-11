@@ -110,16 +110,18 @@ type CreateThreadRunMessageResult struct {
 }
 
 type CreateRunBundleRequest struct {
-	Run     CreateRunRequest
-	Message *CreateMessageSpec
-	Event   *CreateRunEventSpec
+	Run                   CreateRunRequest
+	Message               *CreateMessageSpec
+	Event                 *CreateRunEventSpec
+	SkipTopLevelAdmission bool
 }
 
 type CreateRunBundleResult struct {
-	Run     *entity.Run
-	Message *entity.Message
-	Event   *entity.RunEvent
-	Created bool
+	Run             *entity.Run
+	Message         *entity.Message
+	Event           *entity.RunEvent
+	InterruptedRuns []*entity.Run
+	Created         bool
 }
 
 type GetRunRequest struct {

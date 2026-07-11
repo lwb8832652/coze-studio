@@ -390,12 +390,47 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.Equal(t, `{}`, run.Context)
 	require.Equal(t, `{}`, run.Metadata)
 	require.Equal(t, `["messages","updates"]`, run.StreamMode)
-	require.Equal(t, "enqueue", run.MultitaskStrategy)
+	require.Equal(t, "reject", run.MultitaskStrategy)
 	require.Equal(t, "continue", run.OnDisconnect)
 	require.Equal(t, "async", run.Durability)
 	require.NotZero(t, run.CreatedAt)
 	require.Equal(t, run.CreatedAt, run.UpdatedAt)
 	require.Len(t, repo.runs[10], 1)
+}
+
+func TestCreateRunRejectsUnsupportedTopLevelMultitaskStrategy(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	run, err := svc.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:          10,
+		Input:             `{"messages":[{"role":"user","content":"hello"}]}`,
+		MultitaskStrategy: "enqueue",
+	})
+
+	require.Nil(t, run)
+	require.ErrorIs(t, err, ErrUnsupportedMultitaskStrategy)
+	require.Empty(t, repo.runs[10])
+}
+
+func TestCreateRunBundleAllowsMessageLessPublicRun(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.threads[10] = &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	result, err := svc.CreateRunBundle(context.Background(), &CreateRunBundleRequest{
+		Run: CreateRunRequest{
+			ThreadID: 10,
+			Input:    `{"messages":[{"role":"user","content":"hello"}]}`,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, int64(2001), result.Run.ID)
+	require.Nil(t, result.Message)
+	require.Nil(t, result.Event)
 }
 
 func TestCreateRunCreatesSubagentRunWhenParentRunIsSet(t *testing.T) {

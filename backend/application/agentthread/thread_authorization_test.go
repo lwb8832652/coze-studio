@@ -569,6 +569,9 @@ func authorizedOperationThreadService() *recordingThreadService {
 			ID:       41,
 			ThreadID: 10,
 		},
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &domainentity.Run{ID: 41, ThreadID: 10},
+		},
 		createdCheckpoint: &domainentity.Checkpoint{ID: 60, ThreadID: 10, RunID: 40},
 		appendedRunEvent:  &domainentity.RunEvent{ID: 70, ThreadID: 10, RunID: 40},
 		recordedTokenUsage: &domainentity.TokenUsage{

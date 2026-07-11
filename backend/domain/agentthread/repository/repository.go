@@ -24,8 +24,10 @@ import (
 )
 
 var (
-	ErrRunLeaseLost = errors.New("agent run lease lost")
-	ErrRunCanceled  = errors.New("agent run canceled")
+	ErrRunLeaseLost                 = errors.New("agent run lease lost")
+	ErrRunCanceled                  = errors.New("agent run canceled")
+	ErrActiveRunExists              = errors.New("agent thread already has an active run")
+	ErrUnsupportedMultitaskStrategy = errors.New("unsupported multitask strategy")
 )
 
 type ThreadRepository interface {
@@ -116,16 +118,18 @@ type CreateThreadBundleResult struct {
 }
 
 type CreateRunBundleRequest struct {
-	Run     *entity.Run
-	Message *entity.Message
-	Event   *entity.RunEvent
+	Run                   *entity.Run
+	Message               *entity.Message
+	Event                 *entity.RunEvent
+	SkipTopLevelAdmission bool
 }
 
 type CreateRunBundleResult struct {
-	Run     *entity.Run
-	Message *entity.Message
-	Event   *entity.RunEvent
-	Created bool
+	Run             *entity.Run
+	Message         *entity.Message
+	Event           *entity.RunEvent
+	InterruptedRuns []*entity.Run
+	Created         bool
 }
 
 type ListThreadsRequest struct {

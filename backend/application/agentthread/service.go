@@ -39,6 +39,11 @@ import (
 
 var SVC = new(ApplicationService)
 
+var (
+	ErrActiveRunExists              = domainservice.ErrActiveRunExists
+	ErrUnsupportedMultitaskStrategy = domainservice.ErrUnsupportedMultitaskStrategy
+)
+
 var ErrArtifactScanReviewDecisionInvalid = errors.New(
 	"artifact scan review decision is invalid",
 )
@@ -582,9 +587,31 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		if bundle == nil || bundle.Run == nil || bundle.Message == nil {
 			return nil, fmt.Errorf("agent thread service returned incomplete run bundle")
 		}
+		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 		return &CreateRunResponse{
 			Run: DomainRunToSummary(bundle.Run), Message: DomainMessageToSummary(bundle.Message),
 		}, nil
+	}
+	if domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID) == domainentity.RunKindTask {
+		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+			Run: domainservice.CreateRunRequest{
+				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
+				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
+				Status: domainentity.RunStatus(req.Status), Command: req.Command,
+				Input: req.Input, Config: req.Config, Context: req.Context,
+				Metadata: req.Metadata, StreamMode: req.StreamMode,
+				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bundle == nil || bundle.Run == nil {
+			return nil, fmt.Errorf("agent thread service returned empty run bundle")
+		}
+		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
+		return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
@@ -614,10 +641,42 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
 }
 
+func (s *ApplicationService) cancelMultitaskInterruptedADKRuns(
+	runs []*domainentity.Run,
+) {
+	if s == nil || s.ADKCancelRegistry == nil {
+		return
+	}
+	registry := s.ADKCancelRegistry
+	for _, domainRun := range runs {
+		run := DomainRunToSummary(domainRun)
+		if run == nil || run.RunID <= 0 {
+			continue
+		}
+		mode, err := runtimeModeFromRun(run)
+		if err != nil || mode != RuntimeModeEinoADK {
+			continue
+		}
+		runID := run.RunID
+		go func() {
+			notifyCtx, cancel := context.WithTimeout(context.Background(), defaultMultitaskCancelNotifyTimeout)
+			defer cancel()
+			_ = registry.Request(
+				notifyCtx,
+				runID,
+				adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
+				true,
+			)
+		}()
+	}
+}
+
+const defaultMultitaskCancelNotifyTimeout = 5 * time.Second
 const authoritativeRunHistoryPageSize int32 = 200
 const authoritativeRunPageSize int32 = 200
 
 type authoritativeRunInputMessage struct {
+	RunID   int64  `json:"_run_id,omitempty"`
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
@@ -641,7 +700,6 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 	}
 
 	historyMessages := make([]*domainentity.Message, 0)
-	hasLegacyUnboundMessages := false
 	page := int32(1)
 	for {
 		rows, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
@@ -655,9 +713,6 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 		for _, message := range rows {
 			if message != nil && message.ID > 0 {
 				historyMessages = append(historyMessages, message)
-				if message.RunID <= 0 {
-					hasLegacyUnboundMessages = true
-				}
 			}
 		}
 		if len(rows) == 0 || int64(page)*int64(authoritativeRunHistoryPageSize) >= total {
@@ -667,9 +722,10 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 	}
 
 	legacyCommittedMessageIDs := map[int64]struct{}{}
-	if hasLegacyUnboundMessages {
+	rolledBackRunIDs := map[int64]struct{}{}
+	if len(historyMessages) > 0 {
 		var err error
-		legacyCommittedMessageIDs, err = s.listLegacyCommittedMessageIDs(ctx, threadID)
+		legacyCommittedMessageIDs, rolledBackRunIDs, err = s.listAuthoritativeHistoryRunState(ctx, threadID)
 		if err != nil {
 			return "", err
 		}
@@ -682,6 +738,9 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 			continue
 		}
 		seen[message.ID] = struct{}{}
+		if _, rolledBack := rolledBackRunIDs[message.RunID]; rolledBack {
+			continue
+		}
 		if message.RunID <= 0 {
 			if message.Role != domainentity.MessageRoleUser {
 				continue
@@ -696,9 +755,13 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 		}
 		switch message.Role {
 		case domainentity.MessageRoleUser:
-			messages = append(messages, authoritativeRunInputMessage{Role: "user", Content: content})
+			messages = append(messages, authoritativeRunInputMessage{
+				RunID: message.RunID, Role: "user", Content: content,
+			})
 		case domainentity.MessageRoleAssistant:
-			messages = append(messages, authoritativeRunInputMessage{Role: "assistant", Content: content})
+			messages = append(messages, authoritativeRunInputMessage{
+				RunID: message.RunID, Role: "assistant", Content: content,
+			})
 		}
 	}
 	messages = append(messages, authoritativeRunInputMessage{
@@ -715,11 +778,12 @@ func (s *ApplicationService) buildAuthoritativeRunInput(
 	return string(encoded), nil
 }
 
-func (s *ApplicationService) listLegacyCommittedMessageIDs(
+func (s *ApplicationService) listAuthoritativeHistoryRunState(
 	ctx context.Context,
 	threadID int64,
-) (map[int64]struct{}, error) {
+) (map[int64]struct{}, map[int64]struct{}, error) {
 	messageIDs := make(map[int64]struct{})
+	rolledBackRunIDs := make(map[int64]struct{})
 	page := int32(1)
 	for {
 		runs, total, err := s.ThreadSVC.ListRuns(ctx, &domainservice.ListRunsRequest{
@@ -728,11 +792,14 @@ func (s *ApplicationService) listLegacyCommittedMessageIDs(
 			PageSize: authoritativeRunPageSize,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, run := range runs {
 			if run == nil || run.ThreadID != threadID {
 				continue
+			}
+			if strings.TrimSpace(run.ErrorCode) == "multitask_rollback" {
+				rolledBackRunIDs[run.ID] = struct{}{}
 			}
 			if messageID := legacyAppendedMessageID(run.Metadata); messageID > 0 {
 				messageIDs[messageID] = struct{}{}
@@ -743,7 +810,7 @@ func (s *ApplicationService) listLegacyCommittedMessageIDs(
 		}
 		page++
 	}
-	return messageIDs, nil
+	return messageIDs, rolledBackRunIDs, nil
 }
 
 func legacyAppendedMessageID(metadata string) int64 {

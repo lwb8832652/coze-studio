@@ -206,6 +206,20 @@ func TestParseModelExecutorMessagesPreservesCompleteMultimodalMessages(
 	require.Equal(t, "inspect_file", messages[2].ToolName)
 }
 
+func TestParseModelExecutorMessagesDoesNotForwardAuthoritativeRunMarker(t *testing.T) {
+	messages, err := parseModelExecutorMessages(`{
+		"messages":[{"_run_id":100,"role":"user","content":"继续分析"}]
+	}`, "")
+
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Equal(t, schema.User, messages[0].Role)
+	require.Equal(t, "继续分析", messages[0].Content)
+	encoded, err := json.Marshal(messages[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "_run_id")
+}
+
 func TestModelExecutorRejectsEmptyRunInputMessages(t *testing.T) {
 	called := false
 	executor := NewModelExecutor(func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {

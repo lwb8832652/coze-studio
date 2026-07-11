@@ -766,9 +766,6 @@ func (r *threadRepository) CreateRunBundle(
 	if req.Run == nil {
 		return nil, fmt.Errorf("run is required")
 	}
-	if req.Message == nil && req.Event == nil {
-		return nil, fmt.Errorf("run bundle message or event is required")
-	}
 	if req.Message != nil &&
 		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
 		return nil, fmt.Errorf("run bundle message does not belong to run")
@@ -786,7 +783,10 @@ func (r *threadRepository) CreateRunBundle(
 	if run.UpdatedAt == 0 {
 		run.UpdatedAt = run.CreatedAt
 	}
-	normalized := CreateRunBundleRequest{Run: &run}
+	normalized := CreateRunBundleRequest{
+		Run:                   &run,
+		SkipTopLevelAdmission: req.SkipTopLevelAdmission,
+	}
 	if req.Message != nil {
 		message := *req.Message
 		if message.CreatedAt == 0 {
@@ -814,12 +814,50 @@ func (r *threadRepository) CreateRunBundle(
 			return nil
 		}
 
+		threadQuery := tx.Where("id = ?", normalized.Run.ThreadID)
+		if tx.Dialector.Name() != "sqlite" {
+			threadQuery = threadQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
 		var thread threadPO
-		if err := tx.Where("id = ?", normalized.Run.ThreadID).First(&thread).Error; err != nil {
+		if err := threadQuery.First(&thread).Error; err != nil {
 			return err
 		}
 		if normalized.Run.SpaceID != thread.SpaceID || normalized.Run.CreatorID != thread.CreatorID {
 			return fmt.Errorf("run bundle ownership does not match thread")
+		}
+		result, found, err = findExistingRunBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+
+		activeRuns, err := lockActiveTopLevelRuns(tx, normalized.Run, normalized.SkipTopLevelAdmission)
+		if err != nil {
+			return err
+		}
+		strategy := strings.TrimSpace(normalized.Run.MultitaskStrategy)
+		if strategy == "" {
+			strategy = "reject"
+			normalized.Run.MultitaskStrategy = strategy
+		}
+		if isTopLevelTaskRun(normalized.Run) {
+			switch strategy {
+			case "reject":
+				if len(activeRuns) > 0 {
+					return fmt.Errorf("%w: thread %d", ErrActiveRunExists, normalized.Run.ThreadID)
+				}
+			case "interrupt", "rollback":
+			default:
+				return fmt.Errorf("%w: %q", ErrUnsupportedMultitaskStrategy, strategy)
+			}
+		}
+		if strategy == "rollback" && len(activeRuns) > 0 {
+			normalized.Run.Input, err = excludeRunMessagesFromInput(normalized.Run.Input, activeRuns)
+			if err != nil {
+				return err
+			}
 		}
 
 		runPO, err := runToPO(normalized.Run)
@@ -847,8 +885,13 @@ func (r *threadRepository) CreateRunBundle(
 				return err
 			}
 		}
+		interruptedRuns, err := interruptActiveTopLevelRuns(tx, activeRuns, strategy, normalized.Run.CreatedAt)
+		if err != nil {
+			return err
+		}
 		result = &CreateRunBundleResult{
-			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event, Created: true,
+			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event,
+			InterruptedRuns: interruptedRuns, Created: true,
 		}
 		return nil
 	})
@@ -867,6 +910,136 @@ func (r *threadRepository) CreateRunBundle(
 		return replayed, nil
 	}
 	return nil, err
+}
+
+func isTopLevelTaskRun(run *entity.Run) bool {
+	return run != nil && run.ParentRunID == 0 &&
+		(run.RunKind == "" || run.RunKind == entity.RunKindTask)
+}
+
+func lockActiveTopLevelRuns(tx *gorm.DB, run *entity.Run, skipAdmission bool) ([]runPO, error) {
+	if skipAdmission || !isTopLevelTaskRun(run) {
+		return nil, nil
+	}
+
+	query := tx.Where("thread_id = ?", run.ThreadID).
+		Where("parent_run_id = 0").
+		Where("(run_kind = ? OR run_kind = '')", string(entity.RunKindTask)).
+		Where("status IN ?", []string{
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+			string(entity.RunStatusRunning),
+		})
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var active []runPO
+	if err := query.Order("created_at ASC, id ASC").Find(&active).Error; err != nil {
+		return nil, err
+	}
+	return active, nil
+}
+
+func interruptActiveTopLevelRuns(
+	tx *gorm.DB,
+	active []runPO,
+	strategy string,
+	now int64,
+) ([]*entity.Run, error) {
+	if len(active) == 0 || (strategy != "interrupt" && strategy != "rollback") {
+		return nil, nil
+	}
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	ids := make([]int64, 0, len(active))
+	for _, run := range active {
+		ids = append(ids, run.ID)
+	}
+	updates := map[string]any{
+		"status":               string(entity.RunStatusInterrupted),
+		"execution_generation": gorm.Expr("execution_generation + 1"),
+		"error_code":           "multitask_" + strategy,
+		"error_message":        "run interrupted by a newer thread run",
+		"ended_at":             now,
+		"updated_at":           now,
+	}
+	clearRunLeaseUpdates(updates)
+	updates["cancel_requested_at"] = now
+	updated := tx.Model(&runPO{}).
+		Where("id IN ?", ids).
+		Where("status IN ?", []string{
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+			string(entity.RunStatusRunning),
+		}).
+		Updates(updates)
+	if updated.Error != nil {
+		return nil, updated.Error
+	}
+	if updated.RowsAffected != int64(len(ids)) {
+		return nil, fmt.Errorf("active run set changed during multitask admission")
+	}
+
+	var interrupted []runPO
+	if err := tx.Where("id IN ?", ids).Order("created_at ASC, id ASC").Find(&interrupted).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*entity.Run, 0, len(interrupted))
+	for _, run := range interrupted {
+		result = append(result, run.toEntity())
+	}
+	return result, nil
+}
+
+func excludeRunMessagesFromInput(rawInput string, runs []runPO) (string, error) {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" || len(runs) == 0 {
+		return rawInput, nil
+	}
+	excluded := make(map[int64]struct{}, len(runs))
+	for _, run := range runs {
+		excluded[run.ID] = struct{}{}
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawInput), &payload); err != nil {
+		return "", fmt.Errorf("parse rollback run input: %w", err)
+	}
+	rawMessages, ok := payload["messages"]
+	if !ok {
+		return rawInput, nil
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+		return "", fmt.Errorf("parse rollback run input messages: %w", err)
+	}
+	filtered := make([]json.RawMessage, 0, len(messages))
+	for _, message := range messages {
+		var marker struct {
+			RunID int64 `json:"_run_id"`
+		}
+		if err := json.Unmarshal(message, &marker); err != nil {
+			return "", fmt.Errorf("parse rollback run input message marker: %w", err)
+		}
+		if _, remove := excluded[marker.RunID]; remove && marker.RunID > 0 {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	if len(filtered) == len(messages) {
+		return rawInput, nil
+	}
+	encodedMessages, err := json.Marshal(filtered)
+	if err != nil {
+		return "", fmt.Errorf("marshal rollback run input messages: %w", err)
+	}
+	payload["messages"] = encodedMessages
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal rollback run input: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func findExistingRunBundle(

@@ -98,12 +98,13 @@ func (s *ApplicationService) RetrySubagentRun(
 	}
 
 	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		SkipTopLevelAdmission: true,
 		Run: domainservice.CreateRunRequest{
 			ThreadID: req.ThreadID, AssistantID: parentRun.AssistantID,
 			RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusQueued,
 			Command: command, Input: `{"messages":[]}`, Config: parentRun.Config,
 			Context: parentRun.Context, Metadata: metadata, StreamMode: parentRun.StreamMode,
-			MultitaskStrategy: parentRun.MultitaskStrategy, OnDisconnect: parentRun.OnDisconnect,
+			MultitaskStrategy: "reject", OnDisconnect: parentRun.OnDisconnect,
 			Durability: parentRun.Durability, IdempotencyKey: idempotencyKey,
 		},
 		Event: &domainservice.CreateRunEventSpec{
@@ -121,6 +122,7 @@ func (s *ApplicationService) RetrySubagentRun(
 	if bundle == nil || bundle.Run == nil || bundle.Event == nil {
 		return nil, fmt.Errorf("agent thread service returned incomplete subagent retry bundle")
 	}
+	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 
 	return &RetrySubagentRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }

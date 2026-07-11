@@ -2312,6 +2312,20 @@ func taskThreadUploadFileToAPI(
 }
 
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if errors.Is(err, appagentthread.ErrActiveRunExists) {
+		c.JSON(consts.StatusConflict, map[string]any{
+			"code": consts.StatusConflict,
+			"msg":  "thread already has an active run",
+		})
+		return
+	}
+	if errors.Is(err, appagentthread.ErrUnsupportedMultitaskStrategy) {
+		c.JSON(consts.StatusNotImplemented, map[string]any{
+			"code": consts.StatusNotImplemented,
+			"msg":  "multitask strategy is not supported",
+		})
+		return
+	}
 	if errors.Is(err, appagentthread.ErrThreadAccessDenied) {
 		c.JSON(consts.StatusForbidden, map[string]any{
 			"code": consts.StatusForbidden,

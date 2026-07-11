@@ -1965,6 +1965,58 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Equal(t, `{"source":"test_followup"}`, messages.Messages[0].Metadata)
 }
 
+func TestCreateTaskThreadRunHandlerRejectsSecondActiveRun(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
+	installAgentThreadTestService(t)
+
+	create := func(message, key string) *ut.ResponseRecorder {
+		payload, err := json.Marshal(map[string]any{
+			"input":           fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, message),
+			"message_content": message,
+			"idempotency_key": key,
+		})
+		require.NoError(t, err)
+		return ut.PerformRequest(
+			h.Engine,
+			http.MethodPost,
+			"/api/workbench/task_threads/1/runs",
+			&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+			ut.Header{Key: "Content-Type", Value: "application/json"},
+		)
+	}
+
+	first := create("first", "admission-first")
+	second := create("second", "admission-second")
+
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, http.StatusConflict, second.Code)
+	require.Contains(t, string(second.Result().Body()), "thread already has an active run")
+	require.NotContains(t, string(second.Result().Body()), "internal server error")
+}
+
+func TestCreateTaskThreadRunHandlerRejectsUnsupportedEnqueueStrategy(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
+	installAgentThreadTestService(t)
+	payload, err := json.Marshal(map[string]any{
+		"input":              `{"messages":[{"role":"user","content":"first"}]}`,
+		"multitask_strategy": "enqueue",
+	})
+	require.NoError(t, err)
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusNotImplemented, resp.Code)
+	require.Contains(t, string(resp.Result().Body()), "multitask strategy is not supported")
+}
+
 func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
 	subagent := taskThreadRunToAPI(&appagentthread.RunSummary{
 		RunID:       2001,
@@ -2290,8 +2342,9 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"第二轮"}]}`,
+		ThreadID:          1,
+		Input:             `{"messages":[{"role":"user","content":"第二轮"}]}`,
+		MultitaskStrategy: "interrupt",
 	})
 	require.NoError(t, err)
 
@@ -2844,8 +2897,9 @@ func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	siblingResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"独立任务"}]}`,
+		ThreadID:          1,
+		Input:             `{"messages":[{"role":"user","content":"独立任务"}]}`,
+		MultitaskStrategy: "interrupt",
 	})
 	require.NoError(t, err)
 

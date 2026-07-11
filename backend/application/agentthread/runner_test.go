@@ -1074,6 +1074,163 @@ func TestRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
 	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
+func TestRunProcessorPreservesDurableMultitaskInterruptionAfterExecutorCancel(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Config: `{"runtime":"eino_adk"}`,
+		}},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			ExecutionGeneration: 4, ErrorCode: "multitask_interrupt",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunCanceledError{EventPersisted: true}
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.Zero(t, result.CanceledRuns)
+	require.Nil(t, domainSVC.requestRunCancellationReq)
+}
+
+func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Config: `{"runtime":"eino_adk"}`,
+		}},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+		failedRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusFailed,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunCanceledError{EventPersisted: true}
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.NotNil(t, domainSVC.deleteRuntimeReq)
+	require.Equal(t, int64(10), domainSVC.deleteRuntimeReq.ThreadID)
+	require.Equal(t, int64(200), domainSVC.deleteRuntimeReq.RunID)
+	require.Equal(t, string(RuntimeModeEinoADK), domainSVC.deleteRuntimeReq.RuntimeType)
+	require.Equal(t, adkCheckpointKeyForRun(200), domainSVC.deleteRuntimeReq.RuntimeKey)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Equal(t, entity.RunStatusInterrupted, domainSVC.failRunReq.From)
+	require.Equal(t, "multitask_rollback", domainSVC.failRunReq.ErrorCode)
+	require.Equal(t, "run rolled back by a newer thread run", domainSVC.failRunReq.ErrorMessage)
+}
+
+func TestRunProcessorFinalizesLegacyMultitaskRollbackWithoutEinoCheckpoint(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Config: `{}`,
+		}},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+		failedRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusFailed,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunCanceledError{EventPersisted: true}
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.Nil(t, domainSVC.deleteRuntimeReq)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Equal(t, entity.RunStatusInterrupted, domainSVC.failRunReq.From)
+}
+
+func TestFinalizeMultitaskRollbackPersistsFailedStatusWhenCheckpointCleanupFails(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		deleteRuntimeErr: errors.New("checkpoint storage unavailable"),
+		failedRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusFailed,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	terminal, err := finalizeMultitaskRollback(
+		context.Background(),
+		app,
+		&RunSummary{RunID: 200, ThreadID: 10, Config: `{"runtime":"eino_adk"}`},
+		&RunSummary{
+			RunID: 200, ThreadID: 10, Status: RunStatusInterrupted,
+			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
+		},
+	)
+
+	require.ErrorContains(t, err, "checkpoint storage unavailable")
+	require.NotNil(t, terminal)
+	require.Equal(t, RunStatusFailed, terminal.Status)
+	require.NotNil(t, domainSVC.deleteRuntimeReq)
+	require.NotNil(t, domainSVC.failRunReq)
+}
+
+func TestRunProcessorDiscardsLateSuccessAfterDurableMultitaskInterruption(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 3, Config: `{"runtime":"eino_adk"}`,
+		}},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			ExecutionGeneration: 4, ErrorCode: "multitask_interrupt",
+		},
+		finalizeRunSuccessErr: domainrepo.ErrRunLeaseLost,
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	processor := NewRunProcessor(app, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "stale assistant result"}, nil
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.Zero(t, result.SucceededRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
 type recordingRunEventSink struct {
 	mu     sync.Mutex
 	events []RunEvent

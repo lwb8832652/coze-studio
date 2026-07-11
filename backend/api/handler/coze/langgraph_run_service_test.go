@@ -61,7 +61,7 @@ func TestLangGraphRunCreateListAndGetHandlers(t *testing.T) {
 			"enable_skills": []string{"research"},
 		},
 		"stream_mode":        []string{"messages", "updates"},
-		"multitask_strategy": "enqueue",
+		"multitask_strategy": "reject",
 		"on_disconnect":      "continue",
 		"durability":         "async",
 	})
@@ -689,8 +689,9 @@ func TestLangGraphThreadMessagesHandlerReturnsDeerFlowList(t *testing.T) {
 	require.NoError(t, err)
 
 	secondRun, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"第二轮问题"}]}`,
+		ThreadID:          1,
+		Input:             `{"messages":[{"role":"user","content":"第二轮问题"}]}`,
+		MultitaskStrategy: "interrupt",
 	})
 	require.NoError(t, err)
 	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
@@ -1300,6 +1301,35 @@ func TestLangGraphRunCreateStreamRejectsMissingInput(t *testing.T) {
 	)
 
 	require.Equal(t, http.StatusBadRequest, streamResp.Code)
+}
+
+func TestLangGraphRunCreateStreamRejectsActiveRunBeforeSSEHeaders(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/threads/:thread_id/runs/stream", CreateLangGraphRunStream)
+	installAgentThreadTestService(t)
+	_, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"first"}]}`,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"input": map[string]any{"messages": []map[string]string{{
+			"role": "user", "content": "second",
+		}}},
+	})
+	require.NoError(t, err)
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads/1/runs/stream?timeout_ms=1",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusConflict, resp.Code)
+	require.NotContains(t, resp.Header().Get("Content-Type"), "text/event-stream")
+	require.Contains(t, string(resp.Result().Body()), "thread already has an active run")
 }
 
 func TestLangGraphRunJoinHandlerReturnsTerminalRun(t *testing.T) {

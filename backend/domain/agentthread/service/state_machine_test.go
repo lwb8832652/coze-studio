@@ -32,6 +32,7 @@ func TestCanTransitionRunAllowsWorkerLifecycle(t *testing.T) {
 	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusCanceled))
 	assert.True(t, CanTransitionRun(entity.RunStatusRunning, entity.RunStatusInterrupted))
 	assert.True(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusQueued))
+	assert.True(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusFailed))
 	assert.True(t, CanTransitionRun(entity.RunStatusInterrupted, entity.RunStatusCanceled))
 }
 

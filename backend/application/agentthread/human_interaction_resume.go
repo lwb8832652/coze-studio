@@ -127,7 +127,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 			Status: domainentity.RunStatusQueued, Command: resumeCommand,
 			Input: `{"messages":[]}`, Config: sourceRun.Config, Context: sourceRun.Context,
 			Metadata: metadata, StreamMode: sourceRun.StreamMode,
-			MultitaskStrategy: sourceRun.MultitaskStrategy, OnDisconnect: sourceRun.OnDisconnect,
+			MultitaskStrategy: "reject", OnDisconnect: sourceRun.OnDisconnect,
 			Durability: sourceRun.Durability, IdempotencyKey: idempotencyKey,
 		},
 		Message: &domainservice.CreateMessageSpec{
@@ -149,6 +149,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	if bundle == nil || bundle.Run == nil || bundle.Message == nil || bundle.Event == nil {
 		return nil, fmt.Errorf("agent thread service returned incomplete human resume bundle")
 	}
+	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 
 	return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }

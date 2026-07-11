@@ -127,6 +127,10 @@ func (s *threadService) CreateThreadRunMessage(
 	if err != nil {
 		return nil, err
 	}
+	strategy, err := normalizeMultitaskStrategy(req.Run.MultitaskStrategy, runKind)
+	if err != nil {
+		return nil, err
+	}
 	status, err := normalizeInitialRunStatus(req.Run.Status, runKind)
 	if err != nil {
 		return nil, err
@@ -165,7 +169,9 @@ func (s *threadService) CreateThreadRunMessage(
 		UpdatedAt:     now,
 		LastMessageAt: now,
 	}
-	run := newRunEntity(&req.Run, ids[1], thread, runKind, status, input, now)
+	runReq := req.Run
+	runReq.MultitaskStrategy = strategy
+	run := newRunEntity(&runReq, ids[1], thread, runKind, status, input, now)
 	message := &entity.Message{
 		ID:        ids[2],
 		ThreadID:  thread.ID,
@@ -408,6 +414,10 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	strategy, err := normalizeMultitaskStrategy(req.MultitaskStrategy, runKind)
+	if err != nil {
+		return nil, err
+	}
 	if req.ParentRunID > 0 {
 		parent, err := s.repo.GetRun(ctx, req.ParentRunID)
 		if err != nil {
@@ -428,7 +438,9 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	run := newRunEntity(req, id, thread, runKind, status, input, now)
+	runReq := *req
+	runReq.MultitaskStrategy = strategy
+	run := newRunEntity(&runReq, id, thread, runKind, status, input, now)
 	if err := s.repo.CreateRun(ctx, run); err != nil {
 		return nil, err
 	}
@@ -446,9 +458,6 @@ func (s *threadService) CreateRunBundle(
 	if req == nil {
 		return nil, InvalidArgumentErrorf("create run bundle request is required")
 	}
-	if req.Message == nil && req.Event == nil {
-		return nil, InvalidArgumentErrorf("run bundle message or event is required")
-	}
 	if req.Run.ThreadID <= 0 {
 		return nil, InvalidArgumentErrorf("thread id is required")
 	}
@@ -462,6 +471,10 @@ func (s *threadService) CreateRunBundle(
 		return nil, err
 	}
 	runKind, err := normalizeRunKind(req.Run.RunKind, req.Run.ParentRunID)
+	if err != nil {
+		return nil, err
+	}
+	strategy, err := normalizeMultitaskStrategy(req.Run.MultitaskStrategy, runKind)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +523,9 @@ func (s *threadService) CreateRunBundle(
 		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected %d", len(ids), entityCount)
 	}
 	now := time.Now().UnixMilli()
-	run := newRunEntity(&req.Run, ids[0], thread, runKind, status, input, now)
+	runReq := req.Run
+	runReq.MultitaskStrategy = strategy
+	run := newRunEntity(&runReq, ids[0], thread, runKind, status, input, now)
 	nextID := 1
 	var message *entity.Message
 	if req.Message != nil {
@@ -539,6 +554,7 @@ func (s *threadService) CreateRunBundle(
 
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event,
+		SkipTopLevelAdmission: req.SkipTopLevelAdmission,
 	})
 	if err != nil {
 		return nil, err
@@ -547,7 +563,8 @@ func (s *threadService) CreateRunBundle(
 		return nil, fmt.Errorf("agent thread repository returned empty run bundle")
 	}
 	return &CreateRunBundleResult{
-		Run: result.Run, Message: result.Message, Event: result.Event, Created: result.Created,
+		Run: result.Run, Message: result.Message, Event: result.Event,
+		InterruptedRuns: result.InterruptedRuns, Created: result.Created,
 	}, nil
 }
 
@@ -575,7 +592,7 @@ func newRunEntity(
 		Context:           defaultJSON(req.Context, "{}"),
 		Metadata:          defaultJSON(req.Metadata, "{}"),
 		StreamMode:        defaultJSON(req.StreamMode, `["messages","updates"]`),
-		MultitaskStrategy: defaultString(req.MultitaskStrategy, "enqueue"),
+		MultitaskStrategy: defaultString(req.MultitaskStrategy, "reject"),
 		OnDisconnect:      defaultString(req.OnDisconnect, "continue"),
 		Durability:        defaultString(req.Durability, "async"),
 		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
@@ -586,6 +603,20 @@ func newRunEntity(
 		run.StartedAt = now
 	}
 	return run
+}
+
+func normalizeMultitaskStrategy(strategy string, runKind entity.RunKind) (string, error) {
+	strategy = defaultString(strategy, "reject")
+	if runKind == entity.RunKindSubagent {
+		return strategy, nil
+	}
+
+	switch strategy {
+	case "reject", "interrupt", "rollback":
+		return strategy, nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrUnsupportedMultitaskStrategy, strategy)
+	}
 }
 
 func normalizeInitialRunStatus(

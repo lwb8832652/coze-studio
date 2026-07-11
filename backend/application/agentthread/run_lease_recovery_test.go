@@ -96,6 +96,7 @@ func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry(t *testing.T) {
 	require.Equal(t, `{"messages":[]}`, created.Input)
 	require.Equal(t, source.Config, created.Config)
 	require.Equal(t, source.Context, created.Context)
+	require.Equal(t, "reject", created.MultitaskStrategy)
 	require.Equal(t, "run-recovery:200:3", created.IdempotencyKey)
 	require.JSONEq(t, `{
 		"resume": {

@@ -19,9 +19,15 @@ package service
 import (
 	"errors"
 	"fmt"
+
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
 
-var ErrInvalidArgument = errors.New("invalid argument")
+var (
+	ErrInvalidArgument              = errors.New("invalid argument")
+	ErrActiveRunExists              = repository.ErrActiveRunExists
+	ErrUnsupportedMultitaskStrategy = repository.ErrUnsupportedMultitaskStrategy
+)
 
 func InvalidArgumentErrorf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidArgument, fmt.Sprintf(format, args...))

@@ -238,7 +238,7 @@ func (p *RunLeaseRecoveryProcessor) ensureRecoveryResumeRun(
 		Context:           source.Context,
 		Metadata:          metadata,
 		StreamMode:        source.StreamMode,
-		MultitaskStrategy: source.MultitaskStrategy,
+		MultitaskStrategy: "reject",
 		OnDisconnect:      source.OnDisconnect,
 		Durability:        source.Durability,
 		IdempotencyKey:    idempotencyKey,
