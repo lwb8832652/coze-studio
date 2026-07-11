@@ -70,14 +70,30 @@ Every implementation slice must update this document:
   declared middleware slots are reserved no-ops, plan mode is not used to gate
   Todo, the generic Agent sandbox lacks DeerFlow filesystem/shell semantics,
   memory evolution workers are default-off, and the durable run layer still
-  has authorization, redaction, lease/recovery, cancellation, retry scheduling
-  and Workbench SSE pagination gaps. The approved design and exit gate are in
+  has redaction, lease/recovery, cancellation, retry scheduling and Workbench
+  SSE pagination gaps. Thread/Run authorization is closed in
+  `AR-PARITY-001.1`. The approved design and exit gate are in
   `docs/superpowers/specs/2026-07-11-deerflow-backend-agent-runtime-parity-design.md`.
   Planned verification: targeted tests across `application/agentthread`,
   `domain/agentthread/service`, `domain/agentthread/repository`, Workbench and
   LangGraph handlers/routes; Atlas hash/validate for migrations; paired live
   DeerFlow/NewX AI acceptance for direct, search, Pro, Ultra, Skill, MCP,
   upload, artifact, interrupt and memory cases.
+  - `AR-PARITY-001.1` Thread/Run authorization (已完成): added one fail-closed
+    application boundary for authenticated viewer, space, thread and optional
+    run ownership, then enforce it across public Workbench and LangGraph
+    thread/message/run/checkpoint/event/token operations. Acceptance covers
+    owner success plus unauthenticated, cross-user, cross-space and mismatched
+    run/thread rejection with no mutation. Workspace authority uses a targeted
+    `space_user` membership lookup; dependency failures remain controlled 5xx
+    responses, and successful request scopes are reused by Workbench Chat and
+    SSE without repeated authorization queries. Verification:
+    `go test ./application/agentthread -run 'Authoriz|AccessDenied' -count=1`
+    and `go test -gcflags="all=-N -l" ./api/handler/coze -run
+    'Forbidden|AccessDenied|Authoriz' -count=1`,
+    `go test -gcflags="all=-N -l" ./... -count=1`, `gofmt -l`,
+    `git diff --check`, independent `SPEC COMPLIANT`, and independent `CODE
+    QUALITY APPROVED`.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

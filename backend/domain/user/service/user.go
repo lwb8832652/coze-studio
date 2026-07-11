@@ -112,6 +112,7 @@ type User interface {
 	AddSpaceMembers(ctx context.Context, members []*AddSpaceMemberRequest) (err error)
 	UpdateSpaceMemberRole(ctx context.Context, spaceID int64, userID int64, roleType int32) (err error)
 	RemoveSpaceMember(ctx context.Context, spaceID int64, userID int64) (err error)
+	IsSpaceMember(ctx context.Context, spaceID int64, userID int64) (bool, error)
 }
 
 type SaasUserProvider interface {

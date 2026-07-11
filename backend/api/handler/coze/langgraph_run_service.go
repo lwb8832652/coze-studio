@@ -63,6 +63,7 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -98,6 +99,7 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -136,6 +138,7 @@ func WaitLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -186,6 +189,7 @@ func CreateLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -208,6 +212,7 @@ func CreateLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContex
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -238,6 +243,7 @@ func WaitLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 	if !langGraphInputProvided(req.Input) {
 		invalidParamRequestResponse(c, "input is required")
 		return
@@ -279,6 +285,7 @@ func ListLangGraphRuns(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	var status *appagentthread.RunStatus
 	if strings.TrimSpace(req.Status) != "" {
@@ -316,6 +323,7 @@ func GetLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
@@ -338,6 +346,7 @@ func ListLangGraphRunMessages(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
@@ -366,6 +375,7 @@ func ListLangGraphRunEvents(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
@@ -394,6 +404,7 @@ func ListLangGraphThreadMessages(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	messages, err := buildLangGraphThreadMessagesList(ctx, req)
 	if err != nil {
@@ -412,6 +423,7 @@ func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
@@ -443,6 +455,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 	if req.AfterEventID <= 0 {
 		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
@@ -513,6 +526,7 @@ func JoinLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
@@ -541,6 +555,7 @@ func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 	if req.AfterEventID <= 0 {
 		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
@@ -579,6 +594,7 @@ func GetLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
@@ -601,6 +617,7 @@ func ListLangGraphStatelessRunMessages(ctx context.Context, c *app.RequestContex
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
@@ -635,6 +652,7 @@ func ListLangGraphStatelessRunFeedback(ctx context.Context, c *app.RequestContex
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
@@ -657,6 +675,7 @@ func CancelLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 
 	current, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
@@ -688,6 +707,7 @@ func StreamLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 	if req.AfterEventID <= 0 {
 		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
@@ -726,6 +746,7 @@ func JoinLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
@@ -754,6 +775,7 @@ func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext)
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 	if req.AfterEventID <= 0 {
 		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
@@ -1065,6 +1087,8 @@ func createLangGraphStatelessBackingThread(
 		source = appagentthread.ThreadSourceAPI
 		normalized["source"] = string(source)
 	}
+	normalized["user_id"] = strconv.FormatInt(workbenchViewerIDFromCtx(ctx), 10)
+	delete(normalized, "creator_id")
 
 	metadataJSON, err := sonic.MarshalString(normalized)
 	if err != nil {
@@ -1073,7 +1097,7 @@ func createLangGraphStatelessBackingThread(
 
 	return appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
 		SpaceID:  langGraphInt64Metadata(normalized, "space_id"),
-		UserID:   langGraphInt64Metadata(normalized, "user_id", "creator_id"),
+		UserID:   workbenchViewerIDFromCtx(ctx),
 		Title:    title,
 		Source:   source,
 		Metadata: metadataJSON,

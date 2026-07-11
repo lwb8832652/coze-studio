@@ -47,14 +47,23 @@ separate from internal runtime records.
 - Create: backend/application/agentthread/thread_authorization_test.go
 - Modify: backend/application/agentthread/service.go
 - Modify: backend/application/agentthread/init.go
+- Modify: backend/application/application.go
+- Modify: backend/application/workbench/chat_gateway.go
+- Modify: backend/domain/user/internal/dal/space_user.go
+- Modify: backend/domain/user/repository/repository.go
+- Modify: backend/domain/user/service/user.go
+- Modify: backend/domain/user/service/user_impl.go
 - Modify: backend/api/handler/coze/workbench_thread_service.go
+- Modify: backend/api/handler/coze/workbench_chat_service.go
 - Modify: backend/api/handler/coze/langgraph_thread_service.go
 - Modify: backend/api/handler/coze/langgraph_run_service.go
+- Test: backend/application/workbench/chat_gateway_test.go
+- Test: backend/domain/user/service/space_test.go
 - Test: backend/api/handler/coze/workbench_thread_service_test.go
 - Test: backend/api/handler/coze/langgraph_thread_service_test.go
 - Test: backend/api/handler/coze/langgraph_run_service_test.go
 
-- [ ] **Step 1: Write failing application authorization tests**
+- [x] **Step 1: Write failing application authorization tests**
 
 Add owner, different-user and different-space cases for thread, message, run,
 checkpoint, event and token operations. Use this contract:
@@ -72,7 +81,7 @@ type ThreadAuthorizer interface {
 }
 ~~~
 
-- [ ] **Step 2: Verify the tests fail for the missing boundary**
+- [x] **Step 2: Verify the tests fail for the missing boundary**
 
 Run:
 
@@ -83,20 +92,20 @@ go test ./application/agentthread -run 'TestThreadOwnerAuthorizer|TestApplicatio
 
 Expected: FAIL because the authorizer and access calls do not exist.
 
-- [ ] **Step 3: Implement fail-closed owner and space authorization**
+- [x] **Step 3: Implement fail-closed owner and space authorization**
 
 Load the thread through the domain service, require authenticated viewer
 identity, compare creator and space, and verify an optional run belongs to the
 thread. Wire the authorizer in InitService. A missing authorizer on a public
 call is an error, not allow.
 
-- [ ] **Step 4: Add handler IDOR tests and pass server identity**
+- [x] **Step 4: Add handler IDOR tests and pass server identity**
 
 Use two session user IDs. Cover a read and mutation in every Workbench and
 LangGraph resource family. Assert HTTP 403 and no mutation. Client owner, user
 and space fields cannot grant access.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ~~~bash
 cd backend
@@ -105,6 +114,19 @@ go test -gcflags="all=-N -l" ./api/handler/coze -run 'Forbidden|AccessDenied' -c
 git add backend/application/agentthread backend/api/handler/coze
 git commit -m "fix: enforce agent thread access boundaries"
 ~~~
+
+Completed 2026-07-11. The boundary now uses authenticated session/API-key
+identity, current workspace membership, thread ownership and optional run
+ownership. It also masks checkpoint existence, authorizes Workbench SSE before
+headers, protects the legacy Workbench Chat path before persistence, and
+caches successful request scopes without caching denials. Verification passed
+for `domain/user`, `application/agentthread`, `application/workbench`, Coze
+handlers and routes. Independent spec review returned `SPEC COMPLIANT`; the
+follow-up quality review returned `CODE QUALITY APPROVED` after replacing the
+full workspace-list lookup with a targeted membership query and removing
+duplicate request/SSE authorization queries. Final backend verification passed
+with `go test -gcflags="all=-N -l" ./... -count=1`; `gofmt -l` and
+`git diff --check` returned no findings.
 
 ### Task 2: Separate Internal Records From Public Projections
 

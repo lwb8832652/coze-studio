@@ -48,7 +48,7 @@ import (
 )
 
 func TestListTaskThreadsHandlerReturnsAgentThreads(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
 	installAgentThreadTestService(t)
 
@@ -64,7 +64,7 @@ func TestListTaskThreadsHandlerReturnsAgentThreads(t *testing.T) {
 }
 
 func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
 	installAgentThreadTestService(t)
 
@@ -77,8 +77,55 @@ func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
 	require.Contains(t, body, `"title":"任务列表"`)
 }
 
-func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
+func TestGetTaskThreadHandlerReturnsForbiddenForDifferentViewer(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id",
+		workbenchSessionMiddlewareForTest(3),
+		GetTaskThread,
+	)
+	installAgentThreadTestService(t)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestGetTaskThreadHandlerAccessDeniedWithoutAuthenticatedViewer(t *testing.T) {
 	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestWorkbenchChatErrorResponseMapsThreadAccessDeniedToForbidden(t *testing.T) {
+	h := server.Default()
+	h.GET("/workbench-chat-error", func(ctx context.Context, c *app.RequestContext) {
+		workbenchChatErrorResponse(ctx, c, appagentthread.ErrThreadAccessDenied)
+	})
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/workbench-chat-error", nil)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
 	installAgentThreadTestService(t)
 
@@ -137,7 +184,7 @@ func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 }
 
 func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/messages", ListTaskThreadMessages)
 	installAgentThreadTestService(t)
 
@@ -167,8 +214,45 @@ func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
 }
 
+func TestAppendTaskThreadMessageHandlerAccessDeniedDoesNotMutate(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/messages",
+		workbenchSessionMiddlewareForTest(3),
+		AppendTaskThreadMessage,
+	)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"role":    "user",
+		"content": "must not persist",
+	})
+	require.NoError(t, err)
+	before, err := appagentthread.SVC.ListMessages(
+		context.Background(),
+		&appagentthread.ListMessagesRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/messages",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListMessages(
+		context.Background(),
+		&appagentthread.ListMessagesRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
 func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/suggestions",
 		GenerateTaskThreadSuggestions,
@@ -192,7 +276,7 @@ func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) 
 			{"role": "user", "content": "请生成武汉三日游攻略"},
 			{"role": "assistant", "content": "已经生成路线。"},
 		},
-		"n": 2,
+		"n":          2,
 		"model_type": "100002",
 	})
 	require.NoError(t, err)
@@ -215,7 +299,7 @@ func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) 
 }
 
 func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads", workbenchSessionMiddlewareForTest(42), CreateTaskThread)
 	installAgentThreadTestService(t)
 
@@ -269,8 +353,68 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Equal(t, appagentthread.RunKindTask, runs.Runs[0].RunKind)
 }
 
+func TestCreateTaskThreadHandlerRejectsUnauthorizedWorkspaceBeforeMutation(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.WorkspaceAuthorizer = &recordingWorkbenchWorkspaceAuthorizer{
+		err: appagentthread.ErrThreadAccessDenied,
+	}
+	before, err := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID: 1,
+		Page:    1,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "999",
+		"message":  "must not persist",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID: 1,
+		Page:    1,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
+func TestCreateTaskThreadHandlerMapsWorkspaceDependencyFailureToInternalError(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.WorkspaceAuthorizer = &recordingWorkbenchWorkspaceAuthorizer{
+		err: appagentthread.ErrThreadAuthorizationUnavailable,
+	}
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "1",
+		"message":  "dependency failure",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.NotContains(t, string(w.Result().Body()), "thread access denied")
+}
+
 func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/memories/export", ExportTaskThreadMemories)
 	installAgentThreadTestService(t)
 	_, err := appagentthread.SVC.RememberMemory(context.Background(), &appagentthread.RememberMemoryRequest{
@@ -304,7 +448,7 @@ func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
 }
 
 func TestImportTaskThreadMemoriesHandlerCreatesMemoriesAndAuditsActor(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/memories/import",
 		workbenchSessionMiddlewareForTest(99),
@@ -351,7 +495,7 @@ func TestImportTaskThreadMemoriesHandlerCreatesMemoriesAndAuditsActor(t *testing
 }
 
 func TestListTaskThreadMemoriesHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.Use(workbenchSessionMiddlewareForTest(2))
 	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
 	installAgentThreadTestService(t)
@@ -372,7 +516,7 @@ func TestListTaskThreadMemoriesHandlerPassesSessionViewerID(t *testing.T) {
 }
 
 func TestListTaskThreadMemoriesHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
 	installAgentThreadTestService(t)
 	appagentthread.SVC.MemoryAuthorizer = &recordingWorkbenchMemoryAuthorizer{
@@ -393,7 +537,7 @@ func TestListTaskThreadMemoriesHandlerMapsAuthorizationDeniedToForbidden(t *test
 }
 
 func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -461,7 +605,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -515,7 +659,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerReturnsSafeMetadata(t *testin
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -539,7 +683,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerPassesSessionViewerID(t *test
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		ListTaskThreadMCPRuntimeAuditEvents,
@@ -563,7 +707,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerMapsAuthorizationDeniedToForb
 }
 
 func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events/export",
 		workbenchSessionMiddlewareForTest(2),
@@ -636,7 +780,7 @@ func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *test
 }
 
 func TestListTaskThreadGuardrailAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -662,7 +806,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerPassesSessionViewerID(t *testi
 func TestListTaskThreadGuardrailAuditEventsHandlerMapsAuthorizationDeniedToForbidden(
 	t *testing.T,
 ) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		ListTaskThreadGuardrailAuditEvents,
@@ -686,7 +830,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerMapsAuthorizationDeniedToForbi
 }
 
 func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -741,7 +885,7 @@ func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
 }
 
 func TestListTaskThreadArtifactsHandlerReturnsDeletedArtifactsWhenRequested(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -805,7 +949,7 @@ func TestListTaskThreadArtifactsHandlerReturnsDeletedArtifactsWhenRequested(t *t
 }
 
 func TestListTaskThreadArtifactsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.Use(workbenchSessionMiddlewareForTest(2))
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
@@ -826,7 +970,7 @@ func TestListTaskThreadArtifactsHandlerPassesSessionViewerID(t *testing.T) {
 }
 
 func TestListTaskThreadArtifactsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	appagentthread.SVC.ArtifactAuthorizer = &recordingWorkbenchArtifactAuthorizer{
@@ -847,7 +991,7 @@ func TestListTaskThreadArtifactsHandlerMapsAuthorizationDeniedToForbidden(t *tes
 }
 
 func TestListTaskThreadArtifactScanJobsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs",
 		ListTaskThreadArtifactScanJobs,
@@ -930,7 +1074,7 @@ func TestListTaskThreadArtifactScanJobsHandlerReturnsSafeMetadata(t *testing.T) 
 }
 
 func TestRetryTaskThreadArtifactScanJobHandlerRequeuesFailedJob(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
 		RetryTaskThreadArtifactScanJob,
@@ -1016,7 +1160,7 @@ func TestRetryTaskThreadArtifactScanJobHandlerRequeuesFailedJob(t *testing.T) {
 }
 
 func TestRetryTaskThreadArtifactScanJobHandlerReturnsConflictForNonFailedJob(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
 		RetryTaskThreadArtifactScanJob,
@@ -1087,7 +1231,7 @@ func TestRetryTaskThreadArtifactScanJobHandlerReturnsConflictForNonFailedJob(t *
 }
 
 func TestGetTaskThreadArtifactContentHandlerReturnsBytesWithSafeHeaders(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1165,7 +1309,7 @@ func TestGetTaskThreadArtifactContentHandlerReturnsBytesWithSafeHeaders(t *testi
 }
 
 func TestGetTaskThreadArtifactSignedURLHandlerReturnsSafeReceipt(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
 		GetTaskThreadArtifactSignedURL,
@@ -1244,7 +1388,7 @@ func TestGetTaskThreadArtifactSignedURLHandlerReturnsSafeReceipt(t *testing.T) {
 }
 
 func TestGetTaskThreadArtifactSignedURLHandlerCreatesDownloadReceipt(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
 		GetTaskThreadArtifactSignedURL,
@@ -1330,7 +1474,7 @@ func TestGetTaskThreadArtifactSignedURLHandlerCreatesDownloadReceipt(t *testing.
 }
 
 func TestGetTaskThreadArtifactContentHandlerUsesSniffedContentType(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1406,7 +1550,7 @@ func TestGetTaskThreadArtifactContentHandlerUsesSniffedContentType(t *testing.T)
 }
 
 func TestGetTaskThreadArtifactContentHandlerMapsScanBlockedToConflict(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1484,7 +1628,7 @@ func TestGetTaskThreadArtifactContentHandlerMapsScanBlockedToConflict(t *testing
 }
 
 func TestReviewTaskThreadArtifactScanHandlerReleasesBlockedArtifact(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/scan_review",
 		ReviewTaskThreadArtifactScan,
@@ -1606,7 +1750,7 @@ func TestReviewTaskThreadArtifactScanHandlerReleasesBlockedArtifact(t *testing.T
 }
 
 func TestDeleteTaskThreadArtifactHandlerHidesArtifactFromList(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	h.DELETE(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id",
@@ -1726,7 +1870,7 @@ func TestDeleteTaskThreadArtifactHandlerHidesArtifactFromList(t *testing.T) {
 }
 
 func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/messages", AppendTaskThreadMessage)
 	installAgentThreadTestService(t)
 
@@ -1763,7 +1907,7 @@ func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
 }
 
 func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1842,7 +1986,7 @@ func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
 }
 
 func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
@@ -1888,7 +2032,7 @@ func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
 }
 
 func TestResumeTaskThreadRunHandlerRejectsInvalidPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1905,8 +2049,70 @@ func TestResumeTaskThreadRunHandlerRejectsInvalidPayload(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestResumeAndRetryTaskThreadRunForbiddenBeforeMutation(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/runs/:run_id/resume",
+		workbenchSessionMiddlewareForTest(3),
+		ResumeTaskThreadRun,
+	)
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/runs/:run_id/retry",
+		workbenchSessionMiddlewareForTest(3),
+		RetryTaskThreadSubagentRun,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+	before, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+	})
+	require.NoError(t, err)
+	resumePayload, err := json.Marshal(map[string]any{
+		"interrupt_id": "interrupt-1",
+		"response": map[string]any{
+			"schema":         "coze.human_interaction_response.v1",
+			"interaction_id": "hi_1",
+			"kind":           "clarification",
+			"decision":       "answered",
+			"answer":         "no access",
+		},
+	})
+	require.NoError(t, err)
+	retryPayload := []byte(`{"idempotency_key":"must-not-persist"}`)
+	runPath := "/api/workbench/task_threads/1/runs/" + strconv.FormatInt(runResp.Run.RunID, 10)
+
+	resume := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		runPath+"/resume",
+		&ut.Body{Body: bytes.NewBuffer(resumePayload), Len: len(resumePayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	retry := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		runPath+"/retry",
+		&ut.Body{Body: bytes.NewBuffer(retryPayload), Len: len(retryPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, resume.Code)
+	require.Equal(t, http.StatusForbidden, retry.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
 func TestCancelTaskThreadRunHandlerTransitionsRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/cancel", CancelTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1949,7 +2155,7 @@ func TestCancelTaskThreadRunHandlerTransitionsRun(t *testing.T) {
 }
 
 func TestCancelTaskThreadRunHandlerCancelsPendingRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/cancel", CancelTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1984,7 +2190,7 @@ func TestCancelTaskThreadRunHandlerCancelsPendingRun(t *testing.T) {
 }
 
 func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/retry", RetryTaskThreadSubagentRun)
 	installAgentThreadTestService(t)
 
@@ -2052,7 +2258,7 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 }
 
 func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
 	installAgentThreadTestService(t)
 
@@ -2079,7 +2285,7 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 }
 
 func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
 	installAgentThreadTestService(t)
 
@@ -2118,7 +2324,7 @@ func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
 }
 
 func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2148,7 +2354,7 @@ func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
 }
 
 func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2329,7 +2535,7 @@ func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
 }
 
 func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2440,7 +2646,7 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 }
 
 func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
 	installAgentThreadTestService(t)
 
@@ -2503,7 +2709,7 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 }
 
 func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
 	installAgentThreadTestService(t)
 
@@ -2614,8 +2820,78 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	require.Contains(t, body, "event: done")
 }
 
+func TestStreamTaskThreadRunEventsReturnsForbiddenBeforeSSEHeaders(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/run_events/stream",
+		workbenchSessionMiddlewareForTest(3),
+		StreamTaskThreadRunEvents,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/run_events/stream?run_id="+
+			strconv.FormatInt(runResp.Run.RunID, 10)+"&timeout_ms=1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.NotContains(t, w.Header().Get("Content-Type"), "text/event-stream")
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestStreamTaskThreadRunEventsReusesAuthorizedRequestScope(t *testing.T) {
+	installAgentThreadTestService(t)
+	workspaceAuthorizer := &countingWorkbenchWorkspaceAuthorizer{}
+	appagentthread.SVC.WorkspaceAuthorizer = workspaceAuthorizer
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	})
+	require.NoError(t, err)
+	ctx := appagentthread.WithThreadAccessRequest(context.Background(), appagentthread.ThreadAccessRequest{
+		ViewerID: 2,
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+	})
+	require.NoError(t, appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: 2,
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+	}))
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamTaskThreadRunEvents(ctx, writer, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 10,
+		TimeoutMs:  100,
+	})
+
+	require.Contains(t, writer.String(), "event: done")
+	require.Equal(t, 1, workspaceAuthorizer.calls)
+}
+
 func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
 	installAgentThreadTestService(t)
 
@@ -2624,9 +2900,17 @@ func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func authenticatedAgentThreadTestServer() *server.Hertz {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(2))
+	return h
+}
+
 func installAgentThreadTestService(t *testing.T) {
 	t.Helper()
 	prevThreadSVC := appagentthread.SVC.ThreadSVC
+	prevThreadAuthorizer := appagentthread.SVC.ThreadAuthorizer
+	prevWorkspaceAuthorizer := appagentthread.SVC.WorkspaceAuthorizer
 	prevRuntimeFileSVC := appagentthread.SVC.RuntimeFileSVC
 	prevPlanSVC := appagentthread.SVC.PlanSVC
 	prevArtifactSVC := appagentthread.SVC.ArtifactSVC
@@ -2641,6 +2925,8 @@ func installAgentThreadTestService(t *testing.T) {
 	prevArtifactReviewClock := appagentthread.SVC.ArtifactReviewClock
 	t.Cleanup(func() {
 		appagentthread.SVC.ThreadSVC = prevThreadSVC
+		appagentthread.SVC.ThreadAuthorizer = prevThreadAuthorizer
+		appagentthread.SVC.WorkspaceAuthorizer = prevWorkspaceAuthorizer
 		appagentthread.SVC.RuntimeFileSVC = prevRuntimeFileSVC
 		appagentthread.SVC.PlanSVC = prevPlanSVC
 		appagentthread.SVC.ArtifactSVC = prevArtifactSVC
@@ -2659,6 +2945,7 @@ func installAgentThreadTestService(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, migrateAgentThreadHandlerTableForTest(db))
 	appagentthread.InitService(&appagentthread.ServiceComponents{DB: db, IDGen: &sequentialIDGen{next: 1}})
+	appagentthread.SVC.WorkspaceAuthorizer = allowWorkbenchWorkspaceAuthorizer{}
 	appagentthread.SVC.ArtifactAuthorizer = nil
 	appagentthread.SVC.MemoryAuthorizer = nil
 	_, err = appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
@@ -2670,6 +2957,40 @@ func installAgentThreadTestService(t *testing.T) {
 		Metadata:     `{"message":"hello"}`,
 	})
 	require.NoError(t, err)
+}
+
+type allowWorkbenchWorkspaceAuthorizer struct{}
+
+func (allowWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	return nil
+}
+
+type recordingWorkbenchWorkspaceAuthorizer struct {
+	req appagentthread.WorkspaceAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	_ context.Context,
+	req appagentthread.WorkspaceAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type countingWorkbenchWorkspaceAuthorizer struct {
+	calls int
+}
+
+func (a *countingWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	a.calls++
+	return nil
 }
 
 func workbenchSessionMiddlewareForTest(userID int64) app.HandlerFunc {

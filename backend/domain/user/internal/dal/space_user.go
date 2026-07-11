@@ -46,6 +46,17 @@ func (dao *SpaceDAO) RemoveSpaceUser(ctx context.Context, spaceID int64, userID 
 	return err
 }
 
+func (dao *SpaceDAO) HasSpaceUser(ctx context.Context, spaceID int64, userID int64) (bool, error) {
+	count, err := dao.query.SpaceUser.WithContext(ctx).Where(
+		dao.query.SpaceUser.SpaceID.Eq(spaceID),
+		dao.query.SpaceUser.UserID.Eq(userID),
+	).Count()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (dao *SpaceDAO) GetSpaceList(ctx context.Context, userID int64) ([]*model.SpaceUser, error) {
 	return dao.query.SpaceUser.WithContext(ctx).Where(
 		dao.query.SpaceUser.UserID.Eq(userID),

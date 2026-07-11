@@ -449,9 +449,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 
 	shortcutSVC := shortcutcmd.InitService(basicServices.infra.DB, basicServices.infra.IDGenSVC)
 	agentThreadSVC := agentthread.InitService(&agentthread.ServiceComponents{
-		DB:            basicServices.infra.DB,
-		IDGen:         basicServices.infra.IDGenSVC,
-		ObjectStorage: basicServices.infra.OSS,
+		DB:              basicServices.infra.DB,
+		IDGen:           basicServices.infra.IDGenSVC,
+		ObjectStorage:   basicServices.infra.OSS,
+		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
 		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB),

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"gorm.io/gorm"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
@@ -47,6 +48,8 @@ var ErrArtifactSignedURLNotSupported = errors.New(
 
 type ApplicationService struct {
 	ThreadSVC                 domainservice.ThreadService
+	ThreadAuthorizer          ThreadAuthorizer
+	WorkspaceAuthorizer       WorkspaceAuthorizer
 	RuntimeFileSVC            domainservice.RuntimeFileService
 	UploadFileSVC             domainservice.UploadFileService
 	PlanSVC                   domainservice.PlanService
@@ -135,10 +138,25 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	if req == nil {
 		return nil, fmt.Errorf("create thread request is required")
 	}
+	userID := req.UserID
+	if viewerID, public, err := s.publicThreadViewerID(ctx); err != nil {
+		return nil, err
+	} else if public {
+		if req.SpaceID <= 0 {
+			return nil, ErrThreadAccessDenied
+		}
+		if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
+			ViewerID: viewerID,
+			SpaceID:  req.SpaceID,
+		}); err != nil {
+			return nil, err
+		}
+		userID = viewerID
+	}
 
 	thread, err := s.ThreadSVC.CreateThread(ctx, &domainservice.CreateThreadRequest{
 		SpaceID:      req.SpaceID,
-		UserID:       req.UserID,
+		UserID:       userID,
 		AgentID:      req.AgentID,
 		Title:        req.Title,
 		Source:       domainentity.ThreadSource(req.Source),
@@ -284,6 +302,11 @@ func (s *ApplicationService) GetThread(ctx context.Context, req *GetThreadReques
 	if req == nil {
 		return nil, fmt.Errorf("get thread request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	thread, err := s.ThreadSVC.GetThread(ctx, req.ThreadID)
 	if err != nil {
@@ -305,6 +328,11 @@ func (s *ApplicationService) UpdateThreadTitle(
 	}
 	if req == nil {
 		return nil, fmt.Errorf("update thread title request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	thread, updated, err := s.ThreadSVC.UpdateThreadTitle(ctx, &domainservice.UpdateThreadTitleRequest{
@@ -334,6 +362,11 @@ func (s *ApplicationService) UpdateThreadMetadata(
 	if req == nil {
 		return nil, fmt.Errorf("update thread metadata request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	thread, updated, err := s.ThreadSVC.UpdateThreadMetadata(ctx, &domainservice.UpdateThreadMetadataRequest{
 		ThreadID: req.ThreadID,
@@ -362,6 +395,11 @@ func (s *ApplicationService) DeleteThread(
 	if req == nil {
 		return nil, fmt.Errorf("delete thread request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	deleted, err := s.ThreadSVC.DeleteThread(ctx, &domainservice.DeleteThreadRequest{
 		ThreadID: req.ThreadID,
@@ -380,6 +418,21 @@ func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRe
 	if req == nil {
 		return nil, fmt.Errorf("list threads request is required")
 	}
+	userID := req.UserID
+	if viewerID, public, err := s.publicThreadViewerID(ctx); err != nil {
+		return nil, err
+	} else if public {
+		if req.SpaceID <= 0 {
+			return nil, ErrThreadAccessDenied
+		}
+		if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
+			ViewerID: viewerID,
+			SpaceID:  req.SpaceID,
+		}); err != nil {
+			return nil, err
+		}
+		userID = viewerID
+	}
 
 	var status *domainentity.ThreadStatus
 	if req.Status != nil {
@@ -389,7 +442,7 @@ func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRe
 
 	threads, total, err := s.ThreadSVC.ListThreads(ctx, &domainservice.ListThreadsRequest{
 		SpaceID:  req.SpaceID,
-		UserID:   req.UserID,
+		UserID:   userID,
 		Status:   status,
 		Page:     req.Page,
 		PageSize: req.PageSize,
@@ -416,6 +469,12 @@ func (s *ApplicationService) AppendMessage(ctx context.Context, req *AppendMessa
 	if req == nil {
 		return nil, fmt.Errorf("append message request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	message, err := s.ThreadSVC.AppendMessage(ctx, &domainservice.AppendMessageRequest{
 		ThreadID: req.ThreadID,
@@ -440,6 +499,11 @@ func (s *ApplicationService) ListMessages(ctx context.Context, req *ListMessages
 	}
 	if req == nil {
 		return nil, fmt.Errorf("list messages request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	messages, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
@@ -468,6 +532,11 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}
 	if req == nil {
 		return nil, fmt.Errorf("create run request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
 		return nil, err
@@ -517,6 +586,11 @@ func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*G
 	if req == nil {
 		return nil, fmt.Errorf("get run request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: req.RunID})
 	if err != nil {
@@ -535,6 +609,11 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 	}
 	if req == nil {
 		return nil, fmt.Errorf("list runs request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	var status *domainentity.RunStatus
@@ -573,6 +652,12 @@ func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunE
 	if req == nil {
 		return nil, fmt.Errorf("append run event request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
 		ThreadID:  req.ThreadID,
@@ -596,6 +681,12 @@ func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEven
 	}
 	if req == nil {
 		return nil, fmt.Errorf("list run events request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	events, total, err := s.ThreadSVC.ListRunEvents(ctx, &domainservice.ListRunEventsRequest{
@@ -625,6 +716,12 @@ func (s *ApplicationService) CreateCheckpoint(ctx context.Context, req *CreateCh
 	}
 	if req == nil {
 		return nil, fmt.Errorf("create checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.CreateCheckpoint(ctx, &domainservice.CreateCheckpointRequest{
@@ -657,6 +754,12 @@ func (s *ApplicationService) ListCheckpoints(ctx context.Context, req *ListCheck
 	if req == nil {
 		return nil, fmt.Errorf("list checkpoints request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	checkpoints, total, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
 		ThreadID: req.ThreadID,
@@ -685,15 +788,30 @@ func (s *ApplicationService) GetCheckpoint(ctx context.Context, req *GetCheckpoi
 	if req == nil {
 		return nil, fmt.Errorf("get checkpoint request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{}); err != nil {
+		return nil, err
+	}
 
 	checkpoint, err := s.ThreadSVC.GetCheckpoint(ctx, &domainservice.GetCheckpointRequest{
 		CheckpointID: req.CheckpointID,
 	})
 	if err != nil {
+		if isPublicThreadAccessContext(ctx) && errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrThreadAccessDenied
+		}
 		return nil, err
 	}
 	if checkpoint == nil {
+		if isPublicThreadAccessContext(ctx) {
+			return nil, ErrThreadAccessDenied
+		}
 		return nil, fmt.Errorf("agent thread service returned empty checkpoint")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: checkpoint.ThreadID,
+		RunID:    checkpoint.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	return &GetCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
@@ -705,6 +823,11 @@ func (s *ApplicationService) GetLatestCheckpoint(ctx context.Context, req *GetLa
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get latest checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.GetLatestCheckpoint(ctx, &domainservice.GetLatestCheckpointRequest{
@@ -729,6 +852,12 @@ func (s *ApplicationService) GetLatestRuntimeCheckpoint(
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get latest runtime checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.GetLatestRuntimeCheckpoint(
@@ -758,6 +887,12 @@ func (s *ApplicationService) DeleteRuntimeCheckpoint(
 	}
 	if req == nil {
 		return fmt.Errorf("delete runtime checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return err
 	}
 
 	return s.ThreadSVC.DeleteRuntimeCheckpoint(ctx, &domainservice.DeleteRuntimeCheckpointRequest{
@@ -1385,6 +1520,11 @@ func (s *ApplicationService) RecordTokenUsage(ctx context.Context, req *RecordTo
 	if req == nil {
 		return nil, fmt.Errorf("record token usage request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	usage, err := s.ThreadSVC.RecordTokenUsage(ctx, &domainservice.RecordTokenUsageRequest{
 		RunID:        req.RunID,
@@ -1420,6 +1560,11 @@ func (s *ApplicationService) GetRunTokenUsage(ctx context.Context, req *GetToken
 	if req == nil {
 		return nil, fmt.Errorf("get run token usage request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	rows, total, aggregate, runAggregates, err := s.ThreadSVC.GetRunTokenUsage(ctx, &domainservice.GetRunTokenUsageRequest{
 		RunID:            req.RunID,
@@ -1441,6 +1586,11 @@ func (s *ApplicationService) GetThreadTokenUsage(ctx context.Context, req *GetTo
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get thread token usage request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	rows, total, aggregate, err := s.ThreadSVC.GetThreadTokenUsage(ctx, &domainservice.GetThreadTokenUsageRequest{
@@ -3182,6 +3332,11 @@ func (s *ApplicationService) updateRunStatus(
 	}
 	if update == nil {
 		return nil, fmt.Errorf("update run status handler is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{

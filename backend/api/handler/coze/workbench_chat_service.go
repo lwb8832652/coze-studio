@@ -52,5 +52,5 @@ func workbenchChatErrorResponse(ctx context.Context, c *app.RequestContext, err 
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
-	internalServerErrorResponse(ctx, c, err)
+	workbenchThreadErrorResponse(ctx, c, err)
 }

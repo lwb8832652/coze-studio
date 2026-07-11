@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
 
@@ -32,7 +31,7 @@ import (
 )
 
 func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/threads", CreateLangGraphThread)
 	h.GET("/api/threads/:thread_id", GetLangGraphThread)
 	h.POST("/api/threads/search", SearchLangGraphThreads)
@@ -65,7 +64,7 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.Contains(t, createBody, `"source":"api"`)
 	require.Contains(t, createBody, `"space_id":"7"`)
 	require.Contains(t, createBody, `"title":"LangGraph 兼容任务"`)
-	require.Contains(t, createBody, `"user_id":"9"`)
+	require.Contains(t, createBody, `"user_id":"2"`)
 	require.Contains(t, createBody, `"values":{"messages":[]}`)
 
 	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/2", nil)
@@ -76,7 +75,7 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.Contains(t, getBody, `"source":"api"`)
 	require.Contains(t, getBody, `"space_id":"7"`)
 	require.Contains(t, getBody, `"title":"LangGraph 兼容任务"`)
-	require.Contains(t, getBody, `"user_id":"9"`)
+	require.Contains(t, getBody, `"user_id":"2"`)
 	require.Contains(t, getBody, `"values":{"messages":[]}`)
 
 	searchPayload, err := json.Marshal(map[string]any{
@@ -101,8 +100,93 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.NotContains(t, searchBody, `"thread_id":"1"`)
 }
 
+func TestLangGraphGetThreadForbiddenForDifferentViewer(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET(
+		"/api/threads/:thread_id",
+		workbenchSessionMiddlewareForTest(3),
+		GetLangGraphThread,
+	)
+	installAgentThreadTestService(t)
+
+	resp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
+
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	require.Contains(t, string(resp.Result().Body()), "thread access denied")
+}
+
+func TestLangGraphPatchThreadAccessDeniedDoesNotMutate(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.PATCH(
+		"/api/threads/:thread_id",
+		workbenchSessionMiddlewareForTest(3),
+		PatchLangGraphThread,
+	)
+	installAgentThreadTestService(t)
+
+	before, err := appagentthread.SVC.GetThread(
+		context.Background(),
+		&appagentthread.GetThreadRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{"title": "must not persist"},
+	})
+	require.NoError(t, err)
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPatch,
+		"/api/threads/1",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.GetThread(
+		context.Background(),
+		&appagentthread.GetThreadRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	require.Equal(t, before.Thread.Metadata, after.Thread.Metadata)
+}
+
+func TestLangGraphThreadCreateAuthorizationUsesAuthenticatedViewer(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST(
+		"/api/threads",
+		workbenchSessionMiddlewareForTest(42),
+		CreateLangGraphThread,
+	)
+	installAgentThreadTestService(t)
+	payload, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"space_id": "7",
+			"user_id":  "999",
+			"title":    "trusted creator",
+		},
+	})
+	require.NoError(t, err)
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	created, err := appagentthread.SVC.GetThread(
+		context.Background(),
+		&appagentthread.GetThreadRequest{ThreadID: 2},
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.Equal(t, int64(42), created.Thread.CreatorID)
+}
+
 func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.PATCH("/api/threads/:thread_id", PatchLangGraphThread)
 	h.GET("/api/threads/:thread_id", GetLangGraphThread)
 	installAgentThreadTestService(t)
@@ -154,7 +238,7 @@ func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
 }
 
 func TestLangGraphThreadDeleteRemovesThreadData(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.DELETE("/api/threads/:thread_id", DeleteLangGraphThread)
 	h.GET("/api/threads/:thread_id", GetLangGraphThread)
 	installAgentThreadTestService(t)
@@ -218,7 +302,7 @@ func TestLangGraphThreadDeleteRemovesThreadData(t *testing.T) {
 }
 
 func TestLangGraphThreadSearchUsesMetadataSpaceID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/threads/search", SearchLangGraphThreads)
 	installAgentThreadTestService(t)
 
@@ -255,7 +339,7 @@ func TestLangGraphThreadSearchUsesMetadataSpaceID(t *testing.T) {
 }
 
 func TestLangGraphThreadStateHandlerReturnsMessagesAndConfig(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/state", GetLangGraphThreadState)
 	installAgentThreadTestService(t)
 
@@ -297,7 +381,7 @@ func TestLangGraphThreadStateHandlerReturnsMessagesAndConfig(t *testing.T) {
 }
 
 func TestLangGraphThreadStateHandlerPrefersLatestCheckpoint(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/state", GetLangGraphThreadState)
 	installAgentThreadTestService(t)
 
@@ -341,7 +425,7 @@ func TestLangGraphThreadStateHandlerPrefersLatestCheckpoint(t *testing.T) {
 }
 
 func TestLangGraphThreadStatePostHandlerMergesValuesAndSyncsTitle(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/threads/:thread_id/state", PostLangGraphThreadState)
 	installAgentThreadTestService(t)
 
@@ -397,7 +481,7 @@ func TestLangGraphThreadStatePostHandlerMergesValuesAndSyncsTitle(t *testing.T) 
 }
 
 func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
 	installAgentThreadTestService(t)
 
@@ -427,7 +511,7 @@ func TestLangGraphThreadHistoryHandlerReturnsEventSnapshots(t *testing.T) {
 }
 
 func TestLangGraphThreadHistoryHandlerPrefersCheckpointHistory(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/history", GetLangGraphThreadHistory)
 	installAgentThreadTestService(t)
 
@@ -481,7 +565,7 @@ func TestLangGraphThreadHistoryHandlerPrefersCheckpointHistory(t *testing.T) {
 }
 
 func TestLangGraphThreadHistoryPostHandlerAcceptsDeerFlowBodyCursor(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/threads/:thread_id/history", PostLangGraphThreadHistory)
 	installAgentThreadTestService(t)
 
@@ -536,7 +620,7 @@ func TestLangGraphThreadHistoryPostHandlerAcceptsDeerFlowBodyCursor(t *testing.T
 }
 
 func TestLangGraphThreadHistoryPostHandlerRedactsADKCheckpointEnvelope(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/threads/:thread_id/history", PostLangGraphThreadHistory)
 	installAgentThreadTestService(t)
 
@@ -599,7 +683,7 @@ func TestLangGraphThreadHistoryPostHandlerRedactsADKCheckpointEnvelope(t *testin
 }
 
 func TestLangGraphCheckpointResumeReadinessHandlerReturnsPendingSends(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
 	installAgentThreadTestService(t)
 
@@ -642,7 +726,7 @@ func TestLangGraphCheckpointResumeReadinessHandlerReturnsPendingSends(t *testing
 }
 
 func TestLangGraphCheckpointResumeReadinessHandlerReturnsNotResumableForSucceededCheckpoint(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
 	installAgentThreadTestService(t)
 
@@ -675,4 +759,51 @@ func TestLangGraphCheckpointResumeReadinessHandlerReturnsNotResumableForSucceede
 	require.Contains(t, body, `"reason":"checkpoint_already_succeeded"`)
 	require.Contains(t, body, `"status":"succeeded"`)
 	require.Contains(t, body, `"pending_sends":[]`)
+}
+
+func TestLangGraphCheckpointResumeReadinessMasksMissingAndForeignCheckpoint(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
+	installAgentThreadTestService(t)
+
+	otherThread, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Title:   "other thread",
+	})
+	require.NoError(t, err)
+	otherRun, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: otherThread.Thread.ThreadID,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+	foreignCheckpoint, err := appagentthread.SVC.CreateCheckpoint(
+		context.Background(),
+		&appagentthread.CreateCheckpointRequest{
+			ThreadID:        otherThread.Thread.ThreadID,
+			RunID:           otherRun.Run.RunID,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{}`,
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+		},
+	)
+	require.NoError(t, err)
+
+	missing := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/1/checkpoints/999999/resume",
+		nil,
+	)
+	foreign := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/1/checkpoints/"+strconv.FormatInt(foreignCheckpoint.Checkpoint.CheckpointID, 10)+"/resume",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, missing.Code)
+	require.Equal(t, http.StatusForbidden, foreign.Code)
+	require.JSONEq(t, string(missing.Result().Body()), string(foreign.Result().Body()))
 }

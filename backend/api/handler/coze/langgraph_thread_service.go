@@ -44,6 +44,7 @@ func CreateLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 
 	metadata := normalizeLangGraphMetadata(req.Metadata)
 	title := langGraphStringMetadata(metadata, "title")
@@ -56,6 +57,8 @@ func CreateLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		source = appagentthread.ThreadSourceAPI
 		metadata["source"] = string(source)
 	}
+	metadata["user_id"] = strconv.FormatInt(workbenchViewerIDFromCtx(ctx), 10)
+	delete(metadata, "creator_id")
 
 	metadataJSON, err := sonic.MarshalString(metadata)
 	if err != nil {
@@ -65,7 +68,7 @@ func CreateLangGraphThread(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
 		SpaceID:  langGraphInt64Metadata(metadata, "space_id"),
-		UserID:   langGraphInt64Metadata(metadata, "user_id", "creator_id"),
+		UserID:   workbenchViewerIDFromCtx(ctx),
 		Title:    title,
 		Source:   source,
 		Metadata: metadataJSON,
@@ -86,6 +89,7 @@ func GetLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	resp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
@@ -104,6 +108,7 @@ func PatchLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
@@ -153,6 +158,7 @@ func DeleteLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	deleteResp, err := appagentthread.SVC.DeleteThread(ctx, &appagentthread.DeleteThreadRequest{
 		ThreadID: req.ThreadID,
@@ -183,6 +189,7 @@ func SearchLangGraphThreads(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 
 	metadata := normalizeLangGraphMetadata(req.Metadata)
 	spaceID := langGraphInt64Metadata(metadata, "space_id")
@@ -207,6 +214,7 @@ func SearchLangGraphThreads(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appagentthread.SVC.ListThreads(ctx, &appagentthread.ListThreadsRequest{
 		SpaceID:  spaceID,
+		UserID:   workbenchViewerIDFromCtx(ctx),
 		Status:   status,
 		Page:     page,
 		PageSize: pageSize,
@@ -227,6 +235,7 @@ func GetLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
@@ -255,6 +264,7 @@ func PostLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
@@ -283,6 +293,7 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
 	if err != nil {
@@ -311,6 +322,7 @@ func PostLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
 	if err != nil {
@@ -339,6 +351,7 @@ func GetLangGraphCheckpointResumeReadiness(ctx context.Context, c *app.RequestCo
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, req.ThreadID, req.CheckpointID)
 	if err != nil {

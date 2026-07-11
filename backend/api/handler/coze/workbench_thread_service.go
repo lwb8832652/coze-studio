@@ -68,6 +68,7 @@ func ListTaskThreads(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 
 	var status *appagentthread.ThreadStatus
 	if req.Status != "" {
@@ -76,6 +77,7 @@ func ListTaskThreads(ctx context.Context, c *app.RequestContext) {
 	}
 	resp, err := appagentthread.SVC.ListThreads(ctx, &appagentthread.ListThreadsRequest{
 		SpaceID:  req.SpaceID,
+		UserID:   workbenchViewerIDFromCtx(ctx),
 		Status:   status,
 		Page:     req.Page,
 		PageSize: req.PageSize,
@@ -103,6 +105,7 @@ func CreateTaskThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, 0, 0)
 
 	resp, err := appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{
 		SpaceID:           req.SpaceID,
@@ -285,6 +288,7 @@ func GetTaskThread(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	resp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
@@ -311,6 +315,7 @@ func ListTaskThreadMessages(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	resp, err := appagentthread.SVC.ListMessages(ctx, &appagentthread.ListMessagesRequest{
 		ThreadID: req.ThreadID,
@@ -340,6 +345,7 @@ func GenerateTaskThreadSuggestions(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	if _, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID}); err != nil {
 		workbenchThreadErrorResponse(ctx, c, err)
@@ -391,6 +397,7 @@ func AppendTaskThreadMessage(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	resp, err := appagentthread.SVC.AppendMessage(ctx, &appagentthread.AppendMessageRequest{
 		ThreadID: req.ThreadID,
@@ -419,6 +426,7 @@ func ListTaskThreadRuns(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	var status *appagentthread.RunStatus
 	if req.Status != "" {
@@ -459,6 +467,7 @@ func ListTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
 		ThreadID: req.ThreadID,
@@ -496,6 +505,7 @@ func GetTaskThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	usageReq := &appagentthread.GetTokenUsageRequest{
 		ThreadID:         req.ThreadID,
@@ -1276,6 +1286,10 @@ func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
+	if !authorizeWorkbenchThreadAccess(ctx, c, req.ThreadID, req.RunID) {
+		return
+	}
 
 	writer := sse.NewWriter(c)
 	c.SetContentType("text/event-stream; charset=utf-8")
@@ -1298,6 +1312,7 @@ func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
 
 	resp, err := appagentthread.SVC.CreateRun(ctx, &appagentthread.CreateRunRequest{
 		ThreadID:          req.ThreadID,
@@ -1335,6 +1350,10 @@ func ResumeTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 	}
 	if err := validateResumeTaskThreadRunRequest(req); err != nil {
 		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
+	if !authorizeWorkbenchThreadAccess(ctx, c, req.ThreadID, req.RunID) {
 		return
 	}
 
@@ -1400,6 +1419,7 @@ func CancelTaskThreadRun(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 
 	runResp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
@@ -1448,6 +1468,10 @@ func RetryTaskThreadSubagentRun(ctx context.Context, c *app.RequestContext) {
 	}
 	if err := validateRetryTaskThreadSubagentRunRequest(req); err != nil {
 		invalidParamRequestResponse(c, err.Error())
+		return
+	}
+	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
+	if !authorizeWorkbenchThreadAccess(ctx, c, req.ThreadID, req.RunID) {
 		return
 	}
 
@@ -2618,6 +2642,13 @@ func taskThreadUploadFileToAPI(
 }
 
 func workbenchThreadErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if errors.Is(err, appagentthread.ErrThreadAccessDenied) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": consts.StatusForbidden,
+			"msg":  "thread access denied",
+		})
+		return
+	}
 	if errors.Is(err, appagentthread.ErrArtifactAccessDenied) {
 		c.JSON(consts.StatusForbidden, map[string]any{
 			"code": consts.StatusForbidden,
@@ -2680,6 +2711,36 @@ func workbenchViewerIDFromCtx(ctx context.Context) int64 {
 		return apiKey.UserID
 	}
 	return 0
+}
+
+func workbenchThreadAccessContext(
+	ctx context.Context,
+	threadID int64,
+	runID int64,
+) context.Context {
+	return appagentthread.WithThreadAccessRequest(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		ThreadID: threadID,
+		RunID:    runID,
+	})
+}
+
+func authorizeWorkbenchThreadAccess(
+	ctx context.Context,
+	c *app.RequestContext,
+	threadID int64,
+	runID int64,
+) bool {
+	err := appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		ThreadID: threadID,
+		RunID:    runID,
+	})
+	if err != nil {
+		workbenchThreadErrorResponse(ctx, c, err)
+		return false
+	}
+	return true
 }
 
 func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStreamWriter, req threadapi.StreamTaskThreadRunEventsRequest) {

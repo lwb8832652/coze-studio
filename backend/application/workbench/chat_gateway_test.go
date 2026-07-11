@@ -175,10 +175,15 @@ func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
 		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "生成周报", Status: taskapi.TaskStatus_Running},
 	}
 	agentThreadDomain := &recordingAgentThreadService{}
+	workspaceAuthorizer := &countingWorkbenchWorkspaceAuthorizer{}
 	app := &ApplicationService{
-		taskApp:        taskApp,
-		agentThreadSVC: &appagentthread.ApplicationService{ThreadSVC: agentThreadDomain},
-		runAsync:       func(func()) {},
+		taskApp: taskApp,
+		agentThreadSVC: &appagentthread.ApplicationService{
+			ThreadSVC:           agentThreadDomain,
+			ThreadAuthorizer:    allowWorkbenchThreadAuthorizer{},
+			WorkspaceAuthorizer: workspaceAuthorizer,
+		},
+		runAsync: func(func()) {},
 	}
 	ctx := ctxcache.Init(context.Background())
 	ctxcache.Store(ctx, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 99})
@@ -201,6 +206,7 @@ func TestHandleMessageCreatesAgentThreadForNewTask(t *testing.T) {
 	require.NotNil(t, agentThreadDomain.createReq)
 	require.Equal(t, int64(1), agentThreadDomain.createReq.SpaceID)
 	require.Equal(t, int64(99), agentThreadDomain.createReq.UserID)
+	require.Equal(t, 1, workspaceAuthorizer.calls)
 	require.Equal(t, "生成周报", agentThreadDomain.createReq.Title)
 	require.Equal(t, int64(10), agentThreadDomain.createReq.LegacyTaskID)
 	require.Contains(t, agentThreadDomain.createReq.Metadata, `"message":"请生成周报"`)
@@ -291,6 +297,31 @@ func TestHandleMessageStopsWhenAgentThreadCreateFails(t *testing.T) {
 	require.Empty(t, scheduled)
 }
 
+func TestHandleMessageRejectsUnauthorizedWorkspaceBeforeCreatingTask(t *testing.T) {
+	taskApp := &recordingWorkbenchTaskApp{
+		created: &taskapi.ChatTask{ID: 10, SpaceID: 1, Title: "must not persist", Status: taskapi.TaskStatus_Running},
+	}
+	agentThreadApp := &appagentthread.ApplicationService{
+		WorkspaceAuthorizer: denyWorkbenchWorkspaceAuthorizer{},
+	}
+	app := &ApplicationService{
+		taskApp:        taskApp,
+		agentThreadSVC: agentThreadApp,
+	}
+	ctx := ctxcache.Init(context.Background())
+	ctxcache.Store(ctx, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 99})
+
+	resp, err := app.HandleMessage(ctx, &chatapi.WorkbenchChatRequest{
+		SpaceID: 1,
+		Message: "must not persist",
+		Mode:    chatapi.ChatMode_Auto,
+	})
+
+	require.ErrorIs(t, err, appagentthread.ErrThreadAccessDenied)
+	require.Nil(t, resp)
+	require.Zero(t, taskApp.createCalls)
+}
+
 func TestHandleMessageWithTaskIDRejectsTaskFromDifferentSpace(t *testing.T) {
 	taskID := int64(20)
 	taskApp := &recordingWorkbenchTaskApp{
@@ -373,4 +404,43 @@ func TestInitServiceMergesRuntimeComponents(t *testing.T) {
 	require.Same(t, taskSVC, SVC.taskSVC)
 	require.Same(t, agentThreadSVC, SVC.agentThreadSVC)
 	require.NotNil(t, SVC.chatModelProvider)
+}
+
+type denyWorkbenchWorkspaceAuthorizer struct{}
+
+func (denyWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	return appagentthread.ErrThreadAccessDenied
+}
+
+type allowWorkbenchThreadAuthorizer struct{}
+
+func (allowWorkbenchThreadAuthorizer) AuthorizeThreadAccess(
+	context.Context,
+	appagentthread.ThreadAccessRequest,
+) error {
+	return nil
+}
+
+type allowWorkbenchWorkspaceAuthorizer struct{}
+
+func (allowWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	return nil
+}
+
+type countingWorkbenchWorkspaceAuthorizer struct {
+	calls int
+}
+
+func (a *countingWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	a.calls++
+	return nil
 }
