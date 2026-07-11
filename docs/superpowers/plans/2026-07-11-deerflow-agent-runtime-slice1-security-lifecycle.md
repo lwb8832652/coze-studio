@@ -463,7 +463,7 @@ git commit -m "fix: schedule retries and stream events by cursor"
 - Modify: docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md
 - Create: docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-parity/slice1-security-lifecycle.md
 
-- [ ] **Step 1: Run the complete affected suite**
+- [x] **Step 1: Run the complete affected suite**
 
 ~~~bash
 cd backend
@@ -471,7 +471,7 @@ go test ./application/agentthread ./domain/agentthread/service ./domain/agentthr
 go test -gcflags="all=-N -l" ./api/handler/coze ./api/router/coze -run 'Agent|Thread|Run|LangGraph|Workbench' -count=1
 ~~~
 
-- [ ] **Step 2: Validate migrations and build**
+- [x] **Step 2: Validate migrations and build**
 
 ~~~bash
 atlas version
@@ -481,20 +481,20 @@ make build_server
 git diff --check
 ~~~
 
-- [ ] **Step 3: Run authenticated API smoke**
+- [x] **Step 3: Run authenticated API smoke**
 
 With two test users, verify owner success and cross-user 403 for thread detail,
 messages, run events, cancel and checkpoint history. Produce more than 200
 events and confirm reconnect reaches terminal without gaps. Evidence must omit
 credentials and raw runtime payloads.
 
-- [ ] **Step 4: Review and close the slice**
+- [x] **Step 4: Review and close the slice**
 
 Record exact commands and results, request code review from base to head, fix
 all critical and important findings, then mark only this slice complete in the
 tracker.
 
-- [ ] **Step 5: Commit evidence**
+- [x] **Step 5: Commit evidence**
 
 ~~~bash
 git add docs/superpowers/plans/2026-06-27-deerflow-p0-launch-tracker.md

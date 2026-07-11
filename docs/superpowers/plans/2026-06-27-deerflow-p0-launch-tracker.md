@@ -196,6 +196,14 @@ Every implementation slice must update this document:
     450-event reconnect, header/query normalization, LangGraph reconnect,
     affected packages, targeted race/vet, formatting/diff and serial full
     backend all passed before commit.
+  - `AR-PARITY-001.8` Runtime security/lifecycle slice acceptance (已完成):
+    all eight Slice 1 exit criteria passed Atlas v0.35.0 validation, affected
+    suites, targeted race/vet, serial full backend, authenticated two-user
+    handler smoke and `APP_ENV=debug make build_server`. Acceptance evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-parity/slice1-security-lifecycle.md`.
+    This closes Slice 1 only. Atomic multitask admission, durable stream-end
+    ordering and server-owned thread lifecycle projection remain explicit P0
+    follow-up work before complete backend Agent parity can be claimed.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
