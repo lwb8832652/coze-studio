@@ -784,8 +784,9 @@ func (r *threadRepository) CreateRunBundle(
 		run.UpdatedAt = run.CreatedAt
 	}
 	normalized := CreateRunBundleRequest{
-		Run:                   &run,
-		SkipTopLevelAdmission: req.SkipTopLevelAdmission,
+		Run:                         &run,
+		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
+		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
 	}
 	if req.Message != nil {
 		message := *req.Message
@@ -885,13 +886,19 @@ func (r *threadRepository) CreateRunBundle(
 				return err
 			}
 		}
-		interruptedRuns, err := interruptActiveTopLevelRuns(tx, activeRuns, strategy, normalized.Run.CreatedAt)
+		interruptedRuns, interruptedEvents, err := interruptActiveTopLevelRuns(
+			tx,
+			activeRuns,
+			strategy,
+			normalized.Run,
+			normalized.AllocateInterruptedEventIDs,
+		)
 		if err != nil {
 			return err
 		}
 		result = &CreateRunBundleResult{
 			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event,
-			InterruptedRuns: interruptedRuns, Created: true,
+			InterruptedRuns: interruptedRuns, InterruptedEvents: interruptedEvents, Created: true,
 		}
 		return nil
 	})
@@ -944,11 +951,31 @@ func interruptActiveTopLevelRuns(
 	tx *gorm.DB,
 	active []runPO,
 	strategy string,
-	now int64,
-) ([]*entity.Run, error) {
+	newRun *entity.Run,
+	allocateEventIDs func(count int) ([]int64, error),
+) ([]*entity.Run, []*entity.RunEvent, error) {
 	if len(active) == 0 || (strategy != "interrupt" && strategy != "rollback") {
-		return nil, nil
+		return nil, nil, nil
 	}
+	if newRun == nil {
+		return nil, nil, fmt.Errorf("new run is required to interrupt active runs")
+	}
+	if allocateEventIDs == nil {
+		return nil, nil, fmt.Errorf("interrupted run event id allocator is required")
+	}
+	eventIDs, err := allocateEventIDs(len(active))
+	if err != nil {
+		return nil, nil, fmt.Errorf("allocate interrupted run event ids: %w", err)
+	}
+	if len(eventIDs) != len(active) {
+		return nil, nil, fmt.Errorf("interrupted run event id allocator returned %d ids for %d runs", len(eventIDs), len(active))
+	}
+	for _, eventID := range eventIDs {
+		if eventID <= 0 {
+			return nil, nil, fmt.Errorf("interrupted run event id must be positive")
+		}
+	}
+	now := newRun.CreatedAt
 	if now <= 0 {
 		now = time.Now().UnixMilli()
 	}
@@ -975,21 +1002,47 @@ func interruptActiveTopLevelRuns(
 		}).
 		Updates(updates)
 	if updated.Error != nil {
-		return nil, updated.Error
+		return nil, nil, updated.Error
 	}
 	if updated.RowsAffected != int64(len(ids)) {
-		return nil, fmt.Errorf("active run set changed during multitask admission")
+		return nil, nil, fmt.Errorf("active run set changed during multitask admission")
 	}
 
 	var interrupted []runPO
 	if err := tx.Where("id IN ?", ids).Order("created_at ASC, id ASC").Find(&interrupted).Error; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := make([]*entity.Run, 0, len(interrupted))
-	for _, run := range interrupted {
+	events := make([]*entity.RunEvent, 0, len(interrupted))
+	for index, run := range interrupted {
 		result = append(result, run.toEntity())
+		payload, err := json.Marshal(map[string]any{
+			"status":             entity.RunStatusInterrupted,
+			"error_code":         "multitask_" + strategy,
+			"replacement_run_id": newRun.ID,
+			"multitask":          strategy,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal interrupted run event: %w", err)
+		}
+		event := &entity.RunEvent{
+			ID:        eventIDs[index],
+			ThreadID:  run.ThreadID,
+			RunID:     run.ID,
+			EventType: "run.interrupted",
+			Payload:   string(payload),
+			CreatedAt: now,
+		}
+		eventPO, err := runEventToPO(event)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return nil, nil, err
+		}
+		events = append(events, event)
 	}
-	return result, nil
+	return result, events, nil
 }
 
 func excludeRunMessagesFromInput(rawInput string, runs []runPO) (string, error) {
@@ -3665,6 +3718,10 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 		return nil, fmt.Errorf("expired run lease reconciliation requires interrupted or failed target status")
 	}
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	event, eventPO, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, now)
+	if err != nil {
+		return nil, err
+	}
 	updates := map[string]any{
 		"status":        string(req.ToStatus),
 		"error_code":    strings.TrimSpace(req.ErrorCode),
@@ -3673,23 +3730,40 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 		"updated_at":    now,
 	}
 	clearRunLeaseUpdates(updates)
-	db := r.db.WithContext(ctx).
-		Model(&runPO{}).
-		Where("id = ?", req.RunID).
-		Where("status = ?", string(entity.RunStatusRunning)).
-		Where("lease_owner = ?", strings.TrimSpace(req.LeaseOwner)).
-		Where("lease_token = ?", strings.TrimSpace(req.LeaseToken)).
-		Where("execution_generation = ?", req.ExecutionGeneration).
-		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
-		Updates(updates)
-	if db.Error != nil {
-		return nil, db.Error
+	var reconciled *entity.Run
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updated := tx.
+			Model(&runPO{}).
+			Where("id = ?", req.RunID).
+			Where("status = ?", string(entity.RunStatusRunning)).
+			Where("lease_owner = ?", strings.TrimSpace(req.LeaseOwner)).
+			Where("lease_token = ?", strings.TrimSpace(req.LeaseToken)).
+			Where("execution_generation = ?", req.ExecutionGeneration).
+			Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return fmt.Errorf("%w: run %d expired lease cannot be reconciled", ErrRunLeaseLost, req.RunID)
+		}
+		var current runPO
+		if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+			return err
+		}
+		if event.ThreadID != current.ThreadID {
+			return fmt.Errorf("expired run lease event does not belong to run thread")
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return err
+		}
+		reconciled = current.toEntity()
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if db.RowsAffected == 0 {
-		return nil, fmt.Errorf("%w: run %d expired lease cannot be reconciled", ErrRunLeaseLost, req.RunID)
-	}
-
-	return r.GetRun(ctx, req.RunID)
+	return reconciled, nil
 }
 
 func (r *threadRepository) RequestRunCancellation(
@@ -3787,6 +3861,35 @@ func (r *threadRepository) FinalizeRunSuccess(
 		return nil, fmt.Errorf("run success message must be assistant role")
 	}
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	completionEvent, completionEventPO, err := normalizeTerminalRunEvent(
+		req.CompletionEvent,
+		req.RunID,
+		entity.RunStatusSucceeded,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var titleEvent *entity.RunEvent
+	var titleEventPO *runEventPO
+	if req.TitleEvent != nil {
+		titleCopy := *req.TitleEvent
+		if titleCopy.ID <= 0 || titleCopy.ThreadID <= 0 || titleCopy.RunID != req.RunID ||
+			titleCopy.EventType != "context.thread_title_updated" {
+			return nil, fmt.Errorf("run success title event is invalid")
+		}
+		if titleCopy.CreatedAt == 0 {
+			titleCopy.CreatedAt = now
+		}
+		titleEvent = &titleCopy
+		titleEventPO, err = runEventToPO(titleEvent)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if titleEvent != nil && titleEvent.ID >= completionEvent.ID {
+		return nil, fmt.Errorf("run success title event must sort before completion event")
+	}
 	message := *req.Message
 	if message.CreatedAt == 0 {
 		message.CreatedAt = now
@@ -3837,6 +3940,9 @@ func (r *threadRepository) FinalizeRunSuccess(
 		if message.ThreadID != completed.ThreadID {
 			return fmt.Errorf("run success message does not belong to run thread")
 		}
+		if completionEvent.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success completion event does not belong to run thread")
+		}
 		if err := tx.Create(messagePO).Error; err != nil {
 			return err
 		}
@@ -3851,10 +3957,26 @@ func (r *threadRepository) FinalizeRunSuccess(
 				return titleUpdate.Error
 			}
 			result.TitleUpdated = titleUpdate.RowsAffected > 0
+			if result.TitleUpdated {
+				if titleEvent == nil || titleEventPO == nil {
+					return fmt.Errorf("run success title event is required when thread title changes")
+				}
+				if titleEvent.ThreadID != completed.ThreadID {
+					return fmt.Errorf("run success title event does not belong to run thread")
+				}
+				if err := tx.Create(titleEventPO).Error; err != nil {
+					return err
+				}
+				result.TitleEvent = titleEvent
+			}
+		}
+		if err := tx.Create(completionEventPO).Error; err != nil {
+			return err
 		}
 
 		result.Run = completed.toEntity()
 		result.Message = &message
+		result.CompletionEvent = completionEvent
 		return nil
 	})
 	if err != nil {
@@ -3865,6 +3987,19 @@ func (r *threadRepository) FinalizeRunSuccess(
 
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
 	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	requiresTerminalEvent := isTerminalRunStatus(req.To) || req.To == entity.RunStatusInterrupted
+	if req.EventAlreadyPersisted && (!requiresTerminalEvent || req.To != entity.RunStatusInterrupted || req.Event != nil) {
+		return fmt.Errorf("pre-persisted terminal event is only valid for interrupted runs without a duplicate event")
+	}
+	var terminalEvent *entity.RunEvent
+	var terminalEventPO *runEventPO
+	var err error
+	if requiresTerminalEvent && !req.EventAlreadyPersisted {
+		terminalEvent, terminalEventPO, err = normalizeTerminalRunEvent(req.Event, req.RunID, req.To, now)
+		if err != nil {
+			return err
+		}
+	}
 	updates := map[string]any{
 		"status":        string(req.To),
 		"error_code":    req.ErrorCode,
@@ -3876,36 +4011,110 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 		clearRunLeaseUpdates(updates)
 	}
 
-	query := r.db.WithContext(ctx).
-		Model(&runPO{}).
-		Where("id = ? AND status = ?", req.RunID, string(req.From))
-	if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
-		query = query.Where("worker_id = ?", workerID)
-	}
-	if runTransitionRequiresLeaseFence(req.From, req.To) {
-		query = query.Where(
-			"(execution_generation = 0 AND (lease_token IS NULL OR lease_token = '')) OR "+
-				"(lease_owner = ? AND lease_token = ? AND execution_generation = ? AND lease_expires_at > ?)",
-			strings.TrimSpace(req.LeaseOwner), strings.TrimSpace(req.LeaseToken), req.ExecutionGeneration, now,
-		)
-	}
-
-	db := query.Updates(updates)
-	if db.Error != nil {
-		return db.Error
-	}
-	if db.RowsAffected == 0 {
-		if runTransitionRequiresLeaseFence(req.From, req.To) {
-			var current runPO
-			if err := r.db.WithContext(ctx).Where("id = ?", req.RunID).First(&current).Error; err == nil &&
-				entity.RunStatus(current.Status) == req.From && current.ExecutionGeneration > 0 {
-				return fmt.Errorf("%w: run %d cannot transition from %s to %s", ErrRunLeaseLost, req.RunID, req.From, req.To)
-			}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.
+			Model(&runPO{}).
+			Where("id = ? AND status = ?", req.RunID, string(req.From))
+		if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
+			query = query.Where("worker_id = ?", workerID)
 		}
-		return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
-	}
+		if runTransitionRequiresLeaseFence(req.From, req.To) {
+			query = query.Where(
+				"(execution_generation = 0 AND (lease_token IS NULL OR lease_token = '')) OR "+
+					"(lease_owner = ? AND lease_token = ? AND execution_generation = ? AND lease_expires_at > ?)",
+				strings.TrimSpace(req.LeaseOwner), strings.TrimSpace(req.LeaseToken), req.ExecutionGeneration, now,
+			)
+		}
 
-	return nil
+		updated := query.Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			if runTransitionRequiresLeaseFence(req.From, req.To) {
+				var current runPO
+				if err := tx.Where("id = ?", req.RunID).First(&current).Error; err == nil &&
+					entity.RunStatus(current.Status) == req.From && current.ExecutionGeneration > 0 {
+					return fmt.Errorf("%w: run %d cannot transition from %s to %s", ErrRunLeaseLost, req.RunID, req.From, req.To)
+				}
+			}
+			return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
+		}
+		if terminalEventPO == nil {
+			if req.EventAlreadyPersisted {
+				var current runPO
+				if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+					return err
+				}
+				var eventCount int64
+				eventQuery := tx.Model(&runEventPO{}).
+					Where(
+						"thread_id = ? AND run_id = ? AND event_type = ?",
+						current.ThreadID,
+						req.RunID,
+						"run.interrupted",
+					)
+				if current.StartedAt > 0 {
+					eventQuery = eventQuery.Where("created_at >= ?", current.StartedAt)
+				}
+				if err := eventQuery.Count(&eventCount).Error; err != nil {
+					return err
+				}
+				if eventCount == 0 {
+					return fmt.Errorf("run %d has no durable interrupted event", req.RunID)
+				}
+			}
+			return nil
+		}
+		var current runPO
+		if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+			return err
+		}
+		if terminalEvent.ThreadID != current.ThreadID {
+			return fmt.Errorf("terminal run event does not belong to run thread")
+		}
+		return tx.Create(terminalEventPO).Error
+	})
+}
+
+func normalizeTerminalRunEvent(
+	event *entity.RunEvent,
+	runID int64,
+	status entity.RunStatus,
+	now int64,
+) (*entity.RunEvent, *runEventPO, error) {
+	expectedType, ok := terminalRunEventType(status)
+	if !ok {
+		return nil, nil, fmt.Errorf("run status %s has no terminal event type", status)
+	}
+	if event == nil || event.ID <= 0 || event.ThreadID <= 0 ||
+		event.RunID != runID || event.EventType != expectedType {
+		return nil, nil, fmt.Errorf("run %s event is invalid", status)
+	}
+	copy := *event
+	if copy.CreatedAt == 0 {
+		copy.CreatedAt = now
+	}
+	po, err := runEventToPO(&copy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &copy, po, nil
+}
+
+func terminalRunEventType(status entity.RunStatus) (string, bool) {
+	switch status {
+	case entity.RunStatusSucceeded:
+		return "run.completed", true
+	case entity.RunStatusFailed:
+		return "run.failed", true
+	case entity.RunStatusInterrupted:
+		return "run.interrupted", true
+	case entity.RunStatusCanceled:
+		return "run.canceled", true
+	default:
+		return "", false
+	}
 }
 
 func activeRunLeaseQuery(db *gorm.DB, runID int64, owner, token string, generation uint64, now int64) *gorm.DB {

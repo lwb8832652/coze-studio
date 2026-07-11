@@ -2987,7 +2987,9 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 
 	require.Contains(t, body, "event: run.event")
 	require.Contains(t, body, `data: {"event_id":"3","thread_id":"1","run_id":"2","event_type":"step.completed"`)
+	require.Contains(t, body, `"event_type":"run.completed"`)
 	require.Contains(t, body, "event: done")
+	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: done"))
 }
 
 func TestStreamTaskThreadRunEventsDrains450EventsAcrossReconnects(t *testing.T) {
@@ -3022,6 +3024,13 @@ func TestStreamTaskThreadRunEventsDrains450EventsAcrossReconnects(t *testing.T) 
 		WorkerID: "worker-a",
 	}))
 	require.NoError(t, err)
+	eventsResp, err := appagentthread.SVC.ListRunEvents(context.Background(), &appagentthread.ListRunEventsRequest{
+		RunID: runResp.Run.RunID, Page: 1, PageSize: 500,
+	})
+	require.NoError(t, err)
+	require.Len(t, eventsResp.Events, 451)
+	require.Equal(t, "run.completed", eventsResp.Events[len(eventsResp.Events)-1].EventType)
+	eventIDs = append(eventIDs, eventsResp.Events[len(eventsResp.Events)-1].EventID)
 
 	assertReconnect := func(cursorIndex int) {
 		t.Helper()

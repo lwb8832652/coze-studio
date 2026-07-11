@@ -277,19 +277,28 @@ func (p *ResumeRunProcessor) processResumeRun(
 			if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 				return resumeRunProcessErrored, abortErr
 			}
+			interruptPayload := p.resumeRunEventPayload(resume, map[string]any{
+				"status":    string(RunStatusInterrupted),
+				"worker_id": p.workerID,
+			})
+			if interrupted.CheckpointKey != "" {
+				interruptPayload["checkpoint_key"] = interrupted.CheckpointKey
+			}
+			if len(interrupted.Interrupts) > 0 {
+				interruptPayload["interrupt_count"] = len(interrupted.Interrupts)
+			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
-				RunID:               run.RunID,
-				From:                RunStatusRunning,
-				WorkerID:            p.workerID,
-				LeaseOwner:          run.LeaseOwner,
-				LeaseToken:          run.LeaseToken,
-				ExecutionGeneration: run.ExecutionGeneration,
+				RunID:                 run.RunID,
+				From:                  RunStatusRunning,
+				WorkerID:              p.workerID,
+				LeaseOwner:            run.LeaseOwner,
+				LeaseToken:            run.LeaseToken,
+				ExecutionGeneration:   run.ExecutionGeneration,
+				EventPayload:          encodeRunEventPayload(ctx, interruptPayload),
+				EventAlreadyPersisted: interrupted.EventPersisted,
 			})
 			if transitionErr != nil {
 				return resumeRunProcessErrored, transitionErr
-			}
-			if !interrupted.EventPersisted {
-				p.emitResumeRunInterrupted(ctx, run, resume, interrupted)
 			}
 			p.recordRuntimeRunTerminal(
 				ctx,
@@ -326,6 +335,10 @@ func (p *ResumeRunProcessor) processResumeRun(
 		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
 		Message:             message,
 		MessageMetadata:     resultMetadata(result),
+		CompletionEventPayload: encodeRunEventPayload(ctx, p.resumeRunEventPayload(resume, map[string]any{
+			"status":    string(RunStatusSucceeded),
+			"worker_id": p.workerID,
+		})),
 	})
 	if err != nil {
 		if errors.Is(err, domainrepo.ErrRunCanceled) {
@@ -335,7 +348,6 @@ func (p *ResumeRunProcessor) processResumeRun(
 		return resumeRunProcessErrored, err
 	}
 
-	p.emitResumeRunCompleted(ctx, run, resume)
 	p.recordRuntimeRunTerminal(
 		ctx,
 		run,
@@ -345,23 +357,6 @@ func (p *ResumeRunProcessor) processResumeRun(
 	)
 
 	return resumeRunProcessSucceeded, nil
-}
-
-func (p *ResumeRunProcessor) emitResumeRunInterrupted(
-	ctx context.Context,
-	run *RunSummary,
-	resume resumeRunPayload,
-	interrupted *RunInterruptedError,
-) {
-	payload := p.resumeRunEventPayload(resume, map[string]any{
-		"status":    string(RunStatusInterrupted),
-		"worker_id": p.workerID,
-	})
-	if interrupted != nil {
-		payload["checkpoint_key"] = interrupted.CheckpointKey
-		payload["interrupts"] = interrupted.Interrupts
-	}
-	p.emitRunEvent(ctx, run, "run.interrupted", payload)
 }
 
 func parseResumeRunPayload(command string) (resumeRunPayload, error) {
@@ -935,8 +930,6 @@ func (p *ResumeRunProcessor) failResumeRun(
 	code string,
 	message string,
 ) (*RunSummary, error) {
-	p.emitResumeRunFailed(ctx, run, resume, code, message)
-
 	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
 		RunID:               run.RunID,
 		From:                RunStatusRunning,
@@ -946,6 +939,11 @@ func (p *ResumeRunProcessor) failResumeRun(
 		ExecutionGeneration: run.ExecutionGeneration,
 		ErrorCode:           code,
 		ErrorMessage:        message,
+		EventPayload: encodeRunEventPayload(ctx, p.resumeRunEventPayload(resume, map[string]any{
+			"status":     string(RunStatusFailed),
+			"worker_id":  p.workerID,
+			"error_code": code,
+		})),
 	})
 
 	if err != nil {
@@ -1013,30 +1011,6 @@ func (p *ResumeRunProcessor) emitResumeRunLoaded(ctx context.Context, run *RunSu
 		"message_count":         len(input.Messages),
 	})
 	p.emitRunEvent(ctx, run, "run.resume.loaded", payload)
-}
-
-func (p *ResumeRunProcessor) emitResumeRunFailed(
-	ctx context.Context,
-	run *RunSummary,
-	resume resumeRunPayload,
-	code string,
-	message string,
-) {
-	payload := p.resumeRunEventPayload(resume, map[string]any{
-		"status":        string(RunStatusFailed),
-		"worker_id":     p.workerID,
-		"error_code":    code,
-		"error_message": message,
-	})
-	p.emitRunEvent(ctx, run, "run.failed", payload)
-}
-
-func (p *ResumeRunProcessor) emitResumeRunCompleted(ctx context.Context, run *RunSummary, resume resumeRunPayload) {
-	payload := p.resumeRunEventPayload(resume, map[string]any{
-		"status":    string(RunStatusSucceeded),
-		"worker_id": p.workerID,
-	})
-	p.emitRunEvent(ctx, run, "run.completed", payload)
 }
 
 func (p *ResumeRunProcessor) resumeRunEventPayload(resume resumeRunPayload, payload map[string]any) map[string]any {

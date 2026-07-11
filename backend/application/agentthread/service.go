@@ -3632,6 +3632,7 @@ func (s *ApplicationService) ReconcileExpiredRunLease(
 		Now:                 req.Now,
 		ErrorCode:           req.ErrorCode,
 		ErrorMessage:        req.ErrorMessage,
+		EventPayload:        req.EventPayload,
 	})
 	if err != nil {
 		return nil, err
@@ -3655,16 +3656,18 @@ func (s *ApplicationService) FinalizeRunSuccess(
 	}
 
 	result, err := s.ThreadSVC.FinalizeRunSuccess(ctx, &domainservice.FinalizeRunSuccessRequest{
-		RunID:               req.RunID,
-		ThreadID:            req.ThreadID,
-		LeaseOwner:          req.LeaseOwner,
-		LeaseToken:          req.LeaseToken,
-		ExecutionGeneration: req.ExecutionGeneration,
-		Now:                 req.Now,
-		Message:             req.Message,
-		MessageMetadata:     req.MessageMetadata,
-		ExpectedThreadTitle: req.ExpectedThreadTitle,
-		ThreadTitle:         req.ThreadTitle,
+		RunID:                  req.RunID,
+		ThreadID:               req.ThreadID,
+		LeaseOwner:             req.LeaseOwner,
+		LeaseToken:             req.LeaseToken,
+		ExecutionGeneration:    req.ExecutionGeneration,
+		Now:                    req.Now,
+		Message:                req.Message,
+		MessageMetadata:        req.MessageMetadata,
+		TitleEventPayload:      req.TitleEventPayload,
+		CompletionEventPayload: req.CompletionEventPayload,
+		ExpectedThreadTitle:    req.ExpectedThreadTitle,
+		ThreadTitle:            req.ThreadTitle,
 	})
 	if err != nil {
 		return nil, err
@@ -3792,16 +3795,18 @@ func (s *ApplicationService) updateRunStatus(
 	}
 
 	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{
-		RunID:               req.RunID,
-		From:                domainentity.RunStatus(req.From),
-		To:                  domainentity.RunStatus(req.To),
-		WorkerID:            req.WorkerID,
-		LeaseOwner:          req.LeaseOwner,
-		LeaseToken:          req.LeaseToken,
-		ExecutionGeneration: req.ExecutionGeneration,
-		Now:                 req.Now,
-		ErrorCode:           req.ErrorCode,
-		ErrorMessage:        req.ErrorMessage,
+		RunID:                 req.RunID,
+		From:                  domainentity.RunStatus(req.From),
+		To:                    domainentity.RunStatus(req.To),
+		WorkerID:              req.WorkerID,
+		LeaseOwner:            req.LeaseOwner,
+		LeaseToken:            req.LeaseToken,
+		ExecutionGeneration:   req.ExecutionGeneration,
+		Now:                   req.Now,
+		ErrorCode:             req.ErrorCode,
+		ErrorMessage:          req.ErrorMessage,
+		EventPayload:          req.EventPayload,
+		EventAlreadyPersisted: req.EventAlreadyPersisted,
 	})
 	if err != nil {
 		return nil, err

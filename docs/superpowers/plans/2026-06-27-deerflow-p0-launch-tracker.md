@@ -215,10 +215,23 @@ Every implementation slice must update this document:
     `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-multitask-admission.md`.
     Verification includes affected suites, concurrent race coverage, targeted
     vet, full serial backend tests and `APP_ENV=debug make build_server`.
-  - `AR-PARITY-001.10` Durable terminal event and stream-end ordering (待开始):
-    make terminal run state, bounded terminal event, journal completion and SSE
-    `done` observe one durable order for success, failure, interrupt, rollback
-    and cancellation.
+  - `AR-PARITY-001.10` Durable terminal event and stream-end ordering (已完成):
+    terminal state and its bounded event now share one repository transaction
+    for success, failure, non-ADK interrupt, multitask interruption/rollback and
+    expired-lease recovery; cancellation retains its existing atomic path. A
+    successful finalization writes assistant message, optional title event and
+    `run.completed` before the terminal state can become visible to stream
+    readers. ADK interrupts reuse the already durable mapped event without a
+    duplicate, and the repository fails closed if that event cannot be
+    verified for the current run. Ordinary and resume processors no longer
+    append best-effort terminal events, and terminal payload projection drops
+    raw provider errors and unknown fields. Workbench and LangGraph acceptance
+    proves the terminal event precedes `done`/`end`; a 450-event reconnect
+    fixture also receives the final completion event exactly once. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-terminal-ordering.md`.
+    Verification includes affected suites, targeted race and vet, formatting
+    and diff checks, serial full backend tests, and `APP_ENV=debug make
+    build_server`.
   - `AR-PARITY-001.11` Server-owned disconnect and thread lifecycle (待开始):
     align DeerFlow's `on_disconnect=cancel` default and disconnect ownership,
     then derive thread running/idle/terminal projection from durable top-level

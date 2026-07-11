@@ -23,6 +23,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/common/ut"
@@ -950,10 +951,12 @@ func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 	require.Contains(t, body, "id: 3")
 	require.Contains(t, body, "event: events")
 	require.Contains(t, body, `"event_type":"step.completed"`)
+	require.Contains(t, body, `"event_type":"run.completed"`)
 	require.Contains(t, body, `"step_name":"generate_answer"`)
 	require.Contains(t, body, `"status":"completed"`)
 	require.Contains(t, body, "event: end")
 	require.Contains(t, body, `"status":"success"`)
+	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: end"))
 }
 
 func TestLangGraphRunStreamSkipsEventsAtOrBeforeCursor(t *testing.T) {
@@ -1470,8 +1473,10 @@ func TestLangGraphRunJoinStreamWritesEventsAndEnd(t *testing.T) {
 	require.Contains(t, body, "event: metadata")
 	require.Contains(t, body, "event: events")
 	require.Contains(t, body, `"event_type":"step.completed"`)
+	require.Contains(t, body, `"event_type":"run.completed"`)
 	require.Contains(t, body, "event: end")
 	require.Contains(t, body, `"status":"success"`)
+	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: end"))
 }
 
 func TestLangGraphStatelessRunGetHandlerReturnsRun(t *testing.T) {
@@ -1602,8 +1607,10 @@ func TestLangGraphStatelessRunStreamWritesEventsAndEnd(t *testing.T) {
 	require.Contains(t, body, "event: metadata")
 	require.Contains(t, body, "event: events")
 	require.Contains(t, body, `"event_type":"step.completed"`)
+	require.Contains(t, body, `"event_type":"run.completed"`)
 	require.Contains(t, body, "event: end")
 	require.Contains(t, body, `"status":"success"`)
+	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: end"))
 }
 
 func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun(t *testing.T) {

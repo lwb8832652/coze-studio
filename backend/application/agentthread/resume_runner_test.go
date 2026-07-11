@@ -104,14 +104,14 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
 	require.Equal(t, uint64(4), domainSVC.completeRunReq.ExecutionGeneration)
 	require.Nil(t, domainSVC.failRunReq)
-	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[0].Payload, `"checkpoint_id":"503"`)
 	require.Contains(t, eventSink.events[0].Payload, `"resume_from":"pending_sends"`)
 	require.Contains(t, eventSink.events[1].Payload, `"checkpoint_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"pending_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
-	require.Contains(t, eventSink.events[2].Payload, `"status":"succeeded"`)
-	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"checkpoint_ns":"harness.terminal"`)
 }
 
 func TestResumeRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
@@ -563,8 +563,10 @@ func TestResumeRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
 	require.Equal(t, []string{
 		"run.resume.started",
 		"run.resume.loaded",
-		"run.interrupted",
 	}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"status":"interrupted"`)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"checkpoint_key":"checkpoint-1"`)
+	require.False(t, domainSVC.interruptRunReq.EventAlreadyPersisted)
 }
 
 func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
@@ -669,8 +671,9 @@ func TestResumeRunProcessorFailsRunWhenCheckpointIDIsMissing(t *testing.T) {
 	require.NotNil(t, domainSVC.failRunReq)
 	require.Equal(t, "checkpoint_resume_payload_invalid", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "resume run is missing command.resume.checkpoint_id", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"checkpoint_resume_payload_invalid"`)
+	require.Equal(t, []string{"run.resume.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"checkpoint_resume_payload_invalid"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "resume run is missing")
 }
 
 func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) {
@@ -724,8 +727,9 @@ func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) 
 	require.Equal(t, "resume-worker-a", domainSVC.failRunReq.WorkerID)
 	require.Equal(t, "checkpoint_resume_executor_error", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "resume executor failed", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_resume_executor_error"`)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"checkpoint_resume_executor_error"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "resume executor failed")
 }
 
 func TestResumeRunProcessorReportsProcessResultForFailedRun(t *testing.T) {

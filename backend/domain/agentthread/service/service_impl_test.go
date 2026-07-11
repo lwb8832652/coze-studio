@@ -802,6 +802,10 @@ func TestReconcileExpiredRunLeaseValidatesTargetAndForwardsFence(t *testing.T) {
 	require.Equal(t, uint64(2), repo.lastReconcileExpiredRunLeaseReq.ExecutionGeneration)
 	require.Equal(t, "run_abandoned", repo.lastReconcileExpiredRunLeaseReq.ErrorCode)
 	require.Equal(t, "execution lease expired without a recoverable checkpoint", repo.lastReconcileExpiredRunLeaseReq.ErrorMessage)
+	require.NotNil(t, repo.lastReconcileExpiredRunLeaseReq.Event)
+	require.Equal(t, int64(2001), repo.lastReconcileExpiredRunLeaseReq.Event.ID)
+	require.Equal(t, "run.failed", repo.lastReconcileExpiredRunLeaseReq.Event.EventType)
+	require.JSONEq(t, `{"status":"failed","error_code":"run_abandoned"}`, repo.lastReconcileExpiredRunLeaseReq.Event.Payload)
 }
 
 func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus(t *testing.T) {
@@ -873,6 +877,13 @@ func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *tes
 	require.Equal(t, uint64(2), repo.lastFinalizeRunSuccessReq.ExecutionGeneration)
 	require.Equal(t, "initial title", repo.lastFinalizeRunSuccessReq.ExpectedThreadTitle)
 	require.Equal(t, "generated title", repo.lastFinalizeRunSuccessReq.ThreadTitle)
+	require.Equal(t, int64(301), result.TitleEvent.ID)
+	require.Equal(t, "context.thread_title_updated", result.TitleEvent.EventType)
+	require.Equal(t, int64(302), result.CompletionEvent.ID)
+	require.Equal(t, "run.completed", result.CompletionEvent.EventType)
+	require.Len(t, repo.runEvents[1], 2)
+	require.Equal(t, "context.thread_title_updated", repo.runEvents[1][0].EventType)
+	require.Equal(t, "run.completed", repo.runEvents[1][1].EventType)
 }
 
 func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
@@ -908,6 +919,32 @@ func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	require.Equal(t, "lease-1", repo.lastUpdateRunReq.LeaseToken)
 	require.Equal(t, uint64(1), repo.lastUpdateRunReq.ExecutionGeneration)
 	require.Equal(t, int64(4_000), repo.lastUpdateRunReq.Now)
+	require.NotNil(t, repo.lastUpdateRunReq.Event)
+	require.Equal(t, int64(2001), repo.lastUpdateRunReq.Event.ID)
+	require.Equal(t, "run.completed", repo.lastUpdateRunReq.Event.EventType)
+	require.JSONEq(t, `{"status":"succeeded","worker_id":"worker-a"}`, repo.lastUpdateRunReq.Event.Payload)
+}
+
+func TestInterruptRunUsesPrePersistedEventWithoutAllocatingAnotherID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a",
+	}}
+	svc := NewService(&Components{
+		Repo:  repo,
+		IDGen: failingIDGen{err: errors.New("id generator must not be called")},
+	})
+
+	run, err := svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		EventAlreadyPersisted: true,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, run.Status)
+	require.True(t, repo.lastUpdateRunReq.EventAlreadyPersisted)
+	require.Nil(t, repo.lastUpdateRunReq.Event)
+	require.Empty(t, repo.runEvents[1])
 }
 
 func TestFailRunStoresError(t *testing.T) {
@@ -923,12 +960,16 @@ func TestFailRunStoresError(t *testing.T) {
 		WorkerID:     "worker-a",
 		ErrorCode:    "model_error",
 		ErrorMessage: "model failed",
+		EventPayload: `{"status":"failed","error_code":"caller_value","error_message":"provider secret","raw_provider":"hidden"}`,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, entity.RunStatusFailed, run.Status)
 	require.Equal(t, "model_error", run.ErrorCode)
 	require.Equal(t, "model failed", run.ErrorMessage)
+	require.JSONEq(t, `{"status":"failed","worker_id":"worker-a","error_code":"model_error"}`, repo.lastUpdateRunReq.Event.Payload)
+	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "provider secret")
+	require.NotContains(t, repo.lastUpdateRunReq.Event.Payload, "raw_provider")
 }
 
 func TestAppendRunEventCreatesEventFromRun(t *testing.T) {
@@ -3158,6 +3199,9 @@ func (r *memoryRepo) ReconcileExpiredRunLease(
 			run.LeaseExpiresAt = 0
 			run.HeartbeatAt = 0
 			run.CancelRequestedAt = 0
+			if req.Event != nil {
+				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.Event))
+			}
 			return cloneRun(run), nil
 		}
 	}
@@ -3171,7 +3215,7 @@ func (r *memoryRepo) RequestRunCancellation(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastRequestRunCancellationReq = req
-	for threadID, runs := range r.runs {
+	for _, runs := range r.runs {
 		for _, run := range runs {
 			if run.ID != req.RunID {
 				continue
@@ -3192,7 +3236,7 @@ func (r *memoryRepo) RequestRunCancellation(
 			run.LeaseExpiresAt = 0
 			run.HeartbeatAt = 0
 			if req.Event != nil {
-				r.runEvents[threadID] = append(r.runEvents[threadID], cloneRunEvent(req.Event))
+				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.Event))
 			}
 			return &repository.RequestRunCancellationResult{
 				Run: cloneRun(run), PreviousStatus: previous, Changed: true,
@@ -3235,9 +3279,17 @@ func (r *memoryRepo) FinalizeRunSuccess(
 				req.ThreadTitle != req.ExpectedThreadTitle {
 				thread.Title = req.ThreadTitle
 				titleUpdated = true
+				if req.TitleEvent != nil {
+					r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.TitleEvent))
+				}
+			}
+			if req.CompletionEvent != nil {
+				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.CompletionEvent))
 			}
 			return &repository.FinalizeRunSuccessResult{
-				Run: cloneRun(run), Message: cloneMessage(req.Message), TitleUpdated: titleUpdated,
+				Run: cloneRun(run), Message: cloneMessage(req.Message),
+				TitleEvent: cloneRunEvent(req.TitleEvent), CompletionEvent: cloneRunEvent(req.CompletionEvent),
+				TitleUpdated: titleUpdated,
 			}, nil
 		}
 	}
@@ -3267,6 +3319,9 @@ func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateR
 			run.UpdatedAt = time.Now().UnixMilli()
 			if isMemoryTerminalRunStatus(req.To) {
 				run.EndedAt = run.UpdatedAt
+			}
+			if req.Event != nil && !req.EventAlreadyPersisted {
+				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.Event))
 			}
 
 			return nil

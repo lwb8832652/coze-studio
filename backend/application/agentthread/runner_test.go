@@ -99,12 +99,12 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
 	require.Equal(t, uint64(3), domainSVC.completeRunReq.ExecutionGeneration)
 	require.Nil(t, domainSVC.failRunReq)
-	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 	require.Equal(t, int64(10), eventSink.events[0].ThreadID)
 	require.Equal(t, int64(200), eventSink.events[0].RunID)
 	require.Contains(t, eventSink.events[0].Payload, `"status":"running"`)
 	require.Contains(t, eventSink.events[0].Payload, `"worker_id":"worker-a"`)
-	require.Contains(t, eventSink.events[1].Payload, `"status":"succeeded"`)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
 }
 
 func TestRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
@@ -193,8 +193,8 @@ func TestRunProcessorGeneratesThreadTitleAfterFirstExchange(t *testing.T) {
 	require.NotNil(t, domainSVC.updateThreadTitleReq)
 	require.Equal(t, int64(10), domainSVC.updateThreadTitleReq.ThreadID)
 	require.Equal(t, "武汉3日游攻略", domainSVC.updateThreadTitleReq.Title)
-	require.Equal(t, []string{"run.started", "context.thread_title_updated", "run.completed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"武汉3日游攻略"`)
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.TitleEventPayload, `"thread_title":"武汉3日游攻略"`)
 }
 
 func TestRunProcessorUsesCleanExplicitGeneratedThreadTitle(t *testing.T) {
@@ -248,8 +248,8 @@ func TestRunProcessorUsesCleanExplicitGeneratedThreadTitle(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, domainSVC.updateThreadTitleReq)
 	require.Equal(t, "青岛亲子旅行路线", domainSVC.updateThreadTitleReq.Title)
-	require.Contains(t, eventSink.events[1].Payload, `"thread_title":"青岛亲子旅行路线"`)
-	require.NotContains(t, eventSink.events[1].Payload, "think")
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.TitleEventPayload, `"thread_title":"青岛亲子旅行路线"`)
+	require.NotContains(t, domainSVC.finalizeRunSuccessReq.TitleEventPayload, "think")
 }
 
 func TestRunProcessorGeneratesThreadTitleWithTitleGenerator(t *testing.T) {
@@ -306,7 +306,7 @@ func TestRunProcessorGeneratesThreadTitleWithTitleGenerator(t *testing.T) {
 	require.Equal(t, int64(200), titleGenerator.input.Run.RunID)
 	require.NotNil(t, domainSVC.updateThreadTitleReq)
 	require.Equal(t, "项目上线计划", domainSVC.updateThreadTitleReq.Title)
-	require.Equal(t, []string{"run.started", "context.thread_title_updated", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
@@ -354,7 +354,7 @@ func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) 
 
 	require.NoError(t, err)
 	require.Nil(t, domainSVC.updateThreadTitleReq)
-	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
 func TestRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
@@ -768,10 +768,10 @@ func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 	require.Equal(t, "worker-a", domainSVC.failRunReq.WorkerID)
 	require.Equal(t, "executor_error", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "model failed", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"status":"failed"`)
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"executor_error"`)
-	require.Contains(t, eventSink.events[1].Payload, `"error_message":"model failed"`)
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"status":"failed"`)
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"executor_error"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "model failed")
 }
 
 func TestRunProcessorFailsSubagentRetryCommandBeforeExecutorSupport(t *testing.T) {
@@ -826,12 +826,12 @@ func TestRunProcessorFailsSubagentRetryCommandBeforeExecutorSupport(t *testing.T
 		ProcessedRuns: 1,
 		FailedRuns:    1,
 	}, result)
-	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"status":"failed"`)
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"subagent_retry_not_supported"`)
-	require.Contains(t, eventSink.events[1].Payload, `"error_message":"subagent retry executor is not implemented"`)
-	require.NotContains(t, eventSink.events[1].Payload, "source_run_id")
-	require.NotContains(t, eventSink.events[1].Payload, "parent_run_id")
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"status":"failed"`)
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"subagent_retry_not_supported"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "subagent retry executor is not implemented")
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "source_run_id")
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "parent_run_id")
 }
 
 func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.T) {
@@ -890,7 +890,7 @@ func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.
 		ProcessedRuns: 1,
 		SucceededRuns: 1,
 	}, result)
-	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
 func TestSubagentRetryPublicCommandRunsThroughProductionWorker(t *testing.T) {
@@ -993,9 +993,9 @@ func TestRunProcessorMapsUnsupportedSubagentRetryExecutorToFixedFailure(t *testi
 		ProcessedRuns: 1,
 		FailedRuns:    1,
 	}, result)
-	require.Equal(t, []string{"run.started", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"subagent_retry_not_supported"`)
-	require.NotContains(t, eventSink.events[1].Payload, "executor_error")
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"subagent_retry_not_supported"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "executor_error")
 }
 
 func TestRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
@@ -1040,7 +1040,10 @@ func TestRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
 	require.NotNil(t, domainSVC.interruptRunReq)
 	require.Nil(t, domainSVC.failRunReq)
 	require.Nil(t, domainSVC.appendReq)
-	require.Equal(t, []string{"run.started", "run.interrupted"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"status":"interrupted"`)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"checkpoint_key":"coze-run-200"`)
+	require.False(t, domainSVC.interruptRunReq.EventAlreadyPersisted)
 }
 
 func TestRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {

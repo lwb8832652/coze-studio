@@ -118,18 +118,20 @@ type CreateThreadBundleResult struct {
 }
 
 type CreateRunBundleRequest struct {
-	Run                   *entity.Run
-	Message               *entity.Message
-	Event                 *entity.RunEvent
-	SkipTopLevelAdmission bool
+	Run                         *entity.Run
+	Message                     *entity.Message
+	Event                       *entity.RunEvent
+	SkipTopLevelAdmission       bool
+	AllocateInterruptedEventIDs func(count int) ([]int64, error)
 }
 
 type CreateRunBundleResult struct {
-	Run             *entity.Run
-	Message         *entity.Message
-	Event           *entity.RunEvent
-	InterruptedRuns []*entity.Run
-	Created         bool
+	Run               *entity.Run
+	Message           *entity.Message
+	Event             *entity.RunEvent
+	InterruptedRuns   []*entity.Run
+	InterruptedEvents []*entity.RunEvent
+	Created           bool
 }
 
 type ListThreadsRequest struct {
@@ -339,6 +341,7 @@ type ReconcileExpiredRunLeaseRequest struct {
 	Now                 int64
 	ErrorCode           string
 	ErrorMessage        string
+	Event               *entity.RunEvent
 }
 
 type RequestRunCancellationRequest struct {
@@ -362,25 +365,31 @@ type FinalizeRunSuccessRequest struct {
 	ExecutionGeneration uint64
 	Now                 int64
 	Message             *entity.Message
+	TitleEvent          *entity.RunEvent
+	CompletionEvent     *entity.RunEvent
 	ExpectedThreadTitle string
 	ThreadTitle         string
 }
 
 type FinalizeRunSuccessResult struct {
-	Run          *entity.Run
-	Message      *entity.Message
-	TitleUpdated bool
+	Run             *entity.Run
+	Message         *entity.Message
+	TitleEvent      *entity.RunEvent
+	CompletionEvent *entity.RunEvent
+	TitleUpdated    bool
 }
 
 type UpdateRunStatusRequest struct {
-	RunID               int64
-	From                entity.RunStatus
-	To                  entity.RunStatus
-	WorkerID            string
-	LeaseOwner          string
-	LeaseToken          string
-	ExecutionGeneration uint64
-	Now                 int64
-	ErrorCode           string
-	ErrorMessage        string
+	RunID                 int64
+	From                  entity.RunStatus
+	To                    entity.RunStatus
+	WorkerID              string
+	LeaseOwner            string
+	LeaseToken            string
+	ExecutionGeneration   uint64
+	Now                   int64
+	ErrorCode             string
+	ErrorMessage          string
+	Event                 *entity.RunEvent
+	EventAlreadyPersisted bool
 }

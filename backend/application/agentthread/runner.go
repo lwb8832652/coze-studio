@@ -337,19 +337,28 @@ func (p *RunProcessor) finalizeRunExecution(
 			if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 				return runProcessErrored, abortErr
 			}
+			interruptPayload := map[string]any{
+				"status":    string(RunStatusInterrupted),
+				"worker_id": p.workerID,
+			}
+			if interrupted.CheckpointKey != "" {
+				interruptPayload["checkpoint_key"] = interrupted.CheckpointKey
+			}
+			if len(interrupted.Interrupts) > 0 {
+				interruptPayload["interrupt_count"] = len(interrupted.Interrupts)
+			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
-				RunID:               run.RunID,
-				From:                RunStatusRunning,
-				WorkerID:            p.workerID,
-				LeaseOwner:          run.LeaseOwner,
-				LeaseToken:          run.LeaseToken,
-				ExecutionGeneration: run.ExecutionGeneration,
+				RunID:                 run.RunID,
+				From:                  RunStatusRunning,
+				WorkerID:              p.workerID,
+				LeaseOwner:            run.LeaseOwner,
+				LeaseToken:            run.LeaseToken,
+				ExecutionGeneration:   run.ExecutionGeneration,
+				EventPayload:          encodeRunEventPayload(ctx, interruptPayload),
+				EventAlreadyPersisted: interrupted.EventPersisted,
 			})
 			if transitionErr != nil {
 				return runProcessErrored, transitionErr
-			}
-			if !interrupted.EventPersisted {
-				p.emitRunInterruptedEvent(ctx, run, interrupted)
 			}
 			p.recordRuntimeRunTerminal(
 				ctx,
@@ -387,6 +396,13 @@ func (p *RunProcessor) finalizeRunExecution(
 		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
 		Message:             message,
 		MessageMetadata:     resultMetadata(result),
+		TitleEventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"thread_title": generatedTitle,
+		}),
+		CompletionEventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"status":    string(RunStatusSucceeded),
+			"worker_id": p.workerID,
+		}),
 		ExpectedThreadTitle: expectedTitle,
 		ThreadTitle:         generatedTitle,
 	})
@@ -412,16 +428,6 @@ func (p *RunProcessor) finalizeRunExecution(
 		}
 		return runProcessErrored, err
 	}
-	if finalized.TitleUpdated {
-		p.emitRunEvent(ctx, run, "context.thread_title_updated", map[string]any{
-			"thread_title": generatedTitle,
-		})
-	}
-
-	p.emitRunEvent(ctx, run, "run.completed", map[string]any{
-		"status":    string(RunStatusSucceeded),
-		"worker_id": p.workerID,
-	})
 	p.recordRuntimeRunTerminal(
 		ctx,
 		run,
@@ -515,18 +521,6 @@ func finalizeMultitaskRollback(
 	return failed.Run, checkpointErr
 }
 
-func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSummary, interrupted *RunInterruptedError) {
-	payload := map[string]any{
-		"status":    string(RunStatusInterrupted),
-		"worker_id": p.workerID,
-	}
-	if interrupted != nil {
-		payload["checkpoint_key"] = interrupted.CheckpointKey
-		payload["interrupts"] = interrupted.Interrupts
-	}
-	p.emitRunEvent(ctx, run, "run.interrupted", payload)
-}
-
 func (p *RunProcessor) finalizeFailedRun(
 	ctx context.Context,
 	run *RunSummary,
@@ -537,7 +531,6 @@ func (p *RunProcessor) finalizeFailedRun(
 	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 		return runProcessErrored, abortErr
 	}
-	p.emitRunFailedEvent(ctx, run, code, message)
 	terminalRun, err := p.failRun(ctx, run, code, message)
 	if err != nil {
 		return runProcessFailed, err
@@ -557,6 +550,11 @@ func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, messa
 		ExecutionGeneration: run.ExecutionGeneration,
 		ErrorCode:           code,
 		ErrorMessage:        message,
+		EventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"status":     string(RunStatusFailed),
+			"worker_id":  p.workerID,
+			"error_code": code,
+		}),
 	})
 
 	if err != nil {
@@ -564,15 +562,6 @@ func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, messa
 	}
 
 	return updateRunStatusResponseRun(resp), nil
-}
-
-func (p *RunProcessor) emitRunFailedEvent(ctx context.Context, run *RunSummary, code, message string) {
-	p.emitRunEvent(ctx, run, "run.failed", map[string]any{
-		"status":        string(RunStatusFailed),
-		"worker_id":     p.workerID,
-		"error_code":    code,
-		"error_message": message,
-	})
 }
 
 func (p *RunProcessor) emitRunEvent(ctx context.Context, run *RunSummary, eventType string, payload map[string]any) {

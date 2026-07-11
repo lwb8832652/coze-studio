@@ -555,6 +555,9 @@ func (s *threadService) CreateRunBundle(
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event,
 		SkipTopLevelAdmission: req.SkipTopLevelAdmission,
+		AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
+			return s.idGen.GenMultiIDs(ctx, count)
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -564,7 +567,8 @@ func (s *threadService) CreateRunBundle(
 	}
 	return &CreateRunBundleResult{
 		Run: result.Run, Message: result.Message, Event: result.Event,
-		InterruptedRuns: result.InterruptedRuns, Created: result.Created,
+		InterruptedRuns: result.InterruptedRuns, InterruptedEvents: result.InterruptedEvents,
+		Created: result.Created,
 	}, nil
 }
 
@@ -2117,7 +2121,7 @@ func (s *threadService) ReconcileExpiredRunLease(
 	ctx context.Context,
 	req *ReconcileExpiredRunLeaseRequest,
 ) (*entity.Run, error) {
-	if err := s.requireRepo(); err != nil {
+	if err := s.requireComponents(); err != nil {
 		return nil, err
 	}
 	if req == nil {
@@ -2134,6 +2138,31 @@ func (s *threadService) ReconcileExpiredRunLease(
 	if req.ToStatus != entity.RunStatusInterrupted && req.ToStatus != entity.RunStatusFailed {
 		return nil, InvalidArgumentErrorf("expired run lease reconciliation target status is invalid")
 	}
+	current, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
+	eventID, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	eventType, err := serviceTerminalRunEventType(req.ToStatus)
+	if err != nil {
+		return nil, err
+	}
+	eventPayload, err := terminalRunEventPayload(
+		req.EventPayload,
+		req.ToStatus,
+		"",
+		strings.TrimSpace(req.ErrorCode),
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	return s.repo.ReconcileExpiredRunLease(ctx, repository.ReconcileExpiredRunLeaseRequest{
 		RunID:               req.RunID,
@@ -2141,9 +2170,17 @@ func (s *threadService) ReconcileExpiredRunLease(
 		LeaseToken:          token,
 		ExecutionGeneration: req.ExecutionGeneration,
 		ToStatus:            req.ToStatus,
-		Now:                 req.Now,
+		Now:                 now,
 		ErrorCode:           strings.TrimSpace(req.ErrorCode),
 		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
+		Event: &entity.RunEvent{
+			ID:        eventID,
+			ThreadID:  current.ThreadID,
+			RunID:     current.ID,
+			EventType: eventType,
+			Payload:   eventPayload,
+			CreatedAt: now,
+		},
 	})
 }
 
@@ -2244,13 +2281,54 @@ func (s *threadService) FinalizeRunSuccess(
 	if messageContent == "" {
 		return nil, InvalidArgumentErrorf("assistant message is required")
 	}
-	messageID, err := s.idGen.GenID(ctx)
+	expectedTitle := strings.TrimSpace(req.ExpectedThreadTitle)
+	threadTitle := strings.TrimSpace(req.ThreadTitle)
+	wantsTitleUpdate := threadTitle != "" && threadTitle != expectedTitle
+	entityCount := 2
+	if wantsTitleUpdate {
+		entityCount++
+	}
+	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
 	if err != nil {
 		return nil, err
+	}
+	if len(ids) != entityCount {
+		return nil, fmt.Errorf("agent thread id generator returned %d ids, expected %d", len(ids), entityCount)
 	}
 	now := req.Now
 	if now <= 0 {
 		now = time.Now().UnixMilli()
+	}
+	completionPayload, err := terminalRunEventPayload(
+		req.CompletionEventPayload,
+		entity.RunStatusSucceeded,
+		owner,
+		"",
+	)
+	if err != nil {
+		return nil, err
+	}
+	nextID := 1
+	var titleEvent *entity.RunEvent
+	if wantsTitleUpdate {
+		if raw := strings.TrimSpace(req.TitleEventPayload); raw != "" {
+			var supplied struct {
+				ThreadTitle string `json:"thread_title"`
+			}
+			if err := json.Unmarshal([]byte(raw), &supplied); err != nil ||
+				strings.TrimSpace(supplied.ThreadTitle) != threadTitle {
+				return nil, InvalidArgumentErrorf("thread title event payload does not match generated title")
+			}
+		}
+		payload, marshalErr := json.Marshal(map[string]any{"thread_title": threadTitle})
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		titleEvent = &entity.RunEvent{
+			ID: ids[nextID], ThreadID: req.ThreadID, RunID: req.RunID,
+			EventType: "context.thread_title_updated", Payload: string(payload), CreatedAt: now,
+		}
+		nextID++
 	}
 
 	result, err := s.repo.FinalizeRunSuccess(ctx, repository.FinalizeRunSuccessRequest{
@@ -2260,7 +2338,7 @@ func (s *threadService) FinalizeRunSuccess(
 		ExecutionGeneration: req.ExecutionGeneration,
 		Now:                 now,
 		Message: &entity.Message{
-			ID:        messageID,
+			ID:        ids[0],
 			ThreadID:  req.ThreadID,
 			RunID:     req.RunID,
 			Role:      entity.MessageRoleAssistant,
@@ -2268,8 +2346,13 @@ func (s *threadService) FinalizeRunSuccess(
 			Metadata:  req.MessageMetadata,
 			CreatedAt: now,
 		},
-		ExpectedThreadTitle: strings.TrimSpace(req.ExpectedThreadTitle),
-		ThreadTitle:         strings.TrimSpace(req.ThreadTitle),
+		TitleEvent: titleEvent,
+		CompletionEvent: &entity.RunEvent{
+			ID: ids[nextID], ThreadID: req.ThreadID, RunID: req.RunID,
+			EventType: "run.completed", Payload: completionPayload, CreatedAt: now,
+		},
+		ExpectedThreadTitle: expectedTitle,
+		ThreadTitle:         threadTitle,
 	})
 	if err != nil {
 		return nil, err
@@ -2278,9 +2361,11 @@ func (s *threadService) FinalizeRunSuccess(
 		return nil, fmt.Errorf("finalize run success returned empty result")
 	}
 	return &FinalizeRunSuccessResult{
-		Run:          result.Run,
-		Message:      result.Message,
-		TitleUpdated: result.TitleUpdated,
+		Run:             result.Run,
+		Message:         result.Message,
+		TitleEvent:      result.TitleEvent,
+		CompletionEvent: result.CompletionEvent,
+		TitleUpdated:    result.TitleUpdated,
 	}, nil
 }
 
@@ -2317,7 +2402,7 @@ func (s *threadService) transitionRun(
 	req *UpdateRunStatusRequest,
 	to entity.RunStatus,
 ) (*entity.Run, error) {
-	if err := s.requireRepo(); err != nil {
+	if err := s.requireComponents(); err != nil {
 		return nil, err
 	}
 	if req == nil {
@@ -2334,24 +2419,112 @@ func (s *threadService) transitionRun(
 	if err := EnsureRunTransition(from, to); err != nil {
 		return nil, err
 	}
+	if req.EventAlreadyPersisted && to != entity.RunStatusInterrupted {
+		return nil, InvalidArgumentErrorf("pre-persisted terminal event is only valid for interrupted runs")
+	}
+	current, err := s.repo.GetRun(ctx, req.RunID)
+	if err != nil {
+		return nil, err
+	}
 
 	workerID := strings.TrimSpace(req.WorkerID)
+	var terminalEvent *entity.RunEvent
+	if !req.EventAlreadyPersisted {
+		eventID, err := s.idGen.GenID(ctx)
+		if err != nil {
+			return nil, err
+		}
+		eventType, err := serviceTerminalRunEventType(to)
+		if err != nil {
+			return nil, err
+		}
+		eventPayload, err := terminalRunEventPayload(
+			req.EventPayload,
+			to,
+			workerID,
+			strings.TrimSpace(req.ErrorCode),
+		)
+		if err != nil {
+			return nil, err
+		}
+		terminalEvent = &entity.RunEvent{
+			ID: eventID, ThreadID: current.ThreadID, RunID: current.ID,
+			EventType: eventType, Payload: eventPayload, CreatedAt: req.Now,
+		}
+	}
 	if err := s.repo.UpdateRunStatus(ctx, repository.UpdateRunStatusRequest{
-		RunID:               req.RunID,
-		From:                from,
-		To:                  to,
-		WorkerID:            workerID,
-		LeaseOwner:          strings.TrimSpace(req.LeaseOwner),
-		LeaseToken:          strings.TrimSpace(req.LeaseToken),
-		ExecutionGeneration: req.ExecutionGeneration,
-		Now:                 req.Now,
-		ErrorCode:           strings.TrimSpace(req.ErrorCode),
-		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
+		RunID:                 req.RunID,
+		From:                  from,
+		To:                    to,
+		WorkerID:              workerID,
+		LeaseOwner:            strings.TrimSpace(req.LeaseOwner),
+		LeaseToken:            strings.TrimSpace(req.LeaseToken),
+		ExecutionGeneration:   req.ExecutionGeneration,
+		Now:                   req.Now,
+		ErrorCode:             strings.TrimSpace(req.ErrorCode),
+		ErrorMessage:          strings.TrimSpace(req.ErrorMessage),
+		Event:                 terminalEvent,
+		EventAlreadyPersisted: req.EventAlreadyPersisted,
 	}); err != nil {
 		return nil, err
 	}
 
 	return s.repo.GetRun(ctx, req.RunID)
+}
+
+func serviceTerminalRunEventType(status entity.RunStatus) (string, error) {
+	switch status {
+	case entity.RunStatusSucceeded:
+		return "run.completed", nil
+	case entity.RunStatusFailed:
+		return "run.failed", nil
+	case entity.RunStatusInterrupted:
+		return "run.interrupted", nil
+	case entity.RunStatusCanceled:
+		return "run.canceled", nil
+	default:
+		return "", InvalidArgumentErrorf("run status %s has no terminal event type", status)
+	}
+}
+
+func terminalRunEventPayload(
+	provided string,
+	status entity.RunStatus,
+	workerID string,
+	errorCode string,
+) (string, error) {
+	payload := make(map[string]any, 8)
+	if rawPayload := strings.TrimSpace(provided); rawPayload != "" {
+		var providedFields map[string]any
+		if err := json.Unmarshal([]byte(rawPayload), &providedFields); err != nil || providedFields == nil {
+			return "", InvalidArgumentErrorf("terminal run event payload must be a JSON object")
+		}
+		for _, key := range []string{
+			"worker_id",
+			"error_code",
+			"checkpoint_key",
+			"interrupt_count",
+			"checkpoint_id",
+			"checkpoint_ns",
+			"resume_from",
+		} {
+			if value, ok := providedFields[key]; ok {
+				payload[key] = value
+			}
+		}
+	}
+	payload["status"] = string(status)
+	if workerID = strings.TrimSpace(workerID); workerID != "" {
+		payload["worker_id"] = workerID
+	}
+	if errorCode = strings.TrimSpace(errorCode); errorCode != "" {
+		payload["error_code"] = errorCode
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func isValidMessageRole(role entity.MessageRole) bool {

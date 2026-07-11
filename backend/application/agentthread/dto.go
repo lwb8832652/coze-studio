@@ -1247,6 +1247,7 @@ type ReconcileExpiredRunLeaseRequest struct {
 	Now                 int64
 	ErrorCode           string
 	ErrorMessage        string
+	EventPayload        string
 }
 
 type ReconcileExpiredRunLeaseResponse struct {
@@ -1254,16 +1255,18 @@ type ReconcileExpiredRunLeaseResponse struct {
 }
 
 type FinalizeRunSuccessRequest struct {
-	RunID               int64
-	ThreadID            int64
-	LeaseOwner          string
-	LeaseToken          string
-	ExecutionGeneration uint64
-	Now                 int64
-	Message             string
-	MessageMetadata     string
-	ExpectedThreadTitle string
-	ThreadTitle         string
+	RunID                  int64
+	ThreadID               int64
+	LeaseOwner             string
+	LeaseToken             string
+	ExecutionGeneration    uint64
+	Now                    int64
+	Message                string
+	MessageMetadata        string
+	TitleEventPayload      string
+	CompletionEventPayload string
+	ExpectedThreadTitle    string
+	ThreadTitle            string
 }
 
 type FinalizeRunSuccessResponse struct {
@@ -1273,16 +1276,18 @@ type FinalizeRunSuccessResponse struct {
 }
 
 type UpdateRunStatusRequest struct {
-	RunID               int64
-	From                RunStatus
-	To                  RunStatus
-	WorkerID            string
-	LeaseOwner          string
-	LeaseToken          string
-	ExecutionGeneration uint64
-	Now                 int64
-	ErrorCode           string
-	ErrorMessage        string
+	RunID                 int64
+	From                  RunStatus
+	To                    RunStatus
+	WorkerID              string
+	LeaseOwner            string
+	LeaseToken            string
+	ExecutionGeneration   uint64
+	Now                   int64
+	ErrorCode             string
+	ErrorMessage          string
+	EventPayload          string
+	EventAlreadyPersisted bool
 }
 
 type UpdateRunStatusResponse struct {
