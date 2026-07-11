@@ -125,32 +125,38 @@ type MessageSummary struct {
 }
 
 type RunSummary struct {
-	RunID             int64
-	PlanScopeRunID    int64
-	ThreadID          int64
-	ParentRunID       int64
-	SpaceID           int64
-	CreatorID         int64
-	AssistantID       string
-	RunKind           RunKind
-	Status            RunStatus
-	Command           string
-	Input             string
-	Config            string
-	Context           string
-	Metadata          string
-	StreamMode        string
-	MultitaskStrategy string
-	OnDisconnect      string
-	Durability        string
-	IdempotencyKey    string
-	WorkerID          string
-	ErrorCode         string
-	ErrorMessage      string
-	StartedAt         int64
-	EndedAt           int64
-	CreatedAt         int64
-	UpdatedAt         int64
+	RunID               int64
+	PlanScopeRunID      int64
+	ThreadID            int64
+	ParentRunID         int64
+	SpaceID             int64
+	CreatorID           int64
+	AssistantID         string
+	RunKind             RunKind
+	Status              RunStatus
+	Command             string
+	Input               string
+	Config              string
+	Context             string
+	Metadata            string
+	StreamMode          string
+	MultitaskStrategy   string
+	OnDisconnect        string
+	Durability          string
+	IdempotencyKey      string
+	WorkerID            string
+	LeaseOwner          string
+	LeaseToken          string
+	LeaseExpiresAt      int64
+	HeartbeatAt         int64
+	CancelRequestedAt   int64
+	ExecutionGeneration uint64
+	ErrorCode           string
+	ErrorMessage        string
+	StartedAt           int64
+	EndedAt             int64
+	CreatedAt           int64
+	UpdatedAt           int64
 }
 
 type RunEventSummary struct {
@@ -1172,8 +1178,10 @@ type ReadArtifactContentResponse struct {
 }
 
 type ClaimPendingRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
 }
 
 type ClaimPendingRunsResponse struct {
@@ -1181,21 +1189,62 @@ type ClaimPendingRunsResponse struct {
 }
 
 type ClaimQueuedResumeRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
 }
 
 type ClaimQueuedResumeRunsResponse struct {
 	Runs []*RunSummary
 }
 
+type RenewRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	LeaseTTLMillis      int64
+}
+
+type RenewRunLeaseResponse struct {
+	Run *RunSummary
+}
+
+type ReleaseRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            RunStatus
+	Now                 int64
+}
+
+type ReleaseRunLeaseResponse struct {
+	Run *RunSummary
+}
+
+type ListExpiredRunLeasesRequest struct {
+	Now   int64
+	Limit int32
+}
+
+type ListExpiredRunLeasesResponse struct {
+	Runs []*RunSummary
+}
+
 type UpdateRunStatusRequest struct {
-	RunID        int64
-	From         RunStatus
-	To           RunStatus
-	WorkerID     string
-	ErrorCode    string
-	ErrorMessage string
+	RunID               int64
+	From                RunStatus
+	To                  RunStatus
+	WorkerID            string
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
 }
 
 type UpdateRunStatusResponse struct {

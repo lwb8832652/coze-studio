@@ -233,9 +233,12 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
-				RunID:    run.RunID,
-				From:     RunStatusRunning,
-				WorkerID: p.workerID,
+				RunID:               run.RunID,
+				From:                RunStatusRunning,
+				WorkerID:            p.workerID,
+				LeaseOwner:          run.LeaseOwner,
+				LeaseToken:          run.LeaseToken,
+				ExecutionGeneration: run.ExecutionGeneration,
 			})
 			if transitionErr != nil {
 				return resumeRunProcessErrored, transitionErr
@@ -272,9 +275,12 @@ func (p *ResumeRunProcessor) processResumeRun(ctx context.Context, run *RunSumma
 	}
 
 	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
-		RunID:    run.RunID,
-		From:     RunStatusRunning,
-		WorkerID: p.workerID,
+		RunID:               run.RunID,
+		From:                RunStatusRunning,
+		WorkerID:            p.workerID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
 	})
 	if err != nil {
 		return resumeRunProcessErrored, err
@@ -895,11 +901,14 @@ func (p *ResumeRunProcessor) failResumeRun(
 	p.emitResumeRunFailed(ctx, run, resume, code, message)
 
 	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
-		RunID:        run.RunID,
-		From:         RunStatusRunning,
-		WorkerID:     p.workerID,
-		ErrorCode:    code,
-		ErrorMessage: message,
+		RunID:               run.RunID,
+		From:                RunStatusRunning,
+		WorkerID:            p.workerID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode:           code,
+		ErrorMessage:        message,
 	})
 
 	if err != nil {

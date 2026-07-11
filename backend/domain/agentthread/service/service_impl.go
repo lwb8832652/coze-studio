@@ -1727,8 +1727,10 @@ func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingR
 	}
 
 	return s.repo.ClaimPendingRuns(ctx, repository.ClaimPendingRunsRequest{
-		WorkerID: workerID,
-		Limit:    limit,
+		WorkerID:       workerID,
+		Limit:          limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
 	})
 }
 
@@ -1777,8 +1779,86 @@ func (s *threadService) ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQue
 	}
 
 	return s.repo.ClaimQueuedResumeRuns(ctx, repository.ClaimQueuedResumeRunsRequest{
-		WorkerID: workerID,
-		Limit:    limit,
+		WorkerID:       workerID,
+		Limit:          limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
+	})
+}
+
+func (s *threadService) RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("renew run lease request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	owner := strings.TrimSpace(req.LeaseOwner)
+	token := strings.TrimSpace(req.LeaseToken)
+	if owner == "" || token == "" || req.ExecutionGeneration == 0 {
+		return nil, InvalidArgumentErrorf("run lease credentials are required")
+	}
+
+	return s.repo.RenewRunLease(ctx, repository.RenewRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          owner,
+		LeaseToken:          token,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		LeaseTTLMillis:      req.LeaseTTLMillis,
+	})
+}
+
+func (s *threadService) ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("release run lease request is required")
+	}
+	if req.RunID <= 0 {
+		return nil, InvalidArgumentErrorf("run id is required")
+	}
+	owner := strings.TrimSpace(req.LeaseOwner)
+	token := strings.TrimSpace(req.LeaseToken)
+	if owner == "" || token == "" || req.ExecutionGeneration == 0 {
+		return nil, InvalidArgumentErrorf("run lease credentials are required")
+	}
+	if req.ToStatus != entity.RunStatusPending && req.ToStatus != entity.RunStatusQueued {
+		return nil, InvalidArgumentErrorf("run lease release target status is invalid")
+	}
+
+	return s.repo.ReleaseRunLease(ctx, repository.ReleaseRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          owner,
+		LeaseToken:          token,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            req.ToStatus,
+		Now:                 req.Now,
+	})
+}
+
+func (s *threadService) ListExpiredRunLeases(
+	ctx context.Context,
+	req *ListExpiredRunLeasesRequest,
+) ([]*entity.Run, error) {
+	if err := s.requireRepo(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("list expired run leases request is required")
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	return s.repo.ListExpiredRunLeases(ctx, repository.ListExpiredRunLeasesRequest{
+		Now:   req.Now,
+		Limit: limit,
 	})
 }
 
@@ -1823,12 +1903,16 @@ func (s *threadService) transitionRun(
 
 	workerID := strings.TrimSpace(req.WorkerID)
 	if err := s.repo.UpdateRunStatus(ctx, repository.UpdateRunStatusRequest{
-		RunID:        req.RunID,
-		From:         from,
-		To:           to,
-		WorkerID:     workerID,
-		ErrorCode:    strings.TrimSpace(req.ErrorCode),
-		ErrorMessage: strings.TrimSpace(req.ErrorMessage),
+		RunID:               req.RunID,
+		From:                from,
+		To:                  to,
+		WorkerID:            workerID,
+		LeaseOwner:          strings.TrimSpace(req.LeaseOwner),
+		LeaseToken:          strings.TrimSpace(req.LeaseToken),
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		ErrorCode:           strings.TrimSpace(req.ErrorCode),
+		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
 	}); err != nil {
 		return nil, err
 	}

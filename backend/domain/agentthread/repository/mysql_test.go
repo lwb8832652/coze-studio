@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -3135,8 +3136,10 @@ func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(3, 10, entity.RunStatusRunning, 99)))
 
 	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    1,
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
 	})
 
 	require.NoError(t, err)
@@ -3144,12 +3147,274 @@ func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	require.Equal(t, int64(1), claimed[0].ID)
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "worker-a", claimed[0].WorkerID)
-	require.NotZero(t, claimed[0].StartedAt)
+	require.Equal(t, "worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, int64(6_000), claimed[0].LeaseExpiresAt)
+	require.Equal(t, int64(1_000), claimed[0].HeartbeatAt)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
+	require.Equal(t, int64(1_000), claimed[0].StartedAt)
 	got, err := repo.GetRun(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, entity.RunStatusRunning, got.Status)
 	require.Equal(t, "worker-a", got.WorkerID)
-	require.NotZero(t, got.StartedAt)
+	require.Equal(t, claimed[0].LeaseToken, got.LeaseToken)
+	require.Equal(t, int64(6_000), got.LeaseExpiresAt)
+	require.Equal(t, uint64(1), got.ExecutionGeneration)
+	require.Equal(t, int64(1_000), got.StartedAt)
+}
+
+func TestThreadRepositoryRunLeaseAtomicClaimPreventsDuplicateOwnership(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+
+	first, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	second, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-b",
+		Limit:          1,
+		Now:            1_001,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, first, 1)
+	require.Empty(t, second)
+	require.Equal(t, "worker-a", first[0].LeaseOwner)
+	require.NotEmpty(t, first[0].LeaseToken)
+}
+
+func TestThreadRepositoryRunLeaseHeartbeatAndExpiration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 1_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	lease := claimed[0]
+
+	renewed, err := repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 1_500,
+		LeaseTTLMillis:      2_000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1_500), renewed.HeartbeatAt)
+	require.Equal(t, int64(3_500), renewed.LeaseExpiresAt)
+
+	_, err = repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          "wrong-token",
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 1_600,
+		LeaseTTLMillis:      2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	expired, err := repo.ListExpiredRunLeases(context.Background(), ListExpiredRunLeasesRequest{
+		Now:   3_600,
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	require.Equal(t, lease.ID, expired[0].ID)
+
+	_, err = repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 3_600,
+		LeaseTTLMillis:      2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+}
+
+func TestThreadRepositoryRunLeaseFencesTerminalTransitionAndClearsLease(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          "wrong-token",
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 lease.LeaseExpiresAt,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration + 1,
+		Now:                 2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 2_000,
+	})
+	require.NoError(t, err)
+
+	got, err := repo.GetRun(context.Background(), lease.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, got.Status)
+	require.Empty(t, got.WorkerID)
+	require.Empty(t, got.LeaseOwner)
+	require.Empty(t, got.LeaseToken)
+	require.Zero(t, got.LeaseExpiresAt)
+	require.Zero(t, got.HeartbeatAt)
+	require.Zero(t, got.CancelRequestedAt)
+	require.Equal(t, lease.ExecutionGeneration, got.ExecutionGeneration)
+	require.Equal(t, int64(2_000), got.EndedAt)
+}
+
+func TestThreadRepositoryRunLeaseReleaseAllowsNewGenerationClaim(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	first, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	released, err := repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               first[0].ID,
+		LeaseOwner:          first[0].LeaseOwner,
+		LeaseToken:          first[0].LeaseToken,
+		ExecutionGeneration: first[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusPending,
+		Now:                 1_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusPending, released.Status)
+	require.Empty(t, released.LeaseToken)
+
+	second, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-b",
+		Limit:          1,
+		Now:            2_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	require.Equal(t, "worker-b", second[0].LeaseOwner)
+	require.NotEqual(t, first[0].LeaseToken, second[0].LeaseToken)
+	require.Equal(t, uint64(2), second[0].ExecutionGeneration)
+}
+
+func TestThreadRepositoryRunLeaseReleaseToQueuedRequiresProtectedResumeMetadata(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	normalClaim, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, normalClaim, 1)
+
+	_, err = repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               normalClaim[0].ID,
+		LeaseOwner:          normalClaim[0].LeaseOwner,
+		LeaseToken:          normalClaim[0].LeaseToken,
+		ExecutionGeneration: normalClaim[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusQueued,
+		Now:                 1_500,
+	})
+	require.ErrorIs(t, err, ErrRunLeaseLost)
+
+	protected := newRepositoryTestRun(2, 10, entity.RunStatusQueued, 200)
+	protected.Metadata = `{"checkpoint_resume":{"protected_from_worker_claim":true}}`
+	require.NoError(t, repo.CreateRun(context.Background(), protected))
+	resumeClaim, err := repo.ClaimQueuedResumeRuns(context.Background(), ClaimQueuedResumeRunsRequest{
+		WorkerID: "resume-worker-a", Limit: 1, Now: 2_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, resumeClaim, 1)
+
+	released, err := repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               resumeClaim[0].ID,
+		LeaseOwner:          resumeClaim[0].LeaseOwner,
+		LeaseToken:          resumeClaim[0].LeaseToken,
+		ExecutionGeneration: resumeClaim[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusQueued,
+		Now:                 2_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusQueued, released.Status)
 }
 
 func TestThreadRepositoryClaimPendingRunsSkipsQueuedResumeRuns(t *testing.T) {
@@ -3195,8 +3460,10 @@ func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *te
 	require.NoError(t, repo.CreateRun(context.Background(), pendingResume))
 
 	claimed, err := repo.ClaimQueuedResumeRuns(context.Background(), ClaimQueuedResumeRunsRequest{
-		WorkerID: "resume-worker-a",
-		Limit:    10,
+		WorkerID:       "resume-worker-a",
+		Limit:          10,
+		Now:            2_000,
+		LeaseTTLMillis: 6_000,
 	})
 
 	require.NoError(t, err)
@@ -3204,7 +3471,12 @@ func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *te
 	require.Equal(t, int64(1), claimed[0].ID)
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "resume-worker-a", claimed[0].WorkerID)
-	require.NotZero(t, claimed[0].StartedAt)
+	require.Equal(t, "resume-worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, int64(8_000), claimed[0].LeaseExpiresAt)
+	require.Equal(t, int64(2_000), claimed[0].HeartbeatAt)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
+	require.Equal(t, int64(2_000), claimed[0].StartedAt)
 
 	gotPlain, err := repo.GetRun(context.Background(), 2)
 	require.NoError(t, err)

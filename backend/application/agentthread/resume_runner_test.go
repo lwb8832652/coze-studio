@@ -30,12 +30,16 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{
 			{
-				ID:       200,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				WorkerID: "resume-worker-a",
-				Command:  `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
-				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				WorkerID:            "resume-worker-a",
+				LeaseOwner:          "resume-worker-a",
+				LeaseToken:          "lease-200",
+				LeaseExpiresAt:      60_000,
+				ExecutionGeneration: 4,
+				Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+				Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
 			},
 		},
 		checkpoint: &entity.Checkpoint{
@@ -93,6 +97,9 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "resume-worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, "resume-worker-a", domainSVC.completeRunReq.LeaseOwner)
+	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
+	require.Equal(t, uint64(4), domainSVC.completeRunReq.ExecutionGeneration)
 	require.Nil(t, domainSVC.failRunReq)
 	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.completed"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[0].Payload, `"checkpoint_id":"503"`)

@@ -3048,58 +3048,127 @@ func TestApplicationClaimPendingRunsMapsDomainRuns(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
 			{
-				ID:        200,
-				ThreadID:  10,
-				Status:    entity.RunStatusRunning,
-				Input:     `{"messages":[]}`,
-				WorkerID:  "worker-a",
-				StartedAt: 300,
-				UpdatedAt: 301,
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				Input:               `{"messages":[]}`,
+				WorkerID:            "worker-a",
+				LeaseOwner:          "worker-a",
+				LeaseToken:          "lease-200",
+				LeaseExpiresAt:      6_000,
+				HeartbeatAt:         1_000,
+				ExecutionGeneration: 3,
+				StartedAt:           300,
+				UpdatedAt:           301,
 			},
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    2,
+		WorkerID:       "worker-a",
+		Limit:          2,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "worker-a", domainSVC.claimRunsReq.WorkerID)
 	require.Equal(t, int32(2), domainSVC.claimRunsReq.Limit)
+	require.Equal(t, int64(1_000), domainSVC.claimRunsReq.Now)
+	require.Equal(t, int64(5_000), domainSVC.claimRunsReq.LeaseTTLMillis)
 	require.Len(t, resp.Runs, 1)
 	require.Equal(t, int64(200), resp.Runs[0].RunID)
 	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
 	require.Equal(t, "worker-a", resp.Runs[0].WorkerID)
+	require.Equal(t, "worker-a", resp.Runs[0].LeaseOwner)
+	require.Equal(t, "lease-200", resp.Runs[0].LeaseToken)
+	require.Equal(t, int64(6_000), resp.Runs[0].LeaseExpiresAt)
+	require.Equal(t, uint64(3), resp.Runs[0].ExecutionGeneration)
 }
 
 func TestApplicationClaimQueuedResumeRunsMapsDomainRuns(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{
 			{
-				ID:       201,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				WorkerID: "resume-worker-a",
-				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+				ID:                  201,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				WorkerID:            "resume-worker-a",
+				LeaseOwner:          "resume-worker-a",
+				LeaseToken:          "lease-201",
+				LeaseExpiresAt:      8_000,
+				ExecutionGeneration: 2,
+				Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
 			},
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
-		WorkerID: "resume-worker-a",
-		Limit:    2,
+		WorkerID:       "resume-worker-a",
+		Limit:          2,
+		Now:            2_000,
+		LeaseTTLMillis: 6_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "resume-worker-a", domainSVC.claimQueuedResumeRunsReq.WorkerID)
 	require.Equal(t, int32(2), domainSVC.claimQueuedResumeRunsReq.Limit)
+	require.Equal(t, int64(2_000), domainSVC.claimQueuedResumeRunsReq.Now)
+	require.Equal(t, int64(6_000), domainSVC.claimQueuedResumeRunsReq.LeaseTTLMillis)
 	require.Len(t, resp.Runs, 1)
 	require.Equal(t, int64(201), resp.Runs[0].RunID)
 	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
 	require.Equal(t, "resume-worker-a", resp.Runs[0].WorkerID)
+	require.Equal(t, "lease-201", resp.Runs[0].LeaseToken)
+	require.Equal(t, uint64(2), resp.Runs[0].ExecutionGeneration)
+}
+
+func TestApplicationRunLeaseOperationsMapDomainRuns(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		renewedRunLease: &entity.Run{
+			ID: 200, Status: entity.RunStatusRunning, HeartbeatAt: 3_000, LeaseExpiresAt: 7_000,
+		},
+		releasedRunLease: &entity.Run{ID: 200, Status: entity.RunStatusPending},
+		expiredRunLeases: []*entity.Run{{
+			ID: 201, Status: entity.RunStatusRunning, LeaseExpiresAt: 2_000, ExecutionGeneration: 1,
+		}},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	renewed, err := app.RenewRunLease(context.Background(), &RenewRunLeaseRequest{
+		RunID:               200,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 3_000,
+		LeaseTTLMillis:      4_000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(7_000), renewed.Run.LeaseExpiresAt)
+	require.Equal(t, "lease-200", domainSVC.renewRunLeaseReq.LeaseToken)
+
+	released, err := app.ReleaseRunLease(context.Background(), &ReleaseRunLeaseRequest{
+		RunID:               200,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		ToStatus:            RunStatusPending,
+		Now:                 3_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusPending, released.Run.Status)
+	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReq.ToStatus)
+
+	expired, err := app.ListExpiredRunLeases(context.Background(), &ListExpiredRunLeasesRequest{
+		Now:   4_000,
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, expired.Runs, 1)
+	require.Equal(t, int64(201), expired.Runs[0].RunID)
+	require.Equal(t, int32(10), domainSVC.listExpiredRunLeasesReq.Limit)
 }
 
 func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
@@ -3115,15 +3184,23 @@ func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.CompleteRun(context.Background(), &UpdateRunStatusRequest{
-		RunID:    200,
-		From:     RunStatusRunning,
-		WorkerID: "worker-a",
+		RunID:               200,
+		From:                RunStatusRunning,
+		WorkerID:            "worker-a",
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 4_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, "worker-a", domainSVC.completeRunReq.LeaseOwner)
+	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
+	require.Equal(t, uint64(3), domainSVC.completeRunReq.ExecutionGeneration)
+	require.Equal(t, int64(4_000), domainSVC.completeRunReq.Now)
 	require.Equal(t, int64(200), resp.Run.RunID)
 	require.Equal(t, RunStatusSucceeded, resp.Run.Status)
 	require.Equal(t, int64(400), resp.Run.EndedAt)
@@ -3791,6 +3868,9 @@ type recordingThreadService struct {
 	runs                           []*entity.Run
 	gotRunsByID                    map[int64]*entity.Run
 	claimedQueuedResumeRuns        []*entity.Run
+	renewedRunLease                *entity.Run
+	releasedRunLease               *entity.Run
+	expiredRunLeases               []*entity.Run
 	interruptedRun                 *entity.Run
 	runEvents                      []*entity.RunEvent
 	checkpoints                    []*entity.Checkpoint
@@ -3814,6 +3894,9 @@ type recordingThreadService struct {
 	createRunReq                   *domainservice.CreateRunRequest
 	claimRunsReq                   *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
+	renewRunLeaseReq               *domainservice.RenewRunLeaseRequest
+	releaseRunLeaseReq             *domainservice.ReleaseRunLeaseRequest
+	listExpiredRunLeasesReq        *domainservice.ListExpiredRunLeasesRequest
 	aggregateRunBacklogReq         *domainservice.AggregateRunBacklogRequest
 	completeRunReq                 *domainservice.UpdateRunStatusRequest
 	interruptRunReq                *domainservice.UpdateRunStatusRequest
@@ -4194,6 +4277,12 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			durability text,
 			idempotency_key text,
 			worker_id text,
+			lease_owner text,
+			lease_token text,
+			lease_expires_at integer,
+			heartbeat_at integer,
+			cancel_requested_at integer,
+			execution_generation integer NOT NULL DEFAULT 0,
 			error_code text,
 			error_message text,
 			started_at integer,
@@ -4309,6 +4398,30 @@ func (s *recordingThreadService) AggregateRunBacklog(
 func (s *recordingThreadService) ClaimQueuedResumeRuns(ctx context.Context, req *domainservice.ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
 	s.claimQueuedResumeRunsReq = req
 	return s.claimedQueuedResumeRuns, nil
+}
+
+func (s *recordingThreadService) RenewRunLease(
+	ctx context.Context,
+	req *domainservice.RenewRunLeaseRequest,
+) (*entity.Run, error) {
+	s.renewRunLeaseReq = req
+	return s.renewedRunLease, nil
+}
+
+func (s *recordingThreadService) ReleaseRunLease(
+	ctx context.Context,
+	req *domainservice.ReleaseRunLeaseRequest,
+) (*entity.Run, error) {
+	s.releaseRunLeaseReq = req
+	return s.releasedRunLease, nil
+}
+
+func (s *recordingThreadService) ListExpiredRunLeases(
+	ctx context.Context,
+	req *domainservice.ListExpiredRunLeasesRequest,
+) ([]*entity.Run, error) {
+	s.listExpiredRunLeasesReq = req
+	return s.expiredRunLeases, nil
 }
 
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {

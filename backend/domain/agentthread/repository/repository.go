@@ -18,9 +18,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
+
+var ErrRunLeaseLost = errors.New("agent run lease lost")
 
 type ThreadRepository interface {
 	CreateThread(ctx context.Context, thread *entity.Thread) error
@@ -38,6 +41,9 @@ type ThreadRepository interface {
 	AggregateRunBacklog(ctx context.Context, req AggregateRunBacklogRequest) ([]*entity.RunBacklogAggregate, error)
 	ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
+	RenewRunLease(ctx context.Context, req RenewRunLeaseRequest) (*entity.Run, error)
+	ReleaseRunLease(ctx context.Context, req ReleaseRunLeaseRequest) (*entity.Run, error)
+	ListExpiredRunLeases(ctx context.Context, req ListExpiredRunLeasesRequest) ([]*entity.Run, error)
 	UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error
 	CreateRunEvent(ctx context.Context, event *entity.RunEvent) error
 	ListRunEvents(ctx context.Context, req ListRunEventsRequest) ([]*entity.RunEvent, int64, error)
@@ -249,20 +255,51 @@ type FailMemoryFlushJobRequest struct {
 }
 
 type ClaimPendingRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
 }
 
 type ClaimQueuedResumeRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
+}
+
+type RenewRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	LeaseTTLMillis      int64
+}
+
+type ReleaseRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+}
+
+type ListExpiredRunLeasesRequest struct {
+	Now   int64
+	Limit int32
 }
 
 type UpdateRunStatusRequest struct {
-	RunID        int64
-	From         entity.RunStatus
-	To           entity.RunStatus
-	WorkerID     string
-	ErrorCode    string
-	ErrorMessage string
+	RunID               int64
+	From                entity.RunStatus
+	To                  entity.RunStatus
+	WorkerID            string
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
 }

@@ -321,6 +321,18 @@ func (r *recordingAgentThreadService) ClaimQueuedResumeRuns(context.Context, *ag
 	return nil, nil
 }
 
+func (r *recordingAgentThreadService) RenewRunLease(context.Context, *agentthreadsvc.RenewRunLeaseRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ReleaseRunLease(context.Context, *agentthreadsvc.ReleaseRunLeaseRequest) (*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
+func (r *recordingAgentThreadService) ListExpiredRunLeases(context.Context, *agentthreadsvc.ListExpiredRunLeasesRequest) ([]*agentthreadentity.Run, error) {
+	return nil, nil
+}
+
 func (r *recordingAgentThreadService) CompleteRun(context.Context, *agentthreadsvc.UpdateRunStatusRequest) (*agentthreadentity.Run, error) {
 	return nil, nil
 }

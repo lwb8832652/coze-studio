@@ -199,6 +199,9 @@ whose package passed immediately when rerun alone with the required gcflags.
 
 ### Task 3: Add Leased Run Ownership And Fencing
 
+Reference evidence:
+`docs/superpowers/evidence/2026-07-11-deerflow-agent-run-lease-ownership.md`.
+
 **Files:**
 
 - Create: docker/atlas/migrations/20260711000100_agent_run_leases.sql
@@ -207,32 +210,43 @@ whose package passed immediately when rerun alone with the required gcflags.
 - Modify: backend/domain/agentthread/repository/repository.go
 - Modify: backend/domain/agentthread/repository/mysql.go
 - Test: backend/domain/agentthread/repository/mysql_test.go
+- Modify: backend/domain/agentthread/service/service.go
+- Modify: backend/domain/agentthread/service/service_impl.go
+- Test: backend/domain/agentthread/service/service_impl_test.go
+- Modify: backend/application/agentthread/dto.go
+- Modify: backend/application/agentthread/thread_app.go
+- Modify: backend/application/agentthread/service.go
+- Modify: backend/application/agentthread/runner.go
+- Modify: backend/application/agentthread/resume_runner.go
+- Test: backend/application/agentthread/service_test.go
+- Test: backend/application/agentthread/runner_test.go
+- Test: backend/application/agentthread/resume_runner_test.go
 
-- [ ] **Step 1: Write failing lease tests**
+- [x] **Step 1: Write failing lease tests**
 
 Cover atomic claim, lease owner/token/expiry, heartbeat renewal, wrong-token
 rejection, expired lease discovery and terminal lease clearing. Two claimers
 must never own the same run.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 ~~~bash
 cd backend
 go test ./domain/agentthread/repository -run 'Lease|Claim|Heartbeat' -count=1
 ~~~
 
-- [ ] **Step 3: Add the migration and domain contract**
+- [x] **Step 3: Add the migration and domain contract**
 
 Add nullable lease_owner, lease_token, lease_expires_at, heartbeat_at,
 cancel_requested_at and monotonically increasing execution_generation. Add
 indexes for status/expiry and worker heartbeat.
 
-- [ ] **Step 4: Implement atomic claim and fenced transitions**
+- [x] **Step 4: Implement atomic claim and fenced transitions**
 
 Use a transaction and row locks. Increment generation on claim and require
 owner, token and generation on every running-to-terminal transition.
 
-- [ ] **Step 5: Validate Atlas, test and commit**
+- [x] **Step 5: Validate Atlas, test and commit**
 
 ~~~bash
 atlas version
@@ -243,6 +257,20 @@ go test ./domain/agentthread/repository -run 'Lease|Claim|Heartbeat|Transition' 
 git add docker/atlas/migrations backend/domain/agentthread
 git commit -m "feat: add leased agent run ownership"
 ~~~
+
+Completed 2026-07-11. Both top-level claim paths now install a durable random
+lease and increment execution generation in the same transaction. Heartbeats,
+release and worker finalization use database compare-and-update predicates over
+owner, token, generation and expiry. Successful, failed and interrupted runs
+clear active ownership, while cancellation remains intentionally compatible
+until Task 5. Release to `queued` is restricted to protected checkpoint resume
+runs. Domain and application contracts carry the lease through ordinary and
+resume processors, and public projections explicitly omit it.
+
+Verification passed for repository RED/GREEN lease fixtures, all affected
+domain/application/handler/router packages, targeted `go vet`, Atlas v0.35.0
+hash and validation, public projection redaction, `gofmt`, `git diff --check`,
+and the serial full backend with the required Mockey compiler flags.
 
 ### Task 4: Isolate Batches And Recover Stale Runs
 

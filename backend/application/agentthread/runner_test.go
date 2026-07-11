@@ -31,13 +31,17 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
 			{
-				ID:        200,
-				ThreadID:  10,
-				Status:    entity.RunStatusRunning,
-				Input:     `{"messages":[{"role":"user","content":"分析客户反馈"}]}`,
-				WorkerID:  "worker-a",
-				StartedAt: 300,
-				UpdatedAt: 301,
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				Input:               `{"messages":[{"role":"user","content":"分析客户反馈"}]}`,
+				WorkerID:            "worker-a",
+				LeaseOwner:          "worker-a",
+				LeaseToken:          "lease-200",
+				LeaseExpiresAt:      60_000,
+				ExecutionGeneration: 3,
+				StartedAt:           300,
+				UpdatedAt:           301,
 			},
 		},
 		appended: &entity.Message{
@@ -85,6 +89,9 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, "worker-a", domainSVC.completeRunReq.LeaseOwner)
+	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
+	require.Equal(t, uint64(3), domainSVC.completeRunReq.ExecutionGeneration)
 	require.Nil(t, domainSVC.failRunReq)
 	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
 	require.Equal(t, int64(10), eventSink.events[0].ThreadID)

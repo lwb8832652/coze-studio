@@ -345,8 +345,10 @@ type ListRunEventsRequest struct {
 }
 
 type ClaimPendingRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
 }
 
 type AggregateRunBacklogRequest struct {
@@ -354,17 +356,46 @@ type AggregateRunBacklogRequest struct {
 }
 
 type ClaimQueuedResumeRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
+}
+
+type RenewRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	LeaseTTLMillis      int64
+}
+
+type ReleaseRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+}
+
+type ListExpiredRunLeasesRequest struct {
+	Now   int64
+	Limit int32
 }
 
 type UpdateRunStatusRequest struct {
-	RunID        int64
-	From         entity.RunStatus
-	To           entity.RunStatus
-	WorkerID     string
-	ErrorCode    string
-	ErrorMessage string
+	RunID               int64
+	From                entity.RunStatus
+	To                  entity.RunStatus
+	WorkerID            string
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
 }
 
 type ListMessagesRequest struct {
@@ -429,6 +460,9 @@ type ThreadService interface {
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	AggregateRunBacklog(ctx context.Context, req *AggregateRunBacklogRequest) ([]*entity.RunBacklogAggregate, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
+	RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*entity.Run, error)
+	ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*entity.Run, error)
+	ListExpiredRunLeases(ctx context.Context, req *ListExpiredRunLeasesRequest) ([]*entity.Run, error)
 	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

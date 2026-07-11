@@ -113,6 +113,21 @@ Every implementation slice must update this document:
     `git diff --check`. A parallel full-backend attempt hit an unrelated
     Mockey/Go 1.25 `SIGBUS` in unchanged workflow compose code; that package
     passed immediately when isolated with the required gcflags.
+  - `AR-PARITY-001.3` Leased run ownership and fencing (已完成): persisted lease
+    owner/token/expiry, heartbeat, cancellation-request timestamp and monotonic
+    execution generation. Pending and protected resume claims now atomically
+    install a cryptographically random lease; renewal, release, expired-lease
+    discovery and running-to-success/failure/interruption transitions require a
+    live owner + token + generation fence. Terminal transitions clear active
+    ownership while retaining generation, and only protected checkpoint resume
+    runs may be released back to `queued`. The internal lease contract is
+    propagated through the domain/application services and both run processors;
+    public Workbench/LangGraph projections continue to redact every lease field.
+    Batch isolation, periodic worker heartbeat and stale recovery remain in
+    `AR-PARITY-001.4`. Verification: repository RED/GREEN lease tests, complete
+    domain/application/handler/router suites, targeted `go vet`, Atlas v0.35.0
+    hash/validate, `gofmt`, `git diff --check`, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

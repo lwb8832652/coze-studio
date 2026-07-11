@@ -250,9 +250,12 @@ func (p *RunProcessor) finalizeRunExecution(
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
-				RunID:    run.RunID,
-				From:     RunStatusRunning,
-				WorkerID: p.workerID,
+				RunID:               run.RunID,
+				From:                RunStatusRunning,
+				WorkerID:            p.workerID,
+				LeaseOwner:          run.LeaseOwner,
+				LeaseToken:          run.LeaseToken,
+				ExecutionGeneration: run.ExecutionGeneration,
 			})
 			if transitionErr != nil {
 				return runProcessErrored, transitionErr
@@ -297,9 +300,12 @@ func (p *RunProcessor) finalizeRunExecution(
 	p.syncGeneratedThreadTitle(ctx, run, result)
 
 	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
-		RunID:    run.RunID,
-		From:     RunStatusRunning,
-		WorkerID: p.workerID,
+		RunID:               run.RunID,
+		From:                RunStatusRunning,
+		WorkerID:            p.workerID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
 	})
 	if err != nil {
 		return runProcessErrored, err
@@ -356,11 +362,14 @@ func (p *RunProcessor) finalizeFailedRun(
 
 func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) (*RunSummary, error) {
 	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
-		RunID:        run.RunID,
-		From:         RunStatusRunning,
-		WorkerID:     p.workerID,
-		ErrorCode:    code,
-		ErrorMessage: message,
+		RunID:               run.RunID,
+		From:                RunStatusRunning,
+		WorkerID:            p.workerID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode:           code,
+		ErrorMessage:        message,
 	})
 
 	if err != nil {

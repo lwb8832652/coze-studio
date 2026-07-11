@@ -3221,8 +3221,10 @@ func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPen
 	}
 
 	runs, err := s.ThreadSVC.ClaimPendingRuns(ctx, &domainservice.ClaimPendingRunsRequest{
-		WorkerID: req.WorkerID,
-		Limit:    req.Limit,
+		WorkerID:       req.WorkerID,
+		Limit:          req.Limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
 	})
 	if err != nil {
 		return nil, err
@@ -3247,8 +3249,10 @@ func (s *ApplicationService) ClaimQueuedResumeRuns(ctx context.Context, req *Cla
 	}
 
 	runs, err := s.ThreadSVC.ClaimQueuedResumeRuns(ctx, &domainservice.ClaimQueuedResumeRunsRequest{
-		WorkerID: req.WorkerID,
-		Limit:    req.Limit,
+		WorkerID:       req.WorkerID,
+		Limit:          req.Limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
 	})
 	if err != nil {
 		return nil, err
@@ -3261,6 +3265,81 @@ func (s *ApplicationService) ClaimQueuedResumeRuns(ctx context.Context, req *Cla
 		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
 	}
 
+	return resp, nil
+}
+
+func (s *ApplicationService) RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*RenewRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("renew run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.RenewRunLease(ctx, &domainservice.RenewRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		LeaseTTLMillis:      req.LeaseTTLMillis,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty renewed run")
+	}
+	return &RenewRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*ReleaseRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("release run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.ReleaseRunLease(ctx, &domainservice.ReleaseRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            domainentity.RunStatus(req.ToStatus),
+		Now:                 req.Now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty released run")
+	}
+	return &ReleaseRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) ListExpiredRunLeases(
+	ctx context.Context,
+	req *ListExpiredRunLeasesRequest,
+) (*ListExpiredRunLeasesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list expired run leases request is required")
+	}
+
+	runs, err := s.ThreadSVC.ListExpiredRunLeases(ctx, &domainservice.ListExpiredRunLeasesRequest{
+		Now:   req.Now,
+		Limit: req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListExpiredRunLeasesResponse{Runs: make([]*RunSummary, 0, len(runs))}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+	}
 	return resp, nil
 }
 
@@ -3340,12 +3419,16 @@ func (s *ApplicationService) updateRunStatus(
 	}
 
 	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{
-		RunID:        req.RunID,
-		From:         domainentity.RunStatus(req.From),
-		To:           domainentity.RunStatus(req.To),
-		WorkerID:     req.WorkerID,
-		ErrorCode:    req.ErrorCode,
-		ErrorMessage: req.ErrorMessage,
+		RunID:               req.RunID,
+		From:                domainentity.RunStatus(req.From),
+		To:                  domainentity.RunStatus(req.To),
+		WorkerID:            req.WorkerID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		ErrorCode:           req.ErrorCode,
+		ErrorMessage:        req.ErrorMessage,
 	})
 	if err != nil {
 		return nil, err

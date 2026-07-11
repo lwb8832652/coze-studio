@@ -338,13 +338,13 @@ func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testi
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:        runResp.Run.RunID,
 		From:         appagentthread.RunStatusRunning,
 		WorkerID:     "source-worker",
 		ErrorCode:    "step_error",
 		ErrorMessage: "source run failed",
-	})
+	}))
 	require.NoError(t, err)
 	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
 		ThreadID:        1,
@@ -565,11 +565,11 @@ func TestLangGraphRunListAcceptsCompatibleStatusFilter(t *testing.T) {
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	listResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs?status=success", nil)
@@ -925,11 +925,11 @@ func TestLangGraphRunStreamWritesMetadataEventsAndEnd(t *testing.T) {
 		Payload:   `{"step_name":"generate_answer","status":"completed"}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
 	require.NoError(t, err)
@@ -1242,13 +1242,13 @@ func TestLangGraphRunCreateStreamCreatesProtectedResumeRunFromReadyCheckpoint(t 
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:        runResp.Run.RunID,
 		From:         appagentthread.RunStatusRunning,
 		WorkerID:     "source-worker",
 		ErrorCode:    "step_error",
 		ErrorMessage: "source run failed",
-	})
+	}))
 	require.NoError(t, err)
 	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
 		ThreadID:        1,
@@ -1317,11 +1317,11 @@ func TestLangGraphRunJoinHandlerReturnsTerminalRun(t *testing.T) {
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	joinResp := ut.PerformRequest(
@@ -1419,11 +1419,11 @@ func TestLangGraphRunJoinStreamWritesEventsAndEnd(t *testing.T) {
 		Payload:   `{"step_name":"join"}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
 	require.NoError(t, err)
@@ -1512,11 +1512,11 @@ func TestLangGraphStatelessRunJoinHandlerReturnsTerminalRun(t *testing.T) {
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	joinResp := ut.PerformRequest(
@@ -1552,11 +1552,11 @@ func TestLangGraphStatelessRunStreamWritesEventsAndEnd(t *testing.T) {
 		Payload:   `{"step_name":"stateless"}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
 	require.NoError(t, err)
@@ -1841,13 +1841,13 @@ func TestLangGraphRunWaitResponseDoesNotExposeProviderError(t *testing.T) {
 	})
 	require.NoError(t, err)
 	const sensitive = "provider-sensitive-runtime-sentinel"
-	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:        runResp.Run.RunID,
 		From:         appagentthread.RunStatusRunning,
 		WorkerID:     "worker-a",
 		ErrorCode:    "model_provider_error",
 		ErrorMessage: sensitive,
-	})
+	}))
 	require.NoError(t, err)
 
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})

@@ -488,7 +488,9 @@ func TestClaimPendingRunsNormalizesLimit(t *testing.T) {
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
 
 	claimed, err := svc.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
-		WorkerID: " worker-a ",
+		WorkerID:       " worker-a ",
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
 	})
 
 	require.NoError(t, err)
@@ -496,6 +498,12 @@ func TestClaimPendingRunsNormalizesLimit(t *testing.T) {
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "worker-a", claimed[0].WorkerID)
 	require.Equal(t, int32(10), repo.lastClaimReq.Limit)
+	require.Equal(t, int64(1_000), repo.lastClaimReq.Now)
+	require.Equal(t, int64(5_000), repo.lastClaimReq.LeaseTTLMillis)
+	require.Equal(t, "worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, int64(6_000), claimed[0].LeaseExpiresAt)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
 }
 
 func TestClaimQueuedResumeRunsRequiresWorkerID(t *testing.T) {
@@ -532,35 +540,135 @@ func TestClaimQueuedResumeRunsNormalizesLimit(t *testing.T) {
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
 
 	claimed, err := svc.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
-		WorkerID: "resume-worker-a",
-		Limit:    0,
+		WorkerID:       "resume-worker-a",
+		Limit:          0,
+		Now:            2_000,
+		LeaseTTLMillis: 6_000,
 	})
 
 	require.NoError(t, err)
 	require.Len(t, claimed, 1)
 	require.Equal(t, "resume-worker-a", repo.lastClaimQueuedResumeReq.WorkerID)
 	require.Equal(t, int32(10), repo.lastClaimQueuedResumeReq.Limit)
+	require.Equal(t, int64(2_000), repo.lastClaimQueuedResumeReq.Now)
+	require.Equal(t, int64(6_000), repo.lastClaimQueuedResumeReq.LeaseTTLMillis)
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, int64(1), claimed[0].ID)
+	require.Equal(t, "resume-worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
+}
+
+func TestRenewRunLeaseForwardsFenceCredentials(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:                  1,
+		ThreadID:            10,
+		Status:              entity.RunStatusRunning,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-1",
+		ExecutionGeneration: 2,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	renewed, err := svc.RenewRunLease(context.Background(), &RenewRunLeaseRequest{
+		RunID:               1,
+		LeaseOwner:          " worker-a ",
+		LeaseToken:          " lease-1 ",
+		ExecutionGeneration: 2,
+		Now:                 3_000,
+		LeaseTTLMillis:      4_000,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3_000), renewed.HeartbeatAt)
+	require.Equal(t, int64(7_000), renewed.LeaseExpiresAt)
+	require.Equal(t, "worker-a", repo.lastRenewRunLeaseReq.LeaseOwner)
+	require.Equal(t, "lease-1", repo.lastRenewRunLeaseReq.LeaseToken)
+}
+
+func TestReleaseRunLeaseForwardsFenceCredentials(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:                  1,
+		ThreadID:            10,
+		Status:              entity.RunStatusRunning,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-1",
+		ExecutionGeneration: 2,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	released, err := svc.ReleaseRunLease(context.Background(), &ReleaseRunLeaseRequest{
+		RunID:               1,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-1",
+		ExecutionGeneration: 2,
+		ToStatus:            entity.RunStatusPending,
+		Now:                 3_000,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusPending, released.Status)
+	require.Equal(t, entity.RunStatusPending, repo.lastReleaseRunLeaseReq.ToStatus)
+	require.Equal(t, int64(3_000), repo.lastReleaseRunLeaseReq.Now)
+}
+
+func TestListExpiredRunLeasesForwardsClockAndLimit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID:                  1,
+		ThreadID:            10,
+		Status:              entity.RunStatusRunning,
+		LeaseExpiresAt:      2_000,
+		ExecutionGeneration: 1,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	expired, err := svc.ListExpiredRunLeases(context.Background(), &ListExpiredRunLeasesRequest{
+		Now:   2_001,
+		Limit: 5,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	require.Equal(t, int64(2_001), repo.lastListExpiredRunLeasesReq.Now)
+	require.Equal(t, int32(5), repo.lastListExpiredRunLeasesReq.Limit)
 }
 
 func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.runs[10] = []*entity.Run{
-		{ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a"},
+		{
+			ID:                  1,
+			ThreadID:            10,
+			Status:              entity.RunStatusRunning,
+			WorkerID:            "worker-a",
+			LeaseOwner:          "worker-a",
+			LeaseToken:          "lease-1",
+			ExecutionGeneration: 1,
+		},
 	}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
 
 	run, err := svc.CompleteRun(context.Background(), &UpdateRunStatusRequest{
-		RunID:    1,
-		From:     entity.RunStatusRunning,
-		WorkerID: "worker-a",
+		RunID:               1,
+		From:                entity.RunStatusRunning,
+		WorkerID:            "worker-a",
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-1",
+		ExecutionGeneration: 1,
+		Now:                 4_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, entity.RunStatusSucceeded, run.Status)
 	require.Equal(t, entity.RunStatusRunning, repo.lastUpdateRunReq.From)
 	require.Equal(t, entity.RunStatusSucceeded, repo.lastUpdateRunReq.To)
+	require.Equal(t, "worker-a", repo.lastUpdateRunReq.LeaseOwner)
+	require.Equal(t, "lease-1", repo.lastUpdateRunReq.LeaseToken)
+	require.Equal(t, uint64(1), repo.lastUpdateRunReq.ExecutionGeneration)
+	require.Equal(t, int64(4_000), repo.lastUpdateRunReq.Now)
 }
 
 func TestFailRunStoresError(t *testing.T) {
@@ -1592,6 +1700,9 @@ type memoryRepo struct {
 	lastClaimReq                       repository.ClaimPendingRunsRequest
 	lastAggregateRunBacklogReq         repository.AggregateRunBacklogRequest
 	lastClaimQueuedResumeReq           repository.ClaimQueuedResumeRunsRequest
+	lastRenewRunLeaseReq               repository.RenewRunLeaseRequest
+	lastReleaseRunLeaseReq             repository.ReleaseRunLeaseRequest
+	lastListExpiredRunLeasesReq        repository.ListExpiredRunLeasesRequest
 	lastUpdateRunReq                   repository.UpdateRunStatusRequest
 }
 
@@ -2513,7 +2624,14 @@ func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimP
 		return pending[i].CreatedAt < pending[j].CreatedAt
 	})
 
-	now := time.Now().UnixMilli()
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	ttlMillis := req.LeaseTTLMillis
+	if ttlMillis <= 0 {
+		ttlMillis = 60_000
+	}
 	claimed := make([]*entity.Run, 0, limit)
 	for _, run := range pending {
 		if len(claimed) >= int(limit) {
@@ -2521,6 +2639,11 @@ func (r *memoryRepo) ClaimPendingRuns(ctx context.Context, req repository.ClaimP
 		}
 		run.Status = entity.RunStatusRunning
 		run.WorkerID = req.WorkerID
+		run.LeaseOwner = req.WorkerID
+		run.LeaseToken = fmt.Sprintf("lease-%d-%d", run.ID, run.ExecutionGeneration+1)
+		run.LeaseExpiresAt = now + ttlMillis
+		run.HeartbeatAt = now
+		run.ExecutionGeneration++
 		run.StartedAt = now
 		run.UpdatedAt = now
 		claimed = append(claimed, cloneRun(run))
@@ -2554,7 +2677,14 @@ func (r *memoryRepo) ClaimQueuedResumeRuns(ctx context.Context, req repository.C
 		return queued[i].CreatedAt < queued[j].CreatedAt
 	})
 
-	now := time.Now().UnixMilli()
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	ttlMillis := req.LeaseTTLMillis
+	if ttlMillis <= 0 {
+		ttlMillis = 60_000
+	}
 	claimed := make([]*entity.Run, 0, limit)
 	for _, run := range queued {
 		if len(claimed) >= int(limit) {
@@ -2562,12 +2692,89 @@ func (r *memoryRepo) ClaimQueuedResumeRuns(ctx context.Context, req repository.C
 		}
 		run.Status = entity.RunStatusRunning
 		run.WorkerID = req.WorkerID
+		run.LeaseOwner = req.WorkerID
+		run.LeaseToken = fmt.Sprintf("lease-%d-%d", run.ID, run.ExecutionGeneration+1)
+		run.LeaseExpiresAt = now + ttlMillis
+		run.HeartbeatAt = now
+		run.ExecutionGeneration++
 		run.StartedAt = now
 		run.UpdatedAt = now
 		claimed = append(claimed, cloneRun(run))
 	}
 
 	return claimed, nil
+}
+
+func (r *memoryRepo) RenewRunLease(
+	ctx context.Context,
+	req repository.RenewRunLeaseRequest,
+) (*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRenewRunLeaseReq = req
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			if run.LeaseOwner != req.LeaseOwner || run.LeaseToken != req.LeaseToken ||
+				run.ExecutionGeneration != req.ExecutionGeneration {
+				return nil, repository.ErrRunLeaseLost
+			}
+			run.HeartbeatAt = req.Now
+			run.LeaseExpiresAt = req.Now + req.LeaseTTLMillis
+			return cloneRun(run), nil
+		}
+	}
+	return nil, fmt.Errorf("run %d not found", req.RunID)
+}
+
+func (r *memoryRepo) ReleaseRunLease(
+	ctx context.Context,
+	req repository.ReleaseRunLeaseRequest,
+) (*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastReleaseRunLeaseReq = req
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.ID != req.RunID {
+				continue
+			}
+			if run.LeaseOwner != req.LeaseOwner || run.LeaseToken != req.LeaseToken ||
+				run.ExecutionGeneration != req.ExecutionGeneration {
+				return nil, repository.ErrRunLeaseLost
+			}
+			run.Status = req.ToStatus
+			run.WorkerID = ""
+			run.LeaseOwner = ""
+			run.LeaseToken = ""
+			run.LeaseExpiresAt = 0
+			run.HeartbeatAt = 0
+			run.CancelRequestedAt = 0
+			return cloneRun(run), nil
+		}
+	}
+	return nil, fmt.Errorf("run %d not found", req.RunID)
+}
+
+func (r *memoryRepo) ListExpiredRunLeases(
+	ctx context.Context,
+	req repository.ListExpiredRunLeasesRequest,
+) ([]*entity.Run, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastListExpiredRunLeasesReq = req
+	result := make([]*entity.Run, 0)
+	for _, runs := range r.runs {
+		for _, run := range runs {
+			if run.Status == entity.RunStatusRunning && run.ExecutionGeneration > 0 &&
+				run.LeaseExpiresAt > 0 && run.LeaseExpiresAt <= req.Now {
+				result = append(result, cloneRun(run))
+			}
+		}
+	}
+	return result, nil
 }
 
 func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateRunStatusRequest) error {

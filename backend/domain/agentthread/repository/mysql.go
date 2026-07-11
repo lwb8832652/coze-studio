@@ -18,7 +18,9 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,11 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+)
+
+const (
+	defaultRunLeaseTTLMillis = int64(60_000)
+	maxRunLeaseTTLMillis     = int64(24 * 60 * 60 * 1_000)
 )
 
 type threadRepository struct {
@@ -66,31 +73,37 @@ type messagePO struct {
 }
 
 type runPO struct {
-	ID                int64          `gorm:"column:id;primaryKey"`
-	ThreadID          int64          `gorm:"column:thread_id;index:idx_agent_runs_thread_created;index:idx_agent_runs_thread_kind,priority:1"`
-	ParentRunID       int64          `gorm:"column:parent_run_id;index:idx_agent_runs_parent_created,priority:1"`
-	SpaceID           int64          `gorm:"column:space_id;index:idx_agent_runs_space_status;uniqueIndex:uk_agent_runs_space_idempotency"`
-	CreatorID         int64          `gorm:"column:creator_id"`
-	AssistantID       string         `gorm:"column:assistant_id"`
-	RunKind           string         `gorm:"column:run_kind;index:idx_agent_runs_thread_kind,priority:2"`
-	Status            string         `gorm:"column:status;index:idx_agent_runs_space_status"`
-	Command           datatypes.JSON `gorm:"column:command;type:json"`
-	Input             datatypes.JSON `gorm:"column:input;type:json"`
-	Config            datatypes.JSON `gorm:"column:config;type:json"`
-	Context           datatypes.JSON `gorm:"column:context;type:json"`
-	Metadata          datatypes.JSON `gorm:"column:metadata;type:json"`
-	StreamMode        datatypes.JSON `gorm:"column:stream_mode;type:json"`
-	MultitaskStrategy string         `gorm:"column:multitask_strategy"`
-	OnDisconnect      string         `gorm:"column:on_disconnect"`
-	Durability        string         `gorm:"column:durability"`
-	IdempotencyKey    *string        `gorm:"column:idempotency_key;uniqueIndex:uk_agent_runs_space_idempotency"`
-	WorkerID          string         `gorm:"column:worker_id"`
-	ErrorCode         string         `gorm:"column:error_code"`
-	ErrorMessage      string         `gorm:"column:error_message"`
-	StartedAt         int64          `gorm:"column:started_at"`
-	EndedAt           int64          `gorm:"column:ended_at"`
-	CreatedAt         int64          `gorm:"column:created_at;index:idx_agent_runs_thread_created;index:idx_agent_runs_parent_created,priority:2;index:idx_agent_runs_thread_kind,priority:3"`
-	UpdatedAt         int64          `gorm:"column:updated_at"`
+	ID                  int64          `gorm:"column:id;primaryKey"`
+	ThreadID            int64          `gorm:"column:thread_id;index:idx_agent_runs_thread_created;index:idx_agent_runs_thread_kind,priority:1"`
+	ParentRunID         int64          `gorm:"column:parent_run_id;index:idx_agent_runs_parent_created,priority:1"`
+	SpaceID             int64          `gorm:"column:space_id;index:idx_agent_runs_space_status;uniqueIndex:uk_agent_runs_space_idempotency"`
+	CreatorID           int64          `gorm:"column:creator_id"`
+	AssistantID         string         `gorm:"column:assistant_id"`
+	RunKind             string         `gorm:"column:run_kind;index:idx_agent_runs_thread_kind,priority:2"`
+	Status              string         `gorm:"column:status;index:idx_agent_runs_space_status;index:idx_agent_runs_status_lease_expiry,priority:1"`
+	Command             datatypes.JSON `gorm:"column:command;type:json"`
+	Input               datatypes.JSON `gorm:"column:input;type:json"`
+	Config              datatypes.JSON `gorm:"column:config;type:json"`
+	Context             datatypes.JSON `gorm:"column:context;type:json"`
+	Metadata            datatypes.JSON `gorm:"column:metadata;type:json"`
+	StreamMode          datatypes.JSON `gorm:"column:stream_mode;type:json"`
+	MultitaskStrategy   string         `gorm:"column:multitask_strategy"`
+	OnDisconnect        string         `gorm:"column:on_disconnect"`
+	Durability          string         `gorm:"column:durability"`
+	IdempotencyKey      *string        `gorm:"column:idempotency_key;uniqueIndex:uk_agent_runs_space_idempotency"`
+	WorkerID            string         `gorm:"column:worker_id"`
+	LeaseOwner          *string        `gorm:"column:lease_owner;index:idx_agent_runs_lease_owner_heartbeat,priority:1"`
+	LeaseToken          *string        `gorm:"column:lease_token"`
+	LeaseExpiresAt      *int64         `gorm:"column:lease_expires_at;index:idx_agent_runs_status_lease_expiry,priority:2"`
+	HeartbeatAt         *int64         `gorm:"column:heartbeat_at;index:idx_agent_runs_lease_owner_heartbeat,priority:2"`
+	CancelRequestedAt   *int64         `gorm:"column:cancel_requested_at"`
+	ExecutionGeneration uint64         `gorm:"column:execution_generation"`
+	ErrorCode           string         `gorm:"column:error_code"`
+	ErrorMessage        string         `gorm:"column:error_message"`
+	StartedAt           int64          `gorm:"column:started_at"`
+	EndedAt             int64          `gorm:"column:ended_at"`
+	CreatedAt           int64          `gorm:"column:created_at;index:idx_agent_runs_thread_created;index:idx_agent_runs_parent_created,priority:2;index:idx_agent_runs_thread_kind,priority:3;index:idx_agent_runs_status_lease_expiry,priority:3"`
+	UpdatedAt           int64          `gorm:"column:updated_at"`
 }
 
 type runEventPO struct {
@@ -2952,6 +2965,7 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	}
 
 	workerID := strings.TrimSpace(req.WorkerID)
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
 	claimed := make([]*entity.Run, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Model(&runPO{}).
@@ -2968,15 +2982,25 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 			return err
 		}
 
-		now := time.Now().UnixMilli()
 		for _, po := range pos {
+			leaseToken, err := newRunLeaseToken()
+			if err != nil {
+				return err
+			}
 			db := tx.Model(&runPO{}).
 				Where("id = ? AND status = ?", po.ID, string(entity.RunStatusPending)).
 				Updates(map[string]any{
-					"status":     string(entity.RunStatusRunning),
-					"worker_id":  workerID,
-					"started_at": now,
-					"updated_at": now,
+					"status":               string(entity.RunStatusRunning),
+					"worker_id":            workerID,
+					"lease_owner":          workerID,
+					"lease_token":          leaseToken,
+					"lease_expires_at":     leaseExpiresAt,
+					"heartbeat_at":         now,
+					"cancel_requested_at":  nil,
+					"execution_generation": gorm.Expr("execution_generation + 1"),
+					"started_at":           now,
+					"ended_at":             0,
+					"updated_at":           now,
 				})
 			if db.Error != nil {
 				return db.Error
@@ -3008,6 +3032,7 @@ func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQ
 	}
 
 	workerID := strings.TrimSpace(req.WorkerID)
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
 	claimed := make([]*entity.Run, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := queuedResumeRunQuery(tx.Model(&runPO{})).
@@ -3022,14 +3047,24 @@ func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQ
 			return err
 		}
 
-		now := time.Now().UnixMilli()
 		for _, po := range pos {
+			leaseToken, err := newRunLeaseToken()
+			if err != nil {
+				return err
+			}
 			db := queuedResumeRunQuery(tx.Model(&runPO{}).Where("id = ?", po.ID)).
 				Updates(map[string]any{
-					"status":     string(entity.RunStatusRunning),
-					"worker_id":  workerID,
-					"started_at": now,
-					"updated_at": now,
+					"status":               string(entity.RunStatusRunning),
+					"worker_id":            workerID,
+					"lease_owner":          workerID,
+					"lease_token":          leaseToken,
+					"lease_expires_at":     leaseExpiresAt,
+					"heartbeat_at":         now,
+					"cancel_requested_at":  nil,
+					"execution_generation": gorm.Expr("execution_generation + 1"),
+					"started_at":           now,
+					"ended_at":             0,
+					"updated_at":           now,
 				})
 			if db.Error != nil {
 				return db.Error
@@ -3061,16 +3096,99 @@ func queuedResumeRunQuery(db *gorm.DB) *gorm.DB {
 		Where("JSON_EXTRACT(metadata, '$.checkpoint_resume') IS NOT NULL")
 }
 
+func (r *threadRepository) RenewRunLease(ctx context.Context, req RenewRunLeaseRequest) (*entity.Run, error) {
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
+	db := activeRunLeaseQuery(r.db.WithContext(ctx).Model(&runPO{}), req.RunID, req.LeaseOwner, req.LeaseToken, req.ExecutionGeneration, now).
+		Updates(map[string]any{
+			"heartbeat_at":     now,
+			"lease_expires_at": leaseExpiresAt,
+			"updated_at":       now,
+		})
+	if db.Error != nil {
+		return nil, db.Error
+	}
+	if db.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: run %d cannot renew lease", ErrRunLeaseLost, req.RunID)
+	}
+
+	return r.GetRun(ctx, req.RunID)
+}
+
+func (r *threadRepository) ReleaseRunLease(ctx context.Context, req ReleaseRunLeaseRequest) (*entity.Run, error) {
+	if req.ToStatus != entity.RunStatusPending && req.ToStatus != entity.RunStatusQueued {
+		return nil, fmt.Errorf("release run lease requires pending or queued target status")
+	}
+
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	query := activeRunLeaseQuery(r.db.WithContext(ctx).Model(&runPO{}), req.RunID, req.LeaseOwner, req.LeaseToken, req.ExecutionGeneration, now)
+	if req.ToStatus == entity.RunStatusQueued {
+		query = query.Where("JSON_EXTRACT(metadata, '$.checkpoint_resume.protected_from_worker_claim') = ?", true)
+	}
+	db := query.
+		Updates(map[string]any{
+			"status":              string(req.ToStatus),
+			"worker_id":           "",
+			"lease_owner":         nil,
+			"lease_token":         nil,
+			"lease_expires_at":    nil,
+			"heartbeat_at":        nil,
+			"cancel_requested_at": nil,
+			"error_code":          "",
+			"error_message":       "",
+			"started_at":          0,
+			"ended_at":            0,
+			"updated_at":          now,
+		})
+	if db.Error != nil {
+		return nil, db.Error
+	}
+	if db.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: run %d cannot release lease", ErrRunLeaseLost, req.RunID)
+	}
+
+	return r.GetRun(ctx, req.RunID)
+}
+
+func (r *threadRepository) ListExpiredRunLeases(ctx context.Context, req ListExpiredRunLeasesRequest) ([]*entity.Run, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1_000 {
+		limit = 1_000
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+
+	pos := make([]*runPO, 0, limit)
+	err := r.db.WithContext(ctx).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("execution_generation > 0").
+		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
+		Order("lease_expires_at ASC, created_at ASC, id ASC").
+		Limit(int(limit)).
+		Find(&pos).Error
+	if err != nil {
+		return nil, err
+	}
+
+	runs := make([]*entity.Run, 0, len(pos))
+	for _, po := range pos {
+		runs = append(runs, po.toEntity())
+	}
+	return runs, nil
+}
+
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
-	now := time.Now().UnixMilli()
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
 	updates := map[string]any{
 		"status":        string(req.To),
 		"error_code":    req.ErrorCode,
 		"error_message": req.ErrorMessage,
 		"updated_at":    now,
 	}
-	if isTerminalRunStatus(req.To) {
+	if isTerminalRunStatus(req.To) || req.To == entity.RunStatusInterrupted {
 		updates["ended_at"] = now
+		clearRunLeaseUpdates(updates)
 	}
 
 	query := r.db.WithContext(ctx).
@@ -3079,16 +3197,82 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 	if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
 		query = query.Where("worker_id = ?", workerID)
 	}
+	if runTransitionRequiresLeaseFence(req.From, req.To) {
+		query = query.Where(
+			"(execution_generation = 0 AND (lease_token IS NULL OR lease_token = '')) OR "+
+				"(lease_owner = ? AND lease_token = ? AND execution_generation = ? AND lease_expires_at > ?)",
+			strings.TrimSpace(req.LeaseOwner), strings.TrimSpace(req.LeaseToken), req.ExecutionGeneration, now,
+		)
+	}
 
 	db := query.Updates(updates)
 	if db.Error != nil {
 		return db.Error
 	}
 	if db.RowsAffected == 0 {
+		if runTransitionRequiresLeaseFence(req.From, req.To) {
+			var current runPO
+			if err := r.db.WithContext(ctx).Where("id = ?", req.RunID).First(&current).Error; err == nil &&
+				entity.RunStatus(current.Status) == req.From && current.ExecutionGeneration > 0 {
+				return fmt.Errorf("%w: run %d cannot transition from %s to %s", ErrRunLeaseLost, req.RunID, req.From, req.To)
+			}
+		}
 		return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
 	}
 
 	return nil
+}
+
+func activeRunLeaseQuery(db *gorm.DB, runID int64, owner, token string, generation uint64, now int64) *gorm.DB {
+	return db.
+		Where("id = ?", runID).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("lease_owner = ?", strings.TrimSpace(owner)).
+		Where("lease_token = ?", strings.TrimSpace(token)).
+		Where("execution_generation = ?", generation).
+		Where("lease_expires_at > ?", now)
+}
+
+func normalizeRunLeaseWindow(now, ttlMillis int64) (int64, int64) {
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	if ttlMillis <= 0 {
+		ttlMillis = defaultRunLeaseTTLMillis
+	}
+	if ttlMillis > maxRunLeaseTTLMillis {
+		ttlMillis = maxRunLeaseTTLMillis
+	}
+	return now, now + ttlMillis
+}
+
+func newRunLeaseToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate run lease token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func runTransitionRequiresLeaseFence(from, to entity.RunStatus) bool {
+	if from != entity.RunStatusRunning {
+		return false
+	}
+	switch to {
+	case entity.RunStatusSucceeded, entity.RunStatusFailed, entity.RunStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func clearRunLeaseUpdates(updates map[string]any) {
+	updates["worker_id"] = ""
+	updates["lease_owner"] = nil
+	updates["lease_token"] = nil
+	updates["lease_expires_at"] = nil
+	updates["heartbeat_at"] = nil
+	updates["cancel_requested_at"] = nil
 }
 
 func threadToPO(thread *entity.Thread) (*threadPO, error) {
@@ -3186,61 +3370,73 @@ func runToPO(run *entity.Run) (*runPO, error) {
 	}
 
 	return &runPO{
-		ID:                run.ID,
-		ThreadID:          run.ThreadID,
-		ParentRunID:       run.ParentRunID,
-		SpaceID:           run.SpaceID,
-		CreatorID:         run.CreatorID,
-		AssistantID:       run.AssistantID,
-		RunKind:           string(entity.DefaultRunKind(run.RunKind, run.ParentRunID)),
-		Status:            string(run.Status),
-		Command:           command,
-		Input:             input,
-		Config:            config,
-		Context:           runContext,
-		Metadata:          metadata,
-		StreamMode:        streamMode,
-		MultitaskStrategy: run.MultitaskStrategy,
-		OnDisconnect:      run.OnDisconnect,
-		Durability:        run.Durability,
-		IdempotencyKey:    stringPtrOrNil(run.IdempotencyKey),
-		WorkerID:          run.WorkerID,
-		ErrorCode:         run.ErrorCode,
-		ErrorMessage:      run.ErrorMessage,
-		StartedAt:         run.StartedAt,
-		EndedAt:           run.EndedAt,
-		CreatedAt:         run.CreatedAt,
-		UpdatedAt:         run.UpdatedAt,
+		ID:                  run.ID,
+		ThreadID:            run.ThreadID,
+		ParentRunID:         run.ParentRunID,
+		SpaceID:             run.SpaceID,
+		CreatorID:           run.CreatorID,
+		AssistantID:         run.AssistantID,
+		RunKind:             string(entity.DefaultRunKind(run.RunKind, run.ParentRunID)),
+		Status:              string(run.Status),
+		Command:             command,
+		Input:               input,
+		Config:              config,
+		Context:             runContext,
+		Metadata:            metadata,
+		StreamMode:          streamMode,
+		MultitaskStrategy:   run.MultitaskStrategy,
+		OnDisconnect:        run.OnDisconnect,
+		Durability:          run.Durability,
+		IdempotencyKey:      stringPtrOrNil(run.IdempotencyKey),
+		WorkerID:            run.WorkerID,
+		LeaseOwner:          stringPtrOrNil(run.LeaseOwner),
+		LeaseToken:          stringPtrOrNil(run.LeaseToken),
+		LeaseExpiresAt:      int64PtrOrNil(run.LeaseExpiresAt),
+		HeartbeatAt:         int64PtrOrNil(run.HeartbeatAt),
+		CancelRequestedAt:   int64PtrOrNil(run.CancelRequestedAt),
+		ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode:           run.ErrorCode,
+		ErrorMessage:        run.ErrorMessage,
+		StartedAt:           run.StartedAt,
+		EndedAt:             run.EndedAt,
+		CreatedAt:           run.CreatedAt,
+		UpdatedAt:           run.UpdatedAt,
 	}, nil
 }
 
 func (po *runPO) toEntity() *entity.Run {
 	return &entity.Run{
-		ID:                po.ID,
-		ThreadID:          po.ThreadID,
-		ParentRunID:       po.ParentRunID,
-		SpaceID:           po.SpaceID,
-		CreatorID:         po.CreatorID,
-		AssistantID:       po.AssistantID,
-		RunKind:           entity.RunKind(po.RunKind),
-		Status:            entity.RunStatus(po.Status),
-		Command:           jsonToString(po.Command),
-		Input:             jsonToString(po.Input),
-		Config:            jsonToString(po.Config),
-		Context:           jsonToString(po.Context),
-		Metadata:          jsonToString(po.Metadata),
-		StreamMode:        jsonToString(po.StreamMode),
-		MultitaskStrategy: po.MultitaskStrategy,
-		OnDisconnect:      po.OnDisconnect,
-		Durability:        po.Durability,
-		IdempotencyKey:    stringFromPtr(po.IdempotencyKey),
-		WorkerID:          po.WorkerID,
-		ErrorCode:         po.ErrorCode,
-		ErrorMessage:      po.ErrorMessage,
-		StartedAt:         po.StartedAt,
-		EndedAt:           po.EndedAt,
-		CreatedAt:         po.CreatedAt,
-		UpdatedAt:         po.UpdatedAt,
+		ID:                  po.ID,
+		ThreadID:            po.ThreadID,
+		ParentRunID:         po.ParentRunID,
+		SpaceID:             po.SpaceID,
+		CreatorID:           po.CreatorID,
+		AssistantID:         po.AssistantID,
+		RunKind:             entity.RunKind(po.RunKind),
+		Status:              entity.RunStatus(po.Status),
+		Command:             jsonToString(po.Command),
+		Input:               jsonToString(po.Input),
+		Config:              jsonToString(po.Config),
+		Context:             jsonToString(po.Context),
+		Metadata:            jsonToString(po.Metadata),
+		StreamMode:          jsonToString(po.StreamMode),
+		MultitaskStrategy:   po.MultitaskStrategy,
+		OnDisconnect:        po.OnDisconnect,
+		Durability:          po.Durability,
+		IdempotencyKey:      stringFromPtr(po.IdempotencyKey),
+		WorkerID:            po.WorkerID,
+		LeaseOwner:          stringFromPtr(po.LeaseOwner),
+		LeaseToken:          stringFromPtr(po.LeaseToken),
+		LeaseExpiresAt:      int64FromPtr(po.LeaseExpiresAt),
+		HeartbeatAt:         int64FromPtr(po.HeartbeatAt),
+		CancelRequestedAt:   int64FromPtr(po.CancelRequestedAt),
+		ExecutionGeneration: po.ExecutionGeneration,
+		ErrorCode:           po.ErrorCode,
+		ErrorMessage:        po.ErrorMessage,
+		StartedAt:           po.StartedAt,
+		EndedAt:             po.EndedAt,
+		CreatedAt:           po.CreatedAt,
+		UpdatedAt:           po.UpdatedAt,
 	}
 }
 
@@ -3814,6 +4010,20 @@ func stringFromPtr(value *string) string {
 		return ""
 	}
 
+	return *value
+}
+
+func int64PtrOrNil(value int64) *int64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
+
+func int64FromPtr(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
 	return *value
 }
 

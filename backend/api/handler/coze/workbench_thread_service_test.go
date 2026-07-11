@@ -2219,13 +2219,13 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 		Metadata:    `{"subagent":{"name":"researcher"}}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:        childResp.Run.RunID,
 		From:         appagentthread.RunStatusRunning,
 		To:           appagentthread.RunStatusFailed,
 		ErrorCode:    "subagent_timeout",
 		ErrorMessage: "context deadline exceeded",
-	})
+	}))
 	require.NoError(t, err)
 
 	payload, err := json.Marshal(map[string]any{
@@ -2900,11 +2900,11 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 		Payload:   `{"step_name":"generate_answer","status":"completed"}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
@@ -2978,11 +2978,11 @@ func TestStreamTaskThreadRunEventsReusesAuthorizedRequestScope(t *testing.T) {
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 	ctx := appagentthread.WithThreadAccessRequest(context.Background(), appagentthread.ThreadAccessRequest{
 		ViewerID: 2,
@@ -3212,6 +3212,22 @@ func createInterruptedHumanInteractionRun(t *testing.T) int64 {
 	return runID
 }
 
+func fencedRunStatusRequestForTest(
+	t *testing.T,
+	req *appagentthread.UpdateRunStatusRequest,
+) *appagentthread.UpdateRunStatusRequest {
+	t.Helper()
+	require.NotNil(t, req)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: req.RunID})
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.NotNil(t, persisted.Run)
+	req.LeaseOwner = persisted.Run.LeaseOwner
+	req.LeaseToken = persisted.Run.LeaseToken
+	req.ExecutionGeneration = persisted.Run.ExecutionGeneration
+	return req
+}
+
 func createInterruptedHumanInteractionRunWithCheckpoint(t *testing.T) (int64, int64) {
 	t.Helper()
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -3226,11 +3242,11 @@ func createInterruptedHumanInteractionRunWithCheckpoint(t *testing.T) (int64, in
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.InterruptRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.InterruptRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	envelope := appagentthread.ADKCheckpointEnvelope{
@@ -3320,6 +3336,12 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			durability text,
 			idempotency_key text,
 			worker_id text,
+			lease_owner text,
+			lease_token text,
+			lease_expires_at integer,
+			heartbeat_at integer,
+			cancel_requested_at integer,
+			execution_generation integer NOT NULL DEFAULT 0,
 			error_code text,
 			error_message text,
 			started_at integer,
