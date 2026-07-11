@@ -973,14 +973,29 @@ func TestListRunEventsNormalizesPaging(t *testing.T) {
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
 
 	events, total, err := svc.ListRunEvents(context.Background(), &ListRunEventsRequest{
-		RunID: 20,
+		RunID:        20,
+		AfterEventID: 7,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 	require.Len(t, events, 2)
+	require.Equal(t, int64(7), repo.lastRunEventListReq.AfterEventID)
 	require.Equal(t, int32(1), repo.lastRunEventListReq.Page)
 	require.Equal(t, int32(100), repo.lastRunEventListReq.PageSize)
+}
+
+func TestListRunEventsRejectsNegativeCursor(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3001}})
+
+	_, _, err := svc.ListRunEvents(context.Background(), &ListRunEventsRequest{
+		RunID:        20,
+		AfterEventID: -1,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
 }
 
 func TestCreateCheckpointDefaultsJSONAndPersistsRunCheckpoint(t *testing.T) {

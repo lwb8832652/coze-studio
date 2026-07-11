@@ -38,15 +38,16 @@ import (
 )
 
 const (
-	taskThreadRunEventStreamEvent   = "run.event"
-	taskThreadRunEventStreamDone    = "done"
-	taskThreadRunEventStreamError   = "error"
-	defaultRunEventStreamIntervalMs = int64(1000)
-	defaultRunEventStreamTimeoutMs  = int64(30000)
-	minRunEventStreamIntervalMs     = int64(10)
-	maxRunEventStreamIntervalMs     = int64(5000)
-	minRunEventStreamTimeoutMs      = int64(1)
-	maxRunEventStreamTimeoutMs      = int64(60000)
+	taskThreadRunEventStreamEvent    = "run.event"
+	taskThreadRunEventStreamDone     = "done"
+	taskThreadRunEventStreamError    = "error"
+	defaultRunEventStreamIntervalMs  = int64(1000)
+	defaultRunEventStreamTimeoutMs   = int64(30000)
+	minRunEventStreamIntervalMs      = int64(10)
+	maxRunEventStreamIntervalMs      = int64(5000)
+	minRunEventStreamTimeoutMs       = int64(1)
+	maxRunEventStreamTimeoutMs       = int64(60000)
+	taskThreadRunEventStreamPageSize = int32(200)
 )
 
 type taskThreadRunEventStreamWriter interface {
@@ -1279,6 +1280,15 @@ func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, err.Error())
 		return
 	}
+	afterEventID, ok := resolveTaskThreadRunEventCursor(
+		req.AfterEventID,
+		string(c.Request.Header.Get("Last-Event-ID")),
+	)
+	if !ok {
+		invalidParamRequestResponse(c, "event cursor is invalid")
+		return
+	}
+	req.AfterEventID = afterEventID
 	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 	if !authorizeWorkbenchThreadAccess(ctx, c, req.ThreadID, req.RunID) {
 		return
@@ -2409,28 +2419,34 @@ func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStr
 	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
 
 	sendNewEvents := func() bool {
-		resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
-			ThreadID: req.ThreadID,
-			RunID:    req.RunID,
-			Page:     1,
-			PageSize: 200,
-		})
-		if err != nil {
-			writeTaskThreadRunEventStreamError(ctx, writer, err)
-			return false
-		}
-
-		for _, event := range resp.Events {
-			if event == nil || event.EventID <= afterEventID {
-				continue
-			}
-			if !writeTaskThreadRunEventStreamEvent(ctx, writer, event) {
+		for {
+			cursorBeforePage := afterEventID
+			resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
+				ThreadID:     req.ThreadID,
+				RunID:        req.RunID,
+				AfterEventID: afterEventID,
+				Page:         1,
+				PageSize:     taskThreadRunEventStreamPageSize,
+			})
+			if err != nil {
+				writeTaskThreadRunEventStreamError(ctx, writer, err)
 				return false
 			}
-			afterEventID = event.EventID
-		}
 
-		return true
+			for _, event := range resp.Events {
+				if event == nil || event.EventID <= afterEventID {
+					continue
+				}
+				if !writeTaskThreadRunEventStreamEvent(ctx, writer, event) {
+					return false
+				}
+				afterEventID = event.EventID
+			}
+
+			if len(resp.Events) < int(taskThreadRunEventStreamPageSize) || afterEventID == cursorBeforePage {
+				return true
+			}
+		}
 	}
 
 	if !sendNewEvents() {
@@ -2460,6 +2476,16 @@ func streamTaskThreadRunEvents(ctx context.Context, writer taskThreadRunEventStr
 			}
 		}
 	}
+}
+
+func resolveTaskThreadRunEventCursor(queryCursor int64, lastEventID string) (int64, bool) {
+	if queryCursor < 0 {
+		return 0, false
+	}
+	if queryCursor > 0 {
+		return queryCursor, true
+	}
+	return parseRunEventCursor(lastEventID)
 }
 
 func writeTaskThreadRunEventStreamEvent(ctx context.Context, writer taskThreadRunEventStreamWriter, event *appagentthread.RunEventSummary) bool {

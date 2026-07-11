@@ -345,24 +345,24 @@ Verification passed for all affected packages, targeted `go vet`, `gofmt`,
 - Test: backend/application/agentthread/runner_test.go
 - Test: backend/domain/agentthread/service/state_machine_test.go
 
-- [ ] **Step 1: Write failing cancellation race tests**
+- [x] **Step 1: Write failing cancellation race tests**
 
 Cover cancel before handle registration, during stream, after tool completion
 but before assistant append, duplicate cancel and late executor success. Assert
 no post-cancel assistant message, title update, success event or success state.
 
-- [ ] **Step 2: Persist cancel intent and invalidate the fence first**
+- [x] **Step 2: Persist cancel intent and invalidate the fence first**
 
 Record cancel_requested_at and invalidate execution_generation before
 notifying an in-memory ADK handle. The durable fence is authoritative.
 
-- [ ] **Step 3: Finalize message, title and success under one fence**
+- [x] **Step 3: Finalize message, title and success under one fence**
 
 Check lease token, generation and cancel intent, then persist assistant message,
 title and terminal success transactionally. A late result is discarded and
 produces one canceled terminal event.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ~~~bash
 cd backend
@@ -386,19 +386,19 @@ git commit -m "fix: fence agent run cancellation"
 - Test: backend/application/agentthread/service_test.go
 - Test: backend/application/agentthread/adk_human_interaction_test.go
 
-- [ ] **Step 1: Write failure-boundary rollback tests**
+- [x] **Step 1: Write failure-boundary rollback tests**
 
 Inject failure after each thread, run, initial message, resume run and resume
 message write. Assert no executable orphan remains and the idempotency key can
 be safely retried.
 
-- [ ] **Step 2: Add transactional command methods**
+- [x] **Step 2: Add transactional command methods**
 
 Implement CreateThreadRunMessage and CreateResumeRunMessage as repository
 transactions. Validate policy and authorization before opening the transaction.
 Write events from a committed outbox or reconstruct them idempotently.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ~~~bash
 cd backend
@@ -424,28 +424,28 @@ git commit -m "fix: make agent run commands transactional"
 - Test: backend/domain/agentthread/repository/mysql_test.go
 - Test: backend/api/handler/coze/workbench_thread_service_test.go
 
-- [ ] **Step 1: Write a failing retry scheduling test**
+- [x] **Step 1: Write a failing retry scheduling test**
 
 Create retry through the public method, run the production worker once, and
 assert ExecuteSubagentRetry is called and the row reaches a terminal state.
 Duplicate retry returns the existing row.
 
-- [ ] **Step 2: Write a failing 450-event reconnect test**
+- [x] **Step 2: Write a failing 450-event reconnect test**
 
 Seed 450 events, stream after event 190, reconnect after 320, and assert every
 event 191 through 450 is delivered exactly once before done.
 
-- [ ] **Step 3: Implement executable retry command kind**
+- [x] **Step 3: Implement executable retry command kind**
 
 Persist source child, attempt and idempotency key. Include eligible retry rows
 in leased claim and route them through the same cancel/finalize fence.
 
-- [ ] **Step 4: Implement event-id cursor reads**
+- [x] **Step 4: Implement event-id cursor reads**
 
 Query event_id greater than the cursor in ascending bounded pages. Drain all
 pages per poll. Normalize query cursor and Last-Event-ID to one source.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ~~~bash
 cd backend

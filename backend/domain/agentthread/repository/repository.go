@@ -172,10 +172,11 @@ type AggregateRunBacklogRequest struct {
 }
 
 type ListRunEventsRequest struct {
-	ThreadID int64
-	RunID    int64
-	Page     int32
-	PageSize int32
+	ThreadID     int64
+	RunID        int64
+	AfterEventID int64
+	Page         int32
+	PageSize     int32
 }
 
 type ListCheckpointsRequest struct {

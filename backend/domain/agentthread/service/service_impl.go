@@ -746,6 +746,9 @@ func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsReq
 	if req.RunID <= 0 && req.ThreadID <= 0 {
 		return nil, 0, InvalidArgumentErrorf("run id or thread id is required")
 	}
+	if req.AfterEventID < 0 {
+		return nil, 0, InvalidArgumentErrorf("after event id cannot be negative")
+	}
 
 	page := req.Page
 	if page <= 0 {
@@ -757,10 +760,11 @@ func (s *threadService) ListRunEvents(ctx context.Context, req *ListRunEventsReq
 	}
 
 	return s.repo.ListRunEvents(ctx, repository.ListRunEventsRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Page:     page,
-		PageSize: pageSize,
+		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		AfterEventID: req.AfterEventID,
+		Page:         page,
+		PageSize:     pageSize,
 	})
 }
 

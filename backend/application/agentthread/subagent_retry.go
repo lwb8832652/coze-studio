@@ -27,6 +27,7 @@ import (
 )
 
 const subagentRetryRequestedEventType = "subagent.retry.requested"
+const subagentRetryAttempt = 1
 
 func (s *ApplicationService) RetrySubagentRun(
 	ctx context.Context,
@@ -140,6 +141,7 @@ func subagentRetryCommand(parentRun, sourceRun *domainentity.Run, requestedAt in
 	return marshalHumanInteractionJSON(map[string]any{
 		"subagent_retry": map[string]any{
 			"schema":             "coze.subagent_retry.v1",
+			"attempt":            subagentRetryAttempt,
 			"source_run_id":      sourceRun.ID,
 			"parent_run_id":      parentRun.ID,
 			"source_status":      string(sourceRun.Status),
@@ -155,6 +157,7 @@ func subagentRetryCommand(parentRun, sourceRun *domainentity.Run, requestedAt in
 func subagentRetryMetadata(parentRun, sourceRun *domainentity.Run, requestedAt int64) (string, error) {
 	return marshalHumanInteractionJSON(map[string]any{
 		"source":        "subagent_retry",
+		"attempt":       subagentRetryAttempt,
 		"source_run_id": sourceRun.ID,
 		"parent_run_id": sourceRun.ParentRunID,
 		"thread_id":     sourceRun.ThreadID,
@@ -175,6 +178,7 @@ func subagentRetryRequestedPayload(
 ) map[string]any {
 	return map[string]any{
 		"schema":        "coze.subagent_retry_requested.v1",
+		"attempt":       subagentRetryAttempt,
 		"thread_id":     sourceRun.ThreadID,
 		"source_run_id": sourceRun.ID,
 		"parent_run_id": parentRun.ID,

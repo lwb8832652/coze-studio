@@ -891,10 +891,11 @@ func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEven
 	}
 
 	events, total, err := s.ThreadSVC.ListRunEvents(ctx, &domainservice.ListRunEventsRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		AfterEventID: req.AfterEventID,
+		Page:         req.Page,
+		PageSize:     req.PageSize,
 	})
 	if err != nil {
 		return nil, err

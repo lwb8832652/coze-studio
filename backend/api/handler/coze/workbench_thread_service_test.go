@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -2935,6 +2936,85 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	require.Contains(t, body, "event: done")
 }
 
+func TestStreamTaskThreadRunEventsDrains450EventsAcrossReconnects(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"生成长事件流"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+
+	eventIDs := make([]int64, 0, 450)
+	for index := 1; index <= 450; index++ {
+		resp, appendErr := appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+			ThreadID:  1,
+			RunID:     runResp.Run.RunID,
+			EventType: "step.completed",
+			Payload:   fmt.Sprintf(`{"step_name":"step-%03d","status":"completed"}`, index),
+		})
+		require.NoError(t, appendErr)
+		require.NotNil(t, resp.Event)
+		eventIDs = append(eventIDs, resp.Event.EventID)
+	}
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	}))
+	require.NoError(t, err)
+
+	assertReconnect := func(cursorIndex int) {
+		t.Helper()
+		writer := &recordingTaskThreadRunEventStreamWriter{}
+		streamTaskThreadRunEvents(context.Background(), writer, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			AfterEventID: eventIDs[cursorIndex],
+			IntervalMs:   10,
+			TimeoutMs:    100,
+		})
+
+		expected := make([]string, 0, len(eventIDs)-cursorIndex-1)
+		for _, eventID := range eventIDs[cursorIndex+1:] {
+			expected = append(expected, strconv.FormatInt(eventID, 10))
+		}
+		require.Equal(t, expected, writer.ids)
+		require.Equal(t, 1, strings.Count(writer.String(), "event: done"))
+	}
+
+	assertReconnect(189)
+	assertReconnect(319)
+}
+
+func TestResolveTaskThreadRunEventCursorUsesHeaderAndQueryPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      int64
+		header     string
+		wantCursor int64
+		wantOK     bool
+	}{
+		{name: "empty", wantOK: true},
+		{name: "header", header: "42", wantCursor: 42, wantOK: true},
+		{name: "query wins", query: 7, header: "42", wantCursor: 7, wantOK: true},
+		{name: "negative query", query: -1, wantOK: false},
+		{name: "invalid header", header: "bad", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := resolveTaskThreadRunEventCursor(tt.query, tt.header)
+			require.Equal(t, tt.wantOK, ok)
+			require.Equal(t, tt.wantCursor, got)
+		})
+	}
+}
+
 func TestTaskThreadRunEventStreamErrorDoesNotExposeInternalDetails(t *testing.T) {
 	writer := &recordingTaskThreadRunEventStreamWriter{}
 	writeTaskThreadRunEventStreamError(
@@ -3604,6 +3684,7 @@ type sequentialIDGen struct {
 
 type recordingTaskThreadRunEventStreamWriter struct {
 	buffer bytes.Buffer
+	ids    []string
 }
 
 func publicRunEventPayloadForTest(eventType, payload string) string {
@@ -3619,6 +3700,7 @@ func publicRunEventPayloadForTest(eventType, payload string) string {
 
 func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType string, data []byte) error {
 	if id != "" {
+		w.ids = append(w.ids, id)
 		w.buffer.WriteString("id: ")
 		w.buffer.WriteString(id)
 		w.buffer.WriteByte('\n')

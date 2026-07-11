@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
@@ -889,6 +891,66 @@ func TestRunProcessorDispatchesSubagentRetryCommandToCapableExecutor(t *testing.
 		SucceededRuns: 1,
 	}, result)
 	require.Equal(t, []string{"run.started", "run.completed"}, eventSink.eventTypes())
+}
+
+func TestSubagentRetryPublicCommandRunsThroughProductionWorker(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, migrateAgentThreadTableForTest(db))
+	app := InitService(&ServiceComponents{
+		DB: db, IDGen: &sequentialTranscriptIDGen{next: 1},
+	})
+
+	threadResp, err := app.CreateThread(context.Background(), &CreateThreadRequest{
+		SpaceID: 1, UserID: 2, Title: "子智能体重试验收",
+	})
+	require.NoError(t, err)
+	parentResp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: threadResp.Thread.ThreadID,
+		Input:    `{"messages":[{"role":"user","content":"分析资料"}]}`,
+	})
+	require.NoError(t, err)
+	childResp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:    threadResp.Thread.ThreadID,
+		ParentRunID: parentResp.Run.RunID,
+		RunKind:     RunKindSubagent,
+		Input:       `{"messages":[{"role":"user","content":"检索资料"}]}`,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Table("agent_runs").Where("id = ?", parentResp.Run.RunID).
+		Updates(map[string]any{"status": string(RunStatusRunning)}).Error)
+	require.NoError(t, db.Table("agent_runs").Where("id = ?", childResp.Run.RunID).
+		Updates(map[string]any{
+			"status": string(RunStatusFailed), "error_code": "tool_failed",
+		}).Error)
+
+	retryResp, err := app.RetrySubagentRun(context.Background(), &RetrySubagentRunRequest{
+		ThreadID: threadResp.Thread.ThreadID, SourceRunID: childResp.Run.RunID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusQueued, retryResp.Run.Status)
+
+	executor := &recordingSubagentRetryRunExecutor{retryResult: &RunExecutionResult{
+		Message: "子智能体重试已完成", Metadata: `{"source":"subagent_retry_replay"}`,
+	}}
+	processor := NewRunProcessor(app, executor, RunProcessorOptions{
+		WorkerID: "worker-a", BatchSize: 1,
+	})
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, executor.retryExecuteCalled)
+	require.Equal(t, retryResp.Run.RunID, executor.retryRun.RunID)
+	require.Equal(t, 1, result.SucceededRuns)
+	persisted, err := app.GetRun(context.Background(), &GetRunRequest{RunID: retryResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusSucceeded, persisted.Run.Status)
+
+	replayed, err := app.RetrySubagentRun(context.Background(), &RetrySubagentRunRequest{
+		ThreadID: threadResp.Thread.ThreadID, SourceRunID: childResp.Run.RunID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, retryResp.Run.RunID, replayed.Run.RunID)
 }
 
 func TestRunProcessorMapsUnsupportedSubagentRetryExecutorToFixedFailure(t *testing.T) {

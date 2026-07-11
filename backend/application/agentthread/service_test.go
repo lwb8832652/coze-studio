@@ -1450,11 +1450,14 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"subagent_retry"`)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"source_run_id":20`)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"parent_run_id":10`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"attempt":1`)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source":"subagent_retry"`)
 	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"attempt":1`)
 	require.Equal(t, "subagent.retry.requested", domainSVC.createRunBundleReq.Event.EventType)
 	require.Contains(t, domainSVC.createRunBundleEventPayload, `"source_run_id":20`)
 	require.Contains(t, domainSVC.createRunBundleEventPayload, `"retry_run_id":21`)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"attempt":1`)
 }
 
 func TestApplicationRetrySubagentRunRejectsRunningChildRun(t *testing.T) {
@@ -3655,15 +3658,17 @@ func TestApplicationListRunEventsMapsDomainEvents(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ListRunEvents(context.Background(), &ListRunEventsRequest{
-		ThreadID: 10,
-		RunID:    200,
-		Page:     2,
-		PageSize: 5,
+		ThreadID:     10,
+		RunID:        200,
+		AfterEventID: 299,
+		Page:         2,
+		PageSize:     5,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(10), domainSVC.listRunEventsReq.ThreadID)
 	require.Equal(t, int64(200), domainSVC.listRunEventsReq.RunID)
+	require.Equal(t, int64(299), domainSVC.listRunEventsReq.AfterEventID)
 	require.Equal(t, int32(2), domainSVC.listRunEventsReq.Page)
 	require.Equal(t, int32(5), domainSVC.listRunEventsReq.PageSize)
 	require.Equal(t, int64(2), resp.Total)
@@ -4648,6 +4653,23 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			ended_at integer,
 			created_at integer,
 			updated_at integer
+		);
+		CREATE TABLE agent_thread_messages (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			role text,
+			content text,
+			metadata json,
+			created_at integer
+		);
+		CREATE TABLE agent_run_events (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			event_type text,
+			payload json,
+			created_at integer
 		)
 	`).Error
 }

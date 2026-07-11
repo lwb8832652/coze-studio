@@ -1404,6 +1404,30 @@ func TestThreadRepositoryListRunEventsUsesCursorStableIDOrder(t *testing.T) {
 	require.Equal(t, int64(2), got[1].ID)
 }
 
+func TestThreadRepositoryListRunEventsFiltersAfterCursor(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for id := int64(1); id <= 5; id++ {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+			ID: id, ThreadID: 10, RunID: 20, EventType: "step.completed",
+			Payload: `{}`, CreatedAt: 100 + id,
+		}))
+	}
+
+	got, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, AfterEventID: 2, Page: 1, PageSize: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(3), got[0].ID)
+	require.Equal(t, int64(4), got[1].ID)
+}
+
 func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -3997,6 +4021,39 @@ func TestThreadRepositoryClaimPendingRunsSkipsQueuedResumeRuns(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, entity.RunStatusQueued, gotQueued.Status)
 	require.Empty(t, gotQueued.WorkerID)
+}
+
+func TestThreadRepositoryClaimPendingRunsClaimsOnlyQueuedSubagentRetries(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	retry := newRepositoryTestRun(1, 10, entity.RunStatusQueued, 100)
+	retry.Metadata = `{"source":"subagent_retry","subagent_retry":{"schema":"coze.subagent_retry.metadata.v1"}}`
+	resume := newRepositoryTestRun(2, 10, entity.RunStatusQueued, 101)
+	resume.Metadata = `{"checkpoint_resume":{"protected_from_worker_claim":true}}`
+	manual := newRepositoryTestRun(3, 10, entity.RunStatusQueued, 102)
+	manual.Metadata = `{"source":"manual_queue"}`
+	require.NoError(t, repo.CreateRun(context.Background(), retry))
+	require.NoError(t, repo.CreateRun(context.Background(), resume))
+	require.NoError(t, repo.CreateRun(context.Background(), manual))
+
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 10, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, int64(1), claimed[0].ID)
+	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
+	require.Equal(t, "worker-a", claimed[0].LeaseOwner)
+	for _, runID := range []int64{2, 3} {
+		got, getErr := repo.GetRun(context.Background(), runID)
+		require.NoError(t, getErr)
+		require.Equal(t, entity.RunStatusQueued, got.Status)
+		require.Empty(t, got.LeaseOwner)
+	}
 }
 
 func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *testing.T) {

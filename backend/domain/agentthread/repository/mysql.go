@@ -1090,6 +1090,9 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 	} else {
 		query = query.Where("thread_id = ?", req.ThreadID)
 	}
+	if req.AfterEventID > 0 {
+		query = query.Where("id > ?", req.AfterEventID)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -3264,9 +3267,7 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
 	claimed := make([]*entity.Run, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := tx.Model(&runPO{}).
-			Where("status = ?", string(entity.RunStatusPending)).
-			Where("parent_run_id = ?", 0).
+		query := claimablePendingRunQuery(tx.Model(&runPO{})).
 			Order("created_at ASC, id ASC").
 			Limit(int(limit))
 		if tx.Dialector.Name() != "sqlite" {
@@ -3283,8 +3284,7 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 			if err != nil {
 				return err
 			}
-			db := tx.Model(&runPO{}).
-				Where("id = ? AND status = ?", po.ID, string(entity.RunStatusPending)).
+			db := claimablePendingRunQuery(tx.Model(&runPO{}).Where("id = ?", po.ID)).
 				Updates(map[string]any{
 					"status":               string(entity.RunStatusRunning),
 					"worker_id":            workerID,
@@ -3319,6 +3319,16 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	}
 
 	return claimed, nil
+}
+
+func claimablePendingRunQuery(db *gorm.DB) *gorm.DB {
+	return db.
+		Where("parent_run_id = ?", 0).
+		Where(
+			"(status = ? OR (status = ? AND JSON_EXTRACT(metadata, '$.subagent_retry') IS NOT NULL))",
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+		)
 }
 
 func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {

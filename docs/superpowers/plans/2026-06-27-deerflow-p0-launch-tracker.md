@@ -183,6 +183,19 @@ Every implementation slice must update this document:
     legacy compatibility, 93 frontend tests, generated-client mapping contract,
     TypeScript, targeted race/vet, formatting/diff checks and serial full
     backend all passed before commit.
+  - `AR-PARITY-001.7` Subagent retry scheduling and event-cursor SSE
+    (已完成): retained the verified production-worker dispatch for persisted
+    subagent retry commands and close the remaining stream reconnect gap with
+    repository-native `event_id > cursor` reads. Workbench SSE must normalize
+    query cursor and `Last-Event-ID`, drain every bounded page before terminal
+    `done`, and deliver a 450-event fixture exactly once across reconnects.
+    Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-event-cursor-and-retry.md`.
+    Verification: repository cursor and selective queued-claim RED/GREEN,
+    application propagation, public retry-to-worker integration, Workbench
+    450-event reconnect, header/query normalization, LangGraph reconnect,
+    affected packages, targeted race/vet, formatting/diff and serial full
+    backend all passed before commit.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

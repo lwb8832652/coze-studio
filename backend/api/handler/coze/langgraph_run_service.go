@@ -457,7 +457,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}
 	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
 			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
 			return
@@ -557,7 +557,7 @@ func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 	}
 	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
 	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
 			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
 			return
@@ -709,7 +709,7 @@ func StreamLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 	}
 	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
 			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
 			return
@@ -777,7 +777,7 @@ func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext)
 	}
 	ctx = workbenchThreadAccessContext(ctx, 0, req.RunID)
 	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseLangGraphLastEventID(string(c.Request.Header.Get("Last-Event-ID")))
+		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
 		if !ok {
 			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
 			return
@@ -1705,13 +1705,14 @@ func streamLangGraphRunEvents(
 	}
 
 	sendNewEvents := func() bool {
-		page := int32(1)
 		for {
+			cursorBeforePage := afterEventID
 			resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
-				ThreadID: req.ThreadID,
-				RunID:    req.RunID,
-				Page:     page,
-				PageSize: langGraphRunStreamPageSize,
+				ThreadID:     req.ThreadID,
+				RunID:        req.RunID,
+				AfterEventID: afterEventID,
+				Page:         1,
+				PageSize:     langGraphRunStreamPageSize,
 			})
 			if err != nil {
 				writeLangGraphRunStreamError(ctx, writer, err)
@@ -1728,10 +1729,9 @@ func streamLangGraphRunEvents(
 				afterEventID = event.EventID
 			}
 
-			if int64(page)*int64(langGraphRunStreamPageSize) >= resp.Total || len(resp.Events) < int(langGraphRunStreamPageSize) {
+			if len(resp.Events) < int(langGraphRunStreamPageSize) || afterEventID == cursorBeforePage {
 				return true
 			}
-			page++
 		}
 	}
 
@@ -2037,7 +2037,7 @@ func langGraphRunEventPayloadMap(raw string) map[string]any {
 	return map[string]any{"value": payload}
 }
 
-func parseLangGraphLastEventID(raw string) (int64, bool) {
+func parseRunEventCursor(raw string) (int64, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return 0, true
