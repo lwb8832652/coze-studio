@@ -1404,12 +1404,18 @@ func langGraphRunWaitResponse(ctx context.Context, run *appagentthread.RunSummar
 		return nil, err
 	}
 	if checkpointResp != nil && checkpointResp.Checkpoint != nil {
-		return langGraphCheckpointValues(checkpointResp.Checkpoint), nil
+		return langGraphPublicCheckpointValues(
+			appagentthread.ProjectPublicCheckpoint(checkpointResp.Checkpoint),
+		), nil
+	}
+	errorMessage := ""
+	if publicError := appagentthread.ProjectPublicRuntimeError(run.ErrorCode, run.ErrorMessage); publicError != nil {
+		errorMessage = publicError.Message
 	}
 
 	return map[string]any{
 		"status": langGraphRunStatus(run.Status),
-		"error":  run.ErrorMessage,
+		"error":  errorMessage,
 	}, nil
 }
 
@@ -1481,33 +1487,31 @@ func normalizeLangGraphRunMessagesLimit(limit int32) int32 {
 }
 
 func langGraphRunJournalMessageToAPI(message *appagentthread.RunJournalMessage, seq int64) map[string]any {
-	if message == nil {
+	projected := appagentthread.ProjectPublicRunJournalMessage(message)
+	if projected == nil {
 		return map[string]any{"seq": seq}
 	}
 	item := map[string]any{
-		"id":                message.ID,
+		"id":                projected.ID,
 		"seq":               seq,
-		"thread_id":         strconv.FormatInt(message.ThreadID, 10),
-		"run_id":            strconv.FormatInt(message.RunID, 10),
-		"type":              string(message.Type),
-		"role":              string(message.Role),
-		"content":           message.Content,
-		"name":              message.Name,
-		"tool_call_id":      message.ToolCallID,
-		"tool_calls":        langGraphRunJournalToolCallsToAPI(message.ToolCalls),
-		"additional_kwargs": langGraphSafeMap(message.AdditionalKwargs),
-		"usage":             langGraphSafeMap(message.Usage),
-		"created_at":        langGraphTime(message.CreatedAt),
-		"source_event_id":   message.SourceEventID,
-	}
-	if reasoning := langGraphStringValue(message.AdditionalKwargs["reasoning_content"]); reasoning != "" {
-		item["reasoning_content"] = reasoning
+		"thread_id":         strconv.FormatInt(projected.ThreadID, 10),
+		"run_id":            strconv.FormatInt(projected.RunID, 10),
+		"type":              string(projected.Type),
+		"role":              string(projected.Role),
+		"content":           projected.Content,
+		"name":              projected.Name,
+		"tool_call_id":      projected.ToolCallID,
+		"tool_calls":        langGraphRunJournalToolCallsToAPI(projected.ToolCalls),
+		"additional_kwargs": projected.AdditionalKwargs,
+		"usage":             projected.Usage,
+		"created_at":        langGraphTime(projected.CreatedAt),
+		"source_event_id":   projected.SourceEventID,
 	}
 
 	return item
 }
 
-func langGraphRunJournalToolCallsToAPI(toolCalls []appagentthread.RunJournalToolCall) []map[string]any {
+func langGraphRunJournalToolCallsToAPI(toolCalls []appagentthread.PublicRunJournalToolCall) []map[string]any {
 	result := make([]map[string]any, 0, len(toolCalls))
 	for _, toolCall := range toolCalls {
 		result = append(result, map[string]any{
@@ -1515,18 +1519,6 @@ func langGraphRunJournalToolCallsToAPI(toolCalls []appagentthread.RunJournalTool
 			"name": toolCall.Name,
 			"type": toolCall.Type,
 		})
-	}
-
-	return result
-}
-
-func langGraphSafeMap(value map[string]any) map[string]any {
-	if len(value) == 0 {
-		return map[string]any{}
-	}
-	result := make(map[string]any, len(value))
-	for key, item := range value {
-		result[key] = item
 	}
 
 	return result
@@ -1668,27 +1660,32 @@ func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
 }
 
 func langGraphRunToAPI(run *appagentthread.RunSummary) *langgraphapi.Run {
-	if run == nil {
+	projected := appagentthread.ProjectPublicRun(run)
+	if projected == nil {
 		return nil
+	}
+	errorMessage := ""
+	if projected.Error != nil {
+		errorMessage = projected.Error.Message
 	}
 
 	return &langgraphapi.Run{
-		RunID:             strconv.FormatInt(run.RunID, 10),
-		ThreadID:          strconv.FormatInt(run.ThreadID, 10),
-		AssistantID:       run.AssistantID,
-		Status:            langGraphRunStatus(run.Status),
-		CreatedAt:         langGraphTime(run.CreatedAt),
-		UpdatedAt:         langGraphTime(run.UpdatedAt),
-		Metadata:          langGraphJSONMap(run.Metadata),
-		Input:             langGraphJSONValue(run.Input, map[string]any{}),
-		Command:           langGraphJSONMap(run.Command),
-		Config:            langGraphJSONMap(run.Config),
-		Context:           langGraphJSONMap(run.Context),
-		StreamMode:        langGraphJSONStringSlice(run.StreamMode),
-		MultitaskStrategy: run.MultitaskStrategy,
-		OnDisconnect:      run.OnDisconnect,
-		Durability:        run.Durability,
-		Error:             run.ErrorMessage,
+		RunID:             strconv.FormatInt(projected.RunID, 10),
+		ThreadID:          strconv.FormatInt(projected.ThreadID, 10),
+		AssistantID:       projected.AssistantID,
+		Status:            langGraphRunStatus(projected.Status),
+		CreatedAt:         langGraphTime(projected.CreatedAt),
+		UpdatedAt:         langGraphTime(projected.UpdatedAt),
+		Metadata:          langGraphJSONMap(projected.Metadata),
+		Input:             map[string]any{},
+		Command:           map[string]any{},
+		Config:            map[string]any{},
+		Context:           map[string]any{},
+		StreamMode:        langGraphJSONStringSlice(projected.StreamMode),
+		MultitaskStrategy: projected.MultitaskStrategy,
+		OnDisconnect:      projected.OnDisconnect,
+		Durability:        projected.Durability,
+		Error:             errorMessage,
 	}
 }
 
@@ -1846,7 +1843,12 @@ func writeLangGraphRunStreamError(ctx context.Context, writer langGraphRunStream
 	if err == nil {
 		return
 	}
-	if writeErr := writer.WriteEvent("", langGraphRunStreamError, []byte(err.Error())); writeErr != nil {
+	publicError := appagentthread.ProjectPublicRuntimeError("runtime_failed", err.Error())
+	payload, marshalErr := sonic.Marshal(publicError)
+	if marshalErr != nil {
+		payload = []byte(`{"code":"runtime_failed","message":"Agent run failed"}`)
+	}
+	if writeErr := writer.WriteEvent("", langGraphRunStreamError, payload); writeErr != nil {
 		logs.CtxWarnf(ctx, "write langgraph run stream error failed, err=%v", writeErr)
 	}
 }
@@ -1868,36 +1870,44 @@ func langGraphRunStreamEventPayload(
 	event *appagentthread.RunEventSummary,
 	streamModes map[string]struct{},
 ) (string, any, bool) {
-	if event == nil {
+	projected := appagentthread.ProjectPublicRunEvent(event)
+	if projected == nil {
 		return "", nil, false
 	}
 	if len(streamModes) == 0 {
-		return langGraphRunStreamEvents, langGraphRunGenericEventPayload(event), true
+		return langGraphRunStreamEvents, langGraphPublicRunGenericEventPayload(projected), true
 	}
 	if _, ok := streamModes[langGraphRunStreamEvents]; ok {
-		return langGraphRunStreamEvents, langGraphRunGenericEventPayload(event), true
+		return langGraphRunStreamEvents, langGraphPublicRunGenericEventPayload(projected), true
 	}
 
-	mode := langGraphRunStreamEventMode(event)
+	mode := langGraphPublicRunStreamEventMode(projected)
 	if _, ok := streamModes[mode]; !ok {
 		return "", nil, false
 	}
 
 	switch mode {
 	case langGraphRunStreamUpdates:
-		return mode, langGraphRunUpdateEventPayload(event), true
+		return mode, langGraphPublicRunUpdateEventPayload(projected), true
 	case langGraphRunStreamMessages:
-		return mode, langGraphRunMessageEventPayload(event, false), true
+		return mode, langGraphPublicRunMessageEventPayload(projected, false), true
 	case "messages-tuple":
-		return mode, langGraphRunMessageEventPayload(event, true), true
+		return mode, langGraphPublicRunMessageEventPayload(projected, true), true
 	case langGraphRunStreamValues:
-		return mode, langGraphRunValuesEventPayload(event), true
+		return mode, langGraphPublicRunValuesEventPayload(projected), true
 	default:
-		return mode, langGraphRunModeEventPayload(event), true
+		return mode, langGraphPublicRunModeEventPayload(projected), true
 	}
 }
 
 func langGraphRunGenericEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+	return langGraphPublicRunGenericEventPayload(appagentthread.ProjectPublicRunEvent(event))
+}
+
+func langGraphPublicRunGenericEventPayload(event *appagentthread.PublicRunEvent) map[string]any {
+	if event == nil {
+		return map[string]any{}
+	}
 	return map[string]any{
 		"event_id":   strconv.FormatInt(event.EventID, 10),
 		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
@@ -1908,7 +1918,7 @@ func langGraphRunGenericEventPayload(event *appagentthread.RunEventSummary) map[
 	}
 }
 
-func langGraphRunUpdateEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+func langGraphPublicRunUpdateEventPayload(event *appagentthread.PublicRunEvent) map[string]any {
 	payload := langGraphRunEventPayloadMap(event.Payload)
 	node := langGraphStringValue(payload["node"])
 	if node == "" {
@@ -1924,11 +1934,11 @@ func langGraphRunUpdateEventPayload(event *appagentthread.RunEventSummary) map[s
 
 	return map[string]any{
 		node:       update,
-		"metadata": langGraphRunStreamEventMetadata(event, node),
+		"metadata": langGraphPublicRunStreamEventMetadata(event, node),
 	}
 }
 
-func langGraphRunMessageEventPayload(event *appagentthread.RunEventSummary, tuple bool) any {
+func langGraphPublicRunMessageEventPayload(event *appagentthread.PublicRunEvent, tuple bool) any {
 	payload := langGraphRunEventPayloadMap(event.Payload)
 	node := langGraphStringValue(payload["node"])
 	if node == "" {
@@ -1941,7 +1951,7 @@ func langGraphRunMessageEventPayload(event *appagentthread.RunEventSummary, tupl
 	} else if value, ok := payload["message"]; ok {
 		chunk = value
 	}
-	metadata := langGraphRunStreamEventMetadata(event, node)
+	metadata := langGraphPublicRunStreamEventMetadata(event, node)
 	if tuple {
 		return []any{chunk, metadata}
 	}
@@ -1952,7 +1962,7 @@ func langGraphRunMessageEventPayload(event *appagentthread.RunEventSummary, tupl
 	}
 }
 
-func langGraphRunValuesEventPayload(event *appagentthread.RunEventSummary) any {
+func langGraphPublicRunValuesEventPayload(event *appagentthread.PublicRunEvent) any {
 	payload := langGraphRunEventPayloadMap(event.Payload)
 	if value, ok := payload["values"]; ok {
 		return value
@@ -1961,15 +1971,15 @@ func langGraphRunValuesEventPayload(event *appagentthread.RunEventSummary) any {
 	return payload
 }
 
-func langGraphRunModeEventPayload(event *appagentthread.RunEventSummary) map[string]any {
+func langGraphPublicRunModeEventPayload(event *appagentthread.PublicRunEvent) map[string]any {
 	payload := langGraphRunEventPayload(event.Payload)
 	return map[string]any{
 		"payload":  payload,
-		"metadata": langGraphRunStreamEventMetadata(event, ""),
+		"metadata": langGraphPublicRunStreamEventMetadata(event, ""),
 	}
 }
 
-func langGraphRunStreamEventMetadata(event *appagentthread.RunEventSummary, node string) map[string]any {
+func langGraphPublicRunStreamEventMetadata(event *appagentthread.PublicRunEvent, node string) map[string]any {
 	metadata := map[string]any{
 		"event_id":   strconv.FormatInt(event.EventID, 10),
 		"thread_id":  strconv.FormatInt(event.ThreadID, 10),
@@ -1984,7 +1994,7 @@ func langGraphRunStreamEventMetadata(event *appagentthread.RunEventSummary, node
 	return metadata
 }
 
-func langGraphRunStreamEventMode(event *appagentthread.RunEventSummary) string {
+func langGraphPublicRunStreamEventMode(event *appagentthread.PublicRunEvent) string {
 	eventType := strings.ToLower(strings.TrimSpace(event.EventType))
 	switch {
 	case eventType == langGraphRunStreamValues || strings.HasPrefix(eventType, "state.") || strings.HasPrefix(eventType, "checkpoint."):

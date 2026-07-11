@@ -130,6 +130,9 @@ with `go test -gcflags="all=-N -l" ./... -count=1`; `gofmt -l` and
 
 ### Task 2: Separate Internal Records From Public Projections
 
+Reference evidence:
+`docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-public-projection.md`.
+
 **Files:**
 
 - Create: backend/application/agentthread/public_projection.go
@@ -140,7 +143,7 @@ with `go test -gcflags="all=-N -l" ./... -count=1`; `gofmt -l` and
 - Test: backend/api/handler/coze/workbench_thread_service_test.go
 - Test: backend/api/handler/coze/langgraph_run_service_test.go
 
-- [ ] **Step 1: Write failing leak-fixture tests**
+- [x] **Step 1: Write failing leak-fixture tests**
 
 Build fixtures containing prompt/completion/reasoning text, tool
 arguments/results, credentials, object URIs, raw config/context/command,
@@ -148,25 +151,25 @@ checkpoint bytes and provider errors. Assert public records keep only IDs,
 status, safe labels, timestamps, bounded error codes, token counts and approved
 event metadata.
 
-- [ ] **Step 2: Verify redaction tests fail**
+- [x] **Step 2: Verify redaction tests fail**
 
 ~~~bash
 cd backend
 go test ./application/agentthread -run 'TestPublic.*Redacts' -count=1
 ~~~
 
-- [ ] **Step 3: Implement allow-list projections**
+- [x] **Step 3: Implement allow-list projections**
 
 Define PublicRun, PublicRunEvent, PublicMessageMetadata and PublicRuntimeError.
 Unknown event types expose only ID, type and timestamp. Raw errors are logged
 internally and mapped to bounded product errors.
 
-- [ ] **Step 4: Make REST and SSE use the same projection**
+- [x] **Step 4: Make REST and SSE use the same projection**
 
 Replace handler-specific partial redaction. Never return top-level command,
 input, config, context or raw metadata based on run kind.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 ~~~bash
 cd backend
@@ -175,6 +178,24 @@ go test -gcflags="all=-N -l" ./api/handler/coze -run 'Redacts|DoesNotExpose|Unsa
 git add backend/application/agentthread/public_projection* backend/api/handler/coze
 git commit -m "fix: harden public agent runtime projections"
 ~~~
+
+Completed 2026-07-11. One application-level allow-list now projects public
+runs, user-visible messages, run events, journal rows, checkpoints, token
+usage, artifacts and bounded runtime errors. Workbench REST/SSE and
+LangGraph-compatible REST/SSE consume the same projection. Approved
+user/assistant content and stream tokens remain visible; hidden reasoning,
+tool arguments/results, raw provider payloads/errors, command/input/config/
+context, worker/idempotency fields, checkpoint bytes and unsafe artifact paths
+do not cross the API boundary. Checkpoint update/resume internals retain their
+raw state behind the projection, so redaction does not corrupt recovery.
+
+Verification passed for application and handler leak fixtures, complete
+`application/agentthread` and Coze handler packages, targeted `go vet`, task
+detail frontend tests (61/61), frontend TypeScript, `gofmt -l`, and
+`git diff --check`. The full backend passed serially with
+`go test -p 1 -gcflags="all=-N -l" ./... -count=1`; the first parallel run hit
+an unrelated Mockey/Go 1.25 `SIGBUS` in the unchanged workflow compose test,
+whose package passed immediately when rerun alone with the required gcflags.
 
 ### Task 3: Add Leased Run Ownership And Fencing
 

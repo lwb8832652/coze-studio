@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -329,8 +330,8 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Contains(t, body, `"role":"user"`)
 	require.Contains(t, body, `"content":"请生成行动计划"`)
 	require.Contains(t, body, `"status":"pending"`)
-	require.Contains(t, body, `"config":"{\"runtime\":\"eino_adk\"}"`)
-	require.Contains(t, body, `"idempotency_key":"new-task-1"`)
+	require.NotContains(t, body, `"runtime":"eino_adk"`)
+	require.NotContains(t, body, `"idempotency_key":"new-task-1"`)
 
 	messages, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
 		ThreadID: 2,
@@ -351,6 +352,8 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Equal(t, runs.Runs[0].RunID, messages.Messages[0].RunID)
 	require.Equal(t, appagentthread.RunStatusPending, runs.Runs[0].Status)
 	require.Equal(t, appagentthread.RunKindTask, runs.Runs[0].RunKind)
+	require.Equal(t, `{"runtime":"eino_adk"}`, runs.Runs[0].Config)
+	require.Equal(t, "new-task-1", runs.Runs[0].IdempotencyKey)
 }
 
 func TestCreateTaskThreadHandlerRejectsUnauthorizedWorkspaceBeforeMutation(t *testing.T) {
@@ -880,7 +883,8 @@ func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
 	require.Contains(t, body, `"total":1`)
 	require.Contains(t, body, `"artifact_type":"report"`)
 	require.Contains(t, body, `"preview_mode":"text"`)
-	require.Contains(t, body, `"virtual_path":"/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/`)
+	require.Contains(t, body, `"virtual_path":""`)
+	require.NotContains(t, body, `/mnt/user-data/workspace/.coze/tool-results/`)
 	require.NotContains(t, body, "agent-runtime/")
 }
 
@@ -1931,7 +1935,7 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"status":"pending"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"请追加行动建议\"}]}"`)
+	require.NotContains(t, body, `"content":"请追加行动建议"`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
 		ThreadID: 1,
@@ -1941,6 +1945,7 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), resp.Total)
 	require.Equal(t, appagentthread.RunStatusPending, resp.Runs[0].Status)
+	require.Contains(t, resp.Runs[0].Input, `"content":"请追加行动建议"`)
 	require.Equal(t, `{"mode":"Auto"}`, resp.Runs[0].Config)
 	require.Equal(t, "thread-only-1-msg-1", resp.Runs[0].IdempotencyKey)
 }
@@ -1979,10 +1984,10 @@ func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
 		Context: `{"plan_scope_run_id":2}`,
 	})
 
-	require.Equal(t, `{"visible":"command"}`, task.Command)
-	require.Equal(t, `{"messages":[{"role":"user","content":"visible"}]}`, task.Input)
-	require.Equal(t, `{"runtime":"eino_adk"}`, task.Config)
-	require.Equal(t, `{"plan_scope_run_id":2}`, task.Context)
+	require.Empty(t, task.Command)
+	require.Empty(t, task.Input)
+	require.Empty(t, task.Config)
+	require.Empty(t, task.Context)
 }
 
 func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
@@ -2016,7 +2021,7 @@ func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"status":"queued"`)
-	require.Contains(t, body, `"idempotency_key":"resume-api-key"`)
+	require.NotContains(t, body, `"idempotency_key":"resume-api-key"`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
 		ThreadID: 1,
@@ -2027,6 +2032,7 @@ func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
 	require.Len(t, resp.Runs, 2)
 	require.Equal(t, sourceRunID, resp.Runs[1].RunID)
 	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Equal(t, "resume-api-key", resp.Runs[0].IdempotencyKey)
 	require.Contains(t, resp.Runs[0].Command, `"interrupt-1"`)
 	require.Contains(t, resp.Runs[0].Command, `"answer":"最近 7 天"`)
 }
@@ -2241,7 +2247,7 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 	require.Contains(t, body, `"parent_run_id":"0"`)
 	require.Contains(t, body, `"run_kind":"task"`)
 	require.Contains(t, body, `"status":"queued"`)
-	require.Contains(t, body, `"idempotency_key":"retry-api-key"`)
+	require.NotContains(t, body, `"idempotency_key":"retry-api-key"`)
 	require.Contains(t, body, `subagent_retry`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
@@ -2252,6 +2258,7 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), resp.Total)
 	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Equal(t, "retry-api-key", resp.Runs[0].IdempotencyKey)
 	require.Equal(t, appagentthread.RunKindTask, resp.Runs[0].RunKind)
 	require.Zero(t, resp.Runs[0].ParentRunID)
 	require.Contains(t, resp.Runs[0].Command, `"source_run_id":`+strconv.FormatInt(childResp.Run.RunID, 10))
@@ -2280,8 +2287,8 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"total":2`)
 	require.Contains(t, body, `"thread_id":"1"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第二轮\"}]}"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第一轮\"}]}"`)
+	require.NotContains(t, body, `"content":"第二轮"`)
+	require.NotContains(t, body, `"content":"第一轮"`)
 }
 
 func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
@@ -2350,7 +2357,8 @@ func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"run_id":"2"`)
 	require.Contains(t, body, `"event_type":"run.started"`)
-	require.Contains(t, body, `"payload":"{\"status\":\"running\",\"worker_id\":\"worker-a\"}"`)
+	require.Contains(t, body, `"payload":"{\"status\":\"running\"}"`)
+	require.NotContains(t, body, "worker-a")
 }
 
 func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
@@ -2413,12 +2421,114 @@ func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
 	require.NotContains(t, payload, "media")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T) {
+func TestTaskThreadPublicMappersDoesNotExposeInternalRecords(t *testing.T) {
+	const sensitive = "handler-sensitive-sentinel"
+
+	run := taskThreadRunToAPI(&appagentthread.RunSummary{
+		RunID:          1,
+		ThreadID:       2,
+		ParentRunID:    3,
+		SpaceID:        4,
+		CreatorID:      5,
+		AssistantID:    "researcher",
+		RunKind:        appagentthread.RunKindSubagent,
+		Status:         appagentthread.RunStatusFailed,
+		Command:        `{"resume":"` + sensitive + `"}`,
+		Input:          `{"message":"` + sensitive + `"}`,
+		Config:         `{"api_key":"` + sensitive + `"}`,
+		Context:        `{"reasoning":"` + sensitive + `"}`,
+		Metadata:       `{"source":"subagent_retry","source_run_id":3,"subagent":{"name":"researcher","prompt":"` + sensitive + `"}}`,
+		IdempotencyKey: sensitive,
+		WorkerID:       sensitive,
+		ErrorCode:      "model_provider_error",
+		ErrorMessage:   sensitive,
+	})
+	require.Empty(t, run.Command)
+	require.Empty(t, run.Input)
+	require.Empty(t, run.Config)
+	require.Empty(t, run.Context)
+	require.Empty(t, run.IdempotencyKey)
+	require.Empty(t, run.WorkerID)
+	require.Equal(t, "model_provider_error", run.ErrorCode)
+	require.Equal(t, "Model request failed", run.ErrorMessage)
+	require.NotContains(t, mustMarshalJSON(t, run), sensitive)
+
+	message := taskThreadMessageToAPI(&appagentthread.MessageSummary{
+		MessageID: 1,
+		ThreadID:  2,
+		RunID:     3,
+		Role:      appagentthread.MessageRoleAssistant,
+		Content:   "visible answer",
+		Metadata:  `{"source":"human_interaction","interrupt_id":"interrupt-1","provider_body":"` + sensitive + `"}`,
+	})
+	require.Equal(t, "visible answer", message.Content)
+	require.JSONEq(t, `{"source":"human_interaction","interrupt_id":"interrupt-1"}`, message.Metadata)
+	require.NotContains(t, mustMarshalJSON(t, message), sensitive)
+	require.Nil(t, taskThreadMessageToAPI(&appagentthread.MessageSummary{
+		MessageID: 2,
+		ThreadID:  2,
+		RunID:     3,
+		Role:      appagentthread.MessageRoleSystem,
+		Content:   sensitive,
+	}))
+
+	artifact := taskThreadArtifactToAPI(&appagentthread.ArtifactSummary{
+		ArtifactID:   1,
+		ThreadID:     2,
+		RunID:        3,
+		FileID:       4,
+		Title:        "report.md",
+		ArtifactType: "markdown",
+		VirtualPath:  "/mnt/user-data/outputs/report.md",
+		ContentType:  "text/markdown",
+		Metadata:     `{"scan_status":"clean","object_uri":"` + sensitive + `"}`,
+	})
+	require.Equal(t, "/mnt/user-data/outputs/report.md", artifact.VirtualPath)
+	require.JSONEq(t, `{"scan_status":"clean"}`, artifact.Metadata)
+	require.NotContains(t, mustMarshalJSON(t, artifact), sensitive)
+
+	journal := taskThreadRunJournalMessageToAPI(&appagentthread.RunJournalMessage{
+		ID:       "message-1",
+		ThreadID: 2,
+		RunID:    3,
+		Type:     appagentthread.RunJournalMessageTypeAI,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "visible answer",
+		ToolCalls: []appagentthread.RunJournalToolCall{
+			{ID: "call-1", Name: "web_search", Type: "function", Args: map[string]any{"query": sensitive}},
+		},
+		AdditionalKwargs: map[string]any{"reasoning_content": sensitive},
+		Usage:            map[string]any{"input_tokens": 10, "raw_usage": sensitive},
+	})
+	require.Equal(t, "visible answer", journal.Content)
+	require.JSONEq(t, `{}`, journal.AdditionalKwargs)
+	require.JSONEq(t, `{}`, journal.ToolCalls[0].Arguments)
+	require.NotContains(t, mustMarshalJSON(t, journal), sensitive)
+
+	unknownEvent := taskThreadRunEventToAPI(&appagentthread.RunEventSummary{
+		EventID:   1,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "provider.experimental",
+		Payload:   `{"raw":"` + sensitive + `"}`,
+	})
+	require.Equal(t, `{}`, unknownEvent.Payload)
+	require.NotContains(t, mustMarshalJSON(t, unknownEvent), sensitive)
+}
+
+func mustMarshalJSON(t *testing.T, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func TestTaskThreadRunEventPayloadRedactsAssistantToolCallInternals(t *testing.T) {
 	arguments := `{"description":"创建武汉3日游攻略 Markdown 文档","file_path":"/mnt/user-data/workspace/武汉3日游攻略.md","content":"` + strings.Repeat("x", 5000) + `","url":"https://private.example/signed","api_key":"sk-secret"}`
 	reasoning := "Let me create the document in the workspace first. " + strings.Repeat("Keep the visible step summary detailed. ", 8)
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"reasoning_content":`+strconv.Quote(reasoning)+`,
 		"tool_calls":[{
 			"id":"call_write_file",
@@ -2435,31 +2545,24 @@ func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T
 	var got struct {
 		Redacted         bool   `json:"redacted"`
 		Role             string `json:"role"`
+		Content          string `json:"content"`
 		ReasoningContent string `json:"reasoning_content"`
 		ToolCalls        []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			ArgumentsPresent bool   `json:"arguments_present"`
 		} `json:"tool_calls"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(payload), &got))
 	require.True(t, got.Redacted)
 	require.Equal(t, "assistant", got.Role)
-	require.Equal(t, strings.TrimSpace(reasoning), got.ReasoningContent)
+	require.Equal(t, "approved visible assistant response", got.Content)
+	require.Empty(t, got.ReasoningContent)
 	require.Len(t, got.ToolCalls, 1)
 	require.Equal(t, "call_write_file", got.ToolCalls[0].ID)
-	require.Equal(t, "function", got.ToolCalls[0].Type)
-	require.Equal(t, "write_file", got.ToolCalls[0].Function.Name)
-	var gotArguments map[string]string
-	require.NoError(t, json.Unmarshal([]byte(got.ToolCalls[0].Function.Arguments), &gotArguments))
-	require.Equal(t, map[string]string{
-		"description": "创建武汉3日游攻略 Markdown 文档",
-		"file_path":   "/mnt/user-data/workspace/武汉3日游攻略.md",
-	}, gotArguments)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.Equal(t, "write_file", got.ToolCalls[0].Name)
+	require.True(t, got.ToolCalls[0].ArgumentsPresent)
+	require.NotContains(t, payload, "创建武汉3日游攻略")
 	require.NotContains(t, payload, strings.Repeat("x", 100))
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
@@ -2469,11 +2572,11 @@ func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T
 	require.NotContains(t, payload, "media")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeWebSearchQuery(t *testing.T) {
+func TestTaskThreadRunEventPayloadRedactsWebSearchArguments(t *testing.T) {
 	arguments := `{"query":"青岛最佳旅游时间","max_results":5,"url":"https://private.example/signed","api_key":"sk-secret"}`
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_web_search",
 			"type":"function",
@@ -2487,26 +2590,24 @@ func TestTaskThreadRunEventPayloadKeepsSafeWebSearchQuery(t *testing.T) {
 	require.JSONEq(t, `{
 		"redacted":true,
 		"role":"assistant",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_web_search",
-			"type":"function",
-			"function":{
-				"name":"web_search",
-				"arguments":"{\"query\":\"青岛最佳旅游时间\"}"
-			}
+			"name":"web_search",
+			"arguments_present":true
 		}]
 	}`, payload)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "青岛最佳旅游时间")
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
 	require.NotContains(t, payload, "max_results")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
+func TestTaskThreadRunEventPayloadRedactsSkillToolCallArguments(t *testing.T) {
 	arguments := `{"skill":"skill-creator","url":"https://private.example/signed","api_key":"sk-secret"}`
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_skill",
 			"type":"function",
@@ -2520,16 +2621,14 @@ func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
 	require.JSONEq(t, `{
 		"redacted":true,
 		"role":"assistant",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_skill",
-			"type":"function",
-			"function":{
-				"name":"skill",
-				"arguments":"{\"skill\":\"skill-creator\"}"
-			}
+			"name":"skill",
+			"arguments_present":true
 		}]
 	}`, payload)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "skill-creator")
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
 }
@@ -2563,7 +2662,7 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 		EventType: "message.completed",
 		Payload: `{
 			"role":"assistant",
-			"content":"final text should not be exposed through event payload",
+			"content":"approved visible assistant response",
 			"reasoning_content":"需要查询季节和天气资料。",
 			"tool_calls":[{
 				"id":"call_web_search",
@@ -2624,12 +2723,13 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 	require.Equal(t, "human", resp.Data.JournalMessages[0].Type)
 	require.Equal(t, "青岛最佳旅游时间", resp.Data.JournalMessages[0].Content)
 	require.Equal(t, "ai", resp.Data.JournalMessages[1].Type)
-	require.JSONEq(t, `{"reasoning_content":"需要查询季节和天气资料。"}`, resp.Data.JournalMessages[1].AdditionalKwargs)
+	require.Equal(t, "approved visible assistant response", resp.Data.JournalMessages[1].Content)
+	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].AdditionalKwargs)
 	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].Usage)
 	require.Len(t, resp.Data.JournalMessages[1].ToolCalls, 1)
 	require.Equal(t, "call_web_search", resp.Data.JournalMessages[1].ToolCalls[0].ID)
 	require.Equal(t, "web_search", resp.Data.JournalMessages[1].ToolCalls[0].Name)
-	require.JSONEq(t, `{"query":"青岛最佳旅游时间"}`, resp.Data.JournalMessages[1].ToolCalls[0].Arguments)
+	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].ToolCalls[0].Arguments)
 	require.Equal(t, "tool", resp.Data.JournalMessages[2].Type)
 	require.Equal(t, "call_web_search", resp.Data.JournalMessages[2].ToolCallID)
 	require.Empty(t, resp.Data.JournalMessages[2].Content)
@@ -2637,7 +2737,8 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 	require.Equal(t, "青岛 4-6 月和 9-10 月最适合旅行。", resp.Data.JournalMessages[3].Content)
 
 	body := string(w.Result().Body())
-	require.NotContains(t, body, "final text should not be exposed")
+	require.Contains(t, body, "approved visible assistant response")
+	require.NotContains(t, body, "需要查询季节和天气资料")
 	require.NotContains(t, body, "tool result")
 	require.NotContains(t, body, "private.example")
 	require.NotContains(t, body, "sk-secret")
@@ -2818,6 +2919,22 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 	require.Contains(t, body, "event: run.event")
 	require.Contains(t, body, `data: {"event_id":"3","thread_id":"1","run_id":"2","event_type":"step.completed"`)
 	require.Contains(t, body, "event: done")
+}
+
+func TestTaskThreadRunEventStreamErrorDoesNotExposeInternalDetails(t *testing.T) {
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	writeTaskThreadRunEventStreamError(
+		context.Background(),
+		writer,
+		errors.New("provider failed with credential sensitive-runtime-sentinel"),
+	)
+
+	body := writer.String()
+	require.Contains(t, body, "event: error")
+	require.Contains(t, body, `"code":"runtime_stream_error"`)
+	require.Contains(t, body, `"message":"Model request failed"`)
+	require.NotContains(t, body, "credential")
+	require.NotContains(t, body, "sensitive-runtime-sentinel")
 }
 
 func TestStreamTaskThreadRunEventsReturnsForbiddenBeforeSSEHeaders(t *testing.T) {
@@ -3451,6 +3568,17 @@ type sequentialIDGen struct {
 
 type recordingTaskThreadRunEventStreamWriter struct {
 	buffer bytes.Buffer
+}
+
+func publicRunEventPayloadForTest(eventType, payload string) string {
+	projected := appagentthread.ProjectPublicRunEvent(&appagentthread.RunEventSummary{
+		EventType: eventType,
+		Payload:   payload,
+	})
+	if projected == nil {
+		return `{}`
+	}
+	return projected.Payload
 }
 
 func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType string, data []byte) error {

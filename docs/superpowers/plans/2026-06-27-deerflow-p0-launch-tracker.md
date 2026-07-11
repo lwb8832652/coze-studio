@@ -94,6 +94,25 @@ Every implementation slice must update this document:
     `go test -gcflags="all=-N -l" ./... -count=1`, `gofmt -l`,
     `git diff --check`, independent `SPEC COMPLIANT`, and independent `CODE
     QUALITY APPROVED`.
+  - `AR-PARITY-001.2` Public runtime projection/redaction (已完成): replaced
+    handler-local partial filtering with one application allow-list projection
+    for public runs, user-visible messages, journal rows, events, checkpoints,
+    token usage, artifacts and bounded runtime errors. Workbench and LangGraph
+    REST/SSE now share the same safe event projection. Approved visible reply
+    text and stream tokens remain available, while reasoning, tool arguments/
+    results, credentials, object URIs, unsafe paths, raw command/input/config/
+    context/metadata, worker/idempotency fields, checkpoint bytes and provider
+    errors remain internal. Recovery/update paths use internal checkpoint state
+    separately, avoiding projection-induced corruption. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-public-projection.md`.
+    Verification: application redaction fixtures, handler
+    `Redacts|DoesNotExpose|UnsafePayload`, complete application/handler suites,
+    `go vet ./application/agentthread ./api/handler/coze`, task-detail Vitest
+    61/61, frontend `tsc --noEmit`, full serial backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1`, `gofmt -l`, and
+    `git diff --check`. A parallel full-backend attempt hit an unrelated
+    Mockey/Go 1.25 `SIGBUS` in unchanged workflow compose code; that package
+    passed immediately when isolated with the required gcflags.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

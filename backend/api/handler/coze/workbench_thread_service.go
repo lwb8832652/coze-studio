@@ -21,7 +21,6 @@ import (
 	"errors"
 	"io"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -48,13 +47,7 @@ const (
 	maxRunEventStreamIntervalMs     = int64(5000)
 	minRunEventStreamTimeoutMs      = int64(1)
 	maxRunEventStreamTimeoutMs      = int64(60000)
-	maxSafeRunEventPayloadStringLen = 128
-	maxSafeRunEventReasoningLen     = 2048
-	maxSafeRunEventArgumentsJSONLen = 1024 * 1024
-	maxSafeRunEventToolCalls        = 8
 )
-
-var unsafeRunEventDisplayPattern = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?token|authorization|bearer|credential|secret|password|provider_raw|object[_-]?key|checkpoint|https?://|file://|s3://|oss://|cos://|minio://)`)
 
 type taskThreadRunEventStreamWriter interface {
 	WriteEvent(id, eventType string, data []byte) error
@@ -1515,7 +1508,9 @@ func taskThreadsToAPI(threads []*appagentthread.ThreadSummary) []*threadapi.Task
 func taskThreadMessagesToAPI(messages []*appagentthread.MessageSummary) []*threadapi.TaskThreadMessage {
 	result := make([]*threadapi.TaskThreadMessage, 0, len(messages))
 	for _, item := range messages {
-		result = append(result, taskThreadMessageToAPI(item))
+		if projected := taskThreadMessageToAPI(item); projected != nil {
+			result = append(result, projected)
+		}
 	}
 
 	return result
@@ -1627,29 +1622,30 @@ func taskThreadRunJournalMessagesToAPI(
 func taskThreadRunJournalMessageToAPI(
 	message *appagentthread.RunJournalMessage,
 ) *threadapi.TaskThreadRunJournalMessage {
-	if message == nil {
+	projected := appagentthread.ProjectPublicRunJournalMessage(message)
+	if projected == nil {
 		return nil
 	}
 
 	return &threadapi.TaskThreadRunJournalMessage{
-		ID:               message.ID,
-		ThreadID:         message.ThreadID,
-		RunID:            message.RunID,
-		Type:             string(message.Type),
-		Role:             string(message.Role),
-		Content:          message.Content,
-		Name:             message.Name,
-		ToolCallID:       message.ToolCallID,
-		ToolCalls:        taskThreadRunJournalToolCallsToAPI(message.ToolCalls),
-		AdditionalKwargs: taskThreadRunJournalJSONObject(message.AdditionalKwargs),
-		Usage:            taskThreadRunJournalJSONObject(message.Usage),
-		CreatedAt:        message.CreatedAt,
-		SourceEventID:    message.SourceEventID,
+		ID:               projected.ID,
+		ThreadID:         projected.ThreadID,
+		RunID:            projected.RunID,
+		Type:             string(projected.Type),
+		Role:             string(projected.Role),
+		Content:          projected.Content,
+		Name:             projected.Name,
+		ToolCallID:       projected.ToolCallID,
+		ToolCalls:        taskThreadRunJournalToolCallsToAPI(projected.ToolCalls),
+		AdditionalKwargs: taskThreadRunJournalJSONObject(projected.AdditionalKwargs),
+		Usage:            taskThreadRunJournalJSONObject(projected.Usage),
+		CreatedAt:        projected.CreatedAt,
+		SourceEventID:    projected.SourceEventID,
 	}
 }
 
 func taskThreadRunJournalToolCallsToAPI(
-	toolCalls []appagentthread.RunJournalToolCall,
+	toolCalls []appagentthread.PublicRunJournalToolCall,
 ) []*threadapi.TaskThreadRunJournalToolCall {
 	result := make([]*threadapi.TaskThreadRunJournalToolCall, 0, len(toolCalls))
 	for _, toolCall := range toolCalls {
@@ -1657,18 +1653,18 @@ func taskThreadRunJournalToolCallsToAPI(
 			ID:        toolCall.ID,
 			Name:      toolCall.Name,
 			Type:      toolCall.Type,
-			Arguments: taskThreadRunJournalJSONObject(toolCall.Args),
+			Arguments: taskThreadRunJournalJSONObject(toolCall.Arguments),
 		})
 	}
 	return result
 }
 
-func taskThreadRunJournalJSONObject(value map[string]any) string {
-	if len(value) == 0 {
+func taskThreadRunJournalJSONObject(value any) string {
+	if value == nil {
 		return "{}"
 	}
 	encoded, err := sonic.MarshalString(value)
-	if err != nil {
+	if err != nil || encoded == "null" || encoded == "{}" {
 		return "{}"
 	}
 	return encoded
@@ -2007,25 +2003,26 @@ func taskThreadNormalizeTodoStatus(status string) string {
 }
 
 func taskThreadArtifactToAPI(artifact *appagentthread.ArtifactSummary) *threadapi.TaskThreadArtifact {
-	if artifact == nil {
+	projected := appagentthread.ProjectPublicArtifact(artifact)
+	if projected == nil {
 		return nil
 	}
 
 	return &threadapi.TaskThreadArtifact{
-		ArtifactID:   artifact.ArtifactID,
-		ThreadID:     artifact.ThreadID,
-		RunID:        artifact.RunID,
-		FileID:       artifact.FileID,
-		Title:        artifact.Title,
-		ArtifactType: artifact.ArtifactType,
-		VirtualPath:  artifact.VirtualPath,
-		ContentType:  artifact.ContentType,
-		SizeBytes:    artifact.SizeBytes,
-		PreviewMode:  string(artifact.PreviewMode),
-		Metadata:     artifact.Metadata,
-		CreatedAt:    artifact.CreatedAt,
-		UpdatedAt:    artifact.UpdatedAt,
-		DeletedAt:    artifact.DeletedAt,
+		ArtifactID:   projected.ArtifactID,
+		ThreadID:     projected.ThreadID,
+		RunID:        projected.RunID,
+		FileID:       projected.FileID,
+		Title:        projected.Title,
+		ArtifactType: projected.ArtifactType,
+		VirtualPath:  projected.VirtualPath,
+		ContentType:  projected.ContentType,
+		SizeBytes:    projected.SizeBytes,
+		PreviewMode:  string(projected.PreviewMode),
+		Metadata:     projected.Metadata,
+		CreatedAt:    projected.CreatedAt,
+		UpdatedAt:    projected.UpdatedAt,
+		DeletedAt:    projected.DeletedAt,
 	}
 }
 
@@ -2157,424 +2154,83 @@ func taskThreadArtifactScanJobToAPI(
 }
 
 func taskThreadRunToAPI(run *appagentthread.RunSummary) *threadapi.TaskThreadRun {
-	if run == nil {
+	projected := appagentthread.ProjectPublicRun(run)
+	if projected == nil {
 		return nil
 	}
 
-	command := run.Command
-	input := run.Input
-	config := run.Config
-	runContext := run.Context
-	if run.RunKind == appagentthread.RunKindSubagent {
-		command = ""
-		input = ""
-		config = ""
-		runContext = ""
+	errorCode := ""
+	errorMessage := ""
+	if projected.Error != nil {
+		errorCode = projected.Error.Code
+		errorMessage = projected.Error.Message
 	}
 
 	return &threadapi.TaskThreadRun{
-		RunID:             run.RunID,
-		ThreadID:          run.ThreadID,
-		ParentRunID:       run.ParentRunID,
-		SpaceID:           run.SpaceID,
-		CreatorID:         run.CreatorID,
-		AssistantID:       run.AssistantID,
-		RunKind:           string(run.RunKind),
-		Status:            string(run.Status),
-		Command:           command,
-		Input:             input,
-		Config:            config,
-		Context:           runContext,
-		Metadata:          run.Metadata,
-		StreamMode:        run.StreamMode,
-		MultitaskStrategy: run.MultitaskStrategy,
-		OnDisconnect:      run.OnDisconnect,
-		Durability:        run.Durability,
-		IdempotencyKey:    run.IdempotencyKey,
-		WorkerID:          run.WorkerID,
-		ErrorCode:         run.ErrorCode,
-		ErrorMessage:      run.ErrorMessage,
-		StartedAt:         run.StartedAt,
-		EndedAt:           run.EndedAt,
-		CreatedAt:         run.CreatedAt,
-		UpdatedAt:         run.UpdatedAt,
+		RunID:             projected.RunID,
+		ThreadID:          projected.ThreadID,
+		ParentRunID:       projected.ParentRunID,
+		SpaceID:           projected.SpaceID,
+		CreatorID:         projected.CreatorID,
+		AssistantID:       projected.AssistantID,
+		RunKind:           string(projected.RunKind),
+		Status:            string(projected.Status),
+		Metadata:          projected.Metadata,
+		StreamMode:        projected.StreamMode,
+		MultitaskStrategy: projected.MultitaskStrategy,
+		OnDisconnect:      projected.OnDisconnect,
+		Durability:        projected.Durability,
+		ErrorCode:         errorCode,
+		ErrorMessage:      errorMessage,
+		StartedAt:         projected.StartedAt,
+		EndedAt:           projected.EndedAt,
+		CreatedAt:         projected.CreatedAt,
+		UpdatedAt:         projected.UpdatedAt,
 	}
 }
 
 func taskThreadRunEventToAPI(event *appagentthread.RunEventSummary) *threadapi.TaskThreadRunEvent {
-	if event == nil {
+	projected := appagentthread.ProjectPublicRunEvent(event)
+	if projected == nil {
 		return nil
 	}
 
 	return &threadapi.TaskThreadRunEvent{
-		EventID:   event.EventID,
-		ThreadID:  event.ThreadID,
-		RunID:     event.RunID,
-		EventType: event.EventType,
-		Payload:   taskThreadRunEventPayloadToAPI(event.EventType, event.Payload),
-		CreatedAt: event.CreatedAt,
+		EventID:   projected.EventID,
+		ThreadID:  projected.ThreadID,
+		RunID:     projected.RunID,
+		EventType: projected.EventType,
+		Payload:   projected.Payload,
+		CreatedAt: projected.CreatedAt,
 	}
-}
-
-func taskThreadRunEventPayloadToAPI(eventType, payload string) string {
-	if !isUnsafeTaskThreadRunEventPayload(eventType) {
-		return payload
-	}
-
-	safePayload := map[string]any{
-		"redacted": true,
-	}
-	var rawPayload map[string]any
-	if err := sonic.UnmarshalString(payload, &rawPayload); err == nil {
-		copySafeRunEventString(rawPayload, safePayload, "role")
-		copySafeRunEventString(rawPayload, safePayload, "tool_name")
-		copySafeRunEventString(rawPayload, safePayload, "tool_call_id")
-		copySafeRunEventString(rawPayload, safePayload, "finish_reason")
-		copySafeRunEventString(rawPayload, safePayload, "status")
-		copySafeRunEventBool(rawPayload, safePayload, "arguments_present")
-		copySafeRunEventBool(rawPayload, safePayload, "result_present")
-
-		if eventType == "message.completed" {
-			copySafeRunEventReasoningString(rawPayload, safePayload, "reasoning_content")
-			copySafeRunEventMessageToolCalls(rawPayload, safePayload)
-		}
-
-		if eventType == "tool.completed" && safePayload["result_present"] == nil && hasSafeRunEventString(rawPayload, "content") {
-			safePayload["result_present"] = true
-		}
-	}
-
-	encoded, err := sonic.MarshalString(safePayload)
-	if err != nil {
-		return `{"redacted":true}`
-	}
-
-	return encoded
-}
-
-func isUnsafeTaskThreadRunEventPayload(eventType string) bool {
-	switch eventType {
-	case "message.completed",
-		"tool.completed",
-		"tool.failed",
-		"model.safety_finish",
-		"agent.output":
-		return true
-	default:
-		return false
-	}
-}
-
-func copySafeRunEventString(source, target map[string]any, key string) {
-	if value, ok := safeRunEventString(source[key]); ok {
-		target[key] = value
-	}
-}
-
-func copySafeRunEventDisplayString(source, target map[string]any, key string) {
-	if value, ok := safeRunEventDisplayString(source[key]); ok {
-		target[key] = value
-	}
-}
-
-func copySafeRunEventReasoningString(source, target map[string]any, key string) {
-	if value, ok := safeRunEventDisplayStringWithLimit(source[key], maxSafeRunEventReasoningLen); ok {
-		target[key] = value
-	}
-}
-
-func copySafeRunEventBool(source, target map[string]any, key string) {
-	if value, ok := source[key].(bool); ok {
-		target[key] = value
-	}
-}
-
-func copySafeRunEventMessageToolCalls(source, target map[string]any) {
-	rawToolCalls, ok := source["tool_calls"].([]any)
-	if !ok || len(rawToolCalls) == 0 {
-		return
-	}
-
-	safeToolCalls := make([]map[string]any, 0, min(len(rawToolCalls), maxSafeRunEventToolCalls))
-	for _, rawToolCall := range rawToolCalls {
-		if len(safeToolCalls) >= maxSafeRunEventToolCalls {
-			break
-		}
-
-		toolCall, ok := rawToolCall.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		functionCall, _ := toolCall["function"].(map[string]any)
-		toolName, ok := safeRunEventToolName(firstRunEventValue(toolCall["name"], functionCall["name"]))
-		if !ok {
-			continue
-		}
-
-		safeFunctionCall := map[string]any{
-			"name": toolName,
-		}
-		if arguments := safeRunEventToolArguments(toolName, toolCall["args"], toolCall["arguments"], functionCall["arguments"]); len(arguments) > 0 {
-			if encodedArguments, err := sonic.MarshalString(arguments); err == nil {
-				safeFunctionCall["arguments"] = encodedArguments
-			}
-		}
-
-		safeToolCall := map[string]any{
-			"function": safeFunctionCall,
-		}
-		if id, ok := safeRunEventDisplayString(toolCall["id"]); ok {
-			safeToolCall["id"] = id
-		}
-		if callType, ok := safeRunEventDisplayString(toolCall["type"]); ok {
-			safeToolCall["type"] = callType
-		}
-		safeToolCalls = append(safeToolCalls, safeToolCall)
-	}
-
-	if len(safeToolCalls) > 0 {
-		target["tool_calls"] = safeToolCalls
-	}
-}
-
-func safeRunEventToolArguments(toolName string, values ...any) map[string]any {
-	for _, value := range values {
-		arguments, ok := runEventToolArgumentsObject(value)
-		if !ok {
-			continue
-		}
-
-		safeArguments := map[string]any{}
-		if toolName == "skill" {
-			if skill, ok := safeRunEventDisplayString(arguments["skill"]); ok {
-				safeArguments["skill"] = skill
-			}
-			if skillName, ok := safeRunEventDisplayString(arguments["skill_name"]); ok {
-				safeArguments["skill_name"] = skillName
-			}
-		}
-
-		if toolName == "web_search" {
-			if query, ok := safeRunEventDisplayString(arguments["query"]); ok {
-				safeArguments["query"] = query
-			}
-		}
-
-		if description, ok := safeRunEventDisplayString(arguments["description"]); ok {
-			safeArguments["description"] = description
-		}
-
-		for _, key := range []string{"path", "file_path", "filepath", "virtual_path", "output_path"} {
-			if path, ok := safeRunEventVirtualPath(arguments[key]); ok {
-				safeArguments[key] = path
-				break
-			}
-		}
-		if _, ok := safeArguments["path"]; !ok {
-			if path, ok := safeRunEventFirstVirtualPath(arguments["filepaths"]); ok {
-				safeArguments["path"] = path
-			}
-		}
-
-		if len(safeArguments) > 0 {
-			return safeArguments
-		}
-	}
-
-	return nil
-}
-
-func runEventToolArgumentsObject(value any) (map[string]any, bool) {
-	if value == nil {
-		return nil, false
-	}
-
-	if arguments, ok := value.(map[string]any); ok {
-		return arguments, true
-	}
-
-	text, ok := safeRunEventArgumentsJSONString(value)
-	if !ok {
-		return nil, false
-	}
-
-	var arguments map[string]any
-	if err := sonic.UnmarshalString(text, &arguments); err != nil {
-		return nil, false
-	}
-
-	return arguments, true
-}
-
-func safeRunEventArgumentsJSONString(value any) (string, bool) {
-	text, ok := value.(string)
-	if !ok {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "", false
-	}
-	text = strings.Map(func(item rune) rune {
-		if item < 0x20 || item == 0x7f {
-			return -1
-		}
-
-		return item
-	}, text)
-	if text == "" {
-		return "", false
-	}
-	if len([]rune(text)) > maxSafeRunEventArgumentsJSONLen {
-		return "", false
-	}
-
-	return text, true
-}
-
-func firstRunEventValue(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-
-	return nil
-}
-
-func hasSafeRunEventString(source map[string]any, key string) bool {
-	_, ok := safeRunEventString(source[key])
-
-	return ok
-}
-
-func safeRunEventString(value any) (string, bool) {
-	return safeRunEventStringWithLimit(value, maxSafeRunEventPayloadStringLen)
-}
-
-func safeRunEventStringWithLimit(value any, limit int) (string, bool) {
-	text, ok := value.(string)
-	if !ok {
-		return "", false
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "", false
-	}
-	text = strings.Map(func(item rune) rune {
-		if item < 0x20 || item == 0x7f {
-			return -1
-		}
-
-		return item
-	}, text)
-	if text == "" {
-		return "", false
-	}
-	runes := []rune(text)
-	if len(runes) > limit {
-		text = string(runes[:limit])
-	}
-
-	return text, true
-}
-
-func safeRunEventDisplayString(value any) (string, bool) {
-	return safeRunEventDisplayStringWithLimit(value, maxSafeRunEventPayloadStringLen)
-}
-
-func safeRunEventDisplayStringWithLimit(value any, limit int) (string, bool) {
-	text, ok := safeRunEventStringWithLimit(value, limit)
-	if !ok {
-		return "", false
-	}
-	if unsafeRunEventDisplayPattern.MatchString(text) {
-		return "", false
-	}
-
-	return text, true
-}
-
-func safeRunEventFirstVirtualPath(value any) (string, bool) {
-	values, ok := value.([]any)
-	if !ok {
-		return "", false
-	}
-	for _, value := range values {
-		if path, ok := safeRunEventVirtualPath(value); ok {
-			return path, true
-		}
-	}
-
-	return "", false
-}
-
-func safeRunEventVirtualPath(value any) (string, bool) {
-	text, ok := safeRunEventDisplayString(value)
-	if !ok {
-		return "", false
-	}
-	if !strings.HasPrefix(text, "/mnt/user-data/workspace/") && !strings.HasPrefix(text, "/mnt/user-data/outputs/") {
-		return "", false
-	}
-
-	return text, true
-}
-
-func safeRunEventToolName(value any) (string, bool) {
-	text, ok := safeRunEventDisplayString(value)
-	if !ok || len(text) > 64 {
-		return "", false
-	}
-	for index, char := range text {
-		if index == 0 {
-			if !isSafeRunEventToolNameFirstChar(char) {
-				return "", false
-			}
-			continue
-		}
-		if !isSafeRunEventToolNameChar(char) {
-			return "", false
-		}
-	}
-
-	return text, true
-}
-
-func isSafeRunEventToolNameFirstChar(char rune) bool {
-	return char == '_' || (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z')
-}
-
-func isSafeRunEventToolNameChar(char rune) bool {
-	return isSafeRunEventToolNameFirstChar(char) || (char >= '0' && char <= '9')
 }
 
 func taskThreadTokenUsageToAPI(usage *appagentthread.TokenUsageSummary) *threadapi.TaskThreadTokenUsage {
-	if usage == nil {
+	projected := appagentthread.ProjectPublicTokenUsage(usage)
+	if projected == nil {
 		return nil
 	}
 
 	return &threadapi.TaskThreadTokenUsage{
-		UsageID:      usage.UsageID,
-		ThreadID:     usage.ThreadID,
-		RunID:        usage.RunID,
-		SpaceID:      usage.SpaceID,
-		Source:       string(usage.Source),
-		StepID:       usage.StepID,
-		StepIndex:    usage.StepIndex,
-		StepName:     usage.StepName,
-		ModelName:    usage.ModelName,
-		Provider:     usage.Provider,
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
-		TotalTokens:  usage.TotalTokens,
-		CostMicros:   usage.CostMicros,
-		Currency:     usage.Currency,
-		Estimated:    usage.Estimated,
+		UsageID:      projected.UsageID,
+		ThreadID:     projected.ThreadID,
+		RunID:        projected.RunID,
+		SpaceID:      projected.SpaceID,
+		Source:       string(projected.Source),
+		StepID:       projected.StepID,
+		StepIndex:    projected.StepIndex,
+		StepName:     projected.StepName,
+		ModelName:    projected.ModelName,
+		Provider:     projected.Provider,
+		InputTokens:  projected.InputTokens,
+		OutputTokens: projected.OutputTokens,
+		TotalTokens:  projected.TotalTokens,
+		CostMicros:   projected.CostMicros,
+		Currency:     projected.Currency,
+		Estimated:    projected.Estimated,
 		RawUsage:     "",
 		Metadata:     "",
-		CreatedAt:    usage.CreatedAt,
+		CreatedAt:    projected.CreatedAt,
 	}
 }
 
@@ -2597,18 +2253,19 @@ func taskThreadTokenUsageAggregateToAPI(aggregate *appagentthread.TokenUsageAggr
 }
 
 func taskThreadMessageToAPI(message *appagentthread.MessageSummary) *threadapi.TaskThreadMessage {
-	if message == nil {
+	projected := appagentthread.ProjectPublicMessage(message)
+	if projected == nil {
 		return nil
 	}
 
 	return &threadapi.TaskThreadMessage{
-		MessageID: message.MessageID,
-		ThreadID:  message.ThreadID,
-		RunID:     message.RunID,
-		Role:      string(message.Role),
-		Content:   message.Content,
-		Metadata:  message.Metadata,
-		CreatedAt: message.CreatedAt,
+		MessageID: projected.MessageID,
+		ThreadID:  projected.ThreadID,
+		RunID:     projected.RunID,
+		Role:      string(projected.Role),
+		Content:   projected.Content,
+		Metadata:  projected.Metadata,
+		CreatedAt: projected.CreatedAt,
 	}
 }
 
@@ -2821,7 +2478,12 @@ func writeTaskThreadRunEventStreamError(ctx context.Context, writer taskThreadRu
 	if err == nil {
 		return
 	}
-	if writeErr := writer.WriteEvent("", taskThreadRunEventStreamError, []byte(err.Error())); writeErr != nil {
+	logs.CtxErrorf(ctx, "task thread run event stream failed, err=%v", err)
+	payload, marshalErr := sonic.Marshal(appagentthread.ProjectPublicRuntimeError("runtime_stream_error", err.Error()))
+	if marshalErr != nil {
+		payload = []byte(`{"code":"runtime_stream_error","message":"Agent run failed"}`)
+	}
+	if writeErr := writer.WriteEvent("", taskThreadRunEventStreamError, payload); writeErr != nil {
 		logs.CtxWarnf(ctx, "write task thread run event stream error failed, err=%v", writeErr)
 	}
 }

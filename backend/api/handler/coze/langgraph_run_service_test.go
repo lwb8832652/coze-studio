@@ -81,9 +81,14 @@ func TestLangGraphRunCreateListAndGetHandlers(t *testing.T) {
 	require.Contains(t, createBody, `"assistant_id":"default"`)
 	require.Contains(t, createBody, `"status":"pending"`)
 	require.Contains(t, createBody, `"source":"langgraph_sdk"`)
-	require.Contains(t, createBody, `"model_name":"gpt-4.1"`)
-	require.Contains(t, createBody, `"enable_skills":["research"]`)
+	require.NotContains(t, createBody, `"model_name":"gpt-4.1"`)
+	require.NotContains(t, createBody, `"enable_skills":["research"]`)
 	require.Contains(t, createBody, `"stream_mode":["messages","updates"]`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
+	require.NoError(t, err)
+	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
+	require.Contains(t, persisted.Run.Context, `"enable_skills":["research"]`)
 
 	listResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/runs?limit=10&offset=0", nil)
 	listBody := string(listResp.Result().Body())
@@ -227,7 +232,7 @@ func TestLangGraphRunCreateAcceptsFlexibleInputAndStreamMode(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, createResp.Code)
 	require.Contains(t, body, `"run_id":"2"`)
-	require.Contains(t, body, `"input":[{"content":"数组输入","role":"user"}]`)
+	require.NotContains(t, body, `"content":"数组输入"`)
 	require.Contains(t, body, `"stream_mode":["updates"]`)
 
 	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 2})
@@ -381,9 +386,13 @@ func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testi
 	var apiRun langgraphapi.Run
 	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
 	require.Equal(t, "queued", apiRun.Status)
-	require.Equal(t, "langgraph_sdk", apiRun.Metadata["client"])
+	require.NotContains(t, body, "langgraph_sdk")
+	require.Empty(t, apiRun.Command)
 
-	resumeCommand, ok := apiRun.Command["resume"].(map[string]any)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
+	require.NoError(t, err)
+	command := langGraphJSONMap(persisted.Run.Command)
+	resumeCommand, ok := command["resume"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeCommand["checkpoint_id"])
 	require.Equal(t, "harness.terminal", resumeCommand["checkpoint_ns"])
@@ -391,13 +400,11 @@ func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testi
 	require.Equal(t, "pending_sends_available", resumeCommand["reason"])
 	require.Equal(t, "worker_replay_not_enabled", resumeCommand["guard"])
 
-	resumeMetadata, ok := apiRun.Metadata["checkpoint_resume"].(map[string]any)
+	resumeMetadata, ok := langGraphJSONMap(persisted.Run.Metadata)["checkpoint_resume"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, true, resumeMetadata["protected_from_worker_claim"])
 	require.Equal(t, strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10), resumeMetadata["checkpoint_id"])
 
-	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
-	require.NoError(t, err)
 	require.Equal(t, appagentthread.RunStatusQueued, persisted.Run.Status)
 
 	claimed, err := appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
@@ -406,7 +413,7 @@ func TestLangGraphRunCreateCreatesProtectedResumeRunFromReadyCheckpoint(t *testi
 	})
 	require.NoError(t, err)
 	require.Empty(t, claimed.Runs)
-	require.Contains(t, body, `"checkpoint_resume"`)
+	require.NotContains(t, body, `"checkpoint_resume"`)
 }
 
 func TestLangGraphRunCreatePreservesResumeTargets(t *testing.T) {
@@ -446,7 +453,10 @@ func TestLangGraphRunCreatePreservesResumeTargets(t *testing.T) {
 	require.Equal(t, http.StatusOK, createResp.Code)
 	var apiRun langgraphapi.Run
 	require.NoError(t, json.Unmarshal(createResp.Result().Body(), &apiRun))
-	resumeCommand, ok := apiRun.Command["resume"].(map[string]any)
+	require.Empty(t, apiRun.Command)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: langGraphInt64Value(apiRun.RunID)})
+	require.NoError(t, err)
+	resumeCommand, ok := langGraphJSONMap(persisted.Run.Command)["resume"].(map[string]any)
 	require.True(t, ok)
 	targets, ok := resumeCommand["targets"].(map[string]any)
 	require.True(t, ok)
@@ -639,7 +649,8 @@ func TestLangGraphRunMessagesHandlerReturnsDeerFlowPage(t *testing.T) {
 	require.Contains(t, firstBody, `"content":"请搜索青岛最佳旅游时间"`)
 	require.Contains(t, firstBody, `"seq":2`)
 	require.Contains(t, firstBody, `"type":"ai"`)
-	require.Contains(t, firstBody, `"reasoning_content":"Need travel season evidence"`)
+	require.Contains(t, firstBody, `"content":"我先查询天气和旅游季节。"`)
+	require.NotContains(t, firstBody, "Need travel season evidence")
 	require.NotContains(t, firstBody, `"type":"tool"`)
 
 	nextPage := ut.PerformRequest(
@@ -721,7 +732,7 @@ func TestLangGraphThreadMessagesHandlerReturnsDeerFlowList(t *testing.T) {
 	require.Equal(t, http.StatusOK, nextPage.Code)
 	require.Contains(t, nextBody, `"seq":4`)
 	require.Contains(t, nextBody, `"content":"第二轮回复"`)
-	require.Contains(t, nextBody, `"reasoning_content":"visible bounded reasoning"`)
+	require.NotContains(t, nextBody, "visible bounded reasoning")
 	require.NotContains(t, nextBody, "第一轮问题")
 }
 
@@ -1609,8 +1620,12 @@ func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun(t *testing
 	require.Contains(t, body, `"thread_id":"2"`)
 	require.Contains(t, body, `"status":"pending"`)
 	require.Contains(t, body, `"source":"api"`)
-	require.Contains(t, body, `"model_name":"gpt-4.1"`)
+	require.NotContains(t, body, `"model_name":"gpt-4.1"`)
 	require.Contains(t, body, `"stream_mode":["updates"]`)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: 3})
+	require.NoError(t, err)
+	require.Contains(t, persisted.Run.Config, `"model_name":"gpt-4.1"`)
 
 	threadResp, err := appagentthread.SVC.GetThread(context.Background(), &appagentthread.GetThreadRequest{ThreadID: 2})
 	require.NoError(t, err)
@@ -1726,6 +1741,121 @@ func TestLangGraphInterruptedStatusMapsToResumableInternalState(t *testing.T) {
 	)
 	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusInterrupted))
 	require.Equal(t, "interrupted", langGraphRunStatus(appagentthread.RunStatusCanceled))
+}
+
+func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
+	const sensitive = "langgraph-sensitive-sentinel"
+
+	run := langGraphRunToAPI(&appagentthread.RunSummary{
+		RunID:        1,
+		ThreadID:     2,
+		AssistantID:  "default",
+		Status:       appagentthread.RunStatusFailed,
+		Input:        `{"messages":["` + sensitive + `"]}`,
+		Command:      `{"resume":"` + sensitive + `"}`,
+		Config:       `{"api_key":"` + sensitive + `"}`,
+		Context:      `{"reasoning":"` + sensitive + `"}`,
+		Metadata:     `{"source":"api","credential":"` + sensitive + `"}`,
+		ErrorCode:    "model_provider_error",
+		ErrorMessage: sensitive,
+	})
+	require.Equal(t, map[string]any{"source": "api"}, run.Metadata)
+	require.Equal(t, map[string]any{}, run.Command)
+	require.Equal(t, map[string]any{}, run.Config)
+	require.Equal(t, map[string]any{}, run.Context)
+	require.Equal(t, map[string]any{}, run.Input)
+	require.Equal(t, "Model request failed", run.Error)
+	require.NotContains(t, mustMarshalJSON(t, run), sensitive)
+
+	checkpointState := langGraphThreadStateFromCheckpoint(
+		&appagentthread.ThreadSummary{ThreadID: 2, Title: "safe title"},
+		&appagentthread.CheckpointSummary{
+			CheckpointID:    4,
+			ThreadID:        2,
+			RunID:           1,
+			RuntimeType:     string(appagentthread.RuntimeModeEinoADK),
+			RuntimeKey:      sensitive,
+			ChannelValues:   sensitive,
+			ChannelVersions: `{"provider":"` + sensitive + `"}`,
+			PendingSends:    sensitive,
+			Metadata:        `{"provider":"` + sensitive + `"}`,
+		},
+	)
+	require.NotContains(t, mustMarshalJSON(t, checkpointState), sensitive)
+
+	event := &appagentthread.RunEventSummary{
+		EventID:   5,
+		ThreadID:  2,
+		RunID:     1,
+		EventType: "provider.experimental",
+		Payload:   `{"raw":"` + sensitive + `"}`,
+	}
+	require.NotContains(t, mustMarshalJSON(t, langGraphRunGenericEventPayload(event)), sensitive)
+
+	journal := langGraphRunJournalMessageToAPI(&appagentthread.RunJournalMessage{
+		ID:       "message-1",
+		ThreadID: 2,
+		RunID:    1,
+		Type:     appagentthread.RunJournalMessageTypeAI,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "visible response",
+		ToolCalls: []appagentthread.RunJournalToolCall{{
+			ID:   "call-1",
+			Name: "web_search",
+			Type: "function",
+			Args: map[string]any{"credential": sensitive},
+		}},
+		AdditionalKwargs: map[string]any{"reasoning_content": sensitive},
+		Usage:            map[string]any{"input_tokens": int64(3), "provider_body": sensitive},
+	}, 1)
+	require.Equal(t, "visible response", journal["content"])
+	require.NotContains(t, mustMarshalJSON(t, journal), sensitive)
+
+	stateMessages := langGraphThreadStateMessages([]*appagentthread.MessageSummary{{
+		MessageID: 1,
+		ThreadID:  2,
+		RunID:     1,
+		Role:      appagentthread.MessageRoleAssistant,
+		Content:   "visible state message",
+		Metadata:  `{"source":"runtime","provider_body":"` + sensitive + `"}`,
+	}})
+	require.NotContains(t, mustMarshalJSON(t, stateMessages), sensitive)
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	writeLangGraphRunStreamError(context.Background(), writer, errors.New(sensitive))
+	require.NotContains(t, writer.String(), sensitive)
+	require.Contains(t, writer.String(), "runtime_failed")
+}
+
+func TestLangGraphRunWaitResponseDoesNotExposeProviderError(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	const sensitive = "provider-sensitive-runtime-sentinel"
+	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+		RunID:        runResp.Run.RunID,
+		From:         appagentthread.RunStatusRunning,
+		WorkerID:     "worker-a",
+		ErrorCode:    "model_provider_error",
+		ErrorMessage: sensitive,
+	})
+	require.NoError(t, err)
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	result, err := langGraphRunWaitResponse(context.Background(), persisted.Run)
+	require.NoError(t, err)
+	require.Equal(t, "Model request failed", result["error"])
+	require.NotContains(t, mustMarshalJSON(t, result), sensitive)
 }
 
 type cursorRecordingLangGraphRunStreamWriter struct {
