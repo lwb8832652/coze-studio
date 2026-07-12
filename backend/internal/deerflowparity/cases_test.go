@@ -17,6 +17,7 @@
 package deerflowparity
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,6 +50,30 @@ func TestSemanticCoreCoverage(t *testing.T) {
 		require.NotEmpty(t, testCase.Expect.RequiredEvents)
 		require.NotEmpty(t, testCase.Expect.EventOrder)
 	}
+}
+
+func TestUltraCaseRequiresRealSubagentDelegation(t *testing.T) {
+	t.Parallel()
+
+	suite, err := LoadCases()
+	require.NoError(t, err)
+	index := slices.IndexFunc(suite.Cases, func(testCase Case) bool {
+		return testCase.ID == "core.ultra.subagents"
+	})
+	require.NotEqual(t, -1, index)
+	require.Contains(t, suite.Cases[index].InputPrompt, "必须实际调用可用的子智能体委派工具")
+}
+
+func TestClarificationCaseRequiresRealClarificationTool(t *testing.T) {
+	t.Parallel()
+
+	suite, err := LoadCases()
+	require.NoError(t, err)
+	index := slices.IndexFunc(suite.Cases, func(testCase Case) bool {
+		return testCase.ID == "core.clarify.followup"
+	})
+	require.NotEqual(t, -1, index)
+	require.Contains(t, suite.Cases[index].InputPrompt, "ask_clarification")
 }
 
 func TestDecodeCasesRejectsInvalidContracts(t *testing.T) {

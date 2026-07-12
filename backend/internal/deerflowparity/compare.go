@@ -64,6 +64,9 @@ func CompareCase(testCase Case, reference, candidate Observation) ComparisonResu
 func observationChecks(prefix string, testCase Case, observation Observation, expectedProduct Product) []ComparisonCheck {
 	checks := make([]ComparisonCheck, 0, 24)
 	addCheck := func(name, expected, actual string, passed bool) {
+		if strings.TrimSpace(actual) == "" {
+			actual = "missing"
+		}
 		checks = append(checks, ComparisonCheck{
 			Name: prefix + name, Expected: expected, Actual: actual, Passed: passed,
 		})
@@ -113,6 +116,12 @@ func observationChecks(prefix string, testCase Case, observation Observation, ex
 	}
 	if minimum := testCase.Expect.Children.Minimum; minimum > 0 {
 		addCheck("child_runs", fmt.Sprintf(">=%d", minimum), strconv.Itoa(observation.ChildRuns), observation.ChildRuns >= minimum)
+		addCheck(
+			"child_runs_completed",
+			fmt.Sprintf(">=%d", minimum),
+			strconv.Itoa(observation.CompletedChildRuns),
+			observation.CompletedChildRuns >= minimum,
+		)
 	}
 	if testCase.Expect.Clarification.Required {
 		addCheck("clarification", "present", strconv.FormatBool(observation.ClarificationPresent), observation.ClarificationPresent)
@@ -124,8 +133,19 @@ func observationChecks(prefix string, testCase Case, observation Observation, ex
 		addCheck("cancel_fence", "no_success_after_cancel", strconv.FormatBool(observation.SuccessAfterCancel), !observation.SuccessAfterCancel)
 	}
 	if testCase.Expect.ReconnectDeduplicated {
-		passed := observation.Reconnected && observation.DuplicateEvents == 0
-		addCheck("reconnect_deduplicated", "true/0", fmt.Sprintf("%t/%d", observation.Reconnected, observation.DuplicateEvents), passed)
+		passed := observation.Reconnected && observation.DuplicateEvents == 0 &&
+			observation.StreamTerminalObserved
+		addCheck(
+			"reconnect_deduplicated",
+			"true/0/terminal=true",
+			fmt.Sprintf(
+				"%t/%d/terminal=%t",
+				observation.Reconnected,
+				observation.DuplicateEvents,
+				observation.StreamTerminalObserved,
+			),
+			passed,
+		)
 	}
 	if caseHasAction(testCase, ActionReloadState) {
 		addCheck("state_reload", "durable", strconv.FormatBool(observation.StateReloaded), observation.StateReloaded)

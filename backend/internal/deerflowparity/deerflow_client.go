@@ -122,12 +122,21 @@ func (c *DeerFlowClient) GetRun(ctx context.Context, threadID, runID string) (Ru
 }
 
 func (c *DeerFlowClient) CancelRun(ctx context.Context, threadID, runID string) error {
-	return cancelPlatformRun(ctx, c.http, "deerflow", threadID, runID, c.csrfHeaders())
+	if err := validateOpaqueID(threadID); err != nil {
+		return err
+	}
+	if err := validateOpaqueID(runID); err != nil {
+		return err
+	}
+	path := "/api/threads/" + url.PathEscape(threadID) + "/runs/" + url.PathEscape(runID) +
+		"/cancel?action=interrupt&wait=true"
+	return c.http.doJSON(ctx, http.MethodPost, "deerflow_cancel_run", path, map[string]any{}, c.csrfHeaders(), nil)
 }
 
 func (c *DeerFlowClient) FollowUpRun(
 	ctx context.Context,
 	threadID string,
+	_ string,
 	input RunInput,
 	answer string,
 ) (StreamResult, error) {
@@ -229,7 +238,7 @@ func startPlatformRun(
 	if response.ThreadID != "" && response.ThreadID != threadID {
 		return RunHandle{}, fmt.Errorf("%s start run thread id mismatch", product)
 	}
-	return RunHandle{ThreadID: threadID, RunID: response.RunID, Status: canonicalTerminal(response.Status)}, nil
+	return RunHandle{ThreadID: threadID, RunID: response.RunID, Status: canonicalRunStatus(response.Status)}, nil
 }
 
 func streamExistingPlatformRun(
@@ -321,7 +330,7 @@ func getPlatformRun(
 	if response.RunID != runID || response.ThreadID != threadID {
 		return RunHandle{}, fmt.Errorf("%s get run identity mismatch", product)
 	}
-	return RunHandle{ThreadID: threadID, RunID: runID, Status: canonicalTerminal(response.Status)}, nil
+	return RunHandle{ThreadID: threadID, RunID: runID, Status: canonicalRunStatus(response.Status)}, nil
 }
 
 func streamResultFromFrames(product, threadID, fallbackRunID string, frames []SSEFrame) (StreamResult, error) {
@@ -353,6 +362,7 @@ func streamResultFromFrames(product, threadID, fallbackRunID string, frames []SS
 				return StreamResult{}, fmt.Errorf("%s stream terminal frame is invalid", product)
 			}
 			result.Terminal = canonicalTerminal(terminal.Status)
+			result.TerminalFrameObserved = true
 		case "error":
 			return StreamResult{}, fmt.Errorf("%s stream returned a runtime error", product)
 		}
@@ -376,6 +386,7 @@ func runInputWithThreadID(input RunInput, threadID string) RunInput {
 func waitForPlatformEvent(
 	ctx context.Context,
 	client interface {
+		GetRun(context.Context, string, string) (RunHandle, error)
 		ListRunEvents(context.Context, string, string, int) ([]map[string]any, error)
 	},
 	threadID string,
@@ -388,6 +399,24 @@ func waitForPlatformEvent(
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if eventFamily == "run.started" {
+			handle, err := client.GetRun(ctx, threadID, runID)
+			if err != nil {
+				return err
+			}
+			switch handle.Status {
+			case "running":
+				return nil
+			case "success", "cancelled", "failed", "interrupted":
+				return errors.New("run reached a terminal state before the event boundary")
+			}
+			select {
+			case <-ctx.Done():
+				return errors.New("event boundary wait timed out")
+			case <-ticker.C:
+			}
+			continue
+		}
 		events, err := client.ListRunEvents(ctx, threadID, runID, 1000)
 		if err != nil {
 			return err

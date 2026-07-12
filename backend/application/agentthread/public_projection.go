@@ -774,6 +774,16 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 		if hasAnyPublicValue(payload, "result", "content", "output") {
 			result["result_present"] = true
 		}
+	case eventType == "run.interrupted":
+		if interrupts := projectPublicHumanInteractionInterrupts(payload["interrupts"]); len(interrupts) > 0 {
+			result["interrupts"] = map[string]any{"items": interrupts}
+		}
+		if prompt := projectPublicHumanInteractionPrompt(payload["human_interaction"]); len(prompt) > 0 {
+			result["human_interaction"] = prompt
+		}
+		if prompts := projectPublicHumanInteractionPrompts(payload["human_interactions"]); len(prompts) > 0 {
+			result["human_interactions"] = prompts
+		}
 	case strings.HasPrefix(eventType, "run."):
 		copyPublicIdentifier(payload, result, "status")
 		copyPublicIdentifier(payload, result, "reason")
@@ -1076,6 +1086,96 @@ func copyPublicMessageToolCalls(source, target map[string]any) {
 	if len(result) > 0 {
 		target["tool_calls"] = result
 	}
+}
+
+func projectPublicHumanInteractionInterrupts(value any) []map[string]any {
+	items, _ := value.([]any)
+	if container, ok := value.(map[string]any); ok {
+		items, _ = container["items"].([]any)
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := publicIdentifier(publicString(raw["id"]), maxPublicIdentifierRunes)
+		info := projectPublicHumanInteractionPrompt(raw["info"])
+		if id == "" || len(info) == 0 {
+			continue
+		}
+		projected := map[string]any{"id": id, "info": info}
+		result = append(result, projected)
+		if len(result) == 16 {
+			break
+		}
+	}
+	return result
+}
+
+func projectPublicHumanInteractionPrompts(value any) []map[string]any {
+	items, _ := value.([]any)
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if projected := projectPublicHumanInteractionPrompt(item); len(projected) > 0 {
+			result = append(result, projected)
+		}
+		if len(result) == 16 {
+			break
+		}
+	}
+	return result
+}
+
+func projectPublicHumanInteractionPrompt(value any) map[string]any {
+	raw, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	schemaName := publicIdentifier(publicString(raw["schema"]), maxPublicIdentifierRunes)
+	interactionID := publicIdentifier(publicString(raw["interaction_id"]), maxPublicIdentifierRunes)
+	kind := publicIdentifier(publicString(raw["kind"]), maxPublicIdentifierRunes)
+	if schemaName != humanInteractionSchema || interactionID == "" ||
+		(kind != string(HumanInteractionKindClarification) && kind != string(HumanInteractionKindConfirmation)) {
+		return nil
+	}
+
+	result := map[string]any{
+		"schema":         schemaName,
+		"interaction_id": interactionID,
+		"kind":           kind,
+	}
+	for _, key := range []string{"title", "question", "summary"} {
+		copyPublicLabel(raw, result, key)
+	}
+	copyPublicIdentifier(raw, result, "risk_level")
+	copyPublicBool(raw, result, "required")
+	copyPublicBool(raw, result, "allow_free_text")
+	if choices := projectPublicHumanInteractionChoices(raw["choices"]); len(choices) > 0 {
+		result["choices"] = choices
+	}
+	return result
+}
+
+func projectPublicHumanInteractionChoices(value any) []map[string]any {
+	items, _ := value.([]any)
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		projected := map[string]any{}
+		copyPublicIdentifier(raw, projected, "id")
+		copyPublicLabel(raw, projected, "label")
+		if len(projected) > 0 {
+			result = append(result, projected)
+		}
+		if len(result) == 32 {
+			break
+		}
+	}
+	return result
 }
 
 func copyPublicSkills(source, target map[string]any) {

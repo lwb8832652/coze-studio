@@ -320,7 +320,10 @@ func Init(ctx context.Context) (err error) {
 		func(run *agentthread.RunSummary) (adk.CheckPointStore, error) {
 			return agentthread.NewADKCheckpointStore(primaryServices.agentThreadSVC, run)
 		},
-		agentthread.NewThreadUsageCollector(primaryServices.agentThreadSVC),
+		agentthread.NewThreadUsageCollectorWithOptions(
+			primaryServices.agentThreadSVC,
+			agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
+		),
 		agentthread.WithADKCancelRegistry(adkCancelRegistry),
 		agentthread.WithADKSubagentRetrySourceResolver(
 			agentthread.NewApplicationADKSubagentRetrySourceResolver(

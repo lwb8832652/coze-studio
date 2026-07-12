@@ -61,7 +61,7 @@ type PlatformClient interface {
 	StreamExistingRun(context.Context, string, string, StreamOptions) (StreamResult, error)
 	GetRun(context.Context, string, string) (RunHandle, error)
 	CancelRun(context.Context, string, string) error
-	FollowUpRun(context.Context, string, RunInput, string) (StreamResult, error)
+	FollowUpRun(context.Context, string, string, RunInput, string) (StreamResult, error)
 	GetThreadState(context.Context, string) (map[string]any, error)
 	GetThreadHistory(context.Context, string, int) ([]map[string]any, error)
 	ListRunMessages(context.Context, string, string, PageRequest) (MessagePage, error)
@@ -321,10 +321,11 @@ func (r *Runner) executeProductCase(ctx context.Context, client PlatformClient, 
 		if err == nil && caseHasAction(testCase, ActionFollowUp) {
 			followUp := caseAction(testCase, ActionFollowUp)
 			var followedUp StreamResult
-			followedUp, err = client.FollowUpRun(ctx, threadID, input, followUp.Answer)
+			followedUp, err = client.FollowUpRun(ctx, threadID, combinedStream.RunID, input, followUp.Answer)
 			if err == nil {
 				runIDs = append(runIDs, followedUp.RunID)
 				combinedStream.Terminal = followedUp.Terminal
+				combinedStream.TerminalFrameObserved = followedUp.TerminalFrameObserved
 				combinedStream.LastEventID = followedUp.LastEventID
 				combinedStream.Frames = append(combinedStream.Frames, followedUp.Frames...)
 			}
@@ -414,6 +415,7 @@ func (r *Runner) executeProductCase(ctx context.Context, client PlatformClient, 
 		Tokens:                   tokens,
 		Terminal:                 combinedStream.Terminal,
 		Reconnected:              caseHasAction(testCase, ActionReconnect),
+		StreamTerminalObserved:   combinedStream.TerminalFrameObserved,
 		ReconnectDuplicateEvents: countDuplicateSSEEventIDs(combinedStream.Frames),
 		RunCount:                 len(runIDs),
 		CancelRequested:          caseHasAction(testCase, ActionCancel),
@@ -674,11 +676,16 @@ func int64Value(value any) int64 {
 func rawEventsFromMaps(values []map[string]any) []RawEvent {
 	result := make([]RawEvent, 0, len(values)+4)
 	seenSubagents := map[string]struct{}{}
+	startedTaskCalls := map[string]struct{}{}
+	completedTaskCalls := map[string]struct{}{}
+	hasTaskToolLifecycle := slices.ContainsFunc(values, func(value map[string]any) bool {
+		return len(deerFlowToolCallIDs(mapValue(value["content"]), "task")) > 0
+	})
 	for _, value := range values {
 		eventType, _ := value["event_type"].(string)
 		payload := boundedEventPayload(value)
 		caller := stringValue(payload["caller"])
-		if strings.HasPrefix(strings.ToLower(caller), "subagent:") {
+		if !hasTaskToolLifecycle && strings.HasPrefix(strings.ToLower(caller), "subagent:") {
 			if _, exists := seenSubagents[caller]; !exists {
 				seenSubagents[caller] = struct{}{}
 				result = append(result, RawEvent{
@@ -696,6 +703,39 @@ func rawEventsFromMaps(values []map[string]any) []RawEvent {
 			Type:    eventType,
 			Payload: payload,
 		})
+		if strings.EqualFold(strings.TrimSpace(eventType), "llm.ai.response") {
+			for index, toolCallID := range deerFlowToolCallIDs(mapValue(value["content"]), "task") {
+				if _, exists := startedTaskCalls[toolCallID]; exists {
+					continue
+				}
+				startedTaskCalls[toolCallID] = struct{}{}
+				result = append(result, RawEvent{
+					ID:      fmt.Sprintf("%s.subagent.started.%d", eventID, index+1),
+					Type:    "subagent.started",
+					Payload: map[string]any{},
+				})
+			}
+			for index := 0; index < countDeerFlowToolCalls(mapValue(value["content"]), "ask_clarification"); index++ {
+				result = append(result, RawEvent{
+					ID:      fmt.Sprintf("%s.clarification.requested.%d", eventID, index+1),
+					Type:    "clarification.requested",
+					Payload: map[string]any{},
+				})
+			}
+		}
+		toolCallID := strings.TrimSpace(stringValue(payload["tool_call_id"]))
+		_, taskStarted := startedTaskCalls[toolCallID]
+		_, taskCompleted := completedTaskCalls[toolCallID]
+		if strings.EqualFold(strings.TrimSpace(eventType), "llm.tool.result") &&
+			strings.EqualFold(strings.TrimSpace(stringValue(payload["tool_name"])), "task") &&
+			taskStarted && !taskCompleted && !taskToolResultFailed(value) {
+			completedTaskCalls[toolCallID] = struct{}{}
+			result = append(result, RawEvent{
+				ID:      eventID + ".subagent.completed",
+				Type:    "subagent.completed",
+				Payload: map[string]any{},
+			})
+		}
 		if strings.EqualFold(strings.TrimSpace(eventType), "run.interrupted") &&
 			strings.EqualFold(strings.TrimSpace(stringValue(payload["interaction_kind"])), "clarification") {
 			result = append(result, RawEvent{
@@ -714,9 +754,15 @@ func boundedEventPayload(value map[string]any) map[string]any {
 	payload := mapValue(value["payload"])
 	metadata := mapValue(value["metadata"])
 	content := mapValue(value["content"])
-	for _, key := range []string{"status", "kind", "caller", "tool_name"} {
+	eventType := strings.ToLower(strings.TrimSpace(stringValue(value["event_type"])))
+	if eventType == "model.capability_downgraded" {
+		if enabled, ok := payload["effective_thinking_enabled"].(bool); ok {
+			result["effective_thinking_enabled"] = enabled
+		}
+	}
+	for _, key := range []string{"status", "kind", "caller", "tool_name", "tool_call_id"} {
 		for _, source := range []map[string]any{payload, metadata, content} {
-			if candidate := strings.TrimSpace(stringValue(source[key])); candidate != "" && len(candidate) <= 128 && !strings.ContainsAny(candidate, "\r\n\x00") {
+			if candidate := safeLifecycleIdentifier(source[key]); candidate != "" {
 				result[key] = candidate
 				break
 			}
@@ -732,6 +778,9 @@ func boundedEventPayload(value map[string]any) map[string]any {
 			result["interaction_kind"] = kind
 		}
 	}
+	if hasDeerFlowTodoMutation(content) {
+		result["todo_mutation"] = true
+	}
 	if hasVisibleMessageContent(content) || hasVisibleMessageContent(payload) {
 		result["assistant_content_present"] = true
 	}
@@ -739,6 +788,99 @@ func boundedEventPayload(value map[string]any) map[string]any {
 		result["reasoning_present"] = true
 	}
 	return result
+}
+
+func hasDeerFlowTodoMutation(content map[string]any) bool {
+	if hasDeerFlowToolCall(content, "write_todos") {
+		return true
+	}
+	additional := mapValue(content["additional_kwargs"])
+	attribution := mapValue(additional["token_usage_attribution"])
+	if isDeerFlowTodoActionKind(stringValue(attribution["kind"])) {
+		return true
+	}
+	actions, _ := attribution["actions"].([]any)
+	for _, value := range actions {
+		if isDeerFlowTodoActionKind(stringValue(mapValue(value)["kind"])) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDeerFlowToolCall(content map[string]any, expectedName string) bool {
+	return countDeerFlowToolCalls(content, expectedName) > 0
+}
+
+func countDeerFlowToolCalls(content map[string]any, expectedName string) int {
+	toolCalls, _ := content["tool_calls"].([]any)
+	count := 0
+	for _, value := range toolCalls {
+		if strings.EqualFold(strings.TrimSpace(stringValue(mapValue(value)["name"])), expectedName) {
+			count++
+		}
+	}
+	return count
+}
+
+func deerFlowToolCallIDs(content map[string]any, expectedName string) []string {
+	toolCalls, _ := content["tool_calls"].([]any)
+	result := make([]string, 0, len(toolCalls))
+	seen := make(map[string]struct{}, len(toolCalls))
+	for _, value := range toolCalls {
+		toolCall := mapValue(value)
+		if !strings.EqualFold(strings.TrimSpace(stringValue(toolCall["name"])), expectedName) {
+			continue
+		}
+		id := safeLifecycleIdentifier(toolCall["id"])
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func safeLifecycleIdentifier(value any) string {
+	candidate := strings.TrimSpace(stringValue(value))
+	if candidate == "" || len(candidate) > 128 || strings.ContainsAny(candidate, "/\\\r\n\t\x00") {
+		return ""
+	}
+	return candidate
+}
+
+func taskToolResultFailed(value map[string]any) bool {
+	for _, source := range []map[string]any{
+		mapValue(value["payload"]),
+		mapValue(value["metadata"]),
+		mapValue(value["content"]),
+	} {
+		switch strings.ToLower(strings.TrimSpace(stringValue(source["status"]))) {
+		case "error", "failed", "cancelled", "canceled", "rejected", "blocked":
+			return true
+		}
+		if failed, ok := source["is_error"].(bool); ok && failed {
+			return true
+		}
+		if strings.TrimSpace(stringValue(source["error"])) != "" ||
+			strings.TrimSpace(stringValue(source["error_code"])) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func isDeerFlowTodoActionKind(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "todo_start", "todo_complete", "todo_update", "todo_remove":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasVisibleMessageContent(value map[string]any) bool {

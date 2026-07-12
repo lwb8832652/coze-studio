@@ -17,6 +17,7 @@
 package deerflowparity
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -89,6 +90,31 @@ func TestCompareCaseDifferentWhenTerminalIsNotExactlyOncePerRun(t *testing.T) {
 	require.Contains(t, failedCheckNames(result), "terminal_exactly_once")
 }
 
+func TestCompareCaseReportsMissingTerminalWithoutInvalidatingReport(t *testing.T) {
+	t.Parallel()
+
+	testCase := mustAcceptanceCase(t, "core.cancel")
+	reference := passingObservation(ProductDeerFlow, testCase)
+	candidate := passingObservation(ProductNewX, testCase)
+	candidate.Terminal = ""
+
+	comparison := CompareCase(testCase, reference, candidate)
+	require.Equal(t, StatusDifferent, comparison.Status)
+	require.Equal(t, "missing", comparisonCheckActual(t, comparison, "terminal"))
+
+	report := SuiteReport{
+		Schema:               SuiteReportSchemaV1,
+		DeerFlowRevision:     lockedDeerFlowRevision,
+		RevisionProvenance:   RevisionProvenanceVerifiedSourceAttestedRuntime,
+		ReferenceEnvironment: "deerflow",
+		CandidateEnvironment: "newx",
+		Cases: []CaseReport{{
+			CaseID: testCase.ID, Reference: reference, Candidate: candidate, Comparison: comparison,
+		}},
+	}
+	require.NoError(t, WriteMarkdownReport(&bytes.Buffer{}, report))
+}
+
 func TestCompareCaseMarksBoundedExtraDiagnosticsStronger(t *testing.T) {
 	t.Parallel()
 
@@ -112,6 +138,37 @@ func TestCompareCasePropagatesSafeBlocker(t *testing.T) {
 	result := CompareCase(testCase, reference, candidate)
 	require.Equal(t, StatusBlocked, result.Status)
 	require.Equal(t, "newx_schema_migration_missing", result.Blocker)
+}
+
+func TestCompareCaseRejectsIncompleteSubagentLifecycles(t *testing.T) {
+	t.Parallel()
+
+	testCase := mustAcceptanceCase(t, "core.ultra.subagents")
+	reference := passingObservation(ProductDeerFlow, testCase)
+	candidate := passingObservation(ProductNewX, testCase)
+	candidate.CompletedChildRuns = testCase.Expect.Children.Minimum - 1
+
+	result := CompareCase(testCase, reference, candidate)
+	require.Equal(t, StatusDifferent, result.Status)
+	require.Contains(t, result.Checks, ComparisonCheck{
+		Name:     "child_runs_completed",
+		Expected: ">=2",
+		Actual:   "1",
+		Passed:   false,
+	})
+}
+
+func TestCompareCaseRequiresTerminalFrameAfterReconnect(t *testing.T) {
+	t.Parallel()
+
+	testCase := mustAcceptanceCase(t, "core.stream.reconnect")
+	reference := passingObservation(ProductDeerFlow, testCase)
+	candidate := passingObservation(ProductNewX, testCase)
+	candidate.StreamTerminalObserved = false
+
+	result := CompareCase(testCase, reference, candidate)
+	require.Equal(t, StatusDifferent, result.Status)
+	require.Contains(t, failedCheckNames(result), "reconnect_deduplicated")
 }
 
 func mustAcceptanceCase(t *testing.T, id string) Case {
@@ -144,9 +201,11 @@ func passingObservation(product Product, testCase Case) Observation {
 		Token:                   TokenObservation{Input: 10, Output: 2, Total: 12},
 		Terminal:                testCase.Expect.RequiredTerminal[0],
 		ChildRuns:               testCase.Expect.Children.Minimum,
+		CompletedChildRuns:      testCase.Expect.Children.Minimum,
 		ClarificationPresent:    testCase.Expect.Clarification.Required,
 		FollowUpObserved:        testCase.Expect.Clarification.FollowUpRequired,
 		Reconnected:             testCase.Expect.ReconnectDeduplicated,
+		StreamTerminalObserved:  testCase.Expect.ReconnectDeduplicated,
 		RunCount:                runCount,
 		TerminalEvents:          runCount,
 	}
@@ -178,4 +237,15 @@ func failedCheckNames(result ComparisonResult) []string {
 		}
 	}
 	return names
+}
+
+func comparisonCheckActual(t *testing.T, result ComparisonResult, name string) string {
+	t.Helper()
+	for _, check := range result.Checks {
+		if check.Name == name {
+			return check.Actual
+		}
+	}
+	t.Fatalf("comparison check %q not found", name)
+	return ""
 }

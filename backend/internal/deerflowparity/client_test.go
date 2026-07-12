@@ -146,9 +146,18 @@ func TestNewXClientUsesJSONLoginAndServerOwnedNumericThread(t *testing.T) {
 			require.Equal(t, "7656103552997130240", metadata["space_id"])
 			require.NotContains(t, metadata, "user_id")
 			writeTestJSON(writer, map[string]any{"thread_id": "7657000000000000000"})
-		case "/api/threads/7657000000000000000/runs/stream":
+		case "/api/threads/7657000000000000000/runs":
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+			require.Equal(t, "lead_agent", body["assistant_id"])
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "7657000000000000000",
+				"run_id":    "7657000000000000001",
+				"status":    "pending",
+			})
+		case "/api/threads/7657000000000000000/runs/7657000000000000001/stream":
 			writer.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(writer, "event: metadata\ndata: {\"run_id\":\"7657000000000000001\",\"thread_id\":\"7657000000000000000\"}\n\n")
+			_, _ = fmt.Fprint(writer, "id: 1\nevent: events\ndata: {\"event_type\":\"run.started\",\"payload\":{}}\n\n")
 			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"succeeded\"}\n\n")
 		default:
 			http.NotFound(writer, request)
@@ -181,6 +190,38 @@ func TestNewXClientRequiresSessionCookie(t *testing.T) {
 	require.NoError(t, err)
 	err = client.Login(context.Background(), Credentials{Email: "user@example.com", Password: "password"})
 	require.ErrorContains(t, err, "session")
+}
+
+func TestNewXClientStreamRunStartsThenFollowsExistingRun(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs":
+			require.Equal(t, http.MethodPost, request.Method)
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+			require.Equal(t, "lead_agent", body["assistant_id"])
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1",
+				"run_id":    "run-1",
+				"status":    "pending",
+			})
+		case "/api/threads/thread-1/runs/run-1/stream":
+			require.Equal(t, http.MethodGet, request.Method)
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(writer, "id: 1\nevent: events\ndata: {\"event_type\":\"run.started\",\"payload\":{}}\n\n")
+			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	stream, err := client.StreamRun(context.Background(), "thread-1", testRunInput())
+	require.NoError(t, err)
+	require.Equal(t, "run-1", stream.RunID)
+	require.Equal(t, "success", stream.Terminal)
 }
 
 func testRunInput() RunInput {
@@ -241,6 +282,50 @@ func TestStreamExistingRunStopAfterFramesCountsEventFrames(t *testing.T) {
 	require.Len(t, stream.Frames, 2)
 }
 
+func TestNewXClientStreamExistingRunReconnectsUntilTerminal(t *testing.T) {
+	streamCalls := 0
+	statusCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1/stream":
+			streamCalls++
+			require.Equal(t, "events", request.URL.Query().Get("stream_mode"))
+			writer.Header().Set("Content-Type", "text/event-stream")
+			if streamCalls == 1 {
+				require.Empty(t, request.URL.Query().Get("after_event_id"))
+				require.Empty(t, request.Header.Get("Last-Event-ID"))
+				_, _ = fmt.Fprint(writer, "id: 1\nevent: events\ndata: {\"event_type\":\"run.started\",\"payload\":{}}\n\n")
+				return
+			}
+			require.Equal(t, "1", request.URL.Query().Get("after_event_id"))
+			require.Equal(t, "1", request.Header.Get("Last-Event-ID"))
+			_, _ = fmt.Fprint(writer, "id: 2\nevent: events\ndata: {\"event_type\":\"assistant.completed\",\"payload\":{}}\n\n")
+			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
+		case "/api/threads/thread-1/runs/run-1":
+			statusCalls++
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1",
+				"run_id":    "run-1",
+				"status":    "running",
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	stream, err := client.StreamExistingRun(context.Background(), "thread-1", "run-1", StreamOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "success", stream.Terminal)
+	require.True(t, stream.TerminalFrameObserved)
+	require.Equal(t, "2", stream.LastEventID)
+	require.Len(t, stream.Frames, 3)
+	require.Equal(t, 2, streamCalls)
+	require.Equal(t, 1, statusCalls)
+}
+
 func TestStreamResultFromFramesPreservesFallbackRunIDWhenMetadataOmitsIt(t *testing.T) {
 	t.Parallel()
 
@@ -251,31 +336,230 @@ func TestStreamResultFromFramesPreservesFallbackRunIDWhenMetadataOmitsIt(t *test
 	require.NoError(t, err)
 	require.Equal(t, "run-1", result.RunID)
 	require.Equal(t, "success", result.Terminal)
+	require.True(t, result.TerminalFrameObserved)
 }
 
-func TestNewXClientFollowUpCreatesASecondRunOnTheSameThread(t *testing.T) {
-	t.Parallel()
-
+func TestNewXClientStreamExistingRunRejectsRESTTerminalWithoutTerminalSSE(t *testing.T) {
+	streamCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/threads/thread-1/runs/stream" {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1/stream":
+			streamCalls++
+			writer.Header().Set("Content-Type", "text/event-stream")
+			if streamCalls == 1 {
+				_, _ = fmt.Fprint(writer, "id: 1\nevent: events\ndata: {\"event_type\":\"assistant.completed\",\"payload\":{}}\n\n")
+			}
+		case "/api/threads/thread-1/runs/run-1":
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1", "run_id": "run-1", "status": "success",
+			})
+		default:
 			http.NotFound(writer, request)
-			return
 		}
-		var body map[string]any
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-		input := body["input"].(map[string]any)
-		messages := input["messages"].([]any)
-		require.Equal(t, "方案 A", messages[0].(map[string]any)["content"])
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(writer, "event: metadata\ndata: {\"run_id\":\"run-2\",\"thread_id\":\"thread-1\"}\n\n")
-		_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
 	}))
 	t.Cleanup(server.Close)
 
 	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
 	require.NoError(t, err)
-	followedUp, err := client.FollowUpRun(context.Background(), "thread-1", testRunInput(), "方案 A")
+	_, err = client.StreamExistingRun(context.Background(), "thread-1", "run-1", StreamOptions{})
+	require.ErrorContains(t, err, "omitted terminal frame")
+	require.Equal(t, 2, streamCalls)
+}
+
+func TestNewXClientFollowUpResumesAnInterruptedRunOnTheSameThread(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1":
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1",
+				"run_id":    "run-1",
+				"status":    "interrupted",
+			})
+		case "/api/workbench/task_threads/thread-1/run_events":
+			require.Equal(t, "run-1", request.URL.Query().Get("run_id"))
+			writeTestJSON(writer, map[string]any{"code": 0, "data": map[string]any{
+				"total": 1,
+				"events": []map[string]any{{
+					"event_id":   "7",
+					"event_type": "run.interrupted",
+					"payload": `{
+					"interrupts":{"items":[{
+						"id":"interrupt-1",
+						"info":{"schema":"coze.human_interaction.v1","interaction_id":"hi_1","kind":"clarification"},
+						"is_root_cause":true
+					}]}
+				}`,
+				}},
+			}})
+		case "/api/workbench/task_threads/thread-1/runs/run-1/resume":
+			var body map[string]any
+			require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+			require.Equal(t, "interrupt-1", body["interrupt_id"])
+			response := body["response"].(map[string]any)
+			require.Equal(t, "coze.human_interaction_response.v1", response["schema"])
+			require.Equal(t, "hi_1", response["interaction_id"])
+			require.Equal(t, "clarification", response["kind"])
+			require.Equal(t, "answered", response["decision"])
+			require.Equal(t, "方案 A", response["answer"])
+			writeTestJSON(writer, map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"thread_id": "thread-1",
+					"run_id":    "run-2",
+					"status":    "queued",
+				},
+			})
+		case "/api/threads/thread-1/runs/run-2/stream":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	followedUp, err := client.FollowUpRun(context.Background(), "thread-1", "run-1", testRunInput(), "方案 A")
 	require.NoError(t, err)
 	require.Equal(t, "run-2", followedUp.RunID)
 	require.Equal(t, "success", followedUp.Terminal)
+}
+
+func TestNewXClientFollowUpFindsClarificationAcrossEventPages(t *testing.T) {
+	pages := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1":
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1", "run_id": "run-1", "status": "interrupted",
+			})
+		case "/api/workbench/task_threads/thread-1/run_events":
+			pages++
+			page := request.URL.Query().Get("page")
+			events := []map[string]any{{
+				"event_id": page, "event_type": "run.started", "payload": `{}`,
+			}}
+			if page == "2" {
+				events = []map[string]any{{
+					"event_id": "201", "event_type": "run.interrupted",
+					"payload": `{"interrupts":{"items":[{"id":"interrupt-2","info":{"schema":"coze.human_interaction.v1","interaction_id":"hi_2","kind":"clarification"}}]}}`,
+				}}
+			}
+			writeTestJSON(writer, map[string]any{
+				"code": 0,
+				"data": map[string]any{"events": events, "total": 201},
+			})
+		case "/api/workbench/task_threads/thread-1/runs/run-1/resume":
+			writeTestJSON(writer, map[string]any{
+				"code": 0,
+				"data": map[string]any{"thread_id": "thread-1", "run_id": "run-2", "status": "queued"},
+			})
+		case "/api/threads/thread-1/runs/run-2/stream":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	result, err := client.FollowUpRun(
+		context.Background(), "thread-1", "run-1", testRunInput(), "继续",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "run-2", result.RunID)
+	require.Equal(t, 2, pages)
+}
+
+func TestNewXClientInterruptedWithoutClarificationFallsBackToOrdinaryFollowUp(t *testing.T) {
+	started := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1":
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1", "run_id": "run-1", "status": "interrupted",
+			})
+		case "/api/workbench/task_threads/thread-1/run_events":
+			writeTestJSON(writer, map[string]any{
+				"code": 0,
+				"data": map[string]any{"events": []any{}, "total": 0},
+			})
+		case "/api/threads/thread-1/runs":
+			started++
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1", "run_id": "run-2", "status": "queued",
+			})
+		case "/api/threads/thread-1/runs/run-2/stream":
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(writer, "event: end\ndata: {\"status\":\"success\"}\n\n")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	result, err := client.FollowUpRun(
+		context.Background(), "thread-1", "run-1", testRunInput(), "继续",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "run-2", result.RunID)
+	require.Equal(t, 1, started)
+}
+
+func TestDeerFlowClientWaitForRunStartedUsesLiveRunStatus(t *testing.T) {
+	t.Parallel()
+
+	getCalls := 0
+	eventCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/threads/thread-1/runs/run-1":
+			getCalls++
+			status := "pending"
+			if getCalls > 1 {
+				status = "running"
+			}
+			writeTestJSON(writer, map[string]any{
+				"thread_id": "thread-1", "run_id": "run-1", "status": status,
+			})
+		case "/api/threads/thread-1/runs/run-1/events":
+			eventCalls++
+			writeTestJSON(writer, []any{})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewDeerFlowClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, client.WaitForEvent(ctx, "thread-1", "run-1", "run.started"))
+	require.Equal(t, 2, getCalls)
+	require.Zero(t, eventCalls)
+}
+
+func TestDeerFlowClientCancelWaitsForInterruptToSettle(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodPost, request.Method)
+		require.Equal(t, "/api/threads/thread-1/runs/run-1/cancel", request.URL.Path)
+		require.Equal(t, "true", request.URL.Query().Get("wait"))
+		require.Equal(t, "interrupt", request.URL.Query().Get("action"))
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewDeerFlowClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	require.NoError(t, client.CancelRun(context.Background(), "thread-1", "run-1"))
 }

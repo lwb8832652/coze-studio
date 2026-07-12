@@ -129,6 +129,7 @@ type RawCapture struct {
 	Tokens                   []RawTokenUsage
 	Terminal                 string
 	Reconnected              bool
+	StreamTerminalObserved   bool
 	ReconnectDuplicateEvents int
 	RunCount                 int
 	CancelRequested          bool
@@ -165,6 +166,7 @@ type Observation struct {
 	AssistantMessageBytes   int              `json:"assistant_message_bytes"`
 	Todo                    TodoObservation  `json:"todo"`
 	ChildRuns               int              `json:"child_runs"`
+	CompletedChildRuns      int              `json:"completed_child_runs"`
 	InterruptPresent        bool             `json:"interrupt_present"`
 	ResumeObserved          bool             `json:"resume_observed"`
 	ClarificationPresent    bool             `json:"clarification_present"`
@@ -172,6 +174,7 @@ type Observation struct {
 	Token                   TokenObservation `json:"token"`
 	Terminal                string           `json:"terminal"`
 	Reconnected             bool             `json:"reconnected"`
+	StreamTerminalObserved  bool             `json:"stream_terminal_observed"`
 	DuplicateEvents         int              `json:"duplicate_events"`
 	RunCount                int              `json:"run_count"`
 	TerminalEvents          int              `json:"terminal_events"`

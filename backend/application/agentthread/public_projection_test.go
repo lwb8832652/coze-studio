@@ -147,6 +147,102 @@ func TestPublicRunEventRedactsKnownPayload(t *testing.T) {
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
 }
 
+func TestPublicRunInterruptedKeepsOnlyResumableHumanInteractionMetadata(t *testing.T) {
+	prompt := `{
+		"schema":"coze.human_interaction.v1",
+		"interaction_id":"hi_1",
+		"kind":"clarification",
+		"title":"选择执行方案",
+		"question":"请选择方案 A 或方案 B",
+		"description":"继续执行前需要你的选择",
+		"summary":"请选择后继续",
+		"rejection_guidance":"` + publicProjectionSensitiveSentinel + `",
+		"risk_level":"medium",
+		"tool_name":"ask_clarification",
+		"tool_call_id":"call-private",
+		"policy_ref":"/private/policy/path",
+		"action":"/private/action/path",
+		"default_decision":"approved",
+		"required":true,
+		"allow_free_text":true,
+		"choices":[{"id":"a","label":"方案 A","value":"A","credential":"` + publicProjectionSensitiveSentinel + `"}],
+		"consequences":["/private/consequence"],
+		"affected_resources":["/private/resource"],
+		"created_at":123,
+		"context":"` + publicProjectionSensitiveSentinel + `",
+		"provider_body":"` + publicProjectionSensitiveSentinel + `"
+	}`
+	got := ProjectPublicRunEvent(&RunEventSummary{
+		EventID:   7,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "run.interrupted",
+		Payload: `{
+			"interrupts":[{
+				"id":"interrupt-1",
+				"address":"` + publicProjectionSensitiveSentinel + `",
+				"info":` + prompt + `,
+				"is_root_cause":true
+			}],
+			"human_interaction":` + prompt + `,
+			"human_interactions":[` + prompt + `],
+			"checkpoint_bytes":"` + publicProjectionSensitiveSentinel + `"
+		}`,
+		CreatedAt: 8,
+	})
+
+	require.NotNil(t, got)
+	require.JSONEq(t, `{
+		"interrupts":{"items":[{
+			"id":"interrupt-1",
+			"info":{
+				"schema":"coze.human_interaction.v1",
+				"interaction_id":"hi_1",
+				"kind":"clarification",
+				"title":"选择执行方案",
+				"question":"请选择方案 A 或方案 B",
+				"summary":"请选择后继续",
+				"risk_level":"medium",
+				"required":true,
+				"allow_free_text":true,
+				"choices":[{"id":"a","label":"方案 A"}]
+			}
+		}]},
+		"human_interaction":{
+			"schema":"coze.human_interaction.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"title":"选择执行方案",
+			"question":"请选择方案 A 或方案 B",
+			"summary":"请选择后继续",
+			"risk_level":"medium",
+			"required":true,
+			"allow_free_text":true,
+			"choices":[{"id":"a","label":"方案 A"}]
+		},
+		"human_interactions":[{
+			"schema":"coze.human_interaction.v1",
+			"interaction_id":"hi_1",
+			"kind":"clarification",
+			"title":"选择执行方案",
+			"question":"请选择方案 A 或方案 B",
+			"summary":"请选择后继续",
+			"risk_level":"medium",
+			"required":true,
+			"allow_free_text":true,
+			"choices":[{"id":"a","label":"方案 A"}]
+		}]
+	}`, got.Payload)
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+	for _, hidden := range []string{
+		"继续执行前需要你的选择", "call-private", "/private/policy/path",
+		"/private/action/path", "/private/consequence", "/private/resource",
+		`"value":"A"`, `"created_at":123`,
+	} {
+		require.NotContains(t, got.Payload, hidden)
+	}
+}
+
 func TestPublicRunEventKeepsApprovedVisibleMessageContent(t *testing.T) {
 	got := ProjectPublicRunEvent(&RunEventSummary{
 		EventID:   1,

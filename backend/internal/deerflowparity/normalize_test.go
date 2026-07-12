@@ -65,6 +65,63 @@ func TestNormalizeCaptureCanonicalizesProductEventAliases(t *testing.T) {
 	require.Equal(t, "success", newX.Terminal)
 }
 
+func TestNormalizeCaptureCanonicalizesNewXTokenUsageSnapshot(t *testing.T) {
+	t.Parallel()
+
+	observation, err := NormalizeCapture(RawCapture{
+		Product: ProductNewX,
+		CaseID:  "core.flash.direct",
+		Mode:    ModeFlash,
+		Events: []RawEvent{
+			{ID: "101", Type: "token_usage.snapshot"},
+		},
+		Terminal: "success",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"token.usage"}, observation.EventFamilies)
+}
+
+func TestNormalizeCaptureCanonicalizesNewXPlanMutationsAsTodoUpdates(t *testing.T) {
+	t.Parallel()
+
+	observation, err := NormalizeCapture(RawCapture{
+		Product: ProductNewX,
+		CaseID:  "core.pro.todo",
+		Mode:    ModePro,
+		Events: []RawEvent{
+			{ID: "101", Type: "plan.task.created"},
+			{ID: "102", Type: "plan.task.updated"},
+			{ID: "103", Type: "plan.task.completed"},
+			{ID: "104", Type: "plan.task.deleted"},
+		},
+		Terminal: "success",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"todo.updated", "todo.updated", "todo.updated", "todo.updated",
+	}, observation.EventFamilies)
+}
+
+func TestNormalizeCaptureUsesEffectiveThinkingCapabilityWithoutReasoningText(t *testing.T) {
+	t.Parallel()
+
+	observation, err := NormalizeCapture(RawCapture{
+		Product: ProductNewX,
+		CaseID:  "core.thinking.direct",
+		Mode:    ModeThinking,
+		Events: []RawEvent{{
+			ID:   "102",
+			Type: "model.capability_downgraded",
+			Payload: map[string]any{
+				"effective_thinking_enabled": true,
+			},
+		}},
+		Terminal: "success",
+	})
+	require.NoError(t, err)
+	require.True(t, observation.Capabilities.Thinking)
+}
+
 func TestNormalizeCaptureProjectsTodoInterruptAndChildren(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +149,7 @@ func TestNormalizeCaptureProjectsTodoInterruptAndChildren(t *testing.T) {
 	require.Equal(t, 2, observation.Todo.Total)
 	require.Equal(t, 1, observation.Todo.Completed)
 	require.Equal(t, 1, observation.ChildRuns)
+	require.Equal(t, 1, observation.CompletedChildRuns)
 	require.True(t, observation.InterruptPresent)
 	require.True(t, observation.ResumeObserved)
 }

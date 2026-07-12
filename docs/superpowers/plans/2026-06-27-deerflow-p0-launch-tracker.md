@@ -246,7 +246,7 @@ Every implementation slice must update this document:
     Verification includes all affected suites, targeted race/vet, full serial
     backend, formatting/diff checks and `APP_ENV=debug make build_server`.
 
-- 2026-07-11 `AR-PARITY-002` Agent semantic core (阻塞): Slice 1 security and
+- 2026-07-11 `AR-PARITY-002` Agent semantic core (已完成): Slice 1 security and
   lifecycle work is complete. This mainline sequence will close the runtime
   semantics required before workspace, orchestration and memory parity: one
   production Eino ADK path, one parsed DeerFlow mode contract, a versioned lead
@@ -333,9 +333,9 @@ Every implementation slice must update this document:
     Verification: focused RED/GREEN suites, affected application/domain/API
     packages, targeted race and vet, full serial backend with required Mockey
     compiler flags, formatting/diff checks and `APP_ENV=debug make build_server`
-    passed. The parent semantic-core item stays `阻塞` until its separately
-    tracked acceptance gate is closed.
-  - `AR-PARITY-002.5` Semantic core acceptance gate (阻塞): the versioned,
+    passed. The separately tracked acceptance gate is closed by
+    `AR-PARITY-002.5` below.
+  - `AR-PARITY-002.5` Semantic core acceptance gate (已完成): the versioned,
     redacted fixture contract, authenticated paired HTTP runner, bounded
     HTTP/SSE adapters, reconnect/pagination handling, revision attestation,
     per-invariant JSON/Markdown reports and NewX in-process semantic contracts
@@ -354,13 +354,23 @@ Every implementation slice must update this document:
     affected Agent/API packages, full serial backend, build and diff checks pass.
     Evidence:
     `docs/superpowers/evidence/2026-07-12-deerflow-agent-semantic-core-acceptance.md`.
-    The live phase remains blocked because the user requested that DeerFlow not
-    be started and Atlas reports the external debug database at
-    `20260710000100` with pending migration
-    `20260711000100_agent_run_leases.sql`; migration apply requires explicit
-    authorization. No live row is marked aligned. Workspace, Skill, MCP,
-    Artifact and Memory rows remain deferred to their owning delivery slices
-    and the final ten-row compatibility gate.
+    After the authorized Atlas apply, the external debug database is at
+    `20260711000100` with zero pending files. The paired live gate ran on
+    2026-07-13 against locked DeerFlow `5851f825`: flash, thinking, Pro Todo,
+    Ultra subagents, clarification/resume and SSE reconnect are `aligned`;
+    cancellation is `stronger` because NewX emits additional bounded diagnostic
+    metadata while both products satisfy the same cancel invariants. No row is
+    `different`, `blocked` or `unknown`. Evidence-backed fixes include segmented
+    SSE reconnect with mandatory stream-terminal delivery, bounded
+    token/Todo/subagent/clarification event mapping, strictly paired successful
+    child lifecycles, an Ultra-only built-in general-purpose subagent that
+    inherits ordinary tools while denying nested delegation, clarification,
+    confirmation and `present_files`, minimal resumable interaction metadata,
+    paginated NewX interrupt/resume follow-up and the locked DeerFlow cancel
+    wait contract. Per the user's explicit instruction,
+    DeerFlow page startup and visual comparison are not part of this backend
+    semantic gate. Workspace, Skill, MCP, Artifact and Memory rows remain owned
+    by their delivery slices and the final ten-row compatibility gate.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
@@ -588,7 +598,7 @@ Every implementation slice must update this document:
 
 | Subtask | Status | P0 Acceptance | Notes |
 | --- | --- | --- | --- |
-| 上线验收-Atlas migration 状态 | 阻塞 | Local Atlas can inspect/apply pending migrations without drift. | Local Atlas v0.35.0 is installed. A fresh read-only `atlas migrate status` on 2026-07-12 reports the external debug database at `20260710000100`, with `20260711000100_agent_run_leases.sql` pending. Applying the migration is a database structure change and requires explicit authorization; until then the Agent worker fails closed on the missing `execution_generation` column and the live semantic-core gate cannot run. Earlier migrations, including the `agent_files.virtual_path_hash` compatibility change, remain applied. |
+| 上线验收-Atlas migration 状态 | 已完成 | Local Atlas can inspect/apply pending migrations without drift. | Local Atlas v0.35.0 is installed. The user authorized the external debug migration; post-apply `atlas migrate status` on 2026-07-13 reports `Migration Status: OK`, current version `20260711000100`, `Executed Files: 5` and `Pending Files: 0`. The Agent worker and paired semantic-core gate subsequently executed successfully against the migrated schema. |
 | 上线验收-生成 API 合约 | 已完成 | IDL/generated Workbench clients are in sync after touched API changes. | Backfilled existing task-thread, run, token, artifact, resume, cancel, retry, and create-task-thread contracts into `idl/workbench/task.thrift`; added `.skill` artifact install to `idl/workbench/skill.thrift` and generated `workbenchSkill.InstallSkillFromArtifact`, so task artifact actions no longer call the install route through hand-written fetch. Added api-schema contract coverage so task-thread generated clients cannot exist without thrift service methods, and `ListTaskThreadRuns` must map `parent_run_id` as a query parameter for explicit child-run listing. Verified with `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`, `npm run test -- __tests__/workbench-task-contract.test.ts`, and `npm run test -- src/pages/tasks/__tests__/tasks-service.test.ts`. `rushx update` succeeds but currently rewrites unrelated generated files' formatting/license headers, so that generator-wide churn is excluded from P0 commits. |
 | 上线验收-后端单测 | 已完成 | Targeted backend package tests pass for touched code. | P0 canonical-create backend validation passed with `go test ./application/agentthread -run 'TestApplicationCreate(TaskThread|Run)' -count=1`, `go test ./api/handler/coze -run 'TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'Test(CreateTaskThread|CreateTaskThreadRun|AppendTaskThreadMessage|GetTaskThread|ListTaskThread)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'TestCancelTaskThreadRunHandler(CancelsPendingRun|TransitionsRun)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'TestGetTaskThreadTokenUsageHandler(ReturnsRowsAndAggregate|CanIncludeChildRuns)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'Test(ListTaskThreadRunEventsHandler(RedactsUnsafePayload|ReturnsEvents)|StreamTaskThreadRunEventsWritesEventsAndDone|TaskThreadRunEventStreamStopsForInterruptedRun)' -count=1`, `go test ./api/router/coze -run 'TestRegisterIncludesWorkbenchTaskThreadRoutes' -count=1`, plus existing P0 Skills/MCP/Tools targeted commands. A too-broad handler test command still hits known non-P0 Workflow/Conversation paths and Mockey gcflags requirements; use targeted package commands for P0 cutline evidence. |
 | 上线验收-前端类型/单测 | 已完成 | Targeted app/package typecheck or unit tests pass for touched UI. | Frontend validation passed with `rushx test -- src/pages/workbench/__tests__/workbench.test.tsx`, `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "legacy task id is zero string"`, `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx`, `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`, and `make fe`. Build warnings are limited to the existing Browserslist/caniuse-lite and typeless package warnings. |

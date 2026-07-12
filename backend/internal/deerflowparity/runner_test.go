@@ -428,9 +428,10 @@ func (f *fakePlatform) StreamExistingRun(_ context.Context, threadID, runID stri
 		terminal = "interrupted"
 	}
 	return StreamResult{
-		ThreadID: threadID,
-		RunID:    runID,
-		Terminal: terminal,
+		ThreadID:              threadID,
+		RunID:                 runID,
+		Terminal:              terminal,
+		TerminalFrameObserved: true,
 		Frames: []SSEFrame{
 			{ID: "2", Event: "values", Data: []byte(`{"messages":[]}`)},
 			{ID: "3", Event: "end", Data: []byte(`null`)},
@@ -444,7 +445,7 @@ func (f *fakePlatform) CancelRun(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (f *fakePlatform) FollowUpRun(_ context.Context, threadID string, _ RunInput, _ string) (StreamResult, error) {
+func (f *fakePlatform) FollowUpRun(_ context.Context, threadID, _ string, _ RunInput, _ string) (StreamResult, error) {
 	f.followUpCalls++
 	return StreamResult{ThreadID: threadID, RunID: string(f.product) + "-run-2", Terminal: "success"}, nil
 }
@@ -639,6 +640,162 @@ func TestLockedJournalDerivesTodoClarificationAndDistinctSubagents(t *testing.T)
 	}, families)
 }
 
+func TestLockedJournalDerivesClarificationFromToolCallWithoutArguments(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{{
+		"seq":        1,
+		"event_type": "llm.ai.response",
+		"content": map[string]any{
+			"type": "ai",
+			"tool_calls": []any{map[string]any{
+				"id": "call-1", "name": "ask_clarification", "args": "PRIVATE_CLARIFICATION_ARGUMENTS",
+			}},
+		},
+	}})
+	families := make([]string, 0, len(events))
+	for _, event := range events {
+		family, err := canonicalEventFamily(event)
+		require.NoError(t, err)
+		families = append(families, family)
+	}
+	require.Contains(t, families, "clarification.requested")
+	encoded, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PRIVATE_CLARIFICATION_ARGUMENTS")
+}
+
+func TestLockedJournalDerivesTodoFromBoundedTokenAttribution(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{{
+		"seq":        1,
+		"event_type": "llm.ai.response",
+		"content": map[string]any{
+			"type": "ai",
+			"additional_kwargs": map[string]any{
+				"token_usage_attribution": map[string]any{
+					"kind": "tool_batch",
+					"actions": []any{
+						map[string]any{"kind": "todo_start", "description": "PRIVATE_TODO_DESCRIPTION"},
+						map[string]any{"kind": "todo_update", "description": "PRIVATE_TODO_DESCRIPTION"},
+					},
+				},
+			},
+		},
+	}})
+	require.Len(t, events, 1)
+	family, err := canonicalEventFamily(events[0])
+	require.NoError(t, err)
+	require.Equal(t, "todo.updated", family)
+	encoded, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PRIVATE_TODO_DESCRIPTION")
+}
+
+func TestLockedJournalDerivesTodoFromBoundedWriteTodosCall(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{{
+		"seq":        1,
+		"event_type": "llm.ai.response",
+		"content": map[string]any{
+			"type": "ai",
+			"tool_calls": []any{
+				map[string]any{
+					"name": "write_todos",
+					"args": map[string]any{"todos": "PRIVATE_TODO_ARGUMENTS"},
+				},
+			},
+		},
+	}})
+	require.Len(t, events, 1)
+	family, err := canonicalEventFamily(events[0])
+	require.NoError(t, err)
+	require.Equal(t, "todo.updated", family)
+	encoded, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PRIVATE_TODO_ARGUMENTS")
+}
+
+func TestLockedJournalDerivesParallelSubagentsFromTaskToolLifecycle(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{
+		{
+			"seq":        3,
+			"event_type": "llm.ai.response",
+			"content": map[string]any{
+				"type": "ai",
+				"tool_calls": []any{
+					map[string]any{"id": "call-1", "name": "task", "args": "PRIVATE_SUBAGENT_ARGUMENTS"},
+					map[string]any{"id": "call-2", "name": "task", "args": "PRIVATE_SUBAGENT_ARGUMENTS"},
+				},
+			},
+		},
+		{"seq": 5, "event_type": "llm.tool.result", "content": map[string]any{"name": "task", "tool_call_id": "call-1"}},
+		{"seq": 6, "event_type": "llm.tool.result", "content": map[string]any{"name": "task", "tool_call_id": "call-2"}},
+	})
+	families := make([]string, 0, len(events))
+	for _, event := range events {
+		family, err := canonicalEventFamily(event)
+		require.NoError(t, err)
+		families = append(families, family)
+	}
+	require.Equal(t, 2, countString(families, "subagent.started"))
+	require.Equal(t, 2, countString(families, "subagent.completed"))
+	encoded, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PRIVATE_SUBAGENT_ARGUMENTS")
+}
+
+func TestLockedJournalDoesNotCompleteUnpairedOrFailedTaskToolResults(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{
+		{
+			"seq":        3,
+			"event_type": "llm.ai.response",
+			"content": map[string]any{
+				"tool_calls": []any{
+					map[string]any{"id": "call-1", "name": "task"},
+					map[string]any{"id": "call-2", "name": "task"},
+				},
+			},
+		},
+		{
+			"seq":        5,
+			"event_type": "llm.tool.result",
+			"content":    map[string]any{"name": "task", "tool_call_id": "call-x"},
+		},
+		{
+			"seq":        6,
+			"event_type": "llm.tool.result",
+			"content": map[string]any{
+				"name": "task", "tool_call_id": "call-1", "status": "failed",
+			},
+		},
+	})
+	families := make([]string, 0, len(events))
+	for _, event := range events {
+		family, err := canonicalEventFamily(event)
+		require.NoError(t, err)
+		families = append(families, family)
+	}
+	require.Equal(t, 2, countString(families, "subagent.started"))
+	require.Zero(t, countString(families, "subagent.completed"))
+}
+
+func countString(values []string, expected string) int {
+	count := 0
+	for _, value := range values {
+		if value == expected {
+			count++
+		}
+	}
+	return count
+}
+
 func TestNewXInterruptDerivesClarificationWithoutExposingInteractionPayload(t *testing.T) {
 	t.Parallel()
 
@@ -658,6 +815,26 @@ func TestNewXInterruptDerivesClarificationWithoutExposingInteractionPayload(t *t
 	encoded, err := json.Marshal(events)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "PRIVATE_QUESTION")
+}
+
+func TestNewXCapabilityEventKeepsOnlyEffectiveThinkingSignal(t *testing.T) {
+	t.Parallel()
+
+	events := rawEventsFromMaps([]map[string]any{{
+		"event_id":   "8",
+		"event_type": "model.capability_downgraded",
+		"payload": `{
+			"effective_thinking_enabled": true,
+			"requested_thinking_enabled": true,
+			"private_provider_body": "PRIVATE_PROVIDER_BODY"
+		}`,
+	}})
+	require.Len(t, events, 1)
+	require.Equal(t, true, events[0].Payload["effective_thinking_enabled"])
+	encoded, err := json.Marshal(events)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "PRIVATE_PROVIDER_BODY")
+	require.NotContains(t, string(encoded), "requested_thinking_enabled")
 }
 
 func TestWriteMarkdownReportRejectsUnsafeBlocker(t *testing.T) {

@@ -278,14 +278,14 @@ coverage remains mandatory even when a live endpoint is unavailable.
   DeerFlow base URLs, locked DeerFlow revision, model availability and the NewX
   debug schema. If the schema lacks a required migration, record `blocked` and
   request explicit database-apply authorization instead of changing it.
-- [ ] **Step 4: Run the seven paired cases when prerequisites pass.**
+- [x] **Step 4: Run the seven paired cases when prerequisites pass.**
 
   Run:
   `cd backend && go run ./cmd/deerflow-parity-acceptance -cases semantic-core -format markdown -out ../docs/superpowers/evidence/.local-agent-semantic-core.md`
 
   Expected: all rows `aligned`/documented `stronger`, or an explicit safe
   blocker. A blocker does not close `.5`.
-- [ ] **Step 5: Fix only evidence-backed semantic differences.** Add a RED test
+- [x] **Step 5: Fix only evidence-backed semantic differences.** Add a RED test
   for each observed mismatch before changing production code; do not compensate
   for provider wording or timing differences.
 - [x] **Step 6: Run full backend and build verification.**
@@ -302,14 +302,22 @@ coverage remains mandatory even when a live endpoint is unavailable.
   Run: `git diff --check`
 
   Expected: PASS.
-- [ ] **Step 7: Record evidence and close the tracker.** The evidence document
+- [x] **Step 7: Record evidence and close the tracker.** The evidence document
   must distinguish fixture/in-process/live results, list every blocker and keep
   later-slice cases deferred. Mark `AR-PARITY-002.5` and parent
   `AR-PARITY-002` complete only after all seven live core rows pass.
 
-  Current status: evidence is recorded, but closure remains blocked. DeerFlow
-  is intentionally not running and the external debug database still has
-  pending migration `20260711000100`; no live row is marked aligned.
+  Closure evidence recorded on 2026-07-13: Atlas is at
+  `20260711000100` with no pending files; six paired rows are `aligned`,
+  cancellation is `stronger`, and no row is `different`, `blocked` or
+  `unknown`. The user explicitly waived DeerFlow page comparison because its
+  frontend was unavailable; this gate proves backend function and execution
+  semantics through locked source, authenticated APIs, events and durable
+  state, not visual parity. The closing hardening also requires a terminal SSE
+  frame after reconnect, successful `tool_call_id`-paired child completion,
+  parent-tool inheritance with DeerFlow-equivalent built-in child deny rules,
+  minimal public interrupt metadata and paginated lookup of the latest
+  resumable interaction.
 - [x] **Step 8: Commit the completed mainline slice.**
 
   ```bash

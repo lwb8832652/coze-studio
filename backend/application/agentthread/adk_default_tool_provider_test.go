@@ -17,20 +17,43 @@
 package agentthread
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultADKToolProviderWithSingleAgentSubagentsKeepsBaseWithoutSource(
+func TestDefaultADKToolProviderWithSingleAgentSubagentsExposesBuiltinWithoutSource(
 	t *testing.T,
 ) {
 	provider := NewDefaultADKToolProviderWithSingleAgentSubagents(nil)
 
 	policy, ok := provider.(*ADKToolPolicyProvider)
 	require.True(t, ok)
-	_, ok = policy.base.(*adkHumanInteractionToolProvider)
+	subagents, ok := policy.base.(*ADKSubagentToolProvider)
 	require.True(t, ok)
+	definitions, err := subagents.definition.ResolveADKSubagents(
+		context.Background(),
+		&RunSummary{Config: `{"mode":"ultra"}`},
+	)
+	require.NoError(t, err)
+	require.Len(t, definitions, 1)
+	require.Equal(t, "general_purpose", definitions[0].Name)
+	require.NotEmpty(t, definitions[0].Description)
+}
+
+func TestDefaultADKToolProviderBuiltinRequiresExplicitSubagentMode(t *testing.T) {
+	provider := NewDefaultADKToolProviderWithSingleAgentSubagents(nil)
+	policy, ok := provider.(*ADKToolPolicyProvider)
+	require.True(t, ok)
+	subagents, ok := policy.base.(*ADKSubagentToolProvider)
+	require.True(t, ok)
+	definitions, err := subagents.definition.ResolveADKSubagents(
+		context.Background(),
+		&RunSummary{},
+	)
+	require.NoError(t, err)
+	require.Empty(t, definitions)
 }
 
 func TestDefaultADKToolProviderWithSingleAgentSubagentsWiresSnapshotGrants(
@@ -57,17 +80,26 @@ func TestDefaultADKToolProviderWithSingleAgentSubagentsWiresSnapshotGrants(
 	_, ok = subagents.base.(*adkHumanInteractionToolProvider)
 	require.True(t, ok)
 
-	definitionProvider, ok := subagents.definition.(*ADKSingleAgentSubagentDefinitionProvider)
+	definitionProvider, ok := subagents.definition.(*adkBuiltinSubagentDefinitionProvider)
 	require.True(t, ok)
-	sourceProvider, ok := definitionProvider.source.(*recordingSingleAgentDefinitionService)
+	configuredDefinition, ok := definitionProvider.configured.(*ADKSingleAgentSubagentDefinitionProvider)
+	require.True(t, ok)
+	sourceProvider, ok := configuredDefinition.source.(*recordingSingleAgentDefinitionService)
 	require.True(t, ok)
 	require.Same(t, source, sourceProvider)
-	_, ok = definitionProvider.references.(*ADKRunConfigSubagentReferenceProvider)
+	_, ok = configuredDefinition.references.(*ADKRunConfigSubagentReferenceProvider)
 	require.True(t, ok)
-	_, ok = definitionProvider.grants.(*ADKSingleAgentSnapshotToolGrantProvider)
+	_, ok = configuredDefinition.grants.(*ADKSingleAgentSnapshotToolGrantProvider)
 	require.True(t, ok)
 
-	subagentFactory, ok := subagents.factory.(*ADKSingleAgentSubagentAgentFactory)
+	routingFactory, ok := subagents.factory.(*adkConfiguredOrBuiltinSubagentAgentFactory)
+	require.True(t, ok)
+	builtinFactory, ok := routingFactory.builtin.(*adkBuiltinSubagentAgentFactory)
+	require.True(t, ok)
+	builtinChildFactory, ok := builtinFactory.factory.(*ApplicationADKAgentFactory)
+	require.True(t, ok)
+	require.IsType(t, &adkBuiltinSubagentToolProvider{}, builtinChildFactory.toolProvider)
+	subagentFactory, ok := routingFactory.configured.(*ADKSingleAgentSubagentAgentFactory)
 	require.True(t, ok)
 	factorySource, ok := subagentFactory.source.(*recordingSingleAgentDefinitionService)
 	require.True(t, ok)

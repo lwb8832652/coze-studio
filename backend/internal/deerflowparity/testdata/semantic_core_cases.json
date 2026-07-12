@@ -50,7 +50,7 @@
     {
       "id": "core.pro.todo",
       "mode": "pro",
-      "input_prompt": "请制定三步检查计划，逐项完成后用一句话总结。",
+      "input_prompt": "请显式创建一个包含 3 项的待办列表并逐项执行：1）计算 2+2；2）计算 3+3；3）汇总两个结果。每完成一项立即标记 completed；全部完成后只给出一句总结。",
       "actions": [{ "type": "run" }, { "type": "reload_state" }],
       "expect": {
         "capabilities": { "thinking": true, "plan": true, "subagent": false },
@@ -73,7 +73,7 @@
     {
       "id": "core.ultra.subagents",
       "mode": "ultra",
-      "input_prompt": "并行让两个子任务分别列出 2 个偶数和 2 个奇数，最后合并。",
+      "input_prompt": "必须实际调用可用的子智能体委派工具，并行委派两个彼此独立的子智能体：一个只列出 2 个偶数，另一个只列出 2 个奇数；等待两个子智能体完成后再合并结果。主智能体不得自行完成这两个子任务。",
       "actions": [{ "type": "run" }],
       "expect": {
         "capabilities": { "thinking": true, "subagent": true },
@@ -98,7 +98,7 @@
     {
       "id": "core.clarify.followup",
       "mode": "pro",
-      "input_prompt": "先向我确认使用方案 A 还是方案 B；得到回答前不要继续。",
+      "input_prompt": "必须实际调用 ask_clarification 工具，向我确认使用方案 A 还是方案 B；得到回答前不要继续。",
       "actions": [
         { "type": "run" },
         { "type": "follow_up", "answer": "方案 A" }

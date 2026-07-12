@@ -70,11 +70,12 @@ type RunInput struct {
 }
 
 type StreamResult struct {
-	ThreadID    string
-	RunID       string
-	Terminal    string
-	Frames      []SSEFrame
-	LastEventID string
+	ThreadID              string
+	RunID                 string
+	Terminal              string
+	Frames                []SSEFrame
+	LastEventID           string
+	TerminalFrameObserved bool
 }
 
 type RunHandle struct {

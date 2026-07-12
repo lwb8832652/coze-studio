@@ -80,16 +80,17 @@ func NormalizeCapture(raw RawCapture) (Observation, error) {
 	}
 
 	observation := Observation{
-		Schema:          ObservationSchemaV1,
-		Product:         raw.Product,
-		CaseID:          raw.CaseID,
-		Mode:            raw.Mode,
-		Reconnected:     raw.Reconnected,
-		Terminal:        canonicalTerminal(raw.Terminal),
-		DuplicateEvents: raw.ReconnectDuplicateEvents,
-		RunCount:        runCount,
-		StateReloaded:   raw.StateReloaded,
-		HistoryEntries:  raw.HistoryEntries,
+		Schema:                 ObservationSchemaV1,
+		Product:                raw.Product,
+		CaseID:                 raw.CaseID,
+		Mode:                   raw.Mode,
+		Reconnected:            raw.Reconnected,
+		StreamTerminalObserved: raw.StreamTerminalObserved,
+		Terminal:               canonicalTerminal(raw.Terminal),
+		DuplicateEvents:        raw.ReconnectDuplicateEvents,
+		RunCount:               runCount,
+		StateReloaded:          raw.StateReloaded,
+		HistoryEntries:         raw.HistoryEntries,
 	}
 
 	seenEventIDs := make(map[string]struct{}, len(raw.Events))
@@ -98,6 +99,11 @@ func NormalizeCapture(raw RawCapture) (Observation, error) {
 	for _, event := range raw.Events {
 		if err := rejectForbiddenRawValue(event.Payload); err != nil {
 			return Observation{}, err
+		}
+		if strings.EqualFold(strings.TrimSpace(event.Type), "model.capability_downgraded") {
+			if enabled, ok := event.Payload["effective_thinking_enabled"].(bool); ok && enabled {
+				observation.Capabilities.Thinking = true
+			}
 		}
 		if event.ID != "" {
 			if _, ok := seenEventIDs[event.ID]; ok {
@@ -117,6 +123,8 @@ func NormalizeCapture(raw RawCapture) (Observation, error) {
 		switch family {
 		case "subagent.started":
 			observation.ChildRuns++
+		case "subagent.completed":
+			observation.CompletedChildRuns++
 		case "run.interrupted":
 			observation.InterruptPresent = true
 			if !authoritativeCancel {
@@ -221,15 +229,19 @@ func canonicalEventFamily(event RawEvent) (string, error) {
 	case "assistant.completed", "message.completed", "assistant.message.completed":
 		return "assistant.completed", nil
 	case "llm.ai.response":
+		if mutation, _ := event.Payload["todo_mutation"].(bool); mutation {
+			return "todo.updated", nil
+		}
 		if present, _ := event.Payload["assistant_content_present"].(bool); present {
 			return "assistant.completed", nil
 		}
 		return "runtime.diagnostic", nil
-	case "token.usage", "usage.updated", "token_usage.updated":
+	case "token.usage", "usage.updated", "token_usage.updated", "token_usage.snapshot":
 		return "token.usage", nil
 	case "run.completed", "run.succeeded", "run.success", "run.end":
 		return "run.completed", nil
-	case "todo.updated", "write_todos", "tool.write_todos.completed":
+	case "todo.updated", "write_todos", "tool.write_todos.completed",
+		"plan.task.created", "plan.task.updated", "plan.task.completed", "plan.task.deleted":
 		return "todo.updated", nil
 	case "llm.tool.result":
 		toolName := strings.TrimSpace(stringValue(event.Payload["tool_name"]))
@@ -282,6 +294,16 @@ func canonicalTerminal(value string) string {
 		return ""
 	default:
 		return "unknown"
+	}
+}
+
+func canonicalRunStatus(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "pending", "queued", "running":
+		return normalized
+	default:
+		return canonicalTerminal(normalized)
 	}
 }
 
