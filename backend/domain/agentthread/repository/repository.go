@@ -186,9 +186,10 @@ type ListRunEventsRequest struct {
 }
 
 type ListCheckpointsRequest struct {
-	ThreadID int64
-	RunID    int64
-	Limit    int32
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	Limit       int32
 }
 
 type ListMemoriesRequest struct {
@@ -359,24 +360,27 @@ type RequestRunCancellationResult struct {
 }
 
 type FinalizeRunSuccessRequest struct {
-	RunID               int64
-	LeaseOwner          string
-	LeaseToken          string
-	ExecutionGeneration uint64
-	Now                 int64
-	Message             *entity.Message
-	TitleEvent          *entity.RunEvent
-	CompletionEvent     *entity.RunEvent
-	ExpectedThreadTitle string
-	ThreadTitle         string
+	RunID                             int64
+	LeaseOwner                        string
+	LeaseToken                        string
+	ExecutionGeneration               uint64
+	Now                               int64
+	Message                           *entity.Message
+	TitleEvent                        *entity.RunEvent
+	CompletionEvent                   *entity.RunEvent
+	TerminalCheckpoint                *entity.Checkpoint
+	TerminalCheckpointOnTitleConflict *entity.Checkpoint
+	ExpectedThreadTitle               string
+	ThreadTitle                       string
 }
 
 type FinalizeRunSuccessResult struct {
-	Run             *entity.Run
-	Message         *entity.Message
-	TitleEvent      *entity.RunEvent
-	CompletionEvent *entity.RunEvent
-	TitleUpdated    bool
+	Run                *entity.Run
+	Message            *entity.Message
+	TitleEvent         *entity.RunEvent
+	CompletionEvent    *entity.RunEvent
+	TerminalCheckpoint *entity.Checkpoint
+	TitleUpdated       bool
 }
 
 type UpdateRunStatusRequest struct {

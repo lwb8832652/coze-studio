@@ -691,6 +691,122 @@ func TestLangGraphThreadHistoryPostHandlerRedactsADKCheckpointEnvelope(t *testin
 	require.NotContains(t, body, "runtime_key")
 }
 
+func TestLangGraphThreadStateHandlerProjectsADKParityState(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/threads/:thread_id/state", GetLangGraphThreadState)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"create parity state"}]}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(1, runResp.Run.RunID, []appagentthread.ADKParityTodo{{
+		ID: "todo-1", Title: "整理资料", Status: "completed",
+	}})
+	state.Title = "青岛旅行计划"
+	state.Messages = []appagentthread.ADKParityMessage{
+		{ID: "message-1", RunID: runResp.Run.RunID, Role: "user", Content: "安排三日游"},
+		{ID: "message-2", RunID: runResp.Run.RunID, Role: "assistant", Content: "计划已完成"},
+	}
+	state.Artifacts = []appagentthread.ADKParityArtifact{{
+		ArtifactID: 6, RunID: runResp.Run.RunID, Title: "青岛旅行计划.md",
+		VirtualPath: "/mnt/user-data/outputs/青岛旅行计划.md", ArtifactType: "markdown",
+	}}
+	rawEnvelope := mustHandlerTestADKParityEnvelope(t, state, nil)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: runResp.Run.ThreadID, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType:     string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey:      "thread-1/run-" + strconv.FormatInt(runResp.Run.RunID, 10),
+		EnvelopeVersion: 2, ChannelValues: rawEnvelope, ChannelVersions: `{}`, PendingSends: `[]`,
+		Metadata: `{"runtime":"eino_adk","checkpoint_phase":"terminal"}`,
+	})
+	require.NoError(t, err)
+
+	stateResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1/state", nil)
+	body := string(stateResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, stateResp.Code)
+	require.Contains(t, body, `"title":"青岛旅行计划"`)
+	require.Contains(t, body, `"content":"安排三日游"`)
+	require.Contains(t, body, `"content":"计划已完成"`)
+	require.Contains(t, body, `"id":"todo-1"`)
+	require.Contains(t, body, `"title":"整理资料"`)
+	require.Contains(t, body, `"title":"青岛旅行计划.md"`)
+	require.Contains(t, body, `"completion":{"completed_at":1234,"reason":"completed"`)
+	require.NotContains(t, body, "opaque-checkpoint-secret")
+	require.NotContains(t, body, "runtime_key")
+}
+
+func TestLangGraphThreadHistoryFromADKCheckpointsOmitsRepeatedMessages(t *testing.T) {
+	latestState := handlerTestADKParityState(1, 2, nil)
+	latestState.Messages = []appagentthread.ADKParityMessage{{
+		ID: "message-latest", RunID: 2, Role: "assistant", Content: "latest answer",
+	}}
+	olderState := handlerTestADKParityState(1, 2, nil)
+	olderState.Messages = []appagentthread.ADKParityMessage{{
+		ID: "message-older", RunID: 2, Role: "assistant", Content: "older answer",
+	}}
+	checkpoints := []*appagentthread.CheckpointSummary{
+		{
+			CheckpointID: 11, ThreadID: 1, RunID: 2, CheckpointNS: "eino.adk",
+			RuntimeType: string(appagentthread.RuntimeModeEinoADK), EnvelopeVersion: 2,
+			ChannelValues: mustHandlerTestADKParityEnvelope(t, latestState, nil),
+		},
+		{
+			CheckpointID: 10, ThreadID: 1, RunID: 2, CheckpointNS: "eino.adk",
+			RuntimeType: string(appagentthread.RuntimeModeEinoADK), EnvelopeVersion: 2,
+			ChannelValues: mustHandlerTestADKParityEnvelope(t, olderState, nil),
+		},
+	}
+
+	states := langGraphThreadHistoryFromCheckpoints(&appagentthread.ThreadSummary{ThreadID: 1}, checkpoints)
+	entries := langGraphThreadHistoryEntriesFromCheckpoints(&appagentthread.ThreadSummary{ThreadID: 1}, checkpoints)
+
+	require.Len(t, states, 2)
+	require.Contains(t, states[0].Values, "messages")
+	require.NotContains(t, states[1].Values, "messages")
+	require.Len(t, entries, 2)
+	require.Contains(t, entries[0].Values, "messages")
+	require.NotContains(t, entries[1].Values, "messages")
+}
+
+func TestLangGraphADKTerminalCheckpointResumeReadinessReportsCompletion(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"done"}]}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(1, runResp.Run.RunID, nil)
+	runtimeKey := "thread-1/run-" + strconv.FormatInt(runResp.Run.RunID, 10)
+	checkpointResp, err := appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType: string(appagentthread.RuntimeModeEinoADK), RuntimeKey: runtimeKey,
+		EnvelopeVersion: 2, ChannelValues: mustHandlerTestADKParityEnvelope(t, state, nil),
+		ChannelVersions: `{}`, PendingSends: `[]`,
+		Metadata: `{"runtime":"eino_adk","checkpoint_phase":"terminal"}`,
+	})
+	require.NoError(t, err)
+
+	resumeResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/threads/1/checkpoints/"+strconv.FormatInt(checkpointResp.Checkpoint.CheckpointID, 10)+"/resume",
+		nil,
+	)
+	body := string(resumeResp.Result().Body())
+
+	require.Equal(t, http.StatusOK, resumeResp.Code)
+	require.Contains(t, body, `"resumable":false`)
+	require.Contains(t, body, `"reason":"checkpoint_already_succeeded"`)
+	require.Contains(t, body, `"status":"succeeded"`)
+	require.Contains(t, body, `"pending_sends":[]`)
+}
+
 func TestLangGraphCheckpointResumeReadinessHandlerReturnsPendingSends(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/threads/:thread_id/checkpoints/:checkpoint_id/resume", GetLangGraphCheckpointResumeReadiness)
@@ -815,4 +931,61 @@ func TestLangGraphCheckpointResumeReadinessMasksMissingAndForeignCheckpoint(t *t
 	require.Equal(t, http.StatusForbidden, missing.Code)
 	require.Equal(t, http.StatusForbidden, foreign.Code)
 	require.JSONEq(t, string(missing.Result().Body()), string(foreign.Result().Body()))
+}
+
+func handlerTestADKParityState(
+	threadID int64,
+	runID int64,
+	todos []appagentthread.ADKParityTodo,
+) appagentthread.ADKParityState {
+	return appagentthread.ADKParityState{
+		SchemaVersion: 1,
+		Revision:      1,
+		SpaceID:       1,
+		ThreadID:      threadID,
+		LastRunID:     runID,
+		Messages:      []appagentthread.ADKParityMessage{},
+		Todos:         append([]appagentthread.ADKParityTodo{}, todos...),
+		Workspace: appagentthread.ADKParityWorkspace{
+			SpaceID:       1,
+			ThreadID:      threadID,
+			Identity:      "space:1/thread:" + strconv.FormatInt(threadID, 10),
+			WorkspacePath: "/mnt/user-data/workspace",
+			UploadsPath:   "/mnt/user-data/uploads",
+			OutputsPath:   "/mnt/user-data/outputs",
+		},
+		Uploads:      []appagentthread.ADKParityUpload{},
+		Artifacts:    []appagentthread.ADKParityArtifact{},
+		ViewedImages: map[string]appagentthread.ADKParityViewedImage{},
+		ActiveSkills: []appagentthread.ADKParitySkill{},
+		Interrupts:   []appagentthread.ADKParityInterrupt{},
+		Completion: &appagentthread.ADKParityCompletion{
+			RunID: runID, Status: "succeeded", Reason: "completed", CompletedAt: 1234,
+		},
+	}
+}
+
+func mustHandlerTestADKParityEnvelope(
+	t *testing.T,
+	state appagentthread.ADKParityState,
+	interrupts map[string]appagentthread.ADKInterruptItem,
+) string {
+	t.Helper()
+	envelope := appagentthread.ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(appagentthread.RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "thread-" + strconv.FormatInt(state.ThreadID, 10) + "/run-" + strconv.FormatInt(state.LastRunID, 10),
+		MessageType:     "schema.Message",
+		CheckpointPhase: appagentthread.ADKCheckpointPhaseTerminal,
+		ParityState:     &state,
+		Interrupts:      interrupts,
+		RunRevision:     state.Revision,
+		CreatedAt:       1234,
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "opaque-checkpoint-secret")
+
+	return string(raw)
 }

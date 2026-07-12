@@ -1828,8 +1828,8 @@ func taskThreadValuesToAPI(
 		return nil
 	}
 
-	todos := taskThreadTodosFromLatestCheckpoint(ctx, thread.ThreadID)
-	if len(todos) == 0 {
+	todos, typedParityState := taskThreadTodosFromLatestCheckpoint(ctx, thread.ThreadID)
+	if !typedParityState && len(todos) == 0 {
 		todos = taskThreadTodosFromJSON(thread.Metadata)
 	}
 	if len(todos) == 0 {
@@ -1844,20 +1844,35 @@ func taskThreadValuesToAPI(
 func taskThreadTodosFromLatestCheckpoint(
 	ctx context.Context,
 	threadID int64,
-) []*threadapi.TaskThreadTodo {
+) ([]*threadapi.TaskThreadTodo, bool) {
+	typedResp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
+		ThreadID:    threadID,
+		RuntimeType: string(appagentthread.RuntimeModeEinoADK),
+		Limit:       1,
+	})
+	if err != nil {
+		logs.CtxWarnf(ctx, "list task thread eino checkpoints for values failed, thread_id=%d, err=%v", threadID, err)
+	} else if typedResp != nil && len(typedResp.Checkpoints) > 0 && typedResp.Checkpoints[0] != nil {
+		if projected := appagentthread.ProjectPublicCheckpoint(typedResp.Checkpoints[0]); projected != nil {
+			if value, ok := projected.Values["todos"]; ok {
+				return taskThreadTodosFromValue(value), true
+			}
+		}
+	}
+
 	resp, err := appagentthread.SVC.ListCheckpoints(ctx, &appagentthread.ListCheckpointsRequest{
 		ThreadID: threadID,
 		Limit:    1,
 	})
 	if err != nil {
-		logs.CtxWarnf(ctx, "list task thread checkpoints for values failed, thread_id=%d, err=%v", threadID, err)
-		return nil
+		logs.CtxWarnf(ctx, "list task thread legacy checkpoints for values failed, thread_id=%d, err=%v", threadID, err)
+		return nil, false
 	}
 	if resp == nil || len(resp.Checkpoints) == 0 || resp.Checkpoints[0] == nil {
-		return nil
+		return nil, false
 	}
-
-	return taskThreadTodosFromJSON(resp.Checkpoints[0].ChannelValues)
+	checkpoint := resp.Checkpoints[0]
+	return taskThreadTodosFromJSON(checkpoint.ChannelValues), false
 }
 
 func taskThreadTodosFromJSON(raw string) []*threadapi.TaskThreadTodo {
@@ -1901,6 +1916,12 @@ func taskThreadTodosFromValue(value any) []*threadapi.TaskThreadTodo {
 	switch typed := value.(type) {
 	case []any:
 		return taskThreadTodosFromList(typed)
+	case []map[string]any:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+		return taskThreadTodosFromList(items)
 	case map[string]any:
 		if items, ok := typed["items"].([]any); ok {
 			return taskThreadTodosFromList(items)

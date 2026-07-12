@@ -1556,6 +1556,7 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 			ID:              1,
 			ThreadID:        10,
 			RunID:           20,
+			RuntimeType:     "eino_adk",
 			CheckpointNS:    "",
 			ChannelValues:   `{"messages":["old"]}`,
 			ChannelVersions: `{"messages":1}`,
@@ -1567,6 +1568,7 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 			ID:                 2,
 			ThreadID:           10,
 			RunID:              20,
+			RuntimeType:        "langgraph",
 			ParentCheckpointID: 1,
 			CheckpointNS:       "planner",
 			ChannelValues:      `{"messages":["new"],"next":["tools"]}`,
@@ -1605,6 +1607,16 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	require.Equal(t, `[{"node":"tools"}]`, got[0].PendingSends)
 	require.Equal(t, `{"source":"runtime","step":2}`, got[0].Metadata)
 	require.Equal(t, int64(1), got[1].ID)
+
+	einoOnly, filteredTotal, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID:    10,
+		RuntimeType: "eino_adk",
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), filteredTotal)
+	require.Len(t, einoOnly, 1)
+	require.Equal(t, int64(1), einoOnly[0].ID)
 
 	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
 	require.NoError(t, err)
@@ -4222,10 +4234,124 @@ func TestThreadRepositoryFinalizeRunSuccessCommitsMessageTitleAndStatusTogether(
 	require.Equal(t, "run.completed", events[1].EventType)
 }
 
+func TestThreadRepositoryFinalizeRunSuccessCommitsTerminalCheckpointTogether(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{},
+	))
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(
+		1, 10, entity.RunStatusPending, 100,
+	)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	result, err := repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "final answer", CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1,
+			EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, ParentCheckpointID: 50,
+			CheckpointNS: "eino.adk", RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues:   `{"envelope_version":2}`,
+			ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+			CreatedAt: 2_000,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.TerminalCheckpoint)
+	require.Equal(t, int64(302), result.TerminalCheckpoint.ID)
+	persisted, err := repo.GetCheckpoint(context.Background(), 302)
+	require.NoError(t, err)
+	require.Equal(t, int64(50), persisted.ParentCheckpointID)
+	require.Equal(t, "coze-run-1", persisted.RuntimeKey)
+
+	var run runPO
+	require.NoError(t, db.Where("id = ?", 1).First(&run).Error)
+	require.Equal(t, string(entity.RunStatusSucceeded), run.Status)
+	var messageCount int64
+	require.NoError(t, db.Model(&messagePO{}).Count(&messageCount).Error)
+	require.Equal(t, int64(1), messageCount)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessRollsBackWhenTerminalCheckpointFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{},
+	))
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(
+		1, 10, entity.RunStatusPending, 100,
+	)))
+	require.NoError(t, repo.CreateCheckpoint(context.Background(), &entity.Checkpoint{
+		ID: 302, ThreadID: 10, RunID: 1, RuntimeType: "eino_adk",
+		RuntimeKey: "existing", ChannelValues: `{}`, ChannelVersions: `{}`,
+		PendingSends: `[]`, Metadata: `{}`, CreatedAt: 500,
+	}))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	_, err = repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "must roll back", CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1,
+			EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
+	})
+	require.Error(t, err)
+
+	var run runPO
+	require.NoError(t, db.Where("id = ?", 1).First(&run).Error)
+	require.Equal(t, string(entity.RunStatusRunning), run.Status)
+	var messageCount int64
+	require.NoError(t, db.Model(&messagePO{}).Count(&messageCount).Error)
+	require.Zero(t, messageCount)
+	var completionCount int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&completionCount).Error)
+	require.Zero(t, completionCount)
+}
+
 func TestThreadRepositoryFinalizeRunSuccessPreservesConcurrentlyChangedTitle(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{}))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
@@ -4251,6 +4377,18 @@ func TestThreadRepositoryFinalizeRunSuccessPreservesConcurrentlyChangedTitle(t *
 			ID: 301, ThreadID: 10, RunID: 1, EventType: "run.completed",
 			Payload: `{"status":"succeeded"}`, CreatedAt: 2_000,
 		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{"title":"generated title"}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpointOnTitleConflict: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{"title":"user edited title"}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
 		ExpectedThreadTitle: "initial title",
 		ThreadTitle:         "generated title",
 	})
@@ -4261,6 +4399,11 @@ func TestThreadRepositoryFinalizeRunSuccessPreservesConcurrentlyChangedTitle(t *
 	thread, err := repo.GetThread(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, "user edited title", thread.Title)
+	require.NotNil(t, result.TerminalCheckpoint)
+	require.JSONEq(t, `{"title":"user edited title"}`, result.TerminalCheckpoint.ChannelValues)
+	persistedCheckpoint, err := repo.GetCheckpoint(context.Background(), 302)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"title":"user edited title"}`, persistedCheckpoint.ChannelValues)
 	_, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{ThreadID: 10})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)

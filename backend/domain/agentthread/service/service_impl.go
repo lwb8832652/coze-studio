@@ -898,9 +898,10 @@ func (s *threadService) ListCheckpoints(ctx context.Context, req *ListCheckpoint
 	}
 
 	return s.repo.ListCheckpoints(ctx, repository.ListCheckpointsRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Limit:    normalizeCheckpointLimit(req.Limit),
+		ThreadID:    req.ThreadID,
+		RunID:       req.RunID,
+		RuntimeType: strings.TrimSpace(req.RuntimeType),
+		Limit:       normalizeCheckpointLimit(req.Limit),
 	})
 }
 
@@ -2313,6 +2314,9 @@ func (s *threadService) FinalizeRunSuccess(
 	if wantsTitleUpdate {
 		entityCount++
 	}
+	if req.TerminalCheckpoint != nil {
+		entityCount++
+	}
 	ids, err := s.idGen.GenMultiIDs(ctx, entityCount)
 	if err != nil {
 		return nil, err
@@ -2355,6 +2359,50 @@ func (s *threadService) FinalizeRunSuccess(
 		}
 		nextID++
 	}
+	completionEvent := &entity.RunEvent{
+		ID: ids[nextID], ThreadID: req.ThreadID, RunID: req.RunID,
+		EventType: "run.completed", Payload: completionPayload, CreatedAt: now,
+	}
+	nextID++
+	buildTerminalCheckpoint := func(checkpoint *CreateCheckpointRequest, id int64) (*entity.Checkpoint, error) {
+		if checkpoint == nil {
+			return nil, nil
+		}
+		if checkpoint.ParentCheckpointID < 0 || strings.TrimSpace(checkpoint.RuntimeType) == "" ||
+			strings.TrimSpace(checkpoint.RuntimeKey) == "" || checkpoint.EnvelopeVersion <= 0 {
+			return nil, InvalidArgumentErrorf("terminal checkpoint is invalid")
+		}
+		return &entity.Checkpoint{
+			ID: id, ThreadID: req.ThreadID, RunID: req.RunID,
+			ParentCheckpointID: checkpoint.ParentCheckpointID,
+			CheckpointNS:       strings.TrimSpace(checkpoint.CheckpointNS),
+			RuntimeType:        strings.TrimSpace(checkpoint.RuntimeType),
+			RuntimeKey:         strings.TrimSpace(checkpoint.RuntimeKey),
+			EnvelopeVersion:    checkpoint.EnvelopeVersion,
+			ChannelValues:      defaultJSON(checkpoint.ChannelValues, "{}"),
+			ChannelVersions:    defaultJSON(checkpoint.ChannelVersions, "{}"),
+			PendingSends:       defaultJSON(checkpoint.PendingSends, "[]"),
+			Metadata:           defaultJSON(checkpoint.Metadata, "{}"),
+			CreatedAt:          now,
+		}, nil
+	}
+	var terminalCheckpoint *entity.Checkpoint
+	var terminalCheckpointOnTitleConflict *entity.Checkpoint
+	if req.TerminalCheckpoint != nil {
+		terminalCheckpoint, err = buildTerminalCheckpoint(req.TerminalCheckpoint, ids[nextID])
+		if err != nil {
+			return nil, err
+		}
+		terminalCheckpointOnTitleConflict, err = buildTerminalCheckpoint(
+			req.TerminalCheckpointOnTitleConflict,
+			ids[nextID],
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else if req.TerminalCheckpointOnTitleConflict != nil {
+		return nil, InvalidArgumentErrorf("terminal title-conflict checkpoint requires primary checkpoint")
+	}
 
 	result, err := s.repo.FinalizeRunSuccess(ctx, repository.FinalizeRunSuccessRequest{
 		RunID:               req.RunID,
@@ -2371,13 +2419,12 @@ func (s *threadService) FinalizeRunSuccess(
 			Metadata:  req.MessageMetadata,
 			CreatedAt: now,
 		},
-		TitleEvent: titleEvent,
-		CompletionEvent: &entity.RunEvent{
-			ID: ids[nextID], ThreadID: req.ThreadID, RunID: req.RunID,
-			EventType: "run.completed", Payload: completionPayload, CreatedAt: now,
-		},
-		ExpectedThreadTitle: expectedTitle,
-		ThreadTitle:         threadTitle,
+		TitleEvent:                        titleEvent,
+		CompletionEvent:                   completionEvent,
+		TerminalCheckpoint:                terminalCheckpoint,
+		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
+		ExpectedThreadTitle:               expectedTitle,
+		ThreadTitle:                       threadTitle,
 	})
 	if err != nil {
 		return nil, err
@@ -2386,11 +2433,12 @@ func (s *threadService) FinalizeRunSuccess(
 		return nil, fmt.Errorf("finalize run success returned empty result")
 	}
 	return &FinalizeRunSuccessResult{
-		Run:             result.Run,
-		Message:         result.Message,
-		TitleEvent:      result.TitleEvent,
-		CompletionEvent: result.CompletionEvent,
-		TitleUpdated:    result.TitleUpdated,
+		Run:                result.Run,
+		Message:            result.Message,
+		TitleEvent:         result.TitleEvent,
+		CompletionEvent:    result.CompletionEvent,
+		TerminalCheckpoint: result.TerminalCheckpoint,
+		TitleUpdated:       result.TitleUpdated,
 	}, nil
 }
 

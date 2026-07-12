@@ -4049,13 +4049,15 @@ func TestApplicationCheckpointMethodsMapDomainCheckpoints(t *testing.T) {
 	require.Equal(t, `{"messages":["ok"]}`, createResp.Checkpoint.ChannelValues)
 
 	listResp, err := app.ListCheckpoints(context.Background(), &ListCheckpointsRequest{
-		ThreadID: 10,
-		RunID:    200,
-		Limit:    5,
+		ThreadID:    10,
+		RunID:       200,
+		RuntimeType: string(RuntimeModeEinoADK),
+		Limit:       5,
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(200), domainSVC.listCheckpointsReq.RunID)
+	require.Equal(t, string(RuntimeModeEinoADK), domainSVC.listCheckpointsReq.RuntimeType)
 	require.Equal(t, int32(5), domainSVC.listCheckpointsReq.Limit)
 	require.Equal(t, int64(1), listResp.Total)
 	require.Len(t, listResp.Checkpoints, 1)

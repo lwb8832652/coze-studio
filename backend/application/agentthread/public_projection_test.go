@@ -264,13 +264,20 @@ func TestPublicRuntimeErrorRedactsProviderDetails(t *testing.T) {
 }
 
 func TestPublicCheckpointRedactsRuntimeBytes(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 3, ThreadID: 2, SpaceID: 1, CreatorID: 4,
+	}, nil)
+	require.NoError(t, err)
+	state := tracker.Snapshot()
 	envelope := ADKCheckpointEnvelope{
 		EnvelopeVersion: adkCheckpointEnvelopeVersion,
 		Runtime:         string(RuntimeModeEinoADK),
 		RuntimeVersion:  adkCheckpointRuntimeVersion,
 		RuntimeKey:      "runtime-key",
 		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
 		Checkpoint:      []byte(publicProjectionSensitiveSentinel),
+		ParityState:     &state,
 		Interrupts: map[string]ADKInterruptItem{
 			"interrupt-1": {ID: "interrupt-1"},
 		},
@@ -287,8 +294,8 @@ func TestPublicCheckpointRedactsRuntimeBytes(t *testing.T) {
 		ParentCheckpointID: 4,
 		CheckpointNS:       "eino.adk",
 		RuntimeType:        string(RuntimeModeEinoADK),
-		RuntimeKey:         publicProjectionSensitiveSentinel,
-		EnvelopeVersion:    1,
+		RuntimeKey:         "runtime-key",
+		EnvelopeVersion:    int32(adkCheckpointEnvelopeVersion),
 		ChannelValues:      string(rawEnvelope),
 		ChannelVersions:    publicProjectionSensitiveSentinel,
 		PendingSends:       publicProjectionSensitiveSentinel,
@@ -300,6 +307,172 @@ func TestPublicCheckpointRedactsRuntimeBytes(t *testing.T) {
 	require.Equal(t, []string{"interrupt-1"}, got.InterruptIDs)
 	require.Equal(t, string(RuntimeModeEinoADK), got.Runtime)
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
+func TestPublicCheckpointProjectsBoundedADKParityState(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 3, ThreadID: 2, SpaceID: 1, CreatorID: 4,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.ReplaceMessages([]ADKParityMessage{
+		{
+			ID: "message-1", RunID: 3, Role: "user",
+			Content:   "<uploaded_files>" + publicProjectionSensitiveSentinel + "</uploaded_files>\n生成旅行计划",
+			CreatedAt: 10,
+		},
+		{ID: "message-2", RunID: 3, Role: "assistant", Content: "计划已完成", CreatedAt: 11},
+	}, &ADKParitySummaryBoundary{
+		Digest: "summary-digest", OriginalMessageCount: 8, ActiveMessageCount: 2, CreatedAt: 9,
+	}))
+	require.NoError(t, tracker.SetTitle("青岛旅行计划"))
+	require.NoError(t, tracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "todo-1", Title: "整理行程", Description: "按天组织", Status: "completed",
+		ActiveForm: "正在整理行程", Owner: "lead-agent",
+	}}))
+	require.NoError(t, tracker.MergeUploads([]ADKParityUpload{{
+		FileID: 5, FileName: "需求.txt", VirtualPath: "/mnt/user-data/uploads/需求.txt",
+		ContentType: "text/plain", SizeBytes: 12, CreatedAt: 8,
+	}}))
+	require.NoError(t, tracker.MergeArtifacts([]ADKParityArtifact{{
+		ArtifactID: 6, FileID: 7, RunID: 3, Title: "青岛旅行计划.md",
+		ArtifactType: "markdown", VirtualPath: "/mnt/user-data/outputs/青岛旅行计划.md",
+		ContentType: "text/markdown", SizeBytes: 128, PreviewMode: "markdown",
+		ScanStatus: "released", CreatedAt: 12,
+	}}))
+	require.NoError(t, tracker.MergeViewedImages(map[string]ADKParityViewedImage{
+		"/mnt/user-data/outputs/map.png": {
+			VirtualPath: "/mnt/user-data/outputs/map.png", ContentType: "image/png", Digest: "image-digest",
+		},
+	}))
+	require.NoError(t, tracker.MergePromotedTools(&ADKParityPromotedTools{
+		CatalogHash: "catalog-digest", Names: []string{"web_search"},
+	}))
+	require.NoError(t, tracker.ReplaceActiveSkills([]ADKParitySkill{{
+		ID: 9, Name: "travel-planner", Version: "v1",
+	}}))
+	require.NoError(t, tracker.ReplaceInterrupts([]ADKParityInterrupt{{
+		ID: "interrupt-1", Address: "agent.ask", IsRootCause: true,
+	}}))
+	require.NoError(t, tracker.SetCompletion(ADKParityCompletion{
+		RunID: 3, Status: "interrupted", Reason: "user_input_required", CompletedAt: 13,
+	}))
+	state := tracker.Snapshot()
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: adkCheckpointEnvelopeVersion,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  adkCheckpointRuntimeVersion,
+		RuntimeKey:      "thread-2/run-3",
+		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseInterrupt,
+		Checkpoint:      []byte(publicProjectionSensitiveSentinel),
+		ParityState:     &state,
+		Interrupts: map[string]ADKInterruptItem{
+			"interrupt-1": {ID: "interrupt-1", Address: "agent.ask", IsRootCause: true},
+		},
+		RunRevision: state.Revision,
+		CreatedAt:   13,
+	}
+	rawEnvelope, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	got := ProjectPublicCheckpoint(&CheckpointSummary{
+		CheckpointID: 10, ThreadID: 2, RunID: 3, CheckpointNS: "eino.adk",
+		RuntimeType: string(RuntimeModeEinoADK), EnvelopeVersion: int32(adkCheckpointEnvelopeVersion),
+		ChannelValues: string(rawEnvelope), Metadata: `{"credential":"` + publicProjectionSensitiveSentinel + `"}`,
+	})
+
+	require.NotNil(t, got)
+	require.Equal(t, []string{"interrupt-1"}, got.InterruptIDs)
+	require.Equal(t, "青岛旅行计划", got.Values["title"])
+	messages, ok := got.Values["messages"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, messages, 2)
+	require.Equal(t, "生成旅行计划", messages[0]["content"])
+	require.Equal(t, []map[string]any{{
+		"id": "todo-1", "title": "整理行程", "description": "按天组织", "status": "completed",
+		"active_form": "正在整理行程", "owner": "lead-agent",
+	}}, got.Values["todos"])
+	require.Len(t, got.Values["uploaded_files"], 1)
+	require.Len(t, got.Values["artifacts"], 1)
+	require.Len(t, got.Values["viewed_images"], 1)
+	require.Equal(t, map[string]any{
+		"catalog_hash": "catalog-digest", "names": []string{"web_search"},
+	}, got.Values["promoted"])
+	require.Equal(t, []map[string]any{{
+		"id": int64(9), "name": "travel-planner", "version": "v1",
+	}}, got.Values["active_skills"])
+	require.Equal(t, map[string]any{
+		"run_id": int64(3), "status": "interrupted", "reason": "user_input_required", "completed_at": int64(13),
+	}, got.Values["completion"])
+	require.Equal(t, []string{"interrupt-1"}, got.Values["interrupts"])
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
+func TestPublicCheckpointFailsClosedForMalformedADKEnvelope(t *testing.T) {
+	got := ProjectPublicCheckpoint(&CheckpointSummary{
+		CheckpointID: 1,
+		ThreadID:     2,
+		RunID:        3,
+		RuntimeType:  string(RuntimeModeEinoADK),
+		ChannelValues: `{"envelope_version":99,"checkpoint":"` +
+			publicProjectionSensitiveSentinel + `","parity_state":{"title":"unsafe"}}`,
+	})
+
+	require.NotNil(t, got)
+	require.Equal(t, map[string]any{
+		"runtime": string(RuntimeModeEinoADK), "interrupts": []string{},
+	}, got.Values)
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
+func TestPublicCheckpointFailsClosedForMismatchedADKEnvelopeIdentity(t *testing.T) {
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 3, ThreadID: 2, SpaceID: 1, CreatorID: 4,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.SetTitle("must not cross projection boundary"))
+	state := tracker.Snapshot()
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: adkCheckpointEnvelopeVersion,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  adkCheckpointRuntimeVersion,
+		RuntimeKey:      "runtime-key",
+		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
+		Checkpoint:      []byte{1},
+		ParityState:     &state,
+	}
+	rawEnvelope, err := envelope.Marshal()
+	require.NoError(t, err)
+
+	tests := map[string]CheckpointSummary{
+		"indexed version": {
+			ThreadID: 2, RunID: 3, RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "runtime-key",
+			EnvelopeVersion: 1, ChannelValues: string(rawEnvelope),
+		},
+		"runtime key": {
+			ThreadID: 2, RunID: 3, RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "different-key",
+			EnvelopeVersion: int32(adkCheckpointEnvelopeVersion), ChannelValues: string(rawEnvelope),
+		},
+		"thread": {
+			ThreadID: 99, RunID: 3, RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "runtime-key",
+			EnvelopeVersion: int32(adkCheckpointEnvelopeVersion), ChannelValues: string(rawEnvelope),
+		},
+		"run": {
+			ThreadID: 2, RunID: 99, RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "runtime-key",
+			EnvelopeVersion: int32(adkCheckpointEnvelopeVersion), ChannelValues: string(rawEnvelope),
+		},
+	}
+	for name, checkpoint := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := ProjectPublicCheckpoint(&checkpoint)
+			require.NotNil(t, got)
+			require.Equal(t, map[string]any{
+				"runtime": string(RuntimeModeEinoADK), "interrupts": []string{},
+			}, got.Values)
+			require.NotContains(t, got.Values, "title")
+		})
+	}
 }
 
 func TestPublicCheckpointKeepsBoundedPendingSendTargets(t *testing.T) {

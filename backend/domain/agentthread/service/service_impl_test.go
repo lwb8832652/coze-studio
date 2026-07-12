@@ -931,6 +931,20 @@ func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *tes
 		LeaseOwner: "worker-a", LeaseToken: "lease-1", ExecutionGeneration: 2,
 		Now: 3_000, Message: " final answer ", MessageMetadata: `{"source":"eino_adk"}`,
 		ExpectedThreadTitle: "initial title", ThreadTitle: "generated title",
+		TerminalCheckpoint: &CreateCheckpointRequest{
+			ParentCheckpointID: 50,
+			CheckpointNS:       "eino.adk", RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues:   `{"envelope_version":2}`,
+			ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+		},
+		TerminalCheckpointOnTitleConflict: &CreateCheckpointRequest{
+			ParentCheckpointID: 50,
+			CheckpointNS:       "eino.adk", RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues:   `{"envelope_version":2,"title":"initial title"}`,
+			ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+		},
 	})
 
 	require.NoError(t, err)
@@ -946,6 +960,11 @@ func TestFinalizeRunSuccessGeneratesAssistantMessageAndForwardsTitleFence(t *tes
 	require.Equal(t, "context.thread_title_updated", result.TitleEvent.EventType)
 	require.Equal(t, int64(302), result.CompletionEvent.ID)
 	require.Equal(t, "run.completed", result.CompletionEvent.EventType)
+	require.NotNil(t, result.TerminalCheckpoint)
+	require.Equal(t, int64(303), result.TerminalCheckpoint.ID)
+	require.Equal(t, int64(50), result.TerminalCheckpoint.ParentCheckpointID)
+	require.Equal(t, int64(303), repo.lastFinalizeRunSuccessReq.TerminalCheckpoint.ID)
+	require.Equal(t, int64(303), repo.lastFinalizeRunSuccessReq.TerminalCheckpointOnTitleConflict.ID)
 	require.Len(t, repo.runEvents[1], 2)
 	require.Equal(t, "context.thread_title_updated", repo.runEvents[1][0].EventType)
 	require.Equal(t, "run.completed", repo.runEvents[1][1].EventType)
@@ -1194,19 +1213,21 @@ func TestCreateCheckpointRejectsMismatchedThread(t *testing.T) {
 func TestListCheckpointsNormalizesLimit(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.checkpoints[10] = []*entity.Checkpoint{
-		{ID: 1, ThreadID: 10, RunID: 20, CreatedAt: 100},
-		{ID: 2, ThreadID: 10, RunID: 20, CreatedAt: 200},
+		{ID: 1, ThreadID: 10, RunID: 20, RuntimeType: "eino_adk", CreatedAt: 100},
+		{ID: 2, ThreadID: 10, RunID: 20, RuntimeType: "eino_adk", CreatedAt: 200},
 	}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 3501}})
 
 	checkpoints, total, err := svc.ListCheckpoints(context.Background(), &ListCheckpointsRequest{
-		ThreadID: 10,
+		ThreadID:    10,
+		RuntimeType: "eino_adk",
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 	require.Len(t, checkpoints, 2)
 	require.Equal(t, int64(2), checkpoints[0].ID)
+	require.Equal(t, "eino_adk", repo.lastCheckpointListReq.RuntimeType)
 	require.Equal(t, int32(20), repo.lastCheckpointListReq.Limit)
 }
 
@@ -2533,6 +2554,9 @@ func (r *memoryRepo) ListCheckpoints(ctx context.Context, req repository.ListChe
 		if req.RunID > 0 && checkpoint.RunID != req.RunID {
 			continue
 		}
+		if req.RuntimeType != "" && checkpoint.RuntimeType != req.RuntimeType {
+			continue
+		}
 		checkpoints = append(checkpoints, cloneCheckpoint(checkpoint))
 	}
 	sort.Slice(checkpoints, func(i, j int) bool {
@@ -3351,10 +3375,22 @@ func (r *memoryRepo) FinalizeRunSuccess(
 			if req.CompletionEvent != nil {
 				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.CompletionEvent))
 			}
+			terminalCheckpoint := req.TerminalCheckpoint
+			if req.ThreadTitle != "" && req.ThreadTitle != req.ExpectedThreadTitle &&
+				!titleUpdated && req.TerminalCheckpointOnTitleConflict != nil {
+				terminalCheckpoint = req.TerminalCheckpointOnTitleConflict
+			}
+			if terminalCheckpoint != nil {
+				r.checkpoints[threadID] = append(
+					r.checkpoints[threadID],
+					cloneCheckpoint(terminalCheckpoint),
+				)
+			}
 			return &repository.FinalizeRunSuccessResult{
 				Run: cloneRun(run), Message: cloneMessage(req.Message),
 				TitleEvent: cloneRunEvent(req.TitleEvent), CompletionEvent: cloneRunEvent(req.CompletionEvent),
-				TitleUpdated: titleUpdated,
+				TerminalCheckpoint: cloneCheckpoint(terminalCheckpoint),
+				TitleUpdated:       titleUpdated,
 			}, nil
 		}
 	}

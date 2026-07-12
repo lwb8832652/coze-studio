@@ -35,6 +35,8 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 			{
 				ID:                  200,
 				ThreadID:            10,
+				SpaceID:             30,
+				CreatorID:           40,
 				Status:              entity.RunStatusRunning,
 				WorkerID:            "resume-worker-a",
 				LeaseOwner:          "resume-worker-a",
@@ -73,8 +75,26 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	eventSink := &recordingRunEventSink{}
 	executor := &recordingResumeRunExecutor{
 		result: &RunExecutionResult{
-			Message:  "resumed answer",
-			Metadata: `{"source":"agent_harness","steps":2}`,
+			Message:                  "resumed answer",
+			Metadata:                 `{"source":"agent_harness","steps":2}`,
+			ParityParentCheckpointID: 503,
+			ParityState: &ADKParityState{
+				SchemaVersion: adkParityStateSchemaVersion,
+				Revision:      7,
+				SpaceID:       30,
+				ThreadID:      10,
+				LastRunID:     200,
+				Messages: []ADKParityMessage{
+					{Role: "assistant", Content: "resumed answer", RunID: 200},
+				},
+				Workspace:    newADKParityWorkspace(30, 10),
+				Todos:        []ADKParityTodo{},
+				Uploads:      []ADKParityUpload{},
+				Artifacts:    []ADKParityArtifact{},
+				ViewedImages: map[string]ADKParityViewedImage{},
+				ActiveSkills: []ADKParitySkill{},
+				Interrupts:   []ADKParityInterrupt{{ID: "interrupt-1"}},
+			},
 		},
 	}
 	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
@@ -112,6 +132,16 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
 	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
 	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"checkpoint_ns":"harness.terminal"`)
+	checkpoint := domainSVC.finalizeRunSuccessReq.TerminalCheckpoint
+	require.NotNil(t, checkpoint)
+	require.Equal(t, int64(503), checkpoint.ParentCheckpointID)
+	require.Contains(t, checkpoint.Metadata, `"checkpoint_phase":"terminal"`)
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	require.NoError(t, err)
+	require.NotNil(t, envelope.ParityState)
+	require.Empty(t, envelope.ParityState.Interrupts)
+	require.Equal(t, "succeeded", envelope.ParityState.Completion.Status)
+	require.Equal(t, int64(200), envelope.ParityState.Completion.RunID)
 }
 
 func TestResumeRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {

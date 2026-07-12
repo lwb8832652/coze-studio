@@ -209,6 +209,24 @@ func (i *adkArtifactToolInvoker) InvokeADKRuntimeTool(
 		if err != nil {
 			return "", err
 		}
+		if tracker := adkParityStateTrackerFromContext(ctx); tracker != nil {
+			parityArtifacts := make([]ADKParityArtifact, 0, len(resp.Artifacts))
+			for _, artifact := range resp.Artifacts {
+				if artifact == nil {
+					continue
+				}
+				parityArtifacts = append(parityArtifacts, ADKParityArtifact{
+					ArtifactID: artifact.ArtifactID, FileID: artifact.FileID,
+					RunID: artifact.RunID, Title: artifact.Title,
+					ArtifactType: artifact.ArtifactType, VirtualPath: artifact.VirtualPath,
+					ContentType: artifact.ContentType, SizeBytes: artifact.SizeBytes,
+					PreviewMode: string(artifact.PreviewMode), CreatedAt: artifact.CreatedAt,
+				})
+			}
+			if err := tracker.MergeArtifacts(parityArtifacts); err != nil {
+				return "", fmt.Errorf("record eino adk parity artifacts: %w", err)
+			}
+		}
 		return resp.Notice, nil
 	case adkCreateSkillPackageToolName:
 		var input adkCreateSkillPackageInput

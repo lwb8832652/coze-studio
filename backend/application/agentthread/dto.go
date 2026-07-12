@@ -656,9 +656,10 @@ type CreateCheckpointResponse struct {
 }
 
 type ListCheckpointsRequest struct {
-	ThreadID int64
-	RunID    int64
-	Limit    int32
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	Limit       int32
 }
 
 type ListCheckpointsResponse struct {
@@ -1255,23 +1256,26 @@ type ReconcileExpiredRunLeaseResponse struct {
 }
 
 type FinalizeRunSuccessRequest struct {
-	RunID                  int64
-	ThreadID               int64
-	LeaseOwner             string
-	LeaseToken             string
-	ExecutionGeneration    uint64
-	Now                    int64
-	Message                string
-	MessageMetadata        string
-	TitleEventPayload      string
-	CompletionEventPayload string
-	ExpectedThreadTitle    string
-	ThreadTitle            string
+	RunID                             int64
+	ThreadID                          int64
+	LeaseOwner                        string
+	LeaseToken                        string
+	ExecutionGeneration               uint64
+	Now                               int64
+	Message                           string
+	MessageMetadata                   string
+	TitleEventPayload                 string
+	CompletionEventPayload            string
+	ExpectedThreadTitle               string
+	ThreadTitle                       string
+	TerminalCheckpoint                *CreateCheckpointRequest
+	TerminalCheckpointOnTitleConflict *CreateCheckpointRequest
 }
 
 type FinalizeRunSuccessResponse struct {
 	Run          *RunSummary
 	Message      *MessageSummary
+	Checkpoint   *CheckpointSummary
 	TitleUpdated bool
 }
 

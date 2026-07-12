@@ -122,15 +122,27 @@ func (f ADKPlanBackendFactoryFunc) Build(
 }
 
 type ADKPlanBackend struct {
-	scope     ADKPlanScope
-	store     ADKPlanStore
-	eventSink RunEventSink
+	scope         ADKPlanScope
+	store         ADKPlanStore
+	eventSink     RunEventSink
+	parityTracker *ADKParityStateTracker
+}
+
+type ADKPlanBackendOption func(*ADKPlanBackend)
+
+func WithADKPlanParityStateTracker(
+	tracker *ADKParityStateTracker,
+) ADKPlanBackendOption {
+	return func(backend *ADKPlanBackend) {
+		backend.parityTracker = tracker
+	}
 }
 
 func NewADKPlanBackend(
 	run *RunSummary,
 	store ADKPlanStore,
 	eventSink RunEventSink,
+	options ...ADKPlanBackendOption,
 ) (*ADKPlanBackend, error) {
 	if run == nil {
 		return nil, fmt.Errorf("run is required")
@@ -149,7 +161,7 @@ func NewADKPlanBackend(
 	if scopeRunID <= 0 {
 		return nil, fmt.Errorf("eino adk plan scope run id is invalid")
 	}
-	return &ADKPlanBackend{
+	backend := &ADKPlanBackend{
 		scope: ADKPlanScope{
 			ActiveRunID: run.RunID,
 			ScopeRunID:  scopeRunID,
@@ -159,7 +171,46 @@ func NewADKPlanBackend(
 		},
 		store:     store,
 		eventSink: eventSink,
-	}, nil
+	}
+	for _, option := range options {
+		if option != nil {
+			option(backend)
+		}
+	}
+	if err := backend.setParityStateTracker(backend.parityTracker); err != nil {
+		return nil, err
+	}
+	return backend, nil
+}
+
+func (b *ADKPlanBackend) setParityStateTracker(tracker *ADKParityStateTracker) error {
+	if b == nil || tracker == nil {
+		return nil
+	}
+	snapshot := tracker.Snapshot()
+	if snapshot.ThreadID != b.scope.ThreadID || snapshot.SpaceID != b.scope.SpaceID ||
+		snapshot.LastRunID != b.scope.ActiveRunID {
+		return fmt.Errorf("eino adk plan parity state does not belong to the active run")
+	}
+	b.parityTracker = tracker
+	return nil
+}
+
+func (b *ADKPlanBackend) syncParityState(ctx context.Context) error {
+	if b == nil || b.parityTracker == nil {
+		return nil
+	}
+	snapshot, err := b.store.OpenPlan(ctx, b.scope)
+	if err != nil {
+		return fmt.Errorf("load eino adk plan for parity state: %w", err)
+	}
+	if snapshot == nil {
+		return fmt.Errorf("eino adk plan store returned empty snapshot")
+	}
+	if err := b.parityTracker.ReplaceTodos(adkParityTodosFromPlanSnapshot(snapshot)); err != nil {
+		return fmt.Errorf("record eino adk parity todos: %w", err)
+	}
+	return nil
 }
 
 func (b *ADKPlanBackend) LsInfo(
@@ -308,7 +359,9 @@ func (b *ADKPlanBackend) Write(
 		(mutation.Previous == nil || mutation.Previous.Status != "completed") {
 		eventType = "plan.task.completed"
 	}
-	b.emitMutation(ctx, eventType, mutation)
+	if err := b.emitMutation(ctx, eventType, mutation); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -337,7 +390,9 @@ func (b *ADKPlanBackend) Delete(
 		return fmt.Errorf("eino adk plan store returned empty archive mutation")
 	}
 	if mutation.Task.Status == "deleted" {
-		b.emitMutation(ctx, "plan.task.deleted", mutation)
+		if err := b.emitMutation(ctx, "plan.task.deleted", mutation); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -346,7 +401,7 @@ func (b *ADKPlanBackend) emitMutation(
 	ctx context.Context,
 	eventType string,
 	mutation *ADKPlanMutation,
-) {
+) error {
 	activeCount := 0
 	completedCount := 0
 	for _, task := range mutation.Snapshot.Tasks {
@@ -356,6 +411,11 @@ func (b *ADKPlanBackend) emitMutation(
 		activeCount++
 		if task.Status == "completed" {
 			completedCount++
+		}
+	}
+	if b.parityTracker != nil {
+		if err := b.parityTracker.ReplaceTodos(adkParityTodosFromPlanSnapshot(mutation.Snapshot)); err != nil {
+			return fmt.Errorf("record eino adk parity todos: %w", err)
 		}
 	}
 	emitRunEvent(ctx, b.eventSink, RunEvent{
@@ -377,6 +437,28 @@ func (b *ADKPlanBackend) emitMutation(
 			"total_count":       activeCount,
 		}),
 	})
+	return nil
+}
+
+func adkParityTodosFromPlanSnapshot(snapshot *ADKPlanSnapshot) []ADKParityTodo {
+	if snapshot == nil {
+		return []ADKParityTodo{}
+	}
+	tasks := make([]*ADKPlanTask, 0, len(snapshot.Tasks))
+	for _, task := range snapshot.Tasks {
+		if task != nil && task.Active {
+			tasks = append(tasks, task)
+		}
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].TaskID < tasks[j].TaskID })
+	todos := make([]ADKParityTodo, 0, len(tasks))
+	for _, task := range tasks {
+		todos = append(todos, ADKParityTodo{
+			ID: task.ID, Title: task.Subject, Description: task.Description,
+			Status: task.Status, ActiveForm: task.ActiveForm, Owner: task.Owner,
+		})
+	}
+	return todos
 }
 
 func parseADKPlanPath(filePath string) (string, int64, error) {

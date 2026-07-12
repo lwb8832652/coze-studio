@@ -23,8 +23,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
 type ADKCheckpointStoreFactory func(run *RunSummary) (adk.CheckPointStore, error)
@@ -90,10 +92,18 @@ func (e *ADKExecutor) Execute(
 	}
 	executionCtx, cancelExecution := context.WithCancel(ctx)
 	defer cancelExecution()
-	agent, store, err := e.buildRuntime(executionCtx, run, run)
+	agent, store, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime(
+		executionCtx,
+		run,
+		run,
+		messages,
+		nil,
+		0,
+	)
 	if err != nil {
 		return nil, err
 	}
+	executionCtx = runtimeCtx
 
 	checkpointKey := adkCheckpointKeyForRun(run.RunID)
 	runner := adk.NewRunner(executionCtx, adk.RunnerConfig{
@@ -109,7 +119,7 @@ func (e *ADKExecutor) Execute(
 	defer cleanup()
 	iter := runner.Run(executionCtx, messages, runOptions...)
 
-	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge, parityTracker, parityParentID)
 	return result, normalizeADKExecutionError(ctx, err)
 }
 
@@ -148,14 +158,23 @@ func (e *ADKExecutor) Resume(
 	if err != nil {
 		return nil, err
 	}
-	agent, currentStore, err := e.buildRuntime(
+	var paritySeed *ADKParityState
+	if input.ADKCheckpoint.ParityState != nil {
+		copy := cloneADKParityState(*input.ADKCheckpoint.ParityState)
+		paritySeed = &copy
+	}
+	agent, currentStore, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime(
 		executionCtx,
 		agentRun,
 		run,
+		nil,
+		paritySeed,
+		input.CheckpointID,
 	)
 	if err != nil {
 		return nil, err
 	}
+	executionCtx = runtimeCtx
 	store := currentStore
 	if input.SourceRunID > 0 && input.SourceRunID != run.RunID {
 		sourceRun := *run
@@ -201,7 +220,7 @@ func (e *ADKExecutor) Resume(
 		return nil, fmt.Errorf("resume eino adk runner: %w", err)
 	}
 
-	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge)
+	result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter, usageBridge, parityTracker, parityParentID)
 	return result, normalizeADKExecutionError(ctx, err)
 }
 
@@ -245,24 +264,47 @@ func (e *ADKExecutor) buildRuntime(
 	ctx context.Context,
 	agentRun *RunSummary,
 	storeRun *RunSummary,
-) (adk.ResumableAgent, adk.CheckPointStore, error) {
-	agent, err := e.factory.Build(ctx, agentRun)
-	if err != nil {
-		return nil, nil, err
-	}
-	if agent == nil {
-		return nil, nil, fmt.Errorf("eino adk agent factory returned empty agent")
-	}
-
+	messages []*schema.Message,
+	seed *ADKParityState,
+	parentCheckpointID int64,
+) (adk.ResumableAgent, adk.CheckPointStore, *ADKParityStateTracker, int64, context.Context, error) {
 	store, err := e.checkpointStoreFactory(storeRun)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build eino adk checkpoint store: %w", err)
+		return nil, nil, nil, 0, ctx, fmt.Errorf("build eino adk checkpoint store: %w", err)
 	}
 	if store == nil {
-		return nil, nil, fmt.Errorf("eino adk checkpoint store is required")
+		return nil, nil, nil, 0, ctx, fmt.Errorf("eino adk checkpoint store is required")
 	}
 
-	return agent, store, nil
+	var parityTracker *ADKParityStateTracker
+	parityParentID := parentCheckpointID
+	if parityStore, ok := store.(ADKParityCheckpointStore); ok {
+		if seed != nil {
+			parityTracker, err = NewADKParityStateTracker(storeRun, seed)
+			if err == nil {
+				err = parityStore.SetParityStateTracker(parityTracker, parentCheckpointID)
+			}
+		} else {
+			parityTracker, parityParentID, err = parityStore.ParityStateTracker(ctx)
+		}
+		if err != nil {
+			return nil, nil, nil, 0, ctx, fmt.Errorf("initialize eino adk parity state: %w", err)
+		}
+		if err := seedADKParityStateFromRun(parityTracker, agentRun, messages, seed == nil); err != nil {
+			return nil, nil, nil, 0, ctx, err
+		}
+		ctx = withADKParityStateTracker(ctx, parityTracker)
+	}
+
+	agent, err := e.factory.Build(ctx, agentRun)
+	if err != nil {
+		return nil, nil, nil, 0, ctx, err
+	}
+	if agent == nil {
+		return nil, nil, nil, 0, ctx, fmt.Errorf("eino adk agent factory returned empty agent")
+	}
+
+	return agent, store, parityTracker, parityParentID, ctx, nil
 }
 
 func (e *ADKExecutor) consumeEvents(
@@ -272,6 +314,8 @@ func (e *ADKExecutor) consumeEvents(
 	store adk.CheckPointStore,
 	iter *adk.AsyncIterator[*adk.AgentEvent],
 	usageBridge *ADKUsageBridge,
+	parityTracker *ADKParityStateTracker,
+	parityParentCheckpointID int64,
 ) (*RunExecutionResult, error) {
 	if iter == nil {
 		return nil, fmt.Errorf("eino adk runner returned empty event iterator")
@@ -302,6 +346,13 @@ func (e *ADKExecutor) consumeEvents(
 		}
 		if text := strings.TrimSpace(mapped.FinalText); text != "" {
 			finalText = text
+			if parityTracker != nil {
+				if err := parityTracker.AppendMessage(ADKParityMessage{
+					RunID: run.RunID, Role: "assistant", Content: text,
+				}); err != nil {
+					return nil, fmt.Errorf("record eino adk parity assistant message: %w", err)
+				}
+			}
 		}
 		if mapped.Interrupt != nil && len(mapped.Interrupt.Items) > 0 {
 			interrupted = &RunInterruptedError{
@@ -358,10 +409,73 @@ func (e *ADKExecutor) consumeEvents(
 		return nil, fmt.Errorf("marshal eino adk execution metadata: %w", err)
 	}
 
-	return &RunExecutionResult{
+	result := &RunExecutionResult{
 		Message:  finalText,
 		Metadata: string(metadata),
-	}, nil
+	}
+	if parityTracker != nil {
+		if err := parityTracker.ReplaceInterrupts([]ADKParityInterrupt{}); err != nil {
+			return nil, fmt.Errorf("clear eino adk parity interrupts: %w", err)
+		}
+		if err := parityTracker.SetCompletion(ADKParityCompletion{
+			RunID: run.RunID, Status: "succeeded", Reason: "completed",
+			CompletedAt: time.Now().UnixMilli(),
+		}); err != nil {
+			return nil, fmt.Errorf("record eino adk parity completion: %w", err)
+		}
+		snapshot := parityTracker.Snapshot()
+		result.ParityState = &snapshot
+		result.ParityParentCheckpointID = parityParentCheckpointID
+	}
+	return result, nil
+}
+
+func seedADKParityStateFromRun(
+	tracker *ADKParityStateTracker,
+	run *RunSummary,
+	messages []*schema.Message,
+	replaceMessages bool,
+) error {
+	if tracker == nil || run == nil {
+		return nil
+	}
+	if err := tracker.ClearCompletion(); err != nil {
+		return fmt.Errorf("clear eino adk parity completion: %w", err)
+	}
+	if err := tracker.ReplaceActiveSkills([]ADKParitySkill{}); err != nil {
+		return fmt.Errorf("clear eino adk parity skills: %w", err)
+	}
+	parityMessages := make([]ADKParityMessage, 0, len(messages))
+	for _, message := range messages {
+		if message == nil || (message.Role != schema.User && message.Role != schema.Assistant) ||
+			adkParityHiddenMessage(message) {
+			continue
+		}
+		content := stripADKUploadedFilesContext(message.Content)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		parityMessages = append(parityMessages, ADKParityMessage{
+			RunID: run.RunID, Role: string(message.Role), Content: content,
+		})
+	}
+	if replaceMessages {
+		if err := tracker.ReplaceMessages(parityMessages, nil); err != nil {
+			return fmt.Errorf("seed eino adk parity messages: %w", err)
+		}
+	} else {
+		for _, message := range parityMessages {
+			if err := tracker.AppendMessage(message); err != nil {
+				return fmt.Errorf("append eino adk parity resume message: %w", err)
+			}
+		}
+	}
+	if err := tracker.MergeUploads(adkParityUploadsFromSummaries(
+		uploadedFilesFromRunInput(run.Input),
+	)); err != nil {
+		return fmt.Errorf("seed eino adk parity uploads: %w", err)
+	}
+	return nil
 }
 
 func (e *ADKExecutor) validate(run *RunSummary) error {

@@ -1421,6 +1421,9 @@ func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpoi
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}
+	if runtimeType := strings.TrimSpace(req.RuntimeType); runtimeType != "" {
+		query = query.Where("runtime_type = ?", runtimeType)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -3936,6 +3939,44 @@ func (r *threadRepository) FinalizeRunSuccess(
 	if err != nil {
 		return nil, err
 	}
+	normalizeTerminalCheckpoint := func(checkpoint *entity.Checkpoint) (*entity.Checkpoint, *checkpointPO, error) {
+		if checkpoint == nil {
+			return nil, nil, nil
+		}
+		checkpointCopy := *checkpoint
+		if checkpointCopy.ID <= 0 || checkpointCopy.RunID != req.RunID ||
+			checkpointCopy.ThreadID <= 0 || checkpointCopy.ParentCheckpointID < 0 ||
+			strings.TrimSpace(checkpointCopy.RuntimeType) == "" ||
+			strings.TrimSpace(checkpointCopy.RuntimeKey) == "" ||
+			checkpointCopy.EnvelopeVersion <= 0 {
+			return nil, nil, fmt.Errorf("run success terminal checkpoint is invalid")
+		}
+		if checkpointCopy.CreatedAt == 0 {
+			checkpointCopy.CreatedAt = now
+		}
+		po, err := checkpointToPO(&checkpointCopy)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &checkpointCopy, po, nil
+	}
+	terminalCheckpoint, terminalCheckpointPO, err := normalizeTerminalCheckpoint(req.TerminalCheckpoint)
+	if err != nil {
+		return nil, err
+	}
+	terminalCheckpointOnTitleConflict, terminalCheckpointOnTitleConflictPO, err := normalizeTerminalCheckpoint(
+		req.TerminalCheckpointOnTitleConflict,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if terminalCheckpointOnTitleConflict != nil &&
+		(terminalCheckpoint == nil || !sameTerminalCheckpointEntityIdentity(
+			terminalCheckpoint,
+			terminalCheckpointOnTitleConflict,
+		)) {
+		return nil, fmt.Errorf("run success terminal title-conflict checkpoint identity is invalid")
+	}
 
 	result := &FinalizeRunSuccessResult{}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -3981,6 +4022,9 @@ func (r *threadRepository) FinalizeRunSuccess(
 		if completionEvent.ThreadID != completed.ThreadID {
 			return fmt.Errorf("run success completion event does not belong to run thread")
 		}
+		if terminalCheckpoint != nil && terminalCheckpoint.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success terminal checkpoint does not belong to run thread")
+		}
 		if err := tx.Create(messagePO).Error; err != nil {
 			return err
 		}
@@ -4011,6 +4055,19 @@ func (r *threadRepository) FinalizeRunSuccess(
 		if err := tx.Create(completionEventPO).Error; err != nil {
 			return err
 		}
+		selectedTerminalCheckpoint := terminalCheckpoint
+		selectedTerminalCheckpointPO := terminalCheckpointPO
+		if threadTitle != "" && threadTitle != expectedTitle && !result.TitleUpdated &&
+			terminalCheckpointOnTitleConflict != nil {
+			selectedTerminalCheckpoint = terminalCheckpointOnTitleConflict
+			selectedTerminalCheckpointPO = terminalCheckpointOnTitleConflictPO
+		}
+		if selectedTerminalCheckpointPO != nil {
+			if err := tx.Create(selectedTerminalCheckpointPO).Error; err != nil {
+				return err
+			}
+			result.TerminalCheckpoint = selectedTerminalCheckpoint
+		}
 
 		result.Run = completed.toEntity()
 		result.Message = &message
@@ -4021,6 +4078,21 @@ func (r *threadRepository) FinalizeRunSuccess(
 		return nil, err
 	}
 	return result, nil
+}
+
+func sameTerminalCheckpointEntityIdentity(left, right *entity.Checkpoint) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return left.ID == right.ID && left.ThreadID == right.ThreadID && left.RunID == right.RunID &&
+		left.ParentCheckpointID == right.ParentCheckpointID &&
+		strings.TrimSpace(left.CheckpointNS) == strings.TrimSpace(right.CheckpointNS) &&
+		strings.TrimSpace(left.RuntimeType) == strings.TrimSpace(right.RuntimeType) &&
+		strings.TrimSpace(left.RuntimeKey) == strings.TrimSpace(right.RuntimeKey) &&
+		left.EnvelopeVersion == right.EnvelopeVersion &&
+		strings.TrimSpace(left.ChannelVersions) == strings.TrimSpace(right.ChannelVersions) &&
+		strings.TrimSpace(left.PendingSends) == strings.TrimSpace(right.PendingSends) &&
+		strings.TrimSpace(left.Metadata) == strings.TrimSpace(right.Metadata)
 }
 
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {

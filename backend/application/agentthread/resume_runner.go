@@ -322,6 +322,24 @@ func (p *ResumeRunProcessor) processResumeRun(
 		return p.finalizeFailedResumeRun(ctx, run, heartbeat, resume, resumeRunEmptyResultCode, "resume executor returned empty assistant message")
 	}
 
+	now := p.leaseConfig.Clock.Now().UnixMilli()
+	terminalCheckpoint, checkpointErr := terminalADKCheckpointFromResult(
+		run,
+		result,
+		"",
+		false,
+		now,
+	)
+	if checkpointErr != nil {
+		return p.finalizeFailedResumeRun(
+			ctx,
+			run,
+			heartbeat,
+			resume,
+			"terminal_checkpoint_error",
+			checkpointErr.Error(),
+		)
+	}
 	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 		return resumeRunProcessErrored, abortErr
 	}
@@ -332,13 +350,14 @@ func (p *ResumeRunProcessor) processResumeRun(
 		LeaseOwner:          run.LeaseOwner,
 		LeaseToken:          run.LeaseToken,
 		ExecutionGeneration: run.ExecutionGeneration,
-		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
+		Now:                 now,
 		Message:             message,
 		MessageMetadata:     resultMetadata(result),
 		CompletionEventPayload: encodeRunEventPayload(ctx, p.resumeRunEventPayload(resume, map[string]any{
 			"status":    string(RunStatusSucceeded),
 			"worker_id": p.workerID,
 		})),
+		TerminalCheckpoint: terminalCheckpoint,
 	})
 	if err != nil {
 		if errors.Is(err, domainrepo.ErrRunCanceled) {

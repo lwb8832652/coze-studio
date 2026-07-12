@@ -1031,9 +1031,10 @@ func (s *ApplicationService) ListCheckpoints(ctx context.Context, req *ListCheck
 	}
 
 	checkpoints, total, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Limit:    req.Limit,
+		ThreadID:    req.ThreadID,
+		RunID:       req.RunID,
+		RuntimeType: strings.TrimSpace(req.RuntimeType),
+		Limit:       req.Limit,
 	})
 	if err != nil {
 		return nil, err
@@ -3654,20 +3655,62 @@ func (s *ApplicationService) FinalizeRunSuccess(
 	if req == nil {
 		return nil, fmt.Errorf("finalize run success request is required")
 	}
+	if err := validateADKTerminalCheckpointRequest(
+		req.TerminalCheckpoint,
+		req.ThreadID,
+		req.RunID,
+	); err != nil {
+		return nil, err
+	}
+	if err := validateADKTerminalCheckpointRequest(
+		req.TerminalCheckpointOnTitleConflict,
+		req.ThreadID,
+		req.RunID,
+	); err != nil {
+		return nil, err
+	}
+	if req.TerminalCheckpointOnTitleConflict != nil &&
+		(req.TerminalCheckpoint == nil || !sameADKTerminalCheckpointIdentity(
+			req.TerminalCheckpoint,
+			req.TerminalCheckpointOnTitleConflict,
+		)) {
+		return nil, fmt.Errorf("terminal eino adk title-conflict checkpoint identity is invalid")
+	}
+	toDomainCheckpoint := func(checkpoint *CreateCheckpointRequest) *domainservice.CreateCheckpointRequest {
+		if checkpoint == nil {
+			return nil
+		}
+		return &domainservice.CreateCheckpointRequest{
+			ThreadID: req.ThreadID, RunID: req.RunID,
+			ParentCheckpointID: checkpoint.ParentCheckpointID,
+			CheckpointNS:       checkpoint.CheckpointNS,
+			RuntimeType:        checkpoint.RuntimeType,
+			RuntimeKey:         checkpoint.RuntimeKey,
+			EnvelopeVersion:    checkpoint.EnvelopeVersion,
+			ChannelValues:      checkpoint.ChannelValues,
+			ChannelVersions:    checkpoint.ChannelVersions,
+			PendingSends:       checkpoint.PendingSends,
+			Metadata:           checkpoint.Metadata,
+		}
+	}
+	terminalCheckpoint := toDomainCheckpoint(req.TerminalCheckpoint)
+	terminalCheckpointOnTitleConflict := toDomainCheckpoint(req.TerminalCheckpointOnTitleConflict)
 
 	result, err := s.ThreadSVC.FinalizeRunSuccess(ctx, &domainservice.FinalizeRunSuccessRequest{
-		RunID:                  req.RunID,
-		ThreadID:               req.ThreadID,
-		LeaseOwner:             req.LeaseOwner,
-		LeaseToken:             req.LeaseToken,
-		ExecutionGeneration:    req.ExecutionGeneration,
-		Now:                    req.Now,
-		Message:                req.Message,
-		MessageMetadata:        req.MessageMetadata,
-		TitleEventPayload:      req.TitleEventPayload,
-		CompletionEventPayload: req.CompletionEventPayload,
-		ExpectedThreadTitle:    req.ExpectedThreadTitle,
-		ThreadTitle:            req.ThreadTitle,
+		RunID:                             req.RunID,
+		ThreadID:                          req.ThreadID,
+		LeaseOwner:                        req.LeaseOwner,
+		LeaseToken:                        req.LeaseToken,
+		ExecutionGeneration:               req.ExecutionGeneration,
+		Now:                               req.Now,
+		Message:                           req.Message,
+		MessageMetadata:                   req.MessageMetadata,
+		TitleEventPayload:                 req.TitleEventPayload,
+		CompletionEventPayload:            req.CompletionEventPayload,
+		ExpectedThreadTitle:               req.ExpectedThreadTitle,
+		ThreadTitle:                       req.ThreadTitle,
+		TerminalCheckpoint:                terminalCheckpoint,
+		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
 	})
 	if err != nil {
 		return nil, err
@@ -3679,6 +3722,7 @@ func (s *ApplicationService) FinalizeRunSuccess(
 	return &FinalizeRunSuccessResponse{
 		Run:          DomainRunToSummary(result.Run),
 		Message:      DomainMessageToSummary(result.Message),
+		Checkpoint:   DomainCheckpointToSummary(result.TerminalCheckpoint),
 		TitleUpdated: result.TitleUpdated,
 	}, nil
 }

@@ -55,12 +55,20 @@ func (m *ADKUploadedFilesMiddleware) BeforeModelRewriteState(
 	if state == nil {
 		state = &adk.ChatModelAgentState{}
 	}
-	if len(state.Messages) == 0 || m == nil || m.run == nil {
+	if m == nil || m.run == nil {
 		return ctx, state, nil
 	}
 
 	files := uploadedFilesFromRunInput(m.run.Input)
 	if len(files) == 0 {
+		return ctx, state, nil
+	}
+	if tracker := adkParityStateTrackerFromContext(ctx); tracker != nil {
+		if err := tracker.MergeUploads(adkParityUploadsFromSummaries(files)); err != nil {
+			return ctx, state, fmt.Errorf("record eino adk parity uploads: %w", err)
+		}
+	}
+	if len(state.Messages) == 0 {
 		return ctx, state, nil
 	}
 	targetIndex := lastADKUserInjectionTargetIndex(state.Messages)
@@ -89,6 +97,20 @@ func (m *ADKUploadedFilesMiddleware) BeforeModelRewriteState(
 	nextState.Messages = append([]*schema.Message(nil), state.Messages...)
 	nextState.Messages[targetIndex] = nextMessage
 	return ctx, &nextState, nil
+}
+
+func adkParityUploadsFromSummaries(
+	files []*TaskThreadUploadedFileSummary,
+) []ADKParityUpload {
+	result := make([]ADKParityUpload, 0, len(files))
+	for _, file := range normalizeADKUploadedFiles(files) {
+		result = append(result, ADKParityUpload{
+			FileID: file.FileID, FileName: file.FileName,
+			VirtualPath: file.VirtualPath, ContentType: file.ContentType,
+			SizeBytes: file.SizeBytes, CreatedAt: file.CreatedAt,
+		})
+	}
+	return result
 }
 
 func uploadedFilesFromRunInput(rawInput string) []*TaskThreadUploadedFileSummary {

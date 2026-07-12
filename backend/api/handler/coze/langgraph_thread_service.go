@@ -582,15 +582,27 @@ func langGraphADKCheckpointResumeReadiness(
 	reason := "interrupts_available"
 	resumable := checkpoint.RuntimeDeletedAt == 0
 	interruptIDs := []string{}
-	if projected := appagentthread.ProjectPublicCheckpoint(checkpoint); projected != nil {
+	status := ""
+	projected := appagentthread.ProjectPublicCheckpoint(checkpoint)
+	if projected != nil {
 		interruptIDs = append(interruptIDs, projected.InterruptIDs...)
 	}
-	_, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
 	if err != nil {
 		reason = "invalid_adk_checkpoint"
 		resumable = false
 	} else {
-		if len(interruptIDs) == 0 {
+		if projected != nil && envelope.CheckpointPhase == appagentthread.ADKCheckpointPhaseTerminal {
+			if completion, ok := projected.Values["completion"].(map[string]any); ok {
+				status = langGraphStringValue(completion["status"])
+			}
+			if status == "succeeded" {
+				reason = "checkpoint_already_succeeded"
+			} else {
+				reason = "checkpoint_terminal"
+			}
+			resumable = false
+		} else if len(interruptIDs) == 0 {
 			reason = "no_interrupts"
 			resumable = false
 		}
@@ -613,6 +625,7 @@ func langGraphADKCheckpointResumeReadiness(
 		Resumable:    resumable,
 		ResumeFrom:   resumeFrom,
 		Reason:       reason,
+		Status:       status,
 		PendingSends: interruptIDs,
 		Config: langGraphThreadStateConfig(
 			checkpoint.ThreadID,
@@ -865,7 +878,14 @@ func langGraphThreadHistoryFromCheckpoints(
 		if checkpoint == nil {
 			continue
 		}
-		result = append(result, langGraphThreadStateFromCheckpoint(thread, checkpoint))
+		state := langGraphThreadStateFromCheckpoint(thread, checkpoint)
+		if state == nil {
+			continue
+		}
+		if len(result) > 0 {
+			delete(state.Values, "messages")
+		}
+		result = append(result, state)
 	}
 
 	return result
@@ -876,13 +896,13 @@ func langGraphThreadHistoryEntriesFromCheckpoints(
 	checkpoints []*appagentthread.CheckpointSummary,
 ) []*langgraphapi.ThreadHistoryEntry {
 	result := make([]*langgraphapi.ThreadHistoryEntry, 0, len(checkpoints))
-	for index, checkpoint := range checkpoints {
+	for _, checkpoint := range checkpoints {
 		projected := appagentthread.ProjectPublicCheckpoint(checkpoint)
 		if projected == nil {
 			continue
 		}
 		values := langGraphPublicCheckpointValues(projected)
-		if index > 0 {
+		if len(result) > 0 {
 			delete(values, "messages")
 		}
 		parentID := (*string)(nil)
@@ -1001,14 +1021,7 @@ func langGraphInternalCheckpointValues(checkpoint *appagentthread.CheckpointSumm
 		return defaults
 	}
 	if strings.TrimSpace(checkpoint.RuntimeType) == string(appagentthread.RuntimeModeEinoADK) {
-		values := defaults
-		values["runtime"] = string(appagentthread.RuntimeModeEinoADK)
-		if envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues)); err == nil {
-			values["interrupts"] = langGraphADKInterruptIDs(envelope.Interrupts)
-		} else {
-			values["interrupts"] = []string{}
-		}
-		return values
+		return langGraphPublicCheckpointValues(appagentthread.ProjectPublicCheckpoint(checkpoint))
 	}
 
 	values := langGraphRunEventPayloadMap(checkpoint.ChannelValues)

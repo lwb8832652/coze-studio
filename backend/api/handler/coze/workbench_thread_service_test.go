@@ -168,7 +168,6 @@ func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 		Metadata:        `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
-
 	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
 	body := string(w.Result().Body())
 
@@ -184,6 +183,89 @@ func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 	require.NotContains(t, body, "secret prompt")
 	require.NotContains(t, body, "tool_args")
 	require.NotContains(t, body, "secret result")
+}
+
+func TestGetTaskThreadHandlerPrefersTypedADKParityTodos(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"请生成计划"}]}`,
+		Config:   `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(1, runResp.Run.RunID, []appagentthread.ADKParityTodo{{
+		ID: "typed-todo", Title: "读取持久态", Status: "in_progress",
+	}})
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType:     string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey:      "thread-1/run-" + strconv.FormatInt(runResp.Run.RunID, 10),
+		EnvelopeVersion: 2, ChannelValues: mustHandlerTestADKParityEnvelope(t, state, nil),
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, CheckpointNS: "legacy",
+		RuntimeType: "langgraph", RuntimeKey: "legacy-latest", EnvelopeVersion: 1,
+		ChannelValues:   `{"todos":[{"id":"stale-latest","title":"错误运行时待办","status":"pending"}]}`,
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"id":"typed-todo"`)
+	require.Contains(t, body, `"title":"读取持久态"`)
+	require.Contains(t, body, `"status":"running"`)
+	require.NotContains(t, body, "stale-latest")
+}
+
+func TestGetTaskThreadHandlerDoesNotReviveLegacyTodosAfterExplicitTypedClear(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "显式清空待办",
+		Source:   appagentthread.ThreadSourceWeb,
+		Metadata: `{"todos":[{"id":"stale-todo","title":"旧待办","status":"pending"}]}`,
+	})
+	require.NoError(t, err)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: threadResp.Thread.ThreadID,
+		Input:    `{"messages":[{"role":"user","content":"清空待办"}]}`,
+		Config:   `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(threadResp.Thread.ThreadID, runResp.Run.RunID, []appagentthread.ADKParityTodo{})
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: threadResp.Thread.ThreadID, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType: string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey: "thread-" + strconv.FormatInt(threadResp.Thread.ThreadID, 10) +
+			"/run-" + strconv.FormatInt(runResp.Run.RunID, 10),
+		EnvelopeVersion: 2, ChannelValues: mustHandlerTestADKParityEnvelope(t, state, nil),
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10),
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotContains(t, body, "stale-todo")
+	require.NotContains(t, body, "旧待办")
 }
 
 func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {

@@ -357,7 +357,10 @@ func ProjectPublicCheckpoint(checkpoint *CheckpointSummary) *PublicCheckpoint {
 
 	if strings.TrimSpace(checkpoint.RuntimeType) == string(RuntimeModeEinoADK) {
 		result.Runtime = string(RuntimeModeEinoADK)
-		if envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues)); err == nil {
+		result.Values["runtime"] = string(RuntimeModeEinoADK)
+		result.Values["interrupts"] = []string{}
+		if envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues)); err == nil &&
+			adkEnvelopeMatchesPublicCheckpoint(checkpoint, &envelope) {
 			result.InterruptIDs = make([]string, 0, len(envelope.Interrupts))
 			for key, item := range envelope.Interrupts {
 				id := publicIdentifier(item.ID, maxPublicIdentifierRunes)
@@ -369,14 +372,245 @@ func ProjectPublicCheckpoint(checkpoint *CheckpointSummary) *PublicCheckpoint {
 				}
 			}
 			sort.Strings(result.InterruptIDs)
+			if envelope.EnvelopeVersion == adkCheckpointEnvelopeVersion && envelope.ParityState != nil {
+				result.Values = projectPublicADKParityState(envelope.ParityState, result.InterruptIDs)
+			}
 		}
-		result.Values["runtime"] = string(RuntimeModeEinoADK)
-		result.Values["interrupts"] = append([]string(nil), result.InterruptIDs...)
+		result.Values["interrupts"] = append([]string{}, result.InterruptIDs...)
 		return result
 	}
 
 	result.Values = projectPublicCheckpointValues(checkpoint.ChannelValues)
 	result.InterruptIDs = publicStringSlice(publicJSONValue(checkpoint.PendingSends))
+	return result
+}
+
+func adkEnvelopeMatchesPublicCheckpoint(
+	checkpoint *CheckpointSummary,
+	envelope *ADKCheckpointEnvelope,
+) bool {
+	if checkpoint == nil || envelope == nil {
+		return false
+	}
+	if checkpoint.EnvelopeVersion != 0 && int(checkpoint.EnvelopeVersion) != envelope.EnvelopeVersion {
+		return false
+	}
+	if runtimeKey := strings.TrimSpace(checkpoint.RuntimeKey); runtimeKey != "" && runtimeKey != envelope.RuntimeKey {
+		return false
+	}
+	if envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion {
+		return true
+	}
+	return envelope.ParityState != nil &&
+		envelope.ParityState.ThreadID == checkpoint.ThreadID &&
+		envelope.ParityState.LastRunID == checkpoint.RunID
+}
+
+func projectPublicADKParityState(state *ADKParityState, interruptIDs []string) map[string]any {
+	result := map[string]any{
+		"runtime":        string(RuntimeModeEinoADK),
+		"messages":       []map[string]any{},
+		"todos":          []map[string]any{},
+		"uploaded_files": []map[string]any{},
+		"artifacts":      []map[string]any{},
+		"viewed_images":  map[string]any{},
+		"active_skills":  []map[string]any{},
+		"interrupts":     append([]string{}, interruptIDs...),
+	}
+	if state == nil {
+		return result
+	}
+
+	if title := publicLabel(state.Title, maxPublicLabelRunes); title != "" {
+		result["title"] = title
+	}
+	messages := make([]map[string]any, 0, len(state.Messages))
+	for _, message := range state.Messages {
+		role := strings.ToLower(publicIdentifier(message.Role, 32))
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		content := publicVisibleContent(stripADKUploadedFilesContext(message.Content))
+		if content == "" {
+			continue
+		}
+		projected := map[string]any{"role": role, "content": content}
+		if id := publicIdentifier(message.ID, maxPublicIdentifierRunes); id != "" {
+			projected["id"] = id
+		}
+		if message.RunID > 0 {
+			projected["run_id"] = strconv.FormatInt(message.RunID, 10)
+		}
+		if message.CreatedAt > 0 {
+			projected["created_at"] = message.CreatedAt
+		}
+		messages = append(messages, projected)
+	}
+	result["messages"] = messages
+
+	todos := make([]map[string]any, 0, len(state.Todos))
+	for _, todo := range state.Todos {
+		projected := map[string]any{}
+		if id := publicIdentifier(todo.ID, maxPublicIdentifierRunes); id != "" {
+			projected["id"] = id
+		}
+		if title := publicLabel(todo.Title, maxPublicLabelRunes); title != "" {
+			projected["title"] = title
+		}
+		if description := publicLabel(todo.Description, maxPublicLabelRunes); description != "" {
+			projected["description"] = description
+		}
+		if status := publicIdentifier(todo.Status, 32); status != "" {
+			projected["status"] = status
+		}
+		if activeForm := publicLabel(todo.ActiveForm, maxPublicLabelRunes); activeForm != "" {
+			projected["active_form"] = activeForm
+		}
+		if owner := publicIdentifier(todo.Owner, maxPublicIdentifierRunes); owner != "" {
+			projected["owner"] = owner
+		}
+		if len(projected) > 0 {
+			todos = append(todos, projected)
+		}
+	}
+	result["todos"] = todos
+
+	uploads := make([]map[string]any, 0, len(state.Uploads))
+	for _, upload := range state.Uploads {
+		projected := map[string]any{}
+		if upload.FileID > 0 {
+			projected["file_id"] = upload.FileID
+		}
+		if name := publicLabel(upload.FileName, maxPublicLabelRunes); name != "" {
+			projected["file_name"] = name
+		}
+		if virtualPath := publicVirtualPath(upload.VirtualPath, "/mnt/user-data/uploads"); virtualPath != "" {
+			projected["virtual_path"] = virtualPath
+		}
+		if contentType := publicLabel(upload.ContentType, 255); contentType != "" {
+			projected["content_type"] = contentType
+		}
+		if upload.SizeBytes >= 0 {
+			projected["size_bytes"] = upload.SizeBytes
+		}
+		if upload.CreatedAt > 0 {
+			projected["created_at"] = upload.CreatedAt
+		}
+		if len(projected) > 0 {
+			uploads = append(uploads, projected)
+		}
+	}
+	result["uploaded_files"] = uploads
+
+	artifacts := make([]map[string]any, 0, len(state.Artifacts))
+	for _, artifact := range state.Artifacts {
+		projected := map[string]any{}
+		if artifact.ArtifactID > 0 {
+			projected["artifact_id"] = artifact.ArtifactID
+		}
+		if artifact.FileID > 0 {
+			projected["file_id"] = artifact.FileID
+		}
+		if artifact.RunID > 0 {
+			projected["run_id"] = artifact.RunID
+		}
+		if title := publicLabel(artifact.Title, maxPublicLabelRunes); title != "" {
+			projected["title"] = title
+		}
+		if artifactType := publicIdentifier(artifact.ArtifactType, maxPublicIdentifierRunes); artifactType != "" {
+			projected["artifact_type"] = artifactType
+		}
+		if virtualPath := publicVirtualPath(artifact.VirtualPath, "/mnt/user-data/outputs"); virtualPath != "" {
+			projected["virtual_path"] = virtualPath
+		}
+		if contentType := publicLabel(artifact.ContentType, 255); contentType != "" {
+			projected["content_type"] = contentType
+		}
+		if artifact.SizeBytes >= 0 {
+			projected["size_bytes"] = artifact.SizeBytes
+		}
+		if previewMode := publicIdentifier(artifact.PreviewMode, maxPublicIdentifierRunes); previewMode != "" {
+			projected["preview_mode"] = previewMode
+		}
+		if scanStatus := publicIdentifier(artifact.ScanStatus, maxPublicIdentifierRunes); scanStatus != "" {
+			projected["scan_status"] = scanStatus
+		}
+		if artifact.CreatedAt > 0 {
+			projected["created_at"] = artifact.CreatedAt
+		}
+		if len(projected) > 0 {
+			artifacts = append(artifacts, projected)
+		}
+	}
+	result["artifacts"] = artifacts
+
+	viewedImages := make(map[string]any, len(state.ViewedImages))
+	for key, image := range state.ViewedImages {
+		virtualPath := publicVirtualPath(image.VirtualPath, "/mnt/user-data")
+		if virtualPath == "" || publicVirtualPath(key, "/mnt/user-data") != virtualPath {
+			continue
+		}
+		projected := map[string]any{"virtual_path": virtualPath}
+		if contentType := publicLabel(image.ContentType, 255); contentType != "" {
+			projected["content_type"] = contentType
+		}
+		if digest := publicIdentifier(image.Digest, maxPublicIdentifierRunes); digest != "" {
+			projected["digest"] = digest
+		}
+		viewedImages[virtualPath] = projected
+	}
+	result["viewed_images"] = viewedImages
+
+	if state.PromotedTools != nil {
+		names := make([]string, 0, len(state.PromotedTools.Names))
+		for _, name := range state.PromotedTools.Names {
+			if value := publicIdentifier(name, 255); value != "" {
+				names = append(names, value)
+			}
+		}
+		if catalogHash := publicIdentifier(state.PromotedTools.CatalogHash, maxPublicIdentifierRunes); catalogHash != "" {
+			result["promoted"] = map[string]any{"catalog_hash": catalogHash, "names": names}
+		}
+	}
+
+	skills := make([]map[string]any, 0, len(state.ActiveSkills))
+	for _, skill := range state.ActiveSkills {
+		name := publicLabel(skill.Name, maxPublicLabelRunes)
+		version := publicIdentifier(skill.Version, 255)
+		if skill.ID <= 0 || name == "" || version == "" {
+			continue
+		}
+		skills = append(skills, map[string]any{"id": skill.ID, "name": name, "version": version})
+	}
+	result["active_skills"] = skills
+
+	if state.Summary != nil {
+		if digest := publicIdentifier(state.Summary.Digest, maxPublicIdentifierRunes); digest != "" {
+			result["summary"] = map[string]any{
+				"digest": digest, "original_message_count": state.Summary.OriginalMessageCount,
+				"active_message_count": state.Summary.ActiveMessageCount, "created_at": state.Summary.CreatedAt,
+			}
+		}
+	}
+	if state.Completion != nil {
+		completion := map[string]any{}
+		if state.Completion.RunID > 0 {
+			completion["run_id"] = state.Completion.RunID
+		}
+		if status := publicIdentifier(state.Completion.Status, 32); status != "" {
+			completion["status"] = status
+		}
+		if reason := publicIdentifier(state.Completion.Reason, 255); reason != "" {
+			completion["reason"] = reason
+		}
+		if state.Completion.CompletedAt > 0 {
+			completion["completed_at"] = state.Completion.CompletedAt
+		}
+		if len(completion) > 0 {
+			result["completion"] = completion
+		}
+	}
+
 	return result
 }
 
@@ -776,12 +1010,17 @@ func projectPublicJournalUsage(source map[string]any) map[string]int64 {
 }
 
 func publicArtifactVirtualPath(value string) string {
+	return publicVirtualPath(value, "/mnt/user-data/outputs")
+}
+
+func publicVirtualPath(value string, root string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
+	root = strings.TrimSuffix(strings.TrimSpace(root), "/")
+	if value == "" || root == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return ""
 	}
 	cleaned := path.Clean(value)
-	if !strings.HasPrefix(cleaned, "/mnt/user-data/outputs/") {
+	if !strings.HasPrefix(cleaned, root+"/") {
 		return ""
 	}
 	return cleaned

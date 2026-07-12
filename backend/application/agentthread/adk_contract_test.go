@@ -541,10 +541,12 @@ func runADKClarificationContract(t *testing.T) runtimeContractLifecycle {
 
 func contractRun(runID int64) *RunSummary {
 	return &RunSummary{
-		ThreadID: 10,
-		RunID:    runID,
-		Config:   `{"agent_name":"lead"}`,
-		Input:    `{"messages":[{"role":"user","content":"contract input"}]}`,
+		ThreadID:  10,
+		RunID:     runID,
+		SpaceID:   7,
+		CreatorID: 9,
+		Config:    `{"agent_name":"lead"}`,
+		Input:     `{"messages":[{"role":"user","content":"contract input"}]}`,
 	}
 }
 

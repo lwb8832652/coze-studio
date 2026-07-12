@@ -107,6 +107,114 @@ func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
 }
 
+func TestRunProcessorBuildsTerminalParityCheckpoint(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{ID: 10, SpaceID: 7, CreatorID: 9, Title: "Existing title"},
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+			Status:   entity.RunStatusRunning,
+			Input:    `{"messages":[{"role":"user","content":"continue"}]}`,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			LeaseExpiresAt: 60_000, ExecutionGeneration: 3,
+		}},
+		appended: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 200,
+			Role: entity.MessageRoleAssistant, Content: "done",
+		},
+		completedRun: &entity.Run{
+			ID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+			Status: entity.RunStatusSucceeded,
+		},
+	}
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.SetTitle("Existing title"))
+	require.NoError(t, tracker.AppendMessage(ADKParityMessage{
+		RunID: 200, Role: "assistant", Content: "done",
+	}))
+	require.NoError(t, tracker.SetCompletion(ADKParityCompletion{
+		RunID: 200, Status: "succeeded", Reason: "completed", CompletedAt: 400,
+	}))
+	state := tracker.Snapshot()
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{
+				Message: "done", Metadata: `{"source":"eino_adk"}`,
+				ParityState: &state, ParityParentCheckpointID: 77,
+			}, nil
+		}),
+		RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1},
+	)
+
+	require.NoError(t, processor.ProcessPendingRuns(context.Background()))
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	checkpoint := domainSVC.finalizeRunSuccessReq.TerminalCheckpoint
+	require.NotNil(t, checkpoint)
+	require.Equal(t, int64(77), checkpoint.ParentCheckpointID)
+	require.Equal(t, "coze-run-200", checkpoint.RuntimeKey)
+	require.Equal(t, int32(2), checkpoint.EnvelopeVersion)
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	require.NoError(t, err)
+	require.Equal(t, ADKCheckpointPhaseTerminal, envelope.CheckpointPhase)
+	require.Empty(t, envelope.Checkpoint)
+	require.Equal(t, "Existing title", envelope.ParityState.Title)
+	require.Equal(t, "succeeded", envelope.ParityState.Completion.Status)
+}
+
+func TestRunProcessorBuildsTitleConflictFallbackTerminalParityCheckpoint(t *testing.T) {
+	userMessage := "请制定青岛三日游路线"
+	initialTitle := taskThreadTitle("", userMessage)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{ID: 10, SpaceID: 7, CreatorID: 9, Title: initialTitle},
+		claimedRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+			Status: entity.RunStatusRunning, Input: `{"messages":[{"role":"user","content":"请制定青岛三日游路线"}]}`,
+			WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+			LeaseExpiresAt: 60_000, ExecutionGeneration: 3,
+		}},
+		appended: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "done",
+		},
+		completedRun: &entity.Run{
+			ID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9, Status: entity.RunStatusSucceeded,
+		},
+	}
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 200, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tracker.SetTitle(initialTitle))
+	state := tracker.Snapshot()
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{
+				Message: "done", Title: "青岛亲子三日游",
+				ParityState: &state, ParityParentCheckpointID: 77,
+			}, nil
+		}),
+		RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1},
+	)
+
+	require.NoError(t, processor.ProcessPendingRuns(context.Background()))
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	primary := domainSVC.finalizeRunSuccessReq.TerminalCheckpoint
+	fallback := domainSVC.finalizeRunSuccessReq.TerminalCheckpointOnTitleConflict
+	require.NotNil(t, primary)
+	require.NotNil(t, fallback)
+	primaryEnvelope, err := UnmarshalADKCheckpointEnvelope([]byte(primary.ChannelValues))
+	require.NoError(t, err)
+	fallbackEnvelope, err := UnmarshalADKCheckpointEnvelope([]byte(fallback.ChannelValues))
+	require.NoError(t, err)
+	require.Equal(t, "青岛亲子三日游", primaryEnvelope.ParityState.Title)
+	require.Empty(t, fallbackEnvelope.ParityState.Title)
+	require.Equal(t, primary.ParentCheckpointID, fallback.ParentCheckpointID)
+	require.Equal(t, primary.RuntimeKey, fallback.RuntimeKey)
+}
+
 func TestRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
 	userMessage := "生成文档"
 	input, err := taskThreadRunInputFromMessage(userMessage)

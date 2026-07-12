@@ -72,9 +72,11 @@ func (f RunExecutorFunc) Execute(ctx context.Context, run *RunSummary) (*RunExec
 }
 
 type RunExecutionResult struct {
-	Message  string
-	Metadata string
-	Title    string
+	Message                  string
+	Metadata                 string
+	Title                    string
+	ParityState              *ADKParityState
+	ParityParentCheckpointID int64
 }
 
 type RunTitleGenerationInput struct {
@@ -383,6 +385,30 @@ func (p *RunProcessor) finalizeRunExecution(
 	}
 
 	expectedTitle, generatedTitle := p.prepareGeneratedThreadTitle(ctx, run, result)
+	now := p.leaseConfig.Clock.Now().UnixMilli()
+	terminalCheckpoint, checkpointErr := terminalADKCheckpointFromResult(
+		run,
+		result,
+		generatedTitle,
+		false,
+		now,
+	)
+	if checkpointErr != nil {
+		return p.finalizeFailedRun(ctx, run, heartbeat, "terminal_checkpoint_error", checkpointErr.Error())
+	}
+	var terminalCheckpointOnTitleConflict *CreateCheckpointRequest
+	if terminalCheckpoint != nil && strings.TrimSpace(generatedTitle) != "" {
+		terminalCheckpointOnTitleConflict, checkpointErr = terminalADKCheckpointFromResult(
+			run,
+			result,
+			"",
+			true,
+			now,
+		)
+		if checkpointErr != nil {
+			return p.finalizeFailedRun(ctx, run, heartbeat, "terminal_checkpoint_error", checkpointErr.Error())
+		}
+	}
 	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
 		return runProcessErrored, abortErr
 	}
@@ -393,7 +419,7 @@ func (p *RunProcessor) finalizeRunExecution(
 		LeaseOwner:          run.LeaseOwner,
 		LeaseToken:          run.LeaseToken,
 		ExecutionGeneration: run.ExecutionGeneration,
-		Now:                 p.leaseConfig.Clock.Now().UnixMilli(),
+		Now:                 now,
 		Message:             message,
 		MessageMetadata:     resultMetadata(result),
 		TitleEventPayload: encodeRunEventPayload(ctx, map[string]any{
@@ -403,8 +429,10 @@ func (p *RunProcessor) finalizeRunExecution(
 			"status":    string(RunStatusSucceeded),
 			"worker_id": p.workerID,
 		}),
-		ExpectedThreadTitle: expectedTitle,
-		ThreadTitle:         generatedTitle,
+		ExpectedThreadTitle:               expectedTitle,
+		ThreadTitle:                       generatedTitle,
+		TerminalCheckpoint:                terminalCheckpoint,
+		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
 	})
 	if err != nil {
 		if supersededRun, superseded, lookupErr := durableMultitaskInterruptedRun(
@@ -648,6 +676,79 @@ func resultTitle(result *RunExecutionResult) string {
 	}
 
 	return result.Title
+}
+
+func terminalADKCheckpointFromResult(
+	run *RunSummary,
+	result *RunExecutionResult,
+	title string,
+	clearTitle bool,
+	now int64,
+) (*CreateCheckpointRequest, error) {
+	if result == nil || result.ParityState == nil {
+		return nil, nil
+	}
+	if run == nil || run.RunID <= 0 || run.ThreadID <= 0 || run.SpaceID <= 0 || run.CreatorID <= 0 {
+		return nil, fmt.Errorf("terminal eino adk checkpoint requires run ownership")
+	}
+	if result.ParityParentCheckpointID < 0 {
+		return nil, fmt.Errorf("terminal eino adk checkpoint parent is invalid")
+	}
+	tracker, err := NewADKParityStateTracker(run, result.ParityState)
+	if err != nil {
+		return nil, fmt.Errorf("validate terminal eino adk parity state: %w", err)
+	}
+	if clearTitle {
+		if err := tracker.SetTitle(""); err != nil {
+			return nil, err
+		}
+	} else if title = strings.TrimSpace(title); title != "" {
+		if err := tracker.SetTitle(title); err != nil {
+			return nil, err
+		}
+	}
+	if err := tracker.ReplaceInterrupts([]ADKParityInterrupt{}); err != nil {
+		return nil, err
+	}
+	if err := tracker.SetCompletion(ADKParityCompletion{
+		RunID: run.RunID, Status: "succeeded", Reason: "completed", CompletedAt: now,
+	}); err != nil {
+		return nil, err
+	}
+	state := tracker.Snapshot()
+	runtimeKey := adkCheckpointKeyForRun(run.RunID)
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: adkCheckpointEnvelopeVersion,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  adkCheckpointRuntimeVersion,
+		RuntimeKey:      runtimeKey,
+		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseTerminal,
+		ParityState:     &state,
+		RunRevision:     state.Revision,
+		CreatedAt:       now,
+	}
+	raw, err := envelope.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("marshal terminal eino adk checkpoint: %w", err)
+	}
+	return &CreateCheckpointRequest{
+		ThreadID:           run.ThreadID,
+		RunID:              run.RunID,
+		ParentCheckpointID: result.ParityParentCheckpointID,
+		CheckpointNS:       adkCheckpointNamespace,
+		RuntimeType:        string(RuntimeModeEinoADK),
+		RuntimeKey:         runtimeKey,
+		EnvelopeVersion:    adkCheckpointEnvelopeVersion,
+		ChannelValues:      string(raw),
+		ChannelVersions:    `{}`,
+		PendingSends:       `[]`,
+		Metadata: adkCheckpointMetadataJSON(
+			adkCheckpointRuntimeVersion,
+			runtimeKey,
+			ADKCheckpointPhaseTerminal,
+		),
+	}, nil
 }
 
 func (p *RunProcessor) prepareGeneratedThreadTitle(

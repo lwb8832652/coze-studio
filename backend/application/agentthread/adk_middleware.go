@@ -43,6 +43,7 @@ const (
 	ADKMiddlewareUploadedFiles          ADKMiddlewareName = "uploaded_files"
 	ADKMiddlewareSkill                  ADKMiddlewareName = "skill"
 	ADKMiddlewareToolSearch             ADKMiddlewareName = "toolsearch"
+	ADKMiddlewareParityState            ADKMiddlewareName = "parity_state"
 	ADKMiddlewarePatchTools             ADKMiddlewareName = "patchtoolcalls"
 	ADKMiddlewarePlanTask               ADKMiddlewareName = "plantask"
 	ADKMiddlewareContextBudget          ADKMiddlewareName = "contextbudget"
@@ -70,6 +71,7 @@ var adkMiddlewareOrder = []ADKMiddlewareName{
 	ADKMiddlewareProviderCapability,
 	ADKMiddlewareMultimodal,
 	ADKMiddlewareToolSearch,
+	ADKMiddlewareParityState,
 	ADKMiddlewareContextBudget,
 	ADKMiddlewareSafetyFinish,
 	ADKMiddlewareSubagentLimit,
@@ -204,6 +206,14 @@ func (a *ADKMiddlewareAssembler) Build(
 			return ADKMiddlewareBundle{}, fmt.Errorf(
 				"eino adk plan backend factory returned empty backend",
 			)
+		}
+		if backend, ok := input.PlanBackend.(*ADKPlanBackend); ok {
+			if err := backend.setParityStateTracker(adkParityStateTrackerFromContext(ctx)); err != nil {
+				return ADKMiddlewareBundle{}, err
+			}
+			if err := backend.syncParityState(ctx); err != nil {
+				return ADKMiddlewareBundle{}, err
+			}
 		}
 	}
 
@@ -494,6 +504,17 @@ func defaultADKMiddlewareBuilder(
 			if err != nil {
 				return nil, err
 			}
+			if tracker := adkParityStateTrackerFromContext(ctx); tracker != nil {
+				paritySkills := make([]ADKParitySkill, 0, len(skillContext.Items))
+				for _, skill := range skillContext.Items {
+					paritySkills = append(paritySkills, ADKParitySkill{
+						ID: skill.ID, Name: skill.Name, Version: skill.Version,
+					})
+				}
+				if err := tracker.ReplaceActiveSkills(paritySkills); err != nil {
+					return nil, fmt.Errorf("record eino adk parity skills: %w", err)
+				}
+			}
 			emitSkillsLoadedRunEvent(
 				ctx,
 				options.EventSink,
@@ -511,6 +532,13 @@ func defaultADKMiddlewareBuilder(
 				DynamicTools:       input.DynamicTools,
 				UseModelToolSearch: input.ModelCapabilities.NativeToolSearch,
 			})
+		}
+	case ADKMiddlewareParityState:
+		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
+			if adkParityStateTrackerFromContext(ctx) == nil {
+				return nil, errADKMiddlewareNotApplicable
+			}
+			return NewADKParityStateMiddleware(ctx, input.DynamicTools)
 		}
 	case ADKMiddlewarePatchTools:
 		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {

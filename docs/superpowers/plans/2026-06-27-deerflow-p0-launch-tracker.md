@@ -310,6 +310,31 @@ Every implementation slice must update this document:
     diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
     remains `进行中`; durable Todo/promoted-tool/Skill/upload/Artifact/interrupt
     parity state continues as `AR-PARITY-002.4`.
+  - `AR-PARITY-002.4` Durable Eino parity state (已完成): implemented a bounded,
+    versioned and tenant-scoped `ADKParityState` for safe messages/summary,
+    workspace/uploads, Todo, Artifacts, viewed-image references, promoted tools,
+    resolved Skills, interrupts and successful completion. New checkpoint writes
+    use envelope v2 while valid v1 opaque checkpoints remain resumable; terminal
+    v2 snapshots are non-resumable and unknown or mismatched versions fail closed.
+    Runtime producers update the shared tracker only after successful operations.
+    Successful finalization atomically commits the assistant message, optional
+    generated title, completion event, run status and exactly one terminal
+    checkpoint. Its title-CAS conflict variant omits stale title state and leaves
+    the concurrently committed thread row authoritative. Workbench Todo and
+    LangGraph state/history now project typed
+    state first, preserve explicit empty Todo, omit repeated historical messages
+    and never expose opaque bytes or hidden model/tool/provider payloads. The
+    seed and Workbench paths explicitly query the latest `eino_adk` checkpoint,
+    so a newer foreign-runtime row cannot mask durable Eino state. No migration,
+    Python sidecar, IM work or fabricated viewed-image producer was added.
+    Canceled/failed lifecycle remains authoritative in the run table and terminal
+    events. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-durable-parity-state.md`.
+    Verification: focused RED/GREEN suites, affected application/domain/API
+    packages, targeted race and vet, full serial backend with required Mockey
+    compiler flags, formatting/diff checks and `APP_ENV=debug make build_server`
+    passed. The parent semantic-core item stays `进行中` until its separately
+    tracked acceptance gate is closed.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
