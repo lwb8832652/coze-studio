@@ -293,6 +293,23 @@ Every implementation slice must update this document:
     diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
     remains `进行中`; conditional middleware/concurrency/downgrade events and
     durable parity state continue as `AR-PARITY-002.3` and `.4`.
+  - `AR-PARITY-002.3` Conditional middleware pipeline (已完成): removed all
+    reserved Eino handler placeholders and now omits unavailable Memory, Skill,
+    transcript, Plan, deferred-tool and offload capabilities from the active
+    chain. `HandlerNames` makes active behavior explicit and tests no longer
+    depend on reserved indexes. The verified Eino registration order places
+    safety suppression before the new per-model-response subagent limiter and
+    semantic loop accounting. Internal subagent tool metadata survives provider
+    composition and policy filtering; excess subagent calls are removed without
+    changing ordinary calls or the input state. Unsupported thinking/reasoning
+    now emits one bounded, publicly sanitized
+    `model.capability_downgraded` event per Agent instance. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-conditional-middleware-pipeline.md`.
+    Verification: focused RED/GREEN suites, complete Agent and application
+    suites, targeted race, application vet, full serial backend, formatting and
+    diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
+    remains `进行中`; durable Todo/promoted-tool/Skill/upload/Artifact/interrupt
+    parity state continues as `AR-PARITY-002.4`.
 
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now

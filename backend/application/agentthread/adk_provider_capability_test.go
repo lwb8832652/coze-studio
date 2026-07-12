@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
@@ -195,4 +196,147 @@ func TestADKProviderCapabilityConfigParsesRunOverrides(t *testing.T) {
 	require.True(t, config.Capabilities.Thinking)
 	require.Equal(t, "medium", config.Reasoning.ReasoningEffort)
 	require.True(t, config.Reasoning.ThinkingEnabled)
+}
+
+func TestADKProviderCapabilityMiddlewareEmitsBoundedDowngradeEvent(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       string
+		capabilities ADKModelCapabilities
+		wantPayload  string
+	}{
+		{
+			name:         "reasoning only",
+			config:       `{"reasoning_effort":"high"}`,
+			capabilities: ADKModelCapabilities{Thinking: true},
+			wantPayload: `{
+				"schema":"coze.provider_capability_downgrade.v1",
+				"capabilities":["reasoning"],
+				"requested_thinking_enabled":false,
+				"effective_thinking_enabled":false,
+				"requested_reasoning_effort":"high",
+				"effective_reasoning_effort":"none"
+			}`,
+		},
+		{
+			name:         "thinking only",
+			config:       `{"thinking_enabled":true}`,
+			capabilities: ADKModelCapabilities{Reasoning: true},
+			wantPayload: `{
+				"schema":"coze.provider_capability_downgrade.v1",
+				"capabilities":["thinking"],
+				"requested_thinking_enabled":true,
+				"effective_thinking_enabled":false,
+				"requested_reasoning_effort":"none",
+				"effective_reasoning_effort":"none"
+			}`,
+		},
+		{
+			name:         "combined",
+			config:       `{"reasoning_effort":"high","thinking_enabled":true}`,
+			capabilities: ADKModelCapabilities{},
+			wantPayload: `{
+				"schema":"coze.provider_capability_downgrade.v1",
+				"capabilities":["reasoning","thinking"],
+				"requested_thinking_enabled":true,
+				"effective_thinking_enabled":false,
+				"requested_reasoning_effort":"high",
+				"effective_reasoning_effort":"none"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtimeConfig, err := ParseDeerFlowRuntimeConfig(test.config)
+			require.NoError(t, err)
+			events := &recordingRunEventSink{}
+			middleware, err := NewADKProviderCapabilityMiddleware(
+				&RunSummary{RunID: 20, ThreadID: 10, Config: test.config},
+				test.capabilities,
+				runtimeConfig,
+			)
+			require.NoError(t, err)
+			middleware.eventSink = events
+
+			_, _, err = middleware.BeforeAgent(
+				context.Background(),
+				&adk.ChatModelAgentContext{},
+			)
+			require.NoError(t, err)
+			_, _, err = middleware.BeforeModelRewriteState(
+				context.Background(),
+				&adk.ChatModelAgentState{},
+				&adk.ModelContext{},
+			)
+
+			require.NoError(t, err)
+			require.Len(t, events.events, 1)
+			require.Equal(t, "model.capability_downgraded", events.events[0].EventType)
+			require.Equal(t, int64(10), events.events[0].ThreadID)
+			require.Equal(t, int64(20), events.events[0].RunID)
+			require.JSONEq(t, test.wantPayload, events.events[0].Payload)
+			require.NotContains(t, events.events[0].Payload, "provider_body")
+			require.NotContains(t, events.events[0].Payload, "prompt")
+		})
+	}
+}
+
+func TestADKProviderCapabilityMiddlewareEmitsDowngradeOnceConcurrently(t *testing.T) {
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(
+		`{"reasoning_effort":"high","thinking_enabled":true}`,
+	)
+	require.NoError(t, err)
+	events := &recordingRunEventSink{}
+	middleware, err := NewADKProviderCapabilityMiddleware(
+		&RunSummary{RunID: 20, ThreadID: 10},
+		ADKModelCapabilities{},
+		runtimeConfig,
+	)
+	require.NoError(t, err)
+	middleware.eventSink = events
+
+	var wait sync.WaitGroup
+	errors := make(chan error, 20)
+	for index := 0; index < 20; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, _, hookErr := middleware.BeforeAgent(
+				context.Background(),
+				&adk.ChatModelAgentContext{},
+			)
+			errors <- hookErr
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for hookErr := range errors {
+		require.NoError(t, hookErr)
+	}
+
+	require.Len(t, events.events, 1)
+}
+
+func TestADKProviderCapabilityMiddlewareOmitsEventWhenRequestIsSupported(t *testing.T) {
+	runtimeConfig, err := ParseDeerFlowRuntimeConfig(
+		`{"reasoning_effort":"high","thinking_enabled":true}`,
+	)
+	require.NoError(t, err)
+	events := &recordingRunEventSink{}
+	middleware, err := NewADKProviderCapabilityMiddleware(
+		&RunSummary{RunID: 20, ThreadID: 10},
+		ADKModelCapabilities{Reasoning: true, Thinking: true},
+		runtimeConfig,
+	)
+	require.NoError(t, err)
+	middleware.eventSink = events
+
+	_, _, err = middleware.BeforeAgent(
+		context.Background(),
+		&adk.ChatModelAgentContext{},
+	)
+
+	require.NoError(t, err)
+	require.Empty(t, events.events)
 }

@@ -67,8 +67,9 @@ type ADKToolProvider interface {
 }
 
 type ADKToolSet struct {
-	StaticTools  []tool.BaseTool
-	DynamicTools []tool.BaseTool
+	StaticTools       []tool.BaseTool
+	DynamicTools      []tool.BaseTool
+	SubagentToolNames []string
 }
 
 type ADKToolSetProvider interface {
@@ -93,8 +94,9 @@ func (f ADKToolProviderFunc) ResolveTools(
 }
 
 type ADKMiddlewareBundle struct {
-	Middlewares []adk.AgentMiddleware
-	Handlers    []adk.ChatModelAgentMiddleware
+	Middlewares  []adk.AgentMiddleware
+	Handlers     []adk.ChatModelAgentMiddleware
+	HandlerNames []ADKMiddlewareName
 }
 
 type ADKMiddlewareFactory interface {
@@ -279,6 +281,7 @@ func (f *ApplicationADKAgentFactory) Build(
 
 	var tools []tool.BaseTool
 	var dynamicTools []tool.BaseTool
+	var subagentToolNames []string
 	if f.toolProvider != nil {
 		if toolSetProvider, ok := f.toolProvider.(ADKToolSetProvider); ok {
 			toolSet, resolveErr := toolSetProvider.ResolveToolSet(ctx, run)
@@ -287,6 +290,10 @@ func (f *ApplicationADKAgentFactory) Build(
 			}
 			tools = toolSet.StaticTools
 			dynamicTools = toolSet.DynamicTools
+			subagentToolNames = append(
+				[]string(nil),
+				toolSet.SubagentToolNames...,
+			)
 		} else {
 			tools, err = f.toolProvider.ResolveTools(ctx, run)
 			if err != nil {
@@ -321,6 +328,7 @@ func (f *ApplicationADKAgentFactory) Build(
 			Model:             chatModel,
 			StaticTools:       tools,
 			DynamicTools:      dynamicTools,
+			SubagentToolNames: subagentToolNames,
 			ModelCapabilities: modelCapabilities,
 			RuntimeConfig:     runtimeConfig,
 		})

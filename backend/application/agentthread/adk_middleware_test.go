@@ -84,22 +84,53 @@ func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder(t *testing.T) {
 	require.Equal(t, expected, calls)
 }
 
-func TestADKMultimodalBudgetIsLastModelStateRewriter(t *testing.T) {
-	require.NotEmpty(t, adkMiddlewareOrder)
-	require.Equal(
-		t,
+func TestADKMiddlewareOmitsDisabledOptionalCapabilities(t *testing.T) {
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
+
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run:   &RunSummary{RunID: 20, Config: `{"mode":"flash"}`},
+		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []ADKMiddlewareName{
+		ADKMiddlewareUploadedFiles,
+		ADKMiddlewarePatchTools,
+		ADKMiddlewareToolErrorNormalization,
+		ADKMiddlewareSummarization,
+		ADKMiddlewareProviderCapability,
 		ADKMiddlewareMultimodal,
-		adkMiddlewareOrder[len(adkMiddlewareOrder)-1],
-	)
+		ADKMiddlewareContextBudget,
+		ADKMiddlewareSafetyFinish,
+		ADKMiddlewareSemanticLoop,
+	}, bundle.HandlerNames)
+	require.Len(t, bundle.Handlers, len(bundle.HandlerNames))
+	for _, handler := range bundle.Handlers {
+		require.NotContains(t, fmt.Sprintf("%T", handler), "reservedADKMiddleware")
+	}
+}
+
+func TestADKModelProjectionAndAccountingOrder(t *testing.T) {
+	require.NotEmpty(t, adkMiddlewareOrder)
 	require.Less(
 		t,
-		adkMiddlewareIndex(ADKMiddlewareSummarization),
+		adkMiddlewareIndex(ADKMiddlewareProviderCapability),
 		adkMiddlewareIndex(ADKMiddlewareMultimodal),
 	)
 	require.Less(
 		t,
-		adkMiddlewareIndex(ADKMiddlewareReduction),
 		adkMiddlewareIndex(ADKMiddlewareMultimodal),
+		adkMiddlewareIndex(ADKMiddlewareToolSearch),
+	)
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewareToolSearch),
+		adkMiddlewareIndex(ADKMiddlewareContextBudget),
+	)
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewareContextBudget),
+		adkMiddlewareIndex(ADKMiddlewareSafetyFinish),
 	)
 }
 
@@ -114,6 +145,24 @@ func TestADKProviderCapabilityRunsImmediatelyBeforeMultimodalProjection(t *testi
 		adkMiddlewareIndex(ADKMiddlewareFilesystem),
 		adkMiddlewareIndex(ADKMiddlewareProviderCapability),
 	)
+}
+
+func TestADKMiddlewareWiresProviderCapabilityDowngradeEventSink(t *testing.T) {
+	events := &recordingRunEventSink{}
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		EventSink: events,
+	})
+	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
+		Run:   &RunSummary{RunID: 20, ThreadID: 10, Config: `{"mode":"pro"}`},
+		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
+	})
+	require.NoError(t, err)
+
+	_, _, err = requireADKMiddleware(t, bundle, ADKMiddlewareProviderCapability).
+		BeforeAgent(context.Background(), &adk.ChatModelAgentContext{})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{adkProviderCapabilityDowngradedEventType}, events.eventTypes())
 }
 
 func TestADKMiddlewareUsesClientToolSearchByDefault(t *testing.T) {
@@ -134,7 +183,7 @@ func TestADKMiddlewareUsesClientToolSearchByDefault(t *testing.T) {
 	})
 	require.NoError(t, err)
 	runCtx := &adk.ChatModelAgentContext{}
-	_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareToolSearch)].
+	_, runCtx, err = requireADKMiddleware(t, bundle, ADKMiddlewareToolSearch).
 		BeforeAgent(context.Background(), runCtx)
 
 	require.NoError(t, err)
@@ -163,7 +212,7 @@ func TestADKMiddlewareUsesNativeToolSearchOnlyWhenCapabilityDeclared(t *testing.
 	})
 	require.NoError(t, err)
 	runCtx := &adk.ChatModelAgentContext{}
-	_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareToolSearch)].
+	_, runCtx, err = requireADKMiddleware(t, bundle, ADKMiddlewareToolSearch).
 		BeforeAgent(context.Background(), runCtx)
 
 	require.NoError(t, err)
@@ -204,11 +253,7 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
-		runCtx := &adk.ChatModelAgentContext{}
-		_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
-			BeforeAgent(context.Background(), runCtx)
-		require.NoError(t, err)
-		require.Empty(t, runCtx.Tools)
+		require.NotContains(t, bundle.HandlerNames, ADKMiddlewarePlanTask)
 	})
 
 	t.Run("configured", func(t *testing.T) {
@@ -244,7 +289,8 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 		require.NoError(t, err)
 		require.Same(t, run, builtRun)
 		runCtx := &adk.ChatModelAgentContext{}
-		_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
+		planHandler := requireADKMiddleware(t, bundle, ADKMiddlewarePlanTask)
+		_, runCtx, err = planHandler.
 			BeforeAgent(context.Background(), runCtx)
 		require.NoError(t, err)
 		require.Len(t, runCtx.Tools, 5)
@@ -267,7 +313,7 @@ func TestADKMiddlewareExposesPlanToolsOnlyWithCozeBackend(t *testing.T) {
 			plantask.TaskListToolName,
 			adkPlanCompletionGuardToolName,
 		}, names)
-		_, modelState, err := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
+		_, modelState, err := planHandler.
 			BeforeModelRewriteState(context.Background(), &adk.ChatModelAgentState{
 				ToolInfos: toolInfos,
 			}, nil)
@@ -340,41 +386,47 @@ func TestADKMiddlewareDoesNotBuildPlanBackendOutsidePlanMode(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Zero(t, built)
-	runCtx := &adk.ChatModelAgentContext{}
-	_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePlanTask)].
-		BeforeAgent(context.Background(), runCtx)
-	require.NoError(t, err)
-	require.Empty(t, runCtx.Tools)
+	require.NotContains(t, bundle.HandlerNames, ADKMiddlewarePlanTask)
 }
 
-func TestADKPlanTaskMiddlewarePrecedesContextAndPolicyWrappers(t *testing.T) {
+func TestADKPlanTaskMiddlewarePrecedesProviderVisionAndDeferredToolPhases(t *testing.T) {
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewarePlanTask),
+		adkMiddlewareIndex(ADKMiddlewareProviderCapability),
+	)
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewareProviderCapability),
+		adkMiddlewareIndex(ADKMiddlewareMultimodal),
+	)
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewareMultimodal),
+		adkMiddlewareIndex(ADKMiddlewareToolSearch),
+	)
 	require.Less(
 		t,
 		adkMiddlewareIndex(ADKMiddlewareToolSearch),
-		adkMiddlewareIndex(ADKMiddlewarePlanTask),
-	)
-	require.Less(
-		t,
-		adkMiddlewareIndex(ADKMiddlewarePlanTask),
 		adkMiddlewareIndex(ADKMiddlewareContextBudget),
-	)
-	require.Less(
-		t,
-		adkMiddlewareIndex(ADKMiddlewarePlanTask),
-		adkMiddlewareIndex(ADKMiddlewarePolicy),
 	)
 }
 
-func TestADKMiddlewareSemanticLoopFollowsToolNormalizationAndPrecedesPolicy(t *testing.T) {
+func TestADKAfterModelSafetyAndAccountingOrder(t *testing.T) {
 	require.Less(
 		t,
 		adkMiddlewareIndex(ADKMiddlewareToolErrorNormalization),
-		adkMiddlewareIndex(ADKMiddlewareSemanticLoop),
+		adkMiddlewareIndex(ADKMiddlewareSafetyFinish),
 	)
 	require.Less(
 		t,
+		adkMiddlewareIndex(ADKMiddlewareSafetyFinish),
+		adkMiddlewareIndex(ADKMiddlewareSubagentLimit),
+	)
+	require.Less(
+		t,
+		adkMiddlewareIndex(ADKMiddlewareSubagentLimit),
 		adkMiddlewareIndex(ADKMiddlewareSemanticLoop),
-		adkMiddlewareIndex(ADKMiddlewarePolicy),
 	)
 }
 
@@ -438,39 +490,14 @@ func TestADKMiddlewareUsesRunContextBudgetForSummarization(t *testing.T) {
 	})
 }
 
-func TestADKMiddlewareKeepsReductionDisabledWithoutCozeFilesystem(t *testing.T) {
+func TestADKMiddlewareOmitsReductionWithoutCozeFilesystem(t *testing.T) {
 	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{})
 	bundle, err := assembler.Build(context.Background(), ADKMiddlewareBuildInput{
 		Run:   &RunSummary{RunID: 20},
 		Model: &recordingChatModel{resp: schema.AssistantMessage("done", nil)},
 	})
 	require.NoError(t, err)
-	largeResult := strings.Repeat("tool output ", 10000)
-	state := &adk.ChatModelAgentState{Messages: []*schema.Message{
-		{
-			Role: schema.Assistant,
-			ToolCalls: []schema.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: schema.FunctionCall{
-					Name:      "search_docs",
-					Arguments: `{"query":"deployment"}`,
-				},
-			}},
-		},
-		{
-			Role:       schema.Tool,
-			ToolCallID: "call-1",
-			ToolName:   "search_docs",
-			Content:    largeResult,
-		},
-	}}
-
-	_, got, err := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareReduction)].
-		BeforeModelRewriteState(context.Background(), state, &adk.ModelContext{})
-
-	require.NoError(t, err)
-	require.Equal(t, largeResult, got.Messages[1].Content)
+	require.NotContains(t, bundle.HandlerNames, ADKMiddlewareReduction)
 }
 
 func TestADKMiddlewarePatchToolsUsesCozeRepairPayload(t *testing.T) {
@@ -501,7 +528,7 @@ func TestADKMiddlewarePatchToolsUsesCozeRepairPayload(t *testing.T) {
 		},
 	}}
 
-	_, got, err := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewarePatchTools)].
+	_, got, err := requireADKMiddleware(t, bundle, ADKMiddlewarePatchTools).
 		BeforeModelRewriteState(context.Background(), state, &adk.ModelContext{})
 
 	require.NoError(t, err)
@@ -570,7 +597,7 @@ func TestADKMiddlewareEnablesReadOnlyOffloadAndReduction(t *testing.T) {
 	require.NotNil(t, builtBackend)
 
 	runCtx := &adk.ChatModelAgentContext{}
-	_, runCtx, err = bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareFilesystem)].
+	_, runCtx, err = requireADKMiddleware(t, bundle, ADKMiddlewareFilesystem).
 		BeforeAgent(context.Background(), runCtx)
 	require.NoError(t, err)
 	require.Len(t, runCtx.Tools, 1)
@@ -578,7 +605,7 @@ func TestADKMiddlewareEnablesReadOnlyOffloadAndReduction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "read_file", info.Name)
 
-	handler := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareReduction)]
+	handler := requireADKMiddleware(t, bundle, ADKMiddlewareReduction)
 	wrapped, err := handler.WrapInvokableToolCall(
 		context.Background(),
 		func(
@@ -596,6 +623,23 @@ func TestADKMiddlewareEnablesReadOnlyOffloadAndReduction(t *testing.T) {
 	require.Contains(t, result, "/mnt/user-data/workspace/.coze/tool-results/runs/20/trunc/")
 	require.Len(t, registry.calls, 1)
 	require.Len(t, objectStorage.objects, 1)
+}
+
+func requireADKMiddleware(
+	t *testing.T,
+	bundle ADKMiddlewareBundle,
+	name ADKMiddlewareName,
+) adk.ChatModelAgentMiddleware {
+	t.Helper()
+	for index, activeName := range bundle.HandlerNames {
+		if activeName != name {
+			continue
+		}
+		require.Less(t, index, len(bundle.Handlers))
+		return bundle.Handlers[index]
+	}
+	t.Fatalf("middleware %s is not active; active=%v", name, bundle.HandlerNames)
+	return nil
 }
 
 func TestADKMiddlewareAttributesOnlySummaryModelCallToMiddleware(t *testing.T) {

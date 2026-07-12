@@ -273,6 +273,7 @@ func (p *ADKSubagentToolProvider) ResolveToolSet(
 			}
 		}
 		set.StaticTools = append(set.StaticTools, agentTool)
+		set.SubagentToolNames = append(set.SubagentToolNames, definition.Name)
 	}
 
 	return set, nil

@@ -501,6 +501,13 @@ func projectPublicRunEventPayload(eventType, raw string) string {
 				result["chunk"] = projected
 			}
 		}
+	case eventType == adkProviderCapabilityDowngradedEventType:
+		copyPublicIdentifier(payload, result, "schema")
+		copyPublicStringSlice(payload, result, "capabilities")
+		copyPublicBool(payload, result, "requested_thinking_enabled")
+		copyPublicBool(payload, result, "effective_thinking_enabled")
+		copyPublicIdentifier(payload, result, "requested_reasoning_effort")
+		copyPublicIdentifier(payload, result, "effective_reasoning_effort")
 	case eventType == "agent.output", strings.HasPrefix(eventType, "model."):
 		result["redacted"] = true
 		copyPublicIdentifier(payload, result, "role")

@@ -186,6 +186,37 @@ func TestPublicRunEventKeepsApprovedStreamingContent(t *testing.T) {
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
 }
 
+func TestPublicRunEventKeepsBoundedProviderCapabilityDowngrade(t *testing.T) {
+	got := ProjectPublicRunEvent(&RunEventSummary{
+		EventID:   1,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "model.capability_downgraded",
+		Payload: `{
+			"schema":"coze.provider_capability_downgrade.v1",
+			"capabilities":["reasoning","thinking"],
+			"requested_thinking_enabled":true,
+			"effective_thinking_enabled":false,
+			"requested_reasoning_effort":"high",
+			"effective_reasoning_effort":"none",
+			"provider_body":"` + publicProjectionSensitiveSentinel + `",
+			"prompt":"` + publicProjectionSensitiveSentinel + `"
+		}`,
+		CreatedAt: 4,
+	})
+
+	require.NotNil(t, got)
+	require.JSONEq(t, `{
+		"schema":"coze.provider_capability_downgrade.v1",
+		"capabilities":["reasoning","thinking"],
+		"requested_thinking_enabled":true,
+		"effective_thinking_enabled":false,
+		"requested_reasoning_effort":"high",
+		"effective_reasoning_effort":"none"
+	}`, got.Payload)
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
 func TestPublicRunEventKeepsApprovedNodeUpdate(t *testing.T) {
 	got := ProjectPublicRunEvent(&RunEventSummary{
 		EventID:   1,

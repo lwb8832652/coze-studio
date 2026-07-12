@@ -824,6 +824,7 @@ func TestADKAgentFactoryUsesPolicyFilteredToolSetForModelAndMiddleware(t *testin
 					&namedTestTool{name: "safe_dynamic"},
 					&namedTestTool{name: "blocked_dynamic"},
 				},
+				SubagentToolNames: []string{"safe_static", "blocked_static"},
 			},
 		}),
 		ADKMiddlewareFactoryFunc(func(
@@ -861,6 +862,7 @@ func TestADKAgentFactoryUsesPolicyFilteredToolSetForModelAndMiddleware(t *testin
 		[]string{"safe_static"},
 		adkToolNames(t, context.Background(), got.StaticTools),
 	)
+	require.Equal(t, []string{"safe_static"}, got.SubagentToolNames)
 	require.Equal(
 		t,
 		[]string{"safe_dynamic"},

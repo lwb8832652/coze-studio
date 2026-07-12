@@ -35,6 +35,7 @@ func TestADKToolPolicyProviderFiltersStaticAndDynamicTools(t *testing.T) {
 				&namedTestTool{name: "safe_dynamic"},
 				&namedTestTool{name: "blocked_dynamic"},
 			},
+			SubagentToolNames: []string{"safe_static", "blocked_static"},
 		},
 	}
 	provider := NewADKToolPolicyProvider(base)
@@ -61,6 +62,7 @@ func TestADKToolPolicyProviderFiltersStaticAndDynamicTools(t *testing.T) {
 		[]string{"safe_dynamic"},
 		adkToolNames(t, context.Background(), set.DynamicTools),
 	)
+	require.Equal(t, []string{"safe_static"}, set.SubagentToolNames)
 }
 
 func TestADKToolPolicyProviderExplicitEmptyAllowListDeniesAll(t *testing.T) {

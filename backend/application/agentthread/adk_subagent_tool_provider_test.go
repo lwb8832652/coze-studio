@@ -194,6 +194,7 @@ func TestADKSubagentToolProviderBuildsAgentToolsAndPreservesBaseSet(t *testing.T
 		[]string{"dynamic_tool"},
 		adkToolNames(t, context.Background(), set.DynamicTools),
 	)
+	require.Equal(t, []string{"researcher"}, set.SubagentToolNames)
 
 	researcher := requireADKInvokableTool(
 		t,

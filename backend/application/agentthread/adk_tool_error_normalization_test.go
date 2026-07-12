@@ -203,6 +203,6 @@ func TestADKToolErrorNormalizationOrder(t *testing.T) {
 	require.Less(
 		t,
 		adkMiddlewareIndex(ADKMiddlewareToolErrorNormalization),
-		adkMiddlewareIndex(ADKMiddlewarePolicy),
+		adkMiddlewareIndex(ADKMiddlewareSafetyFinish),
 	)
 }
