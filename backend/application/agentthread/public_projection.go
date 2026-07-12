@@ -104,6 +104,7 @@ type PublicRunJournalMessage struct {
 	ToolCallID       string                     `json:"tool_call_id,omitempty"`
 	ToolCalls        []PublicRunJournalToolCall `json:"tool_calls,omitempty"`
 	AdditionalKwargs map[string]any             `json:"additional_kwargs,omitempty"`
+	ReasoningPresent bool                       `json:"reasoning_present"`
 	Usage            map[string]int64           `json:"usage,omitempty"`
 	CreatedAt        int64                      `json:"created_at"`
 	SourceEventID    int64                      `json:"source_event_id,omitempty"`
@@ -279,6 +280,7 @@ func ProjectPublicRunJournalMessage(message *RunJournalMessage) *PublicRunJourna
 		Name:             publicIdentifier(message.Name, maxPublicIdentifierRunes),
 		ToolCallID:       publicIdentifier(message.ToolCallID, maxPublicIdentifierRunes),
 		AdditionalKwargs: map[string]any{},
+		ReasoningPresent: publicRunJournalReasoningPresent(message.AdditionalKwargs),
 		Usage:            projectPublicJournalUsage(message.Usage),
 		CreatedAt:        message.CreatedAt,
 		SourceEventID:    message.SourceEventID,
@@ -297,6 +299,15 @@ func ProjectPublicRunJournalMessage(message *RunJournalMessage) *PublicRunJourna
 		})
 	}
 	return result
+}
+
+func publicRunJournalReasoningPresent(values map[string]any) bool {
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func ProjectPublicRunJournalMessages(messages []*RunJournalMessage) []*PublicRunJournalMessage {

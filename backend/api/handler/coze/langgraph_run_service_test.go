@@ -705,6 +705,7 @@ func TestLangGraphRunMessagesHandlerReturnsDeerFlowPage(t *testing.T) {
 	require.Contains(t, firstBody, `"seq":2`)
 	require.Contains(t, firstBody, `"type":"ai"`)
 	require.Contains(t, firstBody, `"content":"我先查询天气和旅游季节。"`)
+	require.Contains(t, firstBody, `"reasoning_present":true`)
 	require.NotContains(t, firstBody, "Need travel season evidence")
 	require.NotContains(t, firstBody, `"type":"tool"`)
 
@@ -1923,6 +1924,7 @@ func TestLangGraphPublicProjectionDoesNotExposeInternalRecords(t *testing.T) {
 		Usage:            map[string]any{"input_tokens": int64(3), "provider_body": sensitive},
 	}, 1)
 	require.Equal(t, "visible response", journal["content"])
+	require.Equal(t, true, journal["reasoning_present"])
 	require.NotContains(t, mustMarshalJSON(t, journal), sensitive)
 
 	stateMessages := langGraphThreadStateMessages([]*appagentthread.MessageSummary{{

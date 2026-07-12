@@ -588,6 +588,7 @@ func TestPublicRunJournalMessageRedactsInternalPayloads(t *testing.T) {
 	require.Len(t, got.ToolCalls, 1)
 	require.Empty(t, got.ToolCalls[0].Arguments)
 	require.Empty(t, got.AdditionalKwargs)
+	require.True(t, got.ReasoningPresent)
 	require.Equal(t, int64(10), got.Usage["input_tokens"])
 	require.Equal(t, int64(20), got.Usage["output_tokens"])
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
