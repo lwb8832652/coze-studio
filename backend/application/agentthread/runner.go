@@ -23,13 +23,16 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 const defaultRunProcessorWorkerID = "agent-harness"
 const defaultRunProcessorBatchSize int32 = 10
+const defaultRunLeaseCleanupTimeout = 5 * time.Second
 
 const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
@@ -69,9 +72,11 @@ func (f RunExecutorFunc) Execute(ctx context.Context, run *RunSummary) (*RunExec
 }
 
 type RunExecutionResult struct {
-	Message  string
-	Metadata string
-	Title    string
+	Message                  string
+	Metadata                 string
+	Title                    string
+	ParityState              *ADKParityState
+	ParityParentCheckpointID int64
 }
 
 type RunTitleGenerationInput struct {
@@ -85,11 +90,14 @@ type RunTitleGenerator interface {
 }
 
 type RunProcessorOptions struct {
-	WorkerID         string
-	BatchSize        int32
-	EventSink        RunEventSink
-	TitleGenerator   RunTitleGenerator
-	MetricsCollector RuntimeMetricsCollector
+	WorkerID          string
+	BatchSize         int32
+	EventSink         RunEventSink
+	TitleGenerator    RunTitleGenerator
+	MetricsCollector  RuntimeMetricsCollector
+	LeaseTTL          time.Duration
+	HeartbeatInterval time.Duration
+	LeaseClock        RunLeaseClock
 }
 
 type RunProcessor struct {
@@ -100,6 +108,7 @@ type RunProcessor struct {
 	metricsCollector RuntimeMetricsCollector
 	workerID         string
 	batchSize        int32
+	leaseConfig      runLeaseHeartbeatConfig
 }
 
 type RunProcessResult struct {
@@ -145,6 +154,7 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 		metricsCollector: opts.MetricsCollector,
 		workerID:         workerID,
 		batchSize:        batchSize,
+		leaseConfig:      normalizeRunLeaseHeartbeatConfig(opts.LeaseTTL, opts.HeartbeatInterval, opts.LeaseClock),
 	}
 }
 
@@ -164,8 +174,10 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 	}
 
 	claimed, err := p.app.ClaimPendingRuns(ctx, &ClaimPendingRunsRequest{
-		WorkerID: p.workerID,
-		Limit:    p.batchSize,
+		WorkerID:       p.workerID,
+		Limit:          p.batchSize,
+		Now:            p.leaseConfig.Clock.Now().UnixMilli(),
+		LeaseTTLMillis: p.leaseConfig.TTL.Milliseconds(),
 	})
 	if err != nil {
 		return result, err
@@ -173,9 +185,17 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 
 	result.ClaimedRuns = len(claimed.Runs)
 	p.recordRuntimeRunBacklog(ctx)
+	var batchErr error
 	for _, run := range claimed.Runs {
 		p.recordRuntimeRunQueueDelay(ctx, run)
-		outcome, err := p.processRun(ctx, run)
+		runCtx, heartbeat := startRunLeaseHeartbeat(ctx, p.app, run, p.leaseConfig)
+		outcome, err := p.processRun(runCtx, run, heartbeat)
+		if heartbeatErr := heartbeat.Stop(); err == nil && heartbeatErr != nil &&
+			!(outcome == runProcessCanceled && errors.Is(heartbeatErr, domainrepo.ErrRunLeaseLost)) {
+			outcome = runProcessErrored
+			err = heartbeatErr
+		}
+		heartbeat.Close()
 		switch outcome {
 		case runProcessInterrupted:
 			result.ProcessedRuns++
@@ -194,15 +214,54 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 		}
 		if err != nil {
 			result.ErroredRuns++
-
-			return result, err
+			batchErr = errors.Join(batchErr, fmt.Errorf("process run %d: %w", runSummaryID(run), err))
+			if releaseErr := releaseUnfinalizedRunLease(ctx, p.app, run, RunStatusPending); releaseErr != nil {
+				batchErr = errors.Join(batchErr, fmt.Errorf("release run %d lease: %w", runSummaryID(run), releaseErr))
+			}
 		}
 	}
 
-	return result, nil
+	return result, batchErr
 }
 
-func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProcessOutcome, error) {
+func releaseUnfinalizedRunLease(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	toStatus RunStatus,
+) error {
+	if app == nil || run == nil || run.RunID <= 0 {
+		return nil
+	}
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	_, err := app.ReleaseRunLease(cleanupCtx, &ReleaseRunLeaseRequest{
+		RunID:               run.RunID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ToStatus:            toStatus,
+	})
+	return err
+}
+
+func runSummaryID(run *RunSummary) int64 {
+	if run == nil {
+		return 0
+	}
+	return run.RunID
+}
+
+func (p *RunProcessor) processRun(
+	ctx context.Context,
+	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
+) (runProcessOutcome, error) {
 	if run == nil {
 		return runProcessSkipped, nil
 	}
@@ -217,48 +276,91 @@ func (p *RunProcessor) processRun(ctx context.Context, run *RunSummary) (runProc
 		if ok {
 			result, err := retryExecutor.ExecuteSubagentRetry(ctx, run)
 			if isSubagentRetryUnsupportedError(err) {
-				p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
-
-				return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+				return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 			}
 
-			return p.finalizeRunExecution(ctx, run, result, err)
+			return p.finalizeRunExecution(ctx, run, heartbeat, result, err)
 		}
-		p.emitRunFailedEvent(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
-
-		return p.finalizeFailedRun(ctx, run, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
+		return p.finalizeFailedRun(ctx, run, heartbeat, subagentRetryNotSupportedCode, subagentRetryNotSupportedMessage)
 	}
 
 	result, err := p.executor.Execute(ctx, run)
 
-	return p.finalizeRunExecution(ctx, run, result, err)
+	return p.finalizeRunExecution(ctx, run, heartbeat, result, err)
 }
 
 func (p *RunProcessor) finalizeRunExecution(
 	ctx context.Context,
 	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
 	result *RunExecutionResult,
 	err error,
 ) (runProcessOutcome, error) {
+	if supersededRun, superseded, lookupErr := durableMultitaskInterruptedRun(ctx, p.app, run, err); lookupErr != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, lookupErr
+	} else if superseded {
+		_ = heartbeat.Stop()
+		terminalRun, rollbackErr := finalizeMultitaskRollback(ctx, p.app, run, supersededRun)
+		if rollbackErr != nil {
+			return runProcessErrored, rollbackErr
+		}
+		p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultInterrupted, runtimeMetricErrorNone)
+		return runProcessInterrupted, nil
+	}
+	if canceledRun, canceled, lookupErr := durableCanceledRunAfterLeaseLoss(ctx, p.app, run); lookupErr != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, lookupErr
+	} else if canceled {
+		_ = heartbeat.Stop()
+		p.recordRuntimeRunTerminal(ctx, run, canceledRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+		return runProcessCanceled, nil
+	}
 	if err != nil {
 		var canceled *RunCanceledError
 		if errors.As(err, &canceled) {
-			p.emitRunCanceledEvent(ctx, run)
-			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			if heartbeatErr := heartbeat.Stop(); heartbeatErr != nil {
+				return runProcessErrored, heartbeatErr
+			}
+			terminalRun, cancelErr := requestDurableRunCancellation(
+				ctx,
+				p.app,
+				run,
+				p.leaseConfig.Clock.Now().UnixMilli(),
+			)
+			if cancelErr != nil {
+				return runProcessErrored, cancelErr
+			}
+			p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultCanceled, runtimeMetricErrorNone)
 			return runProcessCanceled, nil
 		}
 		var interrupted *RunInterruptedError
 		if errors.As(err, &interrupted) {
+			if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+				return runProcessErrored, abortErr
+			}
+			interruptPayload := map[string]any{
+				"status":    string(RunStatusInterrupted),
+				"worker_id": p.workerID,
+			}
+			if interrupted.CheckpointKey != "" {
+				interruptPayload["checkpoint_key"] = interrupted.CheckpointKey
+			}
+			if len(interrupted.Interrupts) > 0 {
+				interruptPayload["interrupt_count"] = len(interrupted.Interrupts)
+			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
-				RunID:    run.RunID,
-				From:     RunStatusRunning,
-				WorkerID: p.workerID,
+				RunID:                 run.RunID,
+				From:                  RunStatusRunning,
+				WorkerID:              p.workerID,
+				LeaseOwner:            run.LeaseOwner,
+				LeaseToken:            run.LeaseToken,
+				ExecutionGeneration:   run.ExecutionGeneration,
+				EventPayload:          encodeRunEventPayload(ctx, interruptPayload),
+				EventAlreadyPersisted: interrupted.EventPersisted,
 			})
 			if transitionErr != nil {
 				return runProcessErrored, transitionErr
-			}
-			if !interrupted.EventPersisted {
-				p.emitRunInterruptedEvent(ctx, run, interrupted)
 			}
 			p.recordRuntimeRunTerminal(
 				ctx,
@@ -270,49 +372,94 @@ func (p *RunProcessor) finalizeRunExecution(
 
 			return runProcessInterrupted, nil
 		}
-		p.emitRunFailedEvent(ctx, run, "executor_error", err.Error())
-
-		return p.finalizeFailedRun(ctx, run, "executor_error", err.Error())
+		return p.finalizeFailedRun(ctx, run, heartbeat, "executor_error", err.Error())
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		_ = heartbeat.Stop()
+		return runProcessErrored, cause
 	}
 
 	message := strings.TrimSpace(resultMessage(result))
 	if message == "" {
-		p.emitRunFailedEvent(ctx, run, "empty_executor_result", "executor returned empty assistant message")
-
-		return p.finalizeFailedRun(ctx, run, "empty_executor_result", "executor returned empty assistant message")
+		return p.finalizeFailedRun(ctx, run, heartbeat, "empty_executor_result", "executor returned empty assistant message")
 	}
 
-	if _, err := p.app.AppendMessage(ctx, &AppendMessageRequest{
-		ThreadID: run.ThreadID,
-		RunID:    run.RunID,
-		Role:     MessageRoleAssistant,
-		Content:  message,
-		Metadata: resultMetadata(result),
-	}); err != nil {
-		p.emitRunFailedEvent(ctx, run, "append_message_failed", err.Error())
-
-		return p.finalizeFailedRun(ctx, run, "append_message_failed", err.Error())
+	expectedTitle, generatedTitle := p.prepareGeneratedThreadTitle(ctx, run, result)
+	now := p.leaseConfig.Clock.Now().UnixMilli()
+	terminalCheckpoint, checkpointErr := terminalADKCheckpointFromResult(
+		run,
+		result,
+		generatedTitle,
+		false,
+		now,
+	)
+	if checkpointErr != nil {
+		return p.finalizeFailedRun(ctx, run, heartbeat, "terminal_checkpoint_error", checkpointErr.Error())
+	}
+	var terminalCheckpointOnTitleConflict *CreateCheckpointRequest
+	if terminalCheckpoint != nil && strings.TrimSpace(generatedTitle) != "" {
+		terminalCheckpointOnTitleConflict, checkpointErr = terminalADKCheckpointFromResult(
+			run,
+			result,
+			"",
+			true,
+			now,
+		)
+		if checkpointErr != nil {
+			return p.finalizeFailedRun(ctx, run, heartbeat, "terminal_checkpoint_error", checkpointErr.Error())
+		}
+	}
+	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+		return runProcessErrored, abortErr
 	}
 
-	p.syncGeneratedThreadTitle(ctx, run, result)
-
-	completeResp, err := p.app.CompleteRun(ctx, &UpdateRunStatusRequest{
-		RunID:    run.RunID,
-		From:     RunStatusRunning,
-		WorkerID: p.workerID,
+	finalized, err := p.app.FinalizeRunSuccess(ctx, &FinalizeRunSuccessRequest{
+		RunID:               run.RunID,
+		ThreadID:            run.ThreadID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		Now:                 now,
+		Message:             message,
+		MessageMetadata:     resultMetadata(result),
+		TitleEventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"thread_title": generatedTitle,
+		}),
+		CompletionEventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"status":    string(RunStatusSucceeded),
+			"worker_id": p.workerID,
+		}),
+		ExpectedThreadTitle:               expectedTitle,
+		ThreadTitle:                       generatedTitle,
+		TerminalCheckpoint:                terminalCheckpoint,
+		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
 	})
 	if err != nil {
+		if supersededRun, superseded, lookupErr := durableMultitaskInterruptedRun(
+			ctx,
+			p.app,
+			run,
+			err,
+		); lookupErr != nil {
+			return runProcessErrored, lookupErr
+		} else if superseded {
+			terminalRun, rollbackErr := finalizeMultitaskRollback(ctx, p.app, run, supersededRun)
+			if rollbackErr != nil {
+				return runProcessErrored, rollbackErr
+			}
+			p.recordRuntimeRunTerminal(ctx, run, terminalRun, runtimeMetricResultInterrupted, runtimeMetricErrorNone)
+			return runProcessInterrupted, nil
+		}
+		if errors.Is(err, domainrepo.ErrRunCanceled) {
+			p.recordRuntimeRunTerminal(ctx, run, nil, runtimeMetricResultCanceled, runtimeMetricErrorNone)
+			return runProcessCanceled, nil
+		}
 		return runProcessErrored, err
 	}
-
-	p.emitRunEvent(ctx, run, "run.completed", map[string]any{
-		"status":    string(RunStatusSucceeded),
-		"worker_id": p.workerID,
-	})
 	p.recordRuntimeRunTerminal(
 		ctx,
 		run,
-		updateRunStatusResponseRun(completeResp),
+		finalized.Run,
 		runtimeMetricResultSuccess,
 		runtimeMetricErrorNone,
 	)
@@ -320,31 +467,98 @@ func (p *RunProcessor) finalizeRunExecution(
 	return runProcessSucceeded, nil
 }
 
-func (p *RunProcessor) emitRunCanceledEvent(ctx context.Context, run *RunSummary) {
-	p.emitRunEvent(ctx, run, "run.canceled", map[string]any{
-		"status":    string(RunStatusCanceled),
-		"worker_id": p.workerID,
-	})
+func durableMultitaskInterruptedRun(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	executionErr error,
+) (*RunSummary, bool, error) {
+	if app == nil || app.ThreadSVC == nil || run == nil {
+		return nil, false, nil
+	}
+	var canceled *RunCanceledError
+	shouldCheck := errors.As(executionErr, &canceled) ||
+		errors.Is(executionErr, domainrepo.ErrRunLeaseLost) ||
+		errors.Is(context.Cause(ctx), domainrepo.ErrRunLeaseLost)
+	if !shouldCheck {
+		return nil, false, nil
+	}
+
+	lookupCtx := context.Background()
+	if ctx != nil {
+		lookupCtx = context.WithoutCancel(ctx)
+	}
+	lookupCtx, cancel := context.WithTimeout(lookupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+	current, err := app.ThreadSVC.GetRun(lookupCtx, &domainservice.GetRunRequest{RunID: run.RunID})
+	if err != nil {
+		return nil, false, fmt.Errorf("load run %d after multitask interruption: %w", run.RunID, err)
+	}
+	if current == nil || current.Status != entity.RunStatusInterrupted ||
+		!strings.HasPrefix(strings.TrimSpace(current.ErrorCode), "multitask_") {
+		return nil, false, nil
+	}
+	return DomainRunToSummary(current), true, nil
 }
 
-func (p *RunProcessor) emitRunInterruptedEvent(ctx context.Context, run *RunSummary, interrupted *RunInterruptedError) {
-	payload := map[string]any{
-		"status":    string(RunStatusInterrupted),
-		"worker_id": p.workerID,
+func finalizeMultitaskRollback(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	interrupted *RunSummary,
+) (*RunSummary, error) {
+	if app == nil || run == nil || interrupted == nil ||
+		interrupted.ErrorCode != "multitask_rollback" {
+		return interrupted, nil
 	}
-	if interrupted != nil {
-		payload["checkpoint_key"] = interrupted.CheckpointKey
-		payload["interrupts"] = interrupted.Interrupts
+	mode, err := runtimeModeFromRun(run)
+	if err != nil {
+		return nil, fmt.Errorf("resolve rollback runtime for run %d: %w", run.RunID, err)
 	}
-	p.emitRunEvent(ctx, run, "run.interrupted", payload)
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+	var checkpointErr error
+	if mode == RuntimeModeEinoADK {
+		checkpointErr = app.DeleteRuntimeCheckpoint(cleanupCtx, &DeleteRuntimeCheckpointRequest{
+			ThreadID:    run.ThreadID,
+			RunID:       run.RunID,
+			RuntimeType: string(RuntimeModeEinoADK),
+			RuntimeKey:  adkCheckpointKeyForRun(run.RunID),
+		})
+	}
+	failed, err := app.FailRun(cleanupCtx, &UpdateRunStatusRequest{
+		RunID:        run.RunID,
+		From:         RunStatusInterrupted,
+		Now:          time.Now().UnixMilli(),
+		ErrorCode:    "multitask_rollback",
+		ErrorMessage: "run rolled back by a newer thread run",
+	})
+	if err != nil {
+		return nil, errors.Join(checkpointErr, err)
+	}
+	if failed == nil || failed.Run == nil {
+		return nil, errors.Join(
+			checkpointErr,
+			fmt.Errorf("finalize rollback run %d returned empty run", run.RunID),
+		)
+	}
+	return failed.Run, checkpointErr
 }
 
 func (p *RunProcessor) finalizeFailedRun(
 	ctx context.Context,
 	run *RunSummary,
+	heartbeat *runLeaseHeartbeat,
 	code string,
 	message string,
 ) (runProcessOutcome, error) {
+	if abortErr := stopRunLeaseHeartbeat(ctx, heartbeat); abortErr != nil {
+		return runProcessErrored, abortErr
+	}
 	terminalRun, err := p.failRun(ctx, run, code, message)
 	if err != nil {
 		return runProcessFailed, err
@@ -356,11 +570,19 @@ func (p *RunProcessor) finalizeFailedRun(
 
 func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, message string) (*RunSummary, error) {
 	resp, err := p.app.FailRun(ctx, &UpdateRunStatusRequest{
-		RunID:        run.RunID,
-		From:         RunStatusRunning,
-		WorkerID:     p.workerID,
-		ErrorCode:    code,
-		ErrorMessage: message,
+		RunID:               run.RunID,
+		From:                RunStatusRunning,
+		WorkerID:            p.workerID,
+		LeaseOwner:          run.LeaseOwner,
+		LeaseToken:          run.LeaseToken,
+		ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode:           code,
+		ErrorMessage:        message,
+		EventPayload: encodeRunEventPayload(ctx, map[string]any{
+			"status":     string(RunStatusFailed),
+			"worker_id":  p.workerID,
+			"error_code": code,
+		}),
 	})
 
 	if err != nil {
@@ -368,15 +590,6 @@ func (p *RunProcessor) failRun(ctx context.Context, run *RunSummary, code, messa
 	}
 
 	return updateRunStatusResponseRun(resp), nil
-}
-
-func (p *RunProcessor) emitRunFailedEvent(ctx context.Context, run *RunSummary, code, message string) {
-	p.emitRunEvent(ctx, run, "run.failed", map[string]any{
-		"status":        string(RunStatusFailed),
-		"worker_id":     p.workerID,
-		"error_code":    code,
-		"error_message": message,
-	})
 }
 
 func (p *RunProcessor) emitRunEvent(ctx context.Context, run *RunSummary, eventType string, payload map[string]any) {
@@ -465,53 +678,178 @@ func resultTitle(result *RunExecutionResult) string {
 	return result.Title
 }
 
-func (p *RunProcessor) syncGeneratedThreadTitle(
+func terminalADKCheckpointFromResult(
+	run *RunSummary,
+	result *RunExecutionResult,
+	title string,
+	clearTitle bool,
+	now int64,
+) (*CreateCheckpointRequest, error) {
+	if result == nil || result.ParityState == nil {
+		return nil, nil
+	}
+	if run == nil || run.RunID <= 0 || run.ThreadID <= 0 || run.SpaceID <= 0 || run.CreatorID <= 0 {
+		return nil, fmt.Errorf("terminal eino adk checkpoint requires run ownership")
+	}
+	if result.ParityParentCheckpointID < 0 {
+		return nil, fmt.Errorf("terminal eino adk checkpoint parent is invalid")
+	}
+	tracker, err := NewADKParityStateTracker(run, result.ParityState)
+	if err != nil {
+		return nil, fmt.Errorf("validate terminal eino adk parity state: %w", err)
+	}
+	if clearTitle {
+		if err := tracker.SetTitle(""); err != nil {
+			return nil, err
+		}
+	} else if title = strings.TrimSpace(title); title != "" {
+		if err := tracker.SetTitle(title); err != nil {
+			return nil, err
+		}
+	}
+	if err := tracker.ReplaceInterrupts([]ADKParityInterrupt{}); err != nil {
+		return nil, err
+	}
+	if err := tracker.SetCompletion(ADKParityCompletion{
+		RunID: run.RunID, Status: "succeeded", Reason: "completed", CompletedAt: now,
+	}); err != nil {
+		return nil, err
+	}
+	state := tracker.Snapshot()
+	runtimeKey := adkCheckpointKeyForRun(run.RunID)
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: adkCheckpointEnvelopeVersion,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  adkCheckpointRuntimeVersion,
+		RuntimeKey:      runtimeKey,
+		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseTerminal,
+		ParityState:     &state,
+		RunRevision:     state.Revision,
+		CreatedAt:       now,
+	}
+	raw, err := envelope.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("marshal terminal eino adk checkpoint: %w", err)
+	}
+	return &CreateCheckpointRequest{
+		ThreadID:           run.ThreadID,
+		RunID:              run.RunID,
+		ParentCheckpointID: result.ParityParentCheckpointID,
+		CheckpointNS:       adkCheckpointNamespace,
+		RuntimeType:        string(RuntimeModeEinoADK),
+		RuntimeKey:         runtimeKey,
+		EnvelopeVersion:    adkCheckpointEnvelopeVersion,
+		ChannelValues:      string(raw),
+		ChannelVersions:    `{}`,
+		PendingSends:       `[]`,
+		Metadata: adkCheckpointMetadataJSON(
+			adkCheckpointRuntimeVersion,
+			runtimeKey,
+			ADKCheckpointPhaseTerminal,
+		),
+	}, nil
+}
+
+func (p *RunProcessor) prepareGeneratedThreadTitle(
 	ctx context.Context,
 	run *RunSummary,
 	result *RunExecutionResult,
-) {
+) (string, string) {
 	if p == nil || p.app == nil || run == nil {
-		return
+		return "", ""
 	}
 	if run.ParentRunID > 0 || run.RunKind == RunKindSubagent {
-		return
+		return "", ""
 	}
 
 	userMessage, ok := runtimeLatestUserInputText(run.Input)
 	if !ok {
-		return
+		return "", ""
 	}
 	userMessage = strings.TrimSpace(userMessage)
 	if userMessage == "" {
-		return
+		return "", ""
 	}
-	threadResp, err := p.app.GetThread(ctx, &GetThreadRequest{ThreadID: run.ThreadID})
-	if err != nil || threadResp == nil || threadResp.Thread == nil {
-		return
+	thread, err := p.app.ThreadSVC.GetThread(ctx, run.ThreadID)
+	if err != nil || thread == nil {
+		return "", ""
 	}
-	currentTitle := strings.TrimSpace(threadResp.Thread.Title)
+	currentTitle := strings.TrimSpace(thread.Title)
 	initialTitle := taskThreadTitle("", userMessage)
 	if currentTitle != "" && currentTitle != initialTitle {
-		return
+		return "", ""
 	}
 	title := p.generatedThreadTitle(ctx, run, userMessage, result)
 	if title == "" {
-		return
+		return "", ""
 	}
 	if currentTitle == title {
-		return
+		return "", ""
 	}
 
-	resp, err := p.app.UpdateThreadTitle(ctx, &UpdateThreadTitleRequest{
-		ThreadID: run.ThreadID,
-		Title:    title,
-	})
-	if err != nil || resp == nil || !resp.Updated {
-		return
+	return currentTitle, title
+}
+
+func requestDurableRunCancellation(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+	now int64,
+) (*RunSummary, error) {
+	if app == nil || run == nil {
+		return nil, fmt.Errorf("run cancellation context is required")
 	}
-	p.emitRunEvent(ctx, run, "context.thread_title_updated", map[string]any{
-		"thread_title": title,
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	cleanupCtx, cancel := context.WithTimeout(cleanupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	result, err := app.requestRunCancellation(cleanupCtx, &domainservice.RequestRunCancellationRequest{
+		RunID:        run.RunID,
+		Now:          now,
+		ErrorCode:    "run_canceled",
+		ErrorMessage: "run canceled by request",
 	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty canceled run")
+	}
+
+	return DomainRunToSummary(result.Run), nil
+}
+
+func durableCanceledRunAfterLeaseLoss(
+	ctx context.Context,
+	app *ApplicationService,
+	run *RunSummary,
+) (*RunSummary, bool, error) {
+	if !errors.Is(context.Cause(ctx), domainrepo.ErrRunLeaseLost) {
+		return nil, false, nil
+	}
+	if app == nil || app.ThreadSVC == nil || run == nil {
+		return nil, false, fmt.Errorf("load canceled run after lease loss: run context is required")
+	}
+	lookupCtx := context.Background()
+	if ctx != nil {
+		lookupCtx = context.WithoutCancel(ctx)
+	}
+	lookupCtx, cancel := context.WithTimeout(lookupCtx, defaultRunLeaseCleanupTimeout)
+	defer cancel()
+
+	current, err := app.ThreadSVC.GetRun(lookupCtx, &domainservice.GetRunRequest{RunID: run.RunID})
+	if err != nil {
+		return nil, false, fmt.Errorf("load run %d after lease loss: %w", run.RunID, err)
+	}
+	if current == nil || current.Status != entity.RunStatusCanceled {
+		return nil, false, nil
+	}
+
+	return DomainRunToSummary(current), true, nil
 }
 
 func (p *RunProcessor) generatedThreadTitle(

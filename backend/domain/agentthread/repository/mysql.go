@@ -18,7 +18,9 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,11 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+)
+
+const (
+	defaultRunLeaseTTLMillis = int64(60_000)
+	maxRunLeaseTTLMillis     = int64(24 * 60 * 60 * 1_000)
 )
 
 type threadRepository struct {
@@ -55,6 +62,37 @@ type threadPO struct {
 	LastMessageAt int64          `gorm:"column:last_message_at"`
 }
 
+type projectedThreadPO struct {
+	Thread          threadPO `gorm:"embedded"`
+	ProjectedStatus string   `gorm:"column:projected_status"`
+}
+
+const threadLifecycleStatusProjectionSQL = `CASE
+	WHEN EXISTS (
+		SELECT 1
+		FROM agent_runs AS active_run
+		WHERE active_run.thread_id = agent_threads.id
+			AND active_run.parent_run_id = 0
+			AND (active_run.run_kind = '' OR active_run.run_kind = 'task')
+			AND active_run.status IN ('pending', 'queued', 'running')
+	) THEN 'running'
+	ELSE COALESCE((
+		SELECT CASE latest_run.status
+			WHEN 'succeeded' THEN 'completed'
+			WHEN 'failed' THEN 'failed'
+			WHEN 'canceled' THEN 'canceled'
+			WHEN 'interrupted' THEN 'idle'
+			ELSE 'idle'
+		END
+		FROM agent_runs AS latest_run
+		WHERE latest_run.thread_id = agent_threads.id
+			AND latest_run.parent_run_id = 0
+			AND (latest_run.run_kind = '' OR latest_run.run_kind = 'task')
+		ORDER BY latest_run.created_at DESC, latest_run.id DESC
+		LIMIT 1
+	), agent_threads.status)
+END`
+
 type messagePO struct {
 	ID        int64          `gorm:"column:id;primaryKey"`
 	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_messages_thread_created"`
@@ -66,31 +104,37 @@ type messagePO struct {
 }
 
 type runPO struct {
-	ID                int64          `gorm:"column:id;primaryKey"`
-	ThreadID          int64          `gorm:"column:thread_id;index:idx_agent_runs_thread_created;index:idx_agent_runs_thread_kind,priority:1"`
-	ParentRunID       int64          `gorm:"column:parent_run_id;index:idx_agent_runs_parent_created,priority:1"`
-	SpaceID           int64          `gorm:"column:space_id;index:idx_agent_runs_space_status;uniqueIndex:uk_agent_runs_space_idempotency"`
-	CreatorID         int64          `gorm:"column:creator_id"`
-	AssistantID       string         `gorm:"column:assistant_id"`
-	RunKind           string         `gorm:"column:run_kind;index:idx_agent_runs_thread_kind,priority:2"`
-	Status            string         `gorm:"column:status;index:idx_agent_runs_space_status"`
-	Command           datatypes.JSON `gorm:"column:command;type:json"`
-	Input             datatypes.JSON `gorm:"column:input;type:json"`
-	Config            datatypes.JSON `gorm:"column:config;type:json"`
-	Context           datatypes.JSON `gorm:"column:context;type:json"`
-	Metadata          datatypes.JSON `gorm:"column:metadata;type:json"`
-	StreamMode        datatypes.JSON `gorm:"column:stream_mode;type:json"`
-	MultitaskStrategy string         `gorm:"column:multitask_strategy"`
-	OnDisconnect      string         `gorm:"column:on_disconnect"`
-	Durability        string         `gorm:"column:durability"`
-	IdempotencyKey    *string        `gorm:"column:idempotency_key;uniqueIndex:uk_agent_runs_space_idempotency"`
-	WorkerID          string         `gorm:"column:worker_id"`
-	ErrorCode         string         `gorm:"column:error_code"`
-	ErrorMessage      string         `gorm:"column:error_message"`
-	StartedAt         int64          `gorm:"column:started_at"`
-	EndedAt           int64          `gorm:"column:ended_at"`
-	CreatedAt         int64          `gorm:"column:created_at;index:idx_agent_runs_thread_created;index:idx_agent_runs_parent_created,priority:2;index:idx_agent_runs_thread_kind,priority:3"`
-	UpdatedAt         int64          `gorm:"column:updated_at"`
+	ID                  int64          `gorm:"column:id;primaryKey"`
+	ThreadID            int64          `gorm:"column:thread_id;index:idx_agent_runs_thread_created;index:idx_agent_runs_thread_kind,priority:1"`
+	ParentRunID         int64          `gorm:"column:parent_run_id;index:idx_agent_runs_parent_created,priority:1"`
+	SpaceID             int64          `gorm:"column:space_id;index:idx_agent_runs_space_status;uniqueIndex:uk_agent_runs_space_idempotency"`
+	CreatorID           int64          `gorm:"column:creator_id"`
+	AssistantID         string         `gorm:"column:assistant_id"`
+	RunKind             string         `gorm:"column:run_kind;index:idx_agent_runs_thread_kind,priority:2"`
+	Status              string         `gorm:"column:status;index:idx_agent_runs_space_status;index:idx_agent_runs_status_lease_expiry,priority:1"`
+	Command             datatypes.JSON `gorm:"column:command;type:json"`
+	Input               datatypes.JSON `gorm:"column:input;type:json"`
+	Config              datatypes.JSON `gorm:"column:config;type:json"`
+	Context             datatypes.JSON `gorm:"column:context;type:json"`
+	Metadata            datatypes.JSON `gorm:"column:metadata;type:json"`
+	StreamMode          datatypes.JSON `gorm:"column:stream_mode;type:json"`
+	MultitaskStrategy   string         `gorm:"column:multitask_strategy"`
+	OnDisconnect        string         `gorm:"column:on_disconnect"`
+	Durability          string         `gorm:"column:durability"`
+	IdempotencyKey      *string        `gorm:"column:idempotency_key;uniqueIndex:uk_agent_runs_space_idempotency"`
+	WorkerID            string         `gorm:"column:worker_id"`
+	LeaseOwner          *string        `gorm:"column:lease_owner;index:idx_agent_runs_lease_owner_heartbeat,priority:1"`
+	LeaseToken          *string        `gorm:"column:lease_token"`
+	LeaseExpiresAt      *int64         `gorm:"column:lease_expires_at;index:idx_agent_runs_status_lease_expiry,priority:2"`
+	HeartbeatAt         *int64         `gorm:"column:heartbeat_at;index:idx_agent_runs_lease_owner_heartbeat,priority:2"`
+	CancelRequestedAt   *int64         `gorm:"column:cancel_requested_at"`
+	ExecutionGeneration uint64         `gorm:"column:execution_generation"`
+	ErrorCode           string         `gorm:"column:error_code"`
+	ErrorMessage        string         `gorm:"column:error_message"`
+	StartedAt           int64          `gorm:"column:started_at"`
+	EndedAt             int64          `gorm:"column:ended_at"`
+	CreatedAt           int64          `gorm:"column:created_at;index:idx_agent_runs_thread_created;index:idx_agent_runs_parent_created,priority:2;index:idx_agent_runs_thread_kind,priority:3;index:idx_agent_runs_status_lease_expiry,priority:3"`
+	UpdatedAt           int64          `gorm:"column:updated_at"`
 }
 
 type runEventPO struct {
@@ -368,13 +412,153 @@ func (r *threadRepository) CreateThread(ctx context.Context, thread *entity.Thre
 	return r.db.WithContext(ctx).Create(po).Error
 }
 
-func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
-	var po threadPO
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&po).Error; err != nil {
+func (r *threadRepository) CreateThreadBundle(
+	ctx context.Context,
+	req CreateThreadBundleRequest,
+) (*CreateThreadBundleResult, error) {
+	if req.Thread == nil || req.Run == nil || req.Message == nil {
+		return nil, fmt.Errorf("thread, run and message are required")
+	}
+	if req.Run.ThreadID != req.Thread.ID || req.Message.ThreadID != req.Thread.ID {
+		return nil, fmt.Errorf("thread bundle records do not share a thread")
+	}
+	if req.Message.RunID != req.Run.ID {
+		return nil, fmt.Errorf("thread bundle message does not belong to run")
+	}
+	if req.Run.SpaceID != req.Thread.SpaceID || req.Run.CreatorID != req.Thread.CreatorID {
+		return nil, fmt.Errorf("thread bundle run ownership does not match thread")
+	}
+
+	now := time.Now().UnixMilli()
+	thread := *req.Thread
+	if thread.CreatedAt == 0 {
+		thread.CreatedAt = now
+	}
+	if thread.UpdatedAt == 0 {
+		thread.UpdatedAt = thread.CreatedAt
+	}
+	if thread.LastMessageAt == 0 {
+		thread.LastMessageAt = thread.UpdatedAt
+	}
+	run := *req.Run
+	if run.CreatedAt == 0 {
+		run.CreatedAt = thread.CreatedAt
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+	message := *req.Message
+	if message.CreatedAt == 0 {
+		message.CreatedAt = run.CreatedAt
+	}
+
+	threadPO, err := threadToPO(&thread)
+	if err != nil {
+		return nil, err
+	}
+	runPO, err := runToPO(&run)
+	if err != nil {
+		return nil, err
+	}
+	messagePO, err := messageToPO(&message)
+	if err != nil {
 		return nil, err
 	}
 
-	return po.toEntity(), nil
+	normalized := CreateThreadBundleRequest{Thread: &thread, Run: &run, Message: &message}
+	var result *CreateThreadBundleResult
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var found bool
+		var err error
+		result, found, err = findExistingThreadBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+		if err := tx.Create(threadPO).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(runPO).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(messagePO).Error; err != nil {
+			return err
+		}
+		result = &CreateThreadBundleResult{
+			Thread: &thread, Run: &run, Message: &message, Created: true,
+		}
+		return nil
+	})
+	if err == nil {
+		return result, nil
+	}
+
+	replayed, found, replayErr := findExistingThreadBundle(r.db.WithContext(ctx), normalized)
+	if replayErr != nil {
+		return nil, replayErr
+	}
+	if found {
+		return replayed, nil
+	}
+	return nil, err
+}
+
+func findExistingThreadBundle(
+	db *gorm.DB,
+	req CreateThreadBundleRequest,
+) (*CreateThreadBundleResult, bool, error) {
+	key := strings.TrimSpace(req.Run.IdempotencyKey)
+	if key == "" {
+		return nil, false, nil
+	}
+
+	var run runPO
+	err := db.Where("space_id = ? AND idempotency_key = ?", req.Run.SpaceID, key).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if run.SpaceID != req.Thread.SpaceID || run.CreatorID != req.Thread.CreatorID ||
+		run.ParentRunID != 0 || run.RunKind != string(entity.RunKindTask) {
+		return nil, false, fmt.Errorf("idempotency key belongs to a different thread request")
+	}
+
+	var thread threadPO
+	if err := db.Where("id = ?", run.ThreadID).First(&thread).Error; err != nil {
+		return nil, false, fmt.Errorf("idempotent thread bundle is missing thread: %w", err)
+	}
+	var message messagePO
+	err = db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).
+		Order("id ASC").First(&message).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, fmt.Errorf("idempotent thread bundle is missing message")
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	return &CreateThreadBundleResult{
+		Thread: thread.toEntity(), Run: run.toEntity(), Message: message.toEntity(),
+	}, true, nil
+}
+
+func (r *threadRepository) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
+	var po projectedThreadPO
+	if err := r.db.WithContext(ctx).
+		Model(&threadPO{}).
+		Select("agent_threads.*, ("+threadLifecycleStatusProjectionSQL+") AS projected_status").
+		Where("agent_threads.id = ?", id).
+		First(&po).Error; err != nil {
+		return nil, err
+	}
+	po.Thread.Status = po.ProjectedStatus
+
+	return po.Thread.toEntity(), nil
 }
 
 func (r *threadRepository) UpdateThreadTitle(
@@ -509,12 +693,12 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 		pageSize = 20
 	}
 
-	query := r.db.WithContext(ctx).Model(&threadPO{}).Where("space_id = ?", req.SpaceID)
+	query := r.db.WithContext(ctx).Model(&threadPO{}).Where("agent_threads.space_id = ?", req.SpaceID)
 	if req.UserID > 0 {
-		query = query.Where("creator_id = ?", req.UserID)
+		query = query.Where("agent_threads.creator_id = ?", req.UserID)
 	}
 	if req.Status != nil {
-		query = query.Where("status = ?", string(*req.Status))
+		query = query.Where("("+threadLifecycleStatusProjectionSQL+") = ?", string(*req.Status))
 	}
 
 	var total int64
@@ -522,9 +706,10 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 		return nil, 0, err
 	}
 
-	pos := make([]*threadPO, 0)
+	pos := make([]*projectedThreadPO, 0)
 	if err := query.
-		Order("updated_at DESC, id DESC").
+		Select("agent_threads.*, (" + threadLifecycleStatusProjectionSQL + ") AS projected_status").
+		Order("agent_threads.updated_at DESC, agent_threads.id DESC").
 		Limit(int(pageSize)).
 		Offset(int((page - 1) * pageSize)).
 		Find(&pos).Error; err != nil {
@@ -533,7 +718,8 @@ func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsReque
 
 	threads := make([]*entity.Thread, 0, len(pos))
 	for _, po := range pos {
-		threads = append(threads, po.toEntity())
+		po.Thread.Status = po.ProjectedStatus
+		threads = append(threads, po.Thread.toEntity())
 	}
 
 	return threads, total, nil
@@ -609,6 +795,393 @@ func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error
 	}
 
 	return r.db.WithContext(ctx).Create(po).Error
+}
+
+func (r *threadRepository) CreateRunBundle(
+	ctx context.Context,
+	req CreateRunBundleRequest,
+) (*CreateRunBundleResult, error) {
+	if req.Run == nil {
+		return nil, fmt.Errorf("run is required")
+	}
+	if req.Message != nil &&
+		(req.Message.ThreadID != req.Run.ThreadID || req.Message.RunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle message does not belong to run")
+	}
+	if req.Event != nil &&
+		(req.Event.ThreadID != req.Run.ThreadID || req.Event.RunID != req.Run.ID) {
+		return nil, fmt.Errorf("run bundle event does not belong to run")
+	}
+
+	now := time.Now().UnixMilli()
+	run := *req.Run
+	if run.CreatedAt == 0 {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+	normalized := CreateRunBundleRequest{
+		Run:                         &run,
+		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
+		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
+	}
+	if req.Message != nil {
+		message := *req.Message
+		if message.CreatedAt == 0 {
+			message.CreatedAt = run.CreatedAt
+		}
+		normalized.Message = &message
+	}
+	if req.Event != nil {
+		event := *req.Event
+		if event.CreatedAt == 0 {
+			event.CreatedAt = run.CreatedAt
+		}
+		normalized.Event = &event
+	}
+
+	var result *CreateRunBundleResult
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var found bool
+		var err error
+		result, found, err = findExistingRunBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+
+		threadQuery := tx.Where("id = ?", normalized.Run.ThreadID)
+		if tx.Dialector.Name() != "sqlite" {
+			threadQuery = threadQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var thread threadPO
+		if err := threadQuery.First(&thread).Error; err != nil {
+			return err
+		}
+		if normalized.Run.SpaceID != thread.SpaceID || normalized.Run.CreatorID != thread.CreatorID {
+			return fmt.Errorf("run bundle ownership does not match thread")
+		}
+		result, found, err = findExistingRunBundle(tx, normalized)
+		if err != nil {
+			return err
+		}
+		if found {
+			return nil
+		}
+
+		activeRuns, err := lockActiveTopLevelRuns(tx, normalized.Run, normalized.SkipTopLevelAdmission)
+		if err != nil {
+			return err
+		}
+		strategy := strings.TrimSpace(normalized.Run.MultitaskStrategy)
+		if strategy == "" {
+			strategy = "reject"
+			normalized.Run.MultitaskStrategy = strategy
+		}
+		if isTopLevelTaskRun(normalized.Run) {
+			switch strategy {
+			case "reject":
+				if len(activeRuns) > 0 {
+					return fmt.Errorf("%w: thread %d", ErrActiveRunExists, normalized.Run.ThreadID)
+				}
+			case "interrupt", "rollback":
+			default:
+				return fmt.Errorf("%w: %q", ErrUnsupportedMultitaskStrategy, strategy)
+			}
+		}
+		if strategy == "rollback" && len(activeRuns) > 0 {
+			normalized.Run.Input, err = excludeRunMessagesFromInput(normalized.Run.Input, activeRuns)
+			if err != nil {
+				return err
+			}
+		}
+
+		runPO, err := runToPO(normalized.Run)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(runPO).Error; err != nil {
+			return err
+		}
+		if normalized.Message != nil {
+			messagePO, err := messageToPO(normalized.Message)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(messagePO).Error; err != nil {
+				return err
+			}
+		}
+		if normalized.Event != nil {
+			eventPO, err := runEventToPO(normalized.Event)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(eventPO).Error; err != nil {
+				return err
+			}
+		}
+		interruptedRuns, interruptedEvents, err := interruptActiveTopLevelRuns(
+			tx,
+			activeRuns,
+			strategy,
+			normalized.Run,
+			normalized.AllocateInterruptedEventIDs,
+		)
+		if err != nil {
+			return err
+		}
+		result = &CreateRunBundleResult{
+			Run: normalized.Run, Message: normalized.Message, Event: normalized.Event,
+			InterruptedRuns: interruptedRuns, InterruptedEvents: interruptedEvents, Created: true,
+		}
+		return nil
+	})
+	if err == nil {
+		return result, nil
+	}
+
+	// A concurrent request can win the unique idempotency key while this
+	// transaction is waiting. Once the winner commits, return its complete
+	// aggregate instead of surfacing a duplicate-key failure.
+	replayed, found, replayErr := findExistingRunBundle(r.db.WithContext(ctx), normalized)
+	if replayErr != nil {
+		return nil, replayErr
+	}
+	if found {
+		return replayed, nil
+	}
+	return nil, err
+}
+
+func isTopLevelTaskRun(run *entity.Run) bool {
+	return run != nil && run.ParentRunID == 0 &&
+		(run.RunKind == "" || run.RunKind == entity.RunKindTask)
+}
+
+func lockActiveTopLevelRuns(tx *gorm.DB, run *entity.Run, skipAdmission bool) ([]runPO, error) {
+	if skipAdmission || !isTopLevelTaskRun(run) {
+		return nil, nil
+	}
+
+	query := tx.Where("thread_id = ?", run.ThreadID).
+		Where("parent_run_id = 0").
+		Where("(run_kind = ? OR run_kind = '')", string(entity.RunKindTask)).
+		Where("status IN ?", []string{
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+			string(entity.RunStatusRunning),
+		})
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var active []runPO
+	if err := query.Order("created_at ASC, id ASC").Find(&active).Error; err != nil {
+		return nil, err
+	}
+	return active, nil
+}
+
+func interruptActiveTopLevelRuns(
+	tx *gorm.DB,
+	active []runPO,
+	strategy string,
+	newRun *entity.Run,
+	allocateEventIDs func(count int) ([]int64, error),
+) ([]*entity.Run, []*entity.RunEvent, error) {
+	if len(active) == 0 || (strategy != "interrupt" && strategy != "rollback") {
+		return nil, nil, nil
+	}
+	if newRun == nil {
+		return nil, nil, fmt.Errorf("new run is required to interrupt active runs")
+	}
+	if allocateEventIDs == nil {
+		return nil, nil, fmt.Errorf("interrupted run event id allocator is required")
+	}
+	eventIDs, err := allocateEventIDs(len(active))
+	if err != nil {
+		return nil, nil, fmt.Errorf("allocate interrupted run event ids: %w", err)
+	}
+	if len(eventIDs) != len(active) {
+		return nil, nil, fmt.Errorf("interrupted run event id allocator returned %d ids for %d runs", len(eventIDs), len(active))
+	}
+	for _, eventID := range eventIDs {
+		if eventID <= 0 {
+			return nil, nil, fmt.Errorf("interrupted run event id must be positive")
+		}
+	}
+	now := newRun.CreatedAt
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	ids := make([]int64, 0, len(active))
+	for _, run := range active {
+		ids = append(ids, run.ID)
+	}
+	updates := map[string]any{
+		"status":               string(entity.RunStatusInterrupted),
+		"execution_generation": gorm.Expr("execution_generation + 1"),
+		"error_code":           "multitask_" + strategy,
+		"error_message":        "run interrupted by a newer thread run",
+		"ended_at":             now,
+		"updated_at":           now,
+	}
+	clearRunLeaseUpdates(updates)
+	updates["cancel_requested_at"] = now
+	updated := tx.Model(&runPO{}).
+		Where("id IN ?", ids).
+		Where("status IN ?", []string{
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+			string(entity.RunStatusRunning),
+		}).
+		Updates(updates)
+	if updated.Error != nil {
+		return nil, nil, updated.Error
+	}
+	if updated.RowsAffected != int64(len(ids)) {
+		return nil, nil, fmt.Errorf("active run set changed during multitask admission")
+	}
+
+	var interrupted []runPO
+	if err := tx.Where("id IN ?", ids).Order("created_at ASC, id ASC").Find(&interrupted).Error; err != nil {
+		return nil, nil, err
+	}
+	result := make([]*entity.Run, 0, len(interrupted))
+	events := make([]*entity.RunEvent, 0, len(interrupted))
+	for index, run := range interrupted {
+		result = append(result, run.toEntity())
+		payload, err := json.Marshal(map[string]any{
+			"status":             entity.RunStatusInterrupted,
+			"error_code":         "multitask_" + strategy,
+			"replacement_run_id": newRun.ID,
+			"multitask":          strategy,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal interrupted run event: %w", err)
+		}
+		event := &entity.RunEvent{
+			ID:        eventIDs[index],
+			ThreadID:  run.ThreadID,
+			RunID:     run.ID,
+			EventType: "run.interrupted",
+			Payload:   string(payload),
+			CreatedAt: now,
+		}
+		eventPO, err := runEventToPO(event)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return nil, nil, err
+		}
+		events = append(events, event)
+	}
+	return result, events, nil
+}
+
+func excludeRunMessagesFromInput(rawInput string, runs []runPO) (string, error) {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" || len(runs) == 0 {
+		return rawInput, nil
+	}
+	excluded := make(map[int64]struct{}, len(runs))
+	for _, run := range runs {
+		excluded[run.ID] = struct{}{}
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawInput), &payload); err != nil {
+		return "", fmt.Errorf("parse rollback run input: %w", err)
+	}
+	rawMessages, ok := payload["messages"]
+	if !ok {
+		return rawInput, nil
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+		return "", fmt.Errorf("parse rollback run input messages: %w", err)
+	}
+	filtered := make([]json.RawMessage, 0, len(messages))
+	for _, message := range messages {
+		var marker struct {
+			RunID int64 `json:"_run_id"`
+		}
+		if err := json.Unmarshal(message, &marker); err != nil {
+			return "", fmt.Errorf("parse rollback run input message marker: %w", err)
+		}
+		if _, remove := excluded[marker.RunID]; remove && marker.RunID > 0 {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	if len(filtered) == len(messages) {
+		return rawInput, nil
+	}
+	encodedMessages, err := json.Marshal(filtered)
+	if err != nil {
+		return "", fmt.Errorf("marshal rollback run input messages: %w", err)
+	}
+	payload["messages"] = encodedMessages
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal rollback run input: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func findExistingRunBundle(
+	db *gorm.DB,
+	req CreateRunBundleRequest,
+) (*CreateRunBundleResult, bool, error) {
+	key := strings.TrimSpace(req.Run.IdempotencyKey)
+	if key == "" {
+		return nil, false, nil
+	}
+
+	var run runPO
+	err := db.Where("space_id = ? AND idempotency_key = ?", req.Run.SpaceID, key).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if run.ThreadID != req.Run.ThreadID || run.ParentRunID != req.Run.ParentRunID ||
+		run.RunKind != string(req.Run.RunKind) {
+		return nil, false, fmt.Errorf("idempotency key belongs to a different run request")
+	}
+
+	result := &CreateRunBundleResult{Run: run.toEntity()}
+	if req.Message != nil {
+		var message messagePO
+		err := db.Where("thread_id = ? AND run_id = ? AND role = ?", run.ThreadID, run.ID, string(req.Message.Role)).
+			Order("id ASC").First(&message).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, fmt.Errorf("idempotent run bundle is missing message")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		result.Message = message.toEntity()
+	}
+	if req.Event != nil {
+		var event runEventPO
+		err := db.Where("thread_id = ? AND run_id = ? AND event_type = ?", run.ThreadID, run.ID, req.Event.EventType).
+			Order("id ASC").First(&event).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, fmt.Errorf("idempotent run bundle is missing event")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		result.Event = event.toEntity()
+	}
+	return result, true, nil
 }
 
 func (r *threadRepository) GetRun(ctx context.Context, id int64) (*entity.Run, error) {
@@ -781,6 +1354,9 @@ func (r *threadRepository) ListRunEvents(ctx context.Context, req ListRunEventsR
 	} else {
 		query = query.Where("thread_id = ?", req.ThreadID)
 	}
+	if req.AfterEventID > 0 {
+		query = query.Where("id > ?", req.AfterEventID)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -844,6 +1420,9 @@ func (r *threadRepository) ListCheckpoints(ctx context.Context, req ListCheckpoi
 	query := r.db.WithContext(ctx).Model(&checkpointPO{}).Where("thread_id = ?", req.ThreadID)
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
+	}
+	if runtimeType := strings.TrimSpace(req.RuntimeType); runtimeType != "" {
+		query = query.Where("runtime_type = ?", runtimeType)
 	}
 
 	var total int64
@@ -2952,11 +3531,10 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	}
 
 	workerID := strings.TrimSpace(req.WorkerID)
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
 	claimed := make([]*entity.Run, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := tx.Model(&runPO{}).
-			Where("status = ?", string(entity.RunStatusPending)).
-			Where("parent_run_id = ?", 0).
+		query := claimablePendingRunQuery(tx.Model(&runPO{})).
 			Order("created_at ASC, id ASC").
 			Limit(int(limit))
 		if tx.Dialector.Name() != "sqlite" {
@@ -2968,15 +3546,24 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 			return err
 		}
 
-		now := time.Now().UnixMilli()
 		for _, po := range pos {
-			db := tx.Model(&runPO{}).
-				Where("id = ? AND status = ?", po.ID, string(entity.RunStatusPending)).
+			leaseToken, err := newRunLeaseToken()
+			if err != nil {
+				return err
+			}
+			db := claimablePendingRunQuery(tx.Model(&runPO{}).Where("id = ?", po.ID)).
 				Updates(map[string]any{
-					"status":     string(entity.RunStatusRunning),
-					"worker_id":  workerID,
-					"started_at": now,
-					"updated_at": now,
+					"status":               string(entity.RunStatusRunning),
+					"worker_id":            workerID,
+					"lease_owner":          workerID,
+					"lease_token":          leaseToken,
+					"lease_expires_at":     leaseExpiresAt,
+					"heartbeat_at":         now,
+					"cancel_requested_at":  nil,
+					"execution_generation": gorm.Expr("execution_generation + 1"),
+					"started_at":           now,
+					"ended_at":             0,
+					"updated_at":           now,
 				})
 			if db.Error != nil {
 				return db.Error
@@ -3001,6 +3588,16 @@ func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendin
 	return claimed, nil
 }
 
+func claimablePendingRunQuery(db *gorm.DB) *gorm.DB {
+	return db.
+		Where("parent_run_id = ?", 0).
+		Where(
+			"(status = ? OR (status = ? AND JSON_EXTRACT(metadata, '$.subagent_retry') IS NOT NULL))",
+			string(entity.RunStatusPending),
+			string(entity.RunStatusQueued),
+		)
+}
+
 func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQueuedResumeRunsRequest) ([]*entity.Run, error) {
 	limit := req.Limit
 	if limit <= 0 {
@@ -3008,6 +3605,7 @@ func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQ
 	}
 
 	workerID := strings.TrimSpace(req.WorkerID)
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
 	claimed := make([]*entity.Run, 0, limit)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := queuedResumeRunQuery(tx.Model(&runPO{})).
@@ -3022,14 +3620,24 @@ func (r *threadRepository) ClaimQueuedResumeRuns(ctx context.Context, req ClaimQ
 			return err
 		}
 
-		now := time.Now().UnixMilli()
 		for _, po := range pos {
+			leaseToken, err := newRunLeaseToken()
+			if err != nil {
+				return err
+			}
 			db := queuedResumeRunQuery(tx.Model(&runPO{}).Where("id = ?", po.ID)).
 				Updates(map[string]any{
-					"status":     string(entity.RunStatusRunning),
-					"worker_id":  workerID,
-					"started_at": now,
-					"updated_at": now,
+					"status":               string(entity.RunStatusRunning),
+					"worker_id":            workerID,
+					"lease_owner":          workerID,
+					"lease_token":          leaseToken,
+					"lease_expires_at":     leaseExpiresAt,
+					"heartbeat_at":         now,
+					"cancel_requested_at":  nil,
+					"execution_generation": gorm.Expr("execution_generation + 1"),
+					"started_at":           now,
+					"ended_at":             0,
+					"updated_at":           now,
 				})
 			if db.Error != nil {
 				return db.Error
@@ -3061,34 +3669,614 @@ func queuedResumeRunQuery(db *gorm.DB) *gorm.DB {
 		Where("JSON_EXTRACT(metadata, '$.checkpoint_resume') IS NOT NULL")
 }
 
+func (r *threadRepository) RenewRunLease(ctx context.Context, req RenewRunLeaseRequest) (*entity.Run, error) {
+	now, leaseExpiresAt := normalizeRunLeaseWindow(req.Now, req.LeaseTTLMillis)
+	db := activeRunLeaseQuery(r.db.WithContext(ctx).Model(&runPO{}), req.RunID, req.LeaseOwner, req.LeaseToken, req.ExecutionGeneration, now).
+		Updates(map[string]any{
+			"heartbeat_at":     now,
+			"lease_expires_at": leaseExpiresAt,
+			"updated_at":       now,
+		})
+	if db.Error != nil {
+		return nil, db.Error
+	}
+	if db.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: run %d cannot renew lease", ErrRunLeaseLost, req.RunID)
+	}
+
+	return r.GetRun(ctx, req.RunID)
+}
+
+func (r *threadRepository) ReleaseRunLease(ctx context.Context, req ReleaseRunLeaseRequest) (*entity.Run, error) {
+	if req.ToStatus != entity.RunStatusPending && req.ToStatus != entity.RunStatusQueued {
+		return nil, fmt.Errorf("release run lease requires pending or queued target status")
+	}
+
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	query := activeRunLeaseQuery(r.db.WithContext(ctx).Model(&runPO{}), req.RunID, req.LeaseOwner, req.LeaseToken, req.ExecutionGeneration, now)
+	if req.ToStatus == entity.RunStatusQueued {
+		query = query.Where("JSON_EXTRACT(metadata, '$.checkpoint_resume.protected_from_worker_claim') = ?", true)
+	}
+	db := query.
+		Updates(map[string]any{
+			"status":              string(req.ToStatus),
+			"worker_id":           "",
+			"lease_owner":         nil,
+			"lease_token":         nil,
+			"lease_expires_at":    nil,
+			"heartbeat_at":        nil,
+			"cancel_requested_at": nil,
+			"error_code":          "",
+			"error_message":       "",
+			"started_at":          0,
+			"ended_at":            0,
+			"updated_at":          now,
+		})
+	if db.Error != nil {
+		return nil, db.Error
+	}
+	if db.RowsAffected == 0 {
+		return nil, fmt.Errorf("%w: run %d cannot release lease", ErrRunLeaseLost, req.RunID)
+	}
+
+	return r.GetRun(ctx, req.RunID)
+}
+
+func (r *threadRepository) ListExpiredRunLeases(ctx context.Context, req ListExpiredRunLeasesRequest) ([]*entity.Run, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1_000 {
+		limit = 1_000
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+
+	pos := make([]*runPO, 0, limit)
+	err := r.db.WithContext(ctx).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("execution_generation > 0").
+		Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
+		Order("lease_expires_at ASC, created_at ASC, id ASC").
+		Limit(int(limit)).
+		Find(&pos).Error
+	if err != nil {
+		return nil, err
+	}
+
+	runs := make([]*entity.Run, 0, len(pos))
+	for _, po := range pos {
+		runs = append(runs, po.toEntity())
+	}
+	return runs, nil
+}
+
+func (r *threadRepository) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	if req.ToStatus != entity.RunStatusInterrupted && req.ToStatus != entity.RunStatusFailed {
+		return nil, fmt.Errorf("expired run lease reconciliation requires interrupted or failed target status")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	event, eventPO, err := normalizeTerminalRunEvent(req.Event, req.RunID, req.ToStatus, now)
+	if err != nil {
+		return nil, err
+	}
+	updates := map[string]any{
+		"status":        string(req.ToStatus),
+		"error_code":    strings.TrimSpace(req.ErrorCode),
+		"error_message": strings.TrimSpace(req.ErrorMessage),
+		"ended_at":      now,
+		"updated_at":    now,
+	}
+	clearRunLeaseUpdates(updates)
+	var reconciled *entity.Run
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updated := tx.
+			Model(&runPO{}).
+			Where("id = ?", req.RunID).
+			Where("status = ?", string(entity.RunStatusRunning)).
+			Where("lease_owner = ?", strings.TrimSpace(req.LeaseOwner)).
+			Where("lease_token = ?", strings.TrimSpace(req.LeaseToken)).
+			Where("execution_generation = ?", req.ExecutionGeneration).
+			Where("lease_expires_at IS NOT NULL AND lease_expires_at <= ?", now).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return fmt.Errorf("%w: run %d expired lease cannot be reconciled", ErrRunLeaseLost, req.RunID)
+		}
+		var current runPO
+		if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+			return err
+		}
+		if event.ThreadID != current.ThreadID {
+			return fmt.Errorf("expired run lease event does not belong to run thread")
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return err
+		}
+		reconciled = current.toEntity()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reconciled, nil
+}
+
+func (r *threadRepository) RequestRunCancellation(
+	ctx context.Context,
+	req RequestRunCancellationRequest,
+) (*RequestRunCancellationResult, error) {
+	if req.RunID <= 0 {
+		return nil, fmt.Errorf("run id is required")
+	}
+	if req.Event == nil || req.Event.RunID != req.RunID || req.Event.EventType != "run.canceled" {
+		return nil, fmt.Errorf("run cancellation event is invalid")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	if req.Event.CreatedAt == 0 {
+		req.Event.CreatedAt = now
+	}
+	eventPO, err := runEventToPO(req.Event)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &RequestRunCancellationResult{}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("id = ?", req.RunID)
+		if tx.Dialector.Name() != "sqlite" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		var current runPO
+		if err := query.First(&current).Error; err != nil {
+			return err
+		}
+		if req.Event.ThreadID != current.ThreadID {
+			return fmt.Errorf("run cancellation event does not belong to run thread")
+		}
+		previous := entity.RunStatus(current.Status)
+		if previous == entity.RunStatusCanceled {
+			result.Run = current.toEntity()
+			result.PreviousStatus = previous
+			return nil
+		}
+		switch previous {
+		case entity.RunStatusPending, entity.RunStatusQueued, entity.RunStatusRunning, entity.RunStatusInterrupted:
+		default:
+			return fmt.Errorf("run %d cannot be canceled from status %s", req.RunID, previous)
+		}
+
+		updates := map[string]any{
+			"status":               string(entity.RunStatusCanceled),
+			"execution_generation": gorm.Expr("execution_generation + 1"),
+			"error_code":           strings.TrimSpace(req.ErrorCode),
+			"error_message":        strings.TrimSpace(req.ErrorMessage),
+			"ended_at":             now,
+			"updated_at":           now,
+		}
+		clearRunLeaseUpdates(updates)
+		updates["cancel_requested_at"] = now
+		updated := tx.Model(&runPO{}).
+			Where("id = ?", req.RunID).
+			Where("status = ?", current.Status).
+			Where("execution_generation = ?", current.ExecutionGeneration).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			return fmt.Errorf("%w: run %d cancellation lost execution fence", ErrRunLeaseLost, req.RunID)
+		}
+		if err := tx.Create(eventPO).Error; err != nil {
+			return err
+		}
+
+		var canceled runPO
+		if err := tx.Where("id = ?", req.RunID).First(&canceled).Error; err != nil {
+			return err
+		}
+		result.Run = canceled.toEntity()
+		result.PreviousStatus = previous
+		result.Changed = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *threadRepository) FinalizeRunSuccess(
+	ctx context.Context,
+	req FinalizeRunSuccessRequest,
+) (*FinalizeRunSuccessResult, error) {
+	if req.RunID <= 0 || req.Message == nil || req.Message.RunID != req.RunID {
+		return nil, fmt.Errorf("run success message is invalid")
+	}
+	if req.Message.Role != entity.MessageRoleAssistant {
+		return nil, fmt.Errorf("run success message must be assistant role")
+	}
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	completionEvent, completionEventPO, err := normalizeTerminalRunEvent(
+		req.CompletionEvent,
+		req.RunID,
+		entity.RunStatusSucceeded,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var titleEvent *entity.RunEvent
+	var titleEventPO *runEventPO
+	if req.TitleEvent != nil {
+		titleCopy := *req.TitleEvent
+		if titleCopy.ID <= 0 || titleCopy.ThreadID <= 0 || titleCopy.RunID != req.RunID ||
+			titleCopy.EventType != "context.thread_title_updated" {
+			return nil, fmt.Errorf("run success title event is invalid")
+		}
+		if titleCopy.CreatedAt == 0 {
+			titleCopy.CreatedAt = now
+		}
+		titleEvent = &titleCopy
+		titleEventPO, err = runEventToPO(titleEvent)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if titleEvent != nil && titleEvent.ID >= completionEvent.ID {
+		return nil, fmt.Errorf("run success title event must sort before completion event")
+	}
+	message := *req.Message
+	if message.CreatedAt == 0 {
+		message.CreatedAt = now
+	}
+	messagePO, err := messageToPO(&message)
+	if err != nil {
+		return nil, err
+	}
+	normalizeTerminalCheckpoint := func(checkpoint *entity.Checkpoint) (*entity.Checkpoint, *checkpointPO, error) {
+		if checkpoint == nil {
+			return nil, nil, nil
+		}
+		checkpointCopy := *checkpoint
+		if checkpointCopy.ID <= 0 || checkpointCopy.RunID != req.RunID ||
+			checkpointCopy.ThreadID <= 0 || checkpointCopy.ParentCheckpointID < 0 ||
+			strings.TrimSpace(checkpointCopy.RuntimeType) == "" ||
+			strings.TrimSpace(checkpointCopy.RuntimeKey) == "" ||
+			checkpointCopy.EnvelopeVersion <= 0 {
+			return nil, nil, fmt.Errorf("run success terminal checkpoint is invalid")
+		}
+		if checkpointCopy.CreatedAt == 0 {
+			checkpointCopy.CreatedAt = now
+		}
+		po, err := checkpointToPO(&checkpointCopy)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &checkpointCopy, po, nil
+	}
+	terminalCheckpoint, terminalCheckpointPO, err := normalizeTerminalCheckpoint(req.TerminalCheckpoint)
+	if err != nil {
+		return nil, err
+	}
+	terminalCheckpointOnTitleConflict, terminalCheckpointOnTitleConflictPO, err := normalizeTerminalCheckpoint(
+		req.TerminalCheckpointOnTitleConflict,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if terminalCheckpointOnTitleConflict != nil &&
+		(terminalCheckpoint == nil || !sameTerminalCheckpointEntityIdentity(
+			terminalCheckpoint,
+			terminalCheckpointOnTitleConflict,
+		)) {
+		return nil, fmt.Errorf("run success terminal title-conflict checkpoint identity is invalid")
+	}
+
+	result := &FinalizeRunSuccessResult{}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{
+			"status":        string(entity.RunStatusSucceeded),
+			"error_code":    "",
+			"error_message": "",
+			"ended_at":      now,
+			"updated_at":    now,
+		}
+		clearRunLeaseUpdates(updates)
+		updated := activeRunLeaseQuery(
+			tx.Model(&runPO{}),
+			req.RunID,
+			req.LeaseOwner,
+			req.LeaseToken,
+			req.ExecutionGeneration,
+			now,
+		).
+			Where("cancel_requested_at IS NULL").
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			var current runPO
+			if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+				return err
+			}
+			if entity.RunStatus(current.Status) == entity.RunStatusCanceled || current.CancelRequestedAt != nil {
+				return fmt.Errorf("%w: run %d rejected late success", ErrRunCanceled, req.RunID)
+			}
+			return fmt.Errorf("%w: run %d cannot finalize success", ErrRunLeaseLost, req.RunID)
+		}
+
+		var completed runPO
+		if err := tx.Where("id = ?", req.RunID).First(&completed).Error; err != nil {
+			return err
+		}
+		if message.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success message does not belong to run thread")
+		}
+		if completionEvent.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success completion event does not belong to run thread")
+		}
+		if terminalCheckpoint != nil && terminalCheckpoint.ThreadID != completed.ThreadID {
+			return fmt.Errorf("run success terminal checkpoint does not belong to run thread")
+		}
+		if err := tx.Create(messagePO).Error; err != nil {
+			return err
+		}
+
+		expectedTitle := strings.TrimSpace(req.ExpectedThreadTitle)
+		threadTitle := strings.TrimSpace(req.ThreadTitle)
+		if threadTitle != "" && threadTitle != expectedTitle {
+			titleUpdate := tx.Model(&threadPO{}).
+				Where("id = ? AND title = ?", completed.ThreadID, expectedTitle).
+				Updates(map[string]any{"title": threadTitle, "updated_at": now})
+			if titleUpdate.Error != nil {
+				return titleUpdate.Error
+			}
+			result.TitleUpdated = titleUpdate.RowsAffected > 0
+			if result.TitleUpdated {
+				if titleEvent == nil || titleEventPO == nil {
+					return fmt.Errorf("run success title event is required when thread title changes")
+				}
+				if titleEvent.ThreadID != completed.ThreadID {
+					return fmt.Errorf("run success title event does not belong to run thread")
+				}
+				if err := tx.Create(titleEventPO).Error; err != nil {
+					return err
+				}
+				result.TitleEvent = titleEvent
+			}
+		}
+		if err := tx.Create(completionEventPO).Error; err != nil {
+			return err
+		}
+		selectedTerminalCheckpoint := terminalCheckpoint
+		selectedTerminalCheckpointPO := terminalCheckpointPO
+		if threadTitle != "" && threadTitle != expectedTitle && !result.TitleUpdated &&
+			terminalCheckpointOnTitleConflict != nil {
+			selectedTerminalCheckpoint = terminalCheckpointOnTitleConflict
+			selectedTerminalCheckpointPO = terminalCheckpointOnTitleConflictPO
+		}
+		if selectedTerminalCheckpointPO != nil {
+			if err := tx.Create(selectedTerminalCheckpointPO).Error; err != nil {
+				return err
+			}
+			result.TerminalCheckpoint = selectedTerminalCheckpoint
+		}
+
+		result.Run = completed.toEntity()
+		result.Message = &message
+		result.CompletionEvent = completionEvent
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func sameTerminalCheckpointEntityIdentity(left, right *entity.Checkpoint) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return left.ID == right.ID && left.ThreadID == right.ThreadID && left.RunID == right.RunID &&
+		left.ParentCheckpointID == right.ParentCheckpointID &&
+		strings.TrimSpace(left.CheckpointNS) == strings.TrimSpace(right.CheckpointNS) &&
+		strings.TrimSpace(left.RuntimeType) == strings.TrimSpace(right.RuntimeType) &&
+		strings.TrimSpace(left.RuntimeKey) == strings.TrimSpace(right.RuntimeKey) &&
+		left.EnvelopeVersion == right.EnvelopeVersion &&
+		strings.TrimSpace(left.ChannelVersions) == strings.TrimSpace(right.ChannelVersions) &&
+		strings.TrimSpace(left.PendingSends) == strings.TrimSpace(right.PendingSends) &&
+		strings.TrimSpace(left.Metadata) == strings.TrimSpace(right.Metadata)
+}
+
 func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunStatusRequest) error {
-	now := time.Now().UnixMilli()
+	now, _ := normalizeRunLeaseWindow(req.Now, defaultRunLeaseTTLMillis)
+	requiresTerminalEvent := isTerminalRunStatus(req.To) || req.To == entity.RunStatusInterrupted
+	if req.EventAlreadyPersisted && (!requiresTerminalEvent || req.To != entity.RunStatusInterrupted || req.Event != nil) {
+		return fmt.Errorf("pre-persisted terminal event is only valid for interrupted runs without a duplicate event")
+	}
+	var terminalEvent *entity.RunEvent
+	var terminalEventPO *runEventPO
+	var err error
+	if requiresTerminalEvent && !req.EventAlreadyPersisted {
+		terminalEvent, terminalEventPO, err = normalizeTerminalRunEvent(req.Event, req.RunID, req.To, now)
+		if err != nil {
+			return err
+		}
+	}
 	updates := map[string]any{
 		"status":        string(req.To),
 		"error_code":    req.ErrorCode,
 		"error_message": req.ErrorMessage,
 		"updated_at":    now,
 	}
-	if isTerminalRunStatus(req.To) {
+	if isTerminalRunStatus(req.To) || req.To == entity.RunStatusInterrupted {
 		updates["ended_at"] = now
+		clearRunLeaseUpdates(updates)
 	}
 
-	query := r.db.WithContext(ctx).
-		Model(&runPO{}).
-		Where("id = ? AND status = ?", req.RunID, string(req.From))
-	if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
-		query = query.Where("worker_id = ?", workerID)
-	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.
+			Model(&runPO{}).
+			Where("id = ? AND status = ?", req.RunID, string(req.From))
+		if workerID := strings.TrimSpace(req.WorkerID); workerID != "" {
+			query = query.Where("worker_id = ?", workerID)
+		}
+		if runTransitionRequiresLeaseFence(req.From, req.To) {
+			query = query.Where(
+				"(execution_generation = 0 AND (lease_token IS NULL OR lease_token = '')) OR "+
+					"(lease_owner = ? AND lease_token = ? AND execution_generation = ? AND lease_expires_at > ?)",
+				strings.TrimSpace(req.LeaseOwner), strings.TrimSpace(req.LeaseToken), req.ExecutionGeneration, now,
+			)
+		}
 
-	db := query.Updates(updates)
-	if db.Error != nil {
-		return db.Error
-	}
-	if db.RowsAffected == 0 {
-		return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
-	}
+		updated := query.Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected == 0 {
+			if runTransitionRequiresLeaseFence(req.From, req.To) {
+				var current runPO
+				if err := tx.Where("id = ?", req.RunID).First(&current).Error; err == nil &&
+					entity.RunStatus(current.Status) == req.From && current.ExecutionGeneration > 0 {
+					return fmt.Errorf("%w: run %d cannot transition from %s to %s", ErrRunLeaseLost, req.RunID, req.From, req.To)
+				}
+			}
+			return fmt.Errorf("update run status failed: run %d is not in status %s", req.RunID, req.From)
+		}
+		if terminalEventPO == nil {
+			if req.EventAlreadyPersisted {
+				var current runPO
+				if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+					return err
+				}
+				var eventCount int64
+				eventQuery := tx.Model(&runEventPO{}).
+					Where(
+						"thread_id = ? AND run_id = ? AND event_type = ?",
+						current.ThreadID,
+						req.RunID,
+						"run.interrupted",
+					)
+				if current.StartedAt > 0 {
+					eventQuery = eventQuery.Where("created_at >= ?", current.StartedAt)
+				}
+				if err := eventQuery.Count(&eventCount).Error; err != nil {
+					return err
+				}
+				if eventCount == 0 {
+					return fmt.Errorf("run %d has no durable interrupted event", req.RunID)
+				}
+			}
+			return nil
+		}
+		var current runPO
+		if err := tx.Where("id = ?", req.RunID).First(&current).Error; err != nil {
+			return err
+		}
+		if terminalEvent.ThreadID != current.ThreadID {
+			return fmt.Errorf("terminal run event does not belong to run thread")
+		}
+		return tx.Create(terminalEventPO).Error
+	})
+}
 
-	return nil
+func normalizeTerminalRunEvent(
+	event *entity.RunEvent,
+	runID int64,
+	status entity.RunStatus,
+	now int64,
+) (*entity.RunEvent, *runEventPO, error) {
+	expectedType, ok := terminalRunEventType(status)
+	if !ok {
+		return nil, nil, fmt.Errorf("run status %s has no terminal event type", status)
+	}
+	if event == nil || event.ID <= 0 || event.ThreadID <= 0 ||
+		event.RunID != runID || event.EventType != expectedType {
+		return nil, nil, fmt.Errorf("run %s event is invalid", status)
+	}
+	copy := *event
+	if copy.CreatedAt == 0 {
+		copy.CreatedAt = now
+	}
+	po, err := runEventToPO(&copy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &copy, po, nil
+}
+
+func terminalRunEventType(status entity.RunStatus) (string, bool) {
+	switch status {
+	case entity.RunStatusSucceeded:
+		return "run.completed", true
+	case entity.RunStatusFailed:
+		return "run.failed", true
+	case entity.RunStatusInterrupted:
+		return "run.interrupted", true
+	case entity.RunStatusCanceled:
+		return "run.canceled", true
+	default:
+		return "", false
+	}
+}
+
+func activeRunLeaseQuery(db *gorm.DB, runID int64, owner, token string, generation uint64, now int64) *gorm.DB {
+	return db.
+		Where("id = ?", runID).
+		Where("status = ?", string(entity.RunStatusRunning)).
+		Where("lease_owner = ?", strings.TrimSpace(owner)).
+		Where("lease_token = ?", strings.TrimSpace(token)).
+		Where("execution_generation = ?", generation).
+		Where("lease_expires_at > ?", now)
+}
+
+func normalizeRunLeaseWindow(now, ttlMillis int64) (int64, int64) {
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	if ttlMillis <= 0 {
+		ttlMillis = defaultRunLeaseTTLMillis
+	}
+	if ttlMillis > maxRunLeaseTTLMillis {
+		ttlMillis = maxRunLeaseTTLMillis
+	}
+	return now, now + ttlMillis
+}
+
+func newRunLeaseToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate run lease token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func runTransitionRequiresLeaseFence(from, to entity.RunStatus) bool {
+	if from != entity.RunStatusRunning {
+		return false
+	}
+	switch to {
+	case entity.RunStatusSucceeded, entity.RunStatusFailed, entity.RunStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func clearRunLeaseUpdates(updates map[string]any) {
+	updates["worker_id"] = ""
+	updates["lease_owner"] = nil
+	updates["lease_token"] = nil
+	updates["lease_expires_at"] = nil
+	updates["heartbeat_at"] = nil
+	updates["cancel_requested_at"] = nil
 }
 
 func threadToPO(thread *entity.Thread) (*threadPO, error) {
@@ -3186,61 +4374,73 @@ func runToPO(run *entity.Run) (*runPO, error) {
 	}
 
 	return &runPO{
-		ID:                run.ID,
-		ThreadID:          run.ThreadID,
-		ParentRunID:       run.ParentRunID,
-		SpaceID:           run.SpaceID,
-		CreatorID:         run.CreatorID,
-		AssistantID:       run.AssistantID,
-		RunKind:           string(entity.DefaultRunKind(run.RunKind, run.ParentRunID)),
-		Status:            string(run.Status),
-		Command:           command,
-		Input:             input,
-		Config:            config,
-		Context:           runContext,
-		Metadata:          metadata,
-		StreamMode:        streamMode,
-		MultitaskStrategy: run.MultitaskStrategy,
-		OnDisconnect:      run.OnDisconnect,
-		Durability:        run.Durability,
-		IdempotencyKey:    stringPtrOrNil(run.IdempotencyKey),
-		WorkerID:          run.WorkerID,
-		ErrorCode:         run.ErrorCode,
-		ErrorMessage:      run.ErrorMessage,
-		StartedAt:         run.StartedAt,
-		EndedAt:           run.EndedAt,
-		CreatedAt:         run.CreatedAt,
-		UpdatedAt:         run.UpdatedAt,
+		ID:                  run.ID,
+		ThreadID:            run.ThreadID,
+		ParentRunID:         run.ParentRunID,
+		SpaceID:             run.SpaceID,
+		CreatorID:           run.CreatorID,
+		AssistantID:         run.AssistantID,
+		RunKind:             string(entity.DefaultRunKind(run.RunKind, run.ParentRunID)),
+		Status:              string(run.Status),
+		Command:             command,
+		Input:               input,
+		Config:              config,
+		Context:             runContext,
+		Metadata:            metadata,
+		StreamMode:          streamMode,
+		MultitaskStrategy:   run.MultitaskStrategy,
+		OnDisconnect:        run.OnDisconnect,
+		Durability:          run.Durability,
+		IdempotencyKey:      stringPtrOrNil(run.IdempotencyKey),
+		WorkerID:            run.WorkerID,
+		LeaseOwner:          stringPtrOrNil(run.LeaseOwner),
+		LeaseToken:          stringPtrOrNil(run.LeaseToken),
+		LeaseExpiresAt:      int64PtrOrNil(run.LeaseExpiresAt),
+		HeartbeatAt:         int64PtrOrNil(run.HeartbeatAt),
+		CancelRequestedAt:   int64PtrOrNil(run.CancelRequestedAt),
+		ExecutionGeneration: run.ExecutionGeneration,
+		ErrorCode:           run.ErrorCode,
+		ErrorMessage:        run.ErrorMessage,
+		StartedAt:           run.StartedAt,
+		EndedAt:             run.EndedAt,
+		CreatedAt:           run.CreatedAt,
+		UpdatedAt:           run.UpdatedAt,
 	}, nil
 }
 
 func (po *runPO) toEntity() *entity.Run {
 	return &entity.Run{
-		ID:                po.ID,
-		ThreadID:          po.ThreadID,
-		ParentRunID:       po.ParentRunID,
-		SpaceID:           po.SpaceID,
-		CreatorID:         po.CreatorID,
-		AssistantID:       po.AssistantID,
-		RunKind:           entity.RunKind(po.RunKind),
-		Status:            entity.RunStatus(po.Status),
-		Command:           jsonToString(po.Command),
-		Input:             jsonToString(po.Input),
-		Config:            jsonToString(po.Config),
-		Context:           jsonToString(po.Context),
-		Metadata:          jsonToString(po.Metadata),
-		StreamMode:        jsonToString(po.StreamMode),
-		MultitaskStrategy: po.MultitaskStrategy,
-		OnDisconnect:      po.OnDisconnect,
-		Durability:        po.Durability,
-		IdempotencyKey:    stringFromPtr(po.IdempotencyKey),
-		WorkerID:          po.WorkerID,
-		ErrorCode:         po.ErrorCode,
-		ErrorMessage:      po.ErrorMessage,
-		StartedAt:         po.StartedAt,
-		EndedAt:           po.EndedAt,
-		CreatedAt:         po.CreatedAt,
-		UpdatedAt:         po.UpdatedAt,
+		ID:                  po.ID,
+		ThreadID:            po.ThreadID,
+		ParentRunID:         po.ParentRunID,
+		SpaceID:             po.SpaceID,
+		CreatorID:           po.CreatorID,
+		AssistantID:         po.AssistantID,
+		RunKind:             entity.RunKind(po.RunKind),
+		Status:              entity.RunStatus(po.Status),
+		Command:             jsonToString(po.Command),
+		Input:               jsonToString(po.Input),
+		Config:              jsonToString(po.Config),
+		Context:             jsonToString(po.Context),
+		Metadata:            jsonToString(po.Metadata),
+		StreamMode:          jsonToString(po.StreamMode),
+		MultitaskStrategy:   po.MultitaskStrategy,
+		OnDisconnect:        po.OnDisconnect,
+		Durability:          po.Durability,
+		IdempotencyKey:      stringFromPtr(po.IdempotencyKey),
+		WorkerID:            po.WorkerID,
+		LeaseOwner:          stringFromPtr(po.LeaseOwner),
+		LeaseToken:          stringFromPtr(po.LeaseToken),
+		LeaseExpiresAt:      int64FromPtr(po.LeaseExpiresAt),
+		HeartbeatAt:         int64FromPtr(po.HeartbeatAt),
+		CancelRequestedAt:   int64FromPtr(po.CancelRequestedAt),
+		ExecutionGeneration: po.ExecutionGeneration,
+		ErrorCode:           po.ErrorCode,
+		ErrorMessage:        po.ErrorMessage,
+		StartedAt:           po.StartedAt,
+		EndedAt:             po.EndedAt,
+		CreatedAt:           po.CreatedAt,
+		UpdatedAt:           po.UpdatedAt,
 	}
 }
 
@@ -3814,6 +5014,20 @@ func stringFromPtr(value *string) string {
 		return ""
 	}
 
+	return *value
+}
+
+func int64PtrOrNil(value int64) *int64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
+
+func int64FromPtr(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
 	return *value
 }
 

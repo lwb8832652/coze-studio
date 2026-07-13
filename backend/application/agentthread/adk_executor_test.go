@@ -102,6 +102,71 @@ func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage(t *testing.T) 
 	require.Contains(t, eventSink.events[2].Payload, `"content":"final answer"`)
 }
 
+func TestADKExecutorSeedsAndReturnsDurableParityState(t *testing.T) {
+	checkpointService := &recordingADKCheckpointService{}
+	run := &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+		Input: `{
+			"messages":[
+				{"role":"user","content":"first"},
+				{"role":"assistant","content":"previous"},
+				{"role":"user","content":"current"}
+			],
+			"uploaded_files":[{
+				"file_id":30,
+				"file_name":"brief.md",
+				"virtual_path":"/mnt/user-data/uploads/brief.md",
+				"content_type":"text/markdown"
+			}]
+		}`,
+	}
+	var factorySnapshot ADKParityState
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(ctx context.Context, _ *RunSummary) (adk.ResumableAgent, error) {
+			tracker := adkParityStateTrackerFromContext(ctx)
+			require.NotNil(t, tracker)
+			factorySnapshot = tracker.Snapshot()
+			return &scriptedADKAgent{run: func(context.Context) []*adk.AgentEvent {
+				return []*adk.AgentEvent{{
+					AgentName: "lead",
+					Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{
+						Message: schema.AssistantMessage("final answer", nil),
+						Role:    schema.Assistant,
+					}},
+				}}
+			}}, nil
+		}),
+		&recordingRunEventSink{},
+		func(run *RunSummary) (adk.CheckPointStore, error) {
+			return NewADKCheckpointStore(checkpointService, run)
+		},
+		nil,
+	)
+
+	result, err := executor.Execute(context.Background(), run)
+	require.NoError(t, err)
+	require.Len(t, factorySnapshot.Messages, 3)
+	require.Equal(t, []string{"first", "previous", "current"}, parityMessageContents(factorySnapshot.Messages))
+	require.Equal(t, []ADKParityUpload{{
+		FileID: 30, FileName: "brief.md",
+		VirtualPath: "/mnt/user-data/uploads/brief.md",
+		ContentType: "text/markdown",
+	}}, factorySnapshot.Uploads)
+	require.NotNil(t, result.ParityState)
+	require.Equal(t, []string{"first", "previous", "current", "final answer"}, parityMessageContents(result.ParityState.Messages))
+	require.NotNil(t, result.ParityState.Completion)
+	require.Equal(t, "succeeded", result.ParityState.Completion.Status)
+	require.Empty(t, result.ParityState.Interrupts)
+}
+
+func parityMessageContents(messages []ADKParityMessage) []string {
+	result := make([]string, 0, len(messages))
+	for _, message := range messages {
+		result = append(result, message.Content)
+	}
+	return result
+}
+
 func TestADKExecutorPersistsSummarizationEventsWithBoundedMemory(t *testing.T) {
 	chatModel := &summarizationIntegrationChatModel{}
 	memoryProvider := &recordingMemoryProvider{memories: []AgentMemory{{
@@ -196,8 +261,10 @@ func TestADKSummarizedCheckpointRestartsWithoutOriginalHistoryOrDuplicateMemory(
 	longSecond := "second-" + strings.Repeat("b", 4000)
 	longThird := "third-" + strings.Repeat("c", 4000)
 	run := &RunSummary{
-		ThreadID: 10,
-		RunID:    20,
+		ThreadID:  10,
+		RunID:     20,
+		SpaceID:   7,
+		CreatorID: 9,
 		Config: `{
 			"agent_name":"lead",
 			"context_budget":{
@@ -335,8 +402,10 @@ func TestADKMultimodalProjectionSurvivesInterruptAndFreshResume(t *testing.T) {
 	}
 	imageURL := "https://example.test/checkpoint-image.png"
 	run := &RunSummary{
-		ThreadID: 10,
-		RunID:    20,
+		ThreadID:  10,
+		RunID:     20,
+		SpaceID:   7,
+		CreatorID: 9,
 		Config: `{
 			"agent_name":"lead",
 			"provider_capabilities":{
@@ -619,6 +688,20 @@ func TestADKExecutorReturnsCanceledError(t *testing.T) {
 	require.ErrorAs(t, err, &canceled)
 	require.True(t, canceled.EventPersisted)
 	require.Equal(t, []string{"run.canceling"}, eventSink.eventTypes())
+}
+
+func TestNormalizeADKExecutionErrorDistinguishesRunCancelFromWorkerShutdown(t *testing.T) {
+	err := normalizeADKExecutionError(context.Background(), context.Canceled)
+	var canceled *RunCanceledError
+	require.ErrorAs(t, err, &canceled)
+	require.True(t, canceled.EventPersisted)
+
+	shutdownCtx, shutdown := context.WithCancel(context.Background())
+	shutdown()
+	require.ErrorIs(t, normalizeADKExecutionError(shutdownCtx, context.Canceled), context.Canceled)
+
+	modelErr := fmt.Errorf("model failed")
+	require.ErrorIs(t, normalizeADKExecutionError(context.Background(), modelErr), modelErr)
 }
 
 func TestADKExecutorRegistersActiveExecutionForCancel(t *testing.T) {

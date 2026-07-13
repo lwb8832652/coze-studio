@@ -414,6 +414,29 @@ func TestADKSkillMiddlewareLoadsInstructionsProgressively(t *testing.T) {
 	require.True(t, messagesContain(chatModel.inputs[1], skillBody))
 }
 
+func TestADKSkillMiddlewareRecordsVersionedParitySnapshot(t *testing.T) {
+	provider := &recordingSkillProvider{skills: []AgentSkill{{
+		ID: 1, Name: "weekly-research", Version: "1.2.0",
+		Description: "Research weekly changes.", Body: "Use primary sources.",
+	}}}
+	tracker := newTestADKParityStateTracker(t)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
+	assembler := NewADKMiddlewareAssembler(ADKMiddlewareAssemblerOptions{
+		SkillProvider: provider,
+	})
+	_, err := assembler.Build(ctx, ADKMiddlewareBuildInput{
+		Run: &RunSummary{
+			RunID: 1, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+			Config: `{"enable_skills":["weekly-research"]}`,
+		},
+		Model: &progressiveSkillChatModel{},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []ADKParitySkill{{
+		ID: 1, Name: "weekly-research", Version: "1.2.0",
+	}}, tracker.Snapshot().ActiveSkills)
+}
+
 func TestADKSkillMiddlewarePreloadsSingleExplicitInlineSkill(t *testing.T) {
 	const skillBody = "Ask the user what the new skill should do."
 	provider := &recordingSkillProvider{skills: []AgentSkill{{

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -36,6 +37,9 @@ const (
 	ADKProviderCapabilityFile      ADKProviderCapability = "file"
 	ADKProviderCapabilityAudio     ADKProviderCapability = "audio"
 	ADKProviderCapabilityVideo     ADKProviderCapability = "video"
+
+	adkProviderCapabilityDowngradedEventType = "model.capability_downgraded"
+	adkProviderCapabilityDowngradeSchema     = "coze.provider_capability_downgrade.v1"
 )
 
 type ADKProviderCapabilityConfig struct {
@@ -67,22 +71,119 @@ func (e *ADKProviderCapabilityError) Error() string {
 
 type ADKProviderCapabilityMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
-	config ADKProviderCapabilityConfig
+	config             ADKProviderCapabilityConfig
+	run                *RunSummary
+	eventSink          RunEventSink
+	requestedReasoning ADKReasoningRequest
+	effectiveReasoning ADKReasoningRequest
+	downgradeOnce      sync.Once
 }
 
 func NewADKProviderCapabilityMiddleware(
 	run *RunSummary,
 	capabilities ADKModelCapabilities,
+	runtimeConfigs ...DeerFlowRuntimeConfig,
 ) (*ADKProviderCapabilityMiddleware, error) {
 	config, err := adkProviderCapabilityConfigFromRun(run, capabilities)
 	if err != nil {
 		return nil, err
 	}
+	requested := config.Reasoning
+	effective := requested
+	if len(runtimeConfigs) > 0 {
+		requested = runtimeConfigs[0].ExecutionReasoningRequestOr(config.Reasoning)
+		effective = effectiveADKReasoningRequest(
+			requested,
+			capabilities,
+		)
+	}
+	config.Reasoning = effective
 
 	return &ADKProviderCapabilityMiddleware{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
 		config:                       config,
+		run:                          run,
+		requestedReasoning:           requested,
+		effectiveReasoning:           effective,
 	}, nil
+}
+
+func effectiveADKReasoningRequest(
+	request ADKReasoningRequest,
+	capabilities ADKModelCapabilities,
+) ADKReasoningRequest {
+	if !capabilities.Reasoning {
+		request.ReasoningEffort = ""
+	}
+	if !capabilities.Thinking {
+		request.ThinkingEnabled = false
+	}
+	return request
+}
+
+func (m *ADKProviderCapabilityMiddleware) BeforeAgent(
+	ctx context.Context,
+	runCtx *adk.ChatModelAgentContext,
+) (context.Context, *adk.ChatModelAgentContext, error) {
+	if m == nil {
+		return ctx, runCtx, fmt.Errorf(
+			"eino adk provider capability middleware is invalid",
+		)
+	}
+	capabilities := m.downgradedCapabilities()
+	if len(capabilities) == 0 {
+		return ctx, runCtx, nil
+	}
+	m.downgradeOnce.Do(func() {
+		m.emitDowngradeEvent(ctx, capabilities)
+	})
+	return ctx, runCtx, nil
+}
+
+func (m *ADKProviderCapabilityMiddleware) downgradedCapabilities() []string {
+	if m == nil {
+		return nil
+	}
+	capabilities := make([]string, 0, 2)
+	if m.requestedReasoning.ReasoningEffort !=
+		m.effectiveReasoning.ReasoningEffort {
+		capabilities = append(capabilities, string(ADKProviderCapabilityReasoning))
+	}
+	if m.requestedReasoning.ThinkingEnabled !=
+		m.effectiveReasoning.ThinkingEnabled {
+		capabilities = append(capabilities, string(ADKProviderCapabilityThinking))
+	}
+	return capabilities
+}
+
+func (m *ADKProviderCapabilityMiddleware) emitDowngradeEvent(
+	ctx context.Context,
+	capabilities []string,
+) {
+	if m == nil || m.run == nil || len(capabilities) == 0 {
+		return
+	}
+	emitRunEvent(ctx, m.eventSink, RunEvent{
+		ThreadID:  m.run.ThreadID,
+		RunID:     m.run.RunID,
+		EventType: adkProviderCapabilityDowngradedEventType,
+		Payload: encodeRunEventPayload(ctx, map[string]any{
+			"schema":                     adkProviderCapabilityDowngradeSchema,
+			"capabilities":               capabilities,
+			"requested_thinking_enabled": m.requestedReasoning.ThinkingEnabled,
+			"effective_thinking_enabled": m.effectiveReasoning.ThinkingEnabled,
+			"requested_reasoning_effort": adkReasoningEffortLabel(m.requestedReasoning.ReasoningEffort),
+			"effective_reasoning_effort": adkReasoningEffortLabel(m.effectiveReasoning.ReasoningEffort),
+		}),
+	})
+}
+
+func adkReasoningEffortLabel(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return "none"
+	}
+	return value
 }
 
 func (m *ADKProviderCapabilityMiddleware) BeforeModelRewriteState(

@@ -27,6 +27,7 @@ import (
 )
 
 const subagentRetryRequestedEventType = "subagent.retry.requested"
+const subagentRetryAttempt = 1
 
 func (s *ApplicationService) RetrySubagentRun(
 	ctx context.Context,
@@ -96,40 +97,34 @@ func (s *ApplicationService) RetrySubagentRun(
 		return nil, err
 	}
 
-	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		AssistantID:       parentRun.AssistantID,
-		RunKind:           domainentity.RunKindTask,
-		Status:            domainentity.RunStatusQueued,
-		Command:           command,
-		Input:             `{"messages":[]}`,
-		Config:            parentRun.Config,
-		Context:           parentRun.Context,
-		Metadata:          metadata,
-		StreamMode:        parentRun.StreamMode,
-		MultitaskStrategy: parentRun.MultitaskStrategy,
-		OnDisconnect:      parentRun.OnDisconnect,
-		Durability:        parentRun.Durability,
-		IdempotencyKey:    idempotencyKey,
+	bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+		SkipTopLevelAdmission: true,
+		Run: domainservice.CreateRunRequest{
+			ThreadID: req.ThreadID, AssistantID: parentRun.AssistantID,
+			RunKind: domainentity.RunKindTask, Status: domainentity.RunStatusQueued,
+			Command: command, Input: `{"messages":[]}`, Config: parentRun.Config,
+			Context: parentRun.Context, Metadata: metadata, StreamMode: parentRun.StreamMode,
+			MultitaskStrategy: "reject", OnDisconnect: parentRun.OnDisconnect,
+			Durability: parentRun.Durability, IdempotencyKey: idempotencyKey,
+		},
+		Event: &domainservice.CreateRunEventSpec{
+			EventType: subagentRetryRequestedEventType,
+			PayloadBuilder: func(runID int64) string {
+				return encodeRunEventPayload(ctx, subagentRetryRequestedPayload(
+					parentRun, sourceRun, runID, requestedAt,
+				))
+			},
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if run == nil {
-		return nil, fmt.Errorf("agent thread service returned empty run")
+	if bundle == nil || bundle.Run == nil || bundle.Event == nil {
+		return nil, fmt.Errorf("agent thread service returned incomplete subagent retry bundle")
 	}
+	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
 
-	payload := subagentRetryRequestedPayload(parentRun, sourceRun, run.ID, requestedAt)
-	if _, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
-		ThreadID:  req.ThreadID,
-		RunID:     run.ID,
-		EventType: subagentRetryRequestedEventType,
-		Payload:   encodeRunEventPayload(ctx, payload),
-	}); err != nil {
-		return nil, err
-	}
-
-	return &RetrySubagentRunResponse{Run: DomainRunToSummary(run)}, nil
+	return &RetrySubagentRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 }
 
 func subagentRetryIdempotencyKey(req *RetrySubagentRunRequest) (string, error) {
@@ -148,6 +143,7 @@ func subagentRetryCommand(parentRun, sourceRun *domainentity.Run, requestedAt in
 	return marshalHumanInteractionJSON(map[string]any{
 		"subagent_retry": map[string]any{
 			"schema":             "coze.subagent_retry.v1",
+			"attempt":            subagentRetryAttempt,
 			"source_run_id":      sourceRun.ID,
 			"parent_run_id":      parentRun.ID,
 			"source_status":      string(sourceRun.Status),
@@ -163,6 +159,7 @@ func subagentRetryCommand(parentRun, sourceRun *domainentity.Run, requestedAt in
 func subagentRetryMetadata(parentRun, sourceRun *domainentity.Run, requestedAt int64) (string, error) {
 	return marshalHumanInteractionJSON(map[string]any{
 		"source":        "subagent_retry",
+		"attempt":       subagentRetryAttempt,
 		"source_run_id": sourceRun.ID,
 		"parent_run_id": sourceRun.ParentRunID,
 		"thread_id":     sourceRun.ThreadID,
@@ -183,6 +180,7 @@ func subagentRetryRequestedPayload(
 ) map[string]any {
 	return map[string]any{
 		"schema":        "coze.subagent_retry_requested.v1",
+		"attempt":       subagentRetryAttempt,
 		"thread_id":     sourceRun.ThreadID,
 		"source_run_id": sourceRun.ID,
 		"parent_run_id": parentRun.ID,

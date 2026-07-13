@@ -242,8 +242,11 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 		SpaceID:   30,
 		CreatorID: 40,
 	}
+	tracker, err := NewADKParityStateTracker(run, nil)
+	require.NoError(t, err)
+	parityCtx := withADKParityStateTracker(context.Background(), tracker)
 	provider := NewADKRuntimeToolCatalogProvider(NewADKArtifactToolCatalog(app))
-	set, err := provider.ResolveToolSet(context.Background(), run)
+	set, err := provider.ResolveToolSet(parityCtx, run)
 	require.NoError(t, err)
 	writeTool := requireADKInvokableTool(
 		t,
@@ -284,7 +287,7 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 	}
 
 	presentResult, err := presentTool.InvokableRun(
-		context.Background(),
+		parityCtx,
 		`{"filepaths":["/mnt/user-data/outputs/report.md"]}`,
 	)
 
@@ -294,6 +297,12 @@ func TestADKArtifactToolCatalogWritesAndPresentsOutputFiles(t *testing.T) {
 	require.NotContains(t, presentResult, "agent-runtime")
 	require.NotNil(t, artifacts.registerReq)
 	require.Equal(t, int64(99), artifacts.registerReq.FileID)
+	require.Equal(t, []ADKParityArtifact{{
+		ArtifactID: 100, FileID: 99, RunID: 20, Title: "report.md",
+		ArtifactType: "document", VirtualPath: "/mnt/user-data/outputs/report.md",
+		ContentType: "text/markdown; charset=utf-8", SizeBytes: 9,
+		PreviewMode: "text",
+	}}, tracker.Snapshot().Artifacts)
 }
 
 func TestADKArtifactToolCatalogWritesBase64OutputFile(t *testing.T) {

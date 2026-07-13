@@ -75,6 +75,24 @@ func TestGetUserSpaceListPreservesRoleAndMemberCount(t *testing.T) {
 	require.Equal(t, int64(1), spaces[1].MemberCount)
 }
 
+func TestIsSpaceMemberUsesTargetedRepositoryLookup(t *testing.T) {
+	t.Parallel()
+
+	repo := &spaceListSpaceRepo{hasSpaceUser: true}
+	domain := NewUserDomain(context.Background(), &Components{
+		IconOSS:   fakeSpaceStorage{},
+		UserRepo:  &spaceListUserRepo{},
+		SpaceRepo: repo,
+	})
+
+	member, err := domain.IsSpaceMember(context.Background(), 101, 9)
+
+	require.NoError(t, err)
+	require.True(t, member)
+	require.Equal(t, int64(101), repo.hasSpaceUserSpaceID)
+	require.Equal(t, int64(9), repo.hasSpaceUserUserID)
+}
+
 func TestCreateSpaceCreatesTeamSpaceAndOwnerMembership(t *testing.T) {
 	t.Parallel()
 
@@ -204,18 +222,22 @@ func (r *spaceListUserRepo) ListUsers(context.Context, string, int, int) ([]*mod
 }
 
 type spaceListSpaceRepo struct {
-	userSpaces      []*model.SpaceUser
-	spaceUsers      []*model.SpaceUser
-	spaces          []*model.Space
-	memberCounts    map[int64]int64
-	createdSpace    *model.Space
-	addedSpaceUser  *model.SpaceUser
-	addedSpaceUsers []*model.SpaceUser
-	updatedSpaceID  int64
-	updatedSpace    map[string]any
-	updatedRole     *model.SpaceUser
-	removedSpaceID  int64
-	removedUserID   int64
+	userSpaces          []*model.SpaceUser
+	spaceUsers          []*model.SpaceUser
+	spaces              []*model.Space
+	memberCounts        map[int64]int64
+	hasSpaceUser        bool
+	hasSpaceUserErr     error
+	hasSpaceUserSpaceID int64
+	hasSpaceUserUserID  int64
+	createdSpace        *model.Space
+	addedSpaceUser      *model.SpaceUser
+	addedSpaceUsers     []*model.SpaceUser
+	updatedSpaceID      int64
+	updatedSpace        map[string]any
+	updatedRole         *model.SpaceUser
+	removedSpaceID      int64
+	removedUserID       int64
 }
 
 func (r *spaceListSpaceRepo) CreateSpace(_ context.Context, space *model.Space) error {
@@ -271,6 +293,11 @@ func (r *spaceListSpaceRepo) RemoveSpaceUser(_ context.Context, spaceID int64, u
 }
 func (r *spaceListSpaceRepo) GetSpaceList(context.Context, int64) ([]*model.SpaceUser, error) {
 	return r.userSpaces, nil
+}
+func (r *spaceListSpaceRepo) HasSpaceUser(_ context.Context, spaceID int64, userID int64) (bool, error) {
+	r.hasSpaceUserSpaceID = spaceID
+	r.hasSpaceUserUserID = userID
+	return r.hasSpaceUser, r.hasSpaceUserErr
 }
 func (r *spaceListSpaceRepo) GetSpaceUsersBySpaceID(context.Context, int64) ([]*model.SpaceUser, error) {
 	return r.spaceUsers, nil

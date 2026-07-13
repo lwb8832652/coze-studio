@@ -319,26 +319,38 @@ func NewDefaultADKToolProviderWithSingleAgentSubagents(
 ) ADKToolProvider {
 	parsedOptions := parseDefaultADKToolProviderOptions(options...)
 	base := newDefaultADKRuntimeToolProvider(parsedOptions)
-	if source == nil {
-		return NewADKToolPolicyProvider(base)
-	}
-
-	childFactory := NewApplicationADKAgentFactory(
+	builtinChildFactory := NewApplicationADKAgentFactory(
 		DefaultChatModelProvider,
-		NewDefaultADKToolProvider(),
+		newADKBuiltinSubagentToolProvider(
+			newDefaultADKRuntimeToolProvider(parsedOptions),
+		),
 		nil,
 	)
-	definitionProvider := NewADKSingleAgentSubagentDefinitionProviderWithToolGrants(
-		source,
-		NewADKRunConfigSubagentReferenceProvider(),
-		NewADKSingleAgentSnapshotToolGrantProvider(),
-	)
+	builtinFactory := newADKBuiltinSubagentAgentFactory(builtinChildFactory)
+	var configuredDefinition ADKSubagentDefinitionProvider
+	var configuredFactory ADKSubagentAgentFactory
+	if source != nil {
+		configuredChildFactory := NewApplicationADKAgentFactory(
+			DefaultChatModelProvider,
+			NewDefaultADKToolProvider(),
+			nil,
+		)
+		configuredDefinition = NewADKSingleAgentSubagentDefinitionProviderWithToolGrants(
+			source,
+			NewADKRunConfigSubagentReferenceProvider(),
+			NewADKSingleAgentSnapshotToolGrantProvider(),
+		)
+		configuredFactory = NewADKSingleAgentSubagentAgentFactory(source, configuredChildFactory)
+	}
 
 	return NewADKToolPolicyProvider(
 		NewADKSubagentToolProvider(
 			base,
-			definitionProvider,
-			NewADKSingleAgentSubagentAgentFactory(source, childFactory),
+			newADKBuiltinSubagentDefinitionProvider(configuredDefinition),
+			&adkConfiguredOrBuiltinSubagentAgentFactory{
+				builtin:    builtinFactory,
+				configured: configuredFactory,
+			},
 			WithADKSubagentToolProviderEventSink(parsedOptions.eventSink),
 			WithADKSubagentToolProviderRunRecorder(parsedOptions.recorder),
 			WithADKSubagentToolProviderGuardrailEnforcer(

@@ -24,10 +24,12 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"gorm.io/gorm"
 
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
@@ -36,6 +38,11 @@ import (
 )
 
 var SVC = new(ApplicationService)
+
+var (
+	ErrActiveRunExists              = domainservice.ErrActiveRunExists
+	ErrUnsupportedMultitaskStrategy = domainservice.ErrUnsupportedMultitaskStrategy
+)
 
 var ErrArtifactScanReviewDecisionInvalid = errors.New(
 	"artifact scan review decision is invalid",
@@ -47,6 +54,8 @@ var ErrArtifactSignedURLNotSupported = errors.New(
 
 type ApplicationService struct {
 	ThreadSVC                 domainservice.ThreadService
+	ThreadAuthorizer          ThreadAuthorizer
+	WorkspaceAuthorizer       WorkspaceAuthorizer
 	RuntimeFileSVC            domainservice.RuntimeFileService
 	UploadFileSVC             domainservice.UploadFileService
 	PlanSVC                   domainservice.PlanService
@@ -135,10 +144,14 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	if req == nil {
 		return nil, fmt.Errorf("create thread request is required")
 	}
+	userID, err := s.resolveThreadCreator(ctx, req.SpaceID, req.UserID)
+	if err != nil {
+		return nil, err
+	}
 
 	thread, err := s.ThreadSVC.CreateThread(ctx, &domainservice.CreateThreadRequest{
 		SpaceID:      req.SpaceID,
-		UserID:       req.UserID,
+		UserID:       userID,
 		AgentID:      req.AgentID,
 		Title:        req.Title,
 		Source:       domainentity.ThreadSource(req.Source),
@@ -155,6 +168,30 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	return &CreateThreadResponse{Thread: DomainThreadToSummary(thread)}, nil
 }
 
+func (s *ApplicationService) resolveThreadCreator(
+	ctx context.Context,
+	spaceID int64,
+	requestedUserID int64,
+) (int64, error) {
+	viewerID, public, err := s.publicThreadViewerID(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !public {
+		return requestedUserID, nil
+	}
+	if spaceID <= 0 {
+		return 0, ErrThreadAccessDenied
+	}
+	if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
+		ViewerID: viewerID,
+		SpaceID:  spaceID,
+	}); err != nil {
+		return 0, err
+	}
+	return viewerID, nil
+}
+
 func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTaskThreadRequest) (*CreateTaskThreadResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
@@ -167,25 +204,26 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if message == "" {
 		return nil, fmt.Errorf("task thread message is required")
 	}
-	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	if err != nil {
 		return nil, err
 	}
 
 	title := taskThreadTitle(req.Title, message)
-	threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
-		SpaceID:  req.SpaceID,
-		UserID:   req.UserID,
-		Title:    title,
-		Source:   ThreadSourceWeb,
-		Metadata: `{"source":"workbench_new_task"}`,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if threadResp == nil || threadResp.Thread == nil {
-		return nil, fmt.Errorf("agent thread service returned empty thread")
-	}
 	if req.DeferStart {
+		threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   req.UserID,
+			Title:    title,
+			Source:   ThreadSourceWeb,
+			Metadata: `{"source":"workbench_new_task"}`,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if threadResp == nil || threadResp.Thread == nil {
+			return nil, fmt.Errorf("agent thread service returned empty thread")
+		}
 		return &CreateTaskThreadResponse{
 			Thread: threadResp.Thread,
 		}, nil
@@ -195,46 +233,38 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	if err != nil {
 		return nil, err
 	}
-	runResp, err := s.CreateRun(ctx, &CreateRunRequest{
-		ThreadID:          threadResp.Thread.ThreadID,
-		AssistantID:       req.AssistantID,
-		RunKind:           RunKindTask,
-		Command:           req.Command,
-		Input:             input,
-		Config:            req.Config,
-		Context:           req.Context,
-		Metadata:          req.Metadata,
-		StreamMode:        req.StreamMode,
-		MultitaskStrategy: req.MultitaskStrategy,
-		OnDisconnect:      req.OnDisconnect,
-		Durability:        req.Durability,
-		IdempotencyKey:    req.IdempotencyKey,
+	userID, err := s.resolveThreadCreator(ctx, req.SpaceID, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{
+		Thread: domainservice.CreateThreadRequest{
+			SpaceID: req.SpaceID, UserID: userID, Title: title,
+			Source: domainentity.ThreadSourceWeb, Metadata: `{"source":"workbench_new_task"}`,
+		},
+		Run: domainservice.CreateRunRequest{
+			AssistantID: req.AssistantID, RunKind: domainentity.RunKindTask,
+			Command: req.Command, Input: input, Config: runConfig,
+			Context: req.Context, Metadata: req.Metadata, StreamMode: req.StreamMode,
+			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+		},
+		Message: domainservice.CreateMessageSpec{
+			Role: domainentity.MessageRoleUser, Content: message,
+			Metadata: `{"source":"workbench_new_task"}`,
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	if runResp == nil || runResp.Run == nil {
-		return nil, fmt.Errorf("agent thread service returned empty run")
-	}
-
-	messageResp, err := s.AppendMessage(ctx, &AppendMessageRequest{
-		ThreadID: threadResp.Thread.ThreadID,
-		RunID:    runResp.Run.RunID,
-		Role:     MessageRoleUser,
-		Content:  message,
-		Metadata: `{"source":"workbench_new_task"}`,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if messageResp == nil || messageResp.Message == nil {
-		return nil, fmt.Errorf("agent thread service returned empty message")
+	if bundle == nil || bundle.Thread == nil || bundle.Run == nil || bundle.Message == nil {
+		return nil, fmt.Errorf("agent thread service returned incomplete task thread bundle")
 	}
 
 	return &CreateTaskThreadResponse{
-		Thread:  threadResp.Thread,
-		Message: messageResp.Message,
-		Run:     runResp.Run,
+		Thread:  DomainThreadToSummary(bundle.Thread),
+		Message: DomainMessageToSummary(bundle.Message),
+		Run:     DomainRunToSummary(bundle.Run),
 	}, nil
 }
 
@@ -284,6 +314,11 @@ func (s *ApplicationService) GetThread(ctx context.Context, req *GetThreadReques
 	if req == nil {
 		return nil, fmt.Errorf("get thread request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	thread, err := s.ThreadSVC.GetThread(ctx, req.ThreadID)
 	if err != nil {
@@ -305,6 +340,11 @@ func (s *ApplicationService) UpdateThreadTitle(
 	}
 	if req == nil {
 		return nil, fmt.Errorf("update thread title request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	thread, updated, err := s.ThreadSVC.UpdateThreadTitle(ctx, &domainservice.UpdateThreadTitleRequest{
@@ -334,6 +374,11 @@ func (s *ApplicationService) UpdateThreadMetadata(
 	if req == nil {
 		return nil, fmt.Errorf("update thread metadata request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	thread, updated, err := s.ThreadSVC.UpdateThreadMetadata(ctx, &domainservice.UpdateThreadMetadataRequest{
 		ThreadID: req.ThreadID,
@@ -362,6 +407,11 @@ func (s *ApplicationService) DeleteThread(
 	if req == nil {
 		return nil, fmt.Errorf("delete thread request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
 
 	deleted, err := s.ThreadSVC.DeleteThread(ctx, &domainservice.DeleteThreadRequest{
 		ThreadID: req.ThreadID,
@@ -380,6 +430,21 @@ func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRe
 	if req == nil {
 		return nil, fmt.Errorf("list threads request is required")
 	}
+	userID := req.UserID
+	if viewerID, public, err := s.publicThreadViewerID(ctx); err != nil {
+		return nil, err
+	} else if public {
+		if req.SpaceID <= 0 {
+			return nil, ErrThreadAccessDenied
+		}
+		if err := s.AuthorizeWorkspaceAccess(ctx, WorkspaceAccessRequest{
+			ViewerID: viewerID,
+			SpaceID:  req.SpaceID,
+		}); err != nil {
+			return nil, err
+		}
+		userID = viewerID
+	}
 
 	var status *domainentity.ThreadStatus
 	if req.Status != nil {
@@ -389,7 +454,7 @@ func (s *ApplicationService) ListThreads(ctx context.Context, req *ListThreadsRe
 
 	threads, total, err := s.ThreadSVC.ListThreads(ctx, &domainservice.ListThreadsRequest{
 		SpaceID:  req.SpaceID,
-		UserID:   req.UserID,
+		UserID:   userID,
 		Status:   status,
 		Page:     req.Page,
 		PageSize: req.PageSize,
@@ -416,6 +481,12 @@ func (s *ApplicationService) AppendMessage(ctx context.Context, req *AppendMessa
 	if req == nil {
 		return nil, fmt.Errorf("append message request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	message, err := s.ThreadSVC.AppendMessage(ctx, &domainservice.AppendMessageRequest{
 		ThreadID: req.ThreadID,
@@ -440,6 +511,11 @@ func (s *ApplicationService) ListMessages(ctx context.Context, req *ListMessages
 	}
 	if req == nil {
 		return nil, fmt.Errorf("list messages request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	messages, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
@@ -469,8 +545,75 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	if req == nil {
 		return nil, fmt.Errorf("create run request is required")
 	}
-	if err := s.validateRunRuntimeConfig(req.Config); err != nil {
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
 		return nil, err
+	}
+	runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)
+	if err != nil {
+		return nil, err
+	}
+	messageContent := strings.TrimSpace(req.MessageContent)
+	if messageContent == "" && strings.TrimSpace(req.MessageMetadata) != "" {
+		return nil, fmt.Errorf("run message content is required when message metadata is set")
+	}
+	if messageContent != "" {
+		authoritativeInput, err := s.buildAuthoritativeRunInput(
+			ctx,
+			req.ThreadID,
+			messageContent,
+			req.Input,
+		)
+		if err != nil {
+			return nil, err
+		}
+		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+			Run: domainservice.CreateRunRequest{
+				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
+				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
+				Status: domainentity.RunStatus(req.Status), Command: req.Command,
+				Input: authoritativeInput, Config: runConfig, Context: req.Context,
+				Metadata: req.Metadata, StreamMode: req.StreamMode,
+				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			},
+			Message: &domainservice.CreateMessageSpec{
+				Role: domainentity.MessageRoleUser, Content: messageContent,
+				Metadata: req.MessageMetadata,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bundle == nil || bundle.Run == nil || bundle.Message == nil {
+			return nil, fmt.Errorf("agent thread service returned incomplete run bundle")
+		}
+		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
+		return &CreateRunResponse{
+			Run: DomainRunToSummary(bundle.Run), Message: DomainMessageToSummary(bundle.Message),
+		}, nil
+	}
+	if domainentity.DefaultRunKind(domainentity.RunKind(req.RunKind), req.ParentRunID) == domainentity.RunKindTask {
+		bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{
+			Run: domainservice.CreateRunRequest{
+				ThreadID: req.ThreadID, ParentRunID: req.ParentRunID,
+				AssistantID: req.AssistantID, RunKind: domainentity.RunKind(req.RunKind),
+				Status: domainentity.RunStatus(req.Status), Command: req.Command,
+				Input: req.Input, Config: runConfig, Context: req.Context,
+				Metadata: req.Metadata, StreamMode: req.StreamMode,
+				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
+				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if bundle == nil || bundle.Run == nil {
+			return nil, fmt.Errorf("agent thread service returned empty run bundle")
+		}
+		s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
+		return &CreateRunResponse{Run: DomainRunToSummary(bundle.Run)}, nil
 	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
@@ -481,7 +624,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		Status:            domainentity.RunStatus(req.Status),
 		Command:           req.Command,
 		Input:             req.Input,
-		Config:            req.Config,
+		Config:            runConfig,
 		Context:           req.Context,
 		Metadata:          req.Metadata,
 		StreamMode:        req.StreamMode,
@@ -500,14 +643,208 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	return &CreateRunResponse{Run: DomainRunToSummary(run)}, nil
 }
 
-func (s *ApplicationService) validateRunRuntimeConfig(config string) error {
-	if s.RuntimePolicy == nil {
-		return nil
+func (s *ApplicationService) cancelMultitaskInterruptedADKRuns(
+	runs []*domainentity.Run,
+) {
+	if s == nil || s.ADKCancelRegistry == nil {
+		return
 	}
-	_, err := s.RuntimePolicy.runtimeModeFromRun(&RunSummary{
-		Config: config,
+	registry := s.ADKCancelRegistry
+	for _, domainRun := range runs {
+		run := DomainRunToSummary(domainRun)
+		if run == nil || run.RunID <= 0 {
+			continue
+		}
+		mode, err := runtimeModeFromRun(run)
+		if err != nil || mode != RuntimeModeEinoADK {
+			continue
+		}
+		runID := run.RunID
+		go func() {
+			notifyCtx, cancel := context.WithTimeout(context.Background(), defaultMultitaskCancelNotifyTimeout)
+			defer cancel()
+			_ = registry.Request(
+				notifyCtx,
+				runID,
+				adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
+				true,
+			)
+		}()
+	}
+}
+
+const defaultMultitaskCancelNotifyTimeout = 5 * time.Second
+const authoritativeRunHistoryPageSize int32 = 200
+const authoritativeRunPageSize int32 = 200
+
+type authoritativeRunInputMessage struct {
+	RunID   int64  `json:"_run_id,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type authoritativeRunInput struct {
+	Messages      []authoritativeRunInputMessage   `json:"messages"`
+	UploadedFiles []*TaskThreadUploadedFileSummary `json:"uploaded_files,omitempty"`
+}
+
+func (s *ApplicationService) buildAuthoritativeRunInput(
+	ctx context.Context,
+	threadID int64,
+	currentMessage string,
+	rawInput string,
+) (string, error) {
+	var submitted struct {
+		UploadedFiles []*TaskThreadUploadedFileSummary `json:"uploaded_files"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rawInput)), &submitted); err != nil {
+		return "", fmt.Errorf("parse run input failed: %w", err)
+	}
+
+	historyMessages := make([]*domainentity.Message, 0)
+	page := int32(1)
+	for {
+		rows, total, err := s.ThreadSVC.ListMessages(ctx, &domainservice.ListMessagesRequest{
+			ThreadID: threadID,
+			Page:     page,
+			PageSize: authoritativeRunHistoryPageSize,
+		})
+		if err != nil {
+			return "", err
+		}
+		for _, message := range rows {
+			if message != nil && message.ID > 0 {
+				historyMessages = append(historyMessages, message)
+			}
+		}
+		if len(rows) == 0 || int64(page)*int64(authoritativeRunHistoryPageSize) >= total {
+			break
+		}
+		page++
+	}
+
+	legacyCommittedMessageIDs := map[int64]struct{}{}
+	rolledBackRunIDs := map[int64]struct{}{}
+	if len(historyMessages) > 0 {
+		var err error
+		legacyCommittedMessageIDs, rolledBackRunIDs, err = s.listAuthoritativeHistoryRunState(ctx, threadID)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	messages := make([]authoritativeRunInputMessage, 0, len(historyMessages)+1)
+	seen := make(map[int64]struct{}, len(historyMessages))
+	for _, message := range historyMessages {
+		if _, ok := seen[message.ID]; ok {
+			continue
+		}
+		seen[message.ID] = struct{}{}
+		if _, rolledBack := rolledBackRunIDs[message.RunID]; rolledBack {
+			continue
+		}
+		if message.RunID <= 0 {
+			if message.Role != domainentity.MessageRoleUser {
+				continue
+			}
+			if _, ok := legacyCommittedMessageIDs[message.ID]; !ok {
+				continue
+			}
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		switch message.Role {
+		case domainentity.MessageRoleUser:
+			messages = append(messages, authoritativeRunInputMessage{
+				RunID: message.RunID, Role: "user", Content: content,
+			})
+		case domainentity.MessageRoleAssistant:
+			messages = append(messages, authoritativeRunInputMessage{
+				RunID: message.RunID, Role: "assistant", Content: content,
+			})
+		}
+	}
+	messages = append(messages, authoritativeRunInputMessage{
+		Role: "user", Content: strings.TrimSpace(currentMessage),
 	})
-	return err
+
+	encoded, err := json.Marshal(authoritativeRunInput{
+		Messages:      messages,
+		UploadedFiles: normalizeADKUploadedFiles(submitted.UploadedFiles),
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal authoritative run input: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func (s *ApplicationService) listAuthoritativeHistoryRunState(
+	ctx context.Context,
+	threadID int64,
+) (map[int64]struct{}, map[int64]struct{}, error) {
+	messageIDs := make(map[int64]struct{})
+	rolledBackRunIDs := make(map[int64]struct{})
+	page := int32(1)
+	for {
+		runs, total, err := s.ThreadSVC.ListRuns(ctx, &domainservice.ListRunsRequest{
+			ThreadID: threadID,
+			Page:     page,
+			PageSize: authoritativeRunPageSize,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, run := range runs {
+			if run == nil || run.ThreadID != threadID {
+				continue
+			}
+			if strings.TrimSpace(run.ErrorCode) == "multitask_rollback" {
+				rolledBackRunIDs[run.ID] = struct{}{}
+			}
+			if messageID := legacyAppendedMessageID(run.Metadata); messageID > 0 {
+				messageIDs[messageID] = struct{}{}
+			}
+		}
+		if len(runs) == 0 || int64(page)*int64(authoritativeRunPageSize) >= total {
+			break
+		}
+		page++
+	}
+	return messageIDs, rolledBackRunIDs, nil
+}
+
+func legacyAppendedMessageID(metadata string) int64 {
+	var value struct {
+		AppendedMessageID json.RawMessage `json:"appended_message_id"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(metadata)), &value) != nil || len(value.AppendedMessageID) == 0 {
+		return 0
+	}
+
+	var stringID string
+	if json.Unmarshal(value.AppendedMessageID, &stringID) == nil {
+		id, err := strconv.ParseInt(strings.TrimSpace(stringID), 10, 64)
+		if err == nil && id > 0 {
+			return id
+		}
+		return 0
+	}
+
+	var numericID int64
+	if json.Unmarshal(value.AppendedMessageID, &numericID) == nil && numericID > 0 {
+		return numericID
+	}
+	return 0
+}
+
+func (s *ApplicationService) normalizeNewRunRuntimeConfig(config, runContext string) (string, error) {
+	if s.RuntimePolicy == nil {
+		return config, nil
+	}
+	normalized, _, err := normalizeNewDeerFlowRunConfig(config, *s.RuntimePolicy, runContext)
+	return normalized, err
 }
 
 func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*GetRunResponse, error) {
@@ -516,6 +853,11 @@ func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*G
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get run request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: req.RunID})
@@ -535,6 +877,11 @@ func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest)
 	}
 	if req == nil {
 		return nil, fmt.Errorf("list runs request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	var status *domainentity.RunStatus
@@ -573,6 +920,12 @@ func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunE
 	if req == nil {
 		return nil, fmt.Errorf("append run event request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{
 		ThreadID:  req.ThreadID,
@@ -597,12 +950,19 @@ func (s *ApplicationService) ListRunEvents(ctx context.Context, req *ListRunEven
 	if req == nil {
 		return nil, fmt.Errorf("list run events request is required")
 	}
-
-	events, total, err := s.ThreadSVC.ListRunEvents(ctx, &domainservice.ListRunEventsRequest{
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
 		ThreadID: req.ThreadID,
 		RunID:    req.RunID,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+	}); err != nil {
+		return nil, err
+	}
+
+	events, total, err := s.ThreadSVC.ListRunEvents(ctx, &domainservice.ListRunEventsRequest{
+		ThreadID:     req.ThreadID,
+		RunID:        req.RunID,
+		AfterEventID: req.AfterEventID,
+		Page:         req.Page,
+		PageSize:     req.PageSize,
 	})
 	if err != nil {
 		return nil, err
@@ -625,6 +985,12 @@ func (s *ApplicationService) CreateCheckpoint(ctx context.Context, req *CreateCh
 	}
 	if req == nil {
 		return nil, fmt.Errorf("create checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.CreateCheckpoint(ctx, &domainservice.CreateCheckpointRequest{
@@ -657,11 +1023,18 @@ func (s *ApplicationService) ListCheckpoints(ctx context.Context, req *ListCheck
 	if req == nil {
 		return nil, fmt.Errorf("list checkpoints request is required")
 	}
-
-	checkpoints, total, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
 		ThreadID: req.ThreadID,
 		RunID:    req.RunID,
-		Limit:    req.Limit,
+	}); err != nil {
+		return nil, err
+	}
+
+	checkpoints, total, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
+		ThreadID:    req.ThreadID,
+		RunID:       req.RunID,
+		RuntimeType: strings.TrimSpace(req.RuntimeType),
+		Limit:       req.Limit,
 	})
 	if err != nil {
 		return nil, err
@@ -685,15 +1058,30 @@ func (s *ApplicationService) GetCheckpoint(ctx context.Context, req *GetCheckpoi
 	if req == nil {
 		return nil, fmt.Errorf("get checkpoint request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{}); err != nil {
+		return nil, err
+	}
 
 	checkpoint, err := s.ThreadSVC.GetCheckpoint(ctx, &domainservice.GetCheckpointRequest{
 		CheckpointID: req.CheckpointID,
 	})
 	if err != nil {
+		if isPublicThreadAccessContext(ctx) && errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrThreadAccessDenied
+		}
 		return nil, err
 	}
 	if checkpoint == nil {
+		if isPublicThreadAccessContext(ctx) {
+			return nil, ErrThreadAccessDenied
+		}
 		return nil, fmt.Errorf("agent thread service returned empty checkpoint")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: checkpoint.ThreadID,
+		RunID:    checkpoint.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	return &GetCheckpointResponse{Checkpoint: DomainCheckpointToSummary(checkpoint)}, nil
@@ -705,6 +1093,11 @@ func (s *ApplicationService) GetLatestCheckpoint(ctx context.Context, req *GetLa
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get latest checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.GetLatestCheckpoint(ctx, &domainservice.GetLatestCheckpointRequest{
@@ -729,6 +1122,12 @@ func (s *ApplicationService) GetLatestRuntimeCheckpoint(
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get latest runtime checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return nil, err
 	}
 
 	checkpoint, err := s.ThreadSVC.GetLatestRuntimeCheckpoint(
@@ -758,6 +1157,12 @@ func (s *ApplicationService) DeleteRuntimeCheckpoint(
 	}
 	if req == nil {
 		return fmt.Errorf("delete runtime checkpoint request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+	}); err != nil {
+		return err
 	}
 
 	return s.ThreadSVC.DeleteRuntimeCheckpoint(ctx, &domainservice.DeleteRuntimeCheckpointRequest{
@@ -1385,6 +1790,11 @@ func (s *ApplicationService) RecordTokenUsage(ctx context.Context, req *RecordTo
 	if req == nil {
 		return nil, fmt.Errorf("record token usage request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	usage, err := s.ThreadSVC.RecordTokenUsage(ctx, &domainservice.RecordTokenUsageRequest{
 		RunID:        req.RunID,
@@ -1420,6 +1830,11 @@ func (s *ApplicationService) GetRunTokenUsage(ctx context.Context, req *GetToken
 	if req == nil {
 		return nil, fmt.Errorf("get run token usage request is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	rows, total, aggregate, runAggregates, err := s.ThreadSVC.GetRunTokenUsage(ctx, &domainservice.GetRunTokenUsageRequest{
 		RunID:            req.RunID,
@@ -1441,6 +1856,11 @@ func (s *ApplicationService) GetThreadTokenUsage(ctx context.Context, req *GetTo
 	}
 	if req == nil {
 		return nil, fmt.Errorf("get thread token usage request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
 	}
 
 	rows, total, aggregate, err := s.ThreadSVC.GetThreadTokenUsage(ctx, &domainservice.GetThreadTokenUsageRequest{
@@ -3071,8 +3491,10 @@ func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPen
 	}
 
 	runs, err := s.ThreadSVC.ClaimPendingRuns(ctx, &domainservice.ClaimPendingRunsRequest{
-		WorkerID: req.WorkerID,
-		Limit:    req.Limit,
+		WorkerID:       req.WorkerID,
+		Limit:          req.Limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
 	})
 	if err != nil {
 		return nil, err
@@ -3097,8 +3519,10 @@ func (s *ApplicationService) ClaimQueuedResumeRuns(ctx context.Context, req *Cla
 	}
 
 	runs, err := s.ThreadSVC.ClaimQueuedResumeRuns(ctx, &domainservice.ClaimQueuedResumeRunsRequest{
-		WorkerID: req.WorkerID,
-		Limit:    req.Limit,
+		WorkerID:       req.WorkerID,
+		Limit:          req.Limit,
+		Now:            req.Now,
+		LeaseTTLMillis: req.LeaseTTLMillis,
 	})
 	if err != nil {
 		return nil, err
@@ -3112,6 +3536,195 @@ func (s *ApplicationService) ClaimQueuedResumeRuns(ctx context.Context, req *Cla
 	}
 
 	return resp, nil
+}
+
+func (s *ApplicationService) RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*RenewRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("renew run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.RenewRunLease(ctx, &domainservice.RenewRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		Now:                 req.Now,
+		LeaseTTLMillis:      req.LeaseTTLMillis,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty renewed run")
+	}
+	return &RenewRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*ReleaseRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("release run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.ReleaseRunLease(ctx, &domainservice.ReleaseRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            domainentity.RunStatus(req.ToStatus),
+		Now:                 req.Now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty released run")
+	}
+	return &ReleaseRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) ListExpiredRunLeases(
+	ctx context.Context,
+	req *ListExpiredRunLeasesRequest,
+) (*ListExpiredRunLeasesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list expired run leases request is required")
+	}
+
+	runs, err := s.ThreadSVC.ListExpiredRunLeases(ctx, &domainservice.ListExpiredRunLeasesRequest{
+		Now:   req.Now,
+		Limit: req.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := &ListExpiredRunLeasesResponse{Runs: make([]*RunSummary, 0, len(runs))}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, DomainRunToSummary(run))
+	}
+	return resp, nil
+}
+
+func (s *ApplicationService) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req *ReconcileExpiredRunLeaseRequest,
+) (*ReconcileExpiredRunLeaseResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("reconcile expired run lease request is required")
+	}
+
+	run, err := s.ThreadSVC.ReconcileExpiredRunLease(ctx, &domainservice.ReconcileExpiredRunLeaseRequest{
+		RunID:               req.RunID,
+		LeaseOwner:          req.LeaseOwner,
+		LeaseToken:          req.LeaseToken,
+		ExecutionGeneration: req.ExecutionGeneration,
+		ToStatus:            domainentity.RunStatus(req.ToStatus),
+		Now:                 req.Now,
+		ErrorCode:           req.ErrorCode,
+		ErrorMessage:        req.ErrorMessage,
+		EventPayload:        req.EventPayload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty reconciled run")
+	}
+
+	return &ReconcileExpiredRunLeaseResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) FinalizeRunSuccess(
+	ctx context.Context,
+	req *FinalizeRunSuccessRequest,
+) (*FinalizeRunSuccessResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("finalize run success request is required")
+	}
+	if err := validateADKTerminalCheckpointRequest(
+		req.TerminalCheckpoint,
+		req.ThreadID,
+		req.RunID,
+	); err != nil {
+		return nil, err
+	}
+	if err := validateADKTerminalCheckpointRequest(
+		req.TerminalCheckpointOnTitleConflict,
+		req.ThreadID,
+		req.RunID,
+	); err != nil {
+		return nil, err
+	}
+	if req.TerminalCheckpointOnTitleConflict != nil &&
+		(req.TerminalCheckpoint == nil || !sameADKTerminalCheckpointIdentity(
+			req.TerminalCheckpoint,
+			req.TerminalCheckpointOnTitleConflict,
+		)) {
+		return nil, fmt.Errorf("terminal eino adk title-conflict checkpoint identity is invalid")
+	}
+	toDomainCheckpoint := func(checkpoint *CreateCheckpointRequest) *domainservice.CreateCheckpointRequest {
+		if checkpoint == nil {
+			return nil
+		}
+		return &domainservice.CreateCheckpointRequest{
+			ThreadID: req.ThreadID, RunID: req.RunID,
+			ParentCheckpointID: checkpoint.ParentCheckpointID,
+			CheckpointNS:       checkpoint.CheckpointNS,
+			RuntimeType:        checkpoint.RuntimeType,
+			RuntimeKey:         checkpoint.RuntimeKey,
+			EnvelopeVersion:    checkpoint.EnvelopeVersion,
+			ChannelValues:      checkpoint.ChannelValues,
+			ChannelVersions:    checkpoint.ChannelVersions,
+			PendingSends:       checkpoint.PendingSends,
+			Metadata:           checkpoint.Metadata,
+		}
+	}
+	terminalCheckpoint := toDomainCheckpoint(req.TerminalCheckpoint)
+	terminalCheckpointOnTitleConflict := toDomainCheckpoint(req.TerminalCheckpointOnTitleConflict)
+
+	result, err := s.ThreadSVC.FinalizeRunSuccess(ctx, &domainservice.FinalizeRunSuccessRequest{
+		RunID:                             req.RunID,
+		ThreadID:                          req.ThreadID,
+		LeaseOwner:                        req.LeaseOwner,
+		LeaseToken:                        req.LeaseToken,
+		ExecutionGeneration:               req.ExecutionGeneration,
+		Now:                               req.Now,
+		Message:                           req.Message,
+		MessageMetadata:                   req.MessageMetadata,
+		TitleEventPayload:                 req.TitleEventPayload,
+		CompletionEventPayload:            req.CompletionEventPayload,
+		ExpectedThreadTitle:               req.ExpectedThreadTitle,
+		ThreadTitle:                       req.ThreadTitle,
+		TerminalCheckpoint:                terminalCheckpoint,
+		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Run == nil || result.Message == nil {
+		return nil, fmt.Errorf("agent thread service returned empty finalized run")
+	}
+
+	return &FinalizeRunSuccessResponse{
+		Run:          DomainRunToSummary(result.Run),
+		Message:      DomainMessageToSummary(result.Message),
+		Checkpoint:   DomainCheckpointToSummary(result.TerminalCheckpoint),
+		TitleUpdated: result.TitleUpdated,
+	}, nil
 }
 
 func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
@@ -3142,28 +3755,113 @@ func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatus
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
 	}
+	if req == nil {
+		return nil, fmt.Errorf("update run status request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
-	resp, err := s.updateRunStatus(ctx, req, s.ThreadSVC.CancelRun)
+	result, err := s.requestRunCancellation(ctx, &domainservice.RequestRunCancellationRequest{
+		RunID:        req.RunID,
+		Now:          req.Now,
+		ErrorCode:    req.ErrorCode,
+		ErrorMessage: req.ErrorMessage,
+	})
 	if err != nil {
 		return nil, err
 	}
-	s.cancelActiveADKRun(ctx, resp)
+	if result == nil || result.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty canceled run")
+	}
+	resp := &UpdateRunStatusResponse{Run: DomainRunToSummary(result.Run)}
+	s.cancelActiveADKRun(ctx, result)
 
 	return resp, nil
 }
 
-func (s *ApplicationService) cancelActiveADKRun(ctx context.Context, resp *UpdateRunStatusResponse) {
-	if s == nil || s.ADKCancelRegistry == nil || resp == nil || resp.Run == nil {
+func (s *ApplicationService) CancelRunOnDisconnect(
+	ctx context.Context,
+	req *CancelRunOnDisconnectRequest,
+) (*CancelRunOnDisconnectResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil || req.RunID <= 0 {
+		return nil, fmt.Errorf("disconnect cancellation run id is required")
+	}
+
+	current, err := s.GetRun(ctx, &GetRunRequest{RunID: req.RunID})
+	if err != nil {
+		return nil, err
+	}
+	if current == nil || current.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty disconnect run")
+	}
+	run := current.Run
+	mode := strings.TrimSpace(run.OnDisconnect)
+	if mode == "continue" || !isDisconnectCancellableRunStatus(run.Status) {
+		return &CancelRunOnDisconnectResponse{Run: run}, nil
+	}
+
+	canceled, err := s.CancelRun(ctx, &UpdateRunStatusRequest{
+		RunID:        run.RunID,
+		From:         run.Status,
+		ErrorCode:    "client_disconnected",
+		ErrorMessage: "stream client disconnected",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if canceled == nil || canceled.Run == nil {
+		return nil, fmt.Errorf("agent thread service returned empty disconnected cancellation")
+	}
+
+	return &CancelRunOnDisconnectResponse{Run: canceled.Run, Canceled: true}, nil
+}
+
+func isDisconnectCancellableRunStatus(status RunStatus) bool {
+	switch status {
+	case RunStatusPending, RunStatusQueued, RunStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *ApplicationService) requestRunCancellation(
+	ctx context.Context,
+	req *domainservice.RequestRunCancellationRequest,
+) (*domainservice.RequestRunCancellationResult, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("request run cancellation request is required")
+	}
+
+	return s.ThreadSVC.RequestRunCancellation(ctx, req)
+}
+
+func (s *ApplicationService) cancelActiveADKRun(
+	ctx context.Context,
+	result *domainservice.RequestRunCancellationResult,
+) {
+	if s == nil || s.ADKCancelRegistry == nil || result == nil || result.Run == nil ||
+		!result.Changed || result.PreviousStatus != domainentity.RunStatusRunning {
 		return
 	}
-	mode, err := runtimeModeFromRun(resp.Run)
+	run := DomainRunToSummary(result.Run)
+	mode, err := runtimeModeFromRun(run)
 	if err != nil || mode != RuntimeModeEinoADK {
 		return
 	}
 
-	_ = s.ADKCancelRegistry.Cancel(
+	_ = s.ADKCancelRegistry.Request(
 		ctx,
-		resp.Run.RunID,
+		run.RunID,
 		adk.CancelAfterToolCalls|adk.CancelAfterChatModel,
 		true,
 	)
@@ -3183,14 +3881,25 @@ func (s *ApplicationService) updateRunStatus(
 	if update == nil {
 		return nil, fmt.Errorf("update run status handler is required")
 	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		RunID: req.RunID,
+	}); err != nil {
+		return nil, err
+	}
 
 	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{
-		RunID:        req.RunID,
-		From:         domainentity.RunStatus(req.From),
-		To:           domainentity.RunStatus(req.To),
-		WorkerID:     req.WorkerID,
-		ErrorCode:    req.ErrorCode,
-		ErrorMessage: req.ErrorMessage,
+		RunID:                 req.RunID,
+		From:                  domainentity.RunStatus(req.From),
+		To:                    domainentity.RunStatus(req.To),
+		WorkerID:              req.WorkerID,
+		LeaseOwner:            req.LeaseOwner,
+		LeaseToken:            req.LeaseToken,
+		ExecutionGeneration:   req.ExecutionGeneration,
+		Now:                   req.Now,
+		ErrorCode:             req.ErrorCode,
+		ErrorMessage:          req.ErrorMessage,
+		EventPayload:          req.EventPayload,
+		EventAlreadyPersisted: req.EventAlreadyPersisted,
 	})
 	if err != nil {
 		return nil, err

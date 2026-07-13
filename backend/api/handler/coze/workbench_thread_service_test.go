@@ -20,11 +20,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -48,7 +51,7 @@ import (
 )
 
 func TestListTaskThreadsHandlerReturnsAgentThreads(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
 	installAgentThreadTestService(t)
 
@@ -64,7 +67,7 @@ func TestListTaskThreadsHandlerReturnsAgentThreads(t *testing.T) {
 }
 
 func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
 	installAgentThreadTestService(t)
 
@@ -77,8 +80,55 @@ func TestGetTaskThreadHandlerReturnsAgentThread(t *testing.T) {
 	require.Contains(t, body, `"title":"任务列表"`)
 }
 
-func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
+func TestGetTaskThreadHandlerReturnsForbiddenForDifferentViewer(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id",
+		workbenchSessionMiddlewareForTest(3),
+		GetTaskThread,
+	)
+	installAgentThreadTestService(t)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestGetTaskThreadHandlerAccessDeniedWithoutAuthenticatedViewer(t *testing.T) {
 	h := server.Default()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestWorkbenchChatErrorResponseMapsThreadAccessDeniedToForbidden(t *testing.T) {
+	h := server.Default()
+	h.GET("/workbench-chat-error", func(ctx context.Context, c *app.RequestContext) {
+		workbenchChatErrorResponse(ctx, c, appagentthread.ErrThreadAccessDenied)
+	})
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/workbench-chat-error", nil)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
 	installAgentThreadTestService(t)
 
@@ -118,7 +168,6 @@ func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 		Metadata:        `{"runtime":"eino_adk"}`,
 	})
 	require.NoError(t, err)
-
 	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
 	body := string(w.Result().Body())
 
@@ -136,8 +185,91 @@ func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 	require.NotContains(t, body, "secret result")
 }
 
+func TestGetTaskThreadHandlerPrefersTypedADKParityTodos(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"请生成计划"}]}`,
+		Config:   `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(1, runResp.Run.RunID, []appagentthread.ADKParityTodo{{
+		ID: "typed-todo", Title: "读取持久态", Status: "in_progress",
+	}})
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType:     string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey:      "thread-1/run-" + strconv.FormatInt(runResp.Run.RunID, 10),
+		EnvelopeVersion: 2, ChannelValues: mustHandlerTestADKParityEnvelope(t, state, nil),
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, CheckpointNS: "legacy",
+		RuntimeType: "langgraph", RuntimeKey: "legacy-latest", EnvelopeVersion: 1,
+		ChannelValues:   `{"todos":[{"id":"stale-latest","title":"错误运行时待办","status":"pending"}]}`,
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads/1", nil)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, body, `"id":"typed-todo"`)
+	require.Contains(t, body, `"title":"读取持久态"`)
+	require.Contains(t, body, `"status":"running"`)
+	require.NotContains(t, body, "stale-latest")
+}
+
+func TestGetTaskThreadHandlerDoesNotReviveLegacyTodosAfterExplicitTypedClear(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
+	installAgentThreadTestService(t)
+
+	threadResp, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "显式清空待办",
+		Source:   appagentthread.ThreadSourceWeb,
+		Metadata: `{"todos":[{"id":"stale-todo","title":"旧待办","status":"pending"}]}`,
+	})
+	require.NoError(t, err)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: threadResp.Thread.ThreadID,
+		Input:    `{"messages":[{"role":"user","content":"清空待办"}]}`,
+		Config:   `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+	state := handlerTestADKParityState(threadResp.Thread.ThreadID, runResp.Run.RunID, []appagentthread.ADKParityTodo{})
+	_, err = appagentthread.SVC.CreateCheckpoint(context.Background(), &appagentthread.CreateCheckpointRequest{
+		ThreadID: threadResp.Thread.ThreadID, RunID: runResp.Run.RunID, CheckpointNS: "eino.adk",
+		RuntimeType: string(appagentthread.RuntimeModeEinoADK),
+		RuntimeKey: "thread-" + strconv.FormatInt(threadResp.Thread.ThreadID, 10) +
+			"/run-" + strconv.FormatInt(runResp.Run.RunID, 10),
+		EnvelopeVersion: 2, ChannelValues: mustHandlerTestADKParityEnvelope(t, state, nil),
+		ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{"runtime":"eino_adk"}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/"+strconv.FormatInt(threadResp.Thread.ThreadID, 10),
+		nil,
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotContains(t, body, "stale-todo")
+	require.NotContains(t, body, "旧待办")
+}
+
 func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/messages", ListTaskThreadMessages)
 	installAgentThreadTestService(t)
 
@@ -167,8 +299,45 @@ func TestListTaskThreadMessagesHandlerReturnsMessages(t *testing.T) {
 	require.Contains(t, body, `"content":"客户反馈集中在响应速度。"`)
 }
 
+func TestAppendTaskThreadMessageHandlerAccessDeniedDoesNotMutate(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/messages",
+		workbenchSessionMiddlewareForTest(3),
+		AppendTaskThreadMessage,
+	)
+	installAgentThreadTestService(t)
+
+	payload, err := json.Marshal(map[string]any{
+		"role":    "user",
+		"content": "must not persist",
+	})
+	require.NoError(t, err)
+	before, err := appagentthread.SVC.ListMessages(
+		context.Background(),
+		&appagentthread.ListMessagesRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/messages",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListMessages(
+		context.Background(),
+		&appagentthread.ListMessagesRequest{ThreadID: 1},
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
 func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/suggestions",
 		GenerateTaskThreadSuggestions,
@@ -192,7 +361,7 @@ func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) 
 			{"role": "user", "content": "请生成武汉三日游攻略"},
 			{"role": "assistant", "content": "已经生成路线。"},
 		},
-		"n": 2,
+		"n":          2,
 		"model_type": "100002",
 	})
 	require.NoError(t, err)
@@ -215,7 +384,7 @@ func TestGenerateTaskThreadSuggestionsHandlerReturnsDeerFlowShape(t *testing.T) 
 }
 
 func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads", workbenchSessionMiddlewareForTest(42), CreateTaskThread)
 	installAgentThreadTestService(t)
 
@@ -245,8 +414,8 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Contains(t, body, `"role":"user"`)
 	require.Contains(t, body, `"content":"请生成行动计划"`)
 	require.Contains(t, body, `"status":"pending"`)
-	require.Contains(t, body, `"config":"{\"runtime\":\"eino_adk\"}"`)
-	require.Contains(t, body, `"idempotency_key":"new-task-1"`)
+	require.NotContains(t, body, `"runtime":"eino_adk"`)
+	require.NotContains(t, body, `"idempotency_key":"new-task-1"`)
 
 	messages, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
 		ThreadID: 2,
@@ -267,10 +436,112 @@ func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage(t *testing.T) 
 	require.Equal(t, runs.Runs[0].RunID, messages.Messages[0].RunID)
 	require.Equal(t, appagentthread.RunStatusPending, runs.Runs[0].Status)
 	require.Equal(t, appagentthread.RunKindTask, runs.Runs[0].RunKind)
+	require.Equal(t, `{"runtime":"eino_adk"}`, runs.Runs[0].Config)
+	require.Equal(t, "new-task-1", runs.Runs[0].IdempotencyKey)
+}
+
+func TestCreateTaskThreadHandlerRejectsLegacyRuntimeAsBadRequest(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	previousPolicy := appagentthread.SVC.RuntimePolicy
+	policy := appagentthread.RuntimePolicy{
+		DefaultMode:    appagentthread.RuntimeModeEinoADK,
+		EinoADKEnabled: true,
+	}
+	appagentthread.SVC.RuntimePolicy = &policy
+	t.Cleanup(func() { appagentthread.SVC.RuntimePolicy = previousPolicy })
+
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "1",
+		"message":  "test",
+		"config":   `{"runtime":"legacy"}`,
+	})
+	require.NoError(t, err)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	body := string(w.Result().Body())
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, body, `"msg":"invalid agent runtime configuration"`)
+	require.NotContains(t, body, "legacy runtime")
+	threads, listErr := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID:  1,
+		UserID:   2,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, listErr)
+	require.Equal(t, int64(1), threads.Total)
+}
+
+func TestCreateTaskThreadHandlerRejectsUnauthorizedWorkspaceBeforeMutation(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.WorkspaceAuthorizer = &recordingWorkbenchWorkspaceAuthorizer{
+		err: appagentthread.ErrThreadAccessDenied,
+	}
+	before, err := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID: 1,
+		Page:    1,
+	})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "999",
+		"message":  "must not persist",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListThreads(context.Background(), &appagentthread.ListThreadsRequest{
+		SpaceID: 1,
+		Page:    1,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
+func TestCreateTaskThreadHandlerMapsWorkspaceDependencyFailureToInternalError(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads", CreateTaskThread)
+	installAgentThreadTestService(t)
+	appagentthread.SVC.WorkspaceAuthorizer = &recordingWorkbenchWorkspaceAuthorizer{
+		err: appagentthread.ErrThreadAuthorizationUnavailable,
+	}
+	payload, err := json.Marshal(map[string]any{
+		"space_id": "1",
+		"message":  "dependency failure",
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.NotContains(t, string(w.Result().Body()), "thread access denied")
 }
 
 func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/memories/export", ExportTaskThreadMemories)
 	installAgentThreadTestService(t)
 	_, err := appagentthread.SVC.RememberMemory(context.Background(), &appagentthread.RememberMemoryRequest{
@@ -304,7 +575,7 @@ func TestExportTaskThreadMemoriesHandlerReturnsSchemaPayload(t *testing.T) {
 }
 
 func TestImportTaskThreadMemoriesHandlerCreatesMemoriesAndAuditsActor(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/memories/import",
 		workbenchSessionMiddlewareForTest(99),
@@ -351,7 +622,7 @@ func TestImportTaskThreadMemoriesHandlerCreatesMemoriesAndAuditsActor(t *testing
 }
 
 func TestListTaskThreadMemoriesHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.Use(workbenchSessionMiddlewareForTest(2))
 	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
 	installAgentThreadTestService(t)
@@ -372,7 +643,7 @@ func TestListTaskThreadMemoriesHandlerPassesSessionViewerID(t *testing.T) {
 }
 
 func TestListTaskThreadMemoriesHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/memories", ListTaskThreadMemories)
 	installAgentThreadTestService(t)
 	appagentthread.SVC.MemoryAuthorizer = &recordingWorkbenchMemoryAuthorizer{
@@ -393,7 +664,7 @@ func TestListTaskThreadMemoriesHandlerMapsAuthorizationDeniedToForbidden(t *test
 }
 
 func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -461,7 +732,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerReturnsSafeMetadata(t *testing
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -515,7 +786,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerReturnsSafeMetadata(t *testin
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -539,7 +810,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerPassesSessionViewerID(t *test
 }
 
 func TestListTaskThreadMCPRuntimeAuditEventsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/mcp_runtime_audit_events",
 		ListTaskThreadMCPRuntimeAuditEvents,
@@ -563,7 +834,7 @@ func TestListTaskThreadMCPRuntimeAuditEventsHandlerMapsAuthorizationDeniedToForb
 }
 
 func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events/export",
 		workbenchSessionMiddlewareForTest(2),
@@ -636,7 +907,7 @@ func TestExportTaskThreadGuardrailAuditEventsHandlerReturnsSchemaPayload(t *test
 }
 
 func TestListTaskThreadGuardrailAuditEventsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		workbenchSessionMiddlewareForTest(2),
@@ -662,7 +933,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerPassesSessionViewerID(t *testi
 func TestListTaskThreadGuardrailAuditEventsHandlerMapsAuthorizationDeniedToForbidden(
 	t *testing.T,
 ) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/guardrail_audit_events",
 		ListTaskThreadGuardrailAuditEvents,
@@ -686,7 +957,7 @@ func TestListTaskThreadGuardrailAuditEventsHandlerMapsAuthorizationDeniedToForbi
 }
 
 func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -736,12 +1007,13 @@ func TestListTaskThreadArtifactsHandlerReturnsArtifacts(t *testing.T) {
 	require.Contains(t, body, `"total":1`)
 	require.Contains(t, body, `"artifact_type":"report"`)
 	require.Contains(t, body, `"preview_mode":"text"`)
-	require.Contains(t, body, `"virtual_path":"/mnt/user-data/workspace/.coze/tool-results/runs/2/trunc/`)
+	require.Contains(t, body, `"virtual_path":""`)
+	require.NotContains(t, body, `/mnt/user-data/workspace/.coze/tool-results/`)
 	require.NotContains(t, body, "agent-runtime/")
 }
 
 func TestListTaskThreadArtifactsHandlerReturnsDeletedArtifactsWhenRequested(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -805,7 +1077,7 @@ func TestListTaskThreadArtifactsHandlerReturnsDeletedArtifactsWhenRequested(t *t
 }
 
 func TestListTaskThreadArtifactsHandlerPassesSessionViewerID(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.Use(workbenchSessionMiddlewareForTest(2))
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
@@ -826,7 +1098,7 @@ func TestListTaskThreadArtifactsHandlerPassesSessionViewerID(t *testing.T) {
 }
 
 func TestListTaskThreadArtifactsHandlerMapsAuthorizationDeniedToForbidden(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	installAgentThreadTestService(t)
 	appagentthread.SVC.ArtifactAuthorizer = &recordingWorkbenchArtifactAuthorizer{
@@ -847,7 +1119,7 @@ func TestListTaskThreadArtifactsHandlerMapsAuthorizationDeniedToForbidden(t *tes
 }
 
 func TestListTaskThreadArtifactScanJobsHandlerReturnsSafeMetadata(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs",
 		ListTaskThreadArtifactScanJobs,
@@ -930,7 +1202,7 @@ func TestListTaskThreadArtifactScanJobsHandlerReturnsSafeMetadata(t *testing.T) 
 }
 
 func TestRetryTaskThreadArtifactScanJobHandlerRequeuesFailedJob(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
 		RetryTaskThreadArtifactScanJob,
@@ -1016,7 +1288,7 @@ func TestRetryTaskThreadArtifactScanJobHandlerRequeuesFailedJob(t *testing.T) {
 }
 
 func TestRetryTaskThreadArtifactScanJobHandlerReturnsConflictForNonFailedJob(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifact_scan_jobs/:job_id/retry",
 		RetryTaskThreadArtifactScanJob,
@@ -1087,7 +1359,7 @@ func TestRetryTaskThreadArtifactScanJobHandlerReturnsConflictForNonFailedJob(t *
 }
 
 func TestGetTaskThreadArtifactContentHandlerReturnsBytesWithSafeHeaders(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1165,7 +1437,7 @@ func TestGetTaskThreadArtifactContentHandlerReturnsBytesWithSafeHeaders(t *testi
 }
 
 func TestGetTaskThreadArtifactSignedURLHandlerReturnsSafeReceipt(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
 		GetTaskThreadArtifactSignedURL,
@@ -1244,7 +1516,7 @@ func TestGetTaskThreadArtifactSignedURLHandlerReturnsSafeReceipt(t *testing.T) {
 }
 
 func TestGetTaskThreadArtifactSignedURLHandlerCreatesDownloadReceipt(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/signed_url",
 		GetTaskThreadArtifactSignedURL,
@@ -1330,7 +1602,7 @@ func TestGetTaskThreadArtifactSignedURLHandlerCreatesDownloadReceipt(t *testing.
 }
 
 func TestGetTaskThreadArtifactContentHandlerUsesSniffedContentType(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1406,7 +1678,7 @@ func TestGetTaskThreadArtifactContentHandlerUsesSniffedContentType(t *testing.T)
 }
 
 func TestGetTaskThreadArtifactContentHandlerMapsScanBlockedToConflict(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/content",
 		GetTaskThreadArtifactContent,
@@ -1484,7 +1756,7 @@ func TestGetTaskThreadArtifactContentHandlerMapsScanBlockedToConflict(t *testing
 }
 
 func TestReviewTaskThreadArtifactScanHandlerReleasesBlockedArtifact(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id/scan_review",
 		ReviewTaskThreadArtifactScan,
@@ -1606,7 +1878,7 @@ func TestReviewTaskThreadArtifactScanHandlerReleasesBlockedArtifact(t *testing.T
 }
 
 func TestDeleteTaskThreadArtifactHandlerHidesArtifactFromList(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/artifacts", ListTaskThreadArtifacts)
 	h.DELETE(
 		"/api/workbench/task_threads/:thread_id/artifacts/:artifact_id",
@@ -1726,7 +1998,7 @@ func TestDeleteTaskThreadArtifactHandlerHidesArtifactFromList(t *testing.T) {
 }
 
 func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/messages", AppendTaskThreadMessage)
 	installAgentThreadTestService(t)
 
@@ -1763,15 +2035,17 @@ func TestAppendTaskThreadMessageHandlerCreatesMessage(t *testing.T) {
 }
 
 func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
 	installAgentThreadTestService(t)
 
 	payload, err := json.Marshal(map[string]any{
-		"input":           `{"messages":[{"role":"user","content":"请追加行动建议"}]}`,
-		"config":          `{"mode":"Auto"}`,
-		"metadata":        `{"source":"test"}`,
-		"idempotency_key": "thread-only-1-msg-1",
+		"input":            `{"messages":[{"role":"user","content":"请追加行动建议"}]}`,
+		"config":           `{"mode":"Auto"}`,
+		"metadata":         `{"source":"test"}`,
+		"message_content":  "请追加行动建议",
+		"message_metadata": `{"source":"test_followup"}`,
+		"idempotency_key":  "thread-only-1-msg-1",
 	})
 	require.NoError(t, err)
 	w := ut.PerformRequest(
@@ -1787,7 +2061,8 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"status":"pending"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"请追加行动建议\"}]}"`)
+	require.Contains(t, body, `"message"`)
+	require.Contains(t, body, `"content":"请追加行动建议"`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
 		ThreadID: 1,
@@ -1797,8 +2072,72 @@ func TestCreateTaskThreadRunHandlerCreatesPendingRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), resp.Total)
 	require.Equal(t, appagentthread.RunStatusPending, resp.Runs[0].Status)
+	require.Contains(t, resp.Runs[0].Input, `"content":"请追加行动建议"`)
 	require.Equal(t, `{"mode":"Auto"}`, resp.Runs[0].Config)
 	require.Equal(t, "thread-only-1-msg-1", resp.Runs[0].IdempotencyKey)
+
+	messages, err := appagentthread.SVC.ListMessages(context.Background(), &appagentthread.ListMessagesRequest{
+		ThreadID: 1,
+		Page:     1,
+		PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), messages.Total)
+	require.Equal(t, resp.Runs[0].RunID, messages.Messages[0].RunID)
+	require.Equal(t, "请追加行动建议", messages.Messages[0].Content)
+	require.Equal(t, `{"source":"test_followup"}`, messages.Messages[0].Metadata)
+}
+
+func TestCreateTaskThreadRunHandlerRejectsSecondActiveRun(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
+	installAgentThreadTestService(t)
+
+	create := func(message, key string) *ut.ResponseRecorder {
+		payload, err := json.Marshal(map[string]any{
+			"input":           fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, message),
+			"message_content": message,
+			"idempotency_key": key,
+		})
+		require.NoError(t, err)
+		return ut.PerformRequest(
+			h.Engine,
+			http.MethodPost,
+			"/api/workbench/task_threads/1/runs",
+			&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+			ut.Header{Key: "Content-Type", Value: "application/json"},
+		)
+	}
+
+	first := create("first", "admission-first")
+	second := create("second", "admission-second")
+
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, http.StatusConflict, second.Code)
+	require.Contains(t, string(second.Result().Body()), "thread already has an active run")
+	require.NotContains(t, string(second.Result().Body()), "internal server error")
+}
+
+func TestCreateTaskThreadRunHandlerRejectsUnsupportedEnqueueStrategy(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/task_threads/:thread_id/runs", CreateTaskThreadRun)
+	installAgentThreadTestService(t)
+	payload, err := json.Marshal(map[string]any{
+		"input":              `{"messages":[{"role":"user","content":"first"}]}`,
+		"multitask_strategy": "enqueue",
+	})
+	require.NoError(t, err)
+
+	resp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/task_threads/1/runs",
+		&ut.Body{Body: bytes.NewBuffer(payload), Len: len(payload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+
+	require.Equal(t, http.StatusNotImplemented, resp.Code)
+	require.Contains(t, string(resp.Result().Body()), "multitask strategy is not supported")
 }
 
 func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
@@ -1835,14 +2174,14 @@ func TestTaskThreadRunToAPIRedactsSubagentInternalPayloads(t *testing.T) {
 		Context: `{"plan_scope_run_id":2}`,
 	})
 
-	require.Equal(t, `{"visible":"command"}`, task.Command)
-	require.Equal(t, `{"messages":[{"role":"user","content":"visible"}]}`, task.Input)
-	require.Equal(t, `{"runtime":"eino_adk"}`, task.Config)
-	require.Equal(t, `{"plan_scope_run_id":2}`, task.Context)
+	require.Empty(t, task.Command)
+	require.Empty(t, task.Input)
+	require.Empty(t, task.Config)
+	require.Empty(t, task.Context)
 }
 
 func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
@@ -1872,7 +2211,7 @@ func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"status":"queued"`)
-	require.Contains(t, body, `"idempotency_key":"resume-api-key"`)
+	require.NotContains(t, body, `"idempotency_key":"resume-api-key"`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
 		ThreadID: 1,
@@ -1883,12 +2222,13 @@ func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun(t *testing.T) {
 	require.Len(t, resp.Runs, 2)
 	require.Equal(t, sourceRunID, resp.Runs[1].RunID)
 	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Equal(t, "resume-api-key", resp.Runs[0].IdempotencyKey)
 	require.Contains(t, resp.Runs[0].Command, `"interrupt-1"`)
 	require.Contains(t, resp.Runs[0].Command, `"answer":"最近 7 天"`)
 }
 
 func TestResumeTaskThreadRunHandlerRejectsInvalidPayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/resume", ResumeTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1905,8 +2245,70 @@ func TestResumeTaskThreadRunHandlerRejectsInvalidPayload(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestResumeAndRetryTaskThreadRunForbiddenBeforeMutation(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/runs/:run_id/resume",
+		workbenchSessionMiddlewareForTest(3),
+		ResumeTaskThreadRun,
+	)
+	h.POST(
+		"/api/workbench/task_threads/:thread_id/runs/:run_id/retry",
+		workbenchSessionMiddlewareForTest(3),
+		RetryTaskThreadSubagentRun,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+	before, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+	})
+	require.NoError(t, err)
+	resumePayload, err := json.Marshal(map[string]any{
+		"interrupt_id": "interrupt-1",
+		"response": map[string]any{
+			"schema":         "coze.human_interaction_response.v1",
+			"interaction_id": "hi_1",
+			"kind":           "clarification",
+			"decision":       "answered",
+			"answer":         "no access",
+		},
+	})
+	require.NoError(t, err)
+	retryPayload := []byte(`{"idempotency_key":"must-not-persist"}`)
+	runPath := "/api/workbench/task_threads/1/runs/" + strconv.FormatInt(runResp.Run.RunID, 10)
+
+	resume := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		runPath+"/resume",
+		&ut.Body{Body: bytes.NewBuffer(resumePayload), Len: len(resumePayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	retry := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		runPath+"/retry",
+		&ut.Body{Body: bytes.NewBuffer(retryPayload), Len: len(retryPayload)},
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+	)
+	after, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
+		ThreadID: 1,
+		Page:     1,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusForbidden, resume.Code)
+	require.Equal(t, http.StatusForbidden, retry.Code)
+	require.Equal(t, before.Total, after.Total)
+}
+
 func TestCancelTaskThreadRunHandlerTransitionsRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/cancel", CancelTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1949,7 +2351,7 @@ func TestCancelTaskThreadRunHandlerTransitionsRun(t *testing.T) {
 }
 
 func TestCancelTaskThreadRunHandlerCancelsPendingRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/cancel", CancelTaskThreadRun)
 	installAgentThreadTestService(t)
 
@@ -1984,7 +2386,7 @@ func TestCancelTaskThreadRunHandlerCancelsPendingRun(t *testing.T) {
 }
 
 func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/task_threads/:thread_id/runs/:run_id/retry", RetryTaskThreadSubagentRun)
 	installAgentThreadTestService(t)
 
@@ -2007,13 +2409,13 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 		Metadata:    `{"subagent":{"name":"researcher"}}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.FailRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.FailRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:        childResp.Run.RunID,
 		From:         appagentthread.RunStatusRunning,
 		To:           appagentthread.RunStatusFailed,
 		ErrorCode:    "subagent_timeout",
 		ErrorMessage: "context deadline exceeded",
-	})
+	}))
 	require.NoError(t, err)
 
 	payload, err := json.Marshal(map[string]any{
@@ -2035,7 +2437,7 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 	require.Contains(t, body, `"parent_run_id":"0"`)
 	require.Contains(t, body, `"run_kind":"task"`)
 	require.Contains(t, body, `"status":"queued"`)
-	require.Contains(t, body, `"idempotency_key":"retry-api-key"`)
+	require.NotContains(t, body, `"idempotency_key":"retry-api-key"`)
 	require.Contains(t, body, `subagent_retry`)
 
 	resp, err := appagentthread.SVC.ListRuns(context.Background(), &appagentthread.ListRunsRequest{
@@ -2046,13 +2448,14 @@ func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), resp.Total)
 	require.Equal(t, appagentthread.RunStatusQueued, resp.Runs[0].Status)
+	require.Equal(t, "retry-api-key", resp.Runs[0].IdempotencyKey)
 	require.Equal(t, appagentthread.RunKindTask, resp.Runs[0].RunKind)
 	require.Zero(t, resp.Runs[0].ParentRunID)
 	require.Contains(t, resp.Runs[0].Command, `"source_run_id":`+strconv.FormatInt(childResp.Run.RunID, 10))
 }
 
 func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
 	installAgentThreadTestService(t)
 
@@ -2062,8 +2465,9 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"第二轮"}]}`,
+		ThreadID:          1,
+		Input:             `{"messages":[{"role":"user","content":"第二轮"}]}`,
+		MultitaskStrategy: "interrupt",
 	})
 	require.NoError(t, err)
 
@@ -2074,12 +2478,12 @@ func TestListTaskThreadRunsHandlerReturnsRuns(t *testing.T) {
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"total":2`)
 	require.Contains(t, body, `"thread_id":"1"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第二轮\"}]}"`)
-	require.Contains(t, body, `"input":"{\"messages\":[{\"role\":\"user\",\"content\":\"第一轮\"}]}"`)
+	require.NotContains(t, body, `"content":"第二轮"`)
+	require.NotContains(t, body, `"content":"第一轮"`)
 }
 
 func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/runs", ListTaskThreadRuns)
 	installAgentThreadTestService(t)
 
@@ -2118,7 +2522,7 @@ func TestListTaskThreadRunsHandlerReturnsChildRunsForParentRun(t *testing.T) {
 }
 
 func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2144,11 +2548,12 @@ func TestListTaskThreadRunEventsHandlerReturnsEvents(t *testing.T) {
 	require.Contains(t, body, `"thread_id":"1"`)
 	require.Contains(t, body, `"run_id":"2"`)
 	require.Contains(t, body, `"event_type":"run.started"`)
-	require.Contains(t, body, `"payload":"{\"status\":\"running\",\"worker_id\":\"worker-a\"}"`)
+	require.Contains(t, body, `"payload":"{\"status\":\"running\"}"`)
+	require.NotContains(t, body, "worker-a")
 }
 
 func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2207,12 +2612,114 @@ func TestListTaskThreadRunEventsHandlerRedactsUnsafePayload(t *testing.T) {
 	require.NotContains(t, payload, "media")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T) {
+func TestTaskThreadPublicMappersDoesNotExposeInternalRecords(t *testing.T) {
+	const sensitive = "handler-sensitive-sentinel"
+
+	run := taskThreadRunToAPI(&appagentthread.RunSummary{
+		RunID:          1,
+		ThreadID:       2,
+		ParentRunID:    3,
+		SpaceID:        4,
+		CreatorID:      5,
+		AssistantID:    "researcher",
+		RunKind:        appagentthread.RunKindSubagent,
+		Status:         appagentthread.RunStatusFailed,
+		Command:        `{"resume":"` + sensitive + `"}`,
+		Input:          `{"message":"` + sensitive + `"}`,
+		Config:         `{"api_key":"` + sensitive + `"}`,
+		Context:        `{"reasoning":"` + sensitive + `"}`,
+		Metadata:       `{"source":"subagent_retry","source_run_id":3,"subagent":{"name":"researcher","prompt":"` + sensitive + `"}}`,
+		IdempotencyKey: sensitive,
+		WorkerID:       sensitive,
+		ErrorCode:      "model_provider_error",
+		ErrorMessage:   sensitive,
+	})
+	require.Empty(t, run.Command)
+	require.Empty(t, run.Input)
+	require.Empty(t, run.Config)
+	require.Empty(t, run.Context)
+	require.Empty(t, run.IdempotencyKey)
+	require.Empty(t, run.WorkerID)
+	require.Equal(t, "model_provider_error", run.ErrorCode)
+	require.Equal(t, "Model request failed", run.ErrorMessage)
+	require.NotContains(t, mustMarshalJSON(t, run), sensitive)
+
+	message := taskThreadMessageToAPI(&appagentthread.MessageSummary{
+		MessageID: 1,
+		ThreadID:  2,
+		RunID:     3,
+		Role:      appagentthread.MessageRoleAssistant,
+		Content:   "visible answer",
+		Metadata:  `{"source":"human_interaction","interrupt_id":"interrupt-1","provider_body":"` + sensitive + `"}`,
+	})
+	require.Equal(t, "visible answer", message.Content)
+	require.JSONEq(t, `{"source":"human_interaction","interrupt_id":"interrupt-1"}`, message.Metadata)
+	require.NotContains(t, mustMarshalJSON(t, message), sensitive)
+	require.Nil(t, taskThreadMessageToAPI(&appagentthread.MessageSummary{
+		MessageID: 2,
+		ThreadID:  2,
+		RunID:     3,
+		Role:      appagentthread.MessageRoleSystem,
+		Content:   sensitive,
+	}))
+
+	artifact := taskThreadArtifactToAPI(&appagentthread.ArtifactSummary{
+		ArtifactID:   1,
+		ThreadID:     2,
+		RunID:        3,
+		FileID:       4,
+		Title:        "report.md",
+		ArtifactType: "markdown",
+		VirtualPath:  "/mnt/user-data/outputs/report.md",
+		ContentType:  "text/markdown",
+		Metadata:     `{"scan_status":"clean","object_uri":"` + sensitive + `"}`,
+	})
+	require.Equal(t, "/mnt/user-data/outputs/report.md", artifact.VirtualPath)
+	require.JSONEq(t, `{"scan_status":"clean"}`, artifact.Metadata)
+	require.NotContains(t, mustMarshalJSON(t, artifact), sensitive)
+
+	journal := taskThreadRunJournalMessageToAPI(&appagentthread.RunJournalMessage{
+		ID:       "message-1",
+		ThreadID: 2,
+		RunID:    3,
+		Type:     appagentthread.RunJournalMessageTypeAI,
+		Role:     appagentthread.MessageRoleAssistant,
+		Content:  "visible answer",
+		ToolCalls: []appagentthread.RunJournalToolCall{
+			{ID: "call-1", Name: "web_search", Type: "function", Args: map[string]any{"query": sensitive}},
+		},
+		AdditionalKwargs: map[string]any{"reasoning_content": sensitive},
+		Usage:            map[string]any{"input_tokens": 10, "raw_usage": sensitive},
+	})
+	require.Equal(t, "visible answer", journal.Content)
+	require.JSONEq(t, `{}`, journal.AdditionalKwargs)
+	require.JSONEq(t, `{}`, journal.ToolCalls[0].Arguments)
+	require.NotContains(t, mustMarshalJSON(t, journal), sensitive)
+
+	unknownEvent := taskThreadRunEventToAPI(&appagentthread.RunEventSummary{
+		EventID:   1,
+		ThreadID:  2,
+		RunID:     3,
+		EventType: "provider.experimental",
+		Payload:   `{"raw":"` + sensitive + `"}`,
+	})
+	require.Equal(t, `{}`, unknownEvent.Payload)
+	require.NotContains(t, mustMarshalJSON(t, unknownEvent), sensitive)
+}
+
+func mustMarshalJSON(t *testing.T, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func TestTaskThreadRunEventPayloadRedactsAssistantToolCallInternals(t *testing.T) {
 	arguments := `{"description":"创建武汉3日游攻略 Markdown 文档","file_path":"/mnt/user-data/workspace/武汉3日游攻略.md","content":"` + strings.Repeat("x", 5000) + `","url":"https://private.example/signed","api_key":"sk-secret"}`
 	reasoning := "Let me create the document in the workspace first. " + strings.Repeat("Keep the visible step summary detailed. ", 8)
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"reasoning_content":`+strconv.Quote(reasoning)+`,
 		"tool_calls":[{
 			"id":"call_write_file",
@@ -2229,31 +2736,24 @@ func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T
 	var got struct {
 		Redacted         bool   `json:"redacted"`
 		Role             string `json:"role"`
+		Content          string `json:"content"`
 		ReasoningContent string `json:"reasoning_content"`
 		ToolCalls        []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
+			ID               string `json:"id"`
+			Name             string `json:"name"`
+			ArgumentsPresent bool   `json:"arguments_present"`
 		} `json:"tool_calls"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(payload), &got))
 	require.True(t, got.Redacted)
 	require.Equal(t, "assistant", got.Role)
-	require.Equal(t, strings.TrimSpace(reasoning), got.ReasoningContent)
+	require.Equal(t, "approved visible assistant response", got.Content)
+	require.Empty(t, got.ReasoningContent)
 	require.Len(t, got.ToolCalls, 1)
 	require.Equal(t, "call_write_file", got.ToolCalls[0].ID)
-	require.Equal(t, "function", got.ToolCalls[0].Type)
-	require.Equal(t, "write_file", got.ToolCalls[0].Function.Name)
-	var gotArguments map[string]string
-	require.NoError(t, json.Unmarshal([]byte(got.ToolCalls[0].Function.Arguments), &gotArguments))
-	require.Equal(t, map[string]string{
-		"description": "创建武汉3日游攻略 Markdown 文档",
-		"file_path":   "/mnt/user-data/workspace/武汉3日游攻略.md",
-	}, gotArguments)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.Equal(t, "write_file", got.ToolCalls[0].Name)
+	require.True(t, got.ToolCalls[0].ArgumentsPresent)
+	require.NotContains(t, payload, "创建武汉3日游攻略")
 	require.NotContains(t, payload, strings.Repeat("x", 100))
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
@@ -2263,11 +2763,11 @@ func TestTaskThreadRunEventPayloadKeepsSafeAssistantToolCallSummary(t *testing.T
 	require.NotContains(t, payload, "media")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeWebSearchQuery(t *testing.T) {
+func TestTaskThreadRunEventPayloadRedactsWebSearchArguments(t *testing.T) {
 	arguments := `{"query":"青岛最佳旅游时间","max_results":5,"url":"https://private.example/signed","api_key":"sk-secret"}`
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_web_search",
 			"type":"function",
@@ -2281,26 +2781,24 @@ func TestTaskThreadRunEventPayloadKeepsSafeWebSearchQuery(t *testing.T) {
 	require.JSONEq(t, `{
 		"redacted":true,
 		"role":"assistant",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_web_search",
-			"type":"function",
-			"function":{
-				"name":"web_search",
-				"arguments":"{\"query\":\"青岛最佳旅游时间\"}"
-			}
+			"name":"web_search",
+			"arguments_present":true
 		}]
 	}`, payload)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "青岛最佳旅游时间")
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
 	require.NotContains(t, payload, "max_results")
 }
 
-func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
+func TestTaskThreadRunEventPayloadRedactsSkillToolCallArguments(t *testing.T) {
 	arguments := `{"skill":"skill-creator","url":"https://private.example/signed","api_key":"sk-secret"}`
-	payload := taskThreadRunEventPayloadToAPI("message.completed", `{
+	payload := publicRunEventPayloadForTest("message.completed", `{
 		"role":"assistant",
-		"content":"final text should not be exposed through event payload",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_skill",
 			"type":"function",
@@ -2314,22 +2812,20 @@ func TestTaskThreadRunEventPayloadKeepsSafeSkillToolCallName(t *testing.T) {
 	require.JSONEq(t, `{
 		"redacted":true,
 		"role":"assistant",
+		"content":"approved visible assistant response",
 		"tool_calls":[{
 			"id":"call_skill",
-			"type":"function",
-			"function":{
-				"name":"skill",
-				"arguments":"{\"skill\":\"skill-creator\"}"
-			}
+			"name":"skill",
+			"arguments_present":true
 		}]
 	}`, payload)
-	require.NotContains(t, payload, "final text should not be exposed")
+	require.NotContains(t, payload, "skill-creator")
 	require.NotContains(t, payload, "private.example")
 	require.NotContains(t, payload, "sk-secret")
 }
 
 func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/run_events", ListTaskThreadRunEvents)
 	installAgentThreadTestService(t)
 
@@ -2357,7 +2853,7 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 		EventType: "message.completed",
 		Payload: `{
 			"role":"assistant",
-			"content":"final text should not be exposed through event payload",
+			"content":"approved visible assistant response",
 			"reasoning_content":"需要查询季节和天气资料。",
 			"tool_calls":[{
 				"id":"call_web_search",
@@ -2418,12 +2914,13 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 	require.Equal(t, "human", resp.Data.JournalMessages[0].Type)
 	require.Equal(t, "青岛最佳旅游时间", resp.Data.JournalMessages[0].Content)
 	require.Equal(t, "ai", resp.Data.JournalMessages[1].Type)
-	require.JSONEq(t, `{"reasoning_content":"需要查询季节和天气资料。"}`, resp.Data.JournalMessages[1].AdditionalKwargs)
+	require.Equal(t, "approved visible assistant response", resp.Data.JournalMessages[1].Content)
+	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].AdditionalKwargs)
 	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].Usage)
 	require.Len(t, resp.Data.JournalMessages[1].ToolCalls, 1)
 	require.Equal(t, "call_web_search", resp.Data.JournalMessages[1].ToolCalls[0].ID)
 	require.Equal(t, "web_search", resp.Data.JournalMessages[1].ToolCalls[0].Name)
-	require.JSONEq(t, `{"query":"青岛最佳旅游时间"}`, resp.Data.JournalMessages[1].ToolCalls[0].Arguments)
+	require.JSONEq(t, `{}`, resp.Data.JournalMessages[1].ToolCalls[0].Arguments)
 	require.Equal(t, "tool", resp.Data.JournalMessages[2].Type)
 	require.Equal(t, "call_web_search", resp.Data.JournalMessages[2].ToolCallID)
 	require.Empty(t, resp.Data.JournalMessages[2].Content)
@@ -2431,7 +2928,8 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 	require.Equal(t, "青岛 4-6 月和 9-10 月最适合旅行。", resp.Data.JournalMessages[3].Content)
 
 	body := string(w.Result().Body())
-	require.NotContains(t, body, "final text should not be exposed")
+	require.Contains(t, body, "approved visible assistant response")
+	require.NotContains(t, body, "需要查询季节和天气资料")
 	require.NotContains(t, body, "tool result")
 	require.NotContains(t, body, "private.example")
 	require.NotContains(t, body, "sk-secret")
@@ -2440,7 +2938,7 @@ func TestListTaskThreadRunEventsHandlerReturnsJournalMessages(t *testing.T) {
 }
 
 func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
 	installAgentThreadTestService(t)
 
@@ -2503,7 +3001,7 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 }
 
 func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id/token_usage", GetTaskThreadTokenUsage)
 	installAgentThreadTestService(t)
 
@@ -2522,8 +3020,9 @@ func TestGetTaskThreadTokenUsageHandlerCanIncludeChildRuns(t *testing.T) {
 	})
 	require.NoError(t, err)
 	siblingResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
-		ThreadID: 1,
-		Input:    `{"messages":[{"role":"user","content":"独立任务"}]}`,
+		ThreadID:          1,
+		Input:             `{"messages":[{"role":"user","content":"独立任务"}]}`,
+		MultitaskStrategy: "interrupt",
 	})
 	require.NoError(t, err)
 
@@ -2593,11 +3092,11 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 		Payload:   `{"step_name":"generate_answer","status":"completed"}`,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.CompleteRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	writer := &recordingTaskThreadRunEventStreamWriter{}
@@ -2611,11 +3110,287 @@ func TestStreamTaskThreadRunEventsWritesEventsAndDone(t *testing.T) {
 
 	require.Contains(t, body, "event: run.event")
 	require.Contains(t, body, `data: {"event_id":"3","thread_id":"1","run_id":"2","event_type":"step.completed"`)
+	require.Contains(t, body, `"event_type":"run.completed"`)
 	require.Contains(t, body, "event: done")
+	require.Less(t, strings.Index(body, `"event_type":"run.completed"`), strings.Index(body, "event: done"))
+}
+
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnWriteFailure(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"disconnect"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, EventType: "step.started", Payload: `{}`,
+	})
+	require.NoError(t, err)
+
+	streamTaskThreadRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnRequestCancellation(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"disconnect"}]}`,
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	streamTaskThreadRunEvents(ctx, &recordingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestStreamTaskThreadRunEventsCancelsPersistedCancelModeOnHeartbeatFailure(t *testing.T) {
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"idle disconnect"}]}`,
+	})
+	require.NoError(t, err)
+
+	streamTaskThreadRunEvents(context.Background(), heartbeatFailingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 40,
+	})
+
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+	require.NoError(t, err)
+	require.Equal(t, appagentthread.RunStatusCanceled, persisted.Run.Status)
+	require.Equal(t, "client_disconnected", persisted.Run.ErrorCode)
+}
+
+func TestRunEventStreamKeepAliveIntervalMatchesDeerFlow(t *testing.T) {
+	require.Equal(t, 15*time.Second, runEventStreamKeepAliveInterval(40*time.Millisecond))
+}
+
+func TestStreamTaskThreadRunEventsDoesNotCancelContinueModeOrTimeout(t *testing.T) {
+	t.Run("continue mode survives write failure", func(t *testing.T) {
+		installAgentThreadTestService(t)
+		runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+			ThreadID: 1, Input: `{"messages":[]}`, OnDisconnect: "continue",
+		})
+		require.NoError(t, err)
+		_, err = appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, EventType: "step.started", Payload: `{}`,
+		})
+		require.NoError(t, err)
+
+		streamTaskThreadRunEvents(context.Background(), failingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 100,
+		})
+
+		persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+		require.NoError(t, err)
+		require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+	})
+
+	t.Run("server timeout is not a disconnect", func(t *testing.T) {
+		installAgentThreadTestService(t)
+		runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+			ThreadID: 1, Input: `{"messages":[]}`,
+		})
+		require.NoError(t, err)
+
+		streamTaskThreadRunEvents(context.Background(), &recordingTaskThreadRunEventStreamWriter{}, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID: 1, RunID: runResp.Run.RunID, IntervalMs: 10, TimeoutMs: 20,
+		})
+
+		persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: runResp.Run.RunID})
+		require.NoError(t, err)
+		require.Equal(t, appagentthread.RunStatusPending, persisted.Run.Status)
+	})
+}
+
+func TestStreamTaskThreadRunEventsDrains450EventsAcrossReconnects(t *testing.T) {
+	installAgentThreadTestService(t)
+
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{"messages":[{"role":"user","content":"生成长事件流"}]}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+
+	eventIDs := make([]int64, 0, 450)
+	for index := 1; index <= 450; index++ {
+		resp, appendErr := appagentthread.SVC.AppendRunEvent(context.Background(), &appagentthread.AppendRunEventRequest{
+			ThreadID:  1,
+			RunID:     runResp.Run.RunID,
+			EventType: "step.completed",
+			Payload:   fmt.Sprintf(`{"step_name":"step-%03d","status":"completed"}`, index),
+		})
+		require.NoError(t, appendErr)
+		require.NotNil(t, resp.Event)
+		eventIDs = append(eventIDs, resp.Event.EventID)
+	}
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	}))
+	require.NoError(t, err)
+	eventsResp, err := appagentthread.SVC.ListRunEvents(context.Background(), &appagentthread.ListRunEventsRequest{
+		RunID: runResp.Run.RunID, Page: 1, PageSize: 500,
+	})
+	require.NoError(t, err)
+	require.Len(t, eventsResp.Events, 451)
+	require.Equal(t, "run.completed", eventsResp.Events[len(eventsResp.Events)-1].EventType)
+	eventIDs = append(eventIDs, eventsResp.Events[len(eventsResp.Events)-1].EventID)
+
+	assertReconnect := func(cursorIndex int) {
+		t.Helper()
+		writer := &recordingTaskThreadRunEventStreamWriter{}
+		streamTaskThreadRunEvents(context.Background(), writer, threadapi.StreamTaskThreadRunEventsRequest{
+			ThreadID:     1,
+			RunID:        runResp.Run.RunID,
+			AfterEventID: eventIDs[cursorIndex],
+			IntervalMs:   10,
+			TimeoutMs:    100,
+		})
+
+		expected := make([]string, 0, len(eventIDs)-cursorIndex-1)
+		for _, eventID := range eventIDs[cursorIndex+1:] {
+			expected = append(expected, strconv.FormatInt(eventID, 10))
+		}
+		require.Equal(t, expected, writer.ids)
+		require.Equal(t, 1, strings.Count(writer.String(), "event: done"))
+	}
+
+	assertReconnect(189)
+	assertReconnect(319)
+}
+
+func TestResolveTaskThreadRunEventCursorUsesHeaderAndQueryPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      int64
+		header     string
+		wantCursor int64
+		wantOK     bool
+	}{
+		{name: "empty", wantOK: true},
+		{name: "header", header: "42", wantCursor: 42, wantOK: true},
+		{name: "query wins", query: 7, header: "42", wantCursor: 7, wantOK: true},
+		{name: "negative query", query: -1, wantOK: false},
+		{name: "invalid header", header: "bad", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := resolveTaskThreadRunEventCursor(tt.query, tt.header)
+			require.Equal(t, tt.wantOK, ok)
+			require.Equal(t, tt.wantCursor, got)
+		})
+	}
+}
+
+func TestTaskThreadRunEventStreamErrorDoesNotExposeInternalDetails(t *testing.T) {
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	writeTaskThreadRunEventStreamError(
+		context.Background(),
+		writer,
+		errors.New("provider failed with credential sensitive-runtime-sentinel"),
+	)
+
+	body := writer.String()
+	require.Contains(t, body, "event: error")
+	require.Contains(t, body, `"code":"runtime_stream_error"`)
+	require.Contains(t, body, `"message":"Model request failed"`)
+	require.NotContains(t, body, "credential")
+	require.NotContains(t, body, "sensitive-runtime-sentinel")
+}
+
+func TestStreamTaskThreadRunEventsReturnsForbiddenBeforeSSEHeaders(t *testing.T) {
+	h := authenticatedAgentThreadTestServer()
+	h.GET(
+		"/api/workbench/task_threads/:thread_id/run_events/stream",
+		workbenchSessionMiddlewareForTest(3),
+		StreamTaskThreadRunEvents,
+	)
+	installAgentThreadTestService(t)
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		"/api/workbench/task_threads/1/run_events/stream?run_id="+
+			strconv.FormatInt(runResp.Run.RunID, 10)+"&timeout_ms=1",
+		nil,
+	)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.NotContains(t, w.Header().Get("Content-Type"), "text/event-stream")
+	require.Contains(t, string(w.Result().Body()), "thread access denied")
+}
+
+func TestStreamTaskThreadRunEventsReusesAuthorizedRequestScope(t *testing.T) {
+	installAgentThreadTestService(t)
+	workspaceAuthorizer := &countingWorkbenchWorkspaceAuthorizer{}
+	appagentthread.SVC.WorkspaceAuthorizer = workspaceAuthorizer
+	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: 1,
+		Input:    `{}`,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.ClaimPendingRuns(context.Background(), &appagentthread.ClaimPendingRunsRequest{
+		WorkerID: "worker-a",
+		Limit:    1,
+	})
+	require.NoError(t, err)
+	_, err = appagentthread.SVC.CompleteRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
+		RunID:    runResp.Run.RunID,
+		From:     appagentthread.RunStatusRunning,
+		WorkerID: "worker-a",
+	}))
+	require.NoError(t, err)
+	ctx := appagentthread.WithThreadAccessRequest(context.Background(), appagentthread.ThreadAccessRequest{
+		ViewerID: 2,
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+	})
+	require.NoError(t, appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: 2,
+		ThreadID: 1,
+		RunID:    runResp.Run.RunID,
+	}))
+
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+	streamTaskThreadRunEvents(ctx, writer, threadapi.StreamTaskThreadRunEventsRequest{
+		ThreadID:   1,
+		RunID:      runResp.Run.RunID,
+		IntervalMs: 10,
+		TimeoutMs:  100,
+	})
+
+	require.Contains(t, writer.String(), "event: done")
+	require.Equal(t, 1, workspaceAuthorizer.calls)
 }
 
 func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
-	h := server.Default()
+	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads", ListTaskThreads)
 	installAgentThreadTestService(t)
 
@@ -2624,9 +3399,17 @@ func TestListTaskThreadsHandlerRejectsInvalidQuery(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func authenticatedAgentThreadTestServer() *server.Hertz {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(2))
+	return h
+}
+
 func installAgentThreadTestService(t *testing.T) {
 	t.Helper()
 	prevThreadSVC := appagentthread.SVC.ThreadSVC
+	prevThreadAuthorizer := appagentthread.SVC.ThreadAuthorizer
+	prevWorkspaceAuthorizer := appagentthread.SVC.WorkspaceAuthorizer
 	prevRuntimeFileSVC := appagentthread.SVC.RuntimeFileSVC
 	prevPlanSVC := appagentthread.SVC.PlanSVC
 	prevArtifactSVC := appagentthread.SVC.ArtifactSVC
@@ -2641,6 +3424,8 @@ func installAgentThreadTestService(t *testing.T) {
 	prevArtifactReviewClock := appagentthread.SVC.ArtifactReviewClock
 	t.Cleanup(func() {
 		appagentthread.SVC.ThreadSVC = prevThreadSVC
+		appagentthread.SVC.ThreadAuthorizer = prevThreadAuthorizer
+		appagentthread.SVC.WorkspaceAuthorizer = prevWorkspaceAuthorizer
 		appagentthread.SVC.RuntimeFileSVC = prevRuntimeFileSVC
 		appagentthread.SVC.PlanSVC = prevPlanSVC
 		appagentthread.SVC.ArtifactSVC = prevArtifactSVC
@@ -2659,6 +3444,7 @@ func installAgentThreadTestService(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, migrateAgentThreadHandlerTableForTest(db))
 	appagentthread.InitService(&appagentthread.ServiceComponents{DB: db, IDGen: &sequentialIDGen{next: 1}})
+	appagentthread.SVC.WorkspaceAuthorizer = allowWorkbenchWorkspaceAuthorizer{}
 	appagentthread.SVC.ArtifactAuthorizer = nil
 	appagentthread.SVC.MemoryAuthorizer = nil
 	_, err = appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
@@ -2670,6 +3456,40 @@ func installAgentThreadTestService(t *testing.T) {
 		Metadata:     `{"message":"hello"}`,
 	})
 	require.NoError(t, err)
+}
+
+type allowWorkbenchWorkspaceAuthorizer struct{}
+
+func (allowWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	return nil
+}
+
+type recordingWorkbenchWorkspaceAuthorizer struct {
+	req appagentthread.WorkspaceAccessRequest
+	err error
+}
+
+func (a *recordingWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	_ context.Context,
+	req appagentthread.WorkspaceAccessRequest,
+) error {
+	a.req = req
+	return a.err
+}
+
+type countingWorkbenchWorkspaceAuthorizer struct {
+	calls int
+}
+
+func (a *countingWorkbenchWorkspaceAuthorizer) AuthorizeWorkspaceAccess(
+	context.Context,
+	appagentthread.WorkspaceAccessRequest,
+) error {
+	a.calls++
+	return nil
 }
 
 func workbenchSessionMiddlewareForTest(userID int64) app.HandlerFunc {
@@ -2774,6 +3594,22 @@ func createInterruptedHumanInteractionRun(t *testing.T) int64 {
 	return runID
 }
 
+func fencedRunStatusRequestForTest(
+	t *testing.T,
+	req *appagentthread.UpdateRunStatusRequest,
+) *appagentthread.UpdateRunStatusRequest {
+	t.Helper()
+	require.NotNil(t, req)
+	persisted, err := appagentthread.SVC.GetRun(context.Background(), &appagentthread.GetRunRequest{RunID: req.RunID})
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.NotNil(t, persisted.Run)
+	req.LeaseOwner = persisted.Run.LeaseOwner
+	req.LeaseToken = persisted.Run.LeaseToken
+	req.ExecutionGeneration = persisted.Run.ExecutionGeneration
+	return req
+}
+
 func createInterruptedHumanInteractionRunWithCheckpoint(t *testing.T) (int64, int64) {
 	t.Helper()
 	runResp, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
@@ -2788,11 +3624,11 @@ func createInterruptedHumanInteractionRunWithCheckpoint(t *testing.T) (int64, in
 		Limit:    1,
 	})
 	require.NoError(t, err)
-	_, err = appagentthread.SVC.InterruptRun(context.Background(), &appagentthread.UpdateRunStatusRequest{
+	_, err = appagentthread.SVC.InterruptRun(context.Background(), fencedRunStatusRequestForTest(t, &appagentthread.UpdateRunStatusRequest{
 		RunID:    runResp.Run.RunID,
 		From:     appagentthread.RunStatusRunning,
 		WorkerID: "worker-a",
-	})
+	}))
 	require.NoError(t, err)
 
 	envelope := appagentthread.ADKCheckpointEnvelope{
@@ -2882,6 +3718,12 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			durability text,
 			idempotency_key text,
 			worker_id text,
+			lease_owner text,
+			lease_token text,
+			lease_expires_at integer,
+			heartbeat_at integer,
+			cancel_requested_at integer,
+			execution_generation integer NOT NULL DEFAULT 0,
 			error_code text,
 			error_message text,
 			started_at integer,
@@ -3130,10 +3972,43 @@ type sequentialIDGen struct {
 
 type recordingTaskThreadRunEventStreamWriter struct {
 	buffer bytes.Buffer
+	ids    []string
+}
+
+type failingTaskThreadRunEventStreamWriter struct{}
+
+func (failingTaskThreadRunEventStreamWriter) WriteEvent(string, string, []byte) error {
+	return errors.New("stream disconnected")
+}
+
+func (failingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
+	return errors.New("stream disconnected")
+}
+
+type heartbeatFailingTaskThreadRunEventStreamWriter struct{}
+
+func (heartbeatFailingTaskThreadRunEventStreamWriter) WriteEvent(string, string, []byte) error {
+	return nil
+}
+
+func (heartbeatFailingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
+	return errors.New("stream disconnected")
+}
+
+func publicRunEventPayloadForTest(eventType, payload string) string {
+	projected := appagentthread.ProjectPublicRunEvent(&appagentthread.RunEventSummary{
+		EventType: eventType,
+		Payload:   payload,
+	})
+	if projected == nil {
+		return `{}`
+	}
+	return projected.Payload
 }
 
 func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType string, data []byte) error {
 	if id != "" {
+		w.ids = append(w.ids, id)
 		w.buffer.WriteString("id: ")
 		w.buffer.WriteString(id)
 		w.buffer.WriteByte('\n')
@@ -3150,6 +4025,10 @@ func (w *recordingTaskThreadRunEventStreamWriter) WriteEvent(id, eventType strin
 	}
 	w.buffer.WriteByte('\n')
 
+	return nil
+}
+
+func (w *recordingTaskThreadRunEventStreamWriter) WriteKeepAlive() error {
 	return nil
 }
 

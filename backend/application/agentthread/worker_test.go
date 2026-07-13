@@ -113,6 +113,8 @@ func TestRunWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	t.Setenv(agentThreadWorkerIDEnv, "worker-env")
 	t.Setenv(agentThreadWorkerBatchSizeEnv, "7")
 	t.Setenv(agentThreadWorkerIntervalMsEnv, "1500")
+	t.Setenv(agentThreadWorkerLeaseTTLMsEnv, "9000")
+	t.Setenv(agentThreadWorkerHeartbeatIntervalMsEnv, "3000")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -124,6 +126,8 @@ func TestRunWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	require.Equal(t, 1500*time.Millisecond, worker.interval)
 	require.Equal(t, "worker-env", worker.processor.workerID)
 	require.Equal(t, int32(7), worker.processor.batchSize)
+	require.Equal(t, 9*time.Second, worker.processor.leaseConfig.TTL)
+	require.Equal(t, 3*time.Second, worker.processor.leaseConfig.Interval)
 }
 
 func TestResumeRunWorkerRunOnceDelegatesToProcessor(t *testing.T) {
@@ -208,6 +212,8 @@ func TestResumeRunWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	t.Setenv(agentThreadResumeWorkerIDEnv, "resume-worker-env")
 	t.Setenv(agentThreadResumeWorkerBatchSizeEnv, "5")
 	t.Setenv(agentThreadResumeWorkerIntervalMsEnv, "1750")
+	t.Setenv(agentThreadResumeWorkerLeaseTTLMsEnv, "12000")
+	t.Setenv(agentThreadResumeWorkerHeartbeatIntervalMsEnv, "4000")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -219,6 +225,47 @@ func TestResumeRunWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
 	require.Equal(t, 1750*time.Millisecond, worker.interval)
 	require.Equal(t, "resume-worker-env", worker.processor.workerID)
 	require.Equal(t, int32(5), worker.processor.batchSize)
+	require.Equal(t, 12*time.Second, worker.processor.leaseConfig.TTL)
+	require.Equal(t, 4*time.Second, worker.processor.leaseConfig.Interval)
+}
+
+func TestRunLeaseRecoveryWorkerRunOnceDelegatesToProcessor(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(3_000))
+	source := expiredRecoveryTestRun(200)
+	service := newRunLeaseRecoveryTestService(source)
+	processor := NewRunLeaseRecoveryProcessor(
+		&ApplicationService{ThreadSVC: service},
+		RunLeaseRecoveryProcessorOptions{Limit: 4, Clock: clock},
+	)
+	worker := NewRunLeaseRecoveryWorker(processor, RunLeaseRecoveryWorkerOptions{Interval: time.Second})
+
+	result := worker.RunOnce(context.Background())
+
+	require.Equal(t, RunLeaseRecoveryResult{ExpiredRuns: 1, AbandonedRuns: 1}, result)
+	require.Equal(t, time.Second, worker.interval)
+	require.Equal(t, entity.RunStatusFailed, source.Status)
+}
+
+func TestRunLeaseRecoveryWorkerFromEnvDisabledByDefault(t *testing.T) {
+	t.Setenv(agentThreadLeaseRecoveryWorkerEnabledEnv, "")
+
+	worker := StartRunLeaseRecoveryWorkerFromEnv(context.Background(), &ApplicationService{})
+
+	require.Nil(t, worker)
+}
+
+func TestRunLeaseRecoveryWorkerFromEnvBuildsConfiguredWorker(t *testing.T) {
+	t.Setenv(agentThreadLeaseRecoveryWorkerEnabledEnv, "true")
+	t.Setenv(agentThreadLeaseRecoveryWorkerBatchSizeEnv, "17")
+	t.Setenv(agentThreadLeaseRecoveryWorkerIntervalMsEnv, "4500")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker := StartRunLeaseRecoveryWorkerFromEnv(ctx, &ApplicationService{ThreadSVC: &recordingThreadService{}})
+
+	require.NotNil(t, worker)
+	require.Equal(t, 4500*time.Millisecond, worker.interval)
+	require.Equal(t, int32(17), worker.processor.limit)
 }
 
 func TestArtifactScanWorkerRunOnceDelegatesToApplication(t *testing.T) {

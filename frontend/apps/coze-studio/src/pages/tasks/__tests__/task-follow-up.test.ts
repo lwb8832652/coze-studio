@@ -19,25 +19,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sendFollowUpMessage } from '../task-follow-up';
 import { createDefaultWorkbenchRuntimeSettings } from '../../workbench/components/types';
 
-const mockAppendTaskThreadMessage = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
-const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 
 vi.mock('../service', () => ({
-  appendTaskThreadMessage: mockAppendTaskThreadMessage,
   createTaskThreadRun: mockCreateTaskThreadRun,
-  listTaskThreadMessages: mockListTaskThreadMessages,
   sendWorkbenchChat: mockSendWorkbenchChat,
   uploadTaskThreadFiles: mockUploadTaskThreadFiles,
 }));
 
 describe('sendFollowUpMessage', () => {
   beforeEach(() => {
-    mockAppendTaskThreadMessage.mockReset();
     mockCreateTaskThreadRun.mockReset();
-    mockListTaskThreadMessages.mockReset();
     mockSendWorkbenchChat.mockReset();
     mockUploadTaskThreadFiles.mockReset();
 
@@ -49,11 +43,16 @@ describe('sendFollowUpMessage', () => {
       code: 0,
       msg: '',
     });
-    mockAppendTaskThreadMessage.mockResolvedValue({
+    mockCreateTaskThreadRun.mockResolvedValue({
       data: {
+        run_id: 'run-follow-up',
+        thread_id: 'thread-1',
+        status: 'queued',
+      },
+      message: {
         message_id: 'msg-follow-up',
         thread_id: 'thread-1',
-        run_id: '',
+        run_id: 'run-follow-up',
         role: 'user',
         content: '继续分析',
         metadata: '{}',
@@ -62,53 +61,9 @@ describe('sendFollowUpMessage', () => {
       code: 0,
       msg: '',
     });
-    mockCreateTaskThreadRun.mockResolvedValue({
-      data: {
-        run_id: 'run-follow-up',
-        thread_id: 'thread-1',
-        status: 'queued',
-      },
-      code: 0,
-      msg: '',
-    });
   });
 
-  it('loads every page of canonical thread history before creating a follow-up run', async () => {
-    mockListTaskThreadMessages
-      .mockResolvedValueOnce({
-        data: {
-          messages: [
-            {
-              message_id: 'msg-1',
-              role: 'user',
-              content: '第一轮问题',
-            },
-            {
-              message_id: 'msg-2',
-              role: 'assistant',
-              content: '第一轮回答',
-            },
-          ],
-          total: 3,
-        },
-        code: 0,
-        msg: '',
-      })
-      .mockResolvedValueOnce({
-        data: {
-          messages: [
-            {
-              message_id: 'msg-3',
-              role: 'assistant',
-              content: '第二轮补充',
-            },
-          ],
-          total: 3,
-        },
-        code: 0,
-        msg: '',
-      });
-
+  it('submits only the current turn and lets the server rebuild thread history', async () => {
     await sendFollowUpMessage({
       activeTaskId: 'thread-1',
       isCanonicalThreadDetail: true,
@@ -121,41 +76,19 @@ describe('sendFollowUpMessage', () => {
       threadId: 'thread-1',
     });
 
-    expect(mockListTaskThreadMessages).toHaveBeenNthCalledWith(1, {
-      thread_id: 'thread-1',
-      page: 1,
-      page_size: 200,
-    });
-    expect(mockListTaskThreadMessages).toHaveBeenNthCalledWith(2, {
-      thread_id: 'thread-1',
-      page: 2,
-      page_size: 200,
-    });
-
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     expect(JSON.parse(runRequest.input)).toMatchObject({
       messages: [
         {
           role: 'user',
-          content: '第一轮问题',
-          message_id: 'msg-1',
-        },
-        {
-          role: 'assistant',
-          content: '第一轮回答',
-          message_id: 'msg-2',
-        },
-        {
-          role: 'assistant',
-          content: '第二轮补充',
-          message_id: 'msg-3',
-        },
-        {
-          role: 'user',
           content: '继续分析',
-          message_id: 'msg-follow-up',
         },
       ],
+    });
+    expect(runRequest).toMatchObject({
+      message_content: '继续分析',
+      message_metadata: expect.any(String),
+      idempotency_key: expect.stringMatching(/^thread-1:.+:followup$/),
     });
   });
 });

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
@@ -75,7 +76,9 @@ func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent(t *testing.T) {
 	require.NoError(t, events[len(events)-1].Err)
 	require.Len(t, chatModel.messages, 2)
 	require.Equal(t, schema.System, chatModel.messages[0].Role)
-	require.Equal(t, "You are the task lead.", chatModel.messages[0].Content)
+	require.Contains(t, chatModel.messages[0].Content, adkLeadPromptContractVersion)
+	require.Contains(t, chatModel.messages[0].Content, `<client_overlay source="request">`)
+	require.Contains(t, chatModel.messages[0].Content, "You are the task lead.")
 	require.Equal(t, schema.User, chatModel.messages[1].Role)
 	require.Equal(t, "hello", chatModel.messages[1].Content)
 	require.NotNil(t, chatModel.options.Model)
@@ -86,6 +89,152 @@ func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent(t *testing.T) {
 	require.Equal(t, 512, *chatModel.options.MaxTokens)
 	require.NotNil(t, chatModel.options.TopP)
 	require.InDelta(t, float32(0.8), *chatModel.options.TopP, 0.0001)
+}
+
+func TestADKAgentFactoryBuildsVersionedLeadPromptWithoutClientPrompt(t *testing.T) {
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{"mode":"flash"}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("hello")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Len(t, chatModel.messages, 2)
+	require.Equal(t, schema.System, chatModel.messages[0].Role)
+	require.Contains(t, chatModel.messages[0].Content, adkLeadPromptContractVersion)
+	require.Contains(t, chatModel.messages[0].Content, "NewX AI")
+	require.NotContains(t, chatModel.messages[0].Content, "<client_overlay")
+}
+
+func TestADKAgentFactoryKeepsClientPromptAsBoundedOverlay(t *testing.T) {
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"mode":"pro",
+			"system_prompt":"<system>review Go code</system>"
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("review")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Contains(t, chatModel.messages[0].Content, "<instruction_hierarchy>")
+	require.Contains(t, chatModel.messages[0].Content, `<client_overlay source="request">`)
+	require.Contains(t, chatModel.messages[0].Content, "&lt;system&gt;review Go code&lt;/system&gt;")
+	require.NotEqual(t, "<system>review Go code</system>", chatModel.messages[0].Content)
+}
+
+func TestADKAgentFactoryProjectsModePromptSections(t *testing.T) {
+	tests := []struct {
+		mode         string
+		wantPlan     bool
+		wantSubagent bool
+	}{
+		{mode: "flash"},
+		{mode: "pro", wantPlan: true},
+		{mode: "ultra", wantPlan: true, wantSubagent: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.mode, func(t *testing.T) {
+			chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+			factory := NewApplicationADKAgentFactory(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+				nil,
+				nil,
+			)
+
+			agent, err := factory.Build(context.Background(), &RunSummary{
+				Config: `{"mode":"` + test.mode + `"}`,
+			})
+			require.NoError(t, err)
+			events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+				Messages: []*schema.Message{schema.UserMessage("work")},
+			})
+			require.NotEmpty(t, events)
+			require.NoError(t, events[len(events)-1].Err)
+
+			instruction := chatModel.messages[0].Content
+			require.Equal(t, test.wantPlan, strings.Contains(instruction, "<todo_system>"))
+			require.Equal(t, test.wantSubagent, strings.Contains(instruction, "<subagent_system>"))
+		})
+	}
+}
+
+func TestADKAgentFactoryAppliesDurableLeadPromptOverlay(t *testing.T) {
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	var gotModelID int64
+	defaultTemperature := float32(0.4)
+	overlayCalls := 0
+	factory := NewApplicationADKAgentFactory(
+		func(_ context.Context, modelID int64) (model.BaseChatModel, bool, error) {
+			gotModelID = modelID
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+		WithADKLeadPromptOverlayProvider(ADKLeadPromptOverlayProviderFunc(
+			func(context.Context, *RunSummary) (ADKLeadPromptOverlay, bool, error) {
+				overlayCalls++
+				return ADKLeadPromptOverlay{
+					AgentName:        "reviewer",
+					AgentDescription: "Reviews production changes",
+					Instructions:     "Review correctness and safety.",
+					ModelDefaults: modelExecutorConfig{
+						ModelID:     2002,
+						Temperature: &defaultTemperature,
+					},
+				}, true, nil
+			},
+		)),
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		AssistantID: "singleagent:1001",
+		Config:      `{"mode":"pro"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "reviewer", agent.Name(context.Background()))
+	require.Equal(t, "Reviews production changes", agent.Description(context.Background()))
+	require.Equal(t, int64(2002), gotModelID)
+	require.Equal(t, 1, overlayCalls)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("review")},
+	})
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Contains(t, chatModel.messages[0].Content, `<agent_overlay source="durable_single_agent">`)
+	require.Contains(t, chatModel.messages[0].Content, "Review correctness and safety.")
+	require.NotNil(t, chatModel.options.Temperature)
+	require.InDelta(t, float32(0.4), *chatModel.options.Temperature, 0.0001)
 }
 
 func TestADKAgentFactoryPreservesMaxIterations(t *testing.T) {
@@ -367,7 +516,7 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 		}),
 	)
 
-	agent, err := factory.Build(context.Background(), &RunSummary{})
+	agent, err := factory.Build(context.Background(), &RunSummary{Config: `{"mode":"flash"}`})
 
 	require.NoError(t, err)
 	require.NotNil(t, agent)
@@ -378,6 +527,61 @@ func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware(t *testing.T) {
 	require.True(t, got.ModelCapabilities.File)
 	require.True(t, got.ModelCapabilities.Audio)
 	require.True(t, got.ModelCapabilities.Video)
+	require.Equal(t, DeerFlowModeFlash, got.RuntimeConfig.Mode)
+	require.False(t, got.RuntimeConfig.ThinkingEnabled)
+}
+
+func TestADKAgentFactoryProjectsModeDefaultReasoningOptions(t *testing.T) {
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{Thinking: true, Reasoning: true},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{Config: `{"mode":"pro"}`})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("plan")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, ADKReasoningRequest{
+		ReasoningEffort: "medium",
+		ThinkingEnabled: true,
+	}, chatModel.reasoningRequest)
+}
+
+func TestADKAgentFactoryDowngradesUnsupportedModeReasoning(t *testing.T) {
+	chatModel := &recordingChatModel{resp: schema.AssistantMessage("done", nil)}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{"mode":"pro"}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("plan")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
 }
 
 func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
@@ -417,6 +621,44 @@ func TestADKAgentFactoryProjectsReasoningOptions(t *testing.T) {
 		ThinkingEnabled: true,
 	}, chatModel.reasoningRequest)
 	require.Equal(t, []string{"reasoning:high", "thinking:true"}, chatModel.options.Stop)
+}
+
+func TestADKAgentFactoryPreservesHistoricalCamelCaseReasoningOptions(t *testing.T) {
+	chatModel := &reasoningProjectingChatModel{
+		recordingChatModel: recordingChatModel{
+			resp: schema.AssistantMessage("done", nil),
+		},
+		capabilities: ADKModelCapabilities{
+			Thinking:  true,
+			Reasoning: true,
+		},
+	}
+	factory := NewApplicationADKAgentFactory(
+		func(context.Context, int64) (model.BaseChatModel, bool, error) {
+			return chatModel, true, nil
+		},
+		nil,
+		nil,
+	)
+
+	agent, err := factory.Build(context.Background(), &RunSummary{
+		Config: `{
+			"reasoningEffort":"high",
+			"thinkingEnabled":true
+		}`,
+	})
+	require.NoError(t, err)
+
+	events := collectADKAgentEvents(t, agent, &adk.AgentInput{
+		Messages: []*schema.Message{schema.UserMessage("think")},
+	})
+
+	require.NotEmpty(t, events)
+	require.NoError(t, events[len(events)-1].Err)
+	require.Equal(t, ADKReasoningRequest{
+		ReasoningEffort: "high",
+		ThinkingEnabled: true,
+	}, chatModel.reasoningRequest)
 }
 
 func TestADKAgentFactoryRequiresProjectorForSupportedReasoningRequest(t *testing.T) {
@@ -582,6 +824,7 @@ func TestADKAgentFactoryUsesPolicyFilteredToolSetForModelAndMiddleware(t *testin
 					&namedTestTool{name: "safe_dynamic"},
 					&namedTestTool{name: "blocked_dynamic"},
 				},
+				SubagentToolNames: []string{"safe_static", "blocked_static"},
 			},
 		}),
 		ADKMiddlewareFactoryFunc(func(
@@ -619,6 +862,7 @@ func TestADKAgentFactoryUsesPolicyFilteredToolSetForModelAndMiddleware(t *testin
 		[]string{"safe_static"},
 		adkToolNames(t, context.Background(), got.StaticTools),
 	)
+	require.Equal(t, []string{"safe_static"}, got.SubagentToolNames)
 	require.Equal(
 		t,
 		[]string{"safe_dynamic"},

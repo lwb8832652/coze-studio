@@ -221,6 +221,9 @@ nuwax-ai 演示环境用于页面样式和交互对齐：
 ## Agent Runtime 规则
 
 - Eino ADK 是执行内核，Coze 是控制面和系统记录。
+- 新建公共任务/Run 必须在持久化前规范化为 `runtime=eino_adk`；`legacy`
+  只能用于读取/恢复历史无标记记录和显式迁移测试，不能重新作为生产新任务
+  的选择项或回滚开关。
 - 公共 task、event、checkpoint、LangGraph、Skill、MCP、memory、token、
   artifact、guardrail 合同都由 Coze adapter 暴露。
 - Eino `AgentEvent`、checkpoint bytes、Skill runtime state、provider metadata

@@ -21,18 +21,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
 )
 
 const (
-	adkCheckpointEnvelopeVersion = 1
-	adkCheckpointRuntimeVersion  = "0.9.9"
-	adkCheckpointMessageType     = "schema.Message"
-	adkCheckpointNamespace       = "eino.adk"
-	defaultADKCheckpointMaxBytes = 32 << 20
-	maxADKCheckpointKeyBytes     = 255
+	adkCheckpointEnvelopeLegacyVersion = 1
+	adkCheckpointEnvelopeVersion       = 2
+	adkCheckpointRuntimeVersion        = "0.9.9"
+	adkCheckpointMessageType           = "schema.Message"
+	adkCheckpointNamespace             = "eino.adk"
+	defaultADKCheckpointMaxBytes       = 32 << 20
+	maxADKCheckpointKeyBytes           = 255
+)
+
+type ADKCheckpointPhase string
+
+const (
+	ADKCheckpointPhaseRuntime   ADKCheckpointPhase = "runtime"
+	ADKCheckpointPhaseInterrupt ADKCheckpointPhase = "interrupt"
+	ADKCheckpointPhaseTerminal  ADKCheckpointPhase = "terminal"
 )
 
 type ADKCheckpointEnvelope struct {
@@ -41,7 +51,9 @@ type ADKCheckpointEnvelope struct {
 	RuntimeVersion  string                      `json:"runtime_version"`
 	RuntimeKey      string                      `json:"runtime_key"`
 	MessageType     string                      `json:"message_type"`
+	CheckpointPhase ADKCheckpointPhase          `json:"checkpoint_phase,omitempty"`
 	Checkpoint      []byte                      `json:"checkpoint_bytes"`
+	ParityState     *ADKParityState             `json:"parity_state,omitempty"`
 	Interrupts      map[string]ADKInterruptItem `json:"interrupts,omitempty"`
 	RunRevision     int64                       `json:"run_revision"`
 	CreatedAt       int64                       `json:"created_at"`
@@ -74,7 +86,7 @@ func unmarshalADKCheckpointEnvelope(raw []byte, maxCheckpointBytes int) (ADKChec
 	if maxCheckpointBytes <= 0 {
 		return envelope, fmt.Errorf("maximum checkpoint size must be positive")
 	}
-	maxEnvelopeBytes := maxCheckpointBytes + maxCheckpointBytes/2 + 64*1024
+	maxEnvelopeBytes := maxCheckpointBytes + maxCheckpointBytes/2 + maxADKParityStateBytes + 64*1024
 	if len(raw) > maxEnvelopeBytes {
 		return envelope, fmt.Errorf("checkpoint envelope exceeds maximum encoded size of %d bytes", maxEnvelopeBytes)
 	}
@@ -92,7 +104,8 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	if maxCheckpointBytes <= 0 {
 		return fmt.Errorf("maximum checkpoint size must be positive")
 	}
-	if envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion {
+	if envelope.EnvelopeVersion != adkCheckpointEnvelopeLegacyVersion &&
+		envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion {
 		return fmt.Errorf("unsupported checkpoint envelope version: %d", envelope.EnvelopeVersion)
 	}
 	if strings.TrimSpace(envelope.Runtime) != string(RuntimeModeEinoADK) {
@@ -107,9 +120,6 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	if envelope.MessageType != adkCheckpointMessageType {
 		return fmt.Errorf("unsupported checkpoint message type: %s", envelope.MessageType)
 	}
-	if len(envelope.Checkpoint) == 0 {
-		return fmt.Errorf("checkpoint bytes are required")
-	}
 	if len(envelope.Checkpoint) > maxCheckpointBytes {
 		return fmt.Errorf(
 			"checkpoint exceeds maximum size: got %d bytes, maximum is %d",
@@ -119,6 +129,30 @@ func validateADKCheckpointEnvelope(envelope ADKCheckpointEnvelope, maxCheckpoint
 	}
 	if envelope.RunRevision < 0 {
 		return fmt.Errorf("checkpoint run revision must not be negative")
+	}
+	if envelope.EnvelopeVersion == adkCheckpointEnvelopeLegacyVersion {
+		if len(envelope.Checkpoint) == 0 {
+			return fmt.Errorf("checkpoint bytes are required")
+		}
+		return nil
+	}
+	if envelope.ParityState == nil {
+		return fmt.Errorf("checkpoint parity state is required")
+	}
+	if err := validateADKParityStateSnapshot(envelope.ParityState); err != nil {
+		return err
+	}
+	switch envelope.CheckpointPhase {
+	case ADKCheckpointPhaseRuntime, ADKCheckpointPhaseInterrupt:
+		if len(envelope.Checkpoint) == 0 {
+			return fmt.Errorf("checkpoint bytes are required for %s phase", envelope.CheckpointPhase)
+		}
+	case ADKCheckpointPhaseTerminal:
+		if envelope.ParityState.Completion == nil {
+			return fmt.Errorf("terminal checkpoint completion is required")
+		}
+	default:
+		return fmt.Errorf("unsupported checkpoint phase: %s", envelope.CheckpointPhase)
 	}
 
 	return nil
@@ -141,6 +175,18 @@ type ADKCheckpointInterruptRecorder interface {
 	) error
 }
 
+type ADKCheckpointThreadStateService interface {
+	ListCheckpoints(
+		ctx context.Context,
+		req *ListCheckpointsRequest,
+	) (*ListCheckpointsResponse, error)
+}
+
+type ADKParityCheckpointStore interface {
+	ParityStateTracker(ctx context.Context) (*ADKParityStateTracker, int64, error)
+	SetParityStateTracker(tracker *ADKParityStateTracker, parentCheckpointID int64) error
+}
+
 type ADKCheckpointStore struct {
 	service            ADKCheckpointService
 	run                *RunSummary
@@ -148,6 +194,9 @@ type ADKCheckpointStore struct {
 	maxCheckpointBytes int
 	runRevision        int64
 	now                func() int64
+	parityMu           sync.Mutex
+	parityTracker      *ADKParityStateTracker
+	parityParentID     int64
 }
 
 type ADKCheckpointStoreOption func(*ADKCheckpointStore) error
@@ -252,7 +301,11 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		)
 	}
 
-	parentCheckpointID := int64(0)
+	tracker, parityParentID, err := s.ParityStateTracker(ctx)
+	if err != nil {
+		return err
+	}
+	parentCheckpointID := parityParentID
 	latest, err := s.service.GetLatestRuntimeCheckpoint(ctx, &GetLatestRuntimeCheckpointRequest{
 		ThreadID:    s.run.ThreadID,
 		RunID:       s.run.RunID,
@@ -265,6 +318,7 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 	if latest != nil && latest.Checkpoint != nil {
 		parentCheckpointID = latest.Checkpoint.CheckpointID
 	}
+	parityState := tracker.Snapshot()
 
 	envelope := ADKCheckpointEnvelope{
 		EnvelopeVersion: adkCheckpointEnvelopeVersion,
@@ -272,7 +326,9 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		RuntimeVersion:  s.runtimeVersion,
 		RuntimeKey:      checkpointID,
 		MessageType:     adkCheckpointMessageType,
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
 		Checkpoint:      checkpoint,
+		ParityState:     &parityState,
 		RunRevision:     s.runRevision,
 		CreatedAt:       s.now(),
 	}
@@ -286,6 +342,7 @@ func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, check
 		"runtime_key":      checkpointID,
 		"envelope_version": adkCheckpointEnvelopeVersion,
 		"message_type":     adkCheckpointMessageType,
+		"checkpoint_phase": ADKCheckpointPhaseRuntime,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal checkpoint metadata: %w", err)
@@ -361,6 +418,10 @@ func (s *ADKCheckpointStore) Get(ctx context.Context, checkpointID string) ([]by
 		int(checkpoint.EnvelopeVersion) != envelope.EnvelopeVersion {
 		return nil, false, fmt.Errorf("checkpoint envelope version does not match indexed version")
 	}
+	if envelope.EnvelopeVersion == adkCheckpointEnvelopeVersion &&
+		envelope.CheckpointPhase == ADKCheckpointPhaseTerminal {
+		return nil, false, fmt.Errorf("terminal checkpoint is not resumable")
+	}
 
 	return envelope.Checkpoint, true, nil
 }
@@ -396,6 +457,30 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 	if len(interrupts) == 0 {
 		return nil
 	}
+	tracker, _, err := s.ParityStateTracker(ctx)
+	if err != nil {
+		return err
+	}
+	parityInterrupts := make([]ADKParityInterrupt, 0, len(interrupts))
+	for _, interrupt := range interrupts {
+		parityInterrupts = append(parityInterrupts, ADKParityInterrupt{
+			ID:          interrupt.ID,
+			Address:     interrupt.Address,
+			IsRootCause: interrupt.IsRootCause,
+			ParentID:    interrupt.ParentID,
+		})
+	}
+	if err := tracker.ReplaceInterrupts(parityInterrupts); err != nil {
+		return fmt.Errorf("record eino parity interrupt targets: %w", err)
+	}
+	if err := tracker.SetCompletion(ADKParityCompletion{
+		RunID:       s.run.RunID,
+		Status:      "interrupted",
+		Reason:      "human_interaction",
+		CompletedAt: s.now(),
+	}); err != nil {
+		return fmt.Errorf("record eino parity interrupt completion: %w", err)
+	}
 
 	resp, err := s.service.GetLatestRuntimeCheckpoint(ctx, &GetLatestRuntimeCheckpointRequest{
 		ThreadID:    s.run.ThreadID,
@@ -430,6 +515,10 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 	if len(envelope.Interrupts) == 0 {
 		return fmt.Errorf("eino interrupt targets are missing stable identities")
 	}
+	envelope.EnvelopeVersion = adkCheckpointEnvelopeVersion
+	envelope.CheckpointPhase = ADKCheckpointPhaseInterrupt
+	parityState := tracker.Snapshot()
+	envelope.ParityState = &parityState
 
 	raw, err := marshalADKCheckpointEnvelope(envelope, s.maxCheckpointBytes)
 	if err != nil {
@@ -446,7 +535,7 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 		ChannelValues:      string(raw),
 		ChannelVersions:    `{}`,
 		PendingSends:       `[]`,
-		Metadata:           latest.Metadata,
+		Metadata:           adkCheckpointMetadataJSON(s.runtimeVersion, checkpointID, ADKCheckpointPhaseInterrupt),
 	})
 	if err != nil {
 		return fmt.Errorf("persist eino interrupt targets: %w", err)
@@ -456,6 +545,166 @@ func (s *ADKCheckpointStore) RecordInterrupts(
 	}
 
 	return nil
+}
+
+func (s *ADKCheckpointStore) ParityStateTracker(
+	ctx context.Context,
+) (*ADKParityStateTracker, int64, error) {
+	if s == nil || s.run == nil {
+		return nil, 0, fmt.Errorf("eino adk checkpoint store is required")
+	}
+	s.parityMu.Lock()
+	defer s.parityMu.Unlock()
+	if s.parityTracker != nil {
+		return s.parityTracker, s.parityParentID, nil
+	}
+
+	var seed *ADKParityState
+	parentCheckpointID := int64(0)
+	if source, ok := s.service.(ADKCheckpointThreadStateService); ok {
+		resp, err := source.ListCheckpoints(ctx, &ListCheckpointsRequest{
+			ThreadID:    s.run.ThreadID,
+			RuntimeType: string(RuntimeModeEinoADK),
+			Limit:       1,
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("load latest eino parity checkpoint: %w", err)
+		}
+		if resp != nil && len(resp.Checkpoints) > 0 && resp.Checkpoints[0] != nil {
+			checkpoint := resp.Checkpoints[0]
+			if checkpoint.ThreadID != s.run.ThreadID {
+				return nil, 0, fmt.Errorf("latest parity checkpoint does not belong to the active thread")
+			}
+			parentCheckpointID = checkpoint.CheckpointID
+			if strings.TrimSpace(checkpoint.RuntimeType) == string(RuntimeModeEinoADK) {
+				envelope, err := unmarshalADKCheckpointEnvelope(
+					[]byte(checkpoint.ChannelValues),
+					s.maxCheckpointBytes,
+				)
+				if err != nil {
+					return nil, 0, fmt.Errorf("decode latest eino parity checkpoint: %w", err)
+				}
+				if checkpoint.EnvelopeVersion != 0 &&
+					int(checkpoint.EnvelopeVersion) != envelope.EnvelopeVersion {
+					return nil, 0, fmt.Errorf("latest parity checkpoint envelope version does not match indexed version")
+				}
+				if envelope.ParityState != nil {
+					copy := cloneADKParityState(*envelope.ParityState)
+					seed = &copy
+				}
+			}
+		}
+	}
+
+	tracker, err := NewADKParityStateTracker(s.run, seed)
+	if err != nil {
+		return nil, 0, err
+	}
+	s.parityTracker = tracker
+	s.parityParentID = parentCheckpointID
+	return tracker, parentCheckpointID, nil
+}
+
+func (s *ADKCheckpointStore) SetParityStateTracker(
+	tracker *ADKParityStateTracker,
+	parentCheckpointID int64,
+) error {
+	if s == nil || s.run == nil || tracker == nil {
+		return fmt.Errorf("eino adk parity state tracker is required")
+	}
+	if parentCheckpointID < 0 {
+		return fmt.Errorf("eino adk parity parent checkpoint id is invalid")
+	}
+	snapshot := tracker.Snapshot()
+	if snapshot.ThreadID != s.run.ThreadID || snapshot.SpaceID != s.run.SpaceID {
+		return fmt.Errorf("eino adk parity state does not belong to the active thread")
+	}
+	if err := validateADKParityStateSnapshot(&snapshot); err != nil {
+		return err
+	}
+	s.parityMu.Lock()
+	s.parityTracker = tracker
+	s.parityParentID = parentCheckpointID
+	s.parityMu.Unlock()
+	return nil
+}
+
+func adkCheckpointMetadataJSON(
+	runtimeVersion string,
+	runtimeKey string,
+	phase ADKCheckpointPhase,
+) string {
+	raw, err := json.Marshal(map[string]any{
+		"runtime":          string(RuntimeModeEinoADK),
+		"runtime_version":  runtimeVersion,
+		"runtime_key":      runtimeKey,
+		"envelope_version": adkCheckpointEnvelopeVersion,
+		"message_type":     adkCheckpointMessageType,
+		"checkpoint_phase": phase,
+	})
+	if err != nil {
+		return `{}`
+	}
+	return string(raw)
+}
+
+func validateADKTerminalCheckpointRequest(
+	req *CreateCheckpointRequest,
+	threadID int64,
+	runID int64,
+) error {
+	if req == nil {
+		return nil
+	}
+	if threadID <= 0 || runID <= 0 || req.ThreadID != threadID || req.RunID != runID ||
+		req.ParentCheckpointID < 0 {
+		return fmt.Errorf("terminal eino adk checkpoint ownership is invalid")
+	}
+	runtimeKey := adkCheckpointKeyForRun(runID)
+	if strings.TrimSpace(req.CheckpointNS) != adkCheckpointNamespace ||
+		strings.TrimSpace(req.RuntimeType) != string(RuntimeModeEinoADK) ||
+		strings.TrimSpace(req.RuntimeKey) != runtimeKey ||
+		int(req.EnvelopeVersion) != adkCheckpointEnvelopeVersion {
+		return fmt.Errorf("terminal eino adk checkpoint identity is invalid")
+	}
+	var versions map[string]any
+	if err := json.Unmarshal([]byte(req.ChannelVersions), &versions); err != nil || len(versions) != 0 {
+		return fmt.Errorf("terminal eino adk checkpoint channel versions are invalid")
+	}
+	var pending []any
+	if err := json.Unmarshal([]byte(req.PendingSends), &pending); err != nil || len(pending) != 0 {
+		return fmt.Errorf("terminal eino adk checkpoint pending sends are invalid")
+	}
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(req.ChannelValues))
+	if err != nil {
+		return fmt.Errorf("decode terminal eino adk checkpoint: %w", err)
+	}
+	if envelope.EnvelopeVersion != adkCheckpointEnvelopeVersion ||
+		envelope.CheckpointPhase != ADKCheckpointPhaseTerminal ||
+		envelope.RuntimeKey != runtimeKey || len(envelope.Checkpoint) != 0 ||
+		envelope.ParityState == nil || envelope.ParityState.ThreadID != threadID ||
+		envelope.ParityState.LastRunID != runID ||
+		envelope.ParityState.Completion == nil ||
+		envelope.ParityState.Completion.RunID != runID ||
+		envelope.ParityState.Completion.Status != "succeeded" {
+		return fmt.Errorf("terminal eino adk checkpoint state is invalid")
+	}
+	return nil
+}
+
+func sameADKTerminalCheckpointIdentity(left, right *CreateCheckpointRequest) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return left.ThreadID == right.ThreadID && left.RunID == right.RunID &&
+		left.ParentCheckpointID == right.ParentCheckpointID &&
+		strings.TrimSpace(left.CheckpointNS) == strings.TrimSpace(right.CheckpointNS) &&
+		strings.TrimSpace(left.RuntimeType) == strings.TrimSpace(right.RuntimeType) &&
+		strings.TrimSpace(left.RuntimeKey) == strings.TrimSpace(right.RuntimeKey) &&
+		left.EnvelopeVersion == right.EnvelopeVersion &&
+		strings.TrimSpace(left.ChannelVersions) == strings.TrimSpace(right.ChannelVersions) &&
+		strings.TrimSpace(left.PendingSends) == strings.TrimSpace(right.PendingSends) &&
+		strings.TrimSpace(left.Metadata) == strings.TrimSpace(right.Metadata)
 }
 
 func (s *ADKCheckpointStore) normalizeKey(checkpointID string) (string, error) {
@@ -473,3 +722,4 @@ func (s *ADKCheckpointStore) normalizeKey(checkpointID string) (string, error) {
 var _ adk.CheckPointStore = (*ADKCheckpointStore)(nil)
 var _ adk.CheckPointDeleter = (*ADKCheckpointStore)(nil)
 var _ ADKCheckpointInterruptRecorder = (*ADKCheckpointStore)(nil)
+var _ ADKParityCheckpointStore = (*ADKCheckpointStore)(nil)

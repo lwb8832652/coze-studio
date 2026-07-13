@@ -65,6 +65,10 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 	if _, _, err := workbenchRuntimeSettingsPayload(req); err != nil {
 		return nil, err
 	}
+	ctx, err = s.authorizeAgentThreadWorkspace(ctx, req.SpaceID)
+	if err != nil {
+		return nil, err
+	}
 
 	task, err := s.prepareTask(ctx, req, message)
 	if err != nil {
@@ -90,6 +94,32 @@ func (s *ApplicationService) HandleMessage(ctx context.Context, req *chatapi.Wor
 			ExecutionType:  optionalStringPtr(executionType),
 		},
 	}, nil
+}
+
+func (s *ApplicationService) authorizeAgentThreadWorkspace(
+	ctx context.Context,
+	spaceID int64,
+) (context.Context, error) {
+	viewerID := int64(0)
+	if uid := ctxutil.GetUIDFromCtx(ctx); uid != nil {
+		viewerID = *uid
+	} else if apiKey := ctxutil.GetApiAuthFromCtx(ctx); apiKey != nil {
+		viewerID = apiKey.UserID
+	}
+	if viewerID <= 0 {
+		return ctx, nil
+	}
+	ctx = appagentthread.WithThreadAccessRequest(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: viewerID,
+	})
+	if s == nil || s.agentThreadSVC == nil {
+		return ctx, appagentthread.ErrThreadAccessDenied
+	}
+	err := s.agentThreadSVC.AuthorizeWorkspaceAccess(ctx, appagentthread.WorkspaceAccessRequest{
+		ViewerID: viewerID,
+		SpaceID:  spaceID,
+	})
+	return ctx, err
 }
 
 func (s *ApplicationService) scheduleTurn(fn func()) {

@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudwego/eino/adk"
@@ -38,11 +39,11 @@ type ADKMiddlewareName string
 const (
 	ADKMiddlewareSummarization          ADKMiddlewareName = "summarization"
 	ADKMiddlewareReduction              ADKMiddlewareName = "reduction"
-	ADKMiddlewareAgentsMD               ADKMiddlewareName = "agentsmd"
 	ADKMiddlewareMemory                 ADKMiddlewareName = "memory"
 	ADKMiddlewareUploadedFiles          ADKMiddlewareName = "uploaded_files"
 	ADKMiddlewareSkill                  ADKMiddlewareName = "skill"
 	ADKMiddlewareToolSearch             ADKMiddlewareName = "toolsearch"
+	ADKMiddlewareParityState            ADKMiddlewareName = "parity_state"
 	ADKMiddlewarePatchTools             ADKMiddlewareName = "patchtoolcalls"
 	ADKMiddlewarePlanTask               ADKMiddlewareName = "plantask"
 	ADKMiddlewareContextBudget          ADKMiddlewareName = "contextbudget"
@@ -50,36 +51,34 @@ const (
 	ADKMiddlewareMultimodal             ADKMiddlewareName = "multimodalbudget"
 	ADKMiddlewareToolErrorNormalization ADKMiddlewareName = "tool_error_normalization"
 	ADKMiddlewareSafetyFinish           ADKMiddlewareName = "safety_finish"
+	ADKMiddlewareSubagentLimit          ADKMiddlewareName = "subagent_limit"
 	ADKMiddlewareSemanticLoop           ADKMiddlewareName = "semantic_loop"
-	ADKMiddlewarePolicy                 ADKMiddlewareName = "policy"
-	ADKMiddlewareAudit                  ADKMiddlewareName = "audit"
-	ADKMiddlewareUsage                  ADKMiddlewareName = "usage"
 	ADKMiddlewareFilesystem             ADKMiddlewareName = "filesystem"
 	ADKMiddlewareProviderCapability     ADKMiddlewareName = "provider_capability"
 )
 
 var adkMiddlewareOrder = []ADKMiddlewareName{
-	ADKMiddlewareAgentsMD,
-	ADKMiddlewareMemory,
+	ADKMiddlewareReduction,
+	ADKMiddlewareFilesystem,
 	ADKMiddlewareUploadedFiles,
-	ADKMiddlewareSkill,
-	ADKMiddlewareToolSearch,
 	ADKMiddlewarePatchTools,
-	ADKMiddlewarePlanTask,
-	ADKMiddlewareContextBudget,
+	ADKMiddlewareToolErrorNormalization,
+	ADKMiddlewareMemory,
+	ADKMiddlewareSkill,
 	ADKMiddlewareTranscript,
 	ADKMiddlewareSummarization,
-	ADKMiddlewareReduction,
-	ADKMiddlewareToolErrorNormalization,
-	ADKMiddlewareSafetyFinish,
-	ADKMiddlewareSemanticLoop,
-	ADKMiddlewarePolicy,
-	ADKMiddlewareAudit,
-	ADKMiddlewareUsage,
-	ADKMiddlewareFilesystem,
+	ADKMiddlewarePlanTask,
 	ADKMiddlewareProviderCapability,
 	ADKMiddlewareMultimodal,
+	ADKMiddlewareToolSearch,
+	ADKMiddlewareParityState,
+	ADKMiddlewareContextBudget,
+	ADKMiddlewareSafetyFinish,
+	ADKMiddlewareSubagentLimit,
+	ADKMiddlewareSemanticLoop,
 }
+
+var errADKMiddlewareNotApplicable = errors.New("eino adk middleware is not applicable")
 
 type ADKModelCapabilities struct {
 	NativeToolSearch bool
@@ -94,9 +93,11 @@ type ADKModelCapabilities struct {
 
 type ADKMiddlewareBuildInput struct {
 	Run               *RunSummary
+	RuntimeConfig     DeerFlowRuntimeConfig
 	Model             model.BaseChatModel
 	StaticTools       []tool.BaseTool
 	DynamicTools      []tool.BaseTool
+	SubagentToolNames []string
 	ModelCapabilities ADKModelCapabilities
 	OffloadBackend    *ADKOffloadBackend
 	PlanBackend       plantask.Backend
@@ -154,6 +155,13 @@ func (a *ADKMiddlewareAssembler) Build(
 	if input.Run == nil {
 		return ADKMiddlewareBundle{}, fmt.Errorf("run is required")
 	}
+	if !input.RuntimeConfig.resolved {
+		runtimeConfig, err := ParseDeerFlowRuntimeConfig(input.Run.Config)
+		if err != nil {
+			return ADKMiddlewareBundle{}, err
+		}
+		input.RuntimeConfig = runtimeConfig
+	}
 	if err := validateADKToolPartitions(ctx, input.StaticTools, input.DynamicTools); err != nil {
 		return ADKMiddlewareBundle{}, err
 	}
@@ -186,7 +194,7 @@ func (a *ADKMiddlewareAssembler) Build(
 			)
 		}
 	}
-	if a.planBackendFactory != nil {
+	if a.planBackendFactory != nil && input.RuntimeConfig.PlanCapabilityEnabled() {
 		input.PlanBackend, err = a.planBackendFactory.Build(ctx, input.Run)
 		if err != nil {
 			return ADKMiddlewareBundle{}, fmt.Errorf(
@@ -199,10 +207,19 @@ func (a *ADKMiddlewareAssembler) Build(
 				"eino adk plan backend factory returned empty backend",
 			)
 		}
+		if backend, ok := input.PlanBackend.(*ADKPlanBackend); ok {
+			if err := backend.setParityStateTracker(adkParityStateTrackerFromContext(ctx)); err != nil {
+				return ADKMiddlewareBundle{}, err
+			}
+			if err := backend.syncParityState(ctx); err != nil {
+				return ADKMiddlewareBundle{}, err
+			}
+		}
 	}
 
 	bundle := ADKMiddlewareBundle{
-		Handlers: make([]adk.ChatModelAgentMiddleware, 0, len(adkMiddlewareOrder)),
+		Handlers:     make([]adk.ChatModelAgentMiddleware, 0, len(adkMiddlewareOrder)),
+		HandlerNames: make([]ADKMiddlewareName, 0, len(adkMiddlewareOrder)),
 	}
 	for _, name := range adkMiddlewareOrder {
 		builder := a.builders[name]
@@ -210,6 +227,9 @@ func (a *ADKMiddlewareAssembler) Build(
 			return ADKMiddlewareBundle{}, fmt.Errorf("eino adk middleware %s is not configured", name)
 		}
 		handler, err := builder(ctx, input)
+		if errors.Is(err, errADKMiddlewareNotApplicable) {
+			continue
+		}
 		if err != nil {
 			return ADKMiddlewareBundle{}, fmt.Errorf("build eino adk middleware %s: %w", name, err)
 		}
@@ -217,6 +237,7 @@ func (a *ADKMiddlewareAssembler) Build(
 			return ADKMiddlewareBundle{}, fmt.Errorf("eino adk middleware %s returned empty handler", name)
 		}
 		bundle.Handlers = append(bundle.Handlers, handler)
+		bundle.HandlerNames = append(bundle.HandlerNames, name)
 	}
 
 	return bundle, nil
@@ -337,10 +358,7 @@ func defaultADKMiddlewareBuilder(
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if input.OffloadBackend == nil {
-				return reduction.New(ctx, &reduction.Config{
-					SkipTruncation: true,
-					SkipClear:      true,
-				})
+				return nil, errADKMiddlewareNotApplicable
 			}
 			return reduction.New(ctx, &reduction.Config{
 				Backend:                   input.OffloadBackend,
@@ -403,7 +421,7 @@ func defaultADKMiddlewareBuilder(
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if options.MemoryProvider == nil {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			budget, err := adkContextBudgetFromRun(input.Run)
 			if err != nil {
@@ -424,7 +442,7 @@ func defaultADKMiddlewareBuilder(
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if options.SkillProvider == nil {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			budget, err := adkContextBudgetFromRun(input.Run)
 			if err != nil {
@@ -436,7 +454,7 @@ func defaultADKMiddlewareBuilder(
 			}
 			skillContext := normalizeSkillContext(skills)
 			if len(skillContext.Items) == 0 {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			backend, err := newADKSkillBackend(
 				skillContext.Items,
@@ -486,6 +504,17 @@ func defaultADKMiddlewareBuilder(
 			if err != nil {
 				return nil, err
 			}
+			if tracker := adkParityStateTrackerFromContext(ctx); tracker != nil {
+				paritySkills := make([]ADKParitySkill, 0, len(skillContext.Items))
+				for _, skill := range skillContext.Items {
+					paritySkills = append(paritySkills, ADKParitySkill{
+						ID: skill.ID, Name: skill.Name, Version: skill.Version,
+					})
+				}
+				if err := tracker.ReplaceActiveSkills(paritySkills); err != nil {
+					return nil, fmt.Errorf("record eino adk parity skills: %w", err)
+				}
+			}
 			emitSkillsLoadedRunEvent(
 				ctx,
 				options.EventSink,
@@ -497,12 +526,19 @@ func defaultADKMiddlewareBuilder(
 	case ADKMiddlewareToolSearch:
 		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
 			if len(input.DynamicTools) == 0 {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			return toolsearch.New(ctx, &toolsearch.Config{
 				DynamicTools:       input.DynamicTools,
 				UseModelToolSearch: input.ModelCapabilities.NativeToolSearch,
 			})
+		}
+	case ADKMiddlewareParityState:
+		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
+			if adkParityStateTrackerFromContext(ctx) == nil {
+				return nil, errADKMiddlewareNotApplicable
+			}
+			return NewADKParityStateMiddleware(ctx, input.DynamicTools)
 		}
 	case ADKMiddlewarePatchTools:
 		return func(ctx context.Context, input ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
@@ -534,13 +570,33 @@ func defaultADKMiddlewareBuilder(
 		) (adk.ChatModelAgentMiddleware, error) {
 			return NewADKSafetyFinishMiddleware(input.Run, options.EventSink), nil
 		}
+	case ADKMiddlewareSubagentLimit:
+		return func(
+			_ context.Context,
+			input ADKMiddlewareBuildInput,
+		) (adk.ChatModelAgentMiddleware, error) {
+			if !input.RuntimeConfig.SubagentCapabilityEnabled() ||
+				len(input.SubagentToolNames) == 0 {
+				return nil, errADKMiddlewareNotApplicable
+			}
+			limit := input.RuntimeConfig.MaxConcurrentSubagents
+			if limit == 0 {
+				limit = defaultDeerFlowMaxConcurrentSubagents
+			}
+			return NewADKSubagentLimitMiddleware(
+				input.Run,
+				input.SubagentToolNames,
+				limit,
+				options.EventSink,
+			), nil
+		}
 	case ADKMiddlewarePlanTask:
 		return func(
 			ctx context.Context,
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if input.PlanBackend == nil {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			planMiddleware, err := plantask.New(ctx, &plantask.Config{
 				Backend: input.PlanBackend,
@@ -595,7 +651,7 @@ func defaultADKMiddlewareBuilder(
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if options.TranscriptStore == nil {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			return NewADKTranscriptMiddleware(NewADKTranscriptHooks(
 				input.Run,
@@ -610,7 +666,7 @@ func defaultADKMiddlewareBuilder(
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
 			if input.OffloadBackend == nil {
-				return newReservedADKMiddleware(name), nil
+				return nil, errADKMiddlewareNotApplicable
 			}
 			readTool, err := newADKReadOffloadTool(input.OffloadBackend)
 			if err != nil {
@@ -637,26 +693,20 @@ func defaultADKMiddlewareBuilder(
 			_ context.Context,
 			input ADKMiddlewareBuildInput,
 		) (adk.ChatModelAgentMiddleware, error) {
-			return NewADKProviderCapabilityMiddleware(
+			middleware, err := NewADKProviderCapabilityMiddleware(
 				input.Run,
 				input.ModelCapabilities,
+				input.RuntimeConfig,
 			)
+			if err != nil {
+				return nil, err
+			}
+			middleware.eventSink = options.EventSink
+			return middleware, nil
 		}
 	default:
 		return func(context.Context, ADKMiddlewareBuildInput) (adk.ChatModelAgentMiddleware, error) {
-			return newReservedADKMiddleware(name), nil
+			return nil, fmt.Errorf("unsupported eino adk middleware: %s", name)
 		}
-	}
-}
-
-type reservedADKMiddleware struct {
-	*adk.BaseChatModelAgentMiddleware
-	name ADKMiddlewareName
-}
-
-func newReservedADKMiddleware(name ADKMiddlewareName) *reservedADKMiddleware {
-	return &reservedADKMiddleware{
-		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		name:                         name,
 	}
 }

@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/coze-dev/coze-studio/backend/internal/deerflowparity"
 	"github.com/stretchr/testify/require"
 )
 
@@ -175,30 +177,101 @@ func TestADKParityCancellationTerminal(t *testing.T) {
 	)
 	legacy := observeRuntimeContract(t, legacyExecutor, legacySink, nil)
 
-	currentSink := &recordingRunEventSink{}
-	currentExecutor := NewADKExecutor(
-		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
-			return &scriptedADKAgent{
-				run: func(context.Context) []*adk.AgentEvent {
-					return []*adk.AgentEvent{{
-						AgentName: "lead",
-						Err: &adk.CancelError{
-							Info: &adk.AgentCancelInfo{Mode: adk.CancelAfterChatModel},
-						},
-					}}
-				},
-			}, nil
-		}),
-		currentSink,
-		func(*RunSummary) (adk.CheckPointStore, error) {
-			return newMemoryADKCheckpointStore(), nil
-		},
-		nil,
-	)
-	current := observeRuntimeContract(t, currentExecutor, currentSink, nil)
+	current, _ := runADKCancellationContract(t)
 
 	require.Equal(t, runtimeContractCanceled, legacy.Terminal)
 	require.Equal(t, legacy.Terminal, current.Terminal)
+}
+
+func TestADKSemanticCoreAcceptanceModeProjection(t *testing.T) {
+	suite, err := deerflowparity.LoadCases()
+	require.NoError(t, err)
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+
+	for _, testCase := range suite.Cases {
+		t.Run(testCase.ID, func(t *testing.T) {
+			input := deerflowparity.BuildRunInput(testCase)
+			rawContext, marshalErr := json.Marshal(input.Context)
+			require.NoError(t, marshalErr)
+
+			_, config, normalizeErr := normalizeNewDeerFlowRunConfig("{}", policy, string(rawContext))
+			require.NoError(t, normalizeErr)
+			require.Equal(t, RuntimeModeEinoADK, config.Runtime)
+			require.Equal(t, DeerFlowMode(testCase.Mode), config.Mode)
+			require.Equal(t, input.Context["thinking_enabled"], config.ThinkingEnabled)
+			require.Equal(t, input.Context["is_plan_mode"], config.IsPlanMode)
+			require.Equal(t, input.Context["subagent_enabled"], config.SubagentEnabled)
+			expectedEffort, _ := input.Context["reasoning_effort"].(string)
+			require.Equal(t, expectedEffort, config.ReasoningEffort)
+			if config.SubagentEnabled {
+				require.Equal(t, defaultDeerFlowMaxConcurrentSubagents, config.MaxConcurrentSubagents)
+			}
+		})
+	}
+}
+
+func TestADKSemanticCoreAcceptanceTodoStateSurvivesReload(t *testing.T) {
+	testCase := semanticCoreContractCase(t, "core.pro.todo")
+	require.True(t, semanticCaseHasAction(testCase, deerflowparity.ActionReloadState))
+	require.True(t, testCase.Expect.Todo.Required)
+	require.True(t, testCase.Expect.Todo.AllCompleted)
+
+	initial, err := NewADKParityStateTracker(contractRun(20), nil)
+	require.NoError(t, err)
+	require.NoError(t, initial.ReplaceTodos([]ADKParityTodo{
+		{ID: "one", Title: "first", Status: "completed"},
+		{ID: "two", Title: "second", Status: "completed"},
+		{ID: "three", Title: "third", Status: "completed"},
+	}))
+	persisted, err := json.Marshal(initial.Snapshot())
+	require.NoError(t, err)
+	var seed ADKParityState
+	require.NoError(t, json.Unmarshal(persisted, &seed))
+
+	reloaded, err := NewADKParityStateTracker(contractRun(21), &seed)
+	require.NoError(t, err)
+	snapshot := reloaded.Snapshot()
+	require.Equal(t, int64(21), snapshot.LastRunID)
+	require.Len(t, snapshot.Todos, 3)
+	for _, todo := range snapshot.Todos {
+		require.Equal(t, "completed", todo.Status)
+	}
+}
+
+func TestADKSemanticCoreAcceptanceLifecycleContracts(t *testing.T) {
+	for _, caseID := range []string{"core.flash.direct", "core.thinking.direct"} {
+		testCase := semanticCoreContractCase(t, caseID)
+		observation := runRuntimeContract(t, RuntimeModeEinoADK, &contractChatModel{
+			message: contractAssistantMessage("contract answer"),
+		})
+		families := []string{"run.started"}
+		for _, eventType := range observation.SemanticEvents {
+			if eventType == "message.completed" {
+				families = append(families, "assistant.completed")
+			}
+		}
+		if observation.TotalTokens > 0 {
+			families = append(families, "token.usage")
+		}
+		if observation.Terminal == runtimeContractSucceeded {
+			families = append(families, "run.completed")
+		}
+		requireSemanticEventOrder(t, testCase, families)
+	}
+
+	clarifyCase := semanticCoreContractCase(t, "core.clarify.followup")
+	require.True(t, clarifyCase.Expect.Clarification.Required)
+	require.True(t, clarifyCase.Expect.Clarification.FollowUpRequired)
+	require.True(t, semanticCaseHasAction(clarifyCase, deerflowparity.ActionFollowUp))
+
+	cancelCase := semanticCoreContractCase(t, "core.cancel")
+	require.True(t, cancelCase.Expect.NoSuccessAfterCancel)
+	canceled, events := runADKCancellationContract(t)
+	require.Equal(t, runtimeContractCanceled, canceled.Terminal)
+	for _, event := range events {
+		require.NotEqual(t, "message.completed", event.EventType)
+		require.NotEqual(t, "step.completed", event.EventType)
+	}
 }
 
 func TestADKParityClarificationInterruptAndResume(t *testing.T) {
@@ -286,6 +359,80 @@ func runRuntimeContract(
 	}
 
 	return observeRuntimeContract(t, executor, eventSink, usageCollector)
+}
+
+func runADKCancellationContract(t *testing.T) (runtimeContractObservation, []RunEvent) {
+	t.Helper()
+
+	eventSink := &recordingRunEventSink{}
+	executor := NewADKExecutor(
+		ADKAgentFactoryFunc(func(context.Context, *RunSummary) (adk.ResumableAgent, error) {
+			return &scriptedADKAgent{
+				run: func(context.Context) []*adk.AgentEvent {
+					return []*adk.AgentEvent{{
+						AgentName: "lead",
+						Err: &adk.CancelError{
+							Info: &adk.AgentCancelInfo{Mode: adk.CancelAfterChatModel},
+						},
+					}}
+				},
+			}, nil
+		}),
+		eventSink,
+		func(*RunSummary) (adk.CheckPointStore, error) {
+			return newMemoryADKCheckpointStore(), nil
+		},
+		nil,
+	)
+
+	observation := observeRuntimeContract(t, executor, eventSink, nil)
+	return observation, append([]RunEvent(nil), eventSink.events...)
+}
+
+func semanticCoreContractCase(t *testing.T, caseID string) deerflowparity.Case {
+	t.Helper()
+
+	suite, err := deerflowparity.LoadCases()
+	require.NoError(t, err)
+	for _, testCase := range suite.Cases {
+		if testCase.ID == caseID {
+			return testCase
+		}
+	}
+	t.Fatalf("semantic core contract case %q is missing", caseID)
+	return deerflowparity.Case{}
+}
+
+func semanticCaseHasAction(testCase deerflowparity.Case, actionType deerflowparity.ActionType) bool {
+	for _, action := range testCase.Actions {
+		if action.Type == actionType {
+			return true
+		}
+	}
+	return false
+}
+
+func requireSemanticEventOrder(t *testing.T, testCase deerflowparity.Case, families []string) {
+	t.Helper()
+
+	for _, required := range testCase.Expect.RequiredEvents {
+		require.Contains(t, families, required, testCase.ID)
+	}
+	for _, pair := range testCase.Expect.EventOrder {
+		require.Len(t, pair, 2)
+		before, after := -1, -1
+		for index, family := range families {
+			if family == pair[0] && before < 0 {
+				before = index
+			}
+			if family == pair[1] && after < 0 {
+				after = index
+			}
+		}
+		require.GreaterOrEqual(t, before, 0, testCase.ID)
+		require.GreaterOrEqual(t, after, 0, testCase.ID)
+		require.Less(t, before, after, testCase.ID)
+	}
 }
 
 func observeRuntimeContract(
@@ -541,10 +688,12 @@ func runADKClarificationContract(t *testing.T) runtimeContractLifecycle {
 
 func contractRun(runID int64) *RunSummary {
 	return &RunSummary{
-		ThreadID: 10,
-		RunID:    runID,
-		Config:   `{"agent_name":"lead"}`,
-		Input:    `{"messages":[{"role":"user","content":"contract input"}]}`,
+		ThreadID:  10,
+		RunID:     runID,
+		SpaceID:   7,
+		CreatorID: 9,
+		Config:    `{"agent_name":"lead"}`,
+		Input:     `{"messages":[{"role":"user","content":"contract input"}]}`,
 	}
 }
 

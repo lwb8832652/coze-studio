@@ -43,9 +43,14 @@ func TestADKUploadedFilesMiddlewareInjectsLatestUserContext(t *testing.T) {
 	raw, err := json.Marshal(input)
 	require.NoError(t, err)
 	middleware := NewADKUploadedFilesMiddleware(&RunSummary{
-		RunID: 20,
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
 		Input: string(raw),
 	})
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	}, nil)
+	require.NoError(t, err)
+	ctx := withADKParityStateTracker(context.Background(), tracker)
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{
 			schema.UserMessage("旧问题"),
@@ -55,7 +60,7 @@ func TestADKUploadedFilesMiddlewareInjectsLatestUserContext(t *testing.T) {
 	}
 
 	_, got, err := middleware.BeforeModelRewriteState(
-		context.Background(),
+		ctx,
 		state,
 		&adk.ModelContext{},
 	)
@@ -73,6 +78,10 @@ func TestADKUploadedFilesMiddlewareInjectsLatestUserContext(t *testing.T) {
 	require.Contains(t, latest.Content, "请总结附件")
 	require.NotContains(t, latest.Content, "agent-runtime/")
 	require.NotContains(t, state.Messages[2].Content, "<uploaded_files>")
+	require.Equal(t, []ADKParityUpload{{
+		FileName: "report.md", VirtualPath: "/mnt/user-data/uploads/report.md",
+		ContentType: "text/markdown", SizeBytes: 128,
+	}}, tracker.Snapshot().Uploads)
 }
 
 func TestADKUploadedFilesMiddlewareSkipsEmptyOrDuplicateContext(t *testing.T) {

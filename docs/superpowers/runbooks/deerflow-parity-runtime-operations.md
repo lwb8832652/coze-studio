@@ -47,7 +47,8 @@ object locations, checkpoint bytes, credentials, or raw provider payloads.
 
 ## Enablement Order
 
-1. Enable the Go-native runtime policy in a non-production environment.
+1. Confirm the Go-native Eino ADK runtime policy in a non-production
+   environment. New task execution has no legacy selector.
 2. Enable the run worker and confirm new tasks move from queued to running and
    then to terminal status.
 3. Enable resume worker only after interruption/resume smoke tests pass.
@@ -66,16 +67,30 @@ object locations, checkpoint bytes, credentials, or raw provider payloads.
 
 ### Runtime And Workers
 
-- `AGENT_THREAD_RUNTIME_DEFAULT=legacy|eino_adk`
-- `AGENT_THREAD_EINO_ADK_ENABLED=true|false`
+- `AGENT_THREAD_RUNTIME_DEFAULT=eino_adk` (optional; default is `eino_adk`)
+- `AGENT_THREAD_EINO_ADK_ENABLED=true` (optional; default is `true`)
 - `AGENT_THREAD_WORKER_ENABLED=true|false`
 - `AGENT_THREAD_WORKER_ID`
 - `AGENT_THREAD_WORKER_BATCH_SIZE`
 - `AGENT_THREAD_WORKER_INTERVAL_MS`
+- `AGENT_THREAD_WORKER_LEASE_TTL_MS`
+- `AGENT_THREAD_WORKER_HEARTBEAT_INTERVAL_MS`
 - `AGENT_THREAD_RESUME_WORKER_ENABLED=true|false`
 - `AGENT_THREAD_RESUME_WORKER_ID`
 - `AGENT_THREAD_RESUME_WORKER_BATCH_SIZE`
 - `AGENT_THREAD_RESUME_WORKER_INTERVAL_MS`
+- `AGENT_THREAD_RESUME_WORKER_LEASE_TTL_MS`
+- `AGENT_THREAD_RESUME_WORKER_HEARTBEAT_INTERVAL_MS`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED=true|false`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_BATCH_SIZE`
+- `AGENT_THREAD_LEASE_RECOVERY_WORKER_INTERVAL_MS`
+
+Run and resume workers default to a 60-second lease with a 20-second
+heartbeat. Keep the heartbeat interval below the lease TTL. Enable the lease
+recovery worker whenever durable workers are enabled; it creates one protected,
+idempotent checkpoint resume run per source execution generation, or terminates
+an expired run with bounded `run_abandoned` metadata when no compatible
+checkpoint exists.
 
 ### Memory
 
@@ -229,15 +244,13 @@ For local browser smoke, use the same prompt in DeerFlow and Coze:
 
 ## Rollback
 
-Runtime rollback should use feature flags before code rollback:
+Runtime rollback must not route new tasks to the historical one-step harness:
 
-1. Stop new Eino ADK selection:
-   - Set `AGENT_THREAD_RUNTIME_DEFAULT=legacy`.
-   - Set `AGENT_THREAD_EINO_ADK_ENABLED=false` only if queued Eino runs should
-     fail closed instead of executing.
-2. Stop workers:
+1. Stop workers to prevent new execution while preserving durable queued state:
    - `AGENT_THREAD_WORKER_ENABLED=false`
    - `AGENT_THREAD_RESUME_WORKER_ENABLED=false`
+2. Redeploy the previously approved application image if an execution-code
+   rollback is required. Do not set `AGENT_THREAD_RUNTIME_DEFAULT=legacy`.
 3. Stop optional async paths:
    - `AGENT_MEMORY_FLUSH_WORKER_ENABLED=false`
    - `AGENT_ARTIFACT_SCAN_WORKER_ENABLED=false`

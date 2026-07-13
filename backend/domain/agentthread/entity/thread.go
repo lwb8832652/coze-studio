@@ -121,31 +121,37 @@ type Thread struct {
 }
 
 type Run struct {
-	ID                int64
-	ThreadID          int64
-	ParentRunID       int64
-	SpaceID           int64
-	CreatorID         int64
-	AssistantID       string
-	RunKind           RunKind
-	Status            RunStatus
-	Command           string
-	Input             string
-	Config            string
-	Context           string
-	Metadata          string
-	StreamMode        string
-	MultitaskStrategy string
-	OnDisconnect      string
-	Durability        string
-	IdempotencyKey    string
-	WorkerID          string
-	ErrorCode         string
-	ErrorMessage      string
-	StartedAt         int64
-	EndedAt           int64
-	CreatedAt         int64
-	UpdatedAt         int64
+	ID                  int64
+	ThreadID            int64
+	ParentRunID         int64
+	SpaceID             int64
+	CreatorID           int64
+	AssistantID         string
+	RunKind             RunKind
+	Status              RunStatus
+	Command             string
+	Input               string
+	Config              string
+	Context             string
+	Metadata            string
+	StreamMode          string
+	MultitaskStrategy   string
+	OnDisconnect        string
+	Durability          string
+	IdempotencyKey      string
+	WorkerID            string
+	LeaseOwner          string
+	LeaseToken          string
+	LeaseExpiresAt      int64
+	HeartbeatAt         int64
+	CancelRequestedAt   int64
+	ExecutionGeneration uint64
+	ErrorCode           string
+	ErrorMessage        string
+	StartedAt           int64
+	EndedAt             int64
+	CreatedAt           int64
+	UpdatedAt           int64
 }
 
 type RunBacklogAggregate struct {

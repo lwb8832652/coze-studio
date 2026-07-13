@@ -58,6 +58,14 @@ func (p *ADKToolPolicyProvider) ResolveToolSet(
 	if err != nil {
 		return ADKToolSet{}, err
 	}
+	staticNames, err := adkToolNameSet(ctx, set.StaticTools)
+	if err != nil {
+		return ADKToolSet{}, err
+	}
+	set.SubagentToolNames = filterADKSubagentToolNames(
+		set.SubagentToolNames,
+		staticNames,
+	)
 	set.DynamicTools, err = filterADKToolsByAllowedNames(
 		ctx,
 		set.DynamicTools,
@@ -68,6 +76,29 @@ func (p *ADKToolPolicyProvider) ResolveToolSet(
 	}
 
 	return set, nil
+}
+
+func filterADKSubagentToolNames(
+	names []string,
+	activeStaticNames map[string]struct{},
+) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, rawName := range names {
+		name := strings.TrimSpace(rawName)
+		if _, ok := activeStaticNames[name]; !ok {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		filtered = append(filtered, name)
+	}
+	return filtered
 }
 
 func (p *ADKToolPolicyProvider) ResolveTools(

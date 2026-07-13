@@ -18,7 +18,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,7 +33,7 @@ import (
 func TestThreadRepositoryCreateAndGet(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	thread := &entity.Thread{
@@ -69,7 +71,7 @@ func TestThreadRepositoryCreateAndGet(t *testing.T) {
 func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
@@ -100,7 +102,7 @@ func TestThreadRepositoryUpdateThreadTitle(t *testing.T) {
 func TestThreadRepositoryUpdateThreadMetadata(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
@@ -204,7 +206,7 @@ func TestThreadRepositoryDeleteThreadRemovesThreadDomainRows(t *testing.T) {
 func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	status := entity.ThreadStatusRunning
@@ -233,10 +235,126 @@ func TestThreadRepositoryListFiltersAndOrders(t *testing.T) {
 	require.Equal(t, int64(1), got[1].ID)
 }
 
+func TestThreadRepositoryProjectsDurableTopLevelRunStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	storedStatuses := map[int64]entity.ThreadStatus{
+		1: entity.ThreadStatusIdle,
+		2: entity.ThreadStatusFailed,
+		3: entity.ThreadStatusCompleted,
+		4: entity.ThreadStatusCanceled,
+		5: entity.ThreadStatusIdle,
+		6: entity.ThreadStatusRunning,
+		7: entity.ThreadStatusCompleted,
+		8: entity.ThreadStatusIdle,
+	}
+	for id, status := range storedStatuses {
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: id, SpaceID: 10, CreatorID: 20, Title: "thread", Status: status,
+			Source: entity.ThreadSourceWeb, UpdatedAt: id,
+		}))
+	}
+
+	runs := []*entity.Run{
+		newRepositoryTestRun(101, 1, entity.RunStatusPending, 10),
+		newRepositoryTestRun(201, 2, entity.RunStatusFailed, 10),
+		newRepositoryTestRun(202, 2, entity.RunStatusSucceeded, 20),
+		newRepositoryTestRun(301, 3, entity.RunStatusFailed, 10),
+		newRepositoryTestRun(401, 4, entity.RunStatusInterrupted, 10),
+		newRepositoryTestRun(501, 5, entity.RunStatusRunning, 10),
+		newRepositoryTestRun(701, 7, entity.RunStatusCanceled, 10),
+		newRepositoryTestRun(801, 8, entity.RunStatusRunning, 10),
+		newRepositoryTestRun(802, 8, entity.RunStatusSucceeded, 20),
+	}
+	runs[5].ParentRunID = 500
+	runs[5].RunKind = entity.RunKindSubagent
+	for _, run := range runs {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	expected := map[int64]entity.ThreadStatus{
+		1: entity.ThreadStatusRunning,
+		2: entity.ThreadStatusCompleted,
+		3: entity.ThreadStatusFailed,
+		4: entity.ThreadStatusIdle,
+		5: entity.ThreadStatusIdle,
+		6: entity.ThreadStatusRunning,
+		7: entity.ThreadStatusCanceled,
+		8: entity.ThreadStatusRunning,
+	}
+	for id, status := range expected {
+		got, getErr := repo.GetThread(context.Background(), id)
+		require.NoError(t, getErr)
+		require.Equal(t, status, got.Status, "thread %d", id)
+	}
+}
+
+func TestThreadRepositoryListFiltersAndPaginatesProjectedStatus(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, thread := range []*entity.Thread{
+		{ID: 1, SpaceID: 10, CreatorID: 20, Title: "active", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 10},
+		{ID: 2, SpaceID: 10, CreatorID: 20, Title: "finished", Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb, UpdatedAt: 20},
+		{ID: 3, SpaceID: 10, CreatorID: 20, Title: "child only", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 30},
+		{ID: 4, SpaceID: 10, CreatorID: 20, Title: "legacy running", Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb, UpdatedAt: 40},
+		{ID: 5, SpaceID: 10, CreatorID: 21, Title: "other user", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 50},
+		{ID: 6, SpaceID: 11, CreatorID: 20, Title: "other space", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 60},
+	} {
+		require.NoError(t, repo.CreateThread(context.Background(), thread))
+	}
+	runs := []*entity.Run{
+		newRepositoryTestRun(101, 1, entity.RunStatusPending, 10),
+		newRepositoryTestRun(201, 2, entity.RunStatusSucceeded, 20),
+		newRepositoryTestRun(301, 3, entity.RunStatusRunning, 30),
+		newRepositoryTestRun(501, 5, entity.RunStatusQueued, 50),
+		newRepositoryTestRun(601, 6, entity.RunStatusRunning, 60),
+	}
+	runs[2].ParentRunID = 300
+	runs[2].RunKind = entity.RunKindSubagent
+	for _, run := range runs {
+		require.NoError(t, repo.CreateRun(context.Background(), run))
+	}
+
+	running := entity.ThreadStatusRunning
+	firstPage, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &running, Page: 1, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, firstPage, 1)
+	require.Equal(t, int64(4), firstPage[0].ID)
+	require.Equal(t, entity.ThreadStatusRunning, firstPage[0].Status)
+
+	secondPage, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &running, Page: 2, PageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, secondPage, 1)
+	require.Equal(t, int64(1), secondPage[0].ID)
+	require.Equal(t, entity.ThreadStatusRunning, secondPage[0].Status)
+
+	completed := entity.ThreadStatusCompleted
+	finished, total, err := repo.ListThreads(context.Background(), ListThreadsRequest{
+		SpaceID: 10, UserID: 20, Status: &completed, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, finished, 1)
+	require.Equal(t, int64(2), finished[0].ID)
+	require.Equal(t, entity.ThreadStatusCompleted, finished[0].Status)
+}
+
 func TestThreadRepositoryUsesStablePaginationOrder(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&threadPO{}))
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
 
 	repo := NewThreadRepository(db)
 	for _, thread := range []*entity.Thread{
@@ -1403,6 +1521,30 @@ func TestThreadRepositoryListRunEventsUsesCursorStableIDOrder(t *testing.T) {
 	require.Equal(t, int64(2), got[1].ID)
 }
 
+func TestThreadRepositoryListRunEventsFiltersAfterCursor(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	for id := int64(1); id <= 5; id++ {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+			ID: id, ThreadID: 10, RunID: 20, EventType: "step.completed",
+			Payload: `{}`, CreatedAt: 100 + id,
+		}))
+	}
+
+	got, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, AfterEventID: 2, Page: 1, PageSize: 2,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(3), got[0].ID)
+	require.Equal(t, int64(4), got[1].ID)
+}
+
 func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -1414,6 +1556,7 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 			ID:              1,
 			ThreadID:        10,
 			RunID:           20,
+			RuntimeType:     "eino_adk",
 			CheckpointNS:    "",
 			ChannelValues:   `{"messages":["old"]}`,
 			ChannelVersions: `{"messages":1}`,
@@ -1425,6 +1568,7 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 			ID:                 2,
 			ThreadID:           10,
 			RunID:              20,
+			RuntimeType:        "langgraph",
 			ParentCheckpointID: 1,
 			CheckpointNS:       "planner",
 			ChannelValues:      `{"messages":["new"],"next":["tools"]}`,
@@ -1463,6 +1607,16 @@ func TestThreadRepositoryCreateListAndGetLatestCheckpoints(t *testing.T) {
 	require.Equal(t, `[{"node":"tools"}]`, got[0].PendingSends)
 	require.Equal(t, `{"source":"runtime","step":2}`, got[0].Metadata)
 	require.Equal(t, int64(1), got[1].ID)
+
+	einoOnly, filteredTotal, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID:    10,
+		RuntimeType: "eino_adk",
+		Limit:       10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), filteredTotal)
+	require.Len(t, einoOnly, 1)
+	require.Equal(t, int64(1), einoOnly[0].ID)
 
 	latest, err := repo.GetLatestCheckpoint(context.Background(), 10)
 	require.NoError(t, err)
@@ -3135,8 +3289,10 @@ func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(3, 10, entity.RunStatusRunning, 99)))
 
 	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    1,
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
 	})
 
 	require.NoError(t, err)
@@ -3144,12 +3300,1370 @@ func TestThreadRepositoryClaimPendingRunsMarksOldestRunsRunning(t *testing.T) {
 	require.Equal(t, int64(1), claimed[0].ID)
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "worker-a", claimed[0].WorkerID)
-	require.NotZero(t, claimed[0].StartedAt)
+	require.Equal(t, "worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, int64(6_000), claimed[0].LeaseExpiresAt)
+	require.Equal(t, int64(1_000), claimed[0].HeartbeatAt)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
+	require.Equal(t, int64(1_000), claimed[0].StartedAt)
 	got, err := repo.GetRun(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, entity.RunStatusRunning, got.Status)
 	require.Equal(t, "worker-a", got.WorkerID)
-	require.NotZero(t, got.StartedAt)
+	require.Equal(t, claimed[0].LeaseToken, got.LeaseToken)
+	require.Equal(t, int64(6_000), got.LeaseExpiresAt)
+	require.Equal(t, uint64(1), got.ExecutionGeneration)
+	require.Equal(t, int64(1_000), got.StartedAt)
+}
+
+func TestThreadRepositoryRunLeaseAtomicClaimPreventsDuplicateOwnership(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+
+	first, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	second, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-b",
+		Limit:          1,
+		Now:            1_001,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, first, 1)
+	require.Empty(t, second)
+	require.Equal(t, "worker-a", first[0].LeaseOwner)
+	require.NotEmpty(t, first[0].LeaseToken)
+}
+
+func TestThreadRepositoryRunLeaseHeartbeatAndExpiration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 1_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	lease := claimed[0]
+
+	renewed, err := repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 1_500,
+		LeaseTTLMillis:      2_000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1_500), renewed.HeartbeatAt)
+	require.Equal(t, int64(3_500), renewed.LeaseExpiresAt)
+
+	_, err = repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          "wrong-token",
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 1_600,
+		LeaseTTLMillis:      2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	expired, err := repo.ListExpiredRunLeases(context.Background(), ListExpiredRunLeasesRequest{
+		Now:   3_600,
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	require.Equal(t, lease.ID, expired[0].ID)
+
+	_, err = repo.RenewRunLease(context.Background(), RenewRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 3_600,
+		LeaseTTLMillis:      2_000,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+}
+
+func TestThreadRepositoryReconcileExpiredRunLeaseUsesStaleFenceAndClearsLease(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 1_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	lease := claimed[0]
+	terminalEvent := &entity.RunEvent{
+		ID: 10, ThreadID: 10, RunID: lease.ID, EventType: "run.interrupted",
+		Payload:   `{"status":"interrupted","error_code":"run_recovered"}`,
+		CreatedAt: lease.LeaseExpiresAt,
+	}
+
+	_, err = repo.ReconcileExpiredRunLease(context.Background(), ReconcileExpiredRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration + 1,
+		ToStatus:            entity.RunStatusInterrupted,
+		Now:                 lease.LeaseExpiresAt,
+		ErrorCode:           "run_recovered",
+		ErrorMessage:        "execution recovered from a durable checkpoint",
+		Event:               terminalEvent,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	reconciled, err := repo.ReconcileExpiredRunLease(context.Background(), ReconcileExpiredRunLeaseRequest{
+		RunID:               lease.ID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		ToStatus:            entity.RunStatusInterrupted,
+		Now:                 lease.LeaseExpiresAt,
+		ErrorCode:           "run_recovered",
+		ErrorMessage:        "execution recovered from a durable checkpoint",
+		Event:               terminalEvent,
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, reconciled.Status)
+	require.Equal(t, "run_recovered", reconciled.ErrorCode)
+	require.Equal(t, "execution recovered from a durable checkpoint", reconciled.ErrorMessage)
+	require.Empty(t, reconciled.WorkerID)
+	require.Empty(t, reconciled.LeaseOwner)
+	require.Empty(t, reconciled.LeaseToken)
+	require.Zero(t, reconciled.LeaseExpiresAt)
+	require.Zero(t, reconciled.HeartbeatAt)
+	require.Equal(t, lease.ExecutionGeneration, reconciled.ExecutionGeneration)
+	require.Equal(t, lease.LeaseExpiresAt, reconciled.EndedAt)
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: lease.ID, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "run.interrupted", events[0].EventType)
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 lease.LeaseExpiresAt + 1,
+	})
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryRequestRunCancellationInvalidatesGenerationAndWritesOneEvent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	result, err := repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 1,
+		Now:   2_000,
+		Event: &entity.RunEvent{
+			ID: 900, ThreadID: 10, RunID: 1, EventType: "run.canceled",
+			Payload: `{"status":"canceled"}`, CreatedAt: 2_000,
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, entity.RunStatusRunning, result.PreviousStatus)
+	require.Equal(t, entity.RunStatusCanceled, result.Run.Status)
+	require.Equal(t, lease.ExecutionGeneration+1, result.Run.ExecutionGeneration)
+	require.Equal(t, int64(2_000), result.Run.CancelRequestedAt)
+	require.Equal(t, int64(2_000), result.Run.EndedAt)
+	require.Empty(t, result.Run.LeaseOwner)
+	require.Empty(t, result.Run.LeaseToken)
+
+	duplicate, err := repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 1,
+		Now:   2_100,
+		Event: &entity.RunEvent{
+			ID: 901, ThreadID: 10, RunID: 1, EventType: "run.canceled",
+			Payload: `{"status":"canceled"}`, CreatedAt: 2_100,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, duplicate.Changed)
+	require.Equal(t, result.Run.ExecutionGeneration, duplicate.Run.ExecutionGeneration)
+	require.Equal(t, int64(2_000), duplicate.Run.CancelRequestedAt)
+
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{RunID: 1, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, events, 1)
+	require.Equal(t, "run.canceled", events[0].EventType)
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusSucceeded,
+		WorkerID: lease.WorkerID, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_001,
+	})
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryRequestRunCancellationCancelsPendingRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+
+	result, err := repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 1,
+		Now:   2_000,
+		Event: &entity.RunEvent{
+			ID: 900, ThreadID: 10, RunID: 1, EventType: "run.canceled",
+			Payload: `{"status":"canceled"}`, CreatedAt: 2_000,
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, entity.RunStatusPending, result.PreviousStatus)
+	require.Equal(t, entity.RunStatusCanceled, result.Run.Status)
+	require.Equal(t, uint64(1), result.Run.ExecutionGeneration)
+	require.Equal(t, int64(2_000), result.Run.CancelRequestedAt)
+	require.Empty(t, result.Run.LeaseOwner)
+	require.Empty(t, result.Run.LeaseToken)
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{RunID: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "run.canceled", events[0].EventType)
+}
+
+func TestThreadRepositoryRequestRunCancellationRejectsMismatchedEventThread(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+
+	_, err = repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+		RunID: 1,
+		Now:   2_000,
+		Event: &entity.RunEvent{
+			ID: 900, ThreadID: 11, RunID: 1, EventType: "run.canceled",
+			Payload: `{"status":"canceled"}`, CreatedAt: 2_000,
+		},
+	})
+
+	require.ErrorContains(t, err, "does not belong to run thread")
+	run, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusPending, run.Status)
+	_, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{RunID: 1})
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
+func TestThreadRepositoryCreateThreadBundleCommitsAllRecords(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	thread := &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "atomic task",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(20, 10, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	run.IdempotencyKey = "new-task-key"
+	message := &entity.Message{
+		ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+		Content: "start atomically", Metadata: `{}`, CreatedAt: 100,
+	}
+
+	created, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread:  thread,
+		Run:     run,
+		Message: message,
+	})
+
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, thread.ID, created.Thread.ID)
+	storedThread, err := repo.GetThread(context.Background(), thread.ID)
+	require.NoError(t, err)
+	require.Equal(t, thread.Title, storedThread.Title)
+	storedRun, err := repo.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Equal(t, run.ThreadID, storedRun.ThreadID)
+	messages, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: thread.ID, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, message.ID, messages[0].ID)
+
+	replayed, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: &entity.Thread{
+			ID: 11, SpaceID: 1, CreatorID: 2, Title: "retry",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{}`, CreatedAt: 101, UpdatedAt: 101, LastMessageAt: 101,
+		},
+		Run: &entity.Run{
+			ID: 21, ThreadID: 11, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			Input: `{}`, Command: `{}`, Config: `{}`, Context: `{}`,
+			Metadata: `{}`, StreamMode: `[]`, IdempotencyKey: "new-task-key",
+		},
+		Message: &entity.Message{
+			ID: 31, ThreadID: 11, RunID: 21, Role: entity.MessageRoleUser,
+			Content: "start atomically", Metadata: `{}`, CreatedAt: 101,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, replayed.Created)
+	require.Equal(t, thread.ID, replayed.Thread.ID)
+	require.Equal(t, run.ID, replayed.Run.ID)
+	require.Equal(t, message.ID, replayed.Message.ID)
+	_, err = repo.GetThread(context.Background(), 11)
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryCreateThreadBundleRollsBackOnMessageFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+		ID: 30, ThreadID: 999, RunID: 999, Role: entity.MessageRoleUser,
+		Content: "existing", Metadata: `{}`, CreatedAt: 90,
+	}))
+	thread := &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "must roll back",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}
+	run := newRepositoryTestRun(20, 10, entity.RunStatusPending, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+
+	_, err = repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: thread,
+		Run:    run,
+		Message: &entity.Message{
+			ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+			Content: "duplicate id", Metadata: `{}`, CreatedAt: 100,
+		},
+	})
+
+	require.Error(t, err)
+	_, err = repo.GetThread(context.Background(), thread.ID)
+	require.Error(t, err)
+	_, err = repo.GetRun(context.Background(), run.ID)
+	require.Error(t, err)
+}
+
+func TestThreadRepositoryCreateRunBundleCommitsAndReplaysAtomically(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "existing thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	run := newRepositoryTestRun(20, 10, entity.RunStatusQueued, 200)
+	run.SpaceID = 1
+	run.CreatorID = 2
+	run.IdempotencyKey = "resume-20"
+	message := &entity.Message{
+		ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+		Content: "resume", Metadata: `{}`, CreatedAt: 200,
+	}
+	event := &entity.RunEvent{
+		ID: 40, ThreadID: 10, RunID: 20,
+		EventType: "human.interaction.resolved", Payload: `{}`, CreatedAt: 200,
+	}
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: run, Message: message, Event: event,
+	})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, run.ID, created.Run.ID)
+	require.Equal(t, message.ID, created.Message.ID)
+	require.Equal(t, event.ID, created.Event.ID)
+
+	replayed, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: &entity.Run{
+			ID: 21, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+			RunKind: entity.RunKindTask, Status: entity.RunStatusQueued,
+			Input: `{}`, Command: `{}`, Config: `{}`, Context: `{}`,
+			Metadata: `{}`, StreamMode: `[]`, IdempotencyKey: "resume-20",
+		},
+		Message: &entity.Message{
+			ID: 31, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser,
+			Content: "resume", Metadata: `{}`, CreatedAt: 201,
+		},
+		Event: &entity.RunEvent{
+			ID: 41, ThreadID: 10, RunID: 21,
+			EventType: "human.interaction.resolved", Payload: `{}`, CreatedAt: 201,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, replayed.Created)
+	require.Equal(t, run.ID, replayed.Run.ID)
+	require.Equal(t, message.ID, replayed.Message.ID)
+	require.Equal(t, event.ID, replayed.Event.ID)
+
+	_, runTotal, err := repo.ListRuns(context.Background(), ListRunsRequest{
+		ThreadID: 10, IncludeChildRuns: true, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), runTotal)
+	_, messageTotal, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), messageTotal)
+	_, eventTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 20, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), eventTotal)
+}
+
+func TestThreadRepositoryCreateRunBundleRollsBackOnEventFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "existing thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 40, ThreadID: 999, RunID: 999, EventType: "existing",
+		Payload: `{}`, CreatedAt: 100,
+	}))
+	run := newRepositoryTestRun(20, 10, entity.RunStatusQueued, 200)
+	run.SpaceID = 1
+	run.CreatorID = 2
+
+	_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: run,
+		Message: &entity.Message{
+			ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser,
+			Content: "must roll back", Metadata: `{}`, CreatedAt: 200,
+		},
+		Event: &entity.RunEvent{
+			ID: 40, ThreadID: 10, RunID: 20, EventType: "retry.requested",
+			Payload: `{}`, CreatedAt: 200,
+		},
+	})
+
+	require.Error(t, err)
+	_, err = repo.GetRun(context.Background(), run.ID)
+	require.Error(t, err)
+	_, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{
+		ThreadID: 10, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
+func TestThreadRepositoryCreateRunBundleRejectsActiveTopLevelRuns(t *testing.T) {
+	for _, status := range []entity.RunStatus{
+		entity.RunStatusPending,
+		entity.RunStatusQueued,
+		entity.RunStatusRunning,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+
+			repo := NewThreadRepository(db)
+			require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+				Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+				Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+			}))
+			active := newRepositoryTestRun(20, 10, status, 100)
+			active.RunKind = entity.RunKindTask
+			require.NoError(t, repo.CreateRun(context.Background(), active))
+
+			candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+			candidate.RunKind = entity.RunKindTask
+			candidate.MultitaskStrategy = "reject"
+			_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+				Run: candidate,
+				Message: &entity.Message{
+					ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser,
+					Content: "second", Metadata: `{}`, CreatedAt: 200,
+				},
+			})
+
+			require.ErrorIs(t, err, ErrActiveRunExists)
+			_, err = repo.GetRun(context.Background(), candidate.ID)
+			require.Error(t, err)
+			persisted, err := repo.GetRun(context.Background(), active.ID)
+			require.NoError(t, err)
+			require.Equal(t, status, persisted.Status)
+		})
+	}
+}
+
+func TestThreadRepositoryCreateRunBundleAdmissionIsThreadScoped(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	for _, threadID := range []int64{10, 11} {
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: threadID, SpaceID: 1, CreatorID: 2, Title: "thread",
+			Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+			Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+		}))
+	}
+	active := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+	active.RunKind = entity.RunKindTask
+	require.NoError(t, repo.CreateRun(context.Background(), active))
+	candidate := newRepositoryTestRun(21, 11, entity.RunStatusPending, 200)
+	candidate.RunKind = entity.RunKindTask
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{Run: candidate})
+
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, int64(11), created.Run.ThreadID)
+}
+
+func TestThreadRepositoryCreateRunBundleIgnoresActiveChildSubagent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	child := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+	child.RunKind = entity.RunKindSubagent
+	child.ParentRunID = 19
+	require.NoError(t, repo.CreateRun(context.Background(), child))
+	candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+	candidate.RunKind = entity.RunKindTask
+	candidate.MultitaskStrategy = "reject"
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{Run: candidate})
+
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Empty(t, created.InterruptedRuns)
+}
+
+func TestThreadRepositoryCreateRunBundleInterruptsActiveRunAfterNewAggregatePersists(t *testing.T) {
+	for _, strategy := range []string{"interrupt", "rollback"} {
+		t.Run(strategy, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+			repo := NewThreadRepository(db)
+			require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+				Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+				Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+			}))
+			active := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+			active.RunKind = entity.RunKindTask
+			active.WorkerID = "worker-a"
+			active.LeaseOwner = "worker-a"
+			active.LeaseToken = "lease-a"
+			active.LeaseExpiresAt = 10_000
+			active.ExecutionGeneration = 3
+			require.NoError(t, repo.CreateRun(context.Background(), active))
+			candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+			candidate.RunKind = entity.RunKindTask
+			candidate.MultitaskStrategy = strategy
+
+			created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+				Run: candidate,
+				AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
+					require.Equal(t, 1, count)
+					return []int64{40}, nil
+				},
+				Message: &entity.Message{
+					ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser,
+					Content: "replace", Metadata: `{}`, CreatedAt: 200,
+				},
+			})
+
+			require.NoError(t, err)
+			require.True(t, created.Created)
+			require.Len(t, created.InterruptedRuns, 1)
+			require.Len(t, created.InterruptedEvents, 1)
+			require.Equal(t, active.ID, created.InterruptedRuns[0].ID)
+			require.Equal(t, active.ID, created.InterruptedEvents[0].RunID)
+			require.Equal(t, "run.interrupted", created.InterruptedEvents[0].EventType)
+			persisted, err := repo.GetRun(context.Background(), active.ID)
+			require.NoError(t, err)
+			require.Equal(t, entity.RunStatusInterrupted, persisted.Status)
+			require.Equal(t, uint64(4), persisted.ExecutionGeneration)
+			require.Empty(t, persisted.LeaseOwner)
+			require.Empty(t, persisted.LeaseToken)
+			require.Equal(t, "multitask_"+strategy, persisted.ErrorCode)
+			require.NotZero(t, persisted.CancelRequestedAt)
+			require.NotZero(t, persisted.EndedAt)
+		})
+	}
+}
+
+func TestThreadRepositoryCreateRunBundleLeavesActiveRunUntouchedWhenNewAggregateFails(t *testing.T) {
+	for _, strategy := range []string{"interrupt", "rollback"} {
+		t.Run(strategy, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+			repo := NewThreadRepository(db)
+			require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+				Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+				Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+			}))
+			active := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+			active.RunKind = entity.RunKindTask
+			active.WorkerID = "worker-a"
+			active.LeaseOwner = "worker-a"
+			active.LeaseToken = "lease-a"
+			active.LeaseExpiresAt = 10_000
+			active.ExecutionGeneration = 3
+			require.NoError(t, repo.CreateRun(context.Background(), active))
+			require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+				ID: 40, ThreadID: 999, RunID: 999, EventType: "existing",
+				Payload: `{}`, CreatedAt: 100,
+			}))
+			candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+			candidate.RunKind = entity.RunKindTask
+			candidate.MultitaskStrategy = strategy
+
+			_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+				Run: candidate,
+				Message: &entity.Message{
+					ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser,
+					Content: "replace", Metadata: `{}`, CreatedAt: 200,
+				},
+				Event: &entity.RunEvent{
+					ID: 40, ThreadID: 10, RunID: 21, EventType: "run.created",
+					Payload: `{}`, CreatedAt: 200,
+				},
+			})
+
+			require.Error(t, err)
+			_, err = repo.GetRun(context.Background(), candidate.ID)
+			require.Error(t, err)
+			persisted, err := repo.GetRun(context.Background(), active.ID)
+			require.NoError(t, err)
+			require.Equal(t, entity.RunStatusRunning, persisted.Status)
+			require.Equal(t, uint64(3), persisted.ExecutionGeneration)
+			require.Equal(t, "worker-a", persisted.LeaseOwner)
+			require.Equal(t, "lease-a", persisted.LeaseToken)
+			require.Zero(t, persisted.CancelRequestedAt)
+			require.Zero(t, persisted.EndedAt)
+		})
+	}
+}
+
+func TestThreadRepositoryCreateRunBundleRollsBackWhenInterruptedEventCannotPersist(t *testing.T) {
+	tests := []struct {
+		name      string
+		allocator func(int) ([]int64, error)
+		seedEvent bool
+	}{
+		{
+			name: "allocator failure",
+			allocator: func(int) ([]int64, error) {
+				return nil, errors.New("id generator unavailable")
+			},
+		},
+		{
+			name:      "terminal event conflict",
+			allocator: func(int) ([]int64, error) { return []int64{40}, nil },
+			seedEvent: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &runEventPO{}))
+			repo := NewThreadRepository(db)
+			require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+				Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+				Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+			}))
+			active := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+			active.RunKind = entity.RunKindTask
+			active.WorkerID = "worker-a"
+			active.ExecutionGeneration = 3
+			require.NoError(t, repo.CreateRun(context.Background(), active))
+			if tt.seedEvent {
+				require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+					ID: 40, ThreadID: 999, RunID: 999, EventType: "existing",
+					Payload: `{}`, CreatedAt: 100,
+				}))
+			}
+			candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+			candidate.RunKind = entity.RunKindTask
+			candidate.MultitaskStrategy = "interrupt"
+
+			_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+				Run: candidate, AllocateInterruptedEventIDs: tt.allocator,
+			})
+
+			require.Error(t, err)
+			_, err = repo.GetRun(context.Background(), candidate.ID)
+			require.Error(t, err)
+			persisted, err := repo.GetRun(context.Background(), active.ID)
+			require.NoError(t, err)
+			require.Equal(t, entity.RunStatusRunning, persisted.Status)
+			require.Equal(t, uint64(3), persisted.ExecutionGeneration)
+			require.Zero(t, persisted.EndedAt)
+		})
+	}
+}
+
+func TestThreadRepositoryCreateRunBundleRollbackRemovesActiveRunFromCandidateInput(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	active := newRepositoryTestRun(20, 10, entity.RunStatusRunning, 100)
+	active.RunKind = entity.RunKindTask
+	require.NoError(t, repo.CreateRun(context.Background(), active))
+	candidate := newRepositoryTestRun(21, 10, entity.RunStatusPending, 200)
+	candidate.RunKind = entity.RunKindTask
+	candidate.MultitaskStrategy = "rollback"
+	candidate.Input = `{"messages":[` +
+		`{"_run_id":19,"role":"user","content":"keep"},` +
+		`{"_run_id":20,"role":"user","content":"roll back"},` +
+		`{"role":"user","content":"current"}` +
+		`]}`
+
+	created, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: candidate,
+		AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
+			require.Equal(t, 1, count)
+			return []int64{40}, nil
+		},
+	})
+
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.JSONEq(t, `{"messages":[`+
+		`{"_run_id":19,"role":"user","content":"keep"},`+
+		`{"role":"user","content":"current"}`+
+		`]}`, created.Run.Input)
+	persisted, err := repo.GetRun(context.Background(), candidate.ID)
+	require.NoError(t, err)
+	require.JSONEq(t, created.Run.Input, persisted.Input)
+}
+
+func TestThreadRepositoryCreateRunBundleConcurrentRejectAdmitsOneRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:agent-run-admission?mode=memory&cache=shared&_busy_timeout=5000"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{}`, CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, id := range []int64{20, 21} {
+		wg.Add(1)
+		go func(runID int64) {
+			defer wg.Done()
+			<-start
+			run := newRepositoryTestRun(runID, 10, entity.RunStatusPending, 200+runID)
+			run.RunKind = entity.RunKindTask
+			run.MultitaskStrategy = "reject"
+			_, createErr := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{Run: run})
+			errs <- createErr
+		}(id)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	conflicts := 0
+	for createErr := range errs {
+		switch {
+		case createErr == nil:
+			successes++
+		case errors.Is(createErr, ErrActiveRunExists):
+			conflicts++
+		default:
+			require.NoError(t, createErr)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, conflicts)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessCommitsMessageTitleAndStatusTogether(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	result, err := repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "final answer", Metadata: `{"source":"eino_adk"}`, CreatedAt: 2_000,
+		},
+		TitleEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1, EventType: "context.thread_title_updated",
+			Payload: `{"thread_title":"generated title"}`, CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 302, ThreadID: 10, RunID: 1, EventType: "run.completed",
+			Payload: `{"status":"succeeded"}`, CreatedAt: 2_000,
+		},
+		ExpectedThreadTitle: "initial title",
+		ThreadTitle:         "generated title",
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+	require.Zero(t, result.Run.CancelRequestedAt)
+	require.Empty(t, result.Run.LeaseToken)
+	require.True(t, result.TitleUpdated)
+	require.Equal(t, "final answer", result.Message.Content)
+	require.Equal(t, "run.completed", result.CompletionEvent.EventType)
+	require.Equal(t, "context.thread_title_updated", result.TitleEvent.EventType)
+
+	messages, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{ThreadID: 10, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "final answer", messages[0].Content)
+	thread, err := repo.GetThread(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, "generated title", thread.Title)
+	events, eventTotal, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 1, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), eventTotal)
+	require.Equal(t, "context.thread_title_updated", events[0].EventType)
+	require.Equal(t, "run.completed", events[1].EventType)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessCommitsTerminalCheckpointTogether(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{},
+	))
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(
+		1, 10, entity.RunStatusPending, 100,
+	)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	result, err := repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "final answer", CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1,
+			EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, ParentCheckpointID: 50,
+			CheckpointNS: "eino.adk", RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues:   `{"envelope_version":2}`,
+			ChannelVersions: `{}`, PendingSends: `[]`, Metadata: `{}`,
+			CreatedAt: 2_000,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.TerminalCheckpoint)
+	require.Equal(t, int64(302), result.TerminalCheckpoint.ID)
+	persisted, err := repo.GetCheckpoint(context.Background(), 302)
+	require.NoError(t, err)
+	require.Equal(t, int64(50), persisted.ParentCheckpointID)
+	require.Equal(t, "coze-run-1", persisted.RuntimeKey)
+
+	var run runPO
+	require.NoError(t, db.Where("id = ?", 1).First(&run).Error)
+	require.Equal(t, string(entity.RunStatusSucceeded), run.Status)
+	var messageCount int64
+	require.NoError(t, db.Model(&messagePO{}).Count(&messageCount).Error)
+	require.Equal(t, int64(1), messageCount)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessRollsBackWhenTerminalCheckpointFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{},
+	))
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(
+		1, 10, entity.RunStatusPending, 100,
+	)))
+	require.NoError(t, repo.CreateCheckpoint(context.Background(), &entity.Checkpoint{
+		ID: 302, ThreadID: 10, RunID: 1, RuntimeType: "eino_adk",
+		RuntimeKey: "existing", ChannelValues: `{}`, ChannelVersions: `{}`,
+		PendingSends: `[]`, Metadata: `{}`, CreatedAt: 500,
+	}))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	_, err = repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "must roll back", CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1,
+			EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, RuntimeType: "eino_adk",
+			RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
+	})
+	require.Error(t, err)
+
+	var run runPO
+	require.NoError(t, db.Where("id = ?", 1).First(&run).Error)
+	require.Equal(t, string(entity.RunStatusRunning), run.Status)
+	var messageCount int64
+	require.NoError(t, db.Model(&messagePO{}).Count(&messageCount).Error)
+	require.Zero(t, messageCount)
+	var completionCount int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&completionCount).Error)
+	require.Zero(t, completionCount)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessPreservesConcurrentlyChangedTitle(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}, &checkpointPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 1, CreatorID: 2, Title: "user edited title",
+		Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+		CreatedAt: 100, UpdatedAt: 150, LastMessageAt: 100,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+
+	result, err := repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+		RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+		Message: &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "final answer", CreatedAt: 2_000,
+		},
+		CompletionEvent: &entity.RunEvent{
+			ID: 301, ThreadID: 10, RunID: 1, EventType: "run.completed",
+			Payload: `{"status":"succeeded"}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpoint: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{"title":"generated title"}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
+		TerminalCheckpointOnTitleConflict: &entity.Checkpoint{
+			ID: 302, ThreadID: 10, RunID: 1, CheckpointNS: "eino.adk",
+			RuntimeType: "eino_adk", RuntimeKey: "coze-run-1", EnvelopeVersion: 2,
+			ChannelValues: `{"title":"user edited title"}`, ChannelVersions: `{}`,
+			PendingSends: `[]`, Metadata: `{}`, CreatedAt: 2_000,
+		},
+		ExpectedThreadTitle: "initial title",
+		ThreadTitle:         "generated title",
+	})
+
+	require.NoError(t, err)
+	require.False(t, result.TitleUpdated)
+	require.Equal(t, entity.RunStatusSucceeded, result.Run.Status)
+	thread, err := repo.GetThread(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, "user edited title", thread.Title)
+	require.NotNil(t, result.TerminalCheckpoint)
+	require.JSONEq(t, `{"title":"user edited title"}`, result.TerminalCheckpoint.ChannelValues)
+	persistedCheckpoint, err := repo.GetCheckpoint(context.Background(), 302)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"title":"user edited title"}`, persistedCheckpoint.ChannelValues)
+	_, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{ThreadID: 10})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+}
+
+func TestThreadRepositoryFinalizeRunSuccessRejectsCancelAndRollsBackWriteFailure(t *testing.T) {
+	t.Run("cancel wins", func(t *testing.T) {
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}, &runEventPO{}))
+		repo := NewThreadRepository(db)
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+			Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+			CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+		}))
+		require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+		claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+			WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+		})
+		require.NoError(t, err)
+		lease := claimed[0]
+		_, err = repo.RequestRunCancellation(context.Background(), RequestRunCancellationRequest{
+			RunID: 1, Now: 2_000,
+			Event: &entity.RunEvent{ID: 900, ThreadID: 10, RunID: 1, EventType: "run.canceled", Payload: `{}`, CreatedAt: 2_000},
+		})
+		require.NoError(t, err)
+
+		_, err = repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+			RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+			ExecutionGeneration: lease.ExecutionGeneration, Now: 2_001,
+			Message:             &entity.Message{ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant, Content: "late answer", CreatedAt: 2_001},
+			CompletionEvent:     &entity.RunEvent{ID: 901, ThreadID: 10, RunID: 1, EventType: "run.completed", Payload: `{}`, CreatedAt: 2_001},
+			ExpectedThreadTitle: "initial title", ThreadTitle: "late title",
+		})
+		require.ErrorIs(t, err, ErrRunCanceled)
+		_, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{ThreadID: 10})
+		require.NoError(t, err)
+		require.Zero(t, total)
+		thread, err := repo.GetThread(context.Background(), 10)
+		require.NoError(t, err)
+		require.Equal(t, "initial title", thread.Title)
+	})
+
+	t.Run("message write failure rolls back run and title", func(t *testing.T) {
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+		require.NoError(t, err)
+		require.NoError(t, db.AutoMigrate(&threadPO{}, &runPO{}, &messagePO{}))
+		repo := NewThreadRepository(db)
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: 10, SpaceID: 1, CreatorID: 2, Title: "initial title",
+			Status: entity.ThreadStatusRunning, Source: entity.ThreadSourceWeb,
+			CreatedAt: 100, UpdatedAt: 100, LastMessageAt: 100,
+		}))
+		require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+		claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+			WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+		})
+		require.NoError(t, err)
+		lease := claimed[0]
+		require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+			ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant,
+			Content: "existing", CreatedAt: 1_500,
+		}))
+
+		_, err = repo.FinalizeRunSuccess(context.Background(), FinalizeRunSuccessRequest{
+			RunID: 1, LeaseOwner: lease.LeaseOwner, LeaseToken: lease.LeaseToken,
+			ExecutionGeneration: lease.ExecutionGeneration, Now: 2_000,
+			Message:             &entity.Message{ID: 300, ThreadID: 10, RunID: 1, Role: entity.MessageRoleAssistant, Content: "duplicate", CreatedAt: 2_000},
+			CompletionEvent:     &entity.RunEvent{ID: 301, ThreadID: 10, RunID: 1, EventType: "run.completed", Payload: `{}`, CreatedAt: 2_000},
+			ExpectedThreadTitle: "initial title", ThreadTitle: "generated title",
+		})
+		require.Error(t, err)
+		run, err := repo.GetRun(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, entity.RunStatusRunning, run.Status)
+		require.Equal(t, lease.LeaseToken, run.LeaseToken)
+		thread, err := repo.GetThread(context.Background(), 10)
+		require.NoError(t, err)
+		require.Equal(t, "initial title", thread.Title)
+	})
+}
+
+func TestThreadRepositoryRunLeaseFencesTerminalTransitionAndClearsLease(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	lease := claimed[0]
+	terminalEvent := &entity.RunEvent{
+		ID: 10, ThreadID: 10, RunID: lease.ID, EventType: "run.completed",
+		Payload: `{"status":"succeeded"}`, CreatedAt: 2_000,
+	}
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          "wrong-token",
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 2_000,
+		Event:               terminalEvent,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 lease.LeaseExpiresAt,
+		Event:               terminalEvent,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration + 1,
+		Now:                 2_000,
+		Event:               terminalEvent,
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrRunLeaseLost))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID:               lease.ID,
+		From:                entity.RunStatusRunning,
+		To:                  entity.RunStatusSucceeded,
+		WorkerID:            lease.WorkerID,
+		LeaseOwner:          lease.LeaseOwner,
+		LeaseToken:          lease.LeaseToken,
+		ExecutionGeneration: lease.ExecutionGeneration,
+		Now:                 2_000,
+		Event:               terminalEvent,
+	})
+	require.NoError(t, err)
+
+	got, err := repo.GetRun(context.Background(), lease.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusSucceeded, got.Status)
+	require.Empty(t, got.WorkerID)
+	require.Empty(t, got.LeaseOwner)
+	require.Empty(t, got.LeaseToken)
+	require.Zero(t, got.LeaseExpiresAt)
+	require.Zero(t, got.HeartbeatAt)
+	require.Zero(t, got.CancelRequestedAt)
+	require.Equal(t, lease.ExecutionGeneration, got.ExecutionGeneration)
+	require.Equal(t, int64(2_000), got.EndedAt)
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: lease.ID, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, "run.completed", events[0].EventType)
+}
+
+func TestThreadRepositoryRunLeaseReleaseAllowsNewGenerationClaim(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	first, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-a",
+		Limit:          1,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	released, err := repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               first[0].ID,
+		LeaseOwner:          first[0].LeaseOwner,
+		LeaseToken:          first[0].LeaseToken,
+		ExecutionGeneration: first[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusPending,
+		Now:                 1_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusPending, released.Status)
+	require.Empty(t, released.LeaseToken)
+
+	second, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID:       "worker-b",
+		Limit:          1,
+		Now:            2_000,
+		LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	require.Equal(t, "worker-b", second[0].LeaseOwner)
+	require.NotEqual(t, first[0].LeaseToken, second[0].LeaseToken)
+	require.Equal(t, uint64(2), second[0].ExecutionGeneration)
+}
+
+func TestThreadRepositoryRunLeaseReleaseToQueuedRequiresProtectedResumeMetadata(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	require.NoError(t, repo.CreateRun(context.Background(), newRepositoryTestRun(1, 10, entity.RunStatusPending, 100)))
+	normalClaim, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 1, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, normalClaim, 1)
+
+	_, err = repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               normalClaim[0].ID,
+		LeaseOwner:          normalClaim[0].LeaseOwner,
+		LeaseToken:          normalClaim[0].LeaseToken,
+		ExecutionGeneration: normalClaim[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusQueued,
+		Now:                 1_500,
+	})
+	require.ErrorIs(t, err, ErrRunLeaseLost)
+
+	protected := newRepositoryTestRun(2, 10, entity.RunStatusQueued, 200)
+	protected.Metadata = `{"checkpoint_resume":{"protected_from_worker_claim":true}}`
+	require.NoError(t, repo.CreateRun(context.Background(), protected))
+	resumeClaim, err := repo.ClaimQueuedResumeRuns(context.Background(), ClaimQueuedResumeRunsRequest{
+		WorkerID: "resume-worker-a", Limit: 1, Now: 2_000, LeaseTTLMillis: 5_000,
+	})
+	require.NoError(t, err)
+	require.Len(t, resumeClaim, 1)
+
+	released, err := repo.ReleaseRunLease(context.Background(), ReleaseRunLeaseRequest{
+		RunID:               resumeClaim[0].ID,
+		LeaseOwner:          resumeClaim[0].LeaseOwner,
+		LeaseToken:          resumeClaim[0].LeaseToken,
+		ExecutionGeneration: resumeClaim[0].ExecutionGeneration,
+		ToStatus:            entity.RunStatusQueued,
+		Now:                 2_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusQueued, released.Status)
 }
 
 func TestThreadRepositoryClaimPendingRunsSkipsQueuedResumeRuns(t *testing.T) {
@@ -3178,6 +4692,39 @@ func TestThreadRepositoryClaimPendingRunsSkipsQueuedResumeRuns(t *testing.T) {
 	require.Empty(t, gotQueued.WorkerID)
 }
 
+func TestThreadRepositoryClaimPendingRunsClaimsOnlyQueuedSubagentRetries(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}))
+
+	repo := NewThreadRepository(db)
+	retry := newRepositoryTestRun(1, 10, entity.RunStatusQueued, 100)
+	retry.Metadata = `{"source":"subagent_retry","subagent_retry":{"schema":"coze.subagent_retry.metadata.v1"}}`
+	resume := newRepositoryTestRun(2, 10, entity.RunStatusQueued, 101)
+	resume.Metadata = `{"checkpoint_resume":{"protected_from_worker_claim":true}}`
+	manual := newRepositoryTestRun(3, 10, entity.RunStatusQueued, 102)
+	manual.Metadata = `{"source":"manual_queue"}`
+	require.NoError(t, repo.CreateRun(context.Background(), retry))
+	require.NoError(t, repo.CreateRun(context.Background(), resume))
+	require.NoError(t, repo.CreateRun(context.Background(), manual))
+
+	claimed, err := repo.ClaimPendingRuns(context.Background(), ClaimPendingRunsRequest{
+		WorkerID: "worker-a", Limit: 10, Now: 1_000, LeaseTTLMillis: 5_000,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, int64(1), claimed[0].ID)
+	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
+	require.Equal(t, "worker-a", claimed[0].LeaseOwner)
+	for _, runID := range []int64{2, 3} {
+		got, getErr := repo.GetRun(context.Background(), runID)
+		require.NoError(t, getErr)
+		require.Equal(t, entity.RunStatusQueued, got.Status)
+		require.Empty(t, got.LeaseOwner)
+	}
+}
+
 func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -3195,8 +4742,10 @@ func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *te
 	require.NoError(t, repo.CreateRun(context.Background(), pendingResume))
 
 	claimed, err := repo.ClaimQueuedResumeRuns(context.Background(), ClaimQueuedResumeRunsRequest{
-		WorkerID: "resume-worker-a",
-		Limit:    10,
+		WorkerID:       "resume-worker-a",
+		Limit:          10,
+		Now:            2_000,
+		LeaseTTLMillis: 6_000,
 	})
 
 	require.NoError(t, err)
@@ -3204,7 +4753,12 @@ func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *te
 	require.Equal(t, int64(1), claimed[0].ID)
 	require.Equal(t, entity.RunStatusRunning, claimed[0].Status)
 	require.Equal(t, "resume-worker-a", claimed[0].WorkerID)
-	require.NotZero(t, claimed[0].StartedAt)
+	require.Equal(t, "resume-worker-a", claimed[0].LeaseOwner)
+	require.NotEmpty(t, claimed[0].LeaseToken)
+	require.Equal(t, int64(8_000), claimed[0].LeaseExpiresAt)
+	require.Equal(t, int64(2_000), claimed[0].HeartbeatAt)
+	require.Equal(t, uint64(1), claimed[0].ExecutionGeneration)
+	require.Equal(t, int64(2_000), claimed[0].StartedAt)
 
 	gotPlain, err := repo.GetRun(context.Background(), 2)
 	require.NoError(t, err)
@@ -3217,10 +4771,91 @@ func TestThreadRepositoryClaimQueuedResumeRunsMarksOldestResumeRunsRunning(t *te
 	require.Empty(t, gotPending.WorkerID)
 }
 
+func TestThreadRepositoryInterruptedTransitionRequiresClaimedDurableEvent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	run.StartedAt = 150
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusInterrupted,
+		WorkerID: "worker-a", EventAlreadyPersisted: true,
+	})
+	require.ErrorContains(t, err, "no durable interrupted event")
+	persisted, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, persisted.Status)
+
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 10, ThreadID: 10, RunID: 1, EventType: "run.interrupted",
+		Payload: `{"status":"interrupted"}`, CreatedAt: 100,
+	}))
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusInterrupted,
+		WorkerID: "worker-a", EventAlreadyPersisted: true,
+	})
+	require.ErrorContains(t, err, "no durable interrupted event")
+	persisted, err = repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, persisted.Status)
+
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 11, ThreadID: 10, RunID: 1, EventType: "run.interrupted",
+		Payload: `{"status":"interrupted"}`, CreatedAt: 200,
+	}))
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusInterrupted,
+		WorkerID: "worker-a", EventAlreadyPersisted: true,
+	})
+	require.NoError(t, err)
+	persisted, err = repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, persisted.Status)
+	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{
+		RunID: 1, Page: 1, PageSize: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Equal(t, "run.interrupted", events[0].EventType)
+}
+
+func TestThreadRepositoryUpdateRunStatusRollsBackWhenTerminalEventWriteFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 10, ThreadID: 999, RunID: 999, EventType: "existing", Payload: `{}`, CreatedAt: 100,
+	}))
+
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusFailed,
+		WorkerID: "worker-a", ErrorCode: "model_error",
+		Event: &entity.RunEvent{
+			ID: 10, ThreadID: 10, RunID: 1, EventType: "run.failed", Payload: `{}`,
+		},
+	})
+
+	require.Error(t, err)
+	persisted, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, persisted.Status)
+	require.Empty(t, persisted.ErrorCode)
+	require.Zero(t, persisted.EndedAt)
+}
+
 func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&runPO{}))
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
 
 	repo := NewThreadRepository(db)
 	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
@@ -3232,6 +4867,9 @@ func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
 		From:     entity.RunStatusRunning,
 		To:       entity.RunStatusSucceeded,
 		WorkerID: "worker-a",
+		Event: &entity.RunEvent{
+			ID: 10, ThreadID: 10, RunID: 1, EventType: "run.completed", Payload: `{}`,
+		},
 	}))
 	got, err := repo.GetRun(context.Background(), 1)
 	require.NoError(t, err)
@@ -3243,6 +4881,9 @@ func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
 		From:     entity.RunStatusRunning,
 		To:       entity.RunStatusFailed,
 		WorkerID: "worker-a",
+		Event: &entity.RunEvent{
+			ID: 11, ThreadID: 10, RunID: 1, EventType: "run.failed", Payload: `{}`,
+		},
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in status")
@@ -3262,7 +4903,7 @@ func newRepositoryTestRun(id, threadID int64, status entity.RunStatus, createdAt
 		Context:           `{}`,
 		Metadata:          `{}`,
 		StreamMode:        `["messages","updates"]`,
-		MultitaskStrategy: "enqueue",
+		MultitaskStrategy: "reject",
 		OnDisconnect:      "continue",
 		Durability:        "async",
 		CreatedAt:         createdAt,

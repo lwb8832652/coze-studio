@@ -84,6 +84,47 @@ type CreateRunRequest struct {
 	IdempotencyKey    string
 }
 
+type CreateMessageSpec struct {
+	Role     entity.MessageRole
+	Content  string
+	Metadata string
+}
+
+type RunEventPayloadBuilder func(runID int64) string
+
+type CreateRunEventSpec struct {
+	EventType      string
+	PayloadBuilder RunEventPayloadBuilder
+}
+
+type CreateThreadRunMessageRequest struct {
+	Thread  CreateThreadRequest
+	Run     CreateRunRequest
+	Message CreateMessageSpec
+}
+
+type CreateThreadRunMessageResult struct {
+	Thread  *entity.Thread
+	Run     *entity.Run
+	Message *entity.Message
+}
+
+type CreateRunBundleRequest struct {
+	Run                   CreateRunRequest
+	Message               *CreateMessageSpec
+	Event                 *CreateRunEventSpec
+	SkipTopLevelAdmission bool
+}
+
+type CreateRunBundleResult struct {
+	Run               *entity.Run
+	Message           *entity.Message
+	Event             *entity.RunEvent
+	InterruptedRuns   []*entity.Run
+	InterruptedEvents []*entity.RunEvent
+	Created           bool
+}
+
 type GetRunRequest struct {
 	RunID int64
 }
@@ -119,9 +160,10 @@ type CreateCheckpointRequest struct {
 }
 
 type ListCheckpointsRequest struct {
-	ThreadID int64
-	RunID    int64
-	Limit    int32
+	ThreadID    int64
+	RunID       int64
+	RuntimeType string
+	Limit       int32
 }
 
 type GetCheckpointRequest struct {
@@ -338,15 +380,18 @@ type GetThreadTokenUsageRequest struct {
 }
 
 type ListRunEventsRequest struct {
-	ThreadID int64
-	RunID    int64
-	Page     int32
-	PageSize int32
+	ThreadID     int64
+	RunID        int64
+	AfterEventID int64
+	Page         int32
+	PageSize     int32
 }
 
 type ClaimPendingRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
 }
 
 type AggregateRunBacklogRequest struct {
@@ -354,17 +399,99 @@ type AggregateRunBacklogRequest struct {
 }
 
 type ClaimQueuedResumeRunsRequest struct {
-	WorkerID string
-	Limit    int32
+	WorkerID       string
+	Limit          int32
+	Now            int64
+	LeaseTTLMillis int64
+}
+
+type RenewRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	Now                 int64
+	LeaseTTLMillis      int64
+}
+
+type ReleaseRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+}
+
+type ListExpiredRunLeasesRequest struct {
+	Now   int64
+	Limit int32
+}
+
+type ReconcileExpiredRunLeaseRequest struct {
+	RunID               int64
+	LeaseOwner          string
+	LeaseToken          string
+	ExecutionGeneration uint64
+	ToStatus            entity.RunStatus
+	Now                 int64
+	ErrorCode           string
+	ErrorMessage        string
+	EventPayload        string
+}
+
+type RequestRunCancellationRequest struct {
+	RunID        int64
+	Now          int64
+	ErrorCode    string
+	ErrorMessage string
+}
+
+type RequestRunCancellationResult struct {
+	Run            *entity.Run
+	PreviousStatus entity.RunStatus
+	Changed        bool
+}
+
+type FinalizeRunSuccessRequest struct {
+	RunID                             int64
+	ThreadID                          int64
+	LeaseOwner                        string
+	LeaseToken                        string
+	ExecutionGeneration               uint64
+	Now                               int64
+	Message                           string
+	MessageMetadata                   string
+	TitleEventPayload                 string
+	CompletionEventPayload            string
+	ExpectedThreadTitle               string
+	ThreadTitle                       string
+	TerminalCheckpoint                *CreateCheckpointRequest
+	TerminalCheckpointOnTitleConflict *CreateCheckpointRequest
+}
+
+type FinalizeRunSuccessResult struct {
+	Run                *entity.Run
+	Message            *entity.Message
+	TitleEvent         *entity.RunEvent
+	CompletionEvent    *entity.RunEvent
+	TerminalCheckpoint *entity.Checkpoint
+	TitleUpdated       bool
 }
 
 type UpdateRunStatusRequest struct {
-	RunID        int64
-	From         entity.RunStatus
-	To           entity.RunStatus
-	WorkerID     string
-	ErrorCode    string
-	ErrorMessage string
+	RunID                 int64
+	From                  entity.RunStatus
+	To                    entity.RunStatus
+	WorkerID              string
+	LeaseOwner            string
+	LeaseToken            string
+	ExecutionGeneration   uint64
+	Now                   int64
+	ErrorCode             string
+	ErrorMessage          string
+	EventPayload          string
+	EventAlreadyPersisted bool
 }
 
 type ListMessagesRequest struct {
@@ -375,6 +502,7 @@ type ListMessagesRequest struct {
 
 type ThreadService interface {
 	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
+	CreateThreadRunMessage(ctx context.Context, req *CreateThreadRunMessageRequest) (*CreateThreadRunMessageResult, error)
 	GetThread(ctx context.Context, id int64) (*entity.Thread, error)
 	UpdateThreadTitle(ctx context.Context, req *UpdateThreadTitleRequest) (*entity.Thread, bool, error)
 	UpdateThreadMetadata(ctx context.Context, req *UpdateThreadMetadataRequest) (*entity.Thread, bool, error)
@@ -383,6 +511,7 @@ type ThreadService interface {
 	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
 	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
+	CreateRunBundle(ctx context.Context, req *CreateRunBundleRequest) (*CreateRunBundleResult, error)
 	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)
 	GetRunByIdempotencyKey(ctx context.Context, spaceID int64, idempotencyKey string) (*entity.Run, error)
 	ListRuns(ctx context.Context, req *ListRunsRequest) ([]*entity.Run, int64, error)
@@ -429,6 +558,12 @@ type ThreadService interface {
 	ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error)
 	AggregateRunBacklog(ctx context.Context, req *AggregateRunBacklogRequest) ([]*entity.RunBacklogAggregate, error)
 	ClaimQueuedResumeRuns(ctx context.Context, req *ClaimQueuedResumeRunsRequest) ([]*entity.Run, error)
+	RenewRunLease(ctx context.Context, req *RenewRunLeaseRequest) (*entity.Run, error)
+	ReleaseRunLease(ctx context.Context, req *ReleaseRunLeaseRequest) (*entity.Run, error)
+	ListExpiredRunLeases(ctx context.Context, req *ListExpiredRunLeasesRequest) ([]*entity.Run, error)
+	ReconcileExpiredRunLease(ctx context.Context, req *ReconcileExpiredRunLeaseRequest) (*entity.Run, error)
+	RequestRunCancellation(ctx context.Context, req *RequestRunCancellationRequest) (*RequestRunCancellationResult, error)
+	FinalizeRunSuccess(ctx context.Context, req *FinalizeRunSuccessRequest) (*FinalizeRunSuccessResult, error)
 	InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	CompleteRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)
 	FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*entity.Run, error)

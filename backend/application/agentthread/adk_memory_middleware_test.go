@@ -309,7 +309,7 @@ func TestADKMemoryMiddlewareAssemblerUsesConfiguredProvider(t *testing.T) {
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{schema.UserMessage("hello")},
 	}
-	_, got, err := bundle.Handlers[adkMiddlewareIndex(ADKMiddlewareMemory)].
+	_, got, err := requireADKMiddleware(t, bundle, ADKMiddlewareMemory).
 		BeforeModelRewriteState(context.Background(), state, &adk.ModelContext{})
 
 	require.NoError(t, err)

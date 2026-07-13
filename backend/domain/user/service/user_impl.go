@@ -546,6 +546,16 @@ func (u *userImpl) RemoveSpaceMember(ctx context.Context, spaceID int64, userID 
 	return u.SpaceRepo.RemoveSpaceUser(ctx, spaceID, userID)
 }
 
+func (u *userImpl) IsSpaceMember(ctx context.Context, spaceID int64, userID int64) (bool, error) {
+	if spaceID <= 0 || userID <= 0 {
+		return false, errorx.New(
+			errno.ErrUserInvalidParamCode,
+			errorx.KV("msg", "invalid workspace membership lookup"),
+		)
+	}
+	return u.SpaceRepo.HasSpaceUser(ctx, spaceID, userID)
+}
+
 func (u *userImpl) TransferSpace(ctx context.Context, spaceID int64, targetUserID int64) error {
 	if spaceID <= 0 || targetUserID <= 0 {
 		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid transfer request"))

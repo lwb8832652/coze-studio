@@ -20,22 +20,31 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{
 			{
-				ID:       200,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				WorkerID: "resume-worker-a",
-				Command:  `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
-				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+				ID:                  200,
+				ThreadID:            10,
+				SpaceID:             30,
+				CreatorID:           40,
+				Status:              entity.RunStatusRunning,
+				WorkerID:            "resume-worker-a",
+				LeaseOwner:          "resume-worker-a",
+				LeaseToken:          "lease-200",
+				LeaseExpiresAt:      60_000,
+				ExecutionGeneration: 4,
+				Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+				Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
 			},
 		},
 		checkpoint: &entity.Checkpoint{
@@ -66,8 +75,26 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	eventSink := &recordingRunEventSink{}
 	executor := &recordingResumeRunExecutor{
 		result: &RunExecutionResult{
-			Message:  "resumed answer",
-			Metadata: `{"source":"agent_harness","steps":2}`,
+			Message:                  "resumed answer",
+			Metadata:                 `{"source":"agent_harness","steps":2}`,
+			ParityParentCheckpointID: 503,
+			ParityState: &ADKParityState{
+				SchemaVersion: adkParityStateSchemaVersion,
+				Revision:      7,
+				SpaceID:       30,
+				ThreadID:      10,
+				LastRunID:     200,
+				Messages: []ADKParityMessage{
+					{Role: "assistant", Content: "resumed answer", RunID: 200},
+				},
+				Workspace:    newADKParityWorkspace(30, 10),
+				Todos:        []ADKParityTodo{},
+				Uploads:      []ADKParityUpload{},
+				Artifacts:    []ADKParityArtifact{},
+				ViewedImages: map[string]ADKParityViewedImage{},
+				ActiveSkills: []ADKParitySkill{},
+				Interrupts:   []ADKParityInterrupt{{ID: "interrupt-1"}},
+			},
 		},
 	}
 	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
@@ -93,15 +120,75 @@ func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *test
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "resume-worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, "resume-worker-a", domainSVC.completeRunReq.LeaseOwner)
+	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
+	require.Equal(t, uint64(4), domainSVC.completeRunReq.ExecutionGeneration)
 	require.Nil(t, domainSVC.failRunReq)
-	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.completed"}, eventSink.eventTypes())
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
 	require.Contains(t, eventSink.events[0].Payload, `"checkpoint_id":"503"`)
 	require.Contains(t, eventSink.events[0].Payload, `"resume_from":"pending_sends"`)
 	require.Contains(t, eventSink.events[1].Payload, `"checkpoint_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"pending_step_count":1`)
 	require.Contains(t, eventSink.events[1].Payload, `"message_count":1`)
-	require.Contains(t, eventSink.events[2].Payload, `"status":"succeeded"`)
-	require.Contains(t, eventSink.events[2].Payload, `"checkpoint_ns":"harness.terminal"`)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"status":"succeeded"`)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.CompletionEventPayload, `"checkpoint_ns":"harness.terminal"`)
+	checkpoint := domainSVC.finalizeRunSuccessReq.TerminalCheckpoint
+	require.NotNil(t, checkpoint)
+	require.Equal(t, int64(503), checkpoint.ParentCheckpointID)
+	require.Contains(t, checkpoint.Metadata, `"checkpoint_phase":"terminal"`)
+	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
+	require.NoError(t, err)
+	require.NotNil(t, envelope.ParityState)
+	require.Empty(t, envelope.ParityState.Interrupts)
+	require.Equal(t, "succeeded", envelope.ParityState.Completion.Status)
+	require.Equal(t, int64(200), envelope.ParityState.Completion.RunID)
+}
+
+func TestResumeRunProcessorTreatsLateSuccessAfterCancellationAsCanceled(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID:                  200,
+			ThreadID:            10,
+			Status:              entity.RunStatusRunning,
+			WorkerID:            "resume-worker-a",
+			LeaseOwner:          "resume-worker-a",
+			LeaseToken:          "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-1"}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		finalizeRunSuccessErr: domainrepo.ErrRunCanceled,
+	}
+	eventSink := &recordingRunEventSink{}
+	processor := NewResumeRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		EventSink: eventSink,
+		Executor: ResumeRunExecutorFunc(func(
+			context.Context,
+			*RunSummary,
+			*HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "resumed answer"}, nil
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.Nil(t, domainSVC.appendReq)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
 }
 
 func TestResumeRunProcessorReportsProcessResultForCompletedRun(t *testing.T) {
@@ -506,8 +593,10 @@ func TestResumeRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
 	require.Equal(t, []string{
 		"run.resume.started",
 		"run.resume.loaded",
-		"run.interrupted",
 	}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"status":"interrupted"`)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"checkpoint_key":"checkpoint-1"`)
+	require.False(t, domainSVC.interruptRunReq.EventAlreadyPersisted)
 }
 
 func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
@@ -564,7 +653,6 @@ func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
 	require.Equal(t, []string{
 		"run.resume.started",
 		"run.resume.loaded",
-		"run.canceled",
 	}, eventSink.eventTypes())
 }
 
@@ -613,8 +701,9 @@ func TestResumeRunProcessorFailsRunWhenCheckpointIDIsMissing(t *testing.T) {
 	require.NotNil(t, domainSVC.failRunReq)
 	require.Equal(t, "checkpoint_resume_payload_invalid", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "resume run is missing command.resume.checkpoint_id", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[1].Payload, `"error_code":"checkpoint_resume_payload_invalid"`)
+	require.Equal(t, []string{"run.resume.started"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"checkpoint_resume_payload_invalid"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "resume run is missing")
 }
 
 func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) {
@@ -668,8 +757,9 @@ func TestResumeRunProcessorMarksRunFailedWhenResumeExecutorErrors(t *testing.T) 
 	require.Equal(t, "resume-worker-a", domainSVC.failRunReq.WorkerID)
 	require.Equal(t, "checkpoint_resume_executor_error", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "resume executor failed", domainSVC.failRunReq.ErrorMessage)
-	require.Equal(t, []string{"run.resume.started", "run.resume.loaded", "run.failed"}, eventSink.eventTypes())
-	require.Contains(t, eventSink.events[2].Payload, `"error_code":"checkpoint_resume_executor_error"`)
+	require.Equal(t, []string{"run.resume.started", "run.resume.loaded"}, eventSink.eventTypes())
+	require.Contains(t, domainSVC.failRunReq.EventPayload, `"error_code":"checkpoint_resume_executor_error"`)
+	require.NotContains(t, domainSVC.failRunReq.EventPayload, "resume executor failed")
 }
 
 func TestResumeRunProcessorReportsProcessResultForFailedRun(t *testing.T) {
@@ -771,6 +861,169 @@ func TestResumeRunProcessorReportsProcessResultWhenCompleteRunFails(t *testing.T
 		ProcessedRuns: 1,
 		ErroredRuns:   1,
 	}, result)
+}
+
+func TestResumeRunProcessorIsolatesBatchFailureAndReleasesBackToProtectedQueue(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{
+			{ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+			{ID: 201, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-201", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+			{ID: 202, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-202", ExecutionGeneration: 1, Command: `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`, Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`},
+		},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues: `{"messages":[],"steps":[],"memory":{"items":[]}}`, ChannelVersions: `{}`,
+			PendingSends: `[{"node":"generate_answer","step_id":"step-1"}]`, Metadata: `{}`,
+		},
+		appended:          &entity.Message{ID: 300, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "resumed"},
+		completedRun:      &entity.Run{ID: 999, ThreadID: 10, Status: entity.RunStatusSucceeded},
+		completeRunErrors: map[int64]error{200: errors.New("resume completion infrastructure failure")},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	executed := make([]int64, 0, 3)
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID: "resume-worker-a", BatchSize: 3,
+		Executor: ResumeRunExecutorFunc(func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+			executed = append(executed, run.RunID)
+			return &RunExecutionResult{Message: "resumed"}, nil
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.ErrorContains(t, err, "resume completion infrastructure failure")
+	require.Equal(t, []int64{200, 201, 202}, executed)
+	require.Equal(t, ResumeRunProcessResult{
+		ClaimedRuns:   3,
+		ProcessedRuns: 3,
+		SucceededRuns: 2,
+		ErroredRuns:   1,
+	}, result)
+	require.Len(t, domainSVC.completeRunReqs, 3)
+	require.Len(t, domainSVC.releaseRunLeaseReqs, 1)
+	require.Equal(t, int64(200), domainSVC.releaseRunLeaseReqs[0].RunID)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.releaseRunLeaseReqs[0].ToStatus)
+	require.Equal(t, "lease-200", domainSVC.releaseRunLeaseReqs[0].LeaseToken)
+}
+
+func TestResumeRunProcessorRenewsLeaseWhileExecutionIsActive(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+			Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		renewRunLeaseCalls: renewCalls,
+		appended:           &entity.Message{ID: 301, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "resumed"},
+		completedRun:       &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
+		WorkerID:          "resume-worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+		Executor: ResumeRunExecutorFunc(func(ctx context.Context, run *RunSummary, input *HarnessResumeInput) (*RunExecutionResult, error) {
+			close(started)
+			<-release
+			return &RunExecutionResult{Message: "resumed"}, nil
+		}),
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- processor.ProcessQueuedResumeRuns(context.Background())
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	renew := <-renewCalls
+	require.Equal(t, int64(200), renew.RunID)
+	require.Equal(t, "resume-worker-a", renew.LeaseOwner)
+	require.Equal(t, "lease-200", renew.LeaseToken)
+	require.Equal(t, uint64(4), renew.ExecutionGeneration)
+	require.Equal(t, int64(3_000), renew.Now)
+	require.Equal(t, int64(6_000), renew.LeaseTTLMillis)
+	close(release)
+	require.NoError(t, <-done)
+	require.Equal(t, int64(1_000), domainSVC.claimQueuedResumeRunsReq.Now)
+	require.Equal(t, int64(6_000), domainSVC.claimQueuedResumeRunsReq.LeaseTTLMillis)
+}
+
+func TestResumeRunProcessorTreatsLeaseLossFromDurableCancellationAsCanceled(t *testing.T) {
+	clock := newManualRunLeaseClock(time.UnixMilli(1_000))
+	renewCalls := make(chan *domainservice.RenewRunLeaseRequest, 1)
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+			WorkerID: "resume-worker-a", LeaseOwner: "resume-worker-a", LeaseToken: "lease-200",
+			ExecutionGeneration: 4,
+			Command:             `{"resume":{"checkpoint_id":"503","checkpoint_ns":"harness.terminal","resume_from":"pending_sends"}}`,
+		}},
+		checkpoint: &entity.Checkpoint{
+			ID: 503, ThreadID: 10, RunID: 199, CheckpointNS: "harness.terminal",
+			ChannelValues:   `{"messages":[{"role":"assistant","content":"partial","step_id":"step-1"}],"steps":[{"step_id":"step-1","step_type":"model","step_name":"draft","step_index":0,"final":false,"message_present":true}],"memory":{"items":[]}}`,
+			ChannelVersions: `{"messages":1,"steps":1,"memory":0}`,
+			PendingSends:    `[{"node":"generate_answer","step_id":"step-2","final":true}]`,
+			Metadata:        `{"source":"agent_harness","checkpoint_phase":"terminal","status":"failed"}`,
+		},
+		gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled,
+			CancelRequestedAt: 3_000, ExecutionGeneration: 5,
+		},
+		renewRunLeaseCalls: renewCalls,
+		renewRunLeaseErr:   domainrepo.ErrRunLeaseLost,
+	}
+	started := make(chan struct{})
+	processor := NewResumeRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, ResumeRunProcessorOptions{
+		WorkerID:          "resume-worker-a",
+		BatchSize:         1,
+		LeaseTTL:          6 * time.Second,
+		HeartbeatInterval: 2 * time.Second,
+		LeaseClock:        clock,
+		Executor: ResumeRunExecutorFunc(func(
+			ctx context.Context,
+			_ *RunSummary,
+			_ *HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+	})
+	done := make(chan struct {
+		result ResumeRunProcessResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+		done <- struct {
+			result ResumeRunProcessResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	<-started
+	clock.Tick(time.UnixMilli(3_000))
+	<-renewCalls
+	got := <-done
+	require.NoError(t, got.err)
+	require.Equal(t, 1, got.result.CanceledRuns)
+	require.Empty(t, domainSVC.releaseRunLeaseReqs)
+	require.Nil(t, domainSVC.failRunReq)
 }
 
 type recordingResumeRunExecutor struct {

@@ -26,9 +26,10 @@ import (
 )
 
 type ServiceComponents struct {
-	DB            *gorm.DB
-	IDGen         idgen.IDGenerator
-	ObjectStorage storage.Storage
+	DB              *gorm.DB
+	IDGen           idgen.IDGenerator
+	ObjectStorage   storage.Storage
+	UserSpaceReader UserSpaceReader
 }
 
 func InitService(c *ServiceComponents) *ApplicationService {
@@ -43,6 +44,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 		Repo:  repo,
 		IDGen: c.IDGen,
 	})
+	SVC.ThreadAuthorizer = NewThreadOwnerAuthorizer(SVC.ThreadSVC)
+	SVC.WorkspaceAuthorizer = NewUserSpaceWorkspaceAuthorizer(c.UserSpaceReader)
 	SVC.RuntimeFileSVC = domainservice.NewRuntimeFileService(
 		&domainservice.RuntimeFileComponents{
 			RunReader: repo,

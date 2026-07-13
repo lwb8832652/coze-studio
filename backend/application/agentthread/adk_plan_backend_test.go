@@ -30,12 +30,16 @@ import (
 func TestADKPlanBackendTranslatesEinoFilesToDurablePlan(t *testing.T) {
 	store := newMemoryADKPlanStore()
 	events := &recordingRunEventSink{}
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
 	backend, err := NewADKPlanBackend(&RunSummary{
 		RunID:     21,
 		ThreadID:  10,
 		SpaceID:   30,
 		CreatorID: 40,
-	}, store, events)
+	}, store, events, WithADKPlanParityStateTracker(tracker))
 	require.NoError(t, err)
 
 	require.NoError(t, backend.Write(context.Background(), &plantask.WriteRequest{
@@ -78,6 +82,10 @@ func TestADKPlanBackendTranslatesEinoFilesToDurablePlan(t *testing.T) {
 	require.Contains(t, events.events[0].Payload, `"plan_task_id":"1"`)
 	require.NotContains(t, events.events[0].Payload, "Run focused tests")
 	require.NotContains(t, events.events[0].Payload, `"metadata"`)
+	require.Equal(t, []ADKParityTodo{{
+		ID: "1", Title: "Run tests", Description: "Run focused tests.",
+		Status: "pending", ActiveForm: "Running tests",
+	}}, tracker.Snapshot().Todos)
 }
 
 func TestADKPlanBackendArchivesCompletedCleanupWithoutDuplicateEvent(t *testing.T) {
@@ -175,6 +183,37 @@ func TestADKPlanBackendUsesSourceRunPlanScope(t *testing.T) {
 
 	require.Equal(t, int64(20), store.lastScope.ScopeRunID)
 	require.Equal(t, int64(21), store.lastScope.ActiveRunID)
+}
+
+func TestADKPlanBackendSyncsExistingPlanIntoParityState(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryADKPlanStore()
+	writer, err := NewADKPlanBackend(&RunSummary{
+		RunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, store, &recordingRunEventSink{})
+	require.NoError(t, err)
+	require.NoError(t, writer.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/.highwatermark", Content: "1",
+	}))
+	require.NoError(t, writer.Write(ctx, &plantask.WriteRequest{
+		FilePath: "/plans/1.json",
+		Content:  `{"id":"1","subject":"Persisted","description":"From previous run","status":"in_progress","blocks":[],"blockedBy":[]}`,
+	}))
+
+	tracker, err := NewADKParityStateTracker(&RunSummary{
+		RunID: 22, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, nil)
+	require.NoError(t, err)
+	reader, err := NewADKPlanBackend(&RunSummary{
+		RunID: 22, PlanScopeRunID: 21, ThreadID: 10, SpaceID: 30, CreatorID: 40,
+	}, store, &recordingRunEventSink{}, WithADKPlanParityStateTracker(tracker))
+	require.NoError(t, err)
+
+	require.NoError(t, reader.syncParityState(ctx))
+	require.Equal(t, []ADKParityTodo{{
+		ID: "1", Title: "Persisted", Description: "From previous run",
+		Status: "in_progress",
+	}}, tracker.Snapshot().Todos)
 }
 
 func TestADKPlanBackendAllowsOnlyOneConcurrentReservation(t *testing.T) {

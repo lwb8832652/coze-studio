@@ -310,12 +310,20 @@ func Init(ctx context.Context) (err error) {
 				),
 				OffloadBackendFactory: adkOffloadBackendFactory,
 			}),
+			agentthread.WithADKLeadPromptOverlayProvider(
+				agentthread.NewADKSingleAgentLeadPromptOverlayProvider(
+					complexServices.singleAgentSVC.DomainSVC,
+				),
+			),
 		),
 		adkEventSink,
 		func(run *agentthread.RunSummary) (adk.CheckPointStore, error) {
 			return agentthread.NewADKCheckpointStore(primaryServices.agentThreadSVC, run)
 		},
-		agentthread.NewThreadUsageCollector(primaryServices.agentThreadSVC),
+		agentthread.NewThreadUsageCollectorWithOptions(
+			primaryServices.agentThreadSVC,
+			agentthread.ThreadUsageCollectorOptions{EventSink: adkEventSink},
+		),
 		agentthread.WithADKCancelRegistry(adkCancelRegistry),
 		agentthread.WithADKSubagentRetrySourceResolver(
 			agentthread.NewApplicationADKSubagentRetrySourceResolver(
@@ -335,6 +343,7 @@ func Init(ctx context.Context) (err error) {
 	)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
 	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentResumeRunExecutor)
+	agentthread.StartRunLeaseRecoveryWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartMemoryFlushWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartArtifactScanWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartGuardrailAuditArchiveWorkerFromEnv(
@@ -449,9 +458,10 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 
 	shortcutSVC := shortcutcmd.InitService(basicServices.infra.DB, basicServices.infra.IDGenSVC)
 	agentThreadSVC := agentthread.InitService(&agentthread.ServiceComponents{
-		DB:            basicServices.infra.DB,
-		IDGen:         basicServices.infra.IDGenSVC,
-		ObjectStorage: basicServices.infra.OSS,
+		DB:              basicServices.infra.DB,
+		IDGen:           basicServices.infra.IDGenSVC,
+		ObjectStorage:   basicServices.infra.OSS,
+		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
 		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB),

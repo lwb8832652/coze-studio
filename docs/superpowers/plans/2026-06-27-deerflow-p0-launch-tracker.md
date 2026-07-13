@@ -63,6 +63,315 @@ Every implementation slice must update this document:
 
 ## Recent Slice Notes
 
+- 2026-07-11 `AR-PARITY-001` (进行中): restarted the backend Agent runtime
+  parity audit against the locked, locally deployed DeerFlow baseline
+  `5851f825`. Static tracing confirmed that current NewX AI has a real Eino ADK
+  path but is not yet fully equivalent: ADK is not the server default, several
+  declared middleware slots are reserved no-ops, plan mode is not used to gate
+  Todo, the generic Agent sandbox lacks DeerFlow filesystem/shell semantics,
+  memory evolution workers are default-off, and the durable run layer still
+  has redaction, lease/recovery, cancellation, retry scheduling and Workbench
+  SSE pagination gaps. Thread/Run authorization is closed in
+  `AR-PARITY-001.1`. The approved design and exit gate are in
+  `docs/superpowers/specs/2026-07-11-deerflow-backend-agent-runtime-parity-design.md`.
+  Planned verification: targeted tests across `application/agentthread`,
+  `domain/agentthread/service`, `domain/agentthread/repository`, Workbench and
+  LangGraph handlers/routes; Atlas hash/validate for migrations; paired live
+  DeerFlow/NewX AI acceptance for direct, search, Pro, Ultra, Skill, MCP,
+  upload, artifact, interrupt and memory cases.
+  - `AR-PARITY-001.1` Thread/Run authorization (已完成): added one fail-closed
+    application boundary for authenticated viewer, space, thread and optional
+    run ownership, then enforce it across public Workbench and LangGraph
+    thread/message/run/checkpoint/event/token operations. Acceptance covers
+    owner success plus unauthenticated, cross-user, cross-space and mismatched
+    run/thread rejection with no mutation. Workspace authority uses a targeted
+    `space_user` membership lookup; dependency failures remain controlled 5xx
+    responses, and successful request scopes are reused by Workbench Chat and
+    SSE without repeated authorization queries. Verification:
+    `go test ./application/agentthread -run 'Authoriz|AccessDenied' -count=1`
+    and `go test -gcflags="all=-N -l" ./api/handler/coze -run
+    'Forbidden|AccessDenied|Authoriz' -count=1`,
+    `go test -gcflags="all=-N -l" ./... -count=1`, `gofmt -l`,
+    `git diff --check`, independent `SPEC COMPLIANT`, and independent `CODE
+    QUALITY APPROVED`.
+  - `AR-PARITY-001.2` Public runtime projection/redaction (已完成): replaced
+    handler-local partial filtering with one application allow-list projection
+    for public runs, user-visible messages, journal rows, events, checkpoints,
+    token usage, artifacts and bounded runtime errors. Workbench and LangGraph
+    REST/SSE now share the same safe event projection. Approved visible reply
+    text and stream tokens remain available, while reasoning, tool arguments/
+    results, credentials, object URIs, unsafe paths, raw command/input/config/
+    context/metadata, worker/idempotency fields, checkpoint bytes and provider
+    errors remain internal. Recovery/update paths use internal checkpoint state
+    separately, avoiding projection-induced corruption. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-public-projection.md`.
+    Verification: application redaction fixtures, handler
+    `Redacts|DoesNotExpose|UnsafePayload`, complete application/handler suites,
+    `go vet ./application/agentthread ./api/handler/coze`, task-detail Vitest
+    61/61, frontend `tsc --noEmit`, full serial backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1`, `gofmt -l`, and
+    `git diff --check`. A parallel full-backend attempt hit an unrelated
+    Mockey/Go 1.25 `SIGBUS` in unchanged workflow compose code; that package
+    passed immediately when isolated with the required gcflags.
+  - `AR-PARITY-001.3` Leased run ownership and fencing (已完成): persisted lease
+    owner/token/expiry, heartbeat, cancellation-request timestamp and monotonic
+    execution generation. Pending and protected resume claims now atomically
+    install a cryptographically random lease; renewal, release, expired-lease
+    discovery and running-to-success/failure/interruption transitions require a
+    live owner + token + generation fence. Terminal transitions clear active
+    ownership while retaining generation, and only protected checkpoint resume
+    runs may be released back to `queued`. The internal lease contract is
+    propagated through the domain/application services and both run processors;
+    public Workbench/LangGraph projections continue to redact every lease field.
+    Batch isolation, periodic worker heartbeat and stale recovery remain in
+    `AR-PARITY-001.4`. Verification: repository RED/GREEN lease tests, complete
+    domain/application/handler/router suites, targeted `go vet`, Atlas v0.35.0
+    hash/validate, `gofmt`, `git diff --check`, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
+  - `AR-PARITY-001.4` Batch isolation, lease heartbeat and stale recovery
+    (已完成): claimed ordinary and protected-resume batches now continue after
+    one infrastructure failure and explicitly release any still-owned,
+    unfinalized lease. Both execution paths share an injected-clock heartbeat,
+    cancel work when renewal loses ownership, stop renewal before terminal CAS,
+    and release rather than falsely fail runs on process shutdown. A separate
+    expired-lease owner/token/generation CAS rejects old workers. The latest
+    active, decodable and runtime-compatible checkpoint creates one protected
+    resume run keyed by source run + execution generation; retry after partial
+    recovery reuses that run, while no compatible checkpoint terminates with
+    bounded `run_abandoned` metadata. Recovery and resume workers plus lease
+    timing are wired into the debug/operations profile. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-lease-ownership.md`.
+    Verification: ordinary/resume batch RED/GREEN tests, heartbeat/lease-loss/
+    shutdown tests, stale-CAS and old-worker rejection, Eino ADK invalid/latest
+    checkpoint and retry-idempotency tests, affected packages, targeted
+    `go vet`, `gofmt`, `git diff --check`, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` all passed.
+  - `AR-PARITY-001.5` Cancellation fence and transactional success finalization
+    (已完成): cancellation is now one durable transaction that retains
+    `cancel_requested_at`, increments execution generation, clears ownership and
+    writes one terminal event before notifying the in-memory ADK handle.
+    Same-process cancellation arriving before ADK registration is retained with
+    a bounded TTL and applied as immediate recursive cancellation. Ordinary and
+    checkpoint-resume success now use one live-lease/no-cancel transaction for
+    assistant message, optional title CAS and succeeded status; cancel winning
+    the race yields no late reply, title update or completed event. Duplicate
+    cancellation remains successful without allocating another event ID, and a
+    concurrent user title edit is preserved. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-cancellation-fence.md`.
+    Verification: pending/running/duplicate cancellation, pre-registration and
+    active cancellation, shutdown distinction, ordinary/resume late-result
+    races, transaction rollback, title CAS, event uniqueness, affected package
+    suites, and serial full backend
+    `go test -p 1 -gcflags="all=-N -l" ./... -count=1` passed. Targeted race,
+    `go vet`, formatting and diff checks also passed before commit.
+  - `AR-PARITY-001.6` Transactional run creation and follow-up persistence
+    (已完成): replaced sequential thread/run/message and run/message/event
+    writes with repository-backed aggregate transactions. The scope covers
+    ordinary new-task creation, canonical task-detail follow-up, human
+    interaction resume and subagent retry. File uploads remain an external
+    prerequisite, but the subsequent run and user-message write must commit or
+    roll back together. Existing lease recovery keeps its idempotent
+    create-before-reconcile compensation contract from `AR-PARITY-001.4` and is
+    not broadened into an unrelated cross-state transaction in this slice.
+    Follow-up clients now submit only the current turn; the server rebuilds the
+    authoritative transcript from all persisted message pages, restores only
+    run-referenced legacy unbound messages and excludes failed orphan writes.
+    Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-transactional-creation.md`.
+    Verification: repository rollback/replay, generated-ID and ownership
+    validation, application and handler contracts, 200+ message pagination,
+    legacy compatibility, 93 frontend tests, generated-client mapping contract,
+    TypeScript, targeted race/vet, formatting/diff checks and serial full
+    backend all passed before commit.
+  - `AR-PARITY-001.7` Subagent retry scheduling and event-cursor SSE
+    (已完成): retained the verified production-worker dispatch for persisted
+    subagent retry commands and close the remaining stream reconnect gap with
+    repository-native `event_id > cursor` reads. Workbench SSE must normalize
+    query cursor and `Last-Event-ID`, drain every bounded page before terminal
+    `done`, and deliver a 450-event fixture exactly once across reconnects.
+    Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-event-cursor-and-retry.md`.
+    Verification: repository cursor and selective queued-claim RED/GREEN,
+    application propagation, public retry-to-worker integration, Workbench
+    450-event reconnect, header/query normalization, LangGraph reconnect,
+    affected packages, targeted race/vet, formatting/diff and serial full
+    backend all passed before commit.
+  - `AR-PARITY-001.8` Runtime security/lifecycle slice acceptance (已完成):
+    all eight Slice 1 exit criteria passed Atlas v0.35.0 validation, affected
+    suites, targeted race/vet, serial full backend, authenticated two-user
+    handler smoke and `APP_ENV=debug make build_server`. Acceptance evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-runtime-parity/slice1-security-lifecycle.md`.
+    This closes Slice 1 only. Atomic multitask admission, durable stream-end
+    ordering and server-owned thread lifecycle projection remain explicit P0
+    follow-up work before complete backend Agent parity can be claimed.
+  - `AR-PARITY-001.9` Atomic same-thread multitask admission (已完成): aligned
+    the verified DeerFlow `create_or_reject` contract with a server-owned
+    `reject` default, transactional `reject / interrupt / rollback` arbitration,
+    post-commit Eino cancellation, generation fencing, rollback history and
+    checkpoint cleanup, late-worker suppression and bounded public 409/501
+    behavior before SSE headers. Pending/queued/running top-level rows block the
+    same thread, child subagents do not, idempotent replay wins before conflict,
+    and a failed new aggregate leaves the old lease untouched. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-multitask-admission.md`.
+    Verification includes affected suites, concurrent race coverage, targeted
+    vet, full serial backend tests and `APP_ENV=debug make build_server`.
+  - `AR-PARITY-001.10` Durable terminal event and stream-end ordering (已完成):
+    terminal state and its bounded event now share one repository transaction
+    for success, failure, non-ADK interrupt, multitask interruption/rollback and
+    expired-lease recovery; cancellation retains its existing atomic path. A
+    successful finalization writes assistant message, optional title event and
+    `run.completed` before the terminal state can become visible to stream
+    readers. ADK interrupts reuse the already durable mapped event without a
+    duplicate, and the repository fails closed if that event cannot be
+    verified for the current run. Ordinary and resume processors no longer
+    append best-effort terminal events, and terminal payload projection drops
+    raw provider errors and unknown fields. Workbench and LangGraph acceptance
+    proves the terminal event precedes `done`/`end`; a 450-event reconnect
+    fixture also receives the final completion event exactly once. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-terminal-ordering.md`.
+    Verification includes affected suites, targeted race and vet, formatting
+    and diff checks, serial full backend tests, and `APP_ENV=debug make
+    build_server`.
+  - `AR-PARITY-001.11` Server-owned disconnect and thread lifecycle (已完成):
+    new runs now default to validated `on_disconnect=cancel`; only explicit
+    `continue` survives a real disconnect, while blank or legacy invalid modes
+    fail closed. Workbench and LangGraph detect canceled request contexts,
+    failed SSE writes and idle heartbeat failures, then reuse the durable
+    cancellation transaction through a detached, bounded authorization context;
+    normal timeout and terminal completion do not cancel. Thread Get/List and
+    status-filtered totals now share one durable top-level-run projection with
+    active-run precedence, terminal mapping, no-run fallback and child-subagent
+    exclusion. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-run-disconnect-thread-lifecycle.md`.
+    Verification includes all affected suites, targeted race/vet, full serial
+    backend, formatting/diff checks and `APP_ENV=debug make build_server`.
+
+- 2026-07-11 `AR-PARITY-002` Agent semantic core (已完成): Slice 1 security and
+  lifecycle work is complete. This mainline sequence will close the runtime
+  semantics required before workspace, orchestration and memory parity: one
+  production Eino ADK path, one parsed DeerFlow mode contract, a versioned lead
+  prompt, conditional middleware and durable parity state. Implementation follows
+  `docs/superpowers/specs/2026-07-11-deerflow-backend-agent-runtime-parity-design.md`.
+  - `AR-PARITY-002.1` Production runtime and mode contract (已完成): verified
+    DeerFlow Gateway context whitelisting, frontend mode projection, lead-Agent
+    construction, conditional Todo and subagent paths against baseline
+    `5851f825`. Before this slice, NewX defaulted the server to legacy,
+    persisted ambiguous missing runtime values and installed Plan capabilities
+    for every ADK run.
+    New public runs are now canonical Eino ADK while historical unmarked rows
+    and checkpoint runtime markers keep their legacy recovery interpretation.
+    One server-owned flash/thinking/pro/ultra projection now drives model
+    reasoning defaults, Plan backend construction and subagent tool resolution;
+    Workbench and LangGraph context shapes share the verified DeerFlow
+    whitelist and precedence. Invalid/legacy requests fail as bounded 400s
+    before aggregate persistence. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-production-runtime-mode-contract.md`.
+    Verification: focused RED/GREEN suites, affected application/handler/router
+    packages, targeted race and vet, full serial backend tests, formatting/diff
+    checks and `APP_ENV=debug make build_server` all passed. The Agent semantic
+    core remains `进行中`; prompt composition, conditional no-op removal,
+    subagent concurrency enforcement, bounded capability-downgrade events and
+    durable parity state continue as `AR-PARITY-002.2` through `.4`.
+  - `AR-PARITY-002.2` Versioned Lead Prompt Composer (已完成): verified
+    DeerFlow's stable prompt, Skill progressive-loading, dynamic-context,
+    custom-Agent, conditional Todo/subagent and deferred-tool construction
+    against baseline `5851f825`. Every Eino ADK run now receives the
+    system-owned `newx.lead_prompt.v1` contract. Request prompt text and durable
+    SingleAgent instructions are bounded, escaped, source-labelled overlays;
+    they cannot replace the stable role, clarification, workspace/output,
+    citation or completion sections. The durable provider fails closed on
+    malformed ID/version, missing snapshot and cross-space access, and applies
+    only missing model defaults. Mode and deferred-tool decisions condition the
+    prompt through the same runtime projection used by Agent construction.
+    Child subagents are explicitly persisted as Eino `flash` with thinking,
+    Plan and recursive subagent capability disabled, including retries.
+    Date/memory and full Skill/tool catalogs remain in their existing Eino
+    middleware paths. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-versioned-lead-prompt-contract.md`.
+    Verification: focused RED/GREEN suites, complete Agent and application
+    suites, targeted race, application vet, full serial backend, formatting and
+    diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
+    remains `进行中`; conditional middleware/concurrency/downgrade events and
+    durable parity state continue as `AR-PARITY-002.3` and `.4`.
+  - `AR-PARITY-002.3` Conditional middleware pipeline (已完成): removed all
+    reserved Eino handler placeholders and now omits unavailable Memory, Skill,
+    transcript, Plan, deferred-tool and offload capabilities from the active
+    chain. `HandlerNames` makes active behavior explicit and tests no longer
+    depend on reserved indexes. The verified Eino registration order places
+    safety suppression before the new per-model-response subagent limiter and
+    semantic loop accounting. Internal subagent tool metadata survives provider
+    composition and policy filtering; excess subagent calls are removed without
+    changing ordinary calls or the input state. Unsupported thinking/reasoning
+    now emits one bounded, publicly sanitized
+    `model.capability_downgraded` event per Agent instance. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-conditional-middleware-pipeline.md`.
+    Verification: focused RED/GREEN suites, complete Agent and application
+    suites, targeted race, application vet, full serial backend, formatting and
+    diff checks, and `APP_ENV=debug make build_server` passed. The semantic core
+    remains `进行中`; durable Todo/promoted-tool/Skill/upload/Artifact/interrupt
+    parity state continues as `AR-PARITY-002.4`.
+  - `AR-PARITY-002.4` Durable Eino parity state (已完成): implemented a bounded,
+    versioned and tenant-scoped `ADKParityState` for safe messages/summary,
+    workspace/uploads, Todo, Artifacts, viewed-image references, promoted tools,
+    resolved Skills, interrupts and successful completion. New checkpoint writes
+    use envelope v2 while valid v1 opaque checkpoints remain resumable; terminal
+    v2 snapshots are non-resumable and unknown or mismatched versions fail closed.
+    Runtime producers update the shared tracker only after successful operations.
+    Successful finalization atomically commits the assistant message, optional
+    generated title, completion event, run status and exactly one terminal
+    checkpoint. Its title-CAS conflict variant omits stale title state and leaves
+    the concurrently committed thread row authoritative. Workbench Todo and
+    LangGraph state/history now project typed
+    state first, preserve explicit empty Todo, omit repeated historical messages
+    and never expose opaque bytes or hidden model/tool/provider payloads. The
+    seed and Workbench paths explicitly query the latest `eino_adk` checkpoint,
+    so a newer foreign-runtime row cannot mask durable Eino state. No migration,
+    Python sidecar, IM work or fabricated viewed-image producer was added.
+    Canceled/failed lifecycle remains authoritative in the run table and terminal
+    events. Evidence:
+    `docs/superpowers/evidence/2026-07-11-deerflow-agent-durable-parity-state.md`.
+    Verification: focused RED/GREEN suites, affected application/domain/API
+    packages, targeted race and vet, full serial backend with required Mockey
+    compiler flags, formatting/diff checks and `APP_ENV=debug make build_server`
+    passed. The separately tracked acceptance gate is closed by
+    `AR-PARITY-002.5` below.
+  - `AR-PARITY-002.5` Semantic core acceptance gate (已完成): the versioned,
+    redacted fixture contract, authenticated paired HTTP runner, bounded
+    HTTP/SSE adapters, reconnect/pagination handling, revision attestation,
+    per-invariant JSON/Markdown reports and NewX in-process semantic contracts
+    are implemented as defined in
+    `docs/superpowers/plans/2026-07-12-deerflow-agent-semantic-core-acceptance-gate.md`.
+    The gate covers flash/thinking direct runs, Pro Todo, Ultra subagents,
+    clarification/follow-up, cancellation and SSE reconnect against locked
+    DeerFlow `5851f825`. Verification requires fixture coverage, normalizer and
+    redaction tests, in-process transport/action tests, affected Agent/API
+    suites, race/vet/full backend/build checks and seven live paired rows. The
+    runner now uses the locked DeerFlow `values` stream and POST history wire
+    contracts, derives capabilities from observed messages/events/state, reads
+    durable journal data after reconnect, enforces one terminal event per run,
+    fails non-zero for `different`/`blocked`, and records a clean source checkout
+    plus operator-attested runtime provenance. Fixture/runner, targeted race/vet,
+    affected Agent/API packages, full serial backend, build and diff checks pass.
+    Evidence:
+    `docs/superpowers/evidence/2026-07-12-deerflow-agent-semantic-core-acceptance.md`.
+    After the authorized Atlas apply, the external debug database is at
+    `20260711000100` with zero pending files. The paired live gate ran on
+    2026-07-13 against locked DeerFlow `5851f825`: flash, thinking, Pro Todo,
+    Ultra subagents, clarification/resume and SSE reconnect are `aligned`;
+    cancellation is `stronger` because NewX emits additional bounded diagnostic
+    metadata while both products satisfy the same cancel invariants. No row is
+    `different`, `blocked` or `unknown`. Evidence-backed fixes include segmented
+    SSE reconnect with mandatory stream-terminal delivery, bounded
+    token/Todo/subagent/clarification event mapping, strictly paired successful
+    child lifecycles, an Ultra-only built-in general-purpose subagent that
+    inherits ordinary tools while denying nested delegation, clarification,
+    confirmation and `present_files`, minimal resumable interaction metadata,
+    paginated NewX interrupt/resume follow-up and the locked DeerFlow cancel
+    wait contract. Per the user's explicit instruction,
+    DeerFlow page startup and visual comparison are not part of this backend
+    semantic gate. Workspace, Skill, MCP, Artifact and Memory rows remain owned
+    by their delivery slices and the final ten-row compatibility gate.
+
 - 2026-07-01 `TD-COMP-007`: Coze-only `@` resource reference composer was
   stabilized after the DeerFlow composer parity cut. The inline trigger now
   keeps `@` / `@资源类型：` as plain prefix text, applies the gray pill only to
@@ -289,7 +598,7 @@ Every implementation slice must update this document:
 
 | Subtask | Status | P0 Acceptance | Notes |
 | --- | --- | --- | --- |
-| 上线验收-Atlas migration 状态 | 已完成 | Local Atlas can inspect/apply pending migrations without drift. | Local Atlas v0.35.0 `migrate validate` passes. External MySQL schema apply completed through the ignored debug env target, and follow-up dry-run reports `Schema is synced, no changes to be made`. Fixed `agent_files` MySQL key-length compatibility by indexing a 64-char `virtual_path_hash` while preserving full `virtual_path`. |
+| 上线验收-Atlas migration 状态 | 已完成 | Local Atlas can inspect/apply pending migrations without drift. | Local Atlas v0.35.0 is installed. The user authorized the external debug migration; post-apply `atlas migrate status` on 2026-07-13 reports `Migration Status: OK`, current version `20260711000100`, `Executed Files: 5` and `Pending Files: 0`. The Agent worker and paired semantic-core gate subsequently executed successfully against the migrated schema. |
 | 上线验收-生成 API 合约 | 已完成 | IDL/generated Workbench clients are in sync after touched API changes. | Backfilled existing task-thread, run, token, artifact, resume, cancel, retry, and create-task-thread contracts into `idl/workbench/task.thrift`; added `.skill` artifact install to `idl/workbench/skill.thrift` and generated `workbenchSkill.InstallSkillFromArtifact`, so task artifact actions no longer call the install route through hand-written fetch. Added api-schema contract coverage so task-thread generated clients cannot exist without thrift service methods, and `ListTaskThreadRuns` must map `parent_run_id` as a query parameter for explicit child-run listing. Verified with `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`, `npm run test -- __tests__/workbench-task-contract.test.ts`, and `npm run test -- src/pages/tasks/__tests__/tasks-service.test.ts`. `rushx update` succeeds but currently rewrites unrelated generated files' formatting/license headers, so that generator-wide churn is excluded from P0 commits. |
 | 上线验收-后端单测 | 已完成 | Targeted backend package tests pass for touched code. | P0 canonical-create backend validation passed with `go test ./application/agentthread -run 'TestApplicationCreate(TaskThread|Run)' -count=1`, `go test ./api/handler/coze -run 'TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'Test(CreateTaskThread|CreateTaskThreadRun|AppendTaskThreadMessage|GetTaskThread|ListTaskThread)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'TestCancelTaskThreadRunHandler(CancelsPendingRun|TransitionsRun)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'TestGetTaskThreadTokenUsageHandler(ReturnsRowsAndAggregate|CanIncludeChildRuns)' -count=1`, `go test -gcflags="all=-N -l" ./api/handler/coze -run 'Test(ListTaskThreadRunEventsHandler(RedactsUnsafePayload|ReturnsEvents)|StreamTaskThreadRunEventsWritesEventsAndDone|TaskThreadRunEventStreamStopsForInterruptedRun)' -count=1`, `go test ./api/router/coze -run 'TestRegisterIncludesWorkbenchTaskThreadRoutes' -count=1`, plus existing P0 Skills/MCP/Tools targeted commands. A too-broad handler test command still hits known non-P0 Workflow/Conversation paths and Mockey gcflags requirements; use targeted package commands for P0 cutline evidence. |
 | 上线验收-前端类型/单测 | 已完成 | Targeted app/package typecheck or unit tests pass for touched UI. | Frontend validation passed with `rushx test -- src/pages/workbench/__tests__/workbench.test.tsx`, `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx -t "legacy task id is zero string"`, `rushx test -- src/pages/tasks/__tests__/task-detail.test.tsx`, `rushx test -- __tests__/workbench-task-contract.test.ts __tests__/workbench-task-memory.test.ts`, and `make fe`. Build warnings are limited to the existing Browserslist/caniuse-lite and typeless package warnings. |

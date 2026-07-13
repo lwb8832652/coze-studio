@@ -59,10 +59,15 @@ type RuntimeResumeSelector struct {
 func RuntimePolicyFromEnv() (RuntimePolicy, error) {
 	defaultMode := RuntimeMode(strings.TrimSpace(os.Getenv(agentThreadRuntimeDefaultEnv)))
 	if defaultMode == "" {
-		defaultMode = RuntimeModeLegacy
+		defaultMode = RuntimeModeEinoADK
+	}
+	if defaultMode == RuntimeModeLegacy {
+		return RuntimePolicy{}, fmt.Errorf(
+			"legacy runtime cannot be the production default",
+		)
 	}
 
-	enabled := false
+	enabled := true
 	if rawEnabled, exists := os.LookupEnv(agentThreadEinoADKEnabledEnv); exists &&
 		strings.TrimSpace(rawEnabled) != "" {
 		parsed, err := strconv.ParseBool(strings.TrimSpace(rawEnabled))
@@ -234,14 +239,14 @@ func runtimeModeFromRun(run *RunSummary) (RuntimeMode, error) {
 
 func selectRuntimePolicy(policies []RuntimePolicy) (RuntimePolicy, error) {
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: true,
 	}
 	if len(policies) > 0 {
 		policy = policies[0]
 	}
 	if policy.DefaultMode == "" {
-		policy.DefaultMode = RuntimeModeLegacy
+		policy.DefaultMode = RuntimeModeEinoADK
 	}
 
 	return policy, policy.validate()
@@ -268,7 +273,7 @@ func (p RuntimePolicy) runtimeModeFromRun(run *RunSummary) (RuntimeMode, error) 
 
 	rawConfig := strings.TrimSpace(run.Config)
 	if rawConfig == "" {
-		return p.authorizedMode(p.DefaultMode)
+		return p.authorizedMode(RuntimeModeLegacy)
 	}
 
 	var config struct {
@@ -280,7 +285,7 @@ func (p RuntimePolicy) runtimeModeFromRun(run *RunSummary) (RuntimeMode, error) 
 
 	mode := RuntimeMode(strings.TrimSpace(config.Runtime))
 	if mode == "" {
-		return p.authorizedMode(p.DefaultMode)
+		return p.authorizedMode(RuntimeModeLegacy)
 	}
 	return p.authorizedMode(mode)
 }

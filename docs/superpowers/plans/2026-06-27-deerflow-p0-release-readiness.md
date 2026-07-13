@@ -271,12 +271,13 @@ Browser smoke remains required before RC:
   external tool paths:
   `AGENT_THREAD_WORKER_ENABLED=false`,
   `AGENT_THREAD_RESUME_WORKER_ENABLED=false`,
-  `AGENT_THREAD_EINO_ADK_ENABLED=false`,
-  `AGENT_THREAD_RUNTIME_DEFAULT=legacy`,
   `AGENT_THREAD_MCP_RUNTIME_ENABLED=false`,
   `AGENT_THREAD_WEB_SEARCH_ENABLED=false`,
   `AGENT_MEMORY_EXTRACTOR_ENABLED=false`,
   and `AGENT_MEMORY_FLUSH_WORKER_ENABLED=false`.
+- Do not switch new tasks to `legacy`; after `AR-PARITY-002.1` it is a
+  historical checkpoint compatibility path only. Redeploy the previous
+  approved image for execution-runtime rollback.
 - Treat DB migrations as forward-only unless a rollback migration has been
   reviewed. Take a DB backup before release-gate apply.
 - Do not rotate or expose secrets through rollback logs. Keep env files and

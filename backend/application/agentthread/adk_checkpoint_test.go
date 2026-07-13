@@ -51,6 +51,53 @@ func TestADKCheckpointEnvelopeRoundTrip(t *testing.T) {
 	require.Equal(t, input, output)
 }
 
+func TestADKParityCheckpointEnvelopeV2RoundTrip(t *testing.T) {
+	state := newTestADKParityStateTracker(t).Snapshot()
+	input := ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
+		Checkpoint:      []byte{1, 2, 3},
+		ParityState:     &state,
+		RunRevision:     4,
+		CreatedAt:       100,
+	}
+
+	raw, err := input.Marshal()
+	require.NoError(t, err)
+
+	output, err := UnmarshalADKCheckpointEnvelope(raw)
+	require.NoError(t, err)
+	require.Equal(t, input, output)
+}
+
+func TestADKParityCheckpointEnvelopeAllowsTerminalSnapshotWithoutRuntimeBytes(t *testing.T) {
+	tracker := newTestADKParityStateTracker(t)
+	require.NoError(t, tracker.SetCompletion(ADKParityCompletion{
+		Status: "succeeded", Reason: "completed", CompletedAt: 100,
+	}))
+	state := tracker.Snapshot()
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseTerminal,
+		ParityState:     &state,
+	}
+
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+	decoded, err := UnmarshalADKCheckpointEnvelope(raw)
+	require.NoError(t, err)
+	require.Empty(t, decoded.Checkpoint)
+	require.Equal(t, "succeeded", decoded.ParityState.Completion.Status)
+}
+
 func TestADKCheckpointEnvelopeRejectsInvalidPayloads(t *testing.T) {
 	valid := ADKCheckpointEnvelope{
 		EnvelopeVersion: 1,
@@ -69,7 +116,7 @@ func TestADKCheckpointEnvelopeRejectsInvalidPayloads(t *testing.T) {
 		{
 			name: "unknown envelope version",
 			mutate: func(envelope *ADKCheckpointEnvelope) {
-				envelope.EnvelopeVersion = 2
+				envelope.EnvelopeVersion = 3
 			},
 			errString: "unsupported checkpoint envelope version",
 		},
@@ -120,7 +167,7 @@ func TestADKCheckpointStorePersistsLoadsAndDeletesByRuntimeKey(t *testing.T) {
 	service := &recordingADKCheckpointService{}
 	store, err := NewADKCheckpointStore(
 		service,
-		&RunSummary{RunID: 20, ThreadID: 10},
+		&RunSummary{RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9},
 		WithADKCheckpointMaxBytes(1024),
 		WithADKCheckpointClock(func() int64 { return 1234 }),
 		WithADKCheckpointRunRevision(7),
@@ -133,7 +180,7 @@ func TestADKCheckpointStorePersistsLoadsAndDeletesByRuntimeKey(t *testing.T) {
 	require.Equal(t, int64(20), service.created.RunID)
 	require.Equal(t, "eino_adk", service.created.RuntimeType)
 	require.Equal(t, "checkpoint-1", service.created.RuntimeKey)
-	require.Equal(t, int32(1), service.created.EnvelopeVersion)
+	require.Equal(t, int32(2), service.created.EnvelopeVersion)
 	require.Equal(t, "eino.adk", service.created.CheckpointNS)
 	require.Equal(t, `{}`, service.created.ChannelVersions)
 	require.Equal(t, `[]`, service.created.PendingSends)
@@ -141,13 +188,17 @@ func TestADKCheckpointStorePersistsLoadsAndDeletesByRuntimeKey(t *testing.T) {
 		"runtime":"eino_adk",
 		"runtime_version":"0.9.9",
 		"runtime_key":"checkpoint-1",
-		"envelope_version":1,
-		"message_type":"schema.Message"
+		"envelope_version":2,
+		"message_type":"schema.Message",
+		"checkpoint_phase":"runtime"
 	}`, service.created.Metadata)
 
 	envelope, err := UnmarshalADKCheckpointEnvelope([]byte(service.created.ChannelValues))
 	require.NoError(t, err)
 	require.Equal(t, []byte{1, 2, 3}, envelope.Checkpoint)
+	require.Equal(t, ADKCheckpointPhaseRuntime, envelope.CheckpointPhase)
+	require.NotNil(t, envelope.ParityState)
+	require.Equal(t, int64(10), envelope.ParityState.ThreadID)
 	require.Equal(t, int64(7), envelope.RunRevision)
 	require.Equal(t, int64(1234), envelope.CreatedAt)
 
@@ -158,11 +209,17 @@ func TestADKCheckpointStorePersistsLoadsAndDeletesByRuntimeKey(t *testing.T) {
 	}}))
 	envelope, err = UnmarshalADKCheckpointEnvelope([]byte(service.created.ChannelValues))
 	require.NoError(t, err)
+	require.Equal(t, ADKCheckpointPhaseInterrupt, envelope.CheckpointPhase)
 	require.Equal(t, ADKInterruptItem{
 		ID:          "interrupt-1",
 		Address:     "agent:lead;tool:approval",
 		IsRootCause: true,
 	}, envelope.Interrupts["interrupt-1"])
+	require.Equal(t, []ADKParityInterrupt{{
+		ID: "interrupt-1", Address: "agent:lead;tool:approval", IsRootCause: true,
+	}}, envelope.ParityState.Interrupts)
+	require.Len(t, service.createdHistory, 2)
+	require.Equal(t, service.createdHistory[0].createdID, service.createdHistory[1].request.ParentCheckpointID)
 
 	value, exists, err := store.Get(context.Background(), "checkpoint-1")
 	require.NoError(t, err)
@@ -201,7 +258,9 @@ func TestADKCheckpointStoreRejectsRuntimeVersionMismatch(t *testing.T) {
 			ChannelValues:   string(raw),
 		},
 	}
-	store, err := NewADKCheckpointStore(service, &RunSummary{RunID: 20, ThreadID: 10})
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	})
 	require.NoError(t, err)
 
 	_, _, err = store.Get(context.Background(), "checkpoint-1")
@@ -209,9 +268,62 @@ func TestADKCheckpointStoreRejectsRuntimeVersionMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "checkpoint runtime version 0.8.0 is incompatible with 0.9.9")
 }
 
+func TestADKCheckpointStoreLoadsLegacyV1RuntimeBytes(t *testing.T) {
+	envelope := ADKCheckpointEnvelope{
+		EnvelopeVersion: 1,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "checkpoint-1",
+		MessageType:     "schema.Message",
+		Checkpoint:      []byte{1, 2, 3},
+	}
+	raw, err := envelope.Marshal()
+	require.NoError(t, err)
+	service := &recordingADKCheckpointService{latest: &CheckpointSummary{
+		CheckpointID: 1, ThreadID: 10, RunID: 20,
+		RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "checkpoint-1",
+		EnvelopeVersion: 1, ChannelValues: string(raw),
+	}}
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	})
+	require.NoError(t, err)
+
+	value, exists, err := store.Get(context.Background(), "checkpoint-1")
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, []byte{1, 2, 3}, value)
+}
+
+func TestADKCheckpointStoreRejectsIndexedEnvelopeVersionMismatch(t *testing.T) {
+	state := newTestADKParityStateTracker(t).Snapshot()
+	raw, err := (ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK), RuntimeVersion: "0.9.9",
+		RuntimeKey: "checkpoint-1", MessageType: "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseRuntime,
+		Checkpoint:      []byte{1}, ParityState: &state,
+	}).Marshal()
+	require.NoError(t, err)
+	service := &recordingADKCheckpointService{latest: &CheckpointSummary{
+		CheckpointID: 1, ThreadID: 42, RunID: 1,
+		RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "checkpoint-1",
+		EnvelopeVersion: 1, ChannelValues: string(raw),
+	}}
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 1, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	})
+	require.NoError(t, err)
+
+	_, _, err = store.Get(context.Background(), "checkpoint-1")
+	require.ErrorContains(t, err, "indexed version")
+}
+
 func TestADKCheckpointStoreNormalizesRuntimeKey(t *testing.T) {
 	service := &recordingADKCheckpointService{}
-	store, err := NewADKCheckpointStore(service, &RunSummary{RunID: 20, ThreadID: 10})
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 20, ThreadID: 10, SpaceID: 7, CreatorID: 9,
+	})
 	require.NoError(t, err)
 
 	require.NoError(t, store.Set(context.Background(), " checkpoint-1 ", []byte{1}))
@@ -222,11 +334,120 @@ func TestADKCheckpointStoreNormalizesRuntimeKey(t *testing.T) {
 	require.Equal(t, "checkpoint-1", envelope.RuntimeKey)
 }
 
+func TestADKCheckpointStoreSeedsParityStateFromLatestThreadCheckpoint(t *testing.T) {
+	seedTracker := newTestADKParityStateTracker(t)
+	require.NoError(t, seedTracker.ReplaceTodos([]ADKParityTodo{{
+		ID: "1", Title: "Persisted", Status: "completed",
+	}}))
+	seed := seedTracker.Snapshot()
+	require.NoError(t, seedTracker.SetCompletion(ADKParityCompletion{
+		Status: "succeeded", Reason: "completed",
+	}))
+	seed = seedTracker.Snapshot()
+	raw, err := (ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK),
+		RuntimeVersion:  "0.9.9",
+		RuntimeKey:      "coze-run-1",
+		MessageType:     "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseTerminal,
+		ParityState:     &seed,
+	}).Marshal()
+	require.NoError(t, err)
+
+	service := &recordingADKCheckpointService{threadLatest: &CheckpointSummary{
+		CheckpointID:    40,
+		ThreadID:        42,
+		RunID:           1,
+		RuntimeType:     string(RuntimeModeEinoADK),
+		RuntimeKey:      "coze-run-1",
+		EnvelopeVersion: 2,
+		ChannelValues:   string(raw),
+	}}
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 2, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	})
+	require.NoError(t, err)
+
+	tracker, parentID, err := store.ParityStateTracker(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, service.listReq)
+	require.Equal(t, string(RuntimeModeEinoADK), service.listReq.RuntimeType)
+	require.Equal(t, int64(40), parentID)
+	require.Equal(t, int64(2), tracker.Snapshot().LastRunID)
+	require.Equal(t, []ADKParityTodo{{
+		ID: "1", Title: "Persisted", Status: "completed",
+	}}, tracker.Snapshot().Todos)
+}
+
+func TestADKCheckpointStoreRejectsCrossThreadParitySeed(t *testing.T) {
+	seed := newTestADKParityStateTracker(t).Snapshot()
+	seed.Completion = &ADKParityCompletion{
+		RunID: 1, Status: "succeeded", Reason: "completed",
+	}
+	seed.ThreadID = 99
+	seed.Workspace.ThreadID = 99
+	seed.Workspace.Identity = "space:7/thread:99"
+	raw, err := (ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK), RuntimeVersion: "0.9.9",
+		RuntimeKey: "coze-run-1", MessageType: "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseTerminal, ParityState: &seed,
+	}).Marshal()
+	require.NoError(t, err)
+	service := &recordingADKCheckpointService{threadLatest: &CheckpointSummary{
+		CheckpointID: 40, ThreadID: 42, RunID: 1,
+		RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "coze-run-1",
+		EnvelopeVersion: 2, ChannelValues: string(raw),
+	}}
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 2, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	})
+	require.NoError(t, err)
+
+	_, _, err = store.ParityStateTracker(context.Background())
+	require.ErrorContains(t, err, "active thread")
+}
+
+func TestADKCheckpointStoreRejectsTerminalEnvelopeAsResumeBytes(t *testing.T) {
+	state := newTestADKParityStateTracker(t).Snapshot()
+	state.Completion = &ADKParityCompletion{
+		RunID: 1, Status: "succeeded", Reason: "completed",
+	}
+	raw, err := (ADKCheckpointEnvelope{
+		EnvelopeVersion: 2,
+		Runtime:         string(RuntimeModeEinoADK), RuntimeVersion: "0.9.9",
+		RuntimeKey: "checkpoint-1", MessageType: "schema.Message",
+		CheckpointPhase: ADKCheckpointPhaseTerminal, ParityState: &state,
+	}).Marshal()
+	require.NoError(t, err)
+	service := &recordingADKCheckpointService{latest: &CheckpointSummary{
+		CheckpointID: 40, ThreadID: 42, RunID: 1,
+		RuntimeType: string(RuntimeModeEinoADK), RuntimeKey: "checkpoint-1",
+		EnvelopeVersion: 2, ChannelValues: string(raw),
+	}}
+	store, err := NewADKCheckpointStore(service, &RunSummary{
+		RunID: 1, ThreadID: 42, SpaceID: 7, CreatorID: 9,
+	})
+	require.NoError(t, err)
+
+	_, _, err = store.Get(context.Background(), "checkpoint-1")
+	require.ErrorContains(t, err, "terminal checkpoint is not resumable")
+}
+
+type recordedADKCheckpointCreate struct {
+	createdID int64
+	request   *CreateCheckpointRequest
+}
+
 type recordingADKCheckpointService struct {
-	created   *CreateCheckpointRequest
-	latestReq *GetLatestRuntimeCheckpointRequest
-	latest    *CheckpointSummary
-	deleted   *DeleteRuntimeCheckpointRequest
+	created        *CreateCheckpointRequest
+	createdHistory []recordedADKCheckpointCreate
+	listReq        *ListCheckpointsRequest
+	latestReq      *GetLatestRuntimeCheckpointRequest
+	latest         *CheckpointSummary
+	threadLatest   *CheckpointSummary
+	deleted        *DeleteRuntimeCheckpointRequest
 }
 
 func (s *recordingADKCheckpointService) CreateCheckpoint(
@@ -234,8 +455,9 @@ func (s *recordingADKCheckpointService) CreateCheckpoint(
 	req *CreateCheckpointRequest,
 ) (*CreateCheckpointResponse, error) {
 	s.created = req
+	checkpointID := int64(100 + len(s.createdHistory))
 	s.latest = &CheckpointSummary{
-		CheckpointID:    100,
+		CheckpointID:    checkpointID,
 		ThreadID:        req.ThreadID,
 		RunID:           req.RunID,
 		CheckpointNS:    req.CheckpointNS,
@@ -245,8 +467,28 @@ func (s *recordingADKCheckpointService) CreateCheckpoint(
 		EnvelopeVersion: req.EnvelopeVersion,
 		CreatedAt:       1234,
 	}
+	s.threadLatest = s.latest
+	s.createdHistory = append(s.createdHistory, recordedADKCheckpointCreate{
+		createdID: checkpointID,
+		request:   req,
+	})
 
 	return &CreateCheckpointResponse{Checkpoint: s.latest}, nil
+}
+
+func (s *recordingADKCheckpointService) ListCheckpoints(
+	ctx context.Context,
+	req *ListCheckpointsRequest,
+) (*ListCheckpointsResponse, error) {
+	s.listReq = req
+	checkpoints := []*CheckpointSummary{}
+	if s.threadLatest != nil {
+		checkpoints = append(checkpoints, s.threadLatest)
+	}
+	return &ListCheckpointsResponse{
+		Checkpoints: checkpoints,
+		Total:       int64(len(checkpoints)),
+	}, nil
 }
 
 func (s *recordingADKCheckpointService) GetLatestRuntimeCheckpoint(

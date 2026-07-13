@@ -42,14 +42,16 @@ adapters before exposing or persisting public contracts.
 
 ## Runtime Selection
 
-Production runtime selection is controlled by:
+Production task execution uses Eino ADK only:
 
-- `AGENT_THREAD_RUNTIME_DEFAULT=legacy|eino_adk`
-- `AGENT_THREAD_EINO_ADK_ENABLED=true|false`
+- `AGENT_THREAD_RUNTIME_DEFAULT=eino_adk` (optional; this is also the default)
+- `AGENT_THREAD_EINO_ADK_ENABLED=true` (optional; this is also the default)
 
-Defaults are legacy/disabled. Runtime selection must fail closed when a
-requested runtime is disabled or invalid; do not silently fall back from an
-invalid explicit runtime.
+New public requests are normalized to `runtime=eino_adk` before persistence.
+An explicit `legacy`, unknown runtime, disabled Eino runtime, or legacy
+production default fails closed. The legacy harness remains wired only to read
+or resume historical rows/checkpoints without an ADK marker and for explicit
+migration tests; it is not a production rollback selector.
 
 ## Tools And Policy
 

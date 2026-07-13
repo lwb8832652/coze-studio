@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,7 @@ func TestApplicationCreateTaskThreadRejectsRuntimeBeforeThreadPersistence(t *tes
 		},
 	}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: false,
 	}
 	app := &ApplicationService{
@@ -134,6 +135,77 @@ func TestApplicationCreateTaskThreadCanDeferRunStartForUploads(t *testing.T) {
 	require.NotNil(t, domainSVC.createReq)
 	require.Nil(t, domainSVC.createRunReq)
 	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread: &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "新建任务",
+				Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			},
+			Run: &entity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 30, ThreadID: 10, RunID: 20,
+				Role: entity.MessageRoleUser, Content: "请分析客户反馈",
+			},
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1, UserID: 2, Message: "请分析客户反馈",
+		Config: `{"runtime":"eino_adk"}`, IdempotencyKey: "new-task-key",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(10), resp.Thread.ThreadID)
+	require.Equal(t, int64(20), resp.Run.RunID)
+	require.Equal(t, int64(30), resp.Message.MessageID)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.Equal(t, int64(1), domainSVC.createThreadRunMessageReq.Thread.SpaceID)
+	require.Equal(t, int64(2), domainSVC.createThreadRunMessageReq.Thread.UserID)
+	require.Equal(t, entity.ThreadSourceWeb, domainSVC.createThreadRunMessageReq.Thread.Source)
+	require.JSONEq(t, `{"messages":[{"role":"user","content":"请分析客户反馈"}]}`, domainSVC.createThreadRunMessageReq.Run.Input)
+	require.Equal(t, "new-task-key", domainSVC.createThreadRunMessageReq.Run.IdempotencyKey)
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createThreadRunMessageReq.Message.Role)
+	require.Nil(t, domainSVC.createReq)
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread:  &entity.Thread{ID: 10, SpaceID: 1, CreatorID: 2, Title: "新建任务"},
+			Run:     &entity.Run{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 20, Role: entity.MessageRoleUser},
+		},
+	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Message: "请分析客户反馈",
+		Config:  `{"mode":"thinking","skills":{"enabled":true}}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"mode":"thinking",
+		"thinking_enabled":true,
+		"reasoning_effort":"low",
+		"is_plan_mode":false,
+		"subagent_enabled":false,
+		"skills":{"enabled":true}
+	}`, domainSVC.createThreadRunMessageReq.Run.Config)
 }
 
 func TestApplicationListThreadsMapsDomainThreads(t *testing.T) {
@@ -920,10 +992,326 @@ func TestApplicationCreateRunMapsDomainRun(t *testing.T) {
 	require.Equal(t, `["messages","updates"]`, resp.Run.StreamMode)
 }
 
+func TestApplicationCreateRunWithMessageUsesAtomicBundle(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "第一轮问题"},
+			{ID: 102, ThreadID: 10, RunID: 100, Role: entity.MessageRoleAssistant, Content: "第一轮回答"},
+			{ID: 103, ThreadID: 10, Role: entity.MessageRoleUser, Content: "孤立消息不能进入上下文"},
+		},
+		messageTotal: 3,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input: `{
+			"messages":[{"role":"user","content":"客户端伪造的历史"}],
+			"uploaded_files":[{"file_name":"report.md","virtual_path":"/mnt/user-data/uploads/report.md"}]
+		}`,
+		Config:          `{"runtime":"eino_adk"}`,
+		IdempotencyKey:  "follow-up-key",
+		MessageContent:  "继续分析",
+		MessageMetadata: `{"source":"workbench_detail_followup"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.Equal(t, int64(300), resp.Message.MessageID)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.Equal(t, int64(10), domainSVC.createRunBundleReq.Run.ThreadID)
+	require.Equal(t, "follow-up-key", domainSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.JSONEq(t, `{
+		"messages":[
+			{"_run_id":100,"role":"user","content":"第一轮问题"},
+			{"_run_id":100,"role":"assistant","content":"第一轮回答"},
+			{"role":"user","content":"继续分析"}
+		],
+		"uploaded_files":[{"file_name":"report.md","virtual_path":"/mnt/user-data/uploads/report.md"}]
+	}`, domainSVC.createRunBundleReq.Run.Input)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "客户端伪造的历史")
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "孤立消息不能进入上下文")
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createRunBundleReq.Message.Role)
+	require.Equal(t, "继续分析", domainSVC.createRunBundleReq.Message.Content)
+	require.Equal(t, `{"source":"workbench_detail_followup"}`, domainSVC.createRunBundleReq.Message.Metadata)
+	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateTopLevelRunUsesAdmissionBundleAndCancelsSupersededADK(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			InterruptedRuns: []*entity.Run{{
+				ID: 100, ThreadID: 10, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusInterrupted, Config: `{"runtime":"eino_adk"}`,
+				ErrorCode: "multitask_interrupt",
+			}},
+			Created: true,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	invoked := make(chan adkCancelRequest, 1)
+	cleanup := registry.register(100, func(request adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- request
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	resp, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Input:    `{"messages":[{"role":"user","content":"next"}]}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(200), resp.Run.RunID)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.Nil(t, domainSVC.createRunBundleReq.Message)
+	require.Nil(t, domainSVC.createRunBundleReq.Event)
+	require.Nil(t, domainSVC.createRunReq)
+	select {
+	case request := <-invoked:
+		require.True(t, request.recursive)
+	case <-time.After(time.Second):
+		t.Fatal("superseded Eino run did not receive cancellation")
+	}
+}
+
+func TestApplicationCreateTopLevelRunDoesNotWaitForSupersededADKShutdown(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			InterruptedRuns: []*entity.Run{{
+				ID: 100, ThreadID: 10, RunKind: entity.RunKindTask,
+				Status: entity.RunStatusInterrupted, Config: `{"runtime":"eino_adk"}`,
+				ErrorCode: "multitask_interrupt",
+			}},
+			Created: true,
+		},
+	}
+	release := make(chan struct{})
+	invoked := make(chan struct{}, 1)
+	registry := NewADKCancelRegistry()
+	cleanup := registry.register(100, func(adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- struct{}{}
+		return blockingADKCancelWaiter{release: release}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+	done := make(chan error, 1)
+	go func() {
+		_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+			ThreadID: 10,
+			Input:    `{"messages":[{"role":"user","content":"next"}]}`,
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		t.Fatal("new run creation waited for superseded ADK shutdown")
+	}
+	select {
+	case <-invoked:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("superseded Eino run did not receive cancellation")
+	}
+	close(release)
+}
+
+type blockingADKCancelWaiter struct {
+	release <-chan struct{}
+}
+
+func (w blockingADKCancelWaiter) Wait() error {
+	<-w.release
+	return nil
+}
+
+func TestApplicationCreateRunWithMessageReadsAllPersistedHistoryPages(t *testing.T) {
+	firstPage := make([]*entity.Message, 0, authoritativeRunHistoryPageSize)
+	for index := int64(1); index <= int64(authoritativeRunHistoryPageSize); index++ {
+		firstPage = append(firstPage, &entity.Message{
+			ID:       index,
+			ThreadID: 10,
+			RunID:    100,
+			Role:     entity.MessageRoleUser,
+			Content:  fmt.Sprintf("历史消息-%03d", index),
+		})
+	}
+	domainSVC := &recordingThreadService{
+		messagePages: map[int32][]*entity.Message{
+			1: firstPage,
+			2: {
+				{
+					ID:       201,
+					ThreadID: 10,
+					RunID:    100,
+					Role:     entity.MessageRoleAssistant,
+					Content:  "跨页最后一条回答",
+				},
+			},
+		},
+		messageTotal: 201,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-pagination-key",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, domainSVC.listMessagesReqs, 2)
+	require.Equal(t, int32(1), domainSVC.listMessagesReqs[0].Page)
+	require.Equal(t, authoritativeRunHistoryPageSize, domainSVC.listMessagesReqs[0].PageSize)
+	require.Equal(t, int32(2), domainSVC.listMessagesReqs[1].Page)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Len(t, input.Messages, 202)
+	require.Equal(t, "历史消息-001", input.Messages[0].Content)
+	require.Equal(t, "历史消息-200", input.Messages[199].Content)
+	require.Equal(t, "跨页最后一条回答", input.Messages[200].Content)
+	require.Equal(t, "继续分析", input.Messages[201].Content)
+}
+
+func TestApplicationCreateRunWithMessageKeepsCommittedLegacyMessages(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "原子化前的问题"},
+			{ID: 102, ThreadID: 10, Role: entity.MessageRoleUser, Content: "已成功执行的旧追问"},
+			{ID: 103, ThreadID: 10, Role: entity.MessageRoleUser, Content: "创建 run 失败后的孤立消息"},
+		},
+		messageTotal: 3,
+		runs: []*entity.Run{
+			{
+				ID:       110,
+				ThreadID: 10,
+				Metadata: `{"source":"workbench_detail_followup","appended_message_id":"102"}`,
+			},
+		},
+		runTotal: 1,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-legacy-key",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Equal(t, []authoritativeRunInputMessage{
+		{RunID: 100, Role: "user", Content: "原子化前的问题"},
+		{Role: "user", Content: "已成功执行的旧追问"},
+		{Role: "user", Content: "继续分析"},
+	}, input.Messages)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "创建 run 失败后的孤立消息")
+}
+
+func TestApplicationCreateRunWithMessageExcludesRolledBackRunHistory(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		messages: []*entity.Message{
+			{ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser, Content: "应被回滚的问题"},
+			{ID: 102, ThreadID: 10, RunID: 101, Role: entity.MessageRoleUser, Content: "保留的问题"},
+			{ID: 103, ThreadID: 10, RunID: 101, Role: entity.MessageRoleAssistant, Content: "保留的回答"},
+		},
+		messageTotal: 3,
+		runs: []*entity.Run{
+			{ID: 100, ThreadID: 10, Status: entity.RunStatusFailed, ErrorCode: "multitask_rollback"},
+			{ID: 101, ThreadID: 10, Status: entity.RunStatusSucceeded},
+		},
+		runTotal: 2,
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200,
+				Role: entity.MessageRoleUser, Content: "继续分析",
+			},
+			Created: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID:       10,
+		Input:          `{"messages":[]}`,
+		Config:         `{"runtime":"eino_adk"}`,
+		IdempotencyKey: "follow-up-after-rollback",
+		MessageContent: "继续分析",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	var input authoritativeRunInput
+	require.NoError(t, json.Unmarshal([]byte(domainSVC.createRunBundleReq.Run.Input), &input))
+	require.Equal(t, []authoritativeRunInputMessage{
+		{RunID: 101, Role: "user", Content: "保留的问题"},
+		{RunID: 101, Role: "assistant", Content: "保留的回答"},
+		{Role: "user", Content: "继续分析"},
+	}, input.Messages)
+	require.NotContains(t, domainSVC.createRunBundleReq.Run.Input, "应被回滚的问题")
+}
+
 func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: false,
 	}
 	app := &ApplicationService{
@@ -943,7 +1331,7 @@ func TestApplicationCreateRunRejectsRuntimeDisabledByServerPolicy(t *testing.T) 
 func TestApplicationCreateRunRejectsUnknownRuntimeBeforePersistence(t *testing.T) {
 	domainSVC := &recordingThreadService{}
 	policy := RuntimePolicy{
-		DefaultMode:    RuntimeModeLegacy,
+		DefaultMode:    RuntimeModeEinoADK,
 		EinoADKEnabled: true,
 	}
 	app := &ApplicationService{
@@ -958,6 +1346,49 @@ func TestApplicationCreateRunRejectsUnknownRuntimeBeforePersistence(t *testing.T
 
 	require.ErrorContains(t, err, "unsupported agent runtime: other")
 	require.Nil(t, domainSVC.createRunReq)
+}
+
+func TestApplicationCreateRunRejectsLegacyRuntimeBeforePersistence(t *testing.T) {
+	domainSVC := &recordingThreadService{}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Config:   `{"runtime":"legacy"}`,
+	})
+
+	require.ErrorIs(t, err, ErrInvalidRuntimeConfig)
+	require.ErrorContains(t, err, "legacy runtime is not selectable for new runs")
+	require.Nil(t, domainSVC.createRunReq)
+	require.Nil(t, domainSVC.createRunBundleReq)
+}
+
+func TestApplicationCreateRunCanonicalizesLangGraphRuntimeContext(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2},
+		},
+	}
+	policy := RuntimePolicy{DefaultMode: RuntimeModeEinoADK, EinoADKEnabled: true}
+	app := &ApplicationService{ThreadSVC: domainSVC, RuntimePolicy: &policy}
+
+	_, err := app.CreateRun(context.Background(), &CreateRunRequest{
+		ThreadID: 10,
+		Config:   `{}`,
+		Context:  `{"mode":"flash","model_name":"deepseek-v4-pro"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.createRunBundleReq)
+	require.JSONEq(t, `{
+		"runtime":"eino_adk",
+		"mode":"flash",
+		"model_name":"deepseek-v4-pro",
+		"thinking_enabled":false,
+		"is_plan_mode":false,
+		"subagent_enabled":false
+	}`, domainSVC.createRunBundleReq.Run.Config)
 }
 
 func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
@@ -1006,18 +1437,21 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 				Metadata:        `{"runtime":"eino_adk"}`,
 			},
 		},
-		createdRun: &entity.Run{
-			ID:       21,
-			ThreadID: 10,
-			SpaceID:  1,
-			Status:   entity.RunStatusQueued,
-		},
-		appended: &entity.Message{ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser},
-		appendedRunEvent: &entity.RunEvent{
-			ID:        40,
-			ThreadID:  10,
-			RunID:     21,
-			EventType: "human.interaction.resolved",
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID:       21,
+				ThreadID: 10,
+				SpaceID:  1,
+				Status:   entity.RunStatusQueued,
+			},
+			Message: &entity.Message{ID: 30, ThreadID: 10, RunID: 21, Role: entity.MessageRoleUser},
+			Event: &entity.RunEvent{
+				ID:        40,
+				ThreadID:  10,
+				RunID:     21,
+				EventType: "human.interaction.resolved",
+			},
+			Created: true,
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
@@ -1037,19 +1471,18 @@ func TestApplicationResumeHumanInteractionCreatesQueuedRun(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
-	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(20), domainSVC.listCheckpointsReq.RunID)
-	require.JSONEq(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Contains(t, domainSVC.createRunReq.Command, `"checkpoint_id":503`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"interrupt-1"`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"answer":"最近 7 天"`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source_run_id":20`)
-	require.Equal(t, int64(21), domainSVC.appendReq.RunID)
-	require.Equal(t, entity.MessageRoleUser, domainSVC.appendReq.Role)
-	require.Contains(t, domainSVC.appendReq.Content, "最近 7 天")
-	require.Equal(t, int64(21), domainSVC.appendRunEventReq.RunID)
-	require.Equal(t, "human.interaction.resolved", domainSVC.appendRunEventReq.EventType)
+	require.JSONEq(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"checkpoint_id":503`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"interrupt-1"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"answer":"最近 7 天"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source_run_id":20`)
+	require.Equal(t, entity.MessageRoleUser, domainSVC.createRunBundleReq.Message.Role)
+	require.Contains(t, domainSVC.createRunBundleReq.Message.Content, "最近 7 天")
+	require.Equal(t, "human.interaction.resolved", domainSVC.createRunBundleReq.Event.EventType)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"resume_run_id":21`)
 }
 
 func TestApplicationResumeHumanInteractionRejectsNonInterruptedSourceRun(t *testing.T) {
@@ -1199,20 +1632,23 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 				ErrorCode:   "subagent_timeout",
 			},
 		},
-		createdRun: &entity.Run{
-			ID:          21,
-			ThreadID:    1,
-			ParentRunID: 0,
-			SpaceID:     2,
-			AssistantID: "lead-agent",
-			RunKind:     entity.RunKindTask,
-			Status:      entity.RunStatusQueued,
-		},
-		appendedRunEvent: &entity.RunEvent{
-			ID:        40,
-			ThreadID:  1,
-			RunID:     21,
-			EventType: "subagent.retry.requested",
+		createdRunBundle: &domainservice.CreateRunBundleResult{
+			Run: &entity.Run{
+				ID:          21,
+				ThreadID:    1,
+				ParentRunID: 0,
+				SpaceID:     2,
+				AssistantID: "lead-agent",
+				RunKind:     entity.RunKindTask,
+				Status:      entity.RunStatusQueued,
+			},
+			Event: &entity.RunEvent{
+				ID:        40,
+				ThreadID:  1,
+				RunID:     21,
+				EventType: "subagent.retry.requested",
+			},
+			Created: true,
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
@@ -1225,22 +1661,25 @@ func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, int64(21), resp.Run.RunID)
-	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunReq.Status)
-	require.Equal(t, entity.RunKindTask, domainSVC.createRunReq.RunKind)
-	require.Zero(t, domainSVC.createRunReq.ParentRunID)
-	require.Equal(t, "lead-agent", domainSVC.createRunReq.AssistantID)
-	require.Equal(t, `{"messages":[]}`, domainSVC.createRunReq.Input)
-	require.Equal(t, `{"runtime":"eino_adk"}`, domainSVC.createRunReq.Config)
-	require.Equal(t, `{"plan_scope_run_id":10}`, domainSVC.createRunReq.Context)
-	require.Equal(t, "retry-child-20", domainSVC.createRunReq.IdempotencyKey)
-	require.Contains(t, domainSVC.createRunReq.Command, `"subagent_retry"`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"source_run_id":20`)
-	require.Contains(t, domainSVC.createRunReq.Command, `"parent_run_id":10`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source":"subagent_retry"`)
-	require.Contains(t, domainSVC.createRunReq.Metadata, `"source_run_id":20`)
-	require.Equal(t, "subagent.retry.requested", domainSVC.appendRunEventReq.EventType)
-	require.Equal(t, int64(21), domainSVC.appendRunEventReq.RunID)
-	require.Contains(t, domainSVC.appendRunEventReq.Payload, `"source_run_id":20`)
+	require.Equal(t, entity.RunStatusQueued, domainSVC.createRunBundleReq.Run.Status)
+	require.Equal(t, entity.RunKindTask, domainSVC.createRunBundleReq.Run.RunKind)
+	require.Zero(t, domainSVC.createRunBundleReq.Run.ParentRunID)
+	require.Equal(t, "lead-agent", domainSVC.createRunBundleReq.Run.AssistantID)
+	require.Equal(t, `{"messages":[]}`, domainSVC.createRunBundleReq.Run.Input)
+	require.Equal(t, `{"runtime":"eino_adk"}`, domainSVC.createRunBundleReq.Run.Config)
+	require.Equal(t, `{"plan_scope_run_id":10}`, domainSVC.createRunBundleReq.Run.Context)
+	require.Equal(t, "retry-child-20", domainSVC.createRunBundleReq.Run.IdempotencyKey)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"subagent_retry"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"parent_run_id":10`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Command, `"attempt":1`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source":"subagent_retry"`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleReq.Run.Metadata, `"attempt":1`)
+	require.Equal(t, "subagent.retry.requested", domainSVC.createRunBundleReq.Event.EventType)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"source_run_id":20`)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"retry_run_id":21`)
+	require.Contains(t, domainSVC.createRunBundleEventPayload, `"attempt":1`)
 }
 
 func TestApplicationRetrySubagentRunRejectsRunningChildRun(t *testing.T) {
@@ -3048,58 +3487,145 @@ func TestApplicationClaimPendingRunsMapsDomainRuns(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
 			{
-				ID:        200,
-				ThreadID:  10,
-				Status:    entity.RunStatusRunning,
-				Input:     `{"messages":[]}`,
-				WorkerID:  "worker-a",
-				StartedAt: 300,
-				UpdatedAt: 301,
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				Input:               `{"messages":[]}`,
+				WorkerID:            "worker-a",
+				LeaseOwner:          "worker-a",
+				LeaseToken:          "lease-200",
+				LeaseExpiresAt:      6_000,
+				HeartbeatAt:         1_000,
+				ExecutionGeneration: 3,
+				StartedAt:           300,
+				UpdatedAt:           301,
 			},
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ClaimPendingRuns(context.Background(), &ClaimPendingRunsRequest{
-		WorkerID: "worker-a",
-		Limit:    2,
+		WorkerID:       "worker-a",
+		Limit:          2,
+		Now:            1_000,
+		LeaseTTLMillis: 5_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "worker-a", domainSVC.claimRunsReq.WorkerID)
 	require.Equal(t, int32(2), domainSVC.claimRunsReq.Limit)
+	require.Equal(t, int64(1_000), domainSVC.claimRunsReq.Now)
+	require.Equal(t, int64(5_000), domainSVC.claimRunsReq.LeaseTTLMillis)
 	require.Len(t, resp.Runs, 1)
 	require.Equal(t, int64(200), resp.Runs[0].RunID)
 	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
 	require.Equal(t, "worker-a", resp.Runs[0].WorkerID)
+	require.Equal(t, "worker-a", resp.Runs[0].LeaseOwner)
+	require.Equal(t, "lease-200", resp.Runs[0].LeaseToken)
+	require.Equal(t, int64(6_000), resp.Runs[0].LeaseExpiresAt)
+	require.Equal(t, uint64(3), resp.Runs[0].ExecutionGeneration)
 }
 
 func TestApplicationClaimQueuedResumeRunsMapsDomainRuns(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{
 			{
-				ID:       201,
-				ThreadID: 10,
-				Status:   entity.RunStatusRunning,
-				WorkerID: "resume-worker-a",
-				Metadata: `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
+				ID:                  201,
+				ThreadID:            10,
+				Status:              entity.RunStatusRunning,
+				WorkerID:            "resume-worker-a",
+				LeaseOwner:          "resume-worker-a",
+				LeaseToken:          "lease-201",
+				LeaseExpiresAt:      8_000,
+				ExecutionGeneration: 2,
+				Metadata:            `{"checkpoint_resume":{"protected_from_worker_claim":true}}`,
 			},
 		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ClaimQueuedResumeRuns(context.Background(), &ClaimQueuedResumeRunsRequest{
-		WorkerID: "resume-worker-a",
-		Limit:    2,
+		WorkerID:       "resume-worker-a",
+		Limit:          2,
+		Now:            2_000,
+		LeaseTTLMillis: 6_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "resume-worker-a", domainSVC.claimQueuedResumeRunsReq.WorkerID)
 	require.Equal(t, int32(2), domainSVC.claimQueuedResumeRunsReq.Limit)
+	require.Equal(t, int64(2_000), domainSVC.claimQueuedResumeRunsReq.Now)
+	require.Equal(t, int64(6_000), domainSVC.claimQueuedResumeRunsReq.LeaseTTLMillis)
 	require.Len(t, resp.Runs, 1)
 	require.Equal(t, int64(201), resp.Runs[0].RunID)
 	require.Equal(t, RunStatusRunning, resp.Runs[0].Status)
 	require.Equal(t, "resume-worker-a", resp.Runs[0].WorkerID)
+	require.Equal(t, "lease-201", resp.Runs[0].LeaseToken)
+	require.Equal(t, uint64(2), resp.Runs[0].ExecutionGeneration)
+}
+
+func TestApplicationRunLeaseOperationsMapDomainRuns(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		renewedRunLease: &entity.Run{
+			ID: 200, Status: entity.RunStatusRunning, HeartbeatAt: 3_000, LeaseExpiresAt: 7_000,
+		},
+		releasedRunLease: &entity.Run{ID: 200, Status: entity.RunStatusPending},
+		expiredRunLeases: []*entity.Run{{
+			ID: 201, Status: entity.RunStatusRunning, LeaseExpiresAt: 2_000, ExecutionGeneration: 1,
+		}},
+		reconciledRunLease: &entity.Run{
+			ID: 201, Status: entity.RunStatusFailed, ErrorCode: "run_abandoned", EndedAt: 4_000,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	renewed, err := app.RenewRunLease(context.Background(), &RenewRunLeaseRequest{
+		RunID:               200,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 3_000,
+		LeaseTTLMillis:      4_000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(7_000), renewed.Run.LeaseExpiresAt)
+	require.Equal(t, "lease-200", domainSVC.renewRunLeaseReq.LeaseToken)
+
+	released, err := app.ReleaseRunLease(context.Background(), &ReleaseRunLeaseRequest{
+		RunID:               200,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		ToStatus:            RunStatusPending,
+		Now:                 3_500,
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusPending, released.Run.Status)
+	require.Equal(t, entity.RunStatusPending, domainSVC.releaseRunLeaseReq.ToStatus)
+
+	expired, err := app.ListExpiredRunLeases(context.Background(), &ListExpiredRunLeasesRequest{
+		Now:   4_000,
+		Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, expired.Runs, 1)
+	require.Equal(t, int64(201), expired.Runs[0].RunID)
+	require.Equal(t, int32(10), domainSVC.listExpiredRunLeasesReq.Limit)
+
+	reconciled, err := app.ReconcileExpiredRunLease(context.Background(), &ReconcileExpiredRunLeaseRequest{
+		RunID:               201,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-201",
+		ExecutionGeneration: 1,
+		ToStatus:            RunStatusFailed,
+		Now:                 4_000,
+		ErrorCode:           "run_abandoned",
+		ErrorMessage:        "execution lease expired without a recoverable checkpoint",
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunStatusFailed, reconciled.Run.Status)
+	require.Equal(t, "lease-201", domainSVC.reconcileExpiredRunLeaseReq.LeaseToken)
+	require.Equal(t, entity.RunStatusFailed, domainSVC.reconcileExpiredRunLeaseReq.ToStatus)
 }
 
 func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
@@ -3115,15 +3641,23 @@ func TestApplicationCompleteRunMapsDomainRun(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.CompleteRun(context.Background(), &UpdateRunStatusRequest{
-		RunID:    200,
-		From:     RunStatusRunning,
-		WorkerID: "worker-a",
+		RunID:               200,
+		From:                RunStatusRunning,
+		WorkerID:            "worker-a",
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 4_000,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(200), domainSVC.completeRunReq.RunID)
 	require.Equal(t, entity.RunStatusRunning, domainSVC.completeRunReq.From)
 	require.Equal(t, "worker-a", domainSVC.completeRunReq.WorkerID)
+	require.Equal(t, "worker-a", domainSVC.completeRunReq.LeaseOwner)
+	require.Equal(t, "lease-200", domainSVC.completeRunReq.LeaseToken)
+	require.Equal(t, uint64(3), domainSVC.completeRunReq.ExecutionGeneration)
+	require.Equal(t, int64(4_000), domainSVC.completeRunReq.Now)
 	require.Equal(t, int64(200), resp.Run.RunID)
 	require.Equal(t, RunStatusSucceeded, resp.Run.Status)
 	require.Equal(t, int64(400), resp.Run.EndedAt)
@@ -3163,11 +3697,17 @@ func TestApplicationFailRunMapsErrorFields(t *testing.T) {
 
 func TestApplicationCancelRunSignalsActiveADKExecution(t *testing.T) {
 	domainSVC := &recordingThreadService{
-		canceledRun: &entity.Run{
-			ID:       200,
-			ThreadID: 10,
-			Status:   entity.RunStatusCanceled,
-			Config:   `{"runtime":"eino_adk"}`,
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:                  200,
+				ThreadID:            10,
+				Status:              entity.RunStatusCanceled,
+				Config:              `{"runtime":"eino_adk"}`,
+				CancelRequestedAt:   4_000,
+				ExecutionGeneration: 4,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
 		},
 	}
 	registry := NewADKCancelRegistry()
@@ -3190,8 +3730,189 @@ func TestApplicationCancelRunSignalsActiveADKExecution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, RunStatusCanceled, resp.Run.Status)
+	require.Equal(t, int64(4_000), resp.Run.CancelRequestedAt)
+	require.Equal(t, uint64(4), resp.Run.ExecutionGeneration)
+	require.Equal(t, int64(200), domainSVC.requestRunCancellationReq.RunID)
 	require.Equal(t, adk.CancelAfterToolCalls|adk.CancelAfterChatModel, cancelRequest.mode)
 	require.True(t, cancelRequest.recursive)
+}
+
+func TestApplicationCancelRunDoesNotNotifyADKTwice(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusCanceled,
+				Config:   `{"runtime":"eino_adk"}`,
+			},
+			PreviousStatus: entity.RunStatusCanceled,
+			Changed:        false,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	notified := false
+	cleanup := registry.register(200, func(adkCancelRequest) (adkCancelWaiter, bool) {
+		notified = true
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	resp, err := app.CancelRun(context.Background(), &UpdateRunStatusRequest{RunID: 200})
+
+	require.NoError(t, err)
+	require.Equal(t, RunStatusCanceled, resp.Run.Status)
+	require.False(t, notified)
+}
+
+func TestApplicationCancelRunOnDisconnectHonorsPersistedMode(t *testing.T) {
+	t.Run("cancel mode interrupts active run", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			gotRun: &entity.Run{
+				ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
+				OnDisconnect: "cancel", Config: `{"runtime":"eino_adk"}`,
+			},
+			requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+				Run: &entity.Run{
+					ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled,
+					OnDisconnect: "cancel", Config: `{"runtime":"eino_adk"}`,
+				},
+				PreviousStatus: entity.RunStatusRunning,
+				Changed:        true,
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.True(t, resp.Canceled)
+		require.Equal(t, RunStatusCanceled, resp.Run.Status)
+		require.NotNil(t, domainSVC.requestRunCancellationReq)
+		require.Equal(t, int64(200), domainSVC.requestRunCancellationReq.RunID)
+	})
+
+	t.Run("continue mode keeps active run", func(t *testing.T) {
+		domainSVC := &recordingThreadService{gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, OnDisconnect: "continue",
+		}}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.False(t, resp.Canceled)
+		require.Equal(t, RunStatusRunning, resp.Run.Status)
+		require.Nil(t, domainSVC.requestRunCancellationReq)
+	})
+
+	t.Run("unknown legacy mode fails closed", func(t *testing.T) {
+		domainSVC := &recordingThreadService{
+			gotRun: &entity.Run{
+				ID: 200, ThreadID: 10, Status: entity.RunStatusRunning, OnDisconnect: "detach",
+			},
+			requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+				Run: &entity.Run{
+					ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled, OnDisconnect: "detach",
+				},
+				PreviousStatus: entity.RunStatusRunning,
+				Changed:        true,
+			},
+		}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.True(t, resp.Canceled)
+		require.Equal(t, RunStatusCanceled, resp.Run.Status)
+		require.NotNil(t, domainSVC.requestRunCancellationReq)
+	})
+
+	t.Run("terminal run is not canceled again", func(t *testing.T) {
+		domainSVC := &recordingThreadService{gotRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded, OnDisconnect: "cancel",
+		}}
+		app := &ApplicationService{ThreadSVC: domainSVC}
+
+		resp, err := app.CancelRunOnDisconnect(context.Background(), &CancelRunOnDisconnectRequest{RunID: 200})
+
+		require.NoError(t, err)
+		require.False(t, resp.Canceled)
+		require.Equal(t, RunStatusSucceeded, resp.Run.Status)
+		require.Nil(t, domainSVC.requestRunCancellationReq)
+	})
+}
+
+func TestApplicationCancelRunQueuesNotificationBeforeADKRegistration(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		requestRunCancellationResult: &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusCanceled,
+				Config:   `{"runtime":"eino_adk"}`,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
+		},
+	}
+	registry := NewADKCancelRegistry()
+	app := &ApplicationService{ThreadSVC: domainSVC, ADKCancelRegistry: registry}
+
+	_, err := app.CancelRun(context.Background(), &UpdateRunStatusRequest{RunID: 200})
+	require.NoError(t, err)
+
+	invoked := make(chan adkCancelRequest, 1)
+	cleanup := registry.register(200, func(request adkCancelRequest) (adkCancelWaiter, bool) {
+		invoked <- request
+		return &recordingADKCancelWaiter{}, true
+	})
+	defer cleanup()
+	select {
+	case request := <-invoked:
+		require.Equal(t, adk.CancelImmediate, request.mode)
+		require.True(t, request.recursive)
+	case <-time.After(time.Second):
+		t.Fatal("durable cancellation was not delivered after ADK registration")
+	}
+}
+
+func TestApplicationFinalizeRunSuccessMapsFenceAndResult(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		finalizeRunSuccessResult: &domainservice.FinalizeRunSuccessResult{
+			Run: &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusSucceeded},
+			Message: &entity.Message{
+				ID: 300, ThreadID: 10, RunID: 200, Role: entity.MessageRoleAssistant, Content: "done",
+			},
+			TitleUpdated: true,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.FinalizeRunSuccess(context.Background(), &FinalizeRunSuccessRequest{
+		RunID:               200,
+		ThreadID:            10,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-200",
+		ExecutionGeneration: 3,
+		Now:                 4_000,
+		Message:             "done",
+		MessageMetadata:     `{"source":"eino_adk"}`,
+		ExpectedThreadTitle: "new task",
+		ThreadTitle:         "generated title",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "lease-200", domainSVC.finalizeRunSuccessReq.LeaseToken)
+	require.Equal(t, uint64(3), domainSVC.finalizeRunSuccessReq.ExecutionGeneration)
+	require.Equal(t, "done", domainSVC.finalizeRunSuccessReq.Message)
+	require.Equal(t, "new task", domainSVC.finalizeRunSuccessReq.ExpectedThreadTitle)
+	require.Equal(t, "generated title", domainSVC.finalizeRunSuccessReq.ThreadTitle)
+	require.Equal(t, RunStatusSucceeded, resp.Run.Status)
+	require.Equal(t, int64(300), resp.Message.MessageID)
+	require.True(t, resp.TitleUpdated)
 }
 
 func TestApplicationAppendRunEventMapsDomainEvent(t *testing.T) {
@@ -3238,15 +3959,17 @@ func TestApplicationListRunEventsMapsDomainEvents(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.ListRunEvents(context.Background(), &ListRunEventsRequest{
-		ThreadID: 10,
-		RunID:    200,
-		Page:     2,
-		PageSize: 5,
+		ThreadID:     10,
+		RunID:        200,
+		AfterEventID: 299,
+		Page:         2,
+		PageSize:     5,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(10), domainSVC.listRunEventsReq.ThreadID)
 	require.Equal(t, int64(200), domainSVC.listRunEventsReq.RunID)
+	require.Equal(t, int64(299), domainSVC.listRunEventsReq.AfterEventID)
 	require.Equal(t, int32(2), domainSVC.listRunEventsReq.Page)
 	require.Equal(t, int32(5), domainSVC.listRunEventsReq.PageSize)
 	require.Equal(t, int64(2), resp.Total)
@@ -3326,13 +4049,15 @@ func TestApplicationCheckpointMethodsMapDomainCheckpoints(t *testing.T) {
 	require.Equal(t, `{"messages":["ok"]}`, createResp.Checkpoint.ChannelValues)
 
 	listResp, err := app.ListCheckpoints(context.Background(), &ListCheckpointsRequest{
-		ThreadID: 10,
-		RunID:    200,
-		Limit:    5,
+		ThreadID:    10,
+		RunID:       200,
+		RuntimeType: string(RuntimeModeEinoADK),
+		Limit:       5,
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(10), domainSVC.listCheckpointsReq.ThreadID)
 	require.Equal(t, int64(200), domainSVC.listCheckpointsReq.RunID)
+	require.Equal(t, string(RuntimeModeEinoADK), domainSVC.listCheckpointsReq.RuntimeType)
 	require.Equal(t, int32(5), domainSVC.listCheckpointsReq.Limit)
 	require.Equal(t, int64(1), listResp.Total)
 	require.Len(t, listResp.Checkpoints, 1)
@@ -3755,7 +4480,9 @@ func TestThreadOwnerMemoryAuthorizerAllowsOnlyThreadCreator(t *testing.T) {
 
 type recordingThreadService struct {
 	created                        *entity.Thread
+	createdThreadRunMessage        *domainservice.CreateThreadRunMessageResult
 	createdRun                     *entity.Run
+	createdRunBundle               *domainservice.CreateRunBundleResult
 	gotRun                         *entity.Run
 	idempotentRun                  *entity.Run
 	claimedRuns                    []*entity.Run
@@ -3788,9 +4515,19 @@ type recordingThreadService struct {
 	memoryFlushUpdated             bool
 	recordedTokenUsage             *entity.TokenUsage
 	messages                       []*entity.Message
+	messagePages                   map[int32][]*entity.Message
 	runs                           []*entity.Run
 	gotRunsByID                    map[int64]*entity.Run
 	claimedQueuedResumeRuns        []*entity.Run
+	renewedRunLease                *entity.Run
+	renewRunLeaseErr               error
+	renewRunLeaseCalls             chan *domainservice.RenewRunLeaseRequest
+	releasedRunLease               *entity.Run
+	expiredRunLeases               []*entity.Run
+	reconciledRunLease             *entity.Run
+	requestRunCancellationResult   *domainservice.RequestRunCancellationResult
+	finalizeRunSuccessResult       *domainservice.FinalizeRunSuccessResult
+	finalizeRunSuccessErr          error
 	interruptedRun                 *entity.Run
 	runEvents                      []*entity.RunEvent
 	checkpoints                    []*entity.Checkpoint
@@ -3807,15 +4544,26 @@ type recordingThreadService struct {
 	runTokenUsageAggregates        []*entity.RunTokenUsageAggregate
 	runBacklogAggregates           []*entity.RunBacklogAggregate
 	createReq                      *domainservice.CreateThreadRequest
+	createThreadRunMessageReq      *domainservice.CreateThreadRunMessageRequest
 	updateThreadTitleReq           *domainservice.UpdateThreadTitleRequest
 	updateThreadMetadataReq        *domainservice.UpdateThreadMetadataRequest
 	deleteThreadReq                *domainservice.DeleteThreadRequest
 	deleteThreadOK                 bool
 	createRunReq                   *domainservice.CreateRunRequest
+	createRunBundleReq             *domainservice.CreateRunBundleRequest
+	createRunBundleEventPayload    string
 	claimRunsReq                   *domainservice.ClaimPendingRunsRequest
 	claimQueuedResumeRunsReq       *domainservice.ClaimQueuedResumeRunsRequest
+	renewRunLeaseReq               *domainservice.RenewRunLeaseRequest
+	releaseRunLeaseReq             *domainservice.ReleaseRunLeaseRequest
+	releaseRunLeaseReqs            []*domainservice.ReleaseRunLeaseRequest
+	listExpiredRunLeasesReq        *domainservice.ListExpiredRunLeasesRequest
+	reconcileExpiredRunLeaseReq    *domainservice.ReconcileExpiredRunLeaseRequest
+	requestRunCancellationReq      *domainservice.RequestRunCancellationRequest
+	finalizeRunSuccessReq          *domainservice.FinalizeRunSuccessRequest
 	aggregateRunBacklogReq         *domainservice.AggregateRunBacklogRequest
 	completeRunReq                 *domainservice.UpdateRunStatusRequest
+	completeRunReqs                []*domainservice.UpdateRunStatusRequest
 	interruptRunReq                *domainservice.UpdateRunStatusRequest
 	failRunReq                     *domainservice.UpdateRunStatusRequest
 	cancelRunReq                   *domainservice.UpdateRunStatusRequest
@@ -3826,6 +4574,7 @@ type recordingThreadService struct {
 	getLatestCheckpointReq         *domainservice.GetLatestCheckpointRequest
 	getLatestRuntimeReq            *domainservice.GetLatestRuntimeCheckpointRequest
 	deleteRuntimeReq               *domainservice.DeleteRuntimeCheckpointRequest
+	deleteRuntimeErr               error
 	rememberMemoryReq              *domainservice.RememberMemoryRequest
 	rememberMemoryReqs             []*domainservice.RememberMemoryRequest
 	importMemoriesReq              *domainservice.ImportMemoriesRequest
@@ -3855,9 +4604,11 @@ type recordingThreadService struct {
 	listRunEventsReq               *domainservice.ListRunEventsRequest
 	appendReq                      *domainservice.AppendMessageRequest
 	listMessagesReq                *domainservice.ListMessagesRequest
+	listMessagesReqs               []*domainservice.ListMessagesRequest
 	getID                          int64
 	getRunID                       int64
 	completeRunErr                 error
+	completeRunErrors              map[int64]error
 }
 
 type recordingArtifactService struct {
@@ -4194,12 +4945,35 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			durability text,
 			idempotency_key text,
 			worker_id text,
+			lease_owner text,
+			lease_token text,
+			lease_expires_at integer,
+			heartbeat_at integer,
+			cancel_requested_at integer,
+			execution_generation integer NOT NULL DEFAULT 0,
 			error_code text,
 			error_message text,
 			started_at integer,
 			ended_at integer,
 			created_at integer,
 			updated_at integer
+		);
+		CREATE TABLE agent_thread_messages (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			role text,
+			content text,
+			metadata json,
+			created_at integer
+		);
+		CREATE TABLE agent_run_events (
+			id integer PRIMARY KEY,
+			thread_id integer,
+			run_id integer,
+			event_type text,
+			payload json,
+			created_at integer
 		)
 	`).Error
 }
@@ -4207,6 +4981,14 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 func (s *recordingThreadService) CreateThread(ctx context.Context, req *domainservice.CreateThreadRequest) (*entity.Thread, error) {
 	s.createReq = req
 	return s.created, nil
+}
+
+func (s *recordingThreadService) CreateThreadRunMessage(
+	ctx context.Context,
+	req *domainservice.CreateThreadRunMessageRequest,
+) (*domainservice.CreateThreadRunMessageResult, error) {
+	s.createThreadRunMessageReq = req
+	return s.createdThreadRunMessage, nil
 }
 
 func (s *recordingThreadService) GetThread(ctx context.Context, id int64) (*entity.Thread, error) {
@@ -4259,13 +5041,32 @@ func (s *recordingThreadService) AppendMessage(ctx context.Context, req *domains
 }
 
 func (s *recordingThreadService) ListMessages(ctx context.Context, req *domainservice.ListMessagesRequest) ([]*entity.Message, int64, error) {
-	s.listMessagesReq = req
+	if req != nil {
+		copied := *req
+		s.listMessagesReq = &copied
+		s.listMessagesReqs = append(s.listMessagesReqs, &copied)
+		if s.messagePages != nil {
+			return s.messagePages[req.Page], s.messageTotal, nil
+		}
+	}
 	return s.messages, s.messageTotal, nil
 }
 
 func (s *recordingThreadService) CreateRun(ctx context.Context, req *domainservice.CreateRunRequest) (*entity.Run, error) {
 	s.createRunReq = req
 	return s.createdRun, nil
+}
+
+func (s *recordingThreadService) CreateRunBundle(
+	ctx context.Context,
+	req *domainservice.CreateRunBundleRequest,
+) (*domainservice.CreateRunBundleResult, error) {
+	s.createRunBundleReq = req
+	if req != nil && req.Event != nil && req.Event.PayloadBuilder != nil &&
+		s.createdRunBundle != nil && s.createdRunBundle.Run != nil {
+		s.createRunBundleEventPayload = req.Event.PayloadBuilder(s.createdRunBundle.Run.ID)
+	}
+	return s.createdRunBundle, nil
 }
 
 func (s *recordingThreadService) GetRun(ctx context.Context, req *domainservice.GetRunRequest) (*entity.Run, error) {
@@ -4311,8 +5112,176 @@ func (s *recordingThreadService) ClaimQueuedResumeRuns(ctx context.Context, req 
 	return s.claimedQueuedResumeRuns, nil
 }
 
+func (s *recordingThreadService) RenewRunLease(
+	ctx context.Context,
+	req *domainservice.RenewRunLeaseRequest,
+) (*entity.Run, error) {
+	s.renewRunLeaseReq = req
+	if s.renewRunLeaseCalls != nil {
+		s.renewRunLeaseCalls <- req
+	}
+	if s.renewRunLeaseErr != nil {
+		return nil, s.renewRunLeaseErr
+	}
+	if s.renewedRunLease == nil && req != nil {
+		return &entity.Run{
+			ID:                  req.RunID,
+			Status:              entity.RunStatusRunning,
+			LeaseOwner:          req.LeaseOwner,
+			LeaseToken:          req.LeaseToken,
+			HeartbeatAt:         req.Now,
+			LeaseExpiresAt:      req.Now + req.LeaseTTLMillis,
+			ExecutionGeneration: req.ExecutionGeneration,
+		}, nil
+	}
+	return s.renewedRunLease, nil
+}
+
+func (s *recordingThreadService) ReleaseRunLease(
+	ctx context.Context,
+	req *domainservice.ReleaseRunLeaseRequest,
+) (*entity.Run, error) {
+	s.releaseRunLeaseReq = req
+	s.releaseRunLeaseReqs = append(s.releaseRunLeaseReqs, req)
+	if s.releasedRunLease == nil && req != nil {
+		return &entity.Run{ID: req.RunID, Status: req.ToStatus}, nil
+	}
+	return s.releasedRunLease, nil
+}
+
+func (s *recordingThreadService) ListExpiredRunLeases(
+	ctx context.Context,
+	req *domainservice.ListExpiredRunLeasesRequest,
+) ([]*entity.Run, error) {
+	s.listExpiredRunLeasesReq = req
+	return s.expiredRunLeases, nil
+}
+
+func (s *recordingThreadService) ReconcileExpiredRunLease(
+	ctx context.Context,
+	req *domainservice.ReconcileExpiredRunLeaseRequest,
+) (*entity.Run, error) {
+	s.reconcileExpiredRunLeaseReq = req
+	return s.reconciledRunLease, nil
+}
+
+func (s *recordingThreadService) RequestRunCancellation(
+	ctx context.Context,
+	req *domainservice.RequestRunCancellationRequest,
+) (*domainservice.RequestRunCancellationResult, error) {
+	s.requestRunCancellationReq = req
+	if req != nil {
+		s.cancelRunReq = &domainservice.UpdateRunStatusRequest{
+			RunID:        req.RunID,
+			From:         entity.RunStatusRunning,
+			To:           entity.RunStatusCanceled,
+			Now:          req.Now,
+			ErrorCode:    req.ErrorCode,
+			ErrorMessage: req.ErrorMessage,
+		}
+	}
+	if s.requestRunCancellationResult != nil {
+		return s.requestRunCancellationResult, nil
+	}
+	if s.canceledRun == nil {
+		if req == nil {
+			return nil, nil
+		}
+		return &domainservice.RequestRunCancellationResult{
+			Run: &entity.Run{
+				ID:                  req.RunID,
+				Status:              entity.RunStatusCanceled,
+				CancelRequestedAt:   req.Now,
+				ExecutionGeneration: 1,
+			},
+			PreviousStatus: entity.RunStatusRunning,
+			Changed:        true,
+		}, nil
+	}
+	return &domainservice.RequestRunCancellationResult{
+		Run:            s.canceledRun,
+		PreviousStatus: entity.RunStatusRunning,
+		Changed:        true,
+	}, nil
+}
+
+func (s *recordingThreadService) FinalizeRunSuccess(
+	ctx context.Context,
+	req *domainservice.FinalizeRunSuccessRequest,
+) (*domainservice.FinalizeRunSuccessResult, error) {
+	s.finalizeRunSuccessReq = req
+	if s.finalizeRunSuccessErr != nil {
+		return nil, s.finalizeRunSuccessErr
+	}
+	if req != nil {
+		s.appendReq = &domainservice.AppendMessageRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Role:     entity.MessageRoleAssistant,
+			Content:  req.Message,
+			Metadata: req.MessageMetadata,
+		}
+		s.completeRunReq = &domainservice.UpdateRunStatusRequest{
+			RunID:               req.RunID,
+			From:                entity.RunStatusRunning,
+			To:                  entity.RunStatusSucceeded,
+			WorkerID:            req.LeaseOwner,
+			LeaseOwner:          req.LeaseOwner,
+			LeaseToken:          req.LeaseToken,
+			ExecutionGeneration: req.ExecutionGeneration,
+			Now:                 req.Now,
+		}
+		s.completeRunReqs = append(s.completeRunReqs, s.completeRunReq)
+		if strings.TrimSpace(req.ThreadTitle) != "" {
+			s.updateThreadTitleReq = &domainservice.UpdateThreadTitleRequest{
+				ThreadID:  req.ThreadID,
+				Title:     req.ThreadTitle,
+				UpdatedAt: req.Now,
+			}
+		}
+		if s.completeRunErrors != nil && s.completeRunErrors[req.RunID] != nil {
+			return nil, s.completeRunErrors[req.RunID]
+		}
+	}
+	if s.completeRunErr != nil {
+		return nil, s.completeRunErr
+	}
+	if s.finalizeRunSuccessResult != nil {
+		return s.finalizeRunSuccessResult, nil
+	}
+	completedRun := s.completedRun
+	if completedRun == nil && req != nil {
+		completedRun = &entity.Run{
+			ID:       req.RunID,
+			ThreadID: req.ThreadID,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: req.LeaseOwner,
+		}
+	}
+	message := s.appended
+	if message == nil && req != nil {
+		message = &entity.Message{
+			ID:       req.RunID + 1,
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			Role:     entity.MessageRoleAssistant,
+			Content:  req.Message,
+			Metadata: req.MessageMetadata,
+		}
+	}
+	return &domainservice.FinalizeRunSuccessResult{
+		Run:          completedRun,
+		Message:      message,
+		TitleUpdated: req != nil && strings.TrimSpace(req.ThreadTitle) != "",
+	}, nil
+}
+
 func (s *recordingThreadService) CompleteRun(ctx context.Context, req *domainservice.UpdateRunStatusRequest) (*entity.Run, error) {
 	s.completeRunReq = req
+	s.completeRunReqs = append(s.completeRunReqs, req)
+	if req != nil && s.completeRunErrors != nil && s.completeRunErrors[req.RunID] != nil {
+		return nil, s.completeRunErrors[req.RunID]
+	}
 	if s.completeRunErr != nil {
 		return nil, s.completeRunErr
 	}
@@ -4378,7 +5347,7 @@ func (s *recordingThreadService) DeleteRuntimeCheckpoint(
 	req *domainservice.DeleteRuntimeCheckpointRequest,
 ) error {
 	s.deleteRuntimeReq = req
-	return nil
+	return s.deleteRuntimeErr
 }
 
 func (s *recordingThreadService) RememberMemory(ctx context.Context, req *domainservice.RememberMemoryRequest) (*entity.Memory, error) {

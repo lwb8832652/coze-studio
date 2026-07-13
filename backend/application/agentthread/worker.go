@@ -27,15 +27,23 @@ import (
 )
 
 const (
-	agentThreadWorkerEnabledEnv    = "AGENT_THREAD_WORKER_ENABLED"
-	agentThreadWorkerIDEnv         = "AGENT_THREAD_WORKER_ID"
-	agentThreadWorkerBatchSizeEnv  = "AGENT_THREAD_WORKER_BATCH_SIZE"
-	agentThreadWorkerIntervalMsEnv = "AGENT_THREAD_WORKER_INTERVAL_MS"
+	agentThreadWorkerEnabledEnv             = "AGENT_THREAD_WORKER_ENABLED"
+	agentThreadWorkerIDEnv                  = "AGENT_THREAD_WORKER_ID"
+	agentThreadWorkerBatchSizeEnv           = "AGENT_THREAD_WORKER_BATCH_SIZE"
+	agentThreadWorkerIntervalMsEnv          = "AGENT_THREAD_WORKER_INTERVAL_MS"
+	agentThreadWorkerLeaseTTLMsEnv          = "AGENT_THREAD_WORKER_LEASE_TTL_MS"
+	agentThreadWorkerHeartbeatIntervalMsEnv = "AGENT_THREAD_WORKER_HEARTBEAT_INTERVAL_MS"
 
-	agentThreadResumeWorkerEnabledEnv    = "AGENT_THREAD_RESUME_WORKER_ENABLED"
-	agentThreadResumeWorkerIDEnv         = "AGENT_THREAD_RESUME_WORKER_ID"
-	agentThreadResumeWorkerBatchSizeEnv  = "AGENT_THREAD_RESUME_WORKER_BATCH_SIZE"
-	agentThreadResumeWorkerIntervalMsEnv = "AGENT_THREAD_RESUME_WORKER_INTERVAL_MS"
+	agentThreadResumeWorkerEnabledEnv             = "AGENT_THREAD_RESUME_WORKER_ENABLED"
+	agentThreadResumeWorkerIDEnv                  = "AGENT_THREAD_RESUME_WORKER_ID"
+	agentThreadResumeWorkerBatchSizeEnv           = "AGENT_THREAD_RESUME_WORKER_BATCH_SIZE"
+	agentThreadResumeWorkerIntervalMsEnv          = "AGENT_THREAD_RESUME_WORKER_INTERVAL_MS"
+	agentThreadResumeWorkerLeaseTTLMsEnv          = "AGENT_THREAD_RESUME_WORKER_LEASE_TTL_MS"
+	agentThreadResumeWorkerHeartbeatIntervalMsEnv = "AGENT_THREAD_RESUME_WORKER_HEARTBEAT_INTERVAL_MS"
+
+	agentThreadLeaseRecoveryWorkerEnabledEnv    = "AGENT_THREAD_LEASE_RECOVERY_WORKER_ENABLED"
+	agentThreadLeaseRecoveryWorkerBatchSizeEnv  = "AGENT_THREAD_LEASE_RECOVERY_WORKER_BATCH_SIZE"
+	agentThreadLeaseRecoveryWorkerIntervalMsEnv = "AGENT_THREAD_LEASE_RECOVERY_WORKER_INTERVAL_MS"
 
 	agentMemoryFlushWorkerEnabledEnv        = "AGENT_MEMORY_FLUSH_WORKER_ENABLED"
 	agentMemoryFlushWorkerIDEnv             = "AGENT_MEMORY_FLUSH_WORKER_ID"
@@ -58,6 +66,7 @@ const (
 const (
 	defaultRunWorkerInterval              = 2 * time.Second
 	defaultResumeRunWorkerInterval        = 2 * time.Second
+	defaultRunLeaseRecoveryWorkerInterval = 5 * time.Second
 	defaultMemoryFlushWorkerID            = "memory-flush-worker"
 	defaultMemoryFlushWorkerBatch         = int32(10)
 	defaultMemoryFlushWorkerTTL           = 5 * time.Minute
@@ -195,10 +204,12 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 
 	eventSink := NewApplicationRunEventSink(app)
 	processor := NewRunProcessor(app, executor, RunProcessorOptions{
-		WorkerID:       envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
-		BatchSize:      envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
-		EventSink:      eventSink,
-		TitleGenerator: NewModelRunTitleGenerator(DefaultChatModelProvider),
+		WorkerID:          envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
+		BatchSize:         envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink:         eventSink,
+		TitleGenerator:    NewModelRunTitleGenerator(DefaultChatModelProvider),
+		LeaseTTL:          time.Duration(envkey.GetIntD(agentThreadWorkerLeaseTTLMsEnv, int(defaultRunLeaseTTL/time.Millisecond))) * time.Millisecond,
+		HeartbeatInterval: time.Duration(envkey.GetIntD(agentThreadWorkerHeartbeatIntervalMsEnv, int(defaultRunLeaseHeartbeatInterval/time.Millisecond))) * time.Millisecond,
 	})
 	worker := NewRunWorker(processor, RunWorkerOptions{
 		Interval:         time.Duration(envkey.GetIntD(agentThreadWorkerIntervalMsEnv, int(defaultRunWorkerInterval/time.Millisecond))) * time.Millisecond,
@@ -317,10 +328,12 @@ func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, e
 
 	eventSink := NewApplicationRunEventSink(app)
 	processor := NewResumeRunProcessor(app, ResumeRunProcessorOptions{
-		WorkerID:  envkey.GetStringD(agentThreadResumeWorkerIDEnv, defaultResumeRunProcessorWorkerID),
-		BatchSize: envkey.GetI32D(agentThreadResumeWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
-		EventSink: eventSink,
-		Executor:  executor,
+		WorkerID:          envkey.GetStringD(agentThreadResumeWorkerIDEnv, defaultResumeRunProcessorWorkerID),
+		BatchSize:         envkey.GetI32D(agentThreadResumeWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink:         eventSink,
+		Executor:          executor,
+		LeaseTTL:          time.Duration(envkey.GetIntD(agentThreadResumeWorkerLeaseTTLMsEnv, int(defaultRunLeaseTTL/time.Millisecond))) * time.Millisecond,
+		HeartbeatInterval: time.Duration(envkey.GetIntD(agentThreadResumeWorkerHeartbeatIntervalMsEnv, int(defaultRunLeaseHeartbeatInterval/time.Millisecond))) * time.Millisecond,
 	})
 	worker := NewResumeRunWorker(processor, ResumeRunWorkerOptions{
 		Interval:         time.Duration(envkey.GetIntD(agentThreadResumeWorkerIntervalMsEnv, int(defaultResumeRunWorkerInterval/time.Millisecond))) * time.Millisecond,
@@ -328,6 +341,100 @@ func StartResumeRunWorkerFromEnv(ctx context.Context, app *ApplicationService, e
 	})
 	worker.Start(ctx)
 
+	return worker
+}
+
+type RunLeaseRecoveryWorkerOptions struct {
+	Interval time.Duration
+}
+
+type RunLeaseRecoveryWorker struct {
+	processor *RunLeaseRecoveryProcessor
+	interval  time.Duration
+}
+
+func NewRunLeaseRecoveryWorker(
+	processor *RunLeaseRecoveryProcessor,
+	opts RunLeaseRecoveryWorkerOptions,
+) *RunLeaseRecoveryWorker {
+	interval := opts.Interval
+	if interval <= 0 {
+		interval = defaultRunLeaseRecoveryWorkerInterval
+	}
+	return &RunLeaseRecoveryWorker{processor: processor, interval: interval}
+}
+
+func (w *RunLeaseRecoveryWorker) Start(ctx context.Context) {
+	if w == nil || w.processor == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(w.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.RunOnce(ctx)
+			}
+		}
+	}()
+}
+
+func (w *RunLeaseRecoveryWorker) RunOnce(ctx context.Context) RunLeaseRecoveryResult {
+	if w == nil || w.processor == nil {
+		return RunLeaseRecoveryResult{}
+	}
+	result, err := w.processor.RecoverExpiredRunLeases(ctx)
+	if err != nil {
+		logs.CtxErrorf(
+			ctx,
+			"[agent-run-lease-recovery-worker] recovery failed, expired=%d recovered=%d abandoned=%d skipped=%d errored=%d err=%v",
+			result.ExpiredRuns,
+			result.RecoveredRuns,
+			result.AbandonedRuns,
+			result.SkippedRuns,
+			result.ErroredRuns,
+			err,
+		)
+		return result
+	}
+	if result.ExpiredRuns > 0 {
+		logs.CtxInfof(
+			ctx,
+			"[agent-run-lease-recovery-worker] recovery completed, expired=%d recovered=%d abandoned=%d skipped=%d",
+			result.ExpiredRuns,
+			result.RecoveredRuns,
+			result.AbandonedRuns,
+			result.SkippedRuns,
+		)
+	}
+	return result
+}
+
+func StartRunLeaseRecoveryWorkerFromEnv(
+	ctx context.Context,
+	app *ApplicationService,
+) *RunLeaseRecoveryWorker {
+	if !envkey.GetBoolD(agentThreadLeaseRecoveryWorkerEnabledEnv, false) {
+		return nil
+	}
+	if app == nil || app.ThreadSVC == nil {
+		logs.CtxWarnf(ctx, "[agent-run-lease-recovery-worker] enabled but thread service is not configured")
+		return nil
+	}
+
+	processor := NewRunLeaseRecoveryProcessor(app, RunLeaseRecoveryProcessorOptions{
+		Limit: envkey.GetI32D(agentThreadLeaseRecoveryWorkerBatchSizeEnv, defaultRunLeaseRecoveryLimit),
+	})
+	worker := NewRunLeaseRecoveryWorker(processor, RunLeaseRecoveryWorkerOptions{
+		Interval: time.Duration(envkey.GetIntD(
+			agentThreadLeaseRecoveryWorkerIntervalMsEnv,
+			int(defaultRunLeaseRecoveryWorkerInterval/time.Millisecond),
+		)) * time.Millisecond,
+	})
+	worker.Start(ctx)
 	return worker
 }
 
