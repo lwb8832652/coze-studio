@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,16 @@ func TestDecodeSkillImportContentRejectsRawSkillArchive(t *testing.T) {
 }
 
 func TestApplicationImportSkillUsesCustomDefaultType(t *testing.T) {
+	archive, err := buildSkillVersionArchive(&entity.SkillVersion{SkillMD: `---
+name: weekly-research
+description: Research weekly market changes.
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Weekly Research
+`}, nil)
+	require.NoError(t, err)
 	domainSVC := &recordingSkillDomainService{
 		imported: &entity.Skill{
 			ID:           101,
@@ -83,15 +94,56 @@ func TestApplicationImportSkillUsesCustomDefaultType(t *testing.T) {
 	resp, err := app.ImportSkill(context.Background(), &skillapi.ImportSkillRequest{
 		SpaceID:  1,
 		FileName: "weekly-research.skill",
-		Content:  "base64:" + base64.StdEncoding.EncodeToString([]byte("skill archive")),
+		Content:  "base64:" + base64.StdEncoding.EncodeToString(archive),
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, int64(1), domainSVC.importSpaceID)
 	require.Equal(t, "weekly-research.skill", domainSVC.importFileName)
-	require.Equal(t, []byte("skill archive"), domainSVC.importContent)
+	require.Equal(t, archive, domainSVC.importContent)
 	require.Equal(t, entity.TypeCustomSkill, domainSVC.importDefaultType)
 	require.Equal(t, skillapi.SkillType_CustomSkill, resp.Data.Type)
+}
+
+func TestApplicationArtifactImportPassesTrustedDevelopmentThreadIntoDomainImport(t *testing.T) {
+	archive, err := buildSkillVersionArchive(&entity.SkillVersion{SkillMD: `---
+name: artifact-skill
+description: Imported from an authenticated artifact.
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Artifact Skill
+`}, nil)
+	require.NoError(t, err)
+	domainSVC := &recordingSkillDomainService{imported: &entity.Skill{
+		ID: 101, SpaceID: 1, Name: "artifact-skill", Type: entity.TypeCustomSkill,
+		InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`,
+	}}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.ImportSkillFromArtifact(context.Background(), &skillapi.ImportSkillRequest{
+		SpaceID: 1, FileName: "artifact-skill.skill",
+		Content: "base64:" + base64.StdEncoding.EncodeToString(archive),
+	}, 901)
+	require.NoError(t, err)
+	require.Equal(t, int64(901), domainSVC.importDevelopmentThreadID)
+	require.Equal(t, int64(901), resp.Data.DevelopmentThreadID)
+}
+
+func TestApplicationRejectsMissingExpectedVersionID(t *testing.T) {
+	app := &ApplicationService{}
+	_, err := app.UpdateSkill(context.Background(), &skillapi.UpdateSkillRequest{ID: 101})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "expected version id is required")
+
+	_, err = app.RollbackSkillVersion(context.Background(), &skillapi.RollbackSkillVersionRequest{
+		SkillID: 101, VersionID: 201,
+	})
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "expected version id is required")
 }
 
 func TestApplicationListSkillVersionsMapsDomainVersions(t *testing.T) {
@@ -209,6 +261,52 @@ description: Research weekly market changes.
 	require.Equal(t, "Use concise bullets.", files["references/prompt.md"])
 }
 
+func TestApplicationExportSkillBuildsLatestImportableArchive(t *testing.T) {
+	skill := &entity.Skill{ID: 101, SpaceID: 1, Name: "weekly", Description: "safe", Type: entity.TypeCustomSkill, Version: "1.0.0", Enabled: true, InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`}
+	domainSVC := &recordingSkillDomainService{
+		skill: skill,
+		versions: []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.0.0", SkillMD: `---
+name: weekly
+description: safe
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Full body
+`}},
+		resources: []*entity.SkillResource{{SkillID: 101, VersionID: 201, Path: "references/prompt.md", Content: []byte("keep")}},
+	}
+	app := &ApplicationService{DomainSVC: domainSVC}
+
+	resp, err := app.ExportSkill(context.Background(), &skillapi.GetSkillRequest{SkillID: 101})
+	require.NoError(t, err)
+	require.Equal(t, "skill_101.skill", resp.Data.FileName)
+	require.Contains(t, resp.Data.Content, "base64:")
+	archive, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(resp.Data.Content, "base64:"))
+	require.NoError(t, err)
+	decl, err := domain.ParseDeclarationWithDefaultType(resp.Data.FileName, archive, entity.TypeCustomSkill)
+	require.NoError(t, err)
+	require.Contains(t, decl.SkillMD, "# Full body")
+	require.Len(t, decl.Resources, 1)
+	require.Equal(t, "references/prompt.md", decl.Resources[0].Path)
+	require.Equal(t, []byte("keep"), decl.Resources[0].Content)
+}
+
+func TestMergeUpdateRequestPreservesOptionalAndTrustedFields(t *testing.T) {
+	current := &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill, IconURI: "icon://keep", UsageScenarios: "keep", DevelopmentThreadID: 901, CreatedAt: 1}
+	updated, err := mergeUpdateRequest(current, &skillapi.UpdateSkillRequest{ID: 101, SpaceID: 1, Type: skillapi.SkillType_CustomSkill, Name: "updated", InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`})
+	require.NoError(t, err)
+	require.Equal(t, "icon://keep", updated.IconURI)
+	require.Equal(t, "keep", updated.UsageScenarios)
+	require.Equal(t, int64(901), updated.DevelopmentThreadID)
+}
+
+func TestAuthorizeSkillWriteRejectsBuiltinSkill(t *testing.T) {
+	app := &ApplicationService{DomainSVC: &recordingSkillDomainService{skill: &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeDeerSkill}}}
+	_, err := app.authorizeSkillWrite(context.Background(), 101)
+	require.ErrorIs(t, err, ErrSkillReadOnly)
+}
+
 func TestApplicationExportSkillVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
 	app := &ApplicationService{
 		DomainSVC: &recordingSkillDomainService{
@@ -247,8 +345,9 @@ func TestApplicationRollbackSkillVersionRestoresSkill(t *testing.T) {
 	app := &ApplicationService{DomainSVC: domainSVC}
 
 	resp, err := app.RollbackSkillVersion(context.Background(), &skillapi.RollbackSkillVersionRequest{
-		SkillID:   101,
-		VersionID: 201,
+		SkillID:           101,
+		VersionID:         201,
+		ExpectedVersionID: 301,
 	})
 
 	require.NoError(t, err)
@@ -495,30 +594,39 @@ func TestEntityToAPIMapsDeerSkillType(t *testing.T) {
 
 type recordingSkillDomainService struct {
 	domain.SkillService
-	versions                 []*entity.SkillVersion
-	resources                []*entity.SkillResource
-	rolledBack               *entity.Skill
-	updatedResourceVersion   *entity.SkillVersion
-	updatedContentVersion    *entity.SkillVersion
-	deleted                  *entity.Skill
-	listVersionsSkillID      int64
-	listResourcesSkillID     int64
-	listResourcesVersionID   int64
-	rollbackSkillID          int64
-	rollbackVersionID        int64
-	updatedResourceSkillID   int64
-	updatedResourceVersionID int64
-	updatedResourcePath      string
-	updatedResourceContent   []byte
-	updatedContentSkillID    int64
-	updatedContentVersionID  int64
-	updatedSkillMD           string
-	deletedSkillID           int64
-	imported                 *entity.Skill
-	importSpaceID            int64
-	importFileName           string
-	importContent            []byte
-	importDefaultType        entity.Type
+	skill                     *entity.Skill
+	versions                  []*entity.SkillVersion
+	resources                 []*entity.SkillResource
+	rolledBack                *entity.Skill
+	updatedResourceVersion    *entity.SkillVersion
+	updatedContentVersion     *entity.SkillVersion
+	deleted                   *entity.Skill
+	listVersionsSkillID       int64
+	listResourcesSkillID      int64
+	listResourcesVersionID    int64
+	rollbackSkillID           int64
+	rollbackVersionID         int64
+	updatedResourceSkillID    int64
+	updatedResourceVersionID  int64
+	updatedResourcePath       string
+	updatedResourceContent    []byte
+	updatedContentSkillID     int64
+	updatedContentVersionID   int64
+	updatedSkillMD            string
+	deletedSkillID            int64
+	imported                  *entity.Skill
+	importSpaceID             int64
+	importFileName            string
+	importContent             []byte
+	importDefaultType         entity.Type
+	importDevelopmentThreadID int64
+}
+
+func (s *recordingSkillDomainService) Get(context.Context, int64) (*entity.Skill, error) {
+	if s.skill != nil {
+		return s.skill, nil
+	}
+	return &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill}, nil
 }
 
 func (s *recordingSkillDomainService) ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error) {
@@ -527,6 +635,15 @@ func (s *recordingSkillDomainService) ImportDeclarationWithDefaultType(ctx conte
 	s.importContent = append([]byte(nil), content...)
 	s.importDefaultType = defaultType
 	return s.imported, nil
+}
+
+func (s *recordingSkillDomainService) ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
+	s.importDevelopmentThreadID = developmentThreadID
+	skill, err := s.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, defaultType)
+	if skill != nil {
+		skill.DevelopmentThreadID = developmentThreadID
+	}
+	return skill, err
 }
 
 func (s *recordingSkillDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -544,6 +661,10 @@ func (s *recordingSkillDomainService) RollbackVersion(ctx context.Context, skill
 	s.rollbackSkillID = skillID
 	s.rollbackVersionID = versionID
 	return s.rolledBack, nil
+}
+
+func (s *recordingSkillDomainService) RollbackVersionCAS(ctx context.Context, skillID, versionID, _ int64) (*entity.Skill, error) {
+	return s.RollbackVersion(ctx, skillID, versionID)
 }
 
 func (s *recordingSkillDomainService) Delete(ctx context.Context, skillID int64) (*entity.Skill, error) {
@@ -580,4 +701,29 @@ func readZipArchive(t *testing.T, content []byte) map[string]string {
 		files[file.Name] = string(bs)
 	}
 	return files
+}
+
+func TestExportContentIncludesSkillManagementMetadata(t *testing.T) {
+	content, err := exportContent(&entity.Skill{
+		ID: 101, Name: "weekly-report", Description: "Create weekly reports",
+		Type: entity.TypeCustomSkill, Version: "1.0.0", Enabled: true,
+		InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`,
+		IconURI: "skill-icon://ocean", UsageScenarios: "Summarize delivery progress",
+	})
+
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"id":"101",
+		"name":"weekly-report",
+		"description":"Create weekly reports",
+		"type":"custom_skill",
+		"version":"1.0.0",
+		"enabled":true,
+		"icon_uri":"skill-icon://ocean",
+		"usage_scenarios":"Summarize delivery progress",
+		"input_schema":{},
+		"output_schema":{},
+		"executor":{},
+		"permissions":{}
+	}`, content)
 }

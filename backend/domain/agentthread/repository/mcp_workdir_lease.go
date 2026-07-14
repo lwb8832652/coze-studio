@@ -40,6 +40,14 @@ type MCPRuntimeWorkdirLeaseRepository interface {
 		ctx context.Context,
 		req FinishMCPRuntimeWorkdirLeaseRequest,
 	) (*entity.MCPRuntimeWorkdirLease, bool, error)
+	ClaimExpiredMCPRuntimeWorkdirLease(
+		ctx context.Context,
+		req ClaimExpiredMCPRuntimeWorkdirLeaseRequest,
+	) (*entity.MCPRuntimeWorkdirLease, bool, error)
+	RetryMCPRuntimeWorkdirLease(
+		ctx context.Context,
+		req RetryMCPRuntimeWorkdirLeaseRequest,
+	) (*entity.MCPRuntimeWorkdirLease, bool, error)
 	ListExpiredMCPRuntimeWorkdirLeases(
 		ctx context.Context,
 		req ListExpiredMCPRuntimeWorkdirLeasesRequest,
@@ -51,6 +59,24 @@ type FinishMCPRuntimeWorkdirLeaseRequest struct {
 	WorkerID  string
 	Status    entity.MCPRuntimeWorkdirLeaseStatus
 	Now       int64
+	LastError string
+}
+
+type ClaimExpiredMCPRuntimeWorkdirLeaseRequest struct {
+	LeaseID                int64
+	ExpectedWorkerID       string
+	ExpectedWorkdir        string
+	ExpectedLeaseExpiresAt int64
+	ClaimWorkerID          string
+	Now                    int64
+	ClaimExpiresAt         int64
+}
+
+type RetryMCPRuntimeWorkdirLeaseRequest struct {
+	LeaseID   int64
+	WorkerID  string
+	Now       int64
+	RetryAt   int64
 	LastError string
 }
 
@@ -159,6 +185,85 @@ func (r *threadRepository) FinishMCPRuntimeWorkdirLease(
 	}
 
 	return po.toEntity(), true, nil
+}
+
+func (r *threadRepository) ClaimExpiredMCPRuntimeWorkdirLease(
+	ctx context.Context,
+	req ClaimExpiredMCPRuntimeWorkdirLeaseRequest,
+) (*entity.MCPRuntimeWorkdirLease, bool, error) {
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	expectedWorkerID := strings.TrimSpace(req.ExpectedWorkerID)
+	expectedWorkdir := strings.TrimSpace(req.ExpectedWorkdir)
+	claimWorkerID := strings.TrimSpace(req.ClaimWorkerID)
+	if req.LeaseID <= 0 || expectedWorkerID == "" || expectedWorkdir == "" ||
+		claimWorkerID == "" || len(claimWorkerID) > 128 ||
+		req.ExpectedLeaseExpiresAt <= 0 || req.ExpectedLeaseExpiresAt > now ||
+		req.ClaimExpiresAt <= now {
+		return nil, false, errors.New("mcp runtime workdir lease claim is invalid")
+	}
+	updated := r.db.WithContext(ctx).
+		Model(&mcpRuntimeWorkdirLeasePO{}).
+		Where("id = ?", req.LeaseID).
+		Where("status = ?", string(entity.MCPRuntimeWorkdirLeaseStatusActive)).
+		Where("worker_id = ?", expectedWorkerID).
+		Where("workdir = ?", expectedWorkdir).
+		Where("lease_expires_at = ? AND lease_expires_at <= ?", req.ExpectedLeaseExpiresAt, now).
+		Updates(map[string]any{
+			"worker_id":        claimWorkerID,
+			"lease_expires_at": req.ClaimExpiresAt,
+			"last_error":       "",
+			"updated_at":       now,
+		})
+	if updated.Error != nil {
+		return nil, false, updated.Error
+	}
+	if updated.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	lease, err := r.GetMCPRuntimeWorkdirLease(ctx, req.LeaseID)
+	if err != nil {
+		return nil, false, err
+	}
+	return lease, lease != nil, nil
+}
+
+func (r *threadRepository) RetryMCPRuntimeWorkdirLease(
+	ctx context.Context,
+	req RetryMCPRuntimeWorkdirLeaseRequest,
+) (*entity.MCPRuntimeWorkdirLease, bool, error) {
+	now := req.Now
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	workerID := strings.TrimSpace(req.WorkerID)
+	if req.LeaseID <= 0 || workerID == "" || req.RetryAt <= now {
+		return nil, false, errors.New("mcp runtime workdir lease retry is invalid")
+	}
+	updated := r.db.WithContext(ctx).
+		Model(&mcpRuntimeWorkdirLeasePO{}).
+		Where("id = ?", req.LeaseID).
+		Where("status = ?", string(entity.MCPRuntimeWorkdirLeaseStatusActive)).
+		Where("worker_id = ?", workerID).
+		Updates(map[string]any{
+			"lease_expires_at": req.RetryAt,
+			"released_at":      0,
+			"last_error":       truncateMCPRuntimeWorkdirLeaseError(req.LastError),
+			"updated_at":       now,
+		})
+	if updated.Error != nil {
+		return nil, false, updated.Error
+	}
+	if updated.RowsAffected == 0 {
+		return nil, false, nil
+	}
+	lease, err := r.GetMCPRuntimeWorkdirLease(ctx, req.LeaseID)
+	if err != nil {
+		return nil, false, err
+	}
+	return lease, lease != nil, nil
 }
 
 func (r *threadRepository) ListExpiredMCPRuntimeWorkdirLeases(

@@ -30,6 +30,7 @@ type ServiceComponents struct {
 	IDGen                 idgen.IDGenerator
 	CodeRunner            coderunner.Runner
 	ToolCandidateProvider ToolCandidateProvider
+	UserSpaceReader       UserSpaceReader
 }
 
 func InitService(c *ServiceComponents) *ApplicationService {
@@ -41,5 +42,6 @@ func InitService(c *ServiceComponents) *ApplicationService {
 		WorkflowRunner: domain.UnsupportedExecutor{},
 	}))
 	SVC.ToolCandidateProvider = c.ToolCandidateProvider
+	SVC.UserSpaceReader = c.UserSpaceReader
 	return SVC
 }

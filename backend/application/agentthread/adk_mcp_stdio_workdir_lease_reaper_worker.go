@@ -121,10 +121,12 @@ func (w *ADKMCPRuntimeStdioWorkdirLeaseReaperWorker) RunOnce(
 func StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnv(
 	ctx context.Context,
 	repository domainrepo.MCPRuntimeWorkdirLeaseRepository,
+	preparers ...*ADKMCPRuntimeStdioFilesystemWorkdirPreparer,
 ) *ADKMCPRuntimeStdioWorkdirLeaseReaperWorker {
 	worker, _ := StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnvWithStatus(
 		ctx,
 		repository,
+		preparers...,
 	)
 
 	return worker
@@ -133,6 +135,7 @@ func StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnv(
 func StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnvWithStatus(
 	ctx context.Context,
 	repository domainrepo.MCPRuntimeWorkdirLeaseRepository,
+	preparers ...*ADKMCPRuntimeStdioFilesystemWorkdirPreparer,
 ) (*ADKMCPRuntimeStdioWorkdirLeaseReaperWorker, ADKMCPRuntimeStdioWorkdirLeaseReaperWorkerEnvStatus) {
 	status := ADKMCPRuntimeStdioWorkdirLeaseReaperWorkerEnvStatus{
 		Enabled: envkey.GetBoolD(
@@ -159,11 +162,26 @@ func StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnvWithStatus(
 
 		return nil, status
 	}
+	var preparer *ADKMCPRuntimeStdioFilesystemWorkdirPreparer
+	if len(preparers) > 1 {
+		status.Reason = "mcp stdio workdir reaper preparer is invalid"
+		logs.CtxWarnf(ctx, "[mcp-stdio-workdir-reaper] shared preparer is invalid")
+		return nil, status
+	}
+	if len(preparers) == 1 {
+		preparer = preparers[0]
+		if preparer == nil || !preparer.Valid() || preparer.Root() != root {
+			status.Reason = "mcp stdio workdir reaper root does not match the locked root"
+			logs.CtxWarnf(ctx, "[mcp-stdio-workdir-reaper] shared preparer root mismatch")
+			return nil, status
+		}
+	}
 
 	reaper := NewADKMCPRuntimeStdioWorkdirLeaseReaper(
 		ADKMCPRuntimeStdioWorkdirLeaseReaperOptions{
-			Repository: repository,
-			Root:       root,
+			Repository:      repository,
+			Root:            root,
+			WorkdirPreparer: preparer,
 			BatchSize: envkey.GetI32D(
 				agentThreadMCPStdioWorkdirLeaseReaperBatchSizeEnv,
 				defaultADKMCPRuntimeStdioWorkdirLeaseReaperBatchSize,

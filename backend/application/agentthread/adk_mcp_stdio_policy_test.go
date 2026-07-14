@@ -30,6 +30,7 @@ func TestADKMCPRuntimeStdioStaticPolicyAllowsExplicitCommandWorkdirAndEnv(
 	policy := NewADKMCPRuntimeStdioStaticPolicy(
 		ADKMCPRuntimeStdioStaticPolicyOptions{
 			AllowedCommands:           []string{"node", "npx"},
+			AllowedNpxPackages:        []string{"@example/secret-mcp-server"},
 			AllowedWorkingDirPrefixes: []string{"/mnt/coze/mcp"},
 			AllowedEnvKeys:            []string{"API_TOKEN", "MCP_MODE"},
 			MaxArgs:                   4,
@@ -52,10 +53,14 @@ func TestADKMCPRuntimeStdioStaticPolicyDeniesByDefault(t *testing.T) {
 	policy := NewADKMCPRuntimeStdioStaticPolicy(
 		ADKMCPRuntimeStdioStaticPolicyOptions{},
 	)
+	call := validADKMCPRuntimeStdioPolicyCall()
+	call.Config.Args = nil
+	call.Config.Env = nil
+	call.Config.WorkingDir = ""
 
 	err := policy.ValidateADKMCPRuntimeStdio(
 		context.Background(),
-		validADKMCPRuntimeStdioPolicyCall(),
+		call,
 	)
 
 	require.Error(t, err)
@@ -156,6 +161,7 @@ func TestADKMCPRuntimeStdioStaticPolicyRejectsUnsafeInputsSafely(t *testing.T) {
 			policy := NewADKMCPRuntimeStdioStaticPolicy(
 				ADKMCPRuntimeStdioStaticPolicyOptions{
 					AllowedCommands:           []string{"npx"},
+					AllowedNpxPackages:        []string{"@example/secret-mcp-server"},
 					AllowedWorkingDirPrefixes: []string{"/mnt/coze/mcp"},
 					AllowedEnvKeys:            allowedEnvKeys,
 					MaxArgs:                   4,

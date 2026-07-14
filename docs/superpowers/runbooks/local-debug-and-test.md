@@ -58,6 +58,24 @@ APP_DEV_PREVIEW_GATEWAY_BASE_URL=https://preview.example.com/apps
 只有任务明确涉及 Agent Runtime 时，才额外启用 Eino ADK 相关变量；AppDev 页面
 调试不依赖这些变量。
 
+### MCP management/runtime
+
+MCP management 与 Agent Runtime 共用显式启用开关，未配置时默认关闭：
+
+```bash
+AGENT_THREAD_MCP_RUNTIME_ENABLED=true
+MCP_AES_AUTH_SECRET=<16-or-24-or-32-byte-secret-from-local-secret-store>
+```
+
+启用 MCP 时，application startup 会立即校验 `MCP_AES_AUTH_SECRET` 并构造
+AES-GCM codec；缺失或不是 16、24、32 bytes 会直接启动失败。Debug 模式同样
+不会生成临时或默认密钥。密钥只能放在 ignored `bin/.env.debug`、进程环境或部署
+密钥管理中，不得把真实值写入 tracked 文件、日志或测试夹具。
+
+显式设为 `AGENT_THREAD_MCP_RUNTIME_ENABLED=false`（或不设置）时，MCP 管理 API、
+默认 server seed、runtime registry 与 runtime binding 全部关闭，不会形成只可读或
+只可写的半可用状态。
+
 ## 本地 Web Search Proxy
 
 Go `net/http` 不会自动读取 macOS 系统代理。若本地 `web_search` 请求失败，可在

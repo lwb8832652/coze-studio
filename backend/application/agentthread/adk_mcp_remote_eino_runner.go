@@ -19,15 +19,15 @@ package agentthread
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"time"
 
-	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/components/tool"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const (
@@ -221,13 +221,7 @@ func (p *ADKMCPRuntimeRemoteEinoMCPToolProvider) ADKMCPRuntimeRemoteEinoTools(
 		return nil, errors.New("mcp runtime remote eino client is invalid")
 	}
 
-	return einomcp.GetTools(
-		ctx,
-		&einomcp.Config{
-			Cli:          mcpClient,
-			ToolNameList: []string{strings.TrimSpace(toolName)},
-		},
-	)
+	return boundedADKMCPRuntimeEinoTools(ctx, mcpClient, toolName)
 }
 
 func (r *ADKMCPRuntimeRemoteEinoRunner) outputByteLimit() int {
@@ -242,18 +236,29 @@ func (f *ADKMCPRuntimeRemoteEinoMCPClientFactory) newTransport(
 	execution ADKMCPRuntimeRemoteExecution,
 ) (mcptransport.Interface, error) {
 	headers := cloneADKMCPRuntimeStringMap(execution.Headers)
-	httpClient := &http.Client{Timeout: f.timeoutOrDefault()}
+	httpPolicy, err := mcpruntime.NewSafeHTTPPolicy(mcpruntime.SafeHTTPPolicyOptions{
+		AllowedHosts:    append([]string(nil), execution.AllowedHosts...),
+		AllowLocalDebug: execution.AllowLocalDebug,
+	})
+	if err != nil {
+		return nil, errors.New("mcp runtime remote eino policy is invalid")
+	}
+	httpClient, err := mcpruntime.NewSafeHTTPClient(mcpruntime.SafeHTTPClientOptions{
+		Policy:  httpPolicy,
+		Timeout: f.timeoutOrDefault(),
+	})
+	if err != nil {
+		return nil, errors.New("mcp runtime remote eino transport is unavailable")
+	}
 	switch execution.TransportType {
 	case adkMCPRuntimeTransportSSE:
-		return mcptransport.NewSSE(
-			strings.TrimSpace(execution.URL),
-			mcptransport.WithHeaderFunc(
-				func(context.Context) map[string]string {
-					return cloneADKMCPRuntimeStringMap(headers)
-				},
-			),
-			mcptransport.WithHTTPClient(httpClient),
-		)
+		return mcpruntime.NewSafeSSETransport(mcpruntime.SSETransportOptions{
+			URL:             strings.TrimSpace(execution.URL),
+			Headers:         headers,
+			HTTPClient:      httpClient,
+			HTTPPolicy:      httpPolicy,
+			EndpointTimeout: f.timeoutOrDefault(),
+		})
 	case adkMCPRuntimeTransportStreamableHTTP:
 		return mcptransport.NewStreamableHTTP(
 			strings.TrimSpace(execution.URL),

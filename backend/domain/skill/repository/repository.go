@@ -18,18 +18,25 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
 )
 
+var ErrVersionConflict = errors.New("skill latest version conflict")
+
 type SkillRepository interface {
 	Create(ctx context.Context, skill *entity.Skill) error
 	Update(ctx context.Context, skill *entity.Skill) error
+	CreateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error
+	UpdateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error
+	UpdateWithVersionCAS(ctx context.Context, skill *entity.Skill, expectedVersionID int64, version *entity.SkillVersion, resources []*entity.SkillResource) error
 	Delete(ctx context.Context, id int64) error
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
 	CreateVersion(ctx context.Context, version *entity.SkillVersion) error
 	ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error)
+	GetLatestVersion(ctx context.Context, skillID int64) (*entity.SkillVersion, error)
 	CreateResources(ctx context.Context, resources []*entity.SkillResource) error
 	ListResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error)
 }

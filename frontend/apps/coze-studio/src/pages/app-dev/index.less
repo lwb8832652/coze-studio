@@ -4745,33 +4745,51 @@
     #0f172a;
 }
 
-.app-dev-code-editor__surface textarea,
-.app-dev-code-editor textarea {
-  resize: none;
-
+.app-dev-code-editor__monaco {
+  overflow: hidden;
   flex: 1;
 
   width: 100%;
+  min-width: 0;
   min-height: 0;
-  padding: 16px;
-
-  font-family: SFMono-Regular, Consolas, monospace;
-  font-size: 13px;
-  line-height: 21px;
-  color: #dbeafe;
-  tab-size: 2;
 
   background: #020617;
   border: 1px solid rgb(148 163 184 / 18%);
   border-radius: 16px;
-  outline: none;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 18px 50px rgb(0 0 0 / 20%);
 }
 
-.app-dev-code-editor__surface textarea:focus,
-.app-dev-code-editor textarea:focus {
+.app-dev-code-editor__monaco:focus-within {
   border-color: rgb(129 140 248 / 70%);
   box-shadow: 0 0 0 3px rgb(79 70 229 / 18%), 0 18px 50px rgb(0 0 0 / 20%);
+}
+
+.app-dev-code-editor__monaco .monaco-editor,
+.app-dev-code-editor__monaco .overflow-guard {
+  border-radius: 15px;
+}
+
+.app-dev-code-editor__editor-state {
+  display: grid;
+  flex: 1;
+  place-items: center;
+
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+
+  font-size: 12px;
+  color: #94a3b8;
+
+  background: #020617;
+  border: 1px dashed rgb(148 163 184 / 24%);
+  border-radius: 16px;
+}
+
+.app-dev-code-editor__editor-state--error {
+  color: #fecaca;
+  background: rgb(127 29 29 / 18%);
+  border-color: rgb(248 113 113 / 34%);
 }
 
 .app-dev-code-editor footer {

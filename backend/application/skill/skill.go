@@ -38,6 +38,7 @@ var SVC = new(ApplicationService)
 type ApplicationService struct {
 	DomainSVC             domain.SkillService
 	ToolCandidateProvider ToolCandidateProvider
+	UserSpaceReader       UserSpaceReader
 }
 
 type ToolCandidateProvider interface {
@@ -90,6 +91,9 @@ var defaultSkillToolCandidates = []*skillapi.SkillToolCandidate{
 }
 
 func (s *ApplicationService) ListSkillToolCandidates(ctx context.Context, req *skillapi.ListSkillToolCandidatesRequest) (*skillapi.ListSkillToolCandidatesResponse, error) {
+	if err := s.authorizeSpace(ctx, req.SpaceID); err != nil {
+		return nil, err
+	}
 	if req == nil {
 		return nil, domain.InvalidArgumentErrorf("list skill tool candidates request is required")
 	}
@@ -203,6 +207,23 @@ func boundedTrim(value string, maxLength int) string {
 }
 
 func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.ImportSkillRequest) (*skillapi.SkillResponse, error) {
+	return s.importSkill(ctx, req, 0)
+}
+
+func (s *ApplicationService) ImportSkillFromArtifact(ctx context.Context, req *skillapi.ImportSkillRequest, developmentThreadID int64) (*skillapi.SkillResponse, error) {
+	if developmentThreadID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("development thread id is required")
+	}
+	return s.importSkill(ctx, req, developmentThreadID)
+}
+
+func (s *ApplicationService) importSkill(ctx context.Context, req *skillapi.ImportSkillRequest, developmentThreadID int64) (*skillapi.SkillResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("import skill request is required")
+	}
+	if err := s.authorizeSpaceWrite(ctx, req.SpaceID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -210,13 +231,23 @@ func (s *ApplicationService) ImportSkill(ctx context.Context, req *skillapi.Impo
 	if err != nil {
 		return nil, err
 	}
-	skill, err := s.DomainSVC.ImportDeclarationWithDefaultType(
-		ctx,
-		req.SpaceID,
-		req.FileName,
-		content,
-		entity.TypeCustomSkill,
-	)
+	declaration, err := domain.ParseDeclarationWithDefaultType(req.FileName, content, entity.TypeCustomSkill)
+	if err != nil {
+		return nil, domain.InvalidArgumentErrorf("%v", err)
+	}
+	if err := ensureWritableSkillType(entity.Type(declaration.Type)); err != nil {
+		return nil, err
+	}
+	var skill *entity.Skill
+	if developmentThreadID > 0 {
+		skill, err = s.DomainSVC.ImportDeclarationWithDevelopmentThread(
+			ctx, req.SpaceID, req.FileName, content, entity.TypeCustomSkill, developmentThreadID,
+		)
+	} else {
+		skill, err = s.DomainSVC.ImportDeclarationWithDefaultType(
+			ctx, req.SpaceID, req.FileName, content, entity.TypeCustomSkill,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -244,11 +275,20 @@ func decodeSkillImportContent(fileName, content string) ([]byte, error) {
 }
 
 func (s *ApplicationService) CreateSkill(ctx context.Context, req *skillapi.UpsertSkillRequest) (*skillapi.SkillResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("create skill request is required")
+	}
+	if err := s.authorizeSpaceWrite(ctx, req.SpaceID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
 	skill, err := upsertRequestToEntity(req)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureWritableSkillType(skill.Type); err != nil {
 		return nil, err
 	}
 	created, err := s.DomainSVC.Create(ctx, skill)
@@ -259,14 +299,21 @@ func (s *ApplicationService) CreateSkill(ctx context.Context, req *skillapi.Upse
 }
 
 func (s *ApplicationService) UpdateSkill(ctx context.Context, req *skillapi.UpdateSkillRequest) (*skillapi.SkillResponse, error) {
-	if err := s.requireDomainSVC(); err != nil {
-		return nil, err
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("update skill request is required")
 	}
-	skill, err := updateRequestToEntity(req)
+	if req.ExpectedVersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("expected version id is required")
+	}
+	current, err := s.authorizeSkillWrite(ctx, req.ID)
 	if err != nil {
 		return nil, err
 	}
-	updated, err := s.DomainSVC.Update(ctx, skill)
+	skill, err := mergeUpdateRequest(current, req)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.DomainSVC.UpdateWithExpectedVersion(ctx, skill, req.ExpectedVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +321,9 @@ func (s *ApplicationService) UpdateSkill(ctx context.Context, req *skillapi.Upda
 }
 
 func (s *ApplicationService) ListSkills(ctx context.Context, req *skillapi.ListSkillsRequest) (*skillapi.ListSkillsResponse, error) {
+	if err := s.authorizeSpace(ctx, req.SpaceID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -302,6 +352,9 @@ func (s *ApplicationService) ListSkills(ctx context.Context, req *skillapi.ListS
 }
 
 func (s *ApplicationService) GetSkill(ctx context.Context, req *skillapi.GetSkillRequest) (*skillapi.SkillResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -313,6 +366,12 @@ func (s *ApplicationService) GetSkill(ctx context.Context, req *skillapi.GetSkil
 }
 
 func (s *ApplicationService) DeleteSkill(ctx context.Context, req *skillapi.GetSkillRequest) (*skillapi.SkillResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("delete skill request is required")
+	}
+	if _, err := s.authorizeSkillWrite(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -330,6 +389,9 @@ func (s *ApplicationService) DeleteSkill(ctx context.Context, req *skillapi.GetS
 }
 
 func (s *ApplicationService) ExportSkill(ctx context.Context, req *skillapi.GetSkillRequest) (*skillapi.ExportSkillResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -337,7 +399,19 @@ func (s *ApplicationService) ExportSkill(ctx context.Context, req *skillapi.GetS
 	if err != nil {
 		return nil, err
 	}
-	content, err := exportContent(skill)
+	versions, err := s.DomainSVC.ListVersions(ctx, skill.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(versions) == 0 || versions[0] == nil {
+		return nil, domain.NotFoundErrorf("skill %d has no version", skill.ID)
+	}
+	latest := versions[0]
+	resources, err := s.DomainSVC.ListVersionResources(ctx, skill.ID, latest.ID)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := buildSkillVersionArchive(latest, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -345,13 +419,16 @@ func (s *ApplicationService) ExportSkill(ctx context.Context, req *skillapi.GetS
 		Code: 0,
 		Msg:  "success",
 		Data: &skillapi.ExportSkillData{
-			FileName: fmt.Sprintf("skill_%d.json", skill.ID),
-			Content:  content,
+			FileName: fmt.Sprintf("skill_%d.skill", skill.ID),
+			Content:  "base64:" + base64.StdEncoding.EncodeToString(archive),
 		},
 	}, nil
 }
 
 func (s *ApplicationService) TestRunSkill(ctx context.Context, req *skillapi.TestRunSkillRequest) (*skillapi.TestRunSkillResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -367,6 +444,9 @@ func (s *ApplicationService) TestRunSkill(ctx context.Context, req *skillapi.Tes
 }
 
 func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *skillapi.ListSkillVersionsRequest) (*skillapi.ListSkillVersionsResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -389,6 +469,9 @@ func (s *ApplicationService) ListSkillVersions(ctx context.Context, req *skillap
 }
 
 func (s *ApplicationService) ListSkillVersionResources(ctx context.Context, req *skillapi.ListSkillVersionResourcesRequest) (*skillapi.ListSkillVersionResourcesResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -411,6 +494,15 @@ func (s *ApplicationService) ListSkillVersionResources(ctx context.Context, req 
 }
 
 func (s *ApplicationService) UpdateSkillVersionResource(ctx context.Context, req *skillapi.UpdateSkillVersionResourceRequest) (*skillapi.SkillVersionResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("update skill version resource request is required")
+	}
+	if _, err := s.authorizeSkillWrite(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
+	if req.Operation != 0 && req.Operation != skillapi.SkillResourceOperation_Upsert {
+		return s.mutateSkillVersionResource(ctx, req)
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -436,6 +528,12 @@ func (s *ApplicationService) UpdateSkillVersionResource(ctx context.Context, req
 }
 
 func (s *ApplicationService) UpdateSkillVersionContent(ctx context.Context, req *skillapi.UpdateSkillVersionContentRequest) (*skillapi.SkillVersionResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("update skill version content request is required")
+	}
+	if _, err := s.authorizeSkillWrite(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -457,6 +555,9 @@ func (s *ApplicationService) UpdateSkillVersionContent(ctx context.Context, req 
 }
 
 func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skillapi.ExportSkillVersionRequest) (*skillapi.ExportSkillVersionResponse, error) {
+	if err := s.authorizeSkill(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -495,6 +596,15 @@ func (s *ApplicationService) ExportSkillVersion(ctx context.Context, req *skilla
 }
 
 func (s *ApplicationService) RollbackSkillVersion(ctx context.Context, req *skillapi.RollbackSkillVersionRequest) (*skillapi.SkillResponse, error) {
+	if req == nil {
+		return nil, domain.InvalidArgumentErrorf("rollback skill version request is required")
+	}
+	if req.ExpectedVersionID <= 0 {
+		return nil, domain.InvalidArgumentErrorf("expected version id is required")
+	}
+	if _, err := s.authorizeSkillWrite(ctx, req.SkillID); err != nil {
+		return nil, err
+	}
 	if err := s.requireDomainSVC(); err != nil {
 		return nil, err
 	}
@@ -508,7 +618,7 @@ func (s *ApplicationService) RollbackSkillVersion(ctx context.Context, req *skil
 		return nil, domain.InvalidArgumentErrorf("version id is required")
 	}
 
-	skill, err := s.DomainSVC.RollbackVersion(ctx, req.SkillID, req.VersionID)
+	skill, err := s.DomainSVC.RollbackVersionCAS(ctx, req.SkillID, req.VersionID, req.ExpectedVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -539,22 +649,28 @@ func IsClientError(err error) bool {
 	return domain.IsClientError(err)
 }
 
+func IsConflict(err error) bool {
+	return domain.IsConflict(err)
+}
+
 func upsertRequestToEntity(req *skillapi.UpsertSkillRequest) (*entity.Skill, error) {
 	typ, err := apiTypeToEntity(req.Type)
 	if err != nil {
 		return nil, err
 	}
 	skill := &entity.Skill{
-		SpaceID:      req.SpaceID,
-		Name:         req.Name,
-		Description:  req.Description,
-		Type:         typ,
-		Version:      req.Version,
-		Enabled:      req.Enabled,
-		InputSchema:  req.InputSchema,
-		OutputSchema: req.OutputSchema,
-		Executor:     req.Executor,
-		Permissions:  req.Permissions,
+		SpaceID:        req.SpaceID,
+		Name:           req.Name,
+		Description:    req.Description,
+		Type:           typ,
+		Version:        req.Version,
+		Enabled:        req.Enabled,
+		InputSchema:    req.InputSchema,
+		OutputSchema:   req.OutputSchema,
+		Executor:       req.Executor,
+		Permissions:    req.Permissions,
+		IconURI:        req.IconURI,
+		UsageScenarios: req.UsageScenarios,
 	}
 	if req.ID != nil {
 		skill.ID = *req.ID
@@ -562,24 +678,51 @@ func upsertRequestToEntity(req *skillapi.UpsertSkillRequest) (*entity.Skill, err
 	return skill, nil
 }
 
-func updateRequestToEntity(req *skillapi.UpdateSkillRequest) (*entity.Skill, error) {
+func mergeUpdateRequest(current *entity.Skill, req *skillapi.UpdateSkillRequest) (*entity.Skill, error) {
+	if current == nil || req == nil {
+		return nil, domain.InvalidArgumentErrorf("current skill and update request are required")
+	}
 	typ, err := apiTypeToEntity(req.Type)
 	if err != nil {
 		return nil, err
 	}
-	return &entity.Skill{
-		ID:           req.ID,
-		SpaceID:      req.SpaceID,
-		Name:         req.Name,
-		Description:  req.Description,
-		Type:         typ,
-		Version:      req.Version,
-		Enabled:      req.Enabled,
-		InputSchema:  req.InputSchema,
-		OutputSchema: req.OutputSchema,
-		Executor:     req.Executor,
-		Permissions:  req.Permissions,
-	}, nil
+	if req.SpaceID != current.SpaceID {
+		return nil, domain.InvalidArgumentErrorf("skill workspace cannot be changed")
+	}
+	if typ != current.Type {
+		return nil, domain.InvalidArgumentErrorf("skill type cannot be changed")
+	}
+	updated := &entity.Skill{
+		ID:                  current.ID,
+		SpaceID:             current.SpaceID,
+		Name:                req.Name,
+		Description:         req.Description,
+		Type:                typ,
+		Version:             req.Version,
+		Enabled:             req.Enabled,
+		InputSchema:         req.InputSchema,
+		OutputSchema:        req.OutputSchema,
+		Executor:            req.Executor,
+		Permissions:         req.Permissions,
+		IconURI:             current.IconURI,
+		UsageScenarios:      current.UsageScenarios,
+		DevelopmentThreadID: current.DevelopmentThreadID,
+		CreatedAt:           current.CreatedAt,
+	}
+	if strings.TrimSpace(req.IconURI) != "" {
+		updated.IconURI = req.IconURI
+	}
+	if strings.TrimSpace(req.UsageScenarios) != "" {
+		updated.UsageScenarios = req.UsageScenarios
+	}
+	return updated, nil
+}
+
+func ensureWritableSkillType(typ entity.Type) error {
+	if typ == entity.TypeDeerSkill || typ == entity.TypePublicSkill {
+		return ErrSkillReadOnly
+	}
+	return nil
 }
 
 func skillResponse(skill *entity.Skill) (*skillapi.SkillResponse, error) {
@@ -599,19 +742,22 @@ func entityToAPI(skill *entity.Skill) (*skillapi.Skill, error) {
 		return nil, err
 	}
 	return &skillapi.Skill{
-		ID:           skill.ID,
-		SpaceID:      skill.SpaceID,
-		Name:         skill.Name,
-		Description:  skill.Description,
-		Type:         typ,
-		Version:      skill.Version,
-		Enabled:      skill.Enabled,
-		InputSchema:  skill.InputSchema,
-		OutputSchema: skill.OutputSchema,
-		Executor:     skill.Executor,
-		Permissions:  skill.Permissions,
-		CreatedAt:    skill.CreatedAt,
-		UpdatedAt:    skill.UpdatedAt,
+		ID:                  skill.ID,
+		SpaceID:             skill.SpaceID,
+		Name:                skill.Name,
+		Description:         skill.Description,
+		Type:                typ,
+		Version:             skill.Version,
+		Enabled:             skill.Enabled,
+		InputSchema:         skill.InputSchema,
+		OutputSchema:        skill.OutputSchema,
+		Executor:            skill.Executor,
+		Permissions:         skill.Permissions,
+		IconURI:             skill.IconURI,
+		UsageScenarios:      skill.UsageScenarios,
+		DevelopmentThreadID: skill.DevelopmentThreadID,
+		CreatedAt:           skill.CreatedAt,
+		UpdatedAt:           skill.UpdatedAt,
 	}, nil
 }
 
@@ -686,12 +832,14 @@ func entityTypeToAPI(typ entity.Type) (skillapi.SkillType, error) {
 
 func exportContent(skill *entity.Skill) (string, error) {
 	decl := map[string]any{
-		"id":          strconv.FormatInt(skill.ID, 10),
-		"name":        skill.Name,
-		"description": skill.Description,
-		"type":        string(skill.Type),
-		"version":     skill.Version,
-		"enabled":     skill.Enabled,
+		"id":              strconv.FormatInt(skill.ID, 10),
+		"name":            skill.Name,
+		"description":     skill.Description,
+		"type":            string(skill.Type),
+		"version":         skill.Version,
+		"enabled":         skill.Enabled,
+		"icon_uri":        skill.IconURI,
+		"usage_scenarios": skill.UsageScenarios,
 	}
 	if err := setJSONField(decl, "input_schema", skill.InputSchema); err != nil {
 		return "", err

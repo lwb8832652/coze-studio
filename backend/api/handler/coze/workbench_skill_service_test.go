@@ -17,6 +17,7 @@
 package coze
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"net/http"
@@ -96,7 +97,8 @@ func TestInstallSkillFromArtifactHandlerImportsSkillArchive(t *testing.T) {
 	h.Use(workbenchSessionMiddlewareForTest(2))
 	h.POST("/api/workbench/skills/install", InstallSkillFromArtifact)
 	installSkillVersionTestService(t)
-	installSkillArtifactTestService(t, []byte("skill archive bytes"))
+	archive := buildWorkbenchSkillArchive(t)
+	installSkillArtifactTestService(t, archive)
 
 	w := ut.PerformRequest(
 		h.Engine,
@@ -116,12 +118,33 @@ func TestInstallSkillFromArtifactHandlerImportsSkillArchive(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, int64(1), domainSVC.importSpaceID)
 	require.Equal(t, "weekly-research.skill", domainSVC.importFileName)
-	require.Equal(t, []byte("skill archive bytes"), domainSVC.importContent)
+	require.Equal(t, archive, domainSVC.importContent)
 	require.Equal(t, entity.TypeCustomSkill, domainSVC.importDefaultType)
+	require.Equal(t, int64(10), domainSVC.developmentThreadID)
 	require.Contains(t, body, `"code":0`)
 	require.Contains(t, body, `"success":true`)
 	require.Contains(t, body, `"skill_name":"weekly-research"`)
 	require.Contains(t, body, `"message":"Skill weekly-research installed"`)
+}
+
+func buildWorkbenchSkillArchive(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("SKILL.md")
+	require.NoError(t, err)
+	_, err = w.Write([]byte(`---
+name: weekly-research
+description: Research weekly market changes.
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Weekly Research
+`))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
 }
 
 func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
@@ -129,7 +152,13 @@ func TestRollbackSkillVersionHandlerRestoresSkill(t *testing.T) {
 	h.POST("/api/workbench/skills/:skill_id/versions/:version_id/rollback", RollbackSkillVersion)
 	installSkillVersionTestService(t)
 
-	w := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/skills/101/versions/201/rollback", nil)
+	w := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/workbench/skills/101/versions/201/rollback",
+		&ut.Body{Body: bytes.NewBufferString(`{"expected_version_id":"301"}`), Len: len(`{"expected_version_id":"301"}`)},
+		ut.Header{Key: "content-type", Value: "application/json"},
+	)
 	body := string(w.Result().Body())
 	domainSVC := appskill.SVC.DomainSVC.(*skillVersionDomainService)
 
@@ -412,6 +441,14 @@ type skillVersionDomainService struct {
 	importFileName           string
 	importContent            []byte
 	importDefaultType        entity.Type
+	developmentThreadID      int64
+}
+
+func (s *skillVersionDomainService) Get(_ context.Context, skillID int64) (*entity.Skill, error) {
+	if s.imported != nil && s.imported.ID == skillID {
+		return s.imported, nil
+	}
+	return &entity.Skill{ID: skillID, SpaceID: 1, Type: entity.TypeCustomSkill}, nil
 }
 
 func (s *skillVersionDomainService) ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error) {
@@ -424,6 +461,15 @@ func (s *skillVersionDomainService) ImportDeclarationWithDefaultType(ctx context
 	s.importContent = append([]byte(nil), content...)
 	s.importDefaultType = defaultType
 	return s.imported, nil
+}
+
+func (s *skillVersionDomainService) ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
+	s.developmentThreadID = developmentThreadID
+	skill, err := s.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, defaultType)
+	if skill != nil {
+		skill.DevelopmentThreadID = developmentThreadID
+	}
+	return skill, err
 }
 
 func (s *skillVersionDomainService) ListVersions(ctx context.Context, skillID int64) ([]*entity.SkillVersion, error) {
@@ -441,6 +487,10 @@ func (s *skillVersionDomainService) RollbackVersion(ctx context.Context, skillID
 	s.rollbackSkillID = skillID
 	s.rollbackVersionID = versionID
 	return s.rolledBack, nil
+}
+
+func (s *skillVersionDomainService) RollbackVersionCAS(ctx context.Context, skillID, versionID, _ int64) (*entity.Skill, error) {
+	return s.RollbackVersion(ctx, skillID, versionID)
 }
 
 func (s *skillVersionDomainService) Delete(ctx context.Context, skillID int64) (*entity.Skill, error) {

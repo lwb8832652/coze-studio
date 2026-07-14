@@ -43,8 +43,8 @@ func TestMySQLCatalogPersistsMCPServers(t *testing.T) {
 		Description: "Documentation MCP",
 		ServerType:  "stdio",
 		Enabled:     true,
-		Config:      `{"command":"npx","args":["-y","@example/docs"]}`,
-		Auth:        `{"type":"none"}`,
+		Config:      `{"command":"npx"}`,
+		Auth:        `{}`,
 		Tools: []*toolapi.MCPToolDefinition{
 			{
 				Name:        "search-docs",
@@ -103,7 +103,7 @@ func TestMySQLCatalogEncodesAuthAtRest(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
 
 	codec := &recordingMCPAuthCodec{
-		encoded: `{"schema":"test.mcp_auth_envelope.v1","ciphertext":"encoded-auth"}`,
+		encoded: `{"_coze_mcp_auth":{"version":"test","nonce":"test","ciphertext":"encoded-auth"}}`,
 		decoded: `{"token":"raw-secret-token"}`,
 	}
 	catalog := NewMySQLCatalog(db, WithMySQLCatalogAuthCodec(codec))
@@ -180,7 +180,7 @@ func TestMySQLCatalogSanitizesAuthCodecErrors(t *testing.T) {
 		catalog := NewMySQLCatalog(
 			db,
 			WithMySQLCatalogAuthCodec(&recordingMCPAuthCodec{
-				encoded:   `{"schema":"test.mcp_auth_envelope.v1","ciphertext":"encoded-auth"}`,
+				encoded:   `{"_coze_mcp_auth":{"version":"test","nonce":"test","ciphertext":"encoded-auth"}}`,
 				decodeErr: fmt.Errorf("decode raw-secret-token failed"),
 			}),
 		)
@@ -316,7 +316,7 @@ func TestMySQLCatalogUpdatesMCPServerHealth(t *testing.T) {
 		UpdatedAt: 20,
 	}))
 
-	require.NoError(t, catalog.UpdateHealth(context.Background(), 100, MCPToolHealthSnapshot{
+	require.NoError(t, catalog.UpdateHealth(context.Background(), 100, 0, MCPToolHealthSnapshot{
 		Status:    "healthy",
 		CheckedAt: 40,
 		LatencyMs: 11,

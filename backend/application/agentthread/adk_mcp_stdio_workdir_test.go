@@ -126,6 +126,7 @@ func TestADKMCPRuntimeStdioTransportProjectsWorkdirBeforePolicy(t *testing.T) {
 	policy := NewADKMCPRuntimeStdioStaticPolicy(
 		ADKMCPRuntimeStdioStaticPolicyOptions{
 			AllowedCommands:           []string{"npx"},
+			AllowedNpxPackages:        []string{"@example/secret-mcp-server"},
 			AllowedWorkingDirPrefixes: []string{"/mnt/coze/mcp"},
 			AllowedEnvKeys:            []string{"API_TOKEN"},
 			MaxArgs:                   4,

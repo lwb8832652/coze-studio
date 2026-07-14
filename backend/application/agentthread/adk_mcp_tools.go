@@ -26,7 +26,7 @@ import (
 )
 
 type ADKMCPToolRegistry interface {
-	ListMCPToolRegistryEntries(
+	ListMCPToolRegistryEntriesForRuntime(
 		ctx context.Context,
 		spaceID int64,
 	) ([]*toolapi.MCPToolRegistryEntry, error)
@@ -94,7 +94,7 @@ func (c *ADKMCPRuntimeToolCatalog) LoadADKRuntimeTools(
 		return nil, fmt.Errorf("space_id is required")
 	}
 
-	entries, err := c.registry.ListMCPToolRegistryEntries(ctx, run.SpaceID)
+	entries, err := c.registry.ListMCPToolRegistryEntriesForRuntime(ctx, run.SpaceID)
 	if err != nil {
 		return nil, err
 	}

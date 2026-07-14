@@ -93,7 +93,7 @@ func TestADKMCPRuntimeStdioLeasedWorkdirPreparerReleasesLeaseAfterCleanup(
 	require.Empty(t, store.errorText)
 }
 
-func TestADKMCPRuntimeStdioLeasedWorkdirPreparerMarksLeaseFailedOnCleanupError(
+func TestADKMCPRuntimeStdioLeasedWorkdirPreparerRetriesLeaseOnCleanupError(
 	t *testing.T,
 ) {
 	inner := &recordingADKMCPRuntimeStdioWorkdirPreparer{
@@ -127,9 +127,9 @@ func TestADKMCPRuntimeStdioLeasedWorkdirPreparerMarksLeaseFailedOnCleanupError(
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp runtime stdio workdir cleanup failed")
 	assertADKMCPStdioWorkdirPreparerErrorDoesNotLeak(t, err.Error())
-	require.Equal(t, 1, store.finishCalls)
-	require.Equal(t, ADKMCPRuntimeStdioWorkdirLeaseStatusFailed, store.status)
-	require.Equal(t, "cleanup failed", store.errorText)
+	require.Equal(t, 0, store.finishCalls)
+	require.Equal(t, 1, store.retryCalls)
+	require.Equal(t, "cleanup retryable", store.errorText)
 }
 
 func mustProjectValidADKMCPRuntimeStdioExecution(
@@ -153,6 +153,8 @@ type recordingADKMCPRuntimeStdioWorkdirLeaseStore struct {
 	lease         ADKMCPRuntimeStdioWorkdirLease
 	createCalls   int
 	finishCalls   int
+	retryCalls    int
+	retryAt       int64
 	createErr     error
 	finishErr     error
 }
@@ -183,5 +185,18 @@ func (s *recordingADKMCPRuntimeStdioWorkdirLeaseStore) FinishADKMCPRuntimeStdioW
 	s.status = status
 	s.errorText = errorText
 
+	return s.finishErr
+}
+
+func (s *recordingADKMCPRuntimeStdioWorkdirLeaseStore) RetryADKMCPRuntimeStdioWorkdirLease(
+	_ context.Context,
+	lease ADKMCPRuntimeStdioWorkdirLease,
+	retryAt int64,
+	errorText string,
+) error {
+	s.retryCalls++
+	s.finishedLease = lease
+	s.retryAt = retryAt
+	s.errorText = errorText
 	return s.finishErr
 }

@@ -35,22 +35,24 @@ import (
 )
 
 type Declaration struct {
-	ID           string                `json:"id" yaml:"id"`
-	Name         string                `json:"name" yaml:"name"`
-	Description  string                `json:"description" yaml:"description"`
-	Type         string                `json:"type" yaml:"type"`
-	Version      string                `json:"version" yaml:"version"`
-	Enabled      bool                  `json:"enabled" yaml:"enabled"`
-	Context      string                `json:"context,omitempty" yaml:"context,omitempty"`
-	Agent        string                `json:"agent,omitempty" yaml:"agent,omitempty"`
-	Model        string                `json:"model,omitempty" yaml:"model,omitempty"`
-	InputSchema  map[string]any        `json:"input_schema" yaml:"input_schema"`
-	OutputSchema map[string]any        `json:"output_schema" yaml:"output_schema"`
-	Executor     ExecutorDeclaration   `json:"executor" yaml:"executor"`
-	Permissions  PermissionDeclaration `json:"permissions" yaml:"permissions"`
-	Body         string                `json:"-" yaml:"-"`
-	SkillMD      string                `json:"-" yaml:"-"`
-	Resources    []ArchiveResource     `json:"-" yaml:"-"`
+	ID             string                `json:"id" yaml:"id"`
+	Name           string                `json:"name" yaml:"name"`
+	Description    string                `json:"description" yaml:"description"`
+	Type           string                `json:"type" yaml:"type"`
+	Version        string                `json:"version" yaml:"version"`
+	Enabled        bool                  `json:"enabled" yaml:"enabled"`
+	IconURI        string                `json:"icon_uri,omitempty" yaml:"icon_uri,omitempty"`
+	UsageScenarios string                `json:"usage_scenarios,omitempty" yaml:"usage_scenarios,omitempty"`
+	Context        string                `json:"context,omitempty" yaml:"context,omitempty"`
+	Agent          string                `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Model          string                `json:"model,omitempty" yaml:"model,omitempty"`
+	InputSchema    map[string]any        `json:"input_schema" yaml:"input_schema"`
+	OutputSchema   map[string]any        `json:"output_schema" yaml:"output_schema"`
+	Executor       ExecutorDeclaration   `json:"executor" yaml:"executor"`
+	Permissions    PermissionDeclaration `json:"permissions" yaml:"permissions"`
+	Body           string                `json:"-" yaml:"-"`
+	SkillMD        string                `json:"-" yaml:"-"`
+	Resources      []ArchiveResource     `json:"-" yaml:"-"`
 }
 
 type ArchiveResource struct {
@@ -76,19 +78,23 @@ type PermissionDeclaration struct {
 }
 
 type skillMarkdownFrontmatter struct {
-	ID                string         `yaml:"id"`
-	Name              string         `yaml:"name"`
-	Description       string         `yaml:"description"`
-	Type              string         `yaml:"type"`
-	Version           string         `yaml:"version"`
-	Enabled           *bool          `yaml:"enabled"`
-	Context           string         `yaml:"context"`
-	Agent             string         `yaml:"agent"`
-	Model             string         `yaml:"model"`
-	InputSchema       map[string]any `yaml:"input_schema"`
-	OutputSchema      map[string]any `yaml:"output_schema"`
-	AllowedTools      []string       `yaml:"allowed-tools"`
-	AllowedToolsSnake []string       `yaml:"allowed_tools"`
+	ID                string                `yaml:"id"`
+	Name              string                `yaml:"name"`
+	Description       string                `yaml:"description"`
+	Type              string                `yaml:"type"`
+	Version           string                `yaml:"version"`
+	Enabled           *bool                 `yaml:"enabled"`
+	IconURI           string                `yaml:"icon_uri"`
+	UsageScenarios    string                `yaml:"usage_scenarios"`
+	Context           string                `yaml:"context"`
+	Agent             string                `yaml:"agent"`
+	Model             string                `yaml:"model"`
+	InputSchema       map[string]any        `yaml:"input_schema"`
+	OutputSchema      map[string]any        `yaml:"output_schema"`
+	Executor          ExecutorDeclaration   `yaml:"executor"`
+	Permissions       PermissionDeclaration `yaml:"permissions"`
+	AllowedTools      []string              `yaml:"allowed-tools"`
+	AllowedToolsSnake []string              `yaml:"allowed_tools"`
 }
 
 const (
@@ -293,25 +299,10 @@ func readZipFile(file *zip.File, limit int64) ([]byte, error) {
 
 func parseSkillMarkdown(content []byte) (*Declaration, error) {
 	skillMD := string(content)
-	trimmedBOM := strings.TrimPrefix(skillMD, "\ufeff")
-	lines := strings.SplitAfter(trimmedBOM, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return nil, fmt.Errorf("skill markdown frontmatter is required")
+	frontmatter, body, err := splitSkillMarkdown(skillMD)
+	if err != nil {
+		return nil, err
 	}
-
-	closeIndex := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			closeIndex = i
-			break
-		}
-	}
-	if closeIndex < 0 {
-		return nil, fmt.Errorf("skill markdown closing frontmatter delimiter is required")
-	}
-
-	frontmatter := strings.Join(lines[1:closeIndex], "")
-	body := strings.Join(lines[closeIndex+1:], "")
 	var meta skillMarkdownFrontmatter
 	if err := yaml.Unmarshal([]byte(frontmatter), &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal skill markdown frontmatter: %w", err)
@@ -327,25 +318,163 @@ func parseSkillMarkdown(content []byte) (*Declaration, error) {
 	}
 
 	decl := &Declaration{
-		ID:           firstNonEmpty(meta.ID, meta.Name),
-		Name:         meta.Name,
-		Description:  meta.Description,
-		Type:         meta.Type,
-		Version:      firstNonEmpty(meta.Version, "1.0.0"),
-		Enabled:      enabled,
-		Context:      meta.Context,
-		Agent:        meta.Agent,
-		Model:        meta.Model,
-		InputSchema:  defaultObjectSchema(meta.InputSchema),
-		OutputSchema: defaultObjectSchema(meta.OutputSchema),
-		Permissions: PermissionDeclaration{
-			AllowedTools: allowedTools,
-		},
-		Body:    strings.TrimSpace(body),
-		SkillMD: skillMD,
+		ID:             firstNonEmpty(meta.ID, meta.Name),
+		Name:           meta.Name,
+		Description:    meta.Description,
+		Type:           meta.Type,
+		Version:        firstNonEmpty(meta.Version, "1.0.0"),
+		Enabled:        enabled,
+		IconURI:        meta.IconURI,
+		UsageScenarios: meta.UsageScenarios,
+		Context:        meta.Context,
+		Agent:          meta.Agent,
+		Model:          meta.Model,
+		InputSchema:    defaultObjectSchema(meta.InputSchema),
+		OutputSchema:   defaultObjectSchema(meta.OutputSchema),
+		Executor:       meta.Executor,
+		Permissions:    meta.Permissions,
+		Body:           strings.TrimSpace(body),
+		SkillMD:        skillMD,
+	}
+	if len(decl.Permissions.AllowedTools) == 0 {
+		decl.Permissions.AllowedTools = allowedTools
 	}
 
 	return decl, nil
+}
+
+type skillFrontmatterField struct {
+	name  string
+	value any
+}
+
+func splitSkillMarkdown(skillMD string) (frontmatter, body string, err error) {
+	trimmedBOM := strings.TrimPrefix(skillMD, "\ufeff")
+	lines := strings.SplitAfter(trimmedBOM, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return "", "", fmt.Errorf("skill markdown frontmatter is required")
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return strings.Join(lines[1:i], ""), strings.Join(lines[i+1:], ""), nil
+		}
+	}
+	return "", "", fmt.Errorf("skill markdown closing frontmatter delimiter is required")
+}
+
+func buildSkillMarkdown(skill *entity.Skill) (string, error) {
+	fields, err := managedSkillFrontmatterFields(skill)
+	if err != nil {
+		return "", err
+	}
+	mapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, field := range fields {
+		if err := setSkillFrontmatterField(mapping, field); err != nil {
+			return "", err
+		}
+	}
+	document := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{mapping}}
+	body := ""
+	if strings.TrimSpace(skill.Description) != "" {
+		body = "\n" + skill.Description + "\n"
+	}
+	return marshalSkillMarkdown(document, body)
+}
+
+func rewriteSkillMarkdownMetadata(skillMD string, skill *entity.Skill) (string, error) {
+	frontmatter, body, err := splitSkillMarkdown(skillMD)
+	if err != nil {
+		return "", err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(frontmatter), &document); err != nil {
+		return "", fmt.Errorf("unmarshal skill markdown frontmatter: %w", err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return "", fmt.Errorf("skill markdown frontmatter must be a mapping")
+	}
+	fields, err := managedSkillFrontmatterFields(skill)
+	if err != nil {
+		return "", err
+	}
+	for _, field := range fields {
+		if err := setSkillFrontmatterField(document.Content[0], field); err != nil {
+			return "", err
+		}
+	}
+	return marshalSkillMarkdown(&document, body)
+}
+
+func managedSkillFrontmatterFields(skill *entity.Skill) ([]skillFrontmatterField, error) {
+	if skill == nil {
+		return nil, fmt.Errorf("skill is required")
+	}
+	inputSchema, err := decodeSkillFrontmatterJSON("input_schema", skill.InputSchema)
+	if err != nil {
+		return nil, err
+	}
+	outputSchema, err := decodeSkillFrontmatterJSON("output_schema", skill.OutputSchema)
+	if err != nil {
+		return nil, err
+	}
+	executor, err := decodeSkillFrontmatterJSON("executor", skill.Executor)
+	if err != nil {
+		return nil, err
+	}
+	permissions, err := decodeSkillFrontmatterJSON("permissions", skill.Permissions)
+	if err != nil {
+		return nil, err
+	}
+	return []skillFrontmatterField{
+		{name: "name", value: skill.Name},
+		{name: "description", value: skill.Description},
+		{name: "type", value: string(skill.Type)},
+		{name: "version", value: skill.Version},
+		{name: "enabled", value: skill.Enabled},
+		{name: "icon_uri", value: skill.IconURI},
+		{name: "usage_scenarios", value: skill.UsageScenarios},
+		{name: "input_schema", value: inputSchema},
+		{name: "output_schema", value: outputSchema},
+		{name: "executor", value: executor},
+		{name: "permissions", value: permissions},
+	}, nil
+}
+
+func decodeSkillFrontmatterJSON(name, raw string) (any, error) {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]any{}, nil
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil, fmt.Errorf("unmarshal %s: %w", name, err)
+	}
+	return value, nil
+}
+
+func setSkillFrontmatterField(mapping *yaml.Node, field skillFrontmatterField) error {
+	var value yaml.Node
+	if err := value.Encode(field.value); err != nil {
+		return fmt.Errorf("encode skill frontmatter field %s: %w", field.name, err)
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == field.name {
+			mapping.Content[i+1] = &value
+			return nil
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: field.name},
+		&value,
+	)
+	return nil
+}
+
+func marshalSkillMarkdown(document *yaml.Node, body string) (string, error) {
+	frontmatter, err := yaml.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("marshal skill markdown frontmatter: %w", err)
+	}
+	return "---\n" + string(frontmatter) + "---\n" + body, nil
 }
 
 func ValidateDeclaration(decl *Declaration) error {

@@ -1,18 +1,15 @@
 /*
  * Copyright 2025 coze-dev Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: Apache-2.0
  */
+
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
@@ -21,71 +18,225 @@ import { createRoot, type Root } from 'react-dom/client';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
-const mockListMCPToolServers = vi.hoisted(() => vi.fn());
-const mockUpsertMCPToolServer = vi.hoisted(() => vi.fn());
-const mockTestMCPToolCall = vi.hoisted(() => vi.fn());
-const mockDeleteMCPToolServer = vi.hoisted(() => vi.fn());
+const mockList = vi.hoisted(() => vi.fn());
+const mockUpsert = vi.hoisted(() => vi.fn());
+const mockDiscover = vi.hoisted(() => vi.fn());
+const mockTest = vi.hoisted(() => vi.fn());
+const mockDelete = vi.hoisted(() => vi.fn());
+const mockExport = vi.hoisted(() => vi.fn());
+const mockAudit = vi.hoisted(() => vi.fn());
 
-vi.mock('react-router-dom', () => ({
-  useParams: mockUseParams,
+vi.mock('react-router-dom', () => ({ useParams: mockUseParams }));
+vi.mock('@coze-arch/foundation-sdk', () => ({
+  useUserInfo: () => ({ user_id_str: '7' }),
 }));
-
 vi.mock('../service', () => ({
-  deleteMCPToolServer: mockDeleteMCPToolServer,
+  deleteMCPToolServer: mockDelete,
+  discoverMCPToolServer: mockDiscover,
+  exportMCPToolServer: mockExport,
   getMCPToolServer: vi.fn(),
-  listMCPToolServers: mockListMCPToolServers,
-  testMCPToolCall: mockTestMCPToolCall,
-  upsertMCPToolServer: mockUpsertMCPToolServer,
+  listMCPToolAuditEvents: mockAudit,
+  listMCPToolRegistryEntries: vi.fn(),
+  listMCPToolServers: mockList,
+  testMCPToolCall: mockTest,
+  upsertMCPToolServer: mockUpsert,
 }));
 
 vi.mock('@coze-arch/coze-design', () => {
-  const mockSwitchComponent = (
-    props: {
-      checked?: boolean;
-      disabled?: boolean;
-      loading?: boolean;
-      onChange?: (checked: boolean) => void;
-    } & Record<string, unknown>,
-  ) => {
-    const { checked, disabled, loading, onChange } = props;
-    const ariaLabel =
-      typeof props['aria-label'] === 'string' ? props['aria-label'] : undefined;
-
-    return (
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        aria-checked={checked}
-        disabled={disabled || loading}
-        role="switch"
-        onClick={() => onChange?.(!checked)}
-      />
-    );
-  };
-
+  const Button = ({
+    children,
+    disabled,
+    loading,
+    onClick,
+  }: {
+    children?: ReactNode;
+    disabled?: boolean;
+    loading?: boolean;
+    onClick?: () => void;
+  }) => (
+    <button
+      type="button"
+      disabled={disabled || loading}
+      onClick={() => onClick?.()}
+    >
+      {children}
+    </button>
+  );
+  const Input = ({
+    value,
+    onChange,
+    ...props
+  }: {
+    value?: string;
+    onChange?: (value: string) => void;
+  } & Record<string, unknown>) => (
+    <input
+      aria-label={props['aria-label'] as string | undefined}
+      value={value}
+      onChange={event => onChange?.(event.target.value)}
+    />
+  );
+  const TextArea = ({
+    value,
+    onChange,
+    ...props
+  }: {
+    value?: string;
+    onChange?: (value: string) => void;
+  } & Record<string, unknown>) => (
+    <textarea
+      aria-label={props['aria-label'] as string | undefined}
+      value={value}
+      onChange={event => onChange?.(event.target.value)}
+    />
+  );
+  const Switch = ({
+    checked,
+    disabled,
+    loading,
+    onChange,
+    ...props
+  }: {
+    checked?: boolean;
+    disabled?: boolean;
+    loading?: boolean;
+    onChange?: (checked: boolean) => void;
+  } & Record<string, unknown>) => (
+    <button
+      type="button"
+      role="switch"
+      aria-label={props['aria-label'] as string | undefined}
+      aria-checked={checked}
+      disabled={disabled || loading}
+      onClick={() => onChange?.(!checked)}
+    />
+  );
+  const SideSheet = ({
+    children,
+    title,
+    visible,
+  }: {
+    children?: ReactNode;
+    title?: ReactNode;
+    visible?: boolean;
+  }) =>
+    visible ? (
+      <section role="dialog">
+        <h2>{title}</h2>
+        {children}
+      </section>
+    ) : null;
+  const Modal = ({
+    cancelText,
+    children,
+    okText,
+    onCancel,
+    onOk,
+    title,
+    visible,
+  }: {
+    cancelText?: string;
+    children?: ReactNode;
+    okText?: string;
+    onCancel?: () => void;
+    onOk?: () => void;
+    title?: ReactNode;
+    visible?: boolean;
+  }) =>
+    visible ? (
+      <section role="dialog">
+        <h2>{title}</h2>
+        {children}
+        <button type="button" onClick={onCancel}>
+          {cancelText}
+        </button>
+        <button type="button" onClick={onOk}>
+          {okText}
+        </button>
+      </section>
+    ) : null;
+  const Tabs = ({
+    children,
+    onChange,
+  }: {
+    children?: ReactNode;
+    onChange?: (itemKey: string) => void;
+  }) => (
+    <div>
+      {Children.map(children, child =>
+        isValidElement(child)
+          ? cloneElement(
+              child as ReactElement<{
+                onSelect?: (itemKey: string) => void;
+              }>,
+              { onSelect: onChange },
+            )
+          : child,
+      )}
+    </div>
+  );
+  const TabPane = ({
+    children,
+    itemKey,
+    onSelect,
+    tab,
+  }: {
+    children?: ReactNode;
+    itemKey?: string;
+    onSelect?: (itemKey: string) => void;
+    tab?: ReactNode;
+  }) => (
+    <section>
+      <button type="button" onClick={() => itemKey && onSelect?.(itemKey)}>
+        {tab}
+      </button>
+      {children}
+    </section>
+  );
   return {
-    ['Switch']: mockSwitchComponent,
+    Button,
+    Input,
+    Modal,
+    SideSheet,
+    ['Spin']: () => <span>loading</span>,
+    Switch,
+    TabPane,
+    Tabs,
+    TextArea,
   };
 });
 
 import ToolsPage from '../index';
 
-const server = {
+const customServer = {
   server_id: '100',
   space_id: 'space-1',
+  creator_id: '7',
+  source_type: 'custom' as const,
   name: 'browser-tools',
   description: 'Browser automation tools',
   server_type: 'stdio',
   enabled: true,
   config: '{"command":"npx"}',
-  auth: '{"type":"none"}',
+  auth: '{"configured":true}',
   tools: [
     {
       name: 'search',
       description: 'Search the web',
-      input_schema: '{"type":"object"}',
+      input_schema:
+        '{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}',
     },
   ],
+  resources: [
+    {
+      resource_id: 'mcp_resource_safe',
+      uri: 'file:///private/credential.txt',
+      name: '',
+      description: '',
+      mime_type: 'text/plain',
+    },
+  ],
+  prompts: [],
   health_status: 'healthy',
   health_checked_at: 1717000200000,
   health_latency_ms: 12,
@@ -94,97 +245,200 @@ const server = {
   updated_at: 1717000300000,
 };
 
+const officialServer = {
+  ...customServer,
+  server_id: '200',
+  creator_id: '0',
+  source_type: 'official' as const,
+  name: 'official-search',
+};
+
 describe('ToolsPage', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
-    mockListMCPToolServers.mockReset();
-    mockListMCPToolServers.mockResolvedValue({
-      data: { servers: [server], total: 1 },
+    mockList.mockReset();
+    mockList.mockResolvedValue({
+      data: {
+        servers: [customServer, officialServer],
+        total: 2,
+        can_manage: true,
+      },
       code: 0,
       msg: '',
     });
-    mockUpsertMCPToolServer.mockReset();
-    mockUpsertMCPToolServer.mockResolvedValue({
-      data: server,
+    mockUpsert.mockReset();
+    mockUpsert.mockResolvedValue({ data: customServer, code: 0, msg: '' });
+    mockDiscover.mockReset();
+    mockDiscover.mockResolvedValue({
+      data: {
+        tools: customServer.tools,
+        resources: customServer.resources,
+        prompts: [],
+      },
       code: 0,
       msg: '',
     });
-    mockTestMCPToolCall.mockReset();
-    mockTestMCPToolCall.mockResolvedValue({
+    mockTest.mockReset();
+    mockTest.mockResolvedValue({
       data: {
         status: 'success',
-        output: '{"server_name":"browser-tools","tool_name":"search"}',
+        output: '{"result":"completed"}',
         latency_ms: 12,
       },
       code: 0,
       msg: '',
     });
-    mockDeleteMCPToolServer.mockReset();
-    mockDeleteMCPToolServer.mockResolvedValue({
-      data: server,
+    mockDelete.mockReset();
+    mockDelete.mockResolvedValue({ data: customServer, code: 0, msg: '' });
+    mockExport.mockReset();
+    mockExport.mockResolvedValue({
+      data: {
+        name: customServer.name,
+        description: customServer.description,
+        server_type: customServer.server_type,
+        config: customServer.config,
+        tools: customServer.tools,
+        resources: [],
+        prompts: [],
+      },
+      code: 0,
+      msg: '',
+    });
+    mockAudit.mockReset();
+    mockAudit.mockResolvedValue({
+      data: {
+        events: [
+          {
+            event_id: '1',
+            actor_id: '7',
+            tool_name: 'search',
+            status: 'success',
+            latency_ms: 12,
+            created_at: 1717000300000,
+          },
+        ],
+        next_cursor: '',
+      },
       code: 0,
       msg: '',
     });
   });
 
-  it('renders DeerFlow-style MCP server settings from the backend', async () => {
+  it('renders the Nuwax-aligned MCP management workspace on the existing page', async () => {
     const { container, root } = await renderToolsPage();
 
-    expect(mockListMCPToolServers).toHaveBeenCalledWith({
-      space_id: 'space-1',
-    });
-    expect(container.textContent).toContain('工具');
-    expect(container.textContent).toContain('管理 MCP 工具的配置和启用状态。');
+    expect(mockList).toHaveBeenCalledWith({ space_id: 'space-1' });
+    expect(container.textContent).toContain('MCP 管理');
+    expect(container.textContent).toContain('自定义服务');
+    expect(container.textContent).toContain('官方服务');
+    expect(container.textContent).toContain('创建者');
+    expect(container.textContent).toContain('部署状态');
+    expect(container.textContent).toContain('新建 MCP 服务');
     expect(container.textContent).toContain('browser-tools');
     expect(container.textContent).toContain('Browser automation tools');
-    expect(container.textContent).not.toContain('全部工具');
-    expect(container.textContent).not.toContain('创建工具配置');
-    expect(container.textContent).not.toContain('测试 search');
-    expect(container.textContent).not.toContain('删除');
-    expect(container.querySelector('[role="switch"]')).toBeTruthy();
+    expect(container.textContent).toContain('运行正常');
+    expect(
+      container.querySelector('[aria-label="搜索 MCP 服务"]'),
+    ).toBeTruthy();
 
     cleanup(container, root);
   });
 
-  it('toggles an MCP server enabled state through the existing config API', async () => {
+  it('creates a custom server through the atomic backend operation without leaving /tools', async () => {
     const { container, root } = await renderToolsPage();
 
-    const switchButton = container.querySelector(
-      'button[role="switch"][aria-label="关闭 browser-tools"]',
-    ) as HTMLButtonElement;
+    clickButton(container, '+ 新建 MCP 服务');
+    changeValue(container, '服务名称', 'docs-mcp');
+    changeValue(container, '服务描述', 'Documentation search');
+    changeValue(container, '服务配置 JSON', '{"command":"npx"}');
 
     await act(async () => {
-      switchButton.click();
+      clickButton(container, '保存并发现能力');
+      await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(mockUpsertMCPToolServer).toHaveBeenCalledWith(
+    expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        server_id: '100',
         space_id: 'space-1',
-        name: 'browser-tools',
+        name: 'docs-mcp',
         server_type: 'stdio',
-        enabled: false,
-        config: '{"command":"npx"}',
-        auth: '{"type":"none"}',
-        tools: server.tools,
+        tools: [],
       }),
     );
-    expect(mockListMCPToolServers).toHaveBeenCalledTimes(2);
+    expect(mockDiscover).not.toHaveBeenCalled();
 
     cleanup(container, root);
   });
 
-  it('shows backend business errors instead of a false empty state', async () => {
-    mockListMCPToolServers.mockResolvedValueOnce({
-      code: 401,
-      msg: 'missing session_key in cookie',
-    });
-
+  it('keeps existing authentication write-only while editing', async () => {
     const { container, root } = await renderToolsPage();
 
-    expect(container.textContent).toContain('missing session_key in cookie');
-    expect(container.textContent).not.toContain('暂无 MCP 工具。');
+    clickButton(container, '编辑配置');
+    const authInput = container.querySelector(
+      '[aria-label="认证配置 JSON"]',
+    ) as HTMLTextAreaElement;
+    expect(authInput.value).toBe('');
+
+    await act(async () => {
+      clickButton(container, '保存并发现能力');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        server_id: '100',
+        auth: '{"configured":true}',
+      }),
+    );
+
+    cleanup(container, root);
+  });
+
+  it('opens capabilities, runs a tool and loads safe audit metadata', async () => {
+    const { container, root } = await renderToolsPage();
+
+    clickButton(container, '查看能力');
+    expect(container.textContent).not.toContain(
+      'file:///private/credential.txt',
+    );
+    clickButton(container, '调用日志');
+    expect(mockAudit).toHaveBeenCalledWith({
+      server_id: '100',
+      limit: 20,
+      cursor: undefined,
+    });
+    expect(container.textContent).toContain('工具 1');
+    expect(container.textContent).toContain('调用日志');
+
+    clickButton(container, '试运行');
+    changeValue(container, '参数 query', 'coze');
+    await act(async () => {
+      clickButton(container, '运行');
+      await Promise.resolve();
+    });
+
+    expect(mockTest).toHaveBeenCalledWith({
+      server_id: '100',
+      tool_name: 'search',
+      arguments: expect.stringContaining('"query": "coze"'),
+    });
+
+    cleanup(container, root);
+  });
+
+  it('keeps official servers read-only apart from enable and test actions', async () => {
+    const { container, root } = await renderToolsPage();
+    clickButton(container, '官方服务');
+
+    expect(container.textContent).toContain('official-search');
+    expect(container.textContent).toContain('官方只读');
+    expect(container.textContent).not.toContain('编辑配置');
+    expect(container.textContent).not.toContain('服务导出');
+    expect(
+      container.querySelector('[aria-label="关闭 official-search"]'),
+    ).toBeTruthy();
 
     cleanup(container, root);
   });
@@ -194,19 +448,50 @@ const renderToolsPage = async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   let root: Root | undefined;
-
   await act(async () => {
     root = createRoot(container);
     root.render(<ToolsPage />);
     await Promise.resolve();
   });
-
   return { container, root };
 };
 
-const cleanup = (container: HTMLElement, root?: Root) => {
+const clickButton = (container: HTMLElement, text: string) => {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    item => item.textContent?.trim() === text,
+  );
+  if (!button) {
+    throw new Error(`button not found: ${text}`);
+  }
+  act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+};
+
+const changeValue = (
+  container: HTMLElement,
+  ariaLabel: string,
+  value: string,
+) => {
+  const input = container.querySelector(`[aria-label="${ariaLabel}"]`) as
+    | HTMLInputElement
+    | HTMLTextAreaElement
+    | null;
+  if (!input) {
+    throw new Error(`field not found: ${ariaLabel}`);
+  }
   act(() => {
-    root?.unmount();
+    const setter = Object.getOwnPropertyDescriptor(
+      input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
   });
+};
+
+const cleanup = (container: HTMLElement, root?: Root) => {
+  act(() => root?.unmount());
   container.remove();
 };

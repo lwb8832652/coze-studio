@@ -18,6 +18,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -168,6 +169,63 @@ func TestSkillRepositoryCreateAndListResources(t *testing.T) {
 	other, err := repo.ListResources(context.Background(), 2, 101)
 	require.NoError(t, err)
 	require.Empty(t, other)
+}
+
+func TestSkillRepositoryUpdateWithVersionRollsBackWholeSnapshot(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillPO{}, &skillVersionPO{}, &skillResourcePO{}))
+
+	repo := NewSkillRepository(db, fixedIDGen{})
+	original := &entity.Skill{
+		ID: 1, SpaceID: 10, Name: "Original", Description: "before",
+		Type: entity.TypeCustomSkill, Version: "1.0.0", Enabled: true,
+		InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`,
+		CreatedAt: 1, UpdatedAt: 1,
+	}
+	require.NoError(t, repo.Create(context.Background(), original))
+
+	updated := *original
+	updated.Name = "Changed"
+	updated.UpdatedAt = 2
+	version := &entity.SkillVersion{
+		ID: 101, SkillID: 1, Version: "1.0.0", SkillMD: "# Changed",
+		InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`, CreatedAt: 2,
+	}
+	resources := []*entity.SkillResource{
+		{ID: 201, SkillID: 1, VersionID: 101, Path: "a.txt", Content: []byte("a")},
+		{ID: 201, SkillID: 1, VersionID: 101, Path: "b.txt", Content: []byte("b")},
+	}
+
+	err = repo.UpdateWithVersion(context.Background(), &updated, version, resources)
+	require.Error(t, err)
+
+	got, err := repo.Get(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "Original", got.Name)
+	versions, err := repo.ListVersions(context.Background(), 1)
+	require.NoError(t, err)
+	require.Empty(t, versions)
+}
+
+func TestSkillRepositoryUpdateWithVersionCASRejectsStaleLatest(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&skillPO{}, &skillVersionPO{}, &skillResourcePO{}))
+	repo := NewSkillRepository(db, fixedIDGen{})
+	skill := &entity.Skill{ID: 1, SpaceID: 10, Name: "Original", Type: entity.TypeCustomSkill, Version: "1.0.0", Enabled: true, InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`}
+	require.NoError(t, repo.Create(context.Background(), skill))
+	require.NoError(t, repo.CreateVersion(context.Background(), &entity.SkillVersion{ID: 101, SkillID: 1, Version: "1.0.0", SkillMD: "# latest", InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`, CreatedAt: 1}))
+	updated := *skill
+	updated.Name = "stale overwrite"
+
+	err = repo.UpdateWithVersionCAS(context.Background(), &updated, 100, &entity.SkillVersion{ID: 102, SkillID: 1, Version: "1.0.0", SkillMD: "# stale", InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`, CreatedAt: 2}, nil)
+
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrVersionConflict))
+	stored, getErr := repo.Get(context.Background(), 1)
+	require.NoError(t, getErr)
+	require.Equal(t, "Original", stored.Name)
 }
 
 func TestSkillRepositoryListAndUpdate(t *testing.T) {

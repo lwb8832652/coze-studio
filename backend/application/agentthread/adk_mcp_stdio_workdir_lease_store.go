@@ -31,11 +31,12 @@ import (
 const defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis = int64(300000)
 
 type ApplicationADKMCPRuntimeStdioWorkdirLeaseStoreOptions struct {
-	Repository     domainrepo.MCPRuntimeWorkdirLeaseRepository
-	IDGen          idgen.IDGenerator
-	WorkerID       string
-	LeaseTTLMillis int64
-	NowMillis      func() int64
+	Repository            domainrepo.MCPRuntimeWorkdirLeaseRepository
+	IDGen                 idgen.IDGenerator
+	WorkerID              string
+	LeaseTTLMillis        int64
+	MinimumLeaseTTLMillis int64
+	NowMillis             func() int64
 }
 
 type ApplicationADKMCPRuntimeStdioWorkdirLeaseStore struct {
@@ -52,6 +53,14 @@ func NewApplicationADKMCPRuntimeStdioWorkdirLeaseStore(
 	leaseTTLMillis := options.LeaseTTLMillis
 	if leaseTTLMillis <= 0 {
 		leaseTTLMillis = defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis
+	}
+	minimumLeaseTTLMillis := options.MinimumLeaseTTLMillis
+	if minimumLeaseTTLMillis <= 0 {
+		minimumLeaseTTLMillis = (defaultADKMCPRuntimeExecutorTimeout +
+			defaultADKMCPRuntimeStdioWorkdirCleanupMargin).Milliseconds()
+	}
+	if leaseTTLMillis < minimumLeaseTTLMillis {
+		leaseTTLMillis = minimumLeaseTTLMillis
 	}
 	nowMillis := options.NowMillis
 	if nowMillis == nil {
@@ -142,6 +151,29 @@ func (s *ApplicationADKMCPRuntimeStdioWorkdirLeaseStore) FinishADKMCPRuntimeStdi
 		return errors.New("mcp runtime stdio workdir lease finish failed")
 	}
 
+	return nil
+}
+
+func (s *ApplicationADKMCPRuntimeStdioWorkdirLeaseStore) RetryADKMCPRuntimeStdioWorkdirLease(
+	ctx context.Context,
+	lease ADKMCPRuntimeStdioWorkdirLease,
+	retryAt int64,
+	errorText string,
+) error {
+	if s == nil || s.repository == nil || lease.LeaseID <= 0 ||
+		strings.TrimSpace(lease.WorkerID) == "" || retryAt <= s.now() {
+		return errors.New("mcp runtime stdio workdir lease retry failed")
+	}
+	_, updated, err := s.repository.RetryMCPRuntimeWorkdirLease(
+		ctx,
+		domainrepo.RetryMCPRuntimeWorkdirLeaseRequest{
+			LeaseID: lease.LeaseID, WorkerID: strings.TrimSpace(lease.WorkerID),
+			Now: s.now(), RetryAt: retryAt, LastError: strings.TrimSpace(errorText),
+		},
+	)
+	if err != nil || !updated {
+		return errors.New("mcp runtime stdio workdir lease retry failed")
+	}
 	return nil
 }
 

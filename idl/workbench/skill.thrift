@@ -10,6 +10,13 @@ enum SkillType {
     CustomSkill = 5,
 }
 
+enum SkillResourceOperation {
+    Upsert = 1,
+    Delete = 2,
+    Move = 3,
+    CreateDirectory = 4,
+}
+
 struct Skill {
     1: required i64 id (agw.js_conv="str", api.js_conv="true")
     2: required i64 space_id (agw.js_conv="str", api.js_conv="true")
@@ -24,6 +31,9 @@ struct Skill {
     11: required string permissions
     12: required i64 created_at
     13: required i64 updated_at
+    14: optional string icon_uri
+    15: optional string usage_scenarios
+    16: optional i64 development_thread_id (agw.js_conv="str", api.js_conv="true")
 }
 
 struct UpsertSkillRequest {
@@ -38,6 +48,8 @@ struct UpsertSkillRequest {
     9: required string output_schema
     10: required string executor
     11: required string permissions
+    12: optional string icon_uri
+    13: optional string usage_scenarios
     255: optional base.Base Base (api.none="true")
 }
 
@@ -53,6 +65,9 @@ struct UpdateSkillRequest {
     9: required string output_schema
     10: required string executor
     11: required string permissions
+    12: optional string icon_uri
+    13: optional string usage_scenarios
+    14: required i64 expected_version_id (agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -156,6 +171,8 @@ struct UpdateSkillVersionResourceRequest {
     2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
     3: required string path
     4: required string content_base64
+    5: optional SkillResourceOperation operation
+    6: optional string target_path
     255: optional base.Base Base (api.none="true")
 }
 
@@ -188,6 +205,7 @@ struct ExportSkillVersionResponse {
 struct RollbackSkillVersionRequest {
     1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
+    3: required i64 expected_version_id (agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 

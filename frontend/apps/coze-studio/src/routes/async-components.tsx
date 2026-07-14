@@ -59,7 +59,7 @@ export const AppDevIDE = lazy(() => import('../pages/app-dev/ide'));
 export const Workbench = lazy(() => import('../pages/workbench'));
 
 // skill configuration page
-export const SkillPage = lazy(() => import('../pages/skill'));
+export const SkillPage = lazy(() => import('../pages/skill/management-page'));
 
 // tools configuration page
 export const ToolsPage = lazy(() => import('../pages/tools'));

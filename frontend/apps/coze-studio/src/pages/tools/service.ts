@@ -23,3 +23,6 @@ export const upsertMCPToolServer = workbenchTool.UpsertMCPToolServer;
 export const getMCPToolServer = workbenchTool.GetMCPToolServer;
 export const deleteMCPToolServer = workbenchTool.DeleteMCPToolServer;
 export const testMCPToolCall = workbenchTool.TestMCPToolCall;
+export const discoverMCPToolServer = workbenchTool.DiscoverMCPToolServer;
+export const exportMCPToolServer = workbenchTool.ExportMCPToolServer;
+export const listMCPToolAuditEvents = workbenchTool.ListMCPToolAuditEvents;

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ import (
 func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerCreatesAndCleans(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	execution := validADKMCPRuntimeStdioSandboxExecution(root)
 	preparer := NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
 		ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{
@@ -45,8 +46,10 @@ func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerCreatesAndCleans(
 
 	require.NoError(t, err)
 	require.Equal(t, filepath.Clean(root), prepared.Root)
-	require.Equal(t, execution.WorkingDir, prepared.WorkingDir)
-	info, err := os.Stat(execution.WorkingDir)
+	require.NotEqual(t, execution.WorkingDir, prepared.WorkingDir)
+	require.True(t, adkMCPRuntimePathWithin(prepared.WorkingDir, root))
+	require.True(t, strings.HasPrefix(filepath.Base(prepared.WorkingDir), adkMCPRuntimeStdioInvocationDirPrefix))
+	info, err := os.Stat(prepared.WorkingDir)
 	require.NoError(t, err)
 	require.True(t, info.IsDir())
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
@@ -57,16 +60,16 @@ func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerCreatesAndCleans(
 	)
 
 	require.NoError(t, err)
-	_, err = os.Stat(execution.WorkingDir)
+	_, err = os.Stat(prepared.WorkingDir)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(root)
 	require.NoError(t, err)
 }
 
-func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerRejectsUnsafePaths(
+func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerIgnoresPersistedWorkingDir(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	outside := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-escape")
 	preparer := NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
 		ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{
@@ -82,10 +85,9 @@ func TestADKMCPRuntimeStdioFilesystemWorkdirPreparerRejectsUnsafePaths(
 		execution,
 	)
 
-	require.Error(t, err)
-	require.Empty(t, prepared.WorkingDir)
-	require.Contains(t, err.Error(), "mcp runtime stdio workdir prepare failed")
-	assertADKMCPStdioWorkdirPreparerErrorDoesNotLeak(t, err.Error(), root, outside)
+	require.NoError(t, err)
+	require.True(t, adkMCPRuntimePathWithin(prepared.WorkingDir, root))
+	require.NoError(t, preparer.CleanupADKMCPRuntimeStdioWorkdir(context.Background(), prepared))
 	_, statErr := os.Stat(outside)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }

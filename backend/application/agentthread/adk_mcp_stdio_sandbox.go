@@ -21,16 +21,19 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type ADKMCPRuntimeStdioSandboxOptions struct {
 	Runner          ADKMCPRuntimeStdioSandboxRunner
 	WorkdirPreparer ADKMCPRuntimeStdioWorkdirPreparer
+	CleanupTimeout  time.Duration
 }
 
 type ADKMCPRuntimeStdioSandboxAdapter struct {
 	runner          ADKMCPRuntimeStdioSandboxRunner
 	workdirPreparer ADKMCPRuntimeStdioWorkdirPreparer
+	cleanupTimeout  time.Duration
 }
 
 type ADKMCPRuntimeStdioSandboxRunner interface {
@@ -71,9 +74,14 @@ type ADKMCPRuntimeStdioSandboxExecution struct {
 func NewADKMCPRuntimeStdioSandbox(
 	options ADKMCPRuntimeStdioSandboxOptions,
 ) *ADKMCPRuntimeStdioSandboxAdapter {
+	cleanupTimeout := options.CleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = defaultADKMCPRuntimeStdioWorkdirCleanupTimeout
+	}
 	return &ADKMCPRuntimeStdioSandboxAdapter{
 		runner:          options.Runner,
 		workdirPreparer: options.WorkdirPreparer,
+		cleanupTimeout:  cleanupTimeout,
 	}
 }
 
@@ -94,12 +102,23 @@ func (s *ADKMCPRuntimeStdioSandboxAdapter) InvokeADKMCPRuntimeStdio(
 		execution.WorkingDir = prepared.WorkingDir
 	}
 	if s == nil || s.runner == nil {
+		if s != nil && s.workdirPreparer != nil {
+			_ = s.cleanupADKMCPRuntimeStdioPreparedWorkdir(prepared)
+		}
 		return "", errors.New("mcp runtime stdio runner is not configured")
 	}
 
 	result, err := s.runner.RunADKMCPRuntimeStdio(ctx, execution)
+	if errors.Is(err, errADKMCPRuntimeStdioProcessTerminationUnconfirmed) {
+		if retryable, ok := s.workdirPreparer.(ADKMCPRuntimeStdioRetryableWorkdirPreparer); ok {
+			_ = retryable.RetryADKMCPRuntimeStdioWorkdirCleanup(
+				context.Background(), prepared, "process termination unconfirmed",
+			)
+		}
+		return "", errors.New("mcp runtime stdio runner failed")
+	}
 	if s != nil && s.workdirPreparer != nil {
-		cleanupErr := s.workdirPreparer.CleanupADKMCPRuntimeStdioWorkdir(ctx, prepared)
+		cleanupErr := s.cleanupADKMCPRuntimeStdioPreparedWorkdir(prepared)
 		if err == nil && cleanupErr != nil {
 			return "", errors.New("mcp runtime stdio workdir cleanup failed")
 		}
@@ -109,6 +128,14 @@ func (s *ADKMCPRuntimeStdioSandboxAdapter) InvokeADKMCPRuntimeStdio(
 	}
 
 	return result, nil
+}
+
+func (s *ADKMCPRuntimeStdioSandboxAdapter) cleanupADKMCPRuntimeStdioPreparedWorkdir(
+	prepared ADKMCPRuntimeStdioPreparedWorkdir,
+) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
+	defer cancel()
+	return s.workdirPreparer.CleanupADKMCPRuntimeStdioWorkdir(cleanupCtx, prepared)
 }
 
 func projectADKMCPRuntimeStdioSandboxExecution(

@@ -19,22 +19,24 @@ package agentthread
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	einomcp "github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/components/tool"
 	mcpclient "github.com/mark3labs/mcp-go/client"
-	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const (
 	defaultADKMCPRuntimeStdioEinoClientName    = "coze-studio"
 	defaultADKMCPRuntimeStdioEinoClientVersion = "1.0.0"
+)
+
+var errADKMCPRuntimeStdioProcessTerminationUnconfirmed = errors.New(
+	"mcp runtime stdio process termination unconfirmed",
 )
 
 type ADKMCPRuntimeStdioEinoClient interface {
@@ -71,11 +73,15 @@ type ADKMCPRuntimeStdioEinoRunner struct {
 type ADKMCPRuntimeStdioEinoMCPClientFactoryOptions struct {
 	ClientName    string
 	ClientVersion string
+	CommandPolicy *mcpruntime.StdioCommandPolicy
+	ExecutionMode mcpruntime.StdioExecutionMode
 }
 
 type ADKMCPRuntimeStdioEinoMCPClientFactory struct {
 	clientName    string
 	clientVersion string
+	commandPolicy *mcpruntime.StdioCommandPolicy
+	executionMode mcpruntime.StdioExecutionMode
 }
 
 type ADKMCPRuntimeStdioEinoMCPToolProvider struct{}
@@ -98,7 +104,7 @@ func NewADKMCPRuntimeStdioEinoRunner(
 func (r *ADKMCPRuntimeStdioEinoRunner) RunADKMCPRuntimeStdio(
 	ctx context.Context,
 	execution ADKMCPRuntimeStdioSandboxExecution,
-) (string, error) {
+) (result string, returnErr error) {
 	if !validADKMCPRuntimeStdioEinoExecution(execution) {
 		return "", errors.New("mcp runtime stdio eino execution is invalid")
 	}
@@ -114,9 +120,17 @@ func (r *ADKMCPRuntimeStdioEinoRunner) RunADKMCPRuntimeStdio(
 		execution,
 	)
 	if err != nil || client == nil {
+		if errors.Is(err, errADKMCPRuntimeStdioProcessTerminationUnconfirmed) {
+			return "", errADKMCPRuntimeStdioProcessTerminationUnconfirmed
+		}
 		return "", errors.New("mcp runtime stdio eino client failed")
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			result = ""
+			returnErr = errADKMCPRuntimeStdioProcessTerminationUnconfirmed
+		}
+	}()
 
 	tools, err := r.toolProvider.ADKMCPRuntimeStdioEinoTools(
 		ctx,
@@ -143,7 +157,7 @@ func (r *ADKMCPRuntimeStdioEinoRunner) RunADKMCPRuntimeStdio(
 		return "", errors.New("mcp runtime stdio eino tool is not invokable")
 	}
 
-	result, err := invokable.InvokableRun(ctx, strings.TrimSpace(execution.Arguments))
+	result, err = invokable.InvokableRun(ctx, strings.TrimSpace(execution.Arguments))
 	if err != nil {
 		return "", errors.New("mcp runtime stdio eino tool call failed")
 	}
@@ -169,6 +183,8 @@ func NewADKMCPRuntimeStdioEinoMCPClientFactory(
 	return &ADKMCPRuntimeStdioEinoMCPClientFactory{
 		clientName:    clientName,
 		clientVersion: clientVersion,
+		commandPolicy: options.CommandPolicy,
+		executionMode: options.ExecutionMode,
 	}
 }
 
@@ -180,18 +196,22 @@ func (f *ADKMCPRuntimeStdioEinoMCPClientFactory) NewADKMCPRuntimeStdioEinoClient
 		return nil, errors.New("mcp runtime stdio eino execution is invalid")
 	}
 	env := adkMCPRuntimeStdioEinoEnvList(execution.Env)
-	stdio := mcptransport.NewStdioWithOptions(
-		strings.TrimSpace(execution.Command),
-		env,
-		append([]string(nil), execution.Args...),
-		mcptransport.WithCommandFunc(
-			adkMCPRuntimeStdioEinoCommandFunc(
-				strings.TrimSpace(execution.WorkingDir),
-			),
-		),
-	)
+	stdio, err := mcpruntime.NewSafeStdioTransport(mcpruntime.StdioTransportOptions{
+		Command:       strings.TrimSpace(execution.Command),
+		Args:          append([]string(nil), execution.Args...),
+		Env:           env,
+		WorkingDir:    strings.TrimSpace(execution.WorkingDir),
+		CommandPolicy: f.commandPolicy,
+		ExecutionMode: f.executionMode,
+	})
+	if err != nil {
+		return nil, err
+	}
 	client := mcpclient.NewClient(stdio)
 	if err := client.Start(ctx); err != nil {
+		if closeErr := client.Close(); closeErr != nil {
+			return nil, errADKMCPRuntimeStdioProcessTerminationUnconfirmed
+		}
 		return nil, err
 	}
 
@@ -202,7 +222,9 @@ func (f *ADKMCPRuntimeStdioEinoMCPClientFactory) NewADKMCPRuntimeStdioEinoClient
 		Version: f.clientVersionOrDefault(),
 	}
 	if _, err := client.Initialize(ctx, initRequest); err != nil {
-		_ = client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			return nil, errADKMCPRuntimeStdioProcessTerminationUnconfirmed
+		}
 		return nil, err
 	}
 
@@ -219,13 +241,7 @@ func (p *ADKMCPRuntimeStdioEinoMCPToolProvider) ADKMCPRuntimeStdioEinoTools(
 		return nil, errors.New("mcp runtime stdio eino client is invalid")
 	}
 
-	return einomcp.GetTools(
-		ctx,
-		&einomcp.Config{
-			Cli:          mcpClient,
-			ToolNameList: []string{strings.TrimSpace(toolName)},
-		},
-	)
+	return boundedADKMCPRuntimeEinoTools(ctx, mcpClient, toolName)
 }
 
 func (r *ADKMCPRuntimeStdioEinoRunner) outputByteLimit() int {
@@ -307,21 +323,4 @@ func adkMCPRuntimeStdioEinoEnvList(env map[string]string) []string {
 	}
 
 	return result
-}
-
-func adkMCPRuntimeStdioEinoCommandFunc(
-	workingDir string,
-) mcptransport.CommandFunc {
-	return func(
-		ctx context.Context,
-		command string,
-		env []string,
-		args []string,
-	) (*exec.Cmd, error) {
-		cmd := exec.CommandContext(ctx, command, args...)
-		cmd.Env = append(os.Environ(), env...)
-		cmd.Dir = workingDir
-
-		return cmd, nil
-	}
 }

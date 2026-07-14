@@ -38,7 +38,7 @@ func TestDeerFlowBuiltinSkillServiceSeedsAllPublicSkills(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, skills, 22)
 	require.Equal(t, 22, catalog.importCount)
-	require.Equal(t, 69, catalog.totalResources)
+	require.Equal(t, 68, catalog.totalResources)
 	require.Contains(t, catalog.skillNames(), "academic-paper-review")
 	require.Contains(t, catalog.skillNames(), "bootstrap")
 	require.Contains(t, catalog.skillNames(), "chart-visualization")
@@ -182,6 +182,14 @@ func (c *recordingBuiltinSkillCatalog) ImportDeclarationWithDefaultType(ctx cont
 	c.importCount++
 
 	return skill, nil
+}
+
+func (c *recordingBuiltinSkillCatalog) ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
+	skill, err := c.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, defaultType)
+	if skill != nil {
+		skill.DevelopmentThreadID = developmentThreadID
+	}
+	return skill, err
 }
 
 func (c *recordingBuiltinSkillCatalog) List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error) {

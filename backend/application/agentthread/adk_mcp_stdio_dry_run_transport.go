@@ -20,45 +20,62 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 )
 
 type ADKMCPRuntimeStdioDryRunTransportOptions struct {
-	WorkdirRoot       string
-	LeaseRepository   domainrepo.MCPRuntimeWorkdirLeaseRepository
-	IDGen             idgen.IDGenerator
-	WorkerID          string
-	LeaseTTLMillis    int64
-	AllowedCommands   []string
-	AllowedEnvKeys    []string
-	MaxArgs           int
-	MaxArgBytes       int
-	MaxEnvVars        int
-	MaxEnvValueBytes  int
-	MaxConfigBytes    int
-	DirMode           os.FileMode
-	NowMillis         func() int64
-	DryRunOutputBytes int
+	WorkdirRoot            string
+	LeaseRepository        domainrepo.MCPRuntimeWorkdirLeaseRepository
+	IDGen                  idgen.IDGenerator
+	WorkerID               string
+	LeaseTTLMillis         int64
+	AllowedCommands        []string
+	AllowedNpxPackages     []string
+	AllowedUVXPackages     []string
+	AllowedNodeScriptRoots []string
+	CommandRules           []mcpruntime.StdioCommandRule
+	CommandPolicy          *mcpruntime.StdioCommandPolicy
+	AllowedEnvKeys         []string
+	MaxArgs                int
+	MaxArgBytes            int
+	MaxEnvVars             int
+	MaxEnvValueBytes       int
+	MaxConfigBytes         int
+	DirMode                os.FileMode
+	ExecutionTimeout       time.Duration
+	CleanupTimeout         time.Duration
+	NowMillis              func() int64
+	DryRunOutputBytes      int
 }
 
 type ADKMCPRuntimeStdioRuntimeTransportOptions struct {
-	WorkdirRoot      string
-	LeaseRepository  domainrepo.MCPRuntimeWorkdirLeaseRepository
-	IDGen            idgen.IDGenerator
-	WorkerID         string
-	LeaseTTLMillis   int64
-	AllowedCommands  []string
-	AllowedEnvKeys   []string
-	MaxArgs          int
-	MaxArgBytes      int
-	MaxEnvVars       int
-	MaxEnvValueBytes int
-	MaxConfigBytes   int
-	DirMode          os.FileMode
-	NowMillis        func() int64
-	Runner           ADKMCPRuntimeStdioSandboxRunner
+	WorkdirRoot            string
+	WorkdirPreparer        *ADKMCPRuntimeStdioFilesystemWorkdirPreparer
+	LeaseRepository        domainrepo.MCPRuntimeWorkdirLeaseRepository
+	IDGen                  idgen.IDGenerator
+	WorkerID               string
+	LeaseTTLMillis         int64
+	AllowedCommands        []string
+	AllowedNpxPackages     []string
+	AllowedUVXPackages     []string
+	AllowedNodeScriptRoots []string
+	CommandRules           []mcpruntime.StdioCommandRule
+	CommandPolicy          *mcpruntime.StdioCommandPolicy
+	AllowedEnvKeys         []string
+	MaxArgs                int
+	MaxArgBytes            int
+	MaxEnvVars             int
+	MaxEnvValueBytes       int
+	MaxConfigBytes         int
+	DirMode                os.FileMode
+	ExecutionTimeout       time.Duration
+	CleanupTimeout         time.Duration
+	NowMillis              func() int64
+	Runner                 ADKMCPRuntimeStdioSandboxRunner
 }
 
 func NewADKMCPRuntimeStdioDryRunTransport(
@@ -66,20 +83,27 @@ func NewADKMCPRuntimeStdioDryRunTransport(
 ) *ADKMCPRuntimeStdioTransport {
 	return NewADKMCPRuntimeStdioRuntimeTransport(
 		ADKMCPRuntimeStdioRuntimeTransportOptions{
-			WorkdirRoot:      options.WorkdirRoot,
-			LeaseRepository:  options.LeaseRepository,
-			IDGen:            options.IDGen,
-			WorkerID:         options.WorkerID,
-			LeaseTTLMillis:   options.LeaseTTLMillis,
-			AllowedCommands:  options.AllowedCommands,
-			AllowedEnvKeys:   options.AllowedEnvKeys,
-			MaxArgs:          options.MaxArgs,
-			MaxArgBytes:      options.MaxArgBytes,
-			MaxEnvVars:       options.MaxEnvVars,
-			MaxEnvValueBytes: options.MaxEnvValueBytes,
-			MaxConfigBytes:   options.MaxConfigBytes,
-			DirMode:          options.DirMode,
-			NowMillis:        options.NowMillis,
+			WorkdirRoot:            options.WorkdirRoot,
+			LeaseRepository:        options.LeaseRepository,
+			IDGen:                  options.IDGen,
+			WorkerID:               options.WorkerID,
+			LeaseTTLMillis:         options.LeaseTTLMillis,
+			AllowedCommands:        options.AllowedCommands,
+			AllowedNpxPackages:     options.AllowedNpxPackages,
+			AllowedUVXPackages:     options.AllowedUVXPackages,
+			AllowedNodeScriptRoots: options.AllowedNodeScriptRoots,
+			CommandRules:           options.CommandRules,
+			CommandPolicy:          options.CommandPolicy,
+			AllowedEnvKeys:         options.AllowedEnvKeys,
+			MaxArgs:                options.MaxArgs,
+			MaxArgBytes:            options.MaxArgBytes,
+			MaxEnvVars:             options.MaxEnvVars,
+			MaxEnvValueBytes:       options.MaxEnvValueBytes,
+			MaxConfigBytes:         options.MaxConfigBytes,
+			DirMode:                options.DirMode,
+			ExecutionTimeout:       options.ExecutionTimeout,
+			CleanupTimeout:         options.CleanupTimeout,
+			NowMillis:              options.NowMillis,
 			Runner: NewADKMCPRuntimeStdioDryRunRunner(
 				ADKMCPRuntimeStdioDryRunRunnerOptions{
 					MaxOutputBytes: options.DryRunOutputBytes,
@@ -99,6 +123,11 @@ func NewADKMCPRuntimeStdioRuntimeTransport(
 	policy := NewADKMCPRuntimeStdioStaticPolicy(
 		ADKMCPRuntimeStdioStaticPolicyOptions{
 			AllowedCommands:           options.AllowedCommands,
+			AllowedNpxPackages:        options.AllowedNpxPackages,
+			AllowedUVXPackages:        options.AllowedUVXPackages,
+			AllowedNodeScriptRoots:    options.AllowedNodeScriptRoots,
+			CommandRules:              options.CommandRules,
+			CommandPolicy:             options.CommandPolicy,
 			AllowedWorkingDirPrefixes: []string{root},
 			AllowedEnvKeys:            options.AllowedEnvKeys,
 			MaxArgs:                   options.MaxArgs,
@@ -108,31 +137,40 @@ func NewADKMCPRuntimeStdioRuntimeTransport(
 			RequireWorkingDir:         true,
 		},
 	)
-	innerPreparer := NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
-		ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{
-			Root:    root,
-			DirMode: options.DirMode,
-		},
-	)
+	innerPreparer := options.WorkdirPreparer
+	if innerPreparer == nil {
+		innerPreparer = NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
+			ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{
+				Root:           root,
+				DirMode:        options.DirMode,
+				CleanupTimeout: options.CleanupTimeout,
+			},
+		)
+	}
 	leaseStore := NewApplicationADKMCPRuntimeStdioWorkdirLeaseStore(
 		ApplicationADKMCPRuntimeStdioWorkdirLeaseStoreOptions{
 			Repository:     options.LeaseRepository,
 			IDGen:          options.IDGen,
 			WorkerID:       options.WorkerID,
 			LeaseTTLMillis: options.LeaseTTLMillis,
-			NowMillis:      options.NowMillis,
+			MinimumLeaseTTLMillis: adkMCPRuntimeStdioMinimumLeaseTTLMillis(
+				options.ExecutionTimeout,
+			),
+			NowMillis: options.NowMillis,
 		},
 	)
 	leasedPreparer := NewADKMCPRuntimeStdioLeasedWorkdirPreparer(
 		ADKMCPRuntimeStdioLeasedWorkdirPreparerOptions{
-			Inner:      innerPreparer,
-			LeaseStore: leaseStore,
+			Inner:          innerPreparer,
+			LeaseStore:     leaseStore,
+			CleanupTimeout: options.CleanupTimeout,
 		},
 	)
 	sandbox := NewADKMCPRuntimeStdioSandbox(
 		ADKMCPRuntimeStdioSandboxOptions{
 			Runner:          options.Runner,
 			WorkdirPreparer: leasedPreparer,
+			CleanupTimeout:  options.CleanupTimeout,
 		},
 	)
 
@@ -144,4 +182,11 @@ func NewADKMCPRuntimeStdioRuntimeTransport(
 			MaxConfigBytes: options.MaxConfigBytes,
 		},
 	)
+}
+
+func adkMCPRuntimeStdioMinimumLeaseTTLMillis(executionTimeout time.Duration) int64 {
+	if executionTimeout <= 0 {
+		executionTimeout = defaultADKMCPRuntimeExecutorTimeout
+	}
+	return (executionTimeout + defaultADKMCPRuntimeStdioWorkdirCleanupMargin).Milliseconds()
 }

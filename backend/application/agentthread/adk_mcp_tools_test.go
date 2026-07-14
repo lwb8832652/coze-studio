@@ -357,7 +357,7 @@ type recordingADKMCPToolRegistry struct {
 	listCalls int
 }
 
-func (r *recordingADKMCPToolRegistry) ListMCPToolRegistryEntries(
+func (r *recordingADKMCPToolRegistry) ListMCPToolRegistryEntriesForRuntime(
 	ctx context.Context,
 	spaceID int64,
 ) ([]*toolapi.MCPToolRegistryEntry, error) {

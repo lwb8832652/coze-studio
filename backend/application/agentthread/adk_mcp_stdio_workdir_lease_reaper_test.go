@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,8 +32,8 @@ import (
 func TestADKMCPRuntimeStdioWorkdirLeaseReaperCleansExpiredLeases(
 	t *testing.T,
 ) {
-	root := t.TempDir()
-	workdir := filepath.Join(root, "spaces", "30", "threads", "10", "runs", "20")
+	root := canonicalADKMCPWorkdirTestRoot(t)
+	workdir := filepath.Join(root, "spaces", "30", "threads", "10", "runs", "20", "invocation-expired")
 	require.NoError(t, os.MkdirAll(workdir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(workdir, "scratch.txt"), []byte("secret"), 0o600))
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
@@ -67,6 +68,7 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperCleansExpiredLeases(
 	require.NoError(t, err)
 	require.Equal(t, ADKMCPRuntimeStdioWorkdirLeaseReaperResult{
 		Listed:   1,
+		Claimed:  1,
 		Cleaned:  1,
 		Finished: 1,
 	}, result)
@@ -78,25 +80,68 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperCleansExpiredLeases(
 	require.Equal(t, int64(2000), repo.listReq.Now)
 	require.Equal(t, int32(3), repo.listReq.Limit)
 	require.Equal(t, int64(7001), repo.finishReq.LeaseID)
-	require.Equal(t, "worker-a", repo.finishReq.WorkerID)
+	require.True(t, strings.HasPrefix(repo.finishReq.WorkerID, "reaper-"))
 	require.Equal(t, domainentity.MCPRuntimeWorkdirLeaseStatusFailed, repo.finishReq.Status)
 	require.Equal(t, int64(2000), repo.finishReq.Now)
 	require.Equal(t, "stale lease expired", repo.finishReq.LastError)
 }
 
+func TestADKMCPRuntimeStdioWorkdirLeaseReaperRefreshesClaimTimeAfterSlowPredecessor(
+	t *testing.T,
+) {
+	root := canonicalADKMCPWorkdirTestRoot(t)
+	workdir := filepath.Join(root, "invocation-slow-predecessor")
+	require.NoError(t, os.Mkdir(workdir, 0o700))
+	nowValues := []int64{2_000, 9_000, 10_000}
+	nowIndex := 0
+	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
+		expiredLeases: []*domainentity.MCPRuntimeWorkdirLease{{
+			ID: 7002, Workdir: workdir,
+			Status:   domainentity.MCPRuntimeWorkdirLeaseStatusActive,
+			WorkerID: "worker-a", LeaseExpiresAt: 1_000,
+		}},
+		finishedLease: &domainentity.MCPRuntimeWorkdirLease{
+			ID: 7002, Status: domainentity.MCPRuntimeWorkdirLeaseStatusFailed,
+		},
+		finishOK: true,
+	}
+	reaper := NewADKMCPRuntimeStdioWorkdirLeaseReaper(
+		ADKMCPRuntimeStdioWorkdirLeaseReaperOptions{
+			Repository: repo,
+			Root:       root,
+			NowMillis: func() int64 {
+				if nowIndex >= len(nowValues) {
+					return nowValues[len(nowValues)-1]
+				}
+				value := nowValues[nowIndex]
+				nowIndex++
+				return value
+			},
+		},
+	)
+
+	result, err := reaper.CleanupExpiredADKMCPRuntimeStdioWorkdirLeases(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Claimed)
+	require.Equal(t, int64(9_000), repo.claimReq.Now)
+	require.Equal(t, int64(9_000)+reaper.claimTTL.Milliseconds(), repo.claimReq.ClaimExpiresAt)
+}
+
 func TestADKMCPRuntimeStdioWorkdirLeaseReaperRejectsUnsafeLeaseWorkdir(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	outside := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-outside")
 	require.NoError(t, os.MkdirAll(outside, 0o700))
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
 		expiredLeases: []*domainentity.MCPRuntimeWorkdirLease{
 			{
-				ID:       7001,
-				Workdir:  outside,
-				Status:   domainentity.MCPRuntimeWorkdirLeaseStatusActive,
-				WorkerID: "worker-a",
+				ID:             7001,
+				Workdir:        outside,
+				Status:         domainentity.MCPRuntimeWorkdirLeaseStatusActive,
+				WorkerID:       "worker-a",
+				LeaseExpiresAt: 1000,
 			},
 		},
 		finishOK: true,
@@ -116,10 +161,13 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperRejectsUnsafeLeaseWorkdir(
 	require.NoError(t, err)
 	require.Equal(t, ADKMCPRuntimeStdioWorkdirLeaseReaperResult{
 		Listed:  1,
+		Claimed: 1,
+		Retried: 1,
 		Invalid: 1,
-		Failed:  1,
 	}, result)
 	require.Equal(t, 0, repo.finishCalls)
+	require.Equal(t, 1, repo.retryCalls)
+	require.Greater(t, repo.retryReq.RetryAt, int64(2000))
 	_, statErr := os.Stat(outside)
 	require.NoError(t, statErr)
 }
@@ -127,15 +175,16 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperRejectsUnsafeLeaseWorkdir(
 func TestADKMCPRuntimeStdioWorkdirLeaseReaperDoesNotFinishAfterCleanupFailure(
 	t *testing.T,
 ) {
-	root := t.TempDir()
-	workdir := filepath.Join(root, "spaces", "30", "threads", "10", "runs", "20")
+	root := canonicalADKMCPWorkdirTestRoot(t)
+	workdir := filepath.Join(root, "spaces", "30", "threads", "10", "runs", "20", "invocation-expired")
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
 		expiredLeases: []*domainentity.MCPRuntimeWorkdirLease{
 			{
-				ID:       7001,
-				Workdir:  workdir,
-				Status:   domainentity.MCPRuntimeWorkdirLeaseStatusActive,
-				WorkerID: "worker-a",
+				ID:             7001,
+				Workdir:        workdir,
+				Status:         domainentity.MCPRuntimeWorkdirLeaseStatusActive,
+				WorkerID:       "worker-a",
+				LeaseExpiresAt: 1000,
 			},
 		},
 		finishOK: true,
@@ -158,11 +207,13 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperDoesNotFinishAfterCleanupFailure(
 
 	require.NoError(t, err)
 	require.Equal(t, ADKMCPRuntimeStdioWorkdirLeaseReaperResult{
-		Listed: 1,
-		Failed: 1,
+		Listed:  1,
+		Claimed: 1,
+		Retried: 1,
 	}, result)
 	require.Equal(t, 1, preparer.cleanupCalls)
 	require.Equal(t, 0, repo.finishCalls)
+	require.Equal(t, 1, repo.retryCalls)
 }
 
 func TestADKMCPRuntimeStdioWorkdirLeaseReaperSanitizesListErrors(
@@ -174,7 +225,7 @@ func TestADKMCPRuntimeStdioWorkdirLeaseReaperSanitizesListErrors(
 	reaper := NewADKMCPRuntimeStdioWorkdirLeaseReaper(
 		ADKMCPRuntimeStdioWorkdirLeaseReaperOptions{
 			Repository: repo,
-			Root:       t.TempDir(),
+			Root:       canonicalADKMCPWorkdirTestRoot(t),
 			NowMillis:  func() int64 { return 2000 },
 		},
 	)

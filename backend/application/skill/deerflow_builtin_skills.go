@@ -67,12 +67,20 @@ func (s *deerFlowBuiltinSkillService) ImportDeclarationWithDefaultType(ctx conte
 	return s.delegate.ImportDeclarationWithDefaultType(ctx, spaceID, fileName, content, defaultType)
 }
 
+func (s *deerFlowBuiltinSkillService) ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
+	return s.delegate.ImportDeclarationWithDevelopmentThread(ctx, spaceID, fileName, content, defaultType, developmentThreadID)
+}
+
 func (s *deerFlowBuiltinSkillService) Create(ctx context.Context, skill *entity.Skill) (*entity.Skill, error) {
 	return s.delegate.Create(ctx, skill)
 }
 
 func (s *deerFlowBuiltinSkillService) Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error) {
 	return s.delegate.Update(ctx, skill)
+}
+
+func (s *deerFlowBuiltinSkillService) UpdateWithExpectedVersion(ctx context.Context, skill *entity.Skill, expectedVersionID int64) (*entity.Skill, error) {
+	return s.delegate.UpdateWithExpectedVersion(ctx, skill, expectedVersionID)
 }
 
 func (s *deerFlowBuiltinSkillService) Delete(ctx context.Context, id int64) (*entity.Skill, error) {
@@ -108,8 +116,16 @@ func (s *deerFlowBuiltinSkillService) UpdateVersionResource(ctx context.Context,
 	return s.delegate.UpdateVersionResource(ctx, skillID, versionID, resourcePath, content)
 }
 
+func (s *deerFlowBuiltinSkillService) MutateVersionResources(ctx context.Context, skillID, versionID int64, mutations []domain.ResourceMutation) (*entity.SkillVersion, error) {
+	return s.delegate.MutateVersionResources(ctx, skillID, versionID, mutations)
+}
+
 func (s *deerFlowBuiltinSkillService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
 	return s.delegate.RollbackVersion(ctx, skillID, versionID)
+}
+
+func (s *deerFlowBuiltinSkillService) RollbackVersionCAS(ctx context.Context, skillID, versionID, expectedVersionID int64) (*entity.Skill, error) {
+	return s.delegate.RollbackVersionCAS(ctx, skillID, versionID, expectedVersionID)
 }
 
 func (s *deerFlowBuiltinSkillService) TestRun(ctx context.Context, id int64, input string) (string, error) {

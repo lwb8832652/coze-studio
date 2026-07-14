@@ -24,6 +24,12 @@ export enum SkillType {
   PublicSkill = 4,
   CustomSkill = 5,
 }
+export enum SkillResourceOperation {
+  Upsert = 1,
+  Delete = 2,
+  Move = 3,
+  CreateDirectory = 4,
+}
 export interface Skill {
   id: string,
   space_id: string,
@@ -38,6 +44,9 @@ export interface Skill {
   permissions: string,
   created_at: number,
   updated_at: number,
+  icon_uri?: string,
+  usage_scenarios?: string,
+  development_thread_id?: string,
 }
 export interface UpsertSkillRequest {
   id?: string,
@@ -51,6 +60,8 @@ export interface UpsertSkillRequest {
   output_schema: string,
   executor: string,
   permissions: string,
+  icon_uri?: string,
+  usage_scenarios?: string,
 }
 export interface UpdateSkillRequest {
   id: string,
@@ -64,6 +75,9 @@ export interface UpdateSkillRequest {
   output_schema: string,
   executor: string,
   permissions: string,
+  icon_uri?: string,
+  usage_scenarios?: string,
+  expected_version_id: string,
 }
 export interface ImportSkillRequest {
   space_id: string,
@@ -100,10 +114,10 @@ export interface SkillVersion {
   created_at: number,
 }
 export interface ListSkillVersionsRequest {
-  skill_id: string,
+  skill_id: string
 }
 export interface ListSkillVersionsData {
-  versions: SkillVersion[],
+  versions: SkillVersion[]
 }
 export interface ListSkillVersionsResponse {
   data?: ListSkillVersionsData,
@@ -130,7 +144,7 @@ export interface ListSkillVersionResourcesRequest {
   version_id: string,
 }
 export interface ListSkillVersionResourcesData {
-  resources: SkillResource[],
+  resources: SkillResource[]
 }
 export interface ListSkillVersionResourcesResponse {
   data?: ListSkillVersionResourcesData,
@@ -142,6 +156,8 @@ export interface UpdateSkillVersionResourceRequest {
   version_id: string,
   path: string,
   content_base64: string,
+  operation?: SkillResourceOperation,
+  target_path?: string,
 }
 export interface UpdateSkillVersionContentRequest {
   skill_id: string,
@@ -165,6 +181,7 @@ export interface ExportSkillVersionResponse {
 export interface RollbackSkillVersionRequest {
   skill_id: string,
   version_id: string,
+  expected_version_id: string,
 }
 export interface GetSkillRequest {
   skill_id: string
@@ -192,7 +209,7 @@ export interface ExportSkillResponse {
   msg: string,
 }
 export interface ListSkillToolCandidatesRequest {
-  space_id: string,
+  space_id: string
 }
 export interface SkillToolCandidate {
   name: string,
@@ -205,7 +222,7 @@ export interface SkillToolCandidate {
   source_name?: string,
 }
 export interface ListSkillToolCandidatesData {
-  tools: SkillToolCandidate[],
+  tools: SkillToolCandidate[]
 }
 export interface ListSkillToolCandidatesResponse {
   data?: ListSkillToolCandidatesData,
@@ -234,7 +251,7 @@ export const CreateSkill = /*#__PURE__*/createAPI<UpsertSkillRequest, SkillRespo
   "name": "CreateSkill",
   "reqType": "UpsertSkillRequest",
   "reqMapping": {
-    "body": ["id", "space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions"]
+    "body": ["id", "space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions", "icon_uri", "usage_scenarios"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
@@ -247,7 +264,7 @@ export const UpdateSkill = /*#__PURE__*/createAPI<UpdateSkillRequest, SkillRespo
   "reqType": "UpdateSkillRequest",
   "reqMapping": {
     "path": ["id"],
-    "body": ["space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions"]
+    "body": ["space_id", "name", "description", "type", "version", "enabled", "input_schema", "output_schema", "executor", "permissions", "icon_uri", "usage_scenarios", "expected_version_id"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
@@ -343,7 +360,8 @@ export const ListSkillVersionResources = /*#__PURE__*/createAPI<ListSkillVersion
   "name": "ListSkillVersionResources",
   "reqType": "ListSkillVersionResourcesRequest",
   "reqMapping": {
-    "path": ["skill_id", "version_id"]
+    "path": ["skill_id", "version_id"],
+    "body": ["expected_version_id"]
   },
   "resType": "ListSkillVersionResourcesResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
@@ -356,7 +374,7 @@ export const UpdateSkillVersionResource = /*#__PURE__*/createAPI<UpdateSkillVers
   "reqType": "UpdateSkillVersionResourceRequest",
   "reqMapping": {
     "path": ["skill_id", "version_id"],
-    "body": ["path", "content_base64"]
+    "body": ["path", "content_base64", "operation", "target_path"]
   },
   "resType": "SkillVersionResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",

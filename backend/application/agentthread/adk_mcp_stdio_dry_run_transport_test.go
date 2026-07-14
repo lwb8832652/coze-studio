@@ -19,7 +19,6 @@ package agentthread
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,7 +29,7 @@ import (
 func TestADKMCPRuntimeStdioDryRunTransportBuildsFullSmokeChain(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
 		finishedLease: &domainentity.MCPRuntimeWorkdirLease{
 			ID:     9001,
@@ -40,19 +39,20 @@ func TestADKMCPRuntimeStdioDryRunTransportBuildsFullSmokeChain(
 	}
 	transport := NewADKMCPRuntimeStdioDryRunTransport(
 		ADKMCPRuntimeStdioDryRunTransportOptions{
-			WorkdirRoot:       root,
-			LeaseRepository:   repo,
-			IDGen:             &mcpWorkdirLeaseSequenceIDGen{next: 9001},
-			WorkerID:          "worker-a",
-			LeaseTTLMillis:    120000,
-			AllowedCommands:   []string{"npx"},
-			AllowedEnvKeys:    []string{"API_TOKEN"},
-			MaxArgs:           4,
-			MaxArgBytes:       96,
-			MaxEnvVars:        1,
-			MaxEnvValueBytes:  32,
-			NowMillis:         func() int64 { return 1000 },
-			DryRunOutputBytes: 4096,
+			WorkdirRoot:        root,
+			LeaseRepository:    repo,
+			IDGen:              &mcpWorkdirLeaseSequenceIDGen{next: 9001},
+			WorkerID:           "worker-a",
+			LeaseTTLMillis:     120000,
+			AllowedCommands:    []string{"npx"},
+			AllowedNpxPackages: []string{"@example/secret-mcp-server"},
+			AllowedEnvKeys:     []string{"API_TOKEN"},
+			MaxArgs:            4,
+			MaxArgBytes:        96,
+			MaxEnvVars:         1,
+			MaxEnvValueBytes:   32,
+			NowMillis:          func() int64 { return 1000 },
+			DryRunOutputBytes:  4096,
 		},
 	)
 
@@ -88,36 +88,24 @@ func TestADKMCPRuntimeStdioDryRunTransportBuildsFullSmokeChain(
 	require.Equal(t, domainentity.MCPRuntimeWorkdirLeaseStatusReleased, repo.finishReq.Status)
 	require.Empty(t, repo.finishReq.LastError)
 
-	projectedWorkdir := filepath.Join(
-		root,
-		"spaces",
-		"30",
-		"threads",
-		"10",
-		"runs",
-		"20",
-		"servers",
-		"100",
-		"tools",
-		"mcp_100_search_docs",
-	)
-	_, statErr := os.Stat(projectedWorkdir)
+	_, statErr := os.Stat(repo.createdLease.Workdir)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestADKMCPRuntimeStdioDryRunTransportFailsClosedWithoutLeaseStore(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	transport := NewADKMCPRuntimeStdioDryRunTransport(
 		ADKMCPRuntimeStdioDryRunTransportOptions{
-			WorkdirRoot:      root,
-			AllowedCommands:  []string{"npx"},
-			AllowedEnvKeys:   []string{"API_TOKEN"},
-			MaxArgs:          4,
-			MaxArgBytes:      96,
-			MaxEnvVars:       1,
-			MaxEnvValueBytes: 32,
+			WorkdirRoot:        root,
+			AllowedCommands:    []string{"npx"},
+			AllowedNpxPackages: []string{"@example/secret-mcp-server"},
+			AllowedEnvKeys:     []string{"API_TOKEN"},
+			MaxArgs:            4,
+			MaxArgBytes:        96,
+			MaxEnvVars:         1,
+			MaxEnvValueBytes:   32,
 		},
 	)
 

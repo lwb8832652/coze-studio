@@ -27,7 +27,7 @@ import (
 )
 
 func TestADKMCPRuntimeStdioDryRunRunnerReturnsSafeMetadata(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	runner := NewADKMCPRuntimeStdioDryRunRunner(
 		ADKMCPRuntimeStdioDryRunRunnerOptions{},
 	)
@@ -71,13 +71,14 @@ func TestADKMCPRuntimeStdioDryRunRunnerRejectsInvalidExecutionSafely(
 }
 
 func TestADKMCPRuntimeStdioDryRunRunnerFullTransportChain(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	manager := NewADKMCPRuntimeStdioWorkdirManager(
 		ADKMCPRuntimeStdioWorkdirManagerOptions{Root: root},
 	)
 	policy := NewADKMCPRuntimeStdioStaticPolicy(
 		ADKMCPRuntimeStdioStaticPolicyOptions{
 			AllowedCommands:           []string{"npx"},
+			AllowedNpxPackages:        []string{"@example/secret-mcp-server"},
 			AllowedWorkingDirPrefixes: []string{root},
 			AllowedEnvKeys:            []string{"API_TOKEN"},
 			MaxArgs:                   4,
@@ -137,8 +138,9 @@ func TestADKMCPRuntimeStdioDryRunRunnerFullTransportChain(t *testing.T) {
 		"tools",
 		"mcp_100_search_docs",
 	)
-	_, statErr := os.Stat(projectedWorkdir)
-	require.ErrorIs(t, statErr, os.ErrNotExist)
+	entries, readErr := os.ReadDir(projectedWorkdir)
+	require.NoError(t, readErr)
+	require.Empty(t, entries)
 }
 
 type adkMCPRuntimeStdioDryRunTestResult struct {

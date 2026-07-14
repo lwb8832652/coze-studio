@@ -25,6 +25,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/config"
@@ -54,6 +55,13 @@ func main() {
 	if err := application.Init(ctx); err != nil {
 		panic("InitializeInfra failed, err=" + err.Error())
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := application.Shutdown(shutdownCtx); err != nil {
+			logs.Errorf("application shutdown failed: pending_hooks=%d", application.PendingShutdownHooks())
+		}
+	}()
 
 	startHttpServer()
 }

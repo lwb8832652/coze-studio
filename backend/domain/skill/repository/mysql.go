@@ -19,12 +19,14 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
@@ -43,20 +45,23 @@ func NewSkillRepository(db *gorm.DB, idGen idgen.IDGenerator) SkillRepository {
 }
 
 type skillPO struct {
-	ID           int64          `gorm:"column:id;primaryKey"`
-	SpaceID      int64          `gorm:"column:space_id;index:idx_skills_space_type;index:idx_skills_space_enabled;index:idx_skills_space_deleted"`
-	Name         string         `gorm:"column:name"`
-	Description  string         `gorm:"column:description"`
-	Type         string         `gorm:"column:type;index:idx_skills_space_type"`
-	Version      string         `gorm:"column:version"`
-	Enabled      bool           `gorm:"column:enabled;index:idx_skills_space_enabled"`
-	InputSchema  datatypes.JSON `gorm:"column:input_schema;type:json"`
-	OutputSchema datatypes.JSON `gorm:"column:output_schema;type:json"`
-	Executor     datatypes.JSON `gorm:"column:executor;type:json"`
-	Permissions  datatypes.JSON `gorm:"column:permissions;type:json"`
-	CreatedAt    int64          `gorm:"column:created_at"`
-	UpdatedAt    int64          `gorm:"column:updated_at"`
-	DeletedAt    int64          `gorm:"column:deleted_at;index:idx_skills_space_deleted"`
+	ID                  int64          `gorm:"column:id;primaryKey"`
+	SpaceID             int64          `gorm:"column:space_id;index:idx_skills_space_type;index:idx_skills_space_enabled;index:idx_skills_space_deleted"`
+	Name                string         `gorm:"column:name"`
+	Description         string         `gorm:"column:description"`
+	Type                string         `gorm:"column:type;index:idx_skills_space_type"`
+	Version             string         `gorm:"column:version"`
+	Enabled             bool           `gorm:"column:enabled;index:idx_skills_space_enabled"`
+	InputSchema         datatypes.JSON `gorm:"column:input_schema;type:json"`
+	OutputSchema        datatypes.JSON `gorm:"column:output_schema;type:json"`
+	Executor            datatypes.JSON `gorm:"column:executor;type:json"`
+	Permissions         datatypes.JSON `gorm:"column:permissions;type:json"`
+	IconURI             string         `gorm:"column:icon_uri"`
+	UsageScenarios      string         `gorm:"column:usage_scenarios;type:text"`
+	DevelopmentThreadID int64          `gorm:"column:development_thread_id;index:idx_skills_development_thread"`
+	CreatedAt           int64          `gorm:"column:created_at"`
+	UpdatedAt           int64          `gorm:"column:updated_at"`
+	DeletedAt           int64          `gorm:"column:deleted_at;index:idx_skills_space_deleted"`
 }
 
 func (skillPO) TableName() string {
@@ -142,16 +147,19 @@ func (r *skillRepository) Update(ctx context.Context, skill *entity.Skill) error
 	}
 
 	updates := map[string]any{
-		"name":          skill.Name,
-		"description":   skill.Description,
-		"type":          string(skill.Type),
-		"version":       skill.Version,
-		"enabled":       skill.Enabled,
-		"input_schema":  inputSchema,
-		"output_schema": outputSchema,
-		"executor":      executor,
-		"permissions":   permissions,
-		"updated_at":    skill.UpdatedAt,
+		"name":                  skill.Name,
+		"description":           skill.Description,
+		"type":                  string(skill.Type),
+		"version":               skill.Version,
+		"enabled":               skill.Enabled,
+		"input_schema":          inputSchema,
+		"output_schema":         outputSchema,
+		"executor":              executor,
+		"permissions":           permissions,
+		"icon_uri":              skill.IconURI,
+		"usage_scenarios":       skill.UsageScenarios,
+		"development_thread_id": skill.DevelopmentThreadID,
+		"updated_at":            skill.UpdatedAt,
 	}
 
 	db := r.db.WithContext(ctx).
@@ -221,6 +229,62 @@ func (r *skillRepository) List(ctx context.Context, spaceID int64, typ *entity.T
 	return skills, nil
 }
 
+func (r *skillRepository) CreateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	return r.persistSnapshot(ctx, skill, version, resources, true)
+}
+
+func (r *skillRepository) UpdateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	return r.persistSnapshot(ctx, skill, version, resources, false)
+}
+
+func (r *skillRepository) UpdateWithVersionCAS(ctx context.Context, skill *entity.Skill, expectedVersionID int64, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var latest skillVersionPO
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("skill_id = ?", skill.ID).
+			Order("created_at DESC, id DESC").
+			First(&latest).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		latestID := int64(0)
+		if err == nil {
+			latestID = latest.ID
+		}
+		if latestID != expectedVersionID {
+			return fmt.Errorf("%w: expected %d, latest %d", ErrVersionConflict, expectedVersionID, latestID)
+		}
+
+		txRepo := &skillRepository{db: tx, idGen: r.idGen}
+		if err := txRepo.Update(ctx, skill); err != nil {
+			return err
+		}
+		if err := txRepo.CreateVersion(ctx, version); err != nil {
+			return err
+		}
+		return txRepo.CreateResources(ctx, resources)
+	})
+}
+
+func (r *skillRepository) persistSnapshot(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource, create bool) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &skillRepository{db: tx, idGen: r.idGen}
+		var err error
+		if create {
+			err = txRepo.Create(ctx, skill)
+		} else {
+			err = txRepo.Update(ctx, skill)
+		}
+		if err != nil {
+			return err
+		}
+		if err = txRepo.CreateVersion(ctx, version); err != nil {
+			return err
+		}
+		return txRepo.CreateResources(ctx, resources)
+	})
+}
+
 func (r *skillRepository) CreateVersion(ctx context.Context, version *entity.SkillVersion) error {
 	if version.ID == 0 {
 		id, err := r.idGen.GenID(ctx)
@@ -256,6 +320,21 @@ func (r *skillRepository) ListVersions(ctx context.Context, skillID int64) ([]*e
 	}
 
 	return versions, nil
+}
+
+func (r *skillRepository) GetLatestVersion(ctx context.Context, skillID int64) (*entity.SkillVersion, error) {
+	var po skillVersionPO
+	err := r.db.WithContext(ctx).
+		Where("skill_id = ?", skillID).
+		Order("created_at DESC, id DESC").
+		First(&po).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return po.toEntity(), nil
 }
 
 func (r *skillRepository) CreateResources(ctx context.Context, resources []*entity.SkillResource) error {
@@ -312,7 +391,11 @@ func (r *skillRepository) ListResources(ctx context.Context, skillID, versionID 
 
 	resources := make([]*entity.SkillResource, 0, len(pos))
 	for _, po := range pos {
-		resources = append(resources, po.toEntity())
+		resource := po.toEntity()
+		if string(resource.Content) == entity.ResourceTombstoneContent {
+			continue
+		}
+		resources = append(resources, resource)
 	}
 
 	return resources, nil
@@ -337,39 +420,45 @@ func skillToPO(skill *entity.Skill) (*skillPO, error) {
 	}
 
 	return &skillPO{
-		ID:           skill.ID,
-		SpaceID:      skill.SpaceID,
-		Name:         skill.Name,
-		Description:  skill.Description,
-		Type:         string(skill.Type),
-		Version:      skill.Version,
-		Enabled:      skill.Enabled,
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
-		Executor:     executor,
-		Permissions:  permissions,
-		CreatedAt:    skill.CreatedAt,
-		UpdatedAt:    skill.UpdatedAt,
-		DeletedAt:    skill.DeletedAt,
+		ID:                  skill.ID,
+		SpaceID:             skill.SpaceID,
+		Name:                skill.Name,
+		Description:         skill.Description,
+		Type:                string(skill.Type),
+		Version:             skill.Version,
+		Enabled:             skill.Enabled,
+		InputSchema:         inputSchema,
+		OutputSchema:        outputSchema,
+		Executor:            executor,
+		Permissions:         permissions,
+		IconURI:             skill.IconURI,
+		UsageScenarios:      skill.UsageScenarios,
+		DevelopmentThreadID: skill.DevelopmentThreadID,
+		CreatedAt:           skill.CreatedAt,
+		UpdatedAt:           skill.UpdatedAt,
+		DeletedAt:           skill.DeletedAt,
 	}, nil
 }
 
 func (po *skillPO) toEntity() *entity.Skill {
 	return &entity.Skill{
-		ID:           po.ID,
-		SpaceID:      po.SpaceID,
-		Name:         po.Name,
-		Description:  po.Description,
-		Type:         entity.Type(po.Type),
-		Version:      po.Version,
-		Enabled:      po.Enabled,
-		InputSchema:  jsonToString(po.InputSchema),
-		OutputSchema: jsonToString(po.OutputSchema),
-		Executor:     jsonToString(po.Executor),
-		Permissions:  jsonToString(po.Permissions),
-		CreatedAt:    po.CreatedAt,
-		UpdatedAt:    po.UpdatedAt,
-		DeletedAt:    po.DeletedAt,
+		ID:                  po.ID,
+		SpaceID:             po.SpaceID,
+		Name:                po.Name,
+		Description:         po.Description,
+		Type:                entity.Type(po.Type),
+		Version:             po.Version,
+		Enabled:             po.Enabled,
+		InputSchema:         jsonToString(po.InputSchema),
+		OutputSchema:        jsonToString(po.OutputSchema),
+		Executor:            jsonToString(po.Executor),
+		Permissions:         jsonToString(po.Permissions),
+		IconURI:             po.IconURI,
+		UsageScenarios:      po.UsageScenarios,
+		DevelopmentThreadID: po.DevelopmentThreadID,
+		CreatedAt:           po.CreatedAt,
+		UpdatedAt:           po.UpdatedAt,
+		DeletedAt:           po.DeletedAt,
 	}
 }
 
@@ -424,7 +513,7 @@ func skillResourceToPO(resource *entity.SkillResource) *skillResourcePO {
 		SkillID:   resource.SkillID,
 		VersionID: resource.VersionID,
 		Path:      resource.Path,
-		Content:   append([]byte(nil), resource.Content...),
+		Content:   append([]byte{}, resource.Content...),
 		Size:      resource.Size,
 		SHA256:    resource.SHA256,
 		CreatedAt: resource.CreatedAt,

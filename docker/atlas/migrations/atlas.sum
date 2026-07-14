@@ -1,4 +1,4 @@
-h1:XfsR9JF9qTnzdgdNfV9j0eTEj/SHC1RePnGyE0n7hfQ=
+h1:Bs5Yq/FnT+vkE6n5Go3cKSVsGIxRizSmMTCTUgatG/M=
 20250703095335_initial.sql h1:/joaeUTMhXqAEc0KwsSve5+bYM0qPOp+9OizJtsRc+U=
 20250703115304_update.sql h1:cbYo6Q6Lh96hB4hu5KW2Nn/Mr0VDpg7a1WPgpIb1SOc=
 20250704040445_update.sql h1:QWmoPY//oQ+GFZwET9w/oAWa8mM0KVaD5G8Yiu9bMqY=
@@ -50,3 +50,5 @@ h1:XfsR9JF9qTnzdgdNfV9j0eTEj/SHC1RePnGyE0n7hfQ=
 20260705000100_workspace_space_settings.sql h1:YQ/JWpFQaeitf0Rd5+1Hzacd/RPWSLW2Thh5hC3TyTk=
 20260710000100_appdev_persistence.sql h1:LA6Bxja6ZEEFDrNA+rlSJWqJlVza+Ht29/aSPhWAV3Q=
 20260711000100_agent_run_leases.sql h1:KPIom1DZlR6CiM21TiRdAxIbEXiJ8bHHN2ud4zkHmYU=
+20260713000100_skill_management_parity.sql h1:kXnN0+S5uvFpMkITM9BGQBXKCuqla2yV1MV2e5sOd9I=
+20260714000100_mcp_management_parity.sql h1:7Qm+mKFDnCt35wXaYwW2M6xR69SEGv88pT2KVRANq9s=

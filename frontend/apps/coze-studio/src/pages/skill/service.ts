@@ -17,6 +17,7 @@
 import { workbenchSkill } from '@coze-studio/api-schema';
 
 export const listSkills = workbenchSkill.ListSkills;
+export const getSkill = workbenchSkill.GetSkill;
 export const listSkillToolCandidates = workbenchSkill.ListSkillToolCandidates;
 export const importSkill = workbenchSkill.ImportSkill;
 export const createSkill = workbenchSkill.CreateSkill;

@@ -22,9 +22,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const defaultADKMCPRuntimeStdioWorkdirMode os.FileMode = 0o700
+
+const (
+	defaultADKMCPRuntimeStdioWorkdirCleanupTimeout = 10 * time.Second
+	defaultADKMCPRuntimeStdioWorkdirCleanupMargin  = 30 * time.Second
+	adkMCPRuntimeStdioInvocationDirPrefix          = "invocation-"
+)
+
+type adkMCPRuntimeStdioWorkdirCleanupState struct {
+	once sync.Once
+	err  error
+}
 
 type ADKMCPRuntimeStdioWorkdirPreparer interface {
 	PrepareADKMCPRuntimeStdioWorkdir(
@@ -42,29 +57,59 @@ type ADKMCPRuntimeStdioPreparedWorkdir struct {
 	WorkingDir    string
 	LeaseID       int64
 	LeaseWorkerID string
+
+	relativePath      string
+	cleanupState      *adkMCPRuntimeStdioWorkdirCleanupState
+	leaseCleanupState *adkMCPRuntimeStdioWorkdirCleanupState
 }
 
 type ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions struct {
-	Root    string
-	DirMode os.FileMode
+	Root           string
+	DirMode        os.FileMode
+	CleanupTimeout time.Duration
+	DeleteLimits   mcpruntime.SafeWorkdirDeleteLimits
+	Manager        *mcpruntime.SafeWorkdirManager
 }
 
 type ADKMCPRuntimeStdioFilesystemWorkdirPreparer struct {
-	root    string
-	dirMode os.FileMode
+	root           string
+	manager        *mcpruntime.SafeWorkdirManager
+	initErr        error
+	cleanupTimeout time.Duration
 }
 
 func NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
 	options ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions,
 ) *ADKMCPRuntimeStdioFilesystemWorkdirPreparer {
-	dirMode := options.DirMode
-	if dirMode == 0 {
-		dirMode = defaultADKMCPRuntimeStdioWorkdirMode
+	cleanupTimeout := options.CleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = defaultADKMCPRuntimeStdioWorkdirCleanupTimeout
 	}
-
+	root := filepath.Clean(strings.TrimSpace(options.Root))
+	manager := options.Manager
+	ownsManager := manager == nil
+	var err error
+	if manager == nil {
+		manager, err = mcpruntime.NewSafeWorkdirManager(mcpruntime.SafeWorkdirOptions{
+			Root:         root,
+			DeleteLimits: options.DeleteLimits,
+		})
+	} else if !manager.HasExclusiveRootLock() || manager.Root() != root {
+		err = mcpruntime.ErrSafeWorkdirInvalid
+		manager = nil
+	}
+	if options.DirMode != 0 && options.DirMode.Perm() != defaultADKMCPRuntimeStdioWorkdirMode {
+		err = mcpruntime.ErrSafeWorkdirInvalid
+		if manager != nil && ownsManager {
+			_ = manager.Close()
+		}
+		manager = nil
+	}
+	if manager != nil {
+		root = manager.Root()
+	}
 	return &ADKMCPRuntimeStdioFilesystemWorkdirPreparer{
-		root:    filepath.Clean(strings.TrimSpace(options.Root)),
-		dirMode: dirMode.Perm(),
+		root: root, manager: manager, initErr: err, cleanupTimeout: cleanupTimeout,
 	}
 }
 
@@ -72,83 +117,81 @@ func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) PrepareADKMCPRuntimeStdioW
 	ctx context.Context,
 	execution ADKMCPRuntimeStdioSandboxExecution,
 ) (ADKMCPRuntimeStdioPreparedWorkdir, error) {
-	root, workingDir, ok := p.cleanAndValidate(execution.WorkingDir)
-	if !ok {
+	if p == nil || p.initErr != nil || p.manager == nil || ctx == nil || ctx.Err() != nil {
 		return ADKMCPRuntimeStdioPreparedWorkdir{},
 			errors.New("mcp runtime stdio workdir prepare failed")
 	}
-	if err := os.MkdirAll(workingDir, p.dirMode); err != nil {
+	projection, err := NewADKMCPRuntimeStdioWorkdirManager(
+		ADKMCPRuntimeStdioWorkdirManagerOptions{Root: p.root},
+	).ProjectADKMCPRuntimeStdioWorkdir(ctx, ADKMCPRuntimeStdioWorkdirRequest{
+		Run: execution.Run, Name: execution.Name,
+		ServerID: execution.ServerID, ToolName: execution.ToolName,
+	})
+	if err != nil {
 		return ADKMCPRuntimeStdioPreparedWorkdir{},
 			errors.New("mcp runtime stdio workdir prepare failed")
 	}
-	if err := os.Chmod(workingDir, p.dirMode); err != nil {
+	parent, err := p.manager.RelativePath(projection.WorkingDir)
+	if err != nil {
 		return ADKMCPRuntimeStdioPreparedWorkdir{},
 			errors.New("mcp runtime stdio workdir prepare failed")
 	}
-	info, err := os.Stat(workingDir)
-	if err != nil || !info.IsDir() {
+	workdir, err := p.manager.Create(ctx, mcpruntime.SafeWorkdirCreateRequest{
+		Parent: parent,
+		Prefix: adkMCPRuntimeStdioInvocationDirPrefix,
+	})
+	if err != nil {
 		return ADKMCPRuntimeStdioPreparedWorkdir{},
 			errors.New("mcp runtime stdio workdir prepare failed")
 	}
-
 	return ADKMCPRuntimeStdioPreparedWorkdir{
-		Root:       root,
-		WorkingDir: workingDir,
+		Root: p.root, WorkingDir: workdir.Path, relativePath: workdir.RelativePath,
+		cleanupState: &adkMCPRuntimeStdioWorkdirCleanupState{},
 	}, nil
 }
 
 func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) CleanupADKMCPRuntimeStdioWorkdir(
-	ctx context.Context,
+	_ context.Context,
 	prepared ADKMCPRuntimeStdioPreparedWorkdir,
 ) error {
-	root, workingDir, ok := p.cleanPrepared(prepared)
-	if !ok || root == workingDir {
+	if p == nil || p.initErr != nil || p.manager == nil {
 		return errors.New("mcp runtime stdio workdir cleanup failed")
 	}
-	if err := os.RemoveAll(workingDir); err != nil {
-		return errors.New("mcp runtime stdio workdir cleanup failed")
+	state := prepared.cleanupState
+	if state == nil {
+		state = &adkMCPRuntimeStdioWorkdirCleanupState{}
 	}
-
-	return nil
+	state.once.Do(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), p.cleanupTimeout)
+		defer cancel()
+		if filepath.Clean(strings.TrimSpace(prepared.Root)) != p.root {
+			state.err = errors.New("mcp runtime stdio workdir cleanup failed")
+			return
+		}
+		relative := prepared.relativePath
+		if relative == "" {
+			var err error
+			relative, err = p.manager.RelativePath(prepared.WorkingDir)
+			if err != nil {
+				state.err = errors.New("mcp runtime stdio workdir cleanup failed")
+				return
+			}
+		}
+		if !strings.HasPrefix(filepath.Base(relative), adkMCPRuntimeStdioInvocationDirPrefix) ||
+			p.manager.Delete(cleanupCtx, relative) != nil {
+			state.err = errors.New("mcp runtime stdio workdir cleanup failed")
+		}
+	})
+	return state.err
 }
 
-func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) cleanAndValidate(
-	workingDir string,
-) (string, string, bool) {
-	if p == nil || !filepath.IsAbs(p.root) {
-		return "", "", false
-	}
-	root := filepath.Clean(p.root)
-	workingDir = strings.TrimSpace(workingDir)
-	if workingDir == "" || !filepath.IsAbs(workingDir) {
-		return "", "", false
-	}
-	cleanWorkingDir := filepath.Clean(workingDir)
-	if cleanWorkingDir == root || !adkMCPRuntimePathWithin(cleanWorkingDir, root) {
-		return "", "", false
-	}
-
-	return root, cleanWorkingDir, true
+func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) Valid() bool {
+	return p != nil && p.manager != nil && p.initErr == nil
 }
 
-func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) cleanPrepared(
-	prepared ADKMCPRuntimeStdioPreparedWorkdir,
-) (string, string, bool) {
-	if p == nil || !filepath.IsAbs(p.root) {
-		return "", "", false
+func (p *ADKMCPRuntimeStdioFilesystemWorkdirPreparer) Root() string {
+	if p == nil {
+		return ""
 	}
-	root := filepath.Clean(strings.TrimSpace(prepared.Root))
-	if root == "" || root != filepath.Clean(p.root) {
-		return "", "", false
-	}
-	workingDir := strings.TrimSpace(prepared.WorkingDir)
-	if workingDir == "" || !filepath.IsAbs(workingDir) {
-		return "", "", false
-	}
-	cleanWorkingDir := filepath.Clean(workingDir)
-	if !adkMCPRuntimePathWithin(cleanWorkingDir, root) {
-		return "", "", false
-	}
-
-	return root, cleanWorkingDir, true
+	return p.root
 }

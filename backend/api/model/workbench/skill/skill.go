@@ -30,8 +30,11 @@ import (
 type SkillType int64
 
 const (
-	SkillType_Script   SkillType = 1
-	SkillType_Workflow SkillType = 2
+	SkillType_Script      SkillType = 1
+	SkillType_Workflow    SkillType = 2
+	SkillType_DeerSkill   SkillType = 3
+	SkillType_PublicSkill SkillType = 4
+	SkillType_CustomSkill SkillType = 5
 )
 
 func (p SkillType) String() string {
@@ -40,6 +43,12 @@ func (p SkillType) String() string {
 		return "Script"
 	case SkillType_Workflow:
 		return "Workflow"
+	case SkillType_DeerSkill:
+		return "DeerSkill"
+	case SkillType_PublicSkill:
+		return "PublicSkill"
+	case SkillType_CustomSkill:
+		return "CustomSkill"
 	}
 	return "<UNSET>"
 }
@@ -50,6 +59,12 @@ func SkillTypeFromString(s string) (SkillType, error) {
 		return SkillType_Script, nil
 	case "Workflow":
 		return SkillType_Workflow, nil
+	case "DeerSkill":
+		return SkillType_DeerSkill, nil
+	case "PublicSkill":
+		return SkillType_PublicSkill, nil
+	case "CustomSkill":
+		return SkillType_CustomSkill, nil
 	}
 	return SkillType(0), fmt.Errorf("not a valid SkillType string")
 }
@@ -70,19 +85,22 @@ func (p *SkillType) Value() (driver.Value, error) {
 }
 
 type Skill struct {
-	ID           int64     `thrift:"id,1,required" form:"id,required" json:"id,string,required" query:"id,required"`
-	SpaceID      int64     `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
-	Name         string    `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
-	Description  string    `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
-	Type         SkillType `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
-	Version      string    `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
-	Enabled      bool      `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
-	InputSchema  string    `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
-	OutputSchema string    `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
-	Executor     string    `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
-	Permissions  string    `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
-	CreatedAt    int64     `thrift:"created_at,12,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
-	UpdatedAt    int64     `thrift:"updated_at,13,required" form:"updated_at,required" json:"updated_at,required" query:"updated_at,required"`
+	ID                  int64     `thrift:"id,1,required" form:"id,required" json:"id,string,required" query:"id,required"`
+	SpaceID             int64     `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	Name                string    `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
+	Description         string    `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
+	Type                SkillType `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
+	Version             string    `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
+	Enabled             bool      `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
+	InputSchema         string    `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
+	OutputSchema        string    `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
+	Executor            string    `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
+	Permissions         string    `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
+	CreatedAt           int64     `thrift:"created_at,12,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
+	UpdatedAt           int64     `thrift:"updated_at,13,required" form:"updated_at,required" json:"updated_at,required" query:"updated_at,required"`
+	IconURI             string    `thrift:"icon_uri,14,optional" form:"icon_uri" json:"icon_uri,omitempty" query:"icon_uri"`
+	UsageScenarios      string    `thrift:"usage_scenarios,15,optional" form:"usage_scenarios" json:"usage_scenarios,omitempty" query:"usage_scenarios"`
+	DevelopmentThreadID int64     `thrift:"development_thread_id,16,optional" form:"development_thread_id" json:"development_thread_id,string,omitempty" query:"development_thread_id"`
 }
 
 func NewSkill() *Skill {
@@ -144,6 +162,14 @@ func (p *Skill) GetUpdatedAt() (v int64) {
 	return p.UpdatedAt
 }
 
+func (p *Skill) GetIconURI() string            { return p.IconURI }
+func (p *Skill) GetUsageScenarios() string     { return p.UsageScenarios }
+func (p *Skill) GetDevelopmentThreadID() int64 { return p.DevelopmentThreadID }
+
+func (p *Skill) IsSetIconURI() bool             { return p.IconURI != "" }
+func (p *Skill) IsSetUsageScenarios() bool      { return p.UsageScenarios != "" }
+func (p *Skill) IsSetDevelopmentThreadID() bool { return p.DevelopmentThreadID != 0 }
+
 var fieldIDToName_Skill = map[int16]string{
 	1:  "id",
 	2:  "space_id",
@@ -158,6 +184,9 @@ var fieldIDToName_Skill = map[int16]string{
 	11: "permissions",
 	12: "created_at",
 	13: "updated_at",
+	14: "icon_uri",
+	15: "usage_scenarios",
+	16: "development_thread_id",
 }
 
 func (p *Skill) Read(iprot thrift.TProtocol) (err error) {
@@ -306,6 +335,30 @@ func (p *Skill) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetUpdatedAt = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 15:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField15(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 16:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField16(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -547,6 +600,30 @@ func (p *Skill) ReadField13(iprot thrift.TProtocol) error {
 	p.UpdatedAt = _field
 	return nil
 }
+func (p *Skill) ReadField14(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.IconURI = _field
+	return nil
+}
+func (p *Skill) ReadField15(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.UsageScenarios = _field
+	return nil
+}
+func (p *Skill) ReadField16(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadI64()
+	if err != nil {
+		return err
+	}
+	p.DevelopmentThreadID = _field
+	return nil
+}
 
 func (p *Skill) Write(oprot thrift.TProtocol) (err error) {
 	var fieldId int16
@@ -604,6 +681,18 @@ func (p *Skill) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField13(oprot); err != nil {
 			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
+			goto WriteFieldError
+		}
+		if err = p.writeField15(oprot); err != nil {
+			fieldId = 15
+			goto WriteFieldError
+		}
+		if err = p.writeField16(oprot); err != nil {
+			fieldId = 16
 			goto WriteFieldError
 		}
 	}
@@ -845,6 +934,45 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 13 end error: ", p), err)
 }
 
+func (p *Skill) writeField14(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetIconURI() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("icon_uri", thrift.STRING, 14); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.IconURI); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
+func (p *Skill) writeField15(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetUsageScenarios() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("usage_scenarios", thrift.STRING, 15); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 15 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.UsageScenarios); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
+func (p *Skill) writeField16(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetDevelopmentThreadID() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("development_thread_id", thrift.I64, 16); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 16 begin error: ", p), err)
+	}
+	if err = oprot.WriteI64(p.DevelopmentThreadID); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
 func (p *Skill) String() string {
 	if p == nil {
 		return "<nil>"
@@ -854,18 +982,20 @@ func (p *Skill) String() string {
 }
 
 type UpsertSkillRequest struct {
-	ID           *int64     `thrift:"id,1,optional" form:"id" json:"id,string,omitempty" query:"id"`
-	SpaceID      int64      `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
-	Name         string     `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
-	Description  string     `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
-	Type         SkillType  `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
-	Version      string     `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
-	Enabled      bool       `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
-	InputSchema  string     `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
-	OutputSchema string     `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
-	Executor     string     `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
-	Permissions  string     `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
-	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
+	ID             *int64     `thrift:"id,1,optional" form:"id" json:"id,string,omitempty" query:"id"`
+	SpaceID        int64      `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	Name           string     `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
+	Description    string     `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
+	Type           SkillType  `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
+	Version        string     `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
+	Enabled        bool       `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
+	InputSchema    string     `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
+	OutputSchema   string     `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
+	Executor       string     `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
+	Permissions    string     `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
+	IconURI        string     `thrift:"icon_uri,12,optional" form:"icon_uri" json:"icon_uri,omitempty" query:"icon_uri"`
+	UsageScenarios string     `thrift:"usage_scenarios,13,optional" form:"usage_scenarios" json:"usage_scenarios,omitempty" query:"usage_scenarios"`
+	Base           *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
 func NewUpsertSkillRequest() *UpsertSkillRequest {
@@ -924,6 +1054,12 @@ func (p *UpsertSkillRequest) GetPermissions() (v string) {
 	return p.Permissions
 }
 
+func (p *UpsertSkillRequest) GetIconURI() string        { return p.IconURI }
+func (p *UpsertSkillRequest) GetUsageScenarios() string { return p.UsageScenarios }
+
+func (p *UpsertSkillRequest) IsSetIconURI() bool        { return p.IconURI != "" }
+func (p *UpsertSkillRequest) IsSetUsageScenarios() bool { return p.UsageScenarios != "" }
+
 var UpsertSkillRequest_Base_DEFAULT *base.Base
 
 func (p *UpsertSkillRequest) GetBase() (v *base.Base) {
@@ -945,6 +1081,8 @@ var fieldIDToName_UpsertSkillRequest = map[int16]string{
 	9:   "output_schema",
 	10:  "executor",
 	11:  "permissions",
+	12:  "icon_uri",
+	13:  "usage_scenarios",
 	255: "Base",
 }
 
@@ -1080,6 +1218,22 @@ func (p *UpsertSkillRequest) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetPermissions = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 12:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -1292,6 +1446,22 @@ func (p *UpsertSkillRequest) ReadField11(iprot thrift.TProtocol) error {
 	p.Permissions = _field
 	return nil
 }
+func (p *UpsertSkillRequest) ReadField12(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.IconURI = _field
+	return nil
+}
+func (p *UpsertSkillRequest) ReadField13(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.UsageScenarios = _field
+	return nil
+}
 func (p *UpsertSkillRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -1349,6 +1519,14 @@ func (p *UpsertSkillRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField11(oprot); err != nil {
 			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -1562,6 +1740,32 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
 }
 
+func (p *UpsertSkillRequest) writeField12(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetIconURI() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("icon_uri", thrift.STRING, 12); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.IconURI); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
+func (p *UpsertSkillRequest) writeField13(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetUsageScenarios() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("usage_scenarios", thrift.STRING, 13); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.UsageScenarios); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
 func (p *UpsertSkillRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -1590,18 +1794,21 @@ func (p *UpsertSkillRequest) String() string {
 }
 
 type UpdateSkillRequest struct {
-	ID           int64      `thrift:"id,1,required" json:"id,string,required" path:"id,required"`
-	SpaceID      int64      `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
-	Name         string     `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
-	Description  string     `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
-	Type         SkillType  `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
-	Version      string     `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
-	Enabled      bool       `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
-	InputSchema  string     `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
-	OutputSchema string     `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
-	Executor     string     `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
-	Permissions  string     `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
-	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
+	ID                int64      `thrift:"id,1,required" json:"id,string,required" path:"id,required"`
+	SpaceID           int64      `thrift:"space_id,2,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	Name              string     `thrift:"name,3,required" form:"name,required" json:"name,required" query:"name,required"`
+	Description       string     `thrift:"description,4,required" form:"description,required" json:"description,required" query:"description,required"`
+	Type              SkillType  `thrift:"type,5,required,SkillType" form:"type,required" json:"type,required" query:"type,required"`
+	Version           string     `thrift:"version,6,required" form:"version,required" json:"version,required" query:"version,required"`
+	Enabled           bool       `thrift:"enabled,7,required" form:"enabled,required" json:"enabled,required" query:"enabled,required"`
+	InputSchema       string     `thrift:"input_schema,8,required" form:"input_schema,required" json:"input_schema,required" query:"input_schema,required"`
+	OutputSchema      string     `thrift:"output_schema,9,required" form:"output_schema,required" json:"output_schema,required" query:"output_schema,required"`
+	Executor          string     `thrift:"executor,10,required" form:"executor,required" json:"executor,required" query:"executor,required"`
+	Permissions       string     `thrift:"permissions,11,required" form:"permissions,required" json:"permissions,required" query:"permissions,required"`
+	IconURI           string     `thrift:"icon_uri,12,optional" form:"icon_uri" json:"icon_uri,omitempty" query:"icon_uri"`
+	UsageScenarios    string     `thrift:"usage_scenarios,13,optional" form:"usage_scenarios" json:"usage_scenarios,omitempty" query:"usage_scenarios"`
+	ExpectedVersionID int64      `thrift:"expected_version_id,14,required" form:"expected_version_id,required" json:"expected_version_id,string,required" query:"expected_version_id,required"`
+	Base              *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
 func NewUpdateSkillRequest() *UpdateSkillRequest {
@@ -1655,6 +1862,13 @@ func (p *UpdateSkillRequest) GetPermissions() (v string) {
 	return p.Permissions
 }
 
+func (p *UpdateSkillRequest) GetIconURI() string          { return p.IconURI }
+func (p *UpdateSkillRequest) GetUsageScenarios() string   { return p.UsageScenarios }
+func (p *UpdateSkillRequest) GetExpectedVersionID() int64 { return p.ExpectedVersionID }
+
+func (p *UpdateSkillRequest) IsSetIconURI() bool        { return p.IconURI != "" }
+func (p *UpdateSkillRequest) IsSetUsageScenarios() bool { return p.UsageScenarios != "" }
+
 var UpdateSkillRequest_Base_DEFAULT *base.Base
 
 func (p *UpdateSkillRequest) GetBase() (v *base.Base) {
@@ -1676,6 +1890,9 @@ var fieldIDToName_UpdateSkillRequest = map[int16]string{
 	9:   "output_schema",
 	10:  "executor",
 	11:  "permissions",
+	12:  "icon_uri",
+	13:  "usage_scenarios",
+	14:  "expected_version_id",
 	255: "Base",
 }
 
@@ -1698,6 +1915,7 @@ func (p *UpdateSkillRequest) Read(iprot thrift.TProtocol) (err error) {
 	var issetOutputSchema bool = false
 	var issetExecutor bool = false
 	var issetPermissions bool = false
+	var issetExpectedVersionID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -1812,6 +2030,31 @@ func (p *UpdateSkillRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 12:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField12(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 13:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField13(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 14:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField14(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetExpectedVersionID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -1885,6 +2128,10 @@ func (p *UpdateSkillRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetPermissions {
 		fieldId = 11
+		goto RequiredFieldNotSetError
+	}
+	if !issetExpectedVersionID {
+		fieldId = 14
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -2026,6 +2273,30 @@ func (p *UpdateSkillRequest) ReadField11(iprot thrift.TProtocol) error {
 	p.Permissions = _field
 	return nil
 }
+func (p *UpdateSkillRequest) ReadField12(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.IconURI = _field
+	return nil
+}
+func (p *UpdateSkillRequest) ReadField13(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadString()
+	if err != nil {
+		return err
+	}
+	p.UsageScenarios = _field
+	return nil
+}
+func (p *UpdateSkillRequest) ReadField14(iprot thrift.TProtocol) error {
+	_field, err := iprot.ReadI64()
+	if err != nil {
+		return err
+	}
+	p.ExpectedVersionID = _field
+	return nil
+}
 func (p *UpdateSkillRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -2083,6 +2354,18 @@ func (p *UpdateSkillRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField11(oprot); err != nil {
 			fieldId = 11
+			goto WriteFieldError
+		}
+		if err = p.writeField12(oprot); err != nil {
+			fieldId = 12
+			goto WriteFieldError
+		}
+		if err = p.writeField13(oprot); err != nil {
+			fieldId = 13
+			goto WriteFieldError
+		}
+		if err = p.writeField14(oprot); err != nil {
+			fieldId = 14
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -2292,6 +2575,42 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
+func (p *UpdateSkillRequest) writeField12(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetIconURI() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("icon_uri", thrift.STRING, 12); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 12 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.IconURI); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
+func (p *UpdateSkillRequest) writeField13(oprot thrift.TProtocol) (err error) {
+	if !p.IsSetUsageScenarios() {
+		return nil
+	}
+	if err = oprot.WriteFieldBegin("usage_scenarios", thrift.STRING, 13); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 13 begin error: ", p), err)
+	}
+	if err = oprot.WriteString(p.UsageScenarios); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
+}
+
+func (p *UpdateSkillRequest) writeField14(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("expected_version_id", thrift.I64, 14); err != nil {
+		return thrift.PrependError(fmt.Sprintf("%T write field 14 begin error: ", p), err)
+	}
+	if err = oprot.WriteI64(p.ExpectedVersionID); err != nil {
+		return err
+	}
+	return oprot.WriteFieldEnd()
 }
 
 func (p *UpdateSkillRequest) writeField255(oprot thrift.TProtocol) (err error) {

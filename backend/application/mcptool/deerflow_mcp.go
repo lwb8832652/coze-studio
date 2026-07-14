@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 )
@@ -62,28 +63,6 @@ func DefaultDeerFlowMCPConfigRaw() []byte {
 	if err != nil {
 		return []byte(defaultDeerFlowExtensionsConfigJSON)
 	}
-	config.MCPServers["weather"] = deerFlowMCPServerConfig{
-		Enabled:     boolPtr(true),
-		Type:        "stdio",
-		Command:     "node",
-		Args:        []string{"-e", defaultWeatherMCPStdioScript()},
-		Env:         map[string]string{},
-		Description: "Weather MCP server for local weather queries",
-	}
-	config.MCPServers["openmeteo"] = deerFlowMCPServerConfig{
-		Enabled: boolPtr(true),
-		Type:    "stdio",
-		Command: "npx",
-		Args: []string{
-			"-y",
-			"-p",
-			"open-meteo-mcp-server",
-			"open-meteo-mcp-server",
-		},
-		Env:         map[string]string{},
-		Description: "Open-Meteo MCP server for weather forecast queries",
-	}
-
 	return mustMarshalDeerFlowExtensionsConfig(config)
 }
 
@@ -114,7 +93,26 @@ func (s *ApplicationService) ImportDeerFlowExtensionsConfig(
 	spaceID int64,
 	raw []byte,
 ) (*toolapi.ListMCPToolServersResponse, error) {
-	if err := s.importDeerFlowExtensionsConfig(ctx, spaceID, raw, nil); err != nil {
+	if spaceID <= 0 {
+		return nil, InvalidArgumentErrorf("space_id is required")
+	}
+	if err := s.authorizeSpace(ctx, spaceID, MCPAccessManage); err != nil {
+		return nil, err
+	}
+	creatorID, ok := authenticatedUserID(ctx)
+	if !ok || creatorID <= 0 {
+		return nil, ErrMCPUnauthenticated
+	}
+	if err := s.importDeerFlowExtensionsConfig(
+		ctx,
+		spaceID,
+		raw,
+		nil,
+		&trustedMCPServerFields{
+			CreatorID:  creatorID,
+			SourceType: toolapi.MCPServerSourceTypeCustom,
+		},
+	); err != nil {
 		return nil, err
 	}
 
@@ -124,6 +122,21 @@ func (s *ApplicationService) ImportDeerFlowExtensionsConfig(
 func (s *ApplicationService) ensureDefaultDeerFlowMCPServers(
 	ctx context.Context,
 	spaceID int64,
+) error {
+	return s.ensureDefaultDeerFlowMCPServersWithAccess(ctx, spaceID, true)
+}
+
+func (s *ApplicationService) ensureDefaultDeerFlowMCPServersForRuntime(
+	ctx context.Context,
+	spaceID int64,
+) error {
+	return s.ensureDefaultDeerFlowMCPServersWithAccess(ctx, spaceID, false)
+}
+
+func (s *ApplicationService) ensureDefaultDeerFlowMCPServersWithAccess(
+	ctx context.Context,
+	spaceID int64,
+	requireManage bool,
 ) error {
 	if s == nil || s.components == nil ||
 		len(s.components.DefaultDeerFlowMCPConfigRaw) == 0 {
@@ -157,13 +170,48 @@ func (s *ApplicationService) ensureDefaultDeerFlowMCPServers(
 	if len(missing) == 0 {
 		return nil
 	}
+	if requireManage {
+		if err := s.authorizeSpace(ctx, spaceID, MCPAccessManage); err != nil {
+			return err
+		}
+	}
+	if err := s.requireIDGen(); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(missing))
+	for name := range missing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	now := time.Now().UnixMilli()
+	servers := make([]*toolapi.MCPToolServer, 0, len(names))
+	for _, name := range names {
+		req, err := deerFlowMCPServerUpsertRequest(spaceID, name, config.MCPServers[name])
+		if err != nil {
+			return err
+		}
+		serverID, err := s.components.IDGen.GenID(ctx)
+		if err != nil {
+			return err
+		}
+		servers = append(servers, &toolapi.MCPToolServer{
+			ServerID:     serverID,
+			SpaceID:      spaceID,
+			SourceType:   toolapi.MCPServerSourceTypeOfficial,
+			Name:         strings.TrimSpace(req.Name),
+			Description:  strings.TrimSpace(req.Description),
+			ServerType:   strings.TrimSpace(req.ServerType),
+			Enabled:      req.Enabled,
+			Config:       strings.TrimSpace(req.Config),
+			Auth:         normalizeJSONText(req.Auth),
+			Tools:        cloneToolDefinitions(req.Tools),
+			HealthStatus: mcpToolHealthStatusUnknown,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	}
 
-	return s.importDeerFlowExtensionsConfig(
-		ctx,
-		spaceID,
-		s.components.DefaultDeerFlowMCPConfigRaw,
-		missing,
-	)
+	return s.components.Catalog.EnsureServers(ctx, servers)
 }
 
 func (s *ApplicationService) importDeerFlowExtensionsConfig(
@@ -171,6 +219,7 @@ func (s *ApplicationService) importDeerFlowExtensionsConfig(
 	spaceID int64,
 	raw []byte,
 	onlyNames map[string]struct{},
+	trusted *trustedMCPServerFields,
 ) error {
 	if err := s.requireCatalog(); err != nil {
 		return err
@@ -210,6 +259,8 @@ func (s *ApplicationService) importDeerFlowExtensionsConfig(
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	mutations := make([]MCPToolServerMutation, 0, len(names))
+	now := time.Now().UnixMilli()
 	for _, name := range names {
 		serverConfig := config.MCPServers[name]
 		req, err := deerFlowMCPServerUpsertRequest(
@@ -220,15 +271,74 @@ func (s *ApplicationService) importDeerFlowExtensionsConfig(
 		if err != nil {
 			return err
 		}
-		if existing := existingByName[name]; existing != nil {
-			req.ServerID = existing.ServerID
-		}
-		if _, err := s.UpsertServer(ctx, req); err != nil {
+		if err := validateUpsertRequest(req); err != nil {
 			return err
 		}
+		existing := existingByName[name]
+		if isOfficialMCPServer(existing) && trusted != nil && !isOfficialMCPSourceType(trusted.SourceType) {
+			return ErrMCPOfficialServerImmutable
+		}
+		serverID := int64(0)
+		creatorID := int64(0)
+		sourceType := toolapi.MCPServerSourceTypeCustom
+		createdAt := now
+		updatedAt := now
+		expectedUpdatedAt := int64(0)
+		health := MCPToolHealthSnapshot{Status: mcpToolHealthStatusUnknown}
+		resources := []*toolapi.MCPResource(nil)
+		prompts := []*toolapi.MCPPrompt(nil)
+		if existing != nil {
+			serverID = existing.ServerID
+			creatorID = existing.CreatorID
+			sourceType = existing.SourceType
+			createdAt = existing.CreatedAt
+			updatedAt = nextMCPServerUpdatedAt(existing.UpdatedAt)
+			expectedUpdatedAt = existing.UpdatedAt
+			health = mcpToolHealthFromServer(existing)
+			resources = cloneCatalogMCPResources(existing.Resources)
+			prompts = cloneCatalogMCPPrompts(existing.Prompts)
+		} else {
+			serverID, err = s.components.IDGen.GenID(ctx)
+			if err != nil {
+				return err
+			}
+			if trusted != nil {
+				creatorID = trusted.CreatorID
+				sourceType = normalizeCatalogMCPServerSourceType(trusted.SourceType)
+			}
+		}
+		if trusted != nil {
+			resources = cloneCatalogMCPResources(trusted.Resources)
+			prompts = cloneCatalogMCPPrompts(trusted.Prompts)
+		}
+		mutations = append(mutations, MCPToolServerMutation{
+			Server: &toolapi.MCPToolServer{
+				ServerID:        serverID,
+				SpaceID:         spaceID,
+				CreatorID:       creatorID,
+				SourceType:      sourceType,
+				Name:            strings.TrimSpace(req.Name),
+				Description:     strings.TrimSpace(req.Description),
+				ServerType:      strings.TrimSpace(req.ServerType),
+				Enabled:         req.Enabled,
+				Config:          strings.TrimSpace(req.Config),
+				Auth:            normalizeJSONText(req.Auth),
+				Tools:           cloneToolDefinitions(req.Tools),
+				Resources:       resources,
+				Prompts:         prompts,
+				HealthStatus:    health.Status,
+				HealthCheckedAt: health.CheckedAt,
+				HealthLatencyMs: health.LatencyMs,
+				HealthError:     health.Error,
+				CreatedAt:       createdAt,
+				UpdatedAt:       updatedAt,
+			},
+			ExpectedUpdatedAt: expectedUpdatedAt,
+			FieldMask: MCPToolServerMutationConnectionFields |
+				MCPToolServerMutationCapabilityFields,
+		})
 	}
-
-	return nil
+	return s.components.Catalog.ApplyServers(ctx, mutations)
 }
 
 func parseDeerFlowExtensionsConfig(
@@ -346,17 +456,20 @@ func deerFlowStdioMCPServerConfigAndAuthJSON(
 		)
 	}
 
-	env, authEnv, authPayload := splitDeerFlowMCPEnv(config.Env)
 	payload := map[string]any{
 		"command": command,
 		"args":    append([]string(nil), config.Args...),
-		"env":     env,
 	}
-	if len(authEnv) > 0 {
-		payload["auth_env"] = authEnv
+	if len(config.Env) > 0 {
+		payload["env"] = config.Env
 	}
 
-	return mustMarshalJSONObject(payload), mustMarshalJSONObject(authPayload), nil
+	return canonicalizeMCPConfigCredentials(
+		"stdio",
+		mustMarshalJSONObject(payload),
+		`{}`,
+		mcpConfigCredentialOptions{},
+	)
 }
 
 func deerFlowRemoteMCPServerConfigAndAuthJSON(
@@ -370,19 +483,20 @@ func deerFlowRemoteMCPServerConfigAndAuthJSON(
 			serverType,
 		)
 	}
-	payload := map[string]any{"url": url}
-	headers, authHeaders, authPayload := splitDeerFlowMCPHeaders(config.Headers)
-	if len(headers) > 0 {
-		payload["headers"] = headers
-	}
-	if len(authHeaders) > 0 {
-		payload["auth_headers"] = authHeaders
-	}
 	if len(config.OAuth) > 0 {
-		authPayload["oauth"] = config.OAuth
+		return "", "", InvalidArgumentErrorf("deerflow oauth config is not supported")
+	}
+	payload := map[string]any{"url": url}
+	if len(config.Headers) > 0 {
+		payload["headers"] = config.Headers
 	}
 
-	return mustMarshalJSONObject(payload), mustMarshalJSONObject(authPayload), nil
+	return canonicalizeMCPConfigCredentials(
+		serverType,
+		mustMarshalJSONObject(payload),
+		`{}`,
+		mcpConfigCredentialOptions{},
+	)
 }
 
 func allowedDeerFlowStdioCommand(command string) bool {
@@ -402,7 +516,7 @@ func splitDeerFlowMCPEnv(
 	authValues := make(map[string]any)
 	for _, key := range sortedStringMapKeys(env) {
 		value := env[key]
-		if isMCPAuthSensitiveKey(key) && strings.TrimSpace(value) != "" {
+		if strings.TrimSpace(value) != "" {
 			authValues[key] = value
 			authEnv[key] = "env." + key
 			continue
@@ -425,7 +539,7 @@ func splitDeerFlowMCPHeaders(
 	authValues := make(map[string]any)
 	for _, key := range sortedStringMapKeys(headers) {
 		value := headers[key]
-		if isMCPAuthSensitiveKey(key) && strings.TrimSpace(value) != "" {
+		if strings.TrimSpace(value) != "" {
 			authValues[key] = value
 			authHeaders[key] = "headers." + key
 			continue
@@ -796,8 +910,4 @@ func mustMarshalDeerFlowExtensionsConfig(config deerFlowExtensionsConfig) []byte
 
 func boolPtr(value bool) *bool {
 	return &value
-}
-
-func defaultWeatherMCPStdioScript() string {
-	return `const r=require("readline").createInterface({input:process.stdin});const tool={name:"get_weather",description:"Get current weather for a city",inputSchema:{type:"object",properties:{city:{type:"string",description:"City name, such as Wuhan or Shanghai"},unit:{type:"string",description:"celsius or fahrenheit"}},required:["city"]}};function w(o){process.stdout.write(JSON.stringify(o)+"\n")}function weather(a){const city=String((a&&a.city)||"").trim()||"武汉";const unit=String((a&&a.unit)||"celsius").toLowerCase();const data={"武汉":{condition:"多云",temperature_c:29,humidity_percent:72,wind:"东北风 2级",advisory:"适合出行，注意补水"},"上海":{condition:"小雨",temperature_c:27,humidity_percent:80,wind:"东南风 3级",advisory:"建议带伞"},"北京":{condition:"晴",temperature_c:31,humidity_percent:38,wind:"西南风 2级",advisory:"紫外线较强"}}[city]||{condition:"晴到多云",temperature_c:26,humidity_percent:60,wind:"微风",advisory:"天气平稳"};const t=unit==="fahrenheit"?Math.round(data.temperature_c*9/5+32):data.temperature_c;return {city,condition:data.condition,temperature:t,unit:unit==="fahrenheit"?"fahrenheit":"celsius",humidity_percent:data.humidity_percent,wind:data.wind,advisory:data.advisory,source:"coze-local-weather-mcp"}}r.on("line",l=>{let m;try{m=JSON.parse(l)}catch(e){return}if(!m||m.id===undefined){return}if(m.method==="initialize"){w({jsonrpc:"2.0",id:m.id,result:{protocolVersion:"2025-03-26",capabilities:{tools:{}},serverInfo:{name:"coze-weather-mcp",version:"1.0.0"}}});return}if(m.method==="tools/list"){w({jsonrpc:"2.0",id:m.id,result:{tools:[tool]}});return}if(m.method==="tools/call"){const args=(m.params&&m.params.arguments)||{};const out=weather(args);w({jsonrpc:"2.0",id:m.id,result:{content:[{type:"text",text:JSON.stringify(out)}],structuredContent:out}});return}w({jsonrpc:"2.0",id:m.id,error:{code:-32601,message:"method not found"}})})`
 }

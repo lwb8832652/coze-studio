@@ -27,8 +27,10 @@ import (
 type SkillService interface {
 	ImportDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte) (*entity.Skill, error)
 	ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error)
+	ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error)
 	Create(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
 	Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error)
+	UpdateWithExpectedVersion(ctx context.Context, skill *entity.Skill, expectedVersionID int64) (*entity.Skill, error)
 	Delete(ctx context.Context, id int64) (*entity.Skill, error)
 	Get(ctx context.Context, id int64) (*entity.Skill, error)
 	List(ctx context.Context, spaceID int64, typ *entity.Type, enabled *bool) ([]*entity.Skill, error)
@@ -36,8 +38,25 @@ type SkillService interface {
 	ListVersionResources(ctx context.Context, skillID, versionID int64) ([]*entity.SkillResource, error)
 	UpdateVersionContent(ctx context.Context, skillID, versionID int64, skillMD string) (*entity.SkillVersion, error)
 	UpdateVersionResource(ctx context.Context, skillID, versionID int64, path string, content []byte) (*entity.SkillVersion, error)
+	MutateVersionResources(ctx context.Context, skillID, versionID int64, mutations []ResourceMutation) (*entity.SkillVersion, error)
 	RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error)
+	RollbackVersionCAS(ctx context.Context, skillID, versionID, expectedVersionID int64) (*entity.Skill, error)
 	TestRun(ctx context.Context, id int64, input string) (string, error)
+}
+
+type ResourceMutationOperation int
+
+const (
+	ResourceMutationUpsert ResourceMutationOperation = iota + 1
+	ResourceMutationDelete
+	ResourceMutationMove
+)
+
+type ResourceMutation struct {
+	Operation  ResourceMutationOperation
+	Path       string
+	TargetPath string
+	Content    []byte
 }
 
 type Components struct {

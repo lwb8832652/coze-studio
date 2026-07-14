@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any -- The upstream Monaco loader API is intentionally untyped. */
+
+import { configureMonacoWorkers } from './monaco-workers';
+
 export const loader = {
   async init(): Promise<any> {
     const load = await this.config();
@@ -22,6 +25,7 @@ export const loader = {
   },
 
   async config(config = {}): Promise<any> {
+    configureMonacoWorkers();
     const monaco = await import('monaco-editor');
     const { loader: load } = await import('@monaco-editor/react');
     load.config({

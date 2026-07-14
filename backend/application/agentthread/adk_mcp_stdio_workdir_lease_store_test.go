@@ -159,12 +159,18 @@ func TestApplicationADKMCPRuntimeStdioWorkdirLeaseStoreSanitizesErrors(
 type recordingMCPRuntimeWorkdirLeaseRepository struct {
 	createdLease  *domainentity.MCPRuntimeWorkdirLease
 	finishedLease *domainentity.MCPRuntimeWorkdirLease
+	currentLease  *domainentity.MCPRuntimeWorkdirLease
 	expiredLeases []*domainentity.MCPRuntimeWorkdirLease
 	finishReq     domainrepo.FinishMCPRuntimeWorkdirLeaseRequest
 	listReq       domainrepo.ListExpiredMCPRuntimeWorkdirLeasesRequest
+	claimReq      domainrepo.ClaimExpiredMCPRuntimeWorkdirLeaseRequest
+	retryReq      domainrepo.RetryMCPRuntimeWorkdirLeaseRequest
 	createCalls   int
 	finishCalls   int
 	listCalls     int
+	getCalls      int
+	claimCalls    int
+	retryCalls    int
 	finishOK      bool
 	createErr     error
 	finishErr     error
@@ -187,7 +193,69 @@ func (r *recordingMCPRuntimeWorkdirLeaseRepository) GetMCPRuntimeWorkdirLease(
 	ctx context.Context,
 	leaseID int64,
 ) (*domainentity.MCPRuntimeWorkdirLease, error) {
+	r.getCalls++
+	if r.currentLease != nil && r.currentLease.ID == leaseID {
+		cloned := *r.currentLease
+		return &cloned, nil
+	}
+	for _, lease := range r.expiredLeases {
+		if lease != nil && lease.ID == leaseID {
+			cloned := *lease
+			return &cloned, nil
+		}
+	}
 	return nil, nil
+}
+
+func (r *recordingMCPRuntimeWorkdirLeaseRepository) ClaimExpiredMCPRuntimeWorkdirLease(
+	_ context.Context,
+	req domainrepo.ClaimExpiredMCPRuntimeWorkdirLeaseRequest,
+) (*domainentity.MCPRuntimeWorkdirLease, bool, error) {
+	r.claimCalls++
+	r.claimReq = req
+	var lease *domainentity.MCPRuntimeWorkdirLease
+	if r.currentLease != nil && r.currentLease.ID == req.LeaseID {
+		lease = r.currentLease
+	} else {
+		for _, item := range r.expiredLeases {
+			if item != nil && item.ID == req.LeaseID {
+				lease = item
+				break
+			}
+		}
+	}
+	if lease == nil || lease.Status != domainentity.MCPRuntimeWorkdirLeaseStatusActive ||
+		lease.WorkerID != req.ExpectedWorkerID || lease.Workdir != req.ExpectedWorkdir ||
+		lease.LeaseExpiresAt != req.ExpectedLeaseExpiresAt || lease.LeaseExpiresAt > req.Now {
+		return nil, false, nil
+	}
+	claimed := *lease
+	claimed.WorkerID = req.ClaimWorkerID
+	claimed.LeaseExpiresAt = req.ClaimExpiresAt
+	claimed.UpdatedAt = req.Now
+	r.currentLease = &claimed
+	result := claimed
+	return &result, true, nil
+}
+
+func (r *recordingMCPRuntimeWorkdirLeaseRepository) RetryMCPRuntimeWorkdirLease(
+	_ context.Context,
+	req domainrepo.RetryMCPRuntimeWorkdirLeaseRequest,
+) (*domainentity.MCPRuntimeWorkdirLease, bool, error) {
+	r.retryCalls++
+	r.retryReq = req
+	if r.currentLease == nil || r.currentLease.ID != req.LeaseID ||
+		r.currentLease.WorkerID != req.WorkerID ||
+		r.currentLease.Status != domainentity.MCPRuntimeWorkdirLeaseStatusActive {
+		return nil, false, nil
+	}
+	retried := *r.currentLease
+	retried.LeaseExpiresAt = req.RetryAt
+	retried.UpdatedAt = req.Now
+	retried.LastError = req.LastError
+	r.currentLease = &retried
+	result := retried
+	return &result, true, nil
 }
 
 func (r *recordingMCPRuntimeWorkdirLeaseRepository) FinishMCPRuntimeWorkdirLease(

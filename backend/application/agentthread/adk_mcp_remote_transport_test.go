@@ -31,8 +31,9 @@ func TestADKMCPRuntimeRemoteTransportValidatesAndInvokesRunner(t *testing.T) {
 	}
 	transport := NewADKMCPRuntimeRemoteTransport(
 		ADKMCPRuntimeRemoteTransportOptions{
-			Runner:       runner,
-			AllowedHosts: []string{"mcp.example.test"},
+			Runner:            runner,
+			AllowedHosts:      []string{"mcp.example.test"},
+			AllowInsecureHTTP: true,
 		},
 	)
 
@@ -67,6 +68,8 @@ func TestADKMCPRuntimeRemoteTransportValidatesAndInvokesRunner(t *testing.T) {
 	require.Equal(t, "search-docs", runner.execution.ToolName)
 	require.Equal(t, `{"query":"coze"}`, runner.execution.Arguments)
 	require.Equal(t, "Bearer remote-secret-token", runner.execution.Headers["Authorization"])
+	require.Equal(t, []string{"mcp.example.test"}, runner.execution.AllowedHosts)
+	require.True(t, runner.execution.AllowLocalDebug)
 }
 
 func TestADKMCPRuntimeRemoteTransportRejectsUnsafeConfigSafely(t *testing.T) {

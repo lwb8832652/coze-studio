@@ -255,6 +255,13 @@ export const router: ReturnType<typeof createBrowserRouter> =
                     subMenuKey: SpaceSubModuleEnum.SKILL,
                   }),
                 },
+                {
+                  path: 'skill/:skill_id',
+                  Component: SkillPage,
+                  loader: () => ({
+                    subMenuKey: SpaceSubModuleEnum.SKILL,
+                  }),
+                },
 
                 // Tool Configuration
                 {

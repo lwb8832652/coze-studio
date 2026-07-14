@@ -17,6 +17,7 @@
 package agentthread
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 )
@@ -33,19 +35,24 @@ const (
 	agentThreadMCPRuntimeTimeoutMsEnv      = "AGENT_THREAD_MCP_RUNTIME_TIMEOUT_MS"
 	agentThreadMCPRuntimeMaxOutputBytesEnv = "AGENT_THREAD_MCP_RUNTIME_MAX_OUTPUT_BYTES"
 
-	agentThreadMCPStdioDryRunEnabledEnv     = "AGENT_THREAD_MCP_STDIO_DRY_RUN_ENABLED"
-	agentThreadMCPStdioEinoEnabledEnv       = "AGENT_THREAD_MCP_STDIO_EINO_ENABLED"
-	agentThreadMCPStdioWorkdirRootEnv       = "AGENT_THREAD_MCP_STDIO_WORKDIR_ROOT"
-	agentThreadMCPStdioWorkerIDEnv          = "AGENT_THREAD_MCP_STDIO_WORKER_ID"
-	agentThreadMCPStdioAllowedCommandsEnv   = "AGENT_THREAD_MCP_STDIO_ALLOWED_COMMANDS"
-	agentThreadMCPStdioAllowedEnvKeysEnv    = "AGENT_THREAD_MCP_STDIO_ALLOWED_ENV_KEYS"
-	agentThreadMCPStdioMaxArgsEnv           = "AGENT_THREAD_MCP_STDIO_MAX_ARGS"
-	agentThreadMCPStdioMaxArgBytesEnv       = "AGENT_THREAD_MCP_STDIO_MAX_ARG_BYTES"
-	agentThreadMCPStdioMaxEnvVarsEnv        = "AGENT_THREAD_MCP_STDIO_MAX_ENV_VARS"
-	agentThreadMCPStdioMaxEnvValueBytesEnv  = "AGENT_THREAD_MCP_STDIO_MAX_ENV_VALUE_BYTES"
-	agentThreadMCPStdioLeaseTTLMsEnv        = "AGENT_THREAD_MCP_STDIO_LEASE_TTL_MS"
-	agentThreadMCPStdioMaxConfigBytesEnv    = "AGENT_THREAD_MCP_STDIO_MAX_CONFIG_BYTES"
-	agentThreadMCPStdioDryRunOutputBytesEnv = "AGENT_THREAD_MCP_STDIO_DRY_RUN_OUTPUT_BYTES"
+	agentThreadMCPStdioDryRunEnabledEnv             = "AGENT_THREAD_MCP_STDIO_DRY_RUN_ENABLED"
+	agentThreadMCPStdioEinoEnabledEnv               = "AGENT_THREAD_MCP_STDIO_EINO_ENABLED"
+	agentThreadMCPStdioDebugHostExecutionEnabledEnv = "AGENT_THREAD_MCP_STDIO_DEBUG_HOST_EXECUTION_ENABLED"
+	agentThreadMCPStdioWorkdirRootEnv               = "AGENT_THREAD_MCP_STDIO_WORKDIR_ROOT"
+	agentThreadMCPStdioWorkerIDEnv                  = "AGENT_THREAD_MCP_STDIO_WORKER_ID"
+	agentThreadMCPStdioAllowedCommandsEnv           = "AGENT_THREAD_MCP_STDIO_ALLOWED_COMMANDS"
+	agentThreadMCPStdioAllowedNpxPackagesEnv        = "AGENT_THREAD_MCP_STDIO_ALLOWED_NPX_PACKAGES"
+	agentThreadMCPStdioAllowedUVXPackagesEnv        = "AGENT_THREAD_MCP_STDIO_ALLOWED_UVX_PACKAGES"
+	agentThreadMCPStdioAllowedNodeScriptRootsEnv    = "AGENT_THREAD_MCP_STDIO_ALLOWED_NODE_SCRIPT_ROOTS"
+	agentThreadMCPStdioCommandRulesJSONEnv          = "AGENT_THREAD_MCP_STDIO_COMMAND_RULES_JSON"
+	agentThreadMCPStdioAllowedEnvKeysEnv            = "AGENT_THREAD_MCP_STDIO_ALLOWED_ENV_KEYS"
+	agentThreadMCPStdioMaxArgsEnv                   = "AGENT_THREAD_MCP_STDIO_MAX_ARGS"
+	agentThreadMCPStdioMaxArgBytesEnv               = "AGENT_THREAD_MCP_STDIO_MAX_ARG_BYTES"
+	agentThreadMCPStdioMaxEnvVarsEnv                = "AGENT_THREAD_MCP_STDIO_MAX_ENV_VARS"
+	agentThreadMCPStdioMaxEnvValueBytesEnv          = "AGENT_THREAD_MCP_STDIO_MAX_ENV_VALUE_BYTES"
+	agentThreadMCPStdioLeaseTTLMsEnv                = "AGENT_THREAD_MCP_STDIO_LEASE_TTL_MS"
+	agentThreadMCPStdioMaxConfigBytesEnv            = "AGENT_THREAD_MCP_STDIO_MAX_CONFIG_BYTES"
+	agentThreadMCPStdioDryRunOutputBytesEnv         = "AGENT_THREAD_MCP_STDIO_DRY_RUN_OUTPUT_BYTES"
 
 	agentThreadMCPRemoteEinoEnabledEnv       = "AGENT_THREAD_MCP_REMOTE_EINO_ENABLED"
 	agentThreadMCPRemoteAllowedHostsEnv      = "AGENT_THREAD_MCP_REMOTE_ALLOWED_HOSTS"
@@ -54,6 +61,12 @@ const (
 	agentThreadMCPRemoteMaxHeadersEnv        = "AGENT_THREAD_MCP_REMOTE_MAX_HEADERS"
 	agentThreadMCPRemoteMaxHeaderBytesEnv    = "AGENT_THREAD_MCP_REMOTE_MAX_HEADER_BYTES"
 )
+
+var defaultADKMCPRuntimeStdioNpxPackages = []string{
+	"@modelcontextprotocol/server-github",
+	"@modelcontextprotocol/server-postgres",
+	"open-meteo-mcp-server",
+}
 
 const (
 	defaultADKMCPRuntimeStdioMaxArgs          = 16
@@ -64,20 +77,26 @@ const (
 
 type ADKMCPRuntimeBootstrapConfig struct {
 	Enabled bool
+	AppEnv  string
 
-	StdioDryRunEnabled     bool
-	StdioEinoEnabled       bool
-	StdioWorkdirRoot       string
-	StdioWorkerID          string
-	StdioAllowedCommands   []string
-	StdioAllowedEnvKeys    []string
-	StdioMaxArgs           int
-	StdioMaxArgBytes       int
-	StdioMaxEnvVars        int
-	StdioMaxEnvValueBytes  int
-	StdioLeaseTTLMillis    int64
-	StdioMaxConfigBytes    int
-	StdioDryRunOutputBytes int
+	StdioDryRunEnabled             bool
+	StdioEinoEnabled               bool
+	StdioDebugHostExecutionEnabled bool
+	StdioWorkdirRoot               string
+	StdioWorkerID                  string
+	StdioAllowedCommands           []string
+	StdioAllowedNpxPackages        []string
+	StdioAllowedUVXPackages        []string
+	StdioAllowedNodeScriptRoots    []string
+	StdioCommandRules              []mcpruntime.StdioCommandRule
+	StdioAllowedEnvKeys            []string
+	StdioMaxArgs                   int
+	StdioMaxArgBytes               int
+	StdioMaxEnvVars                int
+	StdioMaxEnvValueBytes          int
+	StdioLeaseTTLMillis            int64
+	StdioMaxConfigBytes            int
+	StdioDryRunOutputBytes         int
 
 	RemoteEinoEnabled       bool
 	RemoteAllowedHosts      []string
@@ -96,6 +115,7 @@ type ADKMCPRuntimeBootstrapDependencies struct {
 	Resolver        ADKMCPRuntimeServerResolver
 	LeaseRepository domainrepo.MCPRuntimeWorkdirLeaseRepository
 	IDGen           idgen.IDGenerator
+	WorkdirPreparer *ADKMCPRuntimeStdioFilesystemWorkdirPreparer
 	EventSink       RunEventSink
 	AuditRecorder   ADKMCPRuntimeAuditRecorder
 	HealthReporter  ADKMCPRuntimeHealthReporter
@@ -122,6 +142,13 @@ func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error)
 	if err != nil {
 		return ADKMCPRuntimeBootstrapConfig{}, err
 	}
+	stdioDebugHostExecutionEnabled, err := adkMCPRuntimeBoolEnv(
+		agentThreadMCPStdioDebugHostExecutionEnabledEnv,
+		false,
+	)
+	if err != nil {
+		return ADKMCPRuntimeBootstrapConfig{}, err
+	}
 	remoteEinoEnabled, err := adkMCPRuntimeBoolEnv(
 		agentThreadMCPRemoteEinoEnabledEnv,
 		false,
@@ -136,30 +163,44 @@ func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error)
 	if err != nil {
 		return ADKMCPRuntimeBootstrapConfig{}, err
 	}
+	commandRules, err := adkMCPRuntimeCommandRulesEnv()
+	if err != nil {
+		return ADKMCPRuntimeBootstrapConfig{}, err
+	}
+	npxPackages := adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedNpxPackagesEnv)
+	if len(npxPackages) == 0 {
+		npxPackages = append([]string(nil), defaultADKMCPRuntimeStdioNpxPackages...)
+	}
 
 	config := ADKMCPRuntimeBootstrapConfig{
-		Enabled:                 enabled,
-		StdioDryRunEnabled:      stdioDryRunEnabled,
-		StdioEinoEnabled:        stdioEinoEnabled,
-		StdioWorkdirRoot:        strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkdirRootEnv)),
-		StdioWorkerID:           strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkerIDEnv)),
-		StdioAllowedCommands:    adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedCommandsEnv),
-		StdioAllowedEnvKeys:     adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedEnvKeysEnv),
-		StdioMaxArgs:            defaultADKMCPRuntimeStdioMaxArgs,
-		StdioMaxArgBytes:        defaultADKMCPRuntimeStdioMaxArgBytes,
-		StdioMaxEnvVars:         defaultADKMCPRuntimeStdioMaxEnvVars,
-		StdioMaxEnvValueBytes:   defaultADKMCPRuntimeStdioMaxEnvValueBytes,
-		StdioLeaseTTLMillis:     defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis,
-		StdioMaxConfigBytes:     defaultADKMCPRuntimeStdioMaxConfigBytes,
-		StdioDryRunOutputBytes:  defaultADKMCPRuntimeStdioDryRunMaxOutputBytes,
-		RemoteEinoEnabled:       remoteEinoEnabled,
-		RemoteAllowedHosts:      adkMCPRuntimeListEnv(agentThreadMCPRemoteAllowedHostsEnv),
-		RemoteAllowInsecureHTTP: remoteAllowInsecureHTTP,
-		RemoteMaxConfigBytes:    defaultADKMCPRuntimeRemoteMaxConfigBytes,
-		RemoteMaxHeaders:        defaultADKMCPRuntimeRemoteMaxHeaders,
-		RemoteMaxHeaderBytes:    defaultADKMCPRuntimeRemoteMaxHeaderBytes,
-		ExecutorTimeout:         defaultADKMCPRuntimeExecutorTimeout,
-		ExecutorMaxOutputBytes:  defaultADKMCPRuntimeExecutorMaxOutputBytes,
+		Enabled:                        enabled,
+		AppEnv:                         strings.TrimSpace(os.Getenv("APP_ENV")),
+		StdioDryRunEnabled:             stdioDryRunEnabled,
+		StdioEinoEnabled:               stdioEinoEnabled,
+		StdioDebugHostExecutionEnabled: stdioDebugHostExecutionEnabled,
+		StdioWorkdirRoot:               strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkdirRootEnv)),
+		StdioWorkerID:                  strings.TrimSpace(os.Getenv(agentThreadMCPStdioWorkerIDEnv)),
+		StdioAllowedCommands:           adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedCommandsEnv),
+		StdioAllowedNpxPackages:        npxPackages,
+		StdioAllowedUVXPackages:        adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedUVXPackagesEnv),
+		StdioAllowedNodeScriptRoots:    adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedNodeScriptRootsEnv),
+		StdioCommandRules:              commandRules,
+		StdioAllowedEnvKeys:            adkMCPRuntimeListEnv(agentThreadMCPStdioAllowedEnvKeysEnv),
+		StdioMaxArgs:                   defaultADKMCPRuntimeStdioMaxArgs,
+		StdioMaxArgBytes:               defaultADKMCPRuntimeStdioMaxArgBytes,
+		StdioMaxEnvVars:                defaultADKMCPRuntimeStdioMaxEnvVars,
+		StdioMaxEnvValueBytes:          defaultADKMCPRuntimeStdioMaxEnvValueBytes,
+		StdioLeaseTTLMillis:            defaultADKMCPRuntimeStdioWorkdirLeaseTTLMillis,
+		StdioMaxConfigBytes:            defaultADKMCPRuntimeStdioMaxConfigBytes,
+		StdioDryRunOutputBytes:         defaultADKMCPRuntimeStdioDryRunMaxOutputBytes,
+		RemoteEinoEnabled:              remoteEinoEnabled,
+		RemoteAllowedHosts:             adkMCPRuntimeListEnv(agentThreadMCPRemoteAllowedHostsEnv),
+		RemoteAllowInsecureHTTP:        remoteAllowInsecureHTTP,
+		RemoteMaxConfigBytes:           defaultADKMCPRuntimeRemoteMaxConfigBytes,
+		RemoteMaxHeaders:               defaultADKMCPRuntimeRemoteMaxHeaders,
+		RemoteMaxHeaderBytes:           defaultADKMCPRuntimeRemoteMaxHeaderBytes,
+		ExecutorTimeout:                defaultADKMCPRuntimeExecutorTimeout,
+		ExecutorMaxOutputBytes:         defaultADKMCPRuntimeExecutorMaxOutputBytes,
 	}
 
 	if err := adkMCPRuntimeParseBootstrapIntegers(&config); err != nil {
@@ -364,6 +405,12 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	if !c.stdioEnabled() {
 		return nil
 	}
+	if c.StdioEinoEnabled && !mcpruntime.NewStdioExecutionMode(
+		c.AppEnv,
+		c.StdioDebugHostExecutionEnabled,
+	).AllowsHostExecution() {
+		return fmt.Errorf("%s requires APP_ENV=debug", agentThreadMCPStdioDebugHostExecutionEnabledEnv)
+	}
 	if strings.TrimSpace(c.StdioWorkdirRoot) == "" ||
 		!filepath.IsAbs(strings.TrimSpace(c.StdioWorkdirRoot)) {
 		return fmt.Errorf("%s must be an absolute path", agentThreadMCPStdioWorkdirRootEnv)
@@ -373,6 +420,15 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	}
 	if len(adkMCPRuntimeStringSet(c.StdioAllowedCommands)) == 0 {
 		return fmt.Errorf("%s is required", agentThreadMCPStdioAllowedCommandsEnv)
+	}
+	if _, err := mcpruntime.NewStdioCommandPolicy(mcpruntime.StdioCommandPolicyOptions{
+		AllowedCommands: c.StdioAllowedCommands,
+		NpxPackages:     c.StdioAllowedNpxPackages,
+		UvxPackages:     c.StdioAllowedUVXPackages,
+		NodeScriptRoots: c.StdioAllowedNodeScriptRoots,
+		CommandRules:    c.StdioCommandRules,
+	}); err != nil {
+		return fmt.Errorf("%s is invalid", agentThreadMCPStdioAllowedCommandsEnv)
 	}
 	if c.StdioMaxArgs < 0 {
 		return fmt.Errorf("%s must be non-negative", agentThreadMCPStdioMaxArgsEnv)
@@ -389,6 +445,12 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	if c.StdioLeaseTTLMillis <= 0 {
 		return fmt.Errorf("%s must be positive", agentThreadMCPStdioLeaseTTLMsEnv)
 	}
+	if c.StdioLeaseTTLMillis < adkMCPRuntimeStdioMinimumLeaseTTLMillis(c.ExecutorTimeout) {
+		return fmt.Errorf(
+			"%s must cover the execution and cleanup budget",
+			agentThreadMCPStdioLeaseTTLMsEnv,
+		)
+	}
 	if c.StdioMaxConfigBytes <= 0 {
 		return fmt.Errorf("%s must be positive", agentThreadMCPStdioMaxConfigBytesEnv)
 	}
@@ -400,6 +462,9 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 }
 
 func (c ADKMCPRuntimeBootstrapConfig) withDefaults() ADKMCPRuntimeBootstrapConfig {
+	if len(c.StdioAllowedNpxPackages) == 0 {
+		c.StdioAllowedNpxPackages = append([]string(nil), defaultADKMCPRuntimeStdioNpxPackages...)
+	}
 	if c.StdioMaxArgs == 0 {
 		c.StdioMaxArgs = defaultADKMCPRuntimeStdioMaxArgs
 	}
@@ -452,28 +517,49 @@ func newADKMCPRuntimeStdioTransportFromBootstrap(
 	config ADKMCPRuntimeBootstrapConfig,
 	deps ADKMCPRuntimeBootstrapDependencies,
 ) *ADKMCPRuntimeStdioTransport {
+	commandPolicy, _ := mcpruntime.NewStdioCommandPolicy(mcpruntime.StdioCommandPolicyOptions{
+		AllowedCommands: config.StdioAllowedCommands,
+		NpxPackages:     config.StdioAllowedNpxPackages,
+		UvxPackages:     config.StdioAllowedUVXPackages,
+		NodeScriptRoots: config.StdioAllowedNodeScriptRoots,
+		CommandRules:    config.StdioCommandRules,
+	})
 	options := ADKMCPRuntimeStdioRuntimeTransportOptions{
-		WorkdirRoot:      config.StdioWorkdirRoot,
-		LeaseRepository:  deps.LeaseRepository,
-		IDGen:            deps.IDGen,
-		WorkerID:         config.StdioWorkerID,
-		LeaseTTLMillis:   config.StdioLeaseTTLMillis,
-		AllowedCommands:  config.StdioAllowedCommands,
-		AllowedEnvKeys:   config.StdioAllowedEnvKeys,
-		MaxArgs:          config.StdioMaxArgs,
-		MaxArgBytes:      config.StdioMaxArgBytes,
-		MaxEnvVars:       config.StdioMaxEnvVars,
-		MaxEnvValueBytes: config.StdioMaxEnvValueBytes,
-		MaxConfigBytes:   config.StdioMaxConfigBytes,
-		DirMode:          0,
-		NowMillis:        config.nowMillis,
-		Runner:           nil,
+		WorkdirRoot:            config.StdioWorkdirRoot,
+		WorkdirPreparer:        deps.WorkdirPreparer,
+		LeaseRepository:        deps.LeaseRepository,
+		IDGen:                  deps.IDGen,
+		WorkerID:               config.StdioWorkerID,
+		LeaseTTLMillis:         config.StdioLeaseTTLMillis,
+		AllowedCommands:        config.StdioAllowedCommands,
+		AllowedNpxPackages:     config.StdioAllowedNpxPackages,
+		AllowedUVXPackages:     config.StdioAllowedUVXPackages,
+		AllowedNodeScriptRoots: config.StdioAllowedNodeScriptRoots,
+		CommandRules:           config.StdioCommandRules,
+		CommandPolicy:          commandPolicy,
+		AllowedEnvKeys:         config.StdioAllowedEnvKeys,
+		MaxArgs:                config.StdioMaxArgs,
+		MaxArgBytes:            config.StdioMaxArgBytes,
+		MaxEnvVars:             config.StdioMaxEnvVars,
+		MaxEnvValueBytes:       config.StdioMaxEnvValueBytes,
+		MaxConfigBytes:         config.StdioMaxConfigBytes,
+		DirMode:                0,
+		ExecutionTimeout:       config.ExecutorTimeout,
+		CleanupTimeout:         defaultADKMCPRuntimeStdioWorkdirCleanupTimeout,
+		NowMillis:              config.nowMillis,
+		Runner:                 nil,
 	}
 	if config.StdioEinoEnabled {
 		options.Runner = NewADKMCPRuntimeStdioEinoRunner(
 			ADKMCPRuntimeStdioEinoRunnerOptions{
 				ClientFactory: NewADKMCPRuntimeStdioEinoMCPClientFactory(
-					ADKMCPRuntimeStdioEinoMCPClientFactoryOptions{},
+					ADKMCPRuntimeStdioEinoMCPClientFactoryOptions{
+						CommandPolicy: commandPolicy,
+						ExecutionMode: mcpruntime.NewStdioExecutionMode(
+							config.AppEnv,
+							config.StdioDebugHostExecutionEnabled,
+						),
+					},
 				),
 				ToolProvider:   &ADKMCPRuntimeStdioEinoMCPToolProvider{},
 				MaxOutputBytes: config.ExecutorMaxOutputBytes,
@@ -574,4 +660,16 @@ func adkMCPRuntimeListEnv(key string) []string {
 	}
 
 	return values
+}
+
+func adkMCPRuntimeCommandRulesEnv() ([]mcpruntime.StdioCommandRule, error) {
+	raw := strings.TrimSpace(os.Getenv(agentThreadMCPStdioCommandRulesJSONEnv))
+	if raw == "" {
+		return nil, nil
+	}
+	var rules []mcpruntime.StdioCommandRule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil || rules == nil {
+		return nil, fmt.Errorf("parse %s", agentThreadMCPStdioCommandRulesJSONEnv)
+	}
+	return rules, nil
 }

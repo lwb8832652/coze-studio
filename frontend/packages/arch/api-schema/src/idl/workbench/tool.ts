@@ -22,9 +22,32 @@ export interface MCPToolDefinition {
   input_schema: string;
 }
 
+export type MCPServerSourceType = 'custom' | 'official';
+
+export interface MCPResource {
+	resource_id: string;
+	name: string;
+  description: string;
+  mime_type: string;
+}
+
+export interface MCPPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface MCPPrompt {
+  name: string;
+  description: string;
+  arguments: MCPPromptArgument[];
+}
+
 export interface MCPToolServer {
   server_id: string;
   space_id: string;
+  creator_id: string;
+  source_type: MCPServerSourceType;
   name: string;
   description: string;
   server_type: string;
@@ -32,6 +55,8 @@ export interface MCPToolServer {
   config: string;
   auth: string;
   tools: MCPToolDefinition[];
+  resources: MCPResource[];
+  prompts: MCPPrompt[];
   health_status: string;
   health_checked_at: number;
   health_latency_ms: number;
@@ -70,9 +95,24 @@ export interface TestMCPToolCallRequest {
   arguments: string;
 }
 
+export interface DiscoverMCPToolServerRequest {
+  server_id: string;
+}
+
+export interface ExportMCPToolServerRequest {
+  server_id: string;
+}
+
+export interface ListMCPToolAuditEventsRequest {
+  server_id: string;
+  limit?: number;
+  cursor?: string;
+}
+
 export interface ListMCPToolServersData {
   servers: MCPToolServer[];
   total: number;
+  can_manage: boolean;
 }
 
 export interface MCPToolRegistryEntry {
@@ -103,6 +143,39 @@ export interface TestMCPToolCallData {
   latency_ms: number;
 }
 
+export interface DiscoverMCPToolServerData {
+  tools: MCPToolDefinition[];
+  resources: MCPResource[];
+  prompts: MCPPrompt[];
+}
+
+export interface ExportMCPToolServerData {
+  name: string;
+  description: string;
+  server_type: string;
+  config: string;
+  tools: MCPToolDefinition[];
+  resources: MCPResource[];
+  prompts: MCPPrompt[];
+}
+
+export interface MCPToolAuditEvent {
+  event_id: string;
+  actor_id: string;
+  tool_name: string;
+  status: 'pending' | 'success' | 'failed';
+  latency_ms: number;
+  error_code?: string;
+  error_summary?: string;
+  created_at: number;
+  completed_at?: number;
+}
+
+export interface ListMCPToolAuditEventsData {
+  events: MCPToolAuditEvent[];
+  next_cursor: string;
+}
+
 export interface MCPToolServerResponse {
   data?: MCPToolServer;
   code: number;
@@ -123,6 +196,24 @@ export interface ListMCPToolRegistryEntriesResponse {
 
 export interface TestMCPToolCallResponse {
   data?: TestMCPToolCallData;
+  code: number;
+  msg: string;
+}
+
+export interface DiscoverMCPToolServerResponse {
+  data?: DiscoverMCPToolServerData;
+  code: number;
+  msg: string;
+}
+
+export interface ExportMCPToolServerResponse {
+  data?: ExportMCPToolServerData;
+  code: number;
+  msg: string;
+}
+
+export interface ListMCPToolAuditEventsResponse {
+  data?: ListMCPToolAuditEventsData;
   code: number;
   msg: string;
 }
@@ -230,6 +321,55 @@ export const TestMCPToolCall = /*#__PURE__*/createAPI<
     body: ['tool_name', 'arguments'],
   },
   resType: 'TestMCPToolCallResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const DiscoverMCPToolServer = /*#__PURE__*/createAPI<
+  DiscoverMCPToolServerRequest,
+  DiscoverMCPToolServerResponse
+>({
+  url: '/api/workbench/mcp_tools/:server_id/discover',
+  method: 'POST',
+  name: 'DiscoverMCPToolServer',
+  reqType: 'DiscoverMCPToolServerRequest',
+  reqMapping: {
+    path: ['server_id'],
+  },
+  resType: 'DiscoverMCPToolServerResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const ExportMCPToolServer = /*#__PURE__*/createAPI<
+  ExportMCPToolServerRequest,
+  ExportMCPToolServerResponse
+>({
+  url: '/api/workbench/mcp_tools/:server_id/export',
+  method: 'GET',
+  name: 'ExportMCPToolServer',
+  reqType: 'ExportMCPToolServerRequest',
+  reqMapping: {
+    path: ['server_id'],
+  },
+  resType: 'ExportMCPToolServerResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const ListMCPToolAuditEvents = /*#__PURE__*/createAPI<
+  ListMCPToolAuditEventsRequest,
+  ListMCPToolAuditEventsResponse
+>({
+  url: '/api/workbench/mcp_tools/:server_id/audit_events',
+  method: 'GET',
+  name: 'ListMCPToolAuditEvents',
+  reqType: 'ListMCPToolAuditEventsRequest',
+  reqMapping: {
+    path: ['server_id'],
+    query: ['limit', 'cursor'],
+  },
+  resType: 'ListMCPToolAuditEventsResponse',
   schemaRoot: 'api://schemas/idl_workbench_tool',
   service: 'workbenchTool',
 });

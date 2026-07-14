@@ -19,6 +19,7 @@ import { useParams } from 'react-router-dom';
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import { MCPToolSettingsPanel } from './mcp-settings-panel';
+import './index.less';
 
 interface ToolsPageHeaderProps {
   description: string;
@@ -40,10 +41,10 @@ const ToolsPage = () => {
       <WorkspacePageTopBar />
       <section className="coze-prototype-page-inner">
         <ToolsPageHeader
-          title="工具"
-          description="管理 MCP 工具的配置和启用状态。"
+          title="MCP 管理"
+          description="统一管理工作空间中的 MCP 服务、能力发现、试运行与调用日志。"
         />
-        <MCPToolSettingsPanel spaceId={space_id} />
+        <MCPToolSettingsPanel mode="full" spaceId={space_id} />
       </section>
     </main>
   );

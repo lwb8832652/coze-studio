@@ -23,8 +23,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
+	"github.com/coze-dev/coze-studio/backend/domain/skill/repository"
 )
 
 func TestServiceImportsScriptSkill(t *testing.T) {
@@ -267,9 +269,23 @@ func TestServiceUpdateRecordsSkillVersion(t *testing.T) {
 		Executor:     `{"language":"python","entry":"main.py"}`,
 		Permissions:  `{"network":false}`,
 	}
+	repo.versions[101] = []*entity.SkillVersion{{
+		ID:      200,
+		SkillID: 101,
+		Version: "1.0.0",
+		SkillMD: `---
+name: Weekly Report
+description: build report
+type: script
+version: 1.0.0
+enabled: true
+---
+Original body.
+`,
+	}}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 201}})
 
-	updated, err := svc.Update(context.Background(), &entity.Skill{
+	updated, err := svc.UpdateWithExpectedVersion(context.Background(), &entity.Skill{
 		ID:           101,
 		SpaceID:      1,
 		Name:         "Weekly Report",
@@ -281,14 +297,98 @@ func TestServiceUpdateRecordsSkillVersion(t *testing.T) {
 		OutputSchema: `{"type":"object"}`,
 		Executor:     `{"language":"python","entry":"main.py"}`,
 		Permissions:  `{"network":false}`,
-	})
+	}, 200)
 
 	require.NoError(t, err)
 	require.Equal(t, "1.1.0", updated.Version)
-	require.Len(t, repo.versions[101], 1)
-	require.Equal(t, int64(201), repo.versions[101][0].ID)
-	require.Equal(t, "1.1.0", repo.versions[101][0].Version)
-	require.Contains(t, repo.versions[101][0].SkillMD, "build updated report")
+	require.Len(t, repo.versions[101], 2)
+	require.Equal(t, int64(201), repo.versions[101][1].ID)
+	require.Equal(t, "1.1.0", repo.versions[101][1].Version)
+	require.Contains(t, repo.versions[101][1].SkillMD, "build updated report")
+}
+
+func TestServiceMetadataUpdatePreservesLatestSkillMDAndResources(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID: 101, SpaceID: 1, Name: "weekly", Description: "before", Type: entity.TypeCustomSkill,
+		Version: "1.0.0", Enabled: true, InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`,
+		IconURI: "skill-icon://ocean", UsageScenarios: "weekly", DevelopmentThreadID: 901,
+	}
+	originalSkillMD := `---
+name: weekly
+description: before
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Full body
+
+Keep this body intact.
+`
+	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.0.0", SkillMD: originalSkillMD, InputSchema: `{}`, OutputSchema: `{}`, Executor: `{}`, Permissions: `{}`, CreatedAt: 1}}
+	repo.resources[201] = []*entity.SkillResource{{SkillID: 101, VersionID: 201, Path: "references/prompt.md", Content: []byte("keep"), Size: 4, SHA256: sha256Hex([]byte("keep"))}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	updated := *repo.items[101]
+	updated.Description = "after"
+	result, err := svc.UpdateWithExpectedVersion(context.Background(), &updated, 201)
+
+	require.NoError(t, err)
+	require.Equal(t, "after", result.Description)
+	require.Len(t, repo.versions[101], 2)
+	require.Contains(t, repo.versions[101][1].SkillMD, "description: after")
+	require.NotContains(t, repo.versions[101][1].SkillMD, "description: before")
+	require.Contains(t, repo.versions[101][1].SkillMD, "# Full body\n\nKeep this body intact.")
+	require.Len(t, repo.resources[401], 1)
+	require.Equal(t, "references/prompt.md", repo.resources[401][0].Path)
+	require.Equal(t, []byte("keep"), repo.resources[401][0].Content)
+}
+
+func TestServiceResourceWriteRejectsStaleVersion(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill}
+	repo.versions[101] = []*entity.SkillVersion{
+		{ID: 200, SkillID: 101, SkillMD: validCustomSkillMD("old"), CreatedAt: 1},
+		{ID: 201, SkillID: 101, SkillMD: validCustomSkillMD("latest"), CreatedAt: 2},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	_, err := svc.UpdateVersionResource(context.Background(), 101, 200, "a.txt", []byte("stale"))
+
+	require.Error(t, err)
+	require.True(t, IsConflict(err))
+	require.Len(t, repo.versions[101], 2)
+}
+
+func TestServiceDirectoryMoveCreatesOneSnapshotAndRejectsOverwrite(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill}
+	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, SkillMD: validCustomSkillMD("weekly"), CreatedAt: 1}}
+	repo.resources[201] = []*entity.SkillResource{
+		{SkillID: 101, VersionID: 201, Path: "references/a.md", Content: []byte("a"), Size: 1},
+		{SkillID: 101, VersionID: 201, Path: "references/b.md", Content: []byte("b"), Size: 1},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	version, err := svc.MutateVersionResources(context.Background(), 101, 201, []ResourceMutation{{Operation: ResourceMutationMove, Path: "references", TargetPath: "docs"}})
+	require.NoError(t, err)
+	require.Equal(t, int64(401), version.ID)
+	require.Len(t, repo.versions[101], 2)
+	require.Equal(t, []string{"docs/a.md", "docs/b.md"}, []string{repo.resources[401][0].Path, repo.resources[401][1].Path})
+
+	repo.items[102] = &entity.Skill{ID: 102, SpaceID: 1, Type: entity.TypeCustomSkill}
+	repo.versions[102] = []*entity.SkillVersion{{ID: 202, SkillID: 102, SkillMD: validCustomSkillMD("collision"), CreatedAt: 1}}
+	repo.resources[202] = []*entity.SkillResource{
+		{SkillID: 102, VersionID: 202, Path: "references/a.md", Content: []byte("a")},
+		{SkillID: 102, VersionID: 202, Path: "docs/a.md", Content: []byte("existing")},
+	}
+	_, err = svc.MutateVersionResources(context.Background(), 102, 202, []ResourceMutation{{Operation: ResourceMutationMove, Path: "references", TargetPath: "docs"}})
+	require.ErrorContains(t, err, "already exists")
+	require.Len(t, repo.versions[102], 1)
+}
+
+func validCustomSkillMD(name string) string {
+	return "---\nname: " + name + "\ndescription: safe\ntype: custom_skill\nversion: 1.0.0\nenabled: true\n---\n# body\n"
 }
 
 func TestServiceDeleteHidesSkillAndKeepsVersions(t *testing.T) {
@@ -415,19 +515,22 @@ func TestServiceListVersionResources(t *testing.T) {
 func TestServiceRollbackVersionRestoresSkillAndCopiesResources(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{
-		ID:           101,
-		SpaceID:      1,
-		Name:         "Weekly Research Current",
-		Description:  "Current description.",
-		Type:         entity.TypeDeerSkill,
-		Version:      "2.0.0",
-		Enabled:      false,
-		InputSchema:  `{"current":true}`,
-		OutputSchema: `{"current":true}`,
-		Executor:     `{"current":true}`,
-		Permissions:  `{"current":true}`,
-		CreatedAt:    1000,
-		UpdatedAt:    2000,
+		ID:                  101,
+		SpaceID:             1,
+		Name:                "Weekly Research Current",
+		Description:         "Current description.",
+		Type:                entity.TypeDeerSkill,
+		Version:             "2.0.0",
+		Enabled:             false,
+		InputSchema:         `{"current":true}`,
+		OutputSchema:        `{"current":true}`,
+		Executor:            `{"current":true}`,
+		Permissions:         `{"current":true}`,
+		IconURI:             "skill-icon://ocean",
+		UsageScenarios:      "Create a weekly research summary.",
+		DevelopmentThreadID: 901,
+		CreatedAt:           1000,
+		UpdatedAt:           2000,
 	}
 	repo.versions[101] = []*entity.SkillVersion{
 		{
@@ -464,7 +567,7 @@ enabled: true
 	}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
 
-	rolledBack, err := svc.RollbackVersion(context.Background(), 101, 201)
+	rolledBack, err := svc.RollbackVersionCAS(context.Background(), 101, 201, 201)
 
 	require.NoError(t, err)
 	require.Equal(t, "weekly-research", rolledBack.Name)
@@ -492,7 +595,7 @@ func TestServiceRollbackVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
 	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, Version: "1.0.0"}}
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
 
-	_, err := svc.RollbackVersion(context.Background(), 101, 404)
+	_, err := svc.RollbackVersionCAS(context.Background(), 101, 404, 201)
 
 	require.Error(t, err)
 	require.True(t, IsClientError(err))
@@ -502,19 +605,22 @@ func TestServiceRollbackVersionReturnsNotFoundForUnknownVersion(t *testing.T) {
 func TestServiceUpdateVersionResourceCreatesSnapshotWithEditedResource(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[101] = &entity.Skill{
-		ID:           101,
-		SpaceID:      1,
-		Name:         "Weekly Research Current",
-		Description:  "Current description.",
-		Type:         entity.TypeDeerSkill,
-		Version:      "2.0.0",
-		Enabled:      false,
-		InputSchema:  `{"current":true}`,
-		OutputSchema: `{"current":true}`,
-		Executor:     `{"current":true}`,
-		Permissions:  `{"current":true}`,
-		CreatedAt:    1000,
-		UpdatedAt:    2000,
+		ID:                  101,
+		SpaceID:             1,
+		Name:                "Weekly Research Current",
+		Description:         "Current description.",
+		Type:                entity.TypeDeerSkill,
+		Version:             "2.0.0",
+		Enabled:             false,
+		InputSchema:         `{"current":true}`,
+		OutputSchema:        `{"current":true}`,
+		Executor:            `{"current":true}`,
+		Permissions:         `{"current":true}`,
+		IconURI:             "skill-icon://ocean",
+		UsageScenarios:      "Create a weekly research summary.",
+		DevelopmentThreadID: 901,
+		CreatedAt:           1000,
+		UpdatedAt:           2000,
 	}
 	repo.versions[101] = []*entity.SkillVersion{
 		{
@@ -571,16 +677,19 @@ enabled: true
 	require.Equal(t, "weekly-research", repo.items[101].Name)
 	require.Equal(t, "Original research skill.", repo.items[101].Description)
 	require.True(t, repo.items[101].Enabled)
+	require.Equal(t, "skill-icon://ocean", repo.items[101].IconURI)
+	require.Equal(t, "Create a weekly research summary.", repo.items[101].UsageScenarios)
+	require.Equal(t, int64(901), repo.items[101].DevelopmentThreadID)
 	require.Len(t, repo.versions[101], 2)
 
 	require.Len(t, repo.resources[401], 2)
-	require.Equal(t, "references/prompt.md", repo.resources[401][0].Path)
-	require.Equal(t, []byte("Use concise action bullets."), repo.resources[401][0].Content)
-	require.Equal(t, int64(len("Use concise action bullets.")), repo.resources[401][0].Size)
-	require.Equal(t, sha256Hex([]byte("Use concise action bullets.")), repo.resources[401][0].SHA256)
+	require.Equal(t, "assets/logo.txt", repo.resources[401][0].Path)
+	require.Equal(t, []byte("asset"), repo.resources[401][0].Content)
 	require.Equal(t, int64(401), repo.resources[401][0].VersionID)
-	require.Equal(t, "assets/logo.txt", repo.resources[401][1].Path)
-	require.Equal(t, []byte("asset"), repo.resources[401][1].Content)
+	require.Equal(t, "references/prompt.md", repo.resources[401][1].Path)
+	require.Equal(t, []byte("Use concise action bullets."), repo.resources[401][1].Content)
+	require.Equal(t, int64(len("Use concise action bullets.")), repo.resources[401][1].Size)
+	require.Equal(t, sha256Hex([]byte("Use concise action bullets.")), repo.resources[401][1].SHA256)
 	require.Equal(t, []byte("Use concise bullets."), repo.resources[201][0].Content)
 }
 
@@ -714,6 +823,28 @@ func TestServiceTestRunUsesScriptRunnerWithJSONInput(t *testing.T) {
 	require.Equal(t, "python", runner.skill.Executor.Language)
 }
 
+func TestServiceTestRunAcceptsPlainTextInput(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Weekly Report",
+		Type:         entity.TypeScript,
+		Enabled:      true,
+		InputSchema:  `{"type":"object"}`,
+		OutputSchema: `{"type":"object"}`,
+		Executor:     `{"language":"python","entry":"main.py"}`,
+		Permissions:  `{"network":false}`,
+	}
+	runner := &capturingExecutor{result: map[string]any{"ok": true}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 102}, ScriptRunner: runner})
+
+	_, err := svc.TestRun(context.Background(), 101, "summarize this report")
+
+	require.NoError(t, err)
+	require.Equal(t, "summarize this report", runner.input["message"])
+}
+
 func TestServiceTestRunWorkflowReturnsNotImplementedClientError(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.items[202] = &entity.Skill{
@@ -737,12 +868,13 @@ func TestServiceTestRunWorkflowReturnsNotImplementedClientError(t *testing.T) {
 }
 
 type memoryRepo struct {
-	items                  map[int64]*entity.Skill
-	versions               map[int64][]*entity.SkillVersion
-	resources              map[int64][]*entity.SkillResource
-	deletedSkillID         int64
-	listResourcesSkillID   int64
-	listResourcesVersionID int64
+	items                                map[int64]*entity.Skill
+	versions                             map[int64][]*entity.SkillVersion
+	resources                            map[int64][]*entity.SkillResource
+	deletedSkillID                       int64
+	listResourcesSkillID                 int64
+	listResourcesVersionID               int64
+	createWithVersionDevelopmentThreadID int64
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -761,6 +893,42 @@ func (r *memoryRepo) Create(ctx context.Context, skill *entity.Skill) error {
 func (r *memoryRepo) Update(ctx context.Context, skill *entity.Skill) error {
 	r.items[skill.ID] = skill
 	return nil
+}
+
+func (r *memoryRepo) CreateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	r.createWithVersionDevelopmentThreadID = skill.DevelopmentThreadID
+	if err := r.Create(ctx, skill); err != nil {
+		return err
+	}
+	if err := r.CreateVersion(ctx, version); err != nil {
+		return err
+	}
+	return r.CreateResources(ctx, resources)
+}
+
+func (r *memoryRepo) UpdateWithVersion(ctx context.Context, skill *entity.Skill, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	if err := r.Update(ctx, skill); err != nil {
+		return err
+	}
+	if err := r.CreateVersion(ctx, version); err != nil {
+		return err
+	}
+	return r.CreateResources(ctx, resources)
+}
+
+func (r *memoryRepo) UpdateWithVersionCAS(ctx context.Context, skill *entity.Skill, expectedVersionID int64, version *entity.SkillVersion, resources []*entity.SkillResource) error {
+	latest, err := r.GetLatestVersion(ctx, skill.ID)
+	if err != nil {
+		return err
+	}
+	latestID := int64(0)
+	if latest != nil {
+		latestID = latest.ID
+	}
+	if latestID != expectedVersionID {
+		return repository.ErrVersionConflict
+	}
+	return r.UpdateWithVersion(ctx, skill, version, resources)
 }
 
 func (r *memoryRepo) Delete(ctx context.Context, id int64) error {
@@ -798,6 +966,14 @@ func (r *memoryRepo) ListVersions(ctx context.Context, skillID int64) ([]*entity
 	return append([]*entity.SkillVersion(nil), r.versions[skillID]...), nil
 }
 
+func (r *memoryRepo) GetLatestVersion(ctx context.Context, skillID int64) (*entity.SkillVersion, error) {
+	versions := r.versions[skillID]
+	if len(versions) == 0 {
+		return nil, nil
+	}
+	return versions[len(versions)-1], nil
+}
+
 func (r *memoryRepo) CreateResources(ctx context.Context, resources []*entity.SkillResource) error {
 	for _, resource := range resources {
 		r.resources[resource.VersionID] = append(r.resources[resource.VersionID], resource)
@@ -827,6 +1003,25 @@ func (g fixedIDGen) GenMultiIDs(ctx context.Context, counts int) ([]int64, error
 	return ids, nil
 }
 
+type incrementingIDGen struct {
+	next int64
+}
+
+func (g *incrementingIDGen) GenID(context.Context) (int64, error) {
+	id := g.next
+	g.next++
+	return id, nil
+}
+
+func (g *incrementingIDGen) GenMultiIDs(_ context.Context, counts int) ([]int64, error) {
+	ids := make([]int64, counts)
+	for i := range ids {
+		ids[i] = g.next
+		g.next++
+	}
+	return ids, nil
+}
+
 type capturingExecutor struct {
 	skill  *Declaration
 	input  map[string]any
@@ -842,4 +1037,148 @@ func (e *capturingExecutor) Run(ctx context.Context, skill *Declaration, input m
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func TestServiceCreateSerializesSkillMarkdownFrontmatterSafely(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: &incrementingIDGen{next: 201}})
+	skill := &entity.Skill{
+		ID:           101,
+		SpaceID:      1,
+		Name:         "Research: \"weekly\"\nreview",
+		Description:  "First line: \"quoted\"\nSecond line",
+		Type:         entity.TypeCustomSkill,
+		Version:      "1.0.0",
+		Enabled:      true,
+		InputSchema:  `{}`,
+		OutputSchema: `{}`,
+		Executor:     `{}`,
+		Permissions:  `{}`,
+	}
+
+	_, err := svc.Create(context.Background(), skill)
+	require.NoError(t, err)
+	require.Len(t, repo.versions[101], 1)
+	decl, err := ParseDeclarationWithDefaultType("SKILL.md", []byte(repo.versions[101][0].SkillMD), entity.TypeCustomSkill)
+	require.NoError(t, err)
+	require.Equal(t, skill.Name, decl.Name)
+	require.Equal(t, skill.Description, decl.Description)
+}
+
+func TestServiceMetadataUpdateRewritesManagedYAMLAndPreservesBodyAcrossResourceSave(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill}
+	body := "# Keep this body exactly\n\nText: \"quoted\"\n"
+	repo.versions[101] = []*entity.SkillVersion{{
+		ID:      201,
+		SkillID: 101,
+		Version: "1.0.0",
+		SkillMD: `---
+name: old-name
+description: old description
+type: custom_skill
+version: 1.0.0
+enabled: true
+unknown_config:
+  preserve: "value: quoted"
+---
+` + body,
+	}}
+	repo.resources[201] = []*entity.SkillResource{{
+		ID: 301, SkillID: 101, VersionID: 201, Path: "references/keep.md", Content: []byte("keep"),
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: &incrementingIDGen{next: 401}})
+	updatedSkill := &entity.Skill{
+		ID:             101,
+		SpaceID:        1,
+		Name:           "new: \"quoted\"\nname",
+		Description:    "updated: description\nwith newline",
+		Type:           entity.TypeCustomSkill,
+		Version:        "2.0.0",
+		Enabled:        false,
+		InputSchema:    `{"type":"object","managed":true}`,
+		OutputSchema:   `{}`,
+		Executor:       `{"mode":"agent"}`,
+		Permissions:    `{"network":false}`,
+		IconURI:        "skill-icon://updated",
+		UsageScenarios: "Use: safely\nwith quotes \"here\"",
+	}
+
+	_, err := svc.UpdateWithExpectedVersion(context.Background(), updatedSkill, 201)
+	require.NoError(t, err)
+	require.Len(t, repo.versions[101], 2)
+	metadataVersion := repo.versions[101][1]
+	frontmatter, actualBody, err := splitSkillMarkdown(metadataVersion.SkillMD)
+	require.NoError(t, err)
+	require.Equal(t, body, actualBody)
+	var metadata map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(frontmatter), &metadata))
+	require.Equal(t, updatedSkill.Name, metadata["name"])
+	require.Equal(t, updatedSkill.Description, metadata["description"])
+	require.Equal(t, "value: quoted", metadata["unknown_config"].(map[string]any)["preserve"])
+
+	resourceVersion, err := svc.UpdateVersionResource(context.Background(), 101, metadataVersion.ID, "references/new.md", []byte("new"))
+	require.NoError(t, err)
+	require.Equal(t, int64(402), resourceVersion.ID)
+	require.Equal(t, metadataVersion.SkillMD, resourceVersion.SkillMD)
+}
+
+func TestServiceExpectedVersionCannotBeBypassedWithZero(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.items[101] = &entity.Skill{ID: 101, SpaceID: 1, Type: entity.TypeCustomSkill}
+	repo.versions[101] = []*entity.SkillVersion{{ID: 201, SkillID: 101, SkillMD: validCustomSkillMD("safe")}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 401}})
+
+	_, err := svc.UpdateWithExpectedVersion(context.Background(), repo.items[101], 0)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "expected version id is required")
+	require.Len(t, repo.versions[101], 1)
+
+	_, err = svc.RollbackVersionCAS(context.Background(), 101, 201, 0)
+	require.Error(t, err)
+	require.True(t, IsClientError(err))
+	require.ErrorContains(t, err, "expected version id is required")
+	require.Len(t, repo.versions[101], 1)
+}
+
+func TestServiceArtifactImportPersistsDevelopmentThreadInCreateTransaction(t *testing.T) {
+	repo := newMemoryRepo()
+	svc := NewService(&Components{Repo: repo, IDGen: &incrementingIDGen{next: 101}})
+	content := []byte(`---
+name: artifact-skill
+description: Imported from an authenticated artifact.
+type: custom_skill
+version: 1.0.0
+enabled: true
+---
+# Artifact Skill
+`)
+
+	skill, err := svc.ImportDeclarationWithDevelopmentThread(
+		context.Background(), 1, "SKILL.md", content, entity.TypeCustomSkill, 901,
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(901), skill.DevelopmentThreadID)
+	require.Equal(t, int64(901), repo.createWithVersionDevelopmentThreadID)
+	require.Equal(t, int64(901), repo.items[skill.ID].DevelopmentThreadID)
+	require.Len(t, repo.versions[skill.ID], 1)
+}
+
+func TestDeclarationToSkillKeepsManagementMetadata(t *testing.T) {
+	skill, err := declarationToSkill(7, 101, &Declaration{
+		Name:           "weekly-report",
+		Description:    "Create weekly reports",
+		Type:           string(entity.TypeCustomSkill),
+		Version:        "1.0.0",
+		Enabled:        true,
+		IconURI:        "skill-icon://ocean",
+		UsageScenarios: "Summarize delivery progress",
+		InputSchema:    map[string]any{},
+		OutputSchema:   map[string]any{},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "skill-icon://ocean", skill.IconURI)
+	require.Equal(t, "Summarize delivery progress", skill.UsageScenarios)
 }

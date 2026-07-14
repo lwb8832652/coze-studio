@@ -2,7 +2,7 @@
  * Copyright 2025 coze-dev Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
- * You may not use this file except in compliance with the License.
+ * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,9 +18,10 @@ package agentthread
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const defaultADKMCPRuntimeStdioMaxConfigBytes = 16 << 10
@@ -58,7 +59,6 @@ func (f ADKMCPRuntimeStdioPolicyFunc) ValidateADKMCPRuntimeStdio(
 	if f == nil {
 		return errors.New("mcp runtime stdio policy is not configured")
 	}
-
 	return f(ctx, call)
 }
 
@@ -81,7 +81,6 @@ func (f ADKMCPRuntimeStdioSandboxFunc) InvokeADKMCPRuntimeStdio(
 	if f == nil {
 		return "", errors.New("mcp runtime stdio sandbox is not configured")
 	}
-
 	return f(ctx, call)
 }
 
@@ -108,7 +107,6 @@ func NewADKMCPRuntimeStdioTransport(
 	if maxConfigBytes <= 0 {
 		maxConfigBytes = defaultADKMCPRuntimeStdioMaxConfigBytes
 	}
-
 	return &ADKMCPRuntimeStdioTransport{
 		policy:         options.Policy,
 		sandbox:        options.Sandbox,
@@ -131,7 +129,6 @@ func (t *ADKMCPRuntimeStdioTransport) InvokeADKMCPRuntimeTransport(
 			return "", err
 		}
 	}
-
 	sandboxCall := ADKMCPRuntimeStdioSandboxCall{
 		Run:       call.Run,
 		Name:      strings.TrimSpace(call.Name),
@@ -146,12 +143,10 @@ func (t *ADKMCPRuntimeStdioTransport) InvokeADKMCPRuntimeTransport(
 	if t == nil || t.sandbox == nil {
 		return "", errors.New("mcp runtime stdio sandbox is not configured")
 	}
-
 	result, err := t.sandbox.InvokeADKMCPRuntimeStdio(ctx, sandboxCall)
 	if err != nil {
 		return "", errors.New("mcp runtime stdio transport failed")
 	}
-
 	return result, nil
 }
 
@@ -159,7 +154,6 @@ func (t *ADKMCPRuntimeStdioTransport) configByteLimit() int {
 	if t == nil || t.maxConfigBytes <= 0 {
 		return defaultADKMCPRuntimeStdioMaxConfigBytes
 	}
-
 	return t.maxConfigBytes
 }
 
@@ -169,8 +163,7 @@ func (t *ADKMCPRuntimeStdioTransport) projectWorkdir(
 	config ADKMCPRuntimeStdioConfig,
 ) (ADKMCPRuntimeStdioConfig, error) {
 	if call.Server == nil {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio workdir is invalid")
+		return ADKMCPRuntimeStdioConfig{}, errors.New("mcp runtime stdio workdir is invalid")
 	}
 	projection, err := t.workdirManager.ProjectADKMCPRuntimeStdioWorkdir(
 		ctx,
@@ -182,11 +175,9 @@ func (t *ADKMCPRuntimeStdioTransport) projectWorkdir(
 		},
 	)
 	if err != nil || strings.TrimSpace(projection.WorkingDir) == "" {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio workdir is invalid")
+		return ADKMCPRuntimeStdioConfig{}, errors.New("mcp runtime stdio workdir is invalid")
 	}
 	config.WorkingDir = strings.TrimSpace(projection.WorkingDir)
-
 	return config, nil
 }
 
@@ -200,7 +191,6 @@ func (t *ADKMCPRuntimeStdioTransport) validate(
 	if err := t.policy.ValidateADKMCPRuntimeStdio(ctx, call); err != nil {
 		return errors.New("mcp runtime stdio policy denied")
 	}
-
 	return nil
 }
 
@@ -209,212 +199,23 @@ func parseADKMCPRuntimeStdioConfig(
 	maxConfigBytes int,
 ) (ADKMCPRuntimeStdioConfig, error) {
 	if call.Server == nil {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
+		return ADKMCPRuntimeStdioConfig{}, errors.New("mcp runtime stdio config is invalid")
 	}
-	if normalizeADKMCPRuntimeTransportType(call) != adkMCPRuntimeTransportStdio {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-	configJSON := strings.TrimSpace(call.Server.Config)
-	if configJSON == "" || len([]byte(configJSON)) > maxConfigBytes {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(configJSON), &raw); err != nil {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-
-	config := ADKMCPRuntimeStdioConfig{
-		Command: strings.TrimSpace(firstADKMCPRuntimeStdioString(raw, "command")),
-		Args:    []string{},
-		Env:     map[string]string{},
-	}
-	if config.Command == "" {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-
-	args, err := parseADKMCPRuntimeStdioStringSlice(raw, "args")
-	if err != nil {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-	config.Args = args
-
-	env, err := parseADKMCPRuntimeStdioStringMap(raw, "env")
-	if err != nil {
-		return ADKMCPRuntimeStdioConfig{},
-			errors.New("mcp runtime stdio config is invalid")
-	}
-	config.Env = env
-	if err := applyADKMCPRuntimeStdioAuthEnv(call, raw, config.Env); err != nil {
-		return ADKMCPRuntimeStdioConfig{}, err
-	}
-
-	config.WorkingDir = strings.TrimSpace(
-		firstADKMCPRuntimeStdioString(raw, "cwd", "working_dir", "workingDir"),
+	config, err := mcpruntime.ParseStdioConnection(
+		mcpruntime.Connection{
+			ServerType: call.Server.ServerType,
+			Config:     call.Server.Config,
+			Auth:       call.Server.Auth,
+		},
+		maxConfigBytes,
 	)
-
-	return config, nil
-}
-
-func applyADKMCPRuntimeStdioAuthEnv(
-	call ADKMCPRuntimeTransportCall,
-	rawConfig map[string]any,
-	env map[string]string,
-) error {
-	authEnv, err := parseADKMCPRuntimeStdioStringMap(rawConfig, "auth_env")
 	if err != nil {
-		return errors.New("mcp runtime stdio auth env is invalid")
+		return ADKMCPRuntimeStdioConfig{}, errors.New("mcp runtime stdio config is invalid")
 	}
-	if len(authEnv) == 0 {
-		return nil
-	}
-	authPayload, err := parseADKMCPRuntimeStdioAuthPayload(call)
-	if err != nil {
-		return err
-	}
-	for envName, authPath := range authEnv {
-		if !validADKMCPRuntimeStdioEnvName(envName) {
-			return errors.New("mcp runtime stdio auth env is invalid")
-		}
-		value, err := resolveADKMCPRuntimeStdioAuthString(authPayload, authPath)
-		if err != nil {
-			return err
-		}
-		env[envName] = value
-	}
-
-	return nil
-}
-
-func parseADKMCPRuntimeStdioAuthPayload(
-	call ADKMCPRuntimeTransportCall,
-) (map[string]any, error) {
-	if call.Server == nil {
-		return nil, errors.New("mcp runtime stdio auth is invalid")
-	}
-	authJSON := strings.TrimSpace(call.Server.Auth)
-	if authJSON == "" {
-		return nil, errors.New("mcp runtime stdio auth is invalid")
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(authJSON), &payload); err != nil || payload == nil {
-		return nil, errors.New("mcp runtime stdio auth is invalid")
-	}
-
-	return payload, nil
-}
-
-func resolveADKMCPRuntimeStdioAuthString(
-	payload map[string]any,
-	authPath string,
-) (string, error) {
-	segments := strings.Split(strings.TrimSpace(authPath), ".")
-	if len(segments) == 0 {
-		return "", errors.New("mcp runtime stdio auth env is invalid")
-	}
-	var current any = payload
-	for _, segment := range segments {
-		segment = strings.TrimSpace(segment)
-		if segment == "" {
-			return "", errors.New("mcp runtime stdio auth env is invalid")
-		}
-		object, ok := current.(map[string]any)
-		if !ok {
-			return "", errors.New("mcp runtime stdio auth env is invalid")
-		}
-		value, ok := object[segment]
-		if !ok {
-			return "", errors.New("mcp runtime stdio auth env is invalid")
-		}
-		current = value
-	}
-	text, ok := current.(string)
-	if !ok || strings.TrimSpace(text) == "" {
-		return "", errors.New("mcp runtime stdio auth env is invalid")
-	}
-
-	return text, nil
-}
-
-func validADKMCPRuntimeStdioEnvName(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for index, r := range value {
-		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
-			continue
-		}
-		if index > 0 && r >= '0' && r <= '9' {
-			continue
-		}
-
-		return false
-	}
-
-	return true
-}
-
-func firstADKMCPRuntimeStdioString(raw map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := raw[key].(string); ok {
-			return value
-		}
-	}
-
-	return ""
-}
-
-func parseADKMCPRuntimeStdioStringSlice(
-	raw map[string]any,
-	key string,
-) ([]string, error) {
-	value, ok := raw[key]
-	if !ok || value == nil {
-		return []string{}, nil
-	}
-	items, ok := value.([]any)
-	if !ok {
-		return nil, errors.New("invalid string slice")
-	}
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		text, ok := item.(string)
-		if !ok {
-			return nil, errors.New("invalid string slice")
-		}
-		result = append(result, text)
-	}
-
-	return result, nil
-}
-
-func parseADKMCPRuntimeStdioStringMap(
-	raw map[string]any,
-	key string,
-) (map[string]string, error) {
-	value, ok := raw[key]
-	if !ok || value == nil {
-		return map[string]string{}, nil
-	}
-	items, ok := value.(map[string]any)
-	if !ok {
-		return nil, errors.New("invalid string map")
-	}
-	result := make(map[string]string, len(items))
-	for itemKey, itemValue := range items {
-		text, ok := itemValue.(string)
-		if !ok {
-			return nil, errors.New("invalid string map")
-		}
-		result[itemKey] = text
-	}
-
-	return result, nil
+	return ADKMCPRuntimeStdioConfig{
+		Command:    config.Command,
+		Args:       append([]string(nil), config.Args...),
+		Env:        cloneADKMCPRuntimeStringMap(config.Env),
+		WorkingDir: config.WorkingDir,
+	}, nil
 }

@@ -118,6 +118,7 @@ func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
 			ThreadID:   req.ThreadID,
 			ArtifactID: req.ArtifactID,
 			Mode:       appagentthread.ArtifactContentModeDownload,
+			SpaceID:    req.SpaceID,
 			ViewerID:   workbenchViewerIDFromCtx(ctx),
 		},
 	)
@@ -131,14 +132,14 @@ func InstallSkillFromArtifact(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	imported, err := appskill.SVC.ImportSkill(ctx, &skillapi.ImportSkillRequest{
+	imported, err := appskill.SVC.ImportSkillFromArtifact(ctx, &skillapi.ImportSkillRequest{
 		SpaceID:  req.SpaceID,
 		FileName: fileName,
 		Content: fmt.Sprintf(
 			"base64:%s",
 			base64.StdEncoding.EncodeToString(artifactContent.Content),
 		),
-	})
+	}, req.ThreadID)
 	if err != nil {
 		workbenchSkillErrorResponse(ctx, c, err)
 		return
@@ -407,6 +408,20 @@ func TestRunSkill(ctx context.Context, c *app.RequestContext) {
 }
 
 func workbenchSkillErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if appskill.IsAccessDenied(err) {
+		c.JSON(consts.StatusForbidden, map[string]any{
+			"code": int64(consts.StatusForbidden),
+			"msg":  "workspace access denied",
+		})
+		return
+	}
+	if appskill.IsConflict(err) {
+		c.JSON(consts.StatusConflict, map[string]any{
+			"code": int64(consts.StatusConflict),
+			"msg":  err.Error(),
+		})
+		return
+	}
 	if appskill.IsClientError(err) {
 		invalidParamRequestResponse(c, err.Error())
 		return

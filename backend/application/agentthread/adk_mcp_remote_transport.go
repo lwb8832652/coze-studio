@@ -18,11 +18,10 @@ package agentthread
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net"
-	"net/url"
 	"strings"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const (
@@ -42,7 +41,7 @@ type ADKMCPRuntimeRemoteTransportOptions struct {
 
 type ADKMCPRuntimeRemoteTransport struct {
 	runner            ADKMCPRuntimeRemoteRunner
-	allowedHosts      map[string]struct{}
+	allowedHosts      []string
 	allowInsecureHTTP bool
 	maxConfigBytes    int
 	maxHeaders        int
@@ -68,19 +67,20 @@ func (f ADKMCPRuntimeRemoteRunnerFunc) RunADKMCPRuntimeRemote(
 	if f == nil {
 		return "", errors.New("mcp runtime remote runner is not configured")
 	}
-
 	return f(ctx, execution)
 }
 
 type ADKMCPRuntimeRemoteExecution struct {
-	Run           *RunSummary
-	Name          string
-	ServerID      int64
-	ToolName      string
-	Arguments     string
-	TransportType string
-	URL           string
-	Headers       map[string]string
+	Run             *RunSummary
+	Name            string
+	ServerID        int64
+	ToolName        string
+	Arguments       string
+	TransportType   string
+	URL             string
+	Headers         map[string]string
+	AllowedHosts    []string
+	AllowLocalDebug bool
 }
 
 type adkMCPRuntimeRemoteConfig struct {
@@ -107,10 +107,9 @@ func NewADKMCPRuntimeRemoteTransport(
 	if maxHeaderBytes <= 0 {
 		maxHeaderBytes = defaultADKMCPRuntimeRemoteMaxHeaderBytes
 	}
-
 	return &ADKMCPRuntimeRemoteTransport{
 		runner:            options.Runner,
-		allowedHosts:      adkMCPRuntimeRemoteHostSet(options.AllowedHosts),
+		allowedHosts:      append([]string(nil), options.AllowedHosts...),
 		allowInsecureHTTP: options.AllowInsecureHTTP,
 		maxConfigBytes:    maxConfigBytes,
 		maxHeaders:        maxHeaders,
@@ -127,14 +126,16 @@ func (t *ADKMCPRuntimeRemoteTransport) InvokeADKMCPRuntimeTransport(
 		return "", err
 	}
 	execution := ADKMCPRuntimeRemoteExecution{
-		Run:           call.Run,
-		Name:          strings.TrimSpace(call.Name),
-		ServerID:      call.Server.ServerID,
-		ToolName:      strings.TrimSpace(call.ToolName),
-		Arguments:     strings.TrimSpace(call.Arguments),
-		TransportType: config.TransportType,
-		URL:           config.URL,
-		Headers:       cloneADKMCPRuntimeStringMap(config.Headers),
+		Run:             call.Run,
+		Name:            strings.TrimSpace(call.Name),
+		ServerID:        call.Server.ServerID,
+		ToolName:        strings.TrimSpace(call.ToolName),
+		Arguments:       strings.TrimSpace(call.Arguments),
+		TransportType:   config.TransportType,
+		URL:             config.URL,
+		Headers:         cloneADKMCPRuntimeStringMap(config.Headers),
+		AllowedHosts:    append([]string(nil), t.allowedHosts...),
+		AllowLocalDebug: t.allowInsecureHTTP,
 	}
 	if !validADKMCPRuntimeRemoteExecution(execution) {
 		return "", errors.New("mcp runtime remote config is invalid")
@@ -142,179 +143,39 @@ func (t *ADKMCPRuntimeRemoteTransport) InvokeADKMCPRuntimeTransport(
 	if t == nil || t.runner == nil {
 		return "", errors.New("mcp runtime remote runner is not configured")
 	}
-
 	result, err := t.runner.RunADKMCPRuntimeRemote(ctx, execution)
 	if err != nil {
 		return "", errors.New("mcp runtime remote transport failed")
 	}
-
 	return result, nil
 }
 
 func (t *ADKMCPRuntimeRemoteTransport) parseConfig(
 	call ADKMCPRuntimeTransportCall,
 ) (adkMCPRuntimeRemoteConfig, error) {
-	if call.Server == nil {
-		return adkMCPRuntimeRemoteConfig{},
-			errors.New("mcp runtime remote config is invalid")
+	if t == nil || call.Server == nil {
+		return adkMCPRuntimeRemoteConfig{}, errors.New("mcp runtime remote config is invalid")
 	}
-	transportType := normalizeADKMCPRuntimeTransportType(call)
-	if transportType != adkMCPRuntimeTransportSSE &&
-		transportType != adkMCPRuntimeTransportStreamableHTTP {
-		return adkMCPRuntimeRemoteConfig{},
-			errors.New("mcp runtime remote config is invalid")
-	}
-	configJSON := strings.TrimSpace(call.Server.Config)
-	if configJSON == "" || len([]byte(configJSON)) > t.configByteLimit() {
-		return adkMCPRuntimeRemoteConfig{},
-			errors.New("mcp runtime remote config is invalid")
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(configJSON), &raw); err != nil {
-		return adkMCPRuntimeRemoteConfig{},
-			errors.New("mcp runtime remote config is invalid")
-	}
-
-	remoteURL, err := t.validateURL(firstADKMCPRuntimeStdioString(raw, "url"))
+	resolved, err := (mcpruntime.Policy{
+		RemoteEnabled:        true,
+		RemoteAllowedHosts:   append([]string(nil), t.allowedHosts...),
+		AllowInsecureHTTP:    t.allowInsecureHTTP,
+		RemoteMaxConfigBytes: t.maxConfigBytes,
+		RemoteMaxHeaders:     t.maxHeaders,
+		RemoteMaxHeaderBytes: t.maxHeaderBytes,
+	}).ParseRemote(mcpruntime.Connection{
+		ServerType: call.Server.ServerType,
+		Config:     call.Server.Config,
+		Auth:       call.Server.Auth,
+	})
 	if err != nil {
-		return adkMCPRuntimeRemoteConfig{}, err
+		return adkMCPRuntimeRemoteConfig{}, errors.New("mcp runtime remote config is invalid")
 	}
-	headers, err := parseADKMCPRuntimeStdioStringMap(raw, "headers")
-	if err != nil {
-		return adkMCPRuntimeRemoteConfig{},
-			errors.New("mcp runtime remote config is invalid")
-	}
-	if err := applyADKMCPRuntimeRemoteAuthHeaders(call, raw, headers); err != nil {
-		return adkMCPRuntimeRemoteConfig{}, err
-	}
-	if err := t.validateHeaders(headers); err != nil {
-		return adkMCPRuntimeRemoteConfig{}, err
-	}
-
 	return adkMCPRuntimeRemoteConfig{
-		TransportType: transportType,
-		URL:           remoteURL,
-		Headers:       headers,
+		TransportType: resolved.ServerType,
+		URL:           resolved.URL,
+		Headers:       cloneADKMCPRuntimeStringMap(resolved.Headers),
 	}, nil
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) configByteLimit() int {
-	if t == nil || t.maxConfigBytes <= 0 {
-		return defaultADKMCPRuntimeRemoteMaxConfigBytes
-	}
-
-	return t.maxConfigBytes
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) headerCountLimit() int {
-	if t == nil || t.maxHeaders <= 0 {
-		return defaultADKMCPRuntimeRemoteMaxHeaders
-	}
-
-	return t.maxHeaders
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) headerByteLimit() int {
-	if t == nil || t.maxHeaderBytes <= 0 {
-		return defaultADKMCPRuntimeRemoteMaxHeaderBytes
-	}
-
-	return t.maxHeaderBytes
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) validateURL(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed == nil || parsed.Host == "" {
-		return "", errors.New("mcp runtime remote config is invalid")
-	}
-	if parsed.User != nil || parsed.Fragment != "" {
-		return "", errors.New("mcp runtime remote config is invalid")
-	}
-	switch parsed.Scheme {
-	case "https":
-	case "http":
-		if !t.allowInsecureHTTP && !adkMCPRuntimeRemoteLocalHost(parsed.Hostname()) {
-			return "", errors.New("mcp runtime remote config is invalid")
-		}
-	default:
-		return "", errors.New("mcp runtime remote config is invalid")
-	}
-	if !t.hostAllowed(parsed.Host) {
-		return "", errors.New("mcp runtime remote config is invalid")
-	}
-
-	return parsed.String(), nil
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) validateHeaders(
-	headers map[string]string,
-) error {
-	if len(headers) > t.headerCountLimit() {
-		return errors.New("mcp runtime remote config is invalid")
-	}
-	totalBytes := 0
-	for key, value := range headers {
-		key = strings.TrimSpace(key)
-		if !validADKMCPRuntimeRemoteHeaderName(key) {
-			return errors.New("mcp runtime remote config is invalid")
-		}
-		if strings.ContainsAny(value, "\r\n") {
-			return errors.New("mcp runtime remote config is invalid")
-		}
-		totalBytes += len([]byte(key)) + len([]byte(value))
-		if totalBytes > t.headerByteLimit() {
-			return errors.New("mcp runtime remote config is invalid")
-		}
-	}
-
-	return nil
-}
-
-func (t *ADKMCPRuntimeRemoteTransport) hostAllowed(hostport string) bool {
-	if t == nil || len(t.allowedHosts) == 0 {
-		return false
-	}
-	host := strings.ToLower(strings.TrimSpace(hostport))
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		host = parsedHost
-	}
-	if _, ok := t.allowedHosts[host]; ok {
-		return true
-	}
-	if _, ok := t.allowedHosts[strings.ToLower(strings.TrimSpace(hostport))]; ok {
-		return true
-	}
-
-	return false
-}
-
-func applyADKMCPRuntimeRemoteAuthHeaders(
-	call ADKMCPRuntimeTransportCall,
-	rawConfig map[string]any,
-	headers map[string]string,
-) error {
-	authHeaders, err := parseADKMCPRuntimeStdioStringMap(rawConfig, "auth_headers")
-	if err != nil {
-		return errors.New("mcp runtime remote config is invalid")
-	}
-	if len(authHeaders) == 0 {
-		return nil
-	}
-	authPayload, err := parseADKMCPRuntimeStdioAuthPayload(call)
-	if err != nil {
-		return errors.New("mcp runtime remote config is invalid")
-	}
-	for headerName, authPath := range authHeaders {
-		value, err := resolveADKMCPRuntimeStdioAuthString(authPayload, authPath)
-		if err != nil {
-			return errors.New("mcp runtime remote config is invalid")
-		}
-		headers[headerName] = value
-	}
-
-	return nil
 }
 
 func validADKMCPRuntimeRemoteExecution(
@@ -331,41 +192,4 @@ func validADKMCPRuntimeRemoteExecution(
 		(execution.TransportType == adkMCPRuntimeTransportSSE ||
 			execution.TransportType == adkMCPRuntimeTransportStreamableHTTP) &&
 		strings.TrimSpace(execution.URL) != ""
-}
-
-func validADKMCPRuntimeRemoteHeaderName(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, r := range value {
-		if r <= 32 || r >= 127 {
-			return false
-		}
-		if strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func adkMCPRuntimeRemoteHostSet(values []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "" {
-			set[value] = struct{}{}
-		}
-	}
-
-	return set
-}
-
-func adkMCPRuntimeRemoteLocalHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "localhost" ||
-		host == "127.0.0.1" ||
-		host == "::1" ||
-		host == "[::1]"
 }

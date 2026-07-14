@@ -82,8 +82,10 @@ func TestADKMCPRuntimeBootstrapConfigFromEnvParsesDryRunStdio(t *testing.T) {
 
 func TestADKMCPRuntimeBootstrapConfigFromEnvParsesEinoStdio(t *testing.T) {
 	clearADKMCPRuntimeBootstrapEnv(t)
+	t.Setenv("APP_ENV", "debug")
 	t.Setenv(agentThreadMCPRuntimeEnabledEnv, "true")
 	t.Setenv(agentThreadMCPStdioEinoEnabledEnv, "true")
+	t.Setenv(agentThreadMCPStdioDebugHostExecutionEnabledEnv, "true")
 	t.Setenv(agentThreadMCPStdioWorkdirRootEnv, "/tmp/coze-mcp")
 	t.Setenv(agentThreadMCPStdioWorkerIDEnv, "worker-env")
 	t.Setenv(agentThreadMCPStdioAllowedCommandsEnv, "npx")
@@ -95,10 +97,28 @@ func TestADKMCPRuntimeBootstrapConfigFromEnvParsesEinoStdio(t *testing.T) {
 	require.True(t, config.Enabled)
 	require.False(t, config.StdioDryRunEnabled)
 	require.True(t, config.StdioEinoEnabled)
+	require.True(t, config.StdioDebugHostExecutionEnabled)
 	require.Equal(t, "/tmp/coze-mcp", config.StdioWorkdirRoot)
 	require.Equal(t, "worker-env", config.StdioWorkerID)
 	require.Equal(t, []string{"npx"}, config.StdioAllowedCommands)
 	require.Equal(t, 8192, config.ExecutorMaxOutputBytes)
+}
+
+func TestADKMCPRuntimeBootstrapConfigFromEnvRejectsProductionHostStdio(t *testing.T) {
+	clearADKMCPRuntimeBootstrapEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv(agentThreadMCPRuntimeEnabledEnv, "true")
+	t.Setenv(agentThreadMCPStdioEinoEnabledEnv, "true")
+	t.Setenv(agentThreadMCPStdioDebugHostExecutionEnabledEnv, "true")
+	t.Setenv(agentThreadMCPStdioWorkdirRootEnv, "/tmp/coze-mcp")
+	t.Setenv(agentThreadMCPStdioWorkerIDEnv, "worker-env")
+	t.Setenv(agentThreadMCPStdioAllowedCommandsEnv, "npx")
+
+	_, err := ADKMCPRuntimeBootstrapConfigFromEnv()
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), agentThreadMCPStdioDebugHostExecutionEnabledEnv)
+	require.NotContains(t, err.Error(), "/tmp/coze-mcp")
 }
 
 func TestADKMCPRuntimeBootstrapConfigFromEnvParsesRemoteEino(t *testing.T) {
@@ -228,7 +248,7 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigReturnsNilWhenDisabled(
 func TestNewADKMCPRuntimeToolExecutorFromConfigInvokesDryRunStdio(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
 		finishedLease: &domainentity.MCPRuntimeWorkdirLease{
 			ID:     9101,
@@ -264,6 +284,7 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigInvokesDryRunStdio(
 				StdioWorkdirRoot:       root,
 				StdioWorkerID:          "worker-env",
 				StdioAllowedCommands:   []string{"npx"},
+				StdioAllowedNpxPackages: []string{"mcp-server"},
 				StdioAllowedEnvKeys:    []string{"API_TOKEN"},
 				StdioMaxArgs:           4,
 				StdioMaxArgBytes:       128,
@@ -320,7 +341,7 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigInvokesDryRunStdio(
 func TestNewADKMCPRuntimeToolExecutorFromConfigInjectsOutputOffloader(
 	t *testing.T,
 ) {
-	root := t.TempDir()
+	root := canonicalADKMCPWorkdirTestRoot(t)
 	repo := &recordingMCPRuntimeWorkdirLeaseRepository{
 		finishedLease: &domainentity.MCPRuntimeWorkdirLease{
 			ID:     9101,
@@ -356,6 +377,7 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigInjectsOutputOffloader(
 				StdioWorkdirRoot:       root,
 				StdioWorkerID:          "worker-env",
 				StdioAllowedCommands:   []string{"npx"},
+				StdioAllowedNpxPackages: []string{"mcp-server"},
 				StdioMaxArgs:           4,
 				StdioMaxArgBytes:       128,
 				StdioMaxEnvVars:        0,
@@ -402,14 +424,16 @@ func TestNewADKMCPRuntimeToolExecutorFromConfigBuildsEinoStdio(
 			},
 			IDGen: &mcpWorkdirLeaseSequenceIDGen{next: 9101},
 			Config: ADKMCPRuntimeBootstrapConfig{
-				Enabled:                true,
-				StdioEinoEnabled:       true,
-				StdioWorkdirRoot:       root,
-				StdioWorkerID:          "worker-env",
-				StdioAllowedCommands:   []string{"npx"},
-				StdioLeaseTTLMillis:    120000,
-				ExecutorTimeout:        50 * time.Millisecond,
-				ExecutorMaxOutputBytes: 4096,
+				Enabled:                        true,
+				AppEnv:                         "debug",
+				StdioEinoEnabled:               true,
+				StdioDebugHostExecutionEnabled: true,
+				StdioWorkdirRoot:               root,
+				StdioWorkerID:                  "worker-env",
+				StdioAllowedCommands:           []string{"npx"},
+				StdioLeaseTTLMillis:            120000,
+				ExecutorTimeout:                50 * time.Millisecond,
+				ExecutorMaxOutputBytes:         4096,
 			},
 		},
 	)
@@ -455,6 +479,7 @@ func clearADKMCPRuntimeBootstrapEnv(t *testing.T) {
 		agentThreadMCPRuntimeMaxOutputBytesEnv,
 		agentThreadMCPStdioDryRunEnabledEnv,
 		agentThreadMCPStdioEinoEnabledEnv,
+		agentThreadMCPStdioDebugHostExecutionEnabledEnv,
 		agentThreadMCPStdioWorkdirRootEnv,
 		agentThreadMCPStdioWorkerIDEnv,
 		agentThreadMCPStdioAllowedCommandsEnv,

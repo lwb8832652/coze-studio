@@ -25,6 +25,7 @@ var (
 	ErrInvalidArgument = errors.New("invalid argument")
 	ErrNotFound        = errors.New("not found")
 	ErrNotImplemented  = errors.New("not implemented")
+	ErrConflict        = errors.New("conflict")
 )
 
 func InvalidArgumentErrorf(format string, args ...any) error {
@@ -37,6 +38,14 @@ func NotFoundErrorf(format string, args ...any) error {
 
 func NotImplementedErrorf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrNotImplemented, fmt.Sprintf(format, args...))
+}
+
+func ConflictErrorf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrConflict, fmt.Sprintf(format, args...))
+}
+
+func IsConflict(err error) bool {
+	return errors.Is(err, ErrConflict)
 }
 
 func IsClientError(err error) bool {

@@ -19,30 +19,35 @@ package entity
 type Type string
 
 const (
-	TypeScript       Type = "script"
-	TypeWorkflow     Type = "workflow"
-	TypeDeerSkill    Type = "deer_skill"
-	TypePublicSkill  Type = "public_skill"
-	TypeCustomSkill  Type = "custom_skill"
-	TypeCozeScript   Type = "coze_script"
-	TypeCozeWorkflow Type = "coze_workflow"
+	TypeScript               Type = "script"
+	TypeWorkflow             Type = "workflow"
+	TypeDeerSkill            Type = "deer_skill"
+	TypePublicSkill          Type = "public_skill"
+	TypeCustomSkill          Type = "custom_skill"
+	TypeCozeScript           Type = "coze_script"
+	TypeCozeWorkflow         Type = "coze_workflow"
+	ResourceTombstoneContent      = "\x00coze-skill-resource-deleted-v1"
+	ResourceDirectoryMarker       = ".coze-folder"
 )
 
 type Skill struct {
-	ID           int64
-	SpaceID      int64
-	Name         string
-	Description  string
-	Type         Type
-	Version      string
-	Enabled      bool
-	InputSchema  string
-	OutputSchema string
-	Executor     string
-	Permissions  string
-	CreatedAt    int64
-	UpdatedAt    int64
-	DeletedAt    int64
+	ID                  int64
+	SpaceID             int64
+	Name                string
+	Description         string
+	Type                Type
+	Version             string
+	Enabled             bool
+	InputSchema         string
+	OutputSchema        string
+	Executor            string
+	Permissions         string
+	IconURI             string
+	UsageScenarios      string
+	DevelopmentThreadID int64
+	CreatedAt           int64
+	UpdatedAt           int64
+	DeletedAt           int64
 }
 
 type SkillVersion struct {

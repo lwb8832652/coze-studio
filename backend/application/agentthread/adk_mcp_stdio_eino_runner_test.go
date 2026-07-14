@@ -61,6 +61,25 @@ func TestADKMCPRuntimeStdioEinoRunnerInvokesTargetTool(t *testing.T) {
 	require.Equal(t, 1, factory.client.closeCalls)
 }
 
+func TestADKMCPRuntimeStdioEinoRunnerPropagatesCloseFailure(t *testing.T) {
+	root := t.TempDir()
+	client := &recordingADKMCPRuntimeStdioEinoClient{closeErr: errors.New("still running")}
+	runner := NewADKMCPRuntimeStdioEinoRunner(ADKMCPRuntimeStdioEinoRunnerOptions{
+		ClientFactory: &recordingADKMCPRuntimeStdioEinoClientFactory{client: client},
+		ToolProvider: &recordingADKMCPRuntimeStdioEinoToolProvider{tools: []tool.BaseTool{
+			&recordingADKMCPRuntimeStdioEinoTool{name: "search-docs", result: `{}`},
+		}},
+	})
+
+	result, err := runner.RunADKMCPRuntimeStdio(
+		context.Background(), validADKMCPRuntimeStdioSandboxExecution(root),
+	)
+
+	require.Empty(t, result)
+	require.ErrorIs(t, err, errADKMCPRuntimeStdioProcessTerminationUnconfirmed)
+	require.Equal(t, 1, client.closeCalls)
+}
+
 func TestADKMCPRuntimeStdioEinoRunnerFailsClosedWithSanitizedErrors(
 	t *testing.T,
 ) {
@@ -221,12 +240,13 @@ func TestADKMCPRuntimeStdioEinoRunnerFailsClosedWithSanitizedErrors(
 
 type recordingADKMCPRuntimeStdioEinoClient struct {
 	closeCalls int
+	closeErr   error
 }
 
 func (c *recordingADKMCPRuntimeStdioEinoClient) Close() error {
 	c.closeCalls++
 
-	return nil
+	return c.closeErr
 }
 
 type recordingADKMCPRuntimeStdioEinoClientFactory struct {

@@ -414,3 +414,24 @@ func buildSkillArchiveEntries(t *testing.T, entries []skillArchiveTestEntry) []b
 	require.NoError(t, zw.Close())
 	return buf.Bytes()
 }
+
+func TestParseJSONDeclarationKeepsManagementMetadata(t *testing.T) {
+	decl, err := ParseDeclaration("skill.json", []byte(`{
+		"id":"weekly-report",
+		"name":"weekly-report",
+		"description":"Create weekly reports",
+		"type":"custom_skill",
+		"version":"1.0.0",
+		"enabled":true,
+		"icon_uri":"skill-icon://ocean",
+		"usage_scenarios":"Summarize delivery progress",
+		"input_schema":{},
+		"output_schema":{},
+		"executor":{},
+		"permissions":{}
+	}`))
+
+	require.NoError(t, err)
+	require.Equal(t, "skill-icon://ocean", decl.IconURI)
+	require.Equal(t, "Summarize delivery progress", decl.UsageScenarios)
+}

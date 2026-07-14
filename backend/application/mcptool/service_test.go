@@ -18,7 +18,6 @@ package mcptool
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,12 +27,25 @@ import (
 )
 
 func TestApplicationServiceUpsertsListsGetsAndTestsMCPServer(t *testing.T) {
-	svc := NewApplicationService(&Components{
-		Catalog: NewInMemoryCatalog(),
-		IDGen:   &sequentialIDGen{next: 100},
+	ctx := managementContext(7)
+	discoverer := &managementDiscoverer{result: &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search",
+			Description: "Search the web",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+	}}}
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:              NewInMemoryCatalog(),
+		IDGen:                &sequentialIDGen{next: 100},
+		CapabilityDiscoverer: discoverer,
+		RuntimeExecutor: &managementRuntimeExecutor{result: &RuntimeToolResult{
+			Status: "success",
+			Output: `{"server_name":"browser-tools","tool_name":"search","arguments":{"query":"coze studio"}}`,
+		}},
 	})
 
-	upserted, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	upserted, err := svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
 		Name:        "browser-tools",
 		Description: "Browser automation tools",
@@ -53,20 +65,31 @@ func TestApplicationServiceUpsertsListsGetsAndTestsMCPServer(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(100), upserted.Data.ServerID)
 	require.Equal(t, "browser-tools", upserted.Data.Name)
-	require.Equal(t, "search", upserted.Data.Tools[0].Name)
-	require.Equal(t, "unknown", upserted.Data.HealthStatus)
+	require.Len(t, upserted.Data.Tools, 1)
+	require.Equal(t, "healthy", upserted.Data.HealthStatus)
 
-	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	discoverer.result = &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search",
+			Description: "Search the web",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+	}}
+	discovered, err := svc.Discover(ctx, 100)
+	require.NoError(t, err)
+	require.Equal(t, "search", discovered.Tools[0].Name)
+
+	listed, err := svc.ListServers(ctx, &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
 	require.Len(t, listed.Data.Servers, 1)
 	require.Equal(t, int64(100), listed.Data.Servers[0].ServerID)
-	require.Equal(t, "unknown", listed.Data.Servers[0].HealthStatus)
+	require.Equal(t, "healthy", listed.Data.Servers[0].HealthStatus)
 
-	got, err := svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{ServerID: 100})
+	got, err := svc.GetServer(ctx, &toolapi.GetMCPToolServerRequest{ServerID: 100})
 	require.NoError(t, err)
 	require.Equal(t, "stdio", got.Data.ServerType)
 
-	tested, err := svc.TestCall(context.Background(), &toolapi.TestMCPToolCallRequest{
+	tested, err := svc.TestCall(ctx, &toolapi.TestMCPToolCallRequest{
 		ServerID:  100,
 		ToolName:  "search",
 		Arguments: `{"query":"coze studio"}`,
@@ -75,13 +98,9 @@ func TestApplicationServiceUpsertsListsGetsAndTestsMCPServer(t *testing.T) {
 	require.Equal(t, "success", tested.Data.Status)
 	require.GreaterOrEqual(t, tested.Data.LatencyMs, int64(0))
 
-	var output map[string]any
-	require.NoError(t, json.Unmarshal([]byte(tested.Data.Output), &output))
-	require.Equal(t, "browser-tools", output["server_name"])
-	require.Equal(t, "search", output["tool_name"])
-	require.Equal(t, map[string]any{"query": "coze studio"}, output["arguments"])
+	require.JSONEq(t, `{"result":"completed"}`, tested.Data.Output)
 
-	listed, err = svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listed, err = svc.ListServers(ctx, &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
 	require.Len(t, listed.Data.Servers, 1)
 	require.Equal(t, "healthy", listed.Data.Servers[0].HealthStatus)
@@ -91,11 +110,13 @@ func TestApplicationServiceUpsertsListsGetsAndTestsMCPServer(t *testing.T) {
 }
 
 func TestApplicationServiceRecordsRuntimeHealth(t *testing.T) {
-	svc := NewApplicationService(&Components{
-		Catalog: NewInMemoryCatalog(),
-		IDGen:   &sequentialIDGen{next: 100},
+	ctx := managementContext(7)
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:             NewInMemoryCatalog(),
+		IDGen:               &sequentialIDGen{next: 100},
+		UserSpaceRoleReader: ownerRoleReader(1),
 	})
-	created, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	created, err := svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "runtime-mcp",
 		ServerType: "stdio",
@@ -107,67 +128,80 @@ func TestApplicationServiceRecordsRuntimeHealth(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	firstCheckedAt := created.Data.HealthCheckedAt + 1
 
-	err = svc.RecordRuntimeHealth(context.Background(), MCPRuntimeHealthReport{
+	err = svc.RecordRuntimeHealth(ctx, MCPRuntimeHealthReport{
 		ServerID:  100,
 		Success:   true,
 		LatencyMs: 25,
-		CheckedAt: 2000,
+		CheckedAt: firstCheckedAt,
 	})
 	require.NoError(t, err)
-	got, err := svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{
+	got, err := svc.GetServer(ctx, &toolapi.GetMCPToolServerRequest{
 		ServerID: created.Data.ServerID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "healthy", got.Data.HealthStatus)
 	require.Equal(t, int64(25), got.Data.HealthLatencyMs)
-	require.Equal(t, int64(2000), got.Data.HealthCheckedAt)
+	require.Equal(t, firstCheckedAt, got.Data.HealthCheckedAt)
 	require.Empty(t, got.Data.HealthError)
 
-	err = svc.RecordRuntimeHealth(context.Background(), MCPRuntimeHealthReport{
+	secondCheckedAt := firstCheckedAt + 1
+	err = svc.RecordRuntimeHealth(ctx, MCPRuntimeHealthReport{
 		ServerID:  100,
 		Success:   false,
 		ErrorCode: "transport_failed",
 		LatencyMs: 27,
-		CheckedAt: 2500,
+		CheckedAt: secondCheckedAt,
 	})
 	require.NoError(t, err)
-	got, err = svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{
+	got, err = svc.GetServer(ctx, &toolapi.GetMCPToolServerRequest{
 		ServerID: created.Data.ServerID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "unhealthy", got.Data.HealthStatus)
 	require.Equal(t, int64(27), got.Data.HealthLatencyMs)
-	require.Equal(t, int64(2500), got.Data.HealthCheckedAt)
+	require.Equal(t, secondCheckedAt, got.Data.HealthCheckedAt)
 	require.Equal(t, "transport_failed", got.Data.HealthError)
 
-	err = svc.RecordRuntimeHealth(context.Background(), MCPRuntimeHealthReport{
+	thirdCheckedAt := secondCheckedAt + 1
+	err = svc.RecordRuntimeHealth(ctx, MCPRuntimeHealthReport{
 		ServerID:  100,
 		Success:   false,
 		ErrorCode: "transport_failed:/mnt/coze/mcp?token=stdio-secret-token",
 		LatencyMs: 31,
-		CheckedAt: 3000,
+		CheckedAt: thirdCheckedAt,
 	})
 	require.NoError(t, err)
-	got, err = svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{
+	got, err = svc.GetServer(ctx, &toolapi.GetMCPToolServerRequest{
 		ServerID: created.Data.ServerID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "unhealthy", got.Data.HealthStatus)
 	require.Equal(t, int64(31), got.Data.HealthLatencyMs)
-	require.Equal(t, int64(3000), got.Data.HealthCheckedAt)
+	require.Equal(t, thirdCheckedAt, got.Data.HealthCheckedAt)
 	require.Equal(t, "runtime_failed", got.Data.HealthError)
 	require.NotContains(t, got.Data.HealthError, "/mnt/coze/mcp")
 	require.NotContains(t, got.Data.HealthError, "stdio-secret-token")
 }
 
 func TestApplicationServiceListsSkillToolCandidatesFromEnabledMCPServers(t *testing.T) {
-	svc := NewApplicationService(&Components{
-		Catalog: NewInMemoryCatalog(),
-		IDGen:   &sequentialIDGen{next: 100},
+	ctx := managementContext(7)
+	discoverer := &managementDiscoverer{result: &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search-docs",
+			Description: "Search internal documentation.",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+		{Name: "missing_description", InputSchema: `{"type":"object"}`},
+	}}}
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:              NewInMemoryCatalog(),
+		IDGen:                &sequentialIDGen{next: 100},
+		CapabilityDiscoverer: discoverer,
 	})
 
-	_, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err := svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
 		Name:        "docs-mcp",
 		Description: "Documentation MCP server",
@@ -189,8 +223,18 @@ func TestApplicationServiceListsSkillToolCandidatesFromEnabledMCPServers(t *test
 		},
 	})
 	require.NoError(t, err)
+	discoverer.result = &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search-docs",
+			Description: "Search internal documentation.",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+		{Name: "missing_description", InputSchema: `{"type":"object"}`},
+	}}
+	_, err = svc.Discover(ctx, 100)
+	require.NoError(t, err)
 
-	_, err = svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err = svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "disabled-mcp",
 		ServerType: "stdio",
@@ -206,8 +250,17 @@ func TestApplicationServiceListsSkillToolCandidatesFromEnabledMCPServers(t *test
 		},
 	})
 	require.NoError(t, err)
+	discoverer.result = &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "disabled_search",
+			Description: "Disabled tools must not be grant candidates.",
+			InputSchema: `{"type":"object"}`,
+		},
+	}}
+	_, err = svc.Discover(ctx, 101)
+	require.NoError(t, err)
 
-	candidates, err := svc.ListSkillToolCandidates(context.Background(), 1)
+	candidates, err := svc.ListSkillToolCandidates(ctx, 1)
 
 	require.NoError(t, err)
 	require.Equal(t, []*skillapi.SkillToolCandidate{
@@ -225,12 +278,12 @@ func TestApplicationServiceListsSkillToolCandidatesFromEnabledMCPServers(t *test
 }
 
 func TestApplicationServiceRejectsInvalidMCPConfigJSON(t *testing.T) {
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog: NewInMemoryCatalog(),
 		IDGen:   &sequentialIDGen{next: 101},
 	})
 
-	_, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err := svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "bad-tools",
 		ServerType: "stdio",
@@ -246,12 +299,12 @@ func TestApplicationServiceRejectsInvalidMCPConfigJSON(t *testing.T) {
 }
 
 func TestApplicationServiceRejectsCrossSpaceMCPServerUpdate(t *testing.T) {
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog: NewInMemoryCatalog(),
 		IDGen:   &sequentialIDGen{next: 100},
 	})
 
-	created, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	created, err := svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "docs-mcp",
 		ServerType: "stdio",
@@ -264,7 +317,7 @@ func TestApplicationServiceRejectsCrossSpaceMCPServerUpdate(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err = svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		ServerID:   created.Data.ServerID,
 		SpaceID:    2,
 		Name:       "hijack-mcp",
@@ -277,18 +330,17 @@ func TestApplicationServiceRejectsCrossSpaceMCPServerUpdate(t *testing.T) {
 		},
 	})
 
-	require.ErrorContains(t, err, "space mismatch")
-	require.True(t, IsClientError(err))
+	require.ErrorIs(t, err, ErrMCPForbidden)
 }
 
-func TestApplicationServiceMasksMCPAuthAndPreservesMaskedSecrets(t *testing.T) {
+func TestApplicationServiceReturnsOpaqueMCPAuthAndPreservesConfiguredSecrets(t *testing.T) {
 	catalog := NewInMemoryCatalog()
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog: catalog,
 		IDGen:   &sequentialIDGen{next: 100},
 	})
 
-	created, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	created, err := svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
 		Name:        "secure-mcp",
 		Description: "Secure MCP",
@@ -302,18 +354,15 @@ func TestApplicationServiceMasksMCPAuthAndPreservesMaskedSecrets(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.JSONEq(t,
-		`{"type":"bearer","token":"********","nested":{"api_key":"********"}}`,
-		created.Data.Auth,
-	)
-	stored, err := catalog.Get(context.Background(), 100)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, created.Data.Auth)
+	stored, err := catalog.Get(managementContext(7), 100)
 	require.NoError(t, err)
 	require.JSONEq(t,
 		`{"type":"bearer","token":"secret-token","nested":{"api_key":"secret-key"}}`,
 		stored.Auth,
 	)
 
-	updated, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	updated, err := svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		ServerID:    100,
 		SpaceID:     1,
 		Name:        "secure-mcp",
@@ -328,11 +377,8 @@ func TestApplicationServiceMasksMCPAuthAndPreservesMaskedSecrets(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.JSONEq(t,
-		`{"type":"bearer","token":"********","nested":{"api_key":"********"}}`,
-		updated.Data.Auth,
-	)
-	stored, err = catalog.Get(context.Background(), 100)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, updated.Data.Auth)
+	stored, err = catalog.Get(managementContext(7), 100)
 	require.NoError(t, err)
 	require.JSONEq(t,
 		`{"type":"bearer","token":"secret-token","nested":{"api_key":"secret-key"}}`,
@@ -342,13 +388,13 @@ func TestApplicationServiceMasksMCPAuthAndPreservesMaskedSecrets(t *testing.T) {
 
 func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 	catalog := NewInMemoryCatalog()
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog: catalog,
 		IDGen:   &sequentialIDGen{next: 100},
 	})
 
 	_, err := svc.ImportDeerFlowExtensionsConfig(
-		context.Background(),
+		managementContext(7),
 		1,
 		[]byte(`{
 			"mcpServers": {
@@ -390,7 +436,7 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listed, err := svc.ListServers(managementContext(7), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
 	require.Len(t, listed.Data.Servers, 4)
 
@@ -401,6 +447,8 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 
 	github := serversByName["github"]
 	require.NotNil(t, github)
+	require.Equal(t, int64(7), github.CreatorID)
+	require.Equal(t, toolapi.MCPServerSourceTypeCustom, github.SourceType)
 	require.Equal(t, "stdio", github.ServerType)
 	require.True(t, github.Enabled)
 	require.Len(t, github.Tools, 26)
@@ -423,16 +471,16 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 		searchRepositories.InputSchema,
 	)
 	require.JSONEq(t,
-		`{"command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{},"auth_env":{"GITHUB_TOKEN":"env.GITHUB_TOKEN"}}`,
+		`{"command":"npx","auth_args":{"0":"args.0","1":"args.1"},"env":{"GITHUB_TOKEN":"__COZE_MCP_WRITE_ONLY__"},"auth_env":{"GITHUB_TOKEN":"env.GITHUB_TOKEN"}}`,
 		github.Config,
 	)
-	require.JSONEq(t, `{"env":{"GITHUB_TOKEN":"********"}}`, github.Auth)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, github.Auth)
 	require.NotContains(t, github.Config, "raw-secret-token")
 	require.NotContains(t, github.Auth, "raw-secret-token")
 
-	stored, err := catalog.Get(context.Background(), github.ServerID)
+	stored, err := catalog.Get(managementContext(7), github.ServerID)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"env":{"GITHUB_TOKEN":"raw-secret-token"}}`, stored.Auth)
+	require.JSONEq(t, `{"args":{"0":"-y","1":"@modelcontextprotocol/server-github"},"env":{"GITHUB_TOKEN":"raw-secret-token"}}`, stored.Auth)
 
 	postgres := serversByName["postgres"]
 	require.NotNil(t, postgres)
@@ -445,10 +493,10 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 		postgres.Tools[0].InputSchema,
 	)
 	require.JSONEq(t,
-		`{"command":"npx","args":["-y","@modelcontextprotocol/server-postgres","postgresql://localhost/mydb"],"env":{}}`,
+		`{"command":"npx","auth_args":{"0":"args.0","1":"args.1","2":"args.2"}}`,
 		postgres.Config,
 	)
-	require.JSONEq(t, `{}`, postgres.Auth)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, postgres.Auth)
 
 	openmeteo := serversByName["openmeteo"]
 	require.NotNil(t, openmeteo)
@@ -464,10 +512,10 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 		geocoding.InputSchema,
 	)
 	require.JSONEq(t,
-		`{"command":"npx","args":["-y","-p","open-meteo-mcp-server","open-meteo-mcp-server"],"env":{}}`,
+		`{"command":"npx","auth_args":{"0":"args.0","1":"args.1","2":"args.2","3":"args.3"}}`,
 		openmeteo.Config,
 	)
-	require.JSONEq(t, `{}`, openmeteo.Auth)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, openmeteo.Auth)
 
 	weather := serversByName["weather"]
 	require.NotNil(t, weather)
@@ -480,12 +528,12 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 		weather.Tools[0].InputSchema,
 	)
 	require.JSONEq(t,
-		`{"command":"node","args":["-e","process.exit(0)"],"env":{}}`,
+		`{"command":"node","auth_args":{"0":"args.0","1":"args.1"}}`,
 		weather.Config,
 	)
-	require.JSONEq(t, `{}`, weather.Auth)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, weather.Auth)
 
-	registry, err := svc.ListMCPToolRegistryEntries(context.Background(), 1)
+	registry, err := svc.ListMCPToolRegistryEntries(managementContext(7), 1)
 	require.NoError(t, err)
 	require.Contains(t, registryNames(registry), "mcp_100_search_repositories")
 	require.Contains(t, registryNames(registry), "mcp_101_geocoding")
@@ -495,59 +543,60 @@ func TestApplicationServiceImportsDeerFlowExtensionsConfig(t *testing.T) {
 }
 
 func TestApplicationServiceSeedsDefaultDeerFlowMCPServersOnFirstList(t *testing.T) {
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog:                     NewInMemoryCatalog(),
 		IDGen:                       &sequentialIDGen{next: 100},
 		DefaultDeerFlowMCPConfigRaw: DefaultDeerFlowMCPConfigRaw(),
 	})
 
-	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listed, err := svc.ListServers(managementContext(7), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
-	require.Len(t, listed.Data.Servers, 4)
+	require.Len(t, listed.Data.Servers, 2)
 	serversByName := map[string]*toolapi.MCPToolServer{}
 	for _, server := range listed.Data.Servers {
 		serversByName[server.Name] = server
 	}
 	require.Len(t, serversByName["github"].Tools, 26)
-	require.Len(t, serversByName["openmeteo"].Tools, 2)
+	require.Equal(t, toolapi.MCPServerSourceType("official"), serversByName["github"].SourceType)
 	require.Len(t, serversByName["postgres"].Tools, 1)
-	require.Len(t, serversByName["weather"].Tools, 1)
+	require.NotContains(t, serversByName, "openmeteo")
+	require.NotContains(t, serversByName, "weather")
 
-	listedAgain, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listedAgain, err := svc.ListServers(managementContext(7), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
-	require.Len(t, listedAgain.Data.Servers, 4)
+	require.Len(t, listedAgain.Data.Servers, 2)
 	require.Equal(t, listed.Data.Servers, listedAgain.Data.Servers)
 }
 
 func TestApplicationServiceSeedsDefaultDeerFlowMCPServersForRegistry(t *testing.T) {
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog:                     NewInMemoryCatalog(),
 		IDGen:                       &sequentialIDGen{next: 100},
 		DefaultDeerFlowMCPConfigRaw: DefaultDeerFlowMCPConfigRaw(),
 	})
 
-	entries, err := svc.ListMCPToolRegistryEntries(context.Background(), 1)
+	entries, err := svc.ListMCPToolRegistryEntries(managementContext(7), 1)
 
 	require.NoError(t, err)
 	names := registryNames(entries)
 	require.Contains(t, names, "mcp_100_search_repositories")
-	require.Contains(t, names, "mcp_101_geocoding")
-	require.Contains(t, names, "mcp_101_weather_forecast")
-	require.Contains(t, names, "mcp_102_query")
-	require.Contains(t, names, "mcp_103_get_weather")
+	require.Contains(t, names, "mcp_101_query")
+	require.NotContains(t, names, "geocoding")
+	require.NotContains(t, names, "weather_forecast")
+	require.NotContains(t, names, "get_weather")
 
-	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listed, err := svc.ListServers(managementContext(7), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
-	require.Len(t, listed.Data.Servers, 4)
+	require.Len(t, listed.Data.Servers, 2)
 }
 
 func TestApplicationServiceDeletesMCPServer(t *testing.T) {
-	svc := NewApplicationService(&Components{
+	svc := newAuthorizedLegacyApplicationService(&Components{
 		Catalog: NewInMemoryCatalog(),
 		IDGen:   &sequentialIDGen{next: 100},
 	})
 
-	created, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	created, err := svc.UpsertServer(managementContext(7), &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "delete-me",
 		ServerType: "stdio",
@@ -560,29 +609,42 @@ func TestApplicationServiceDeletesMCPServer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	deleted, err := svc.DeleteServer(context.Background(), &toolapi.GetMCPToolServerRequest{
+	deleted, err := svc.DeleteServer(managementContext(7), &toolapi.GetMCPToolServerRequest{
 		ServerID: 100,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, created.Data.ServerID, deleted.Data.ServerID)
-	require.JSONEq(t, `{"type":"bearer","token":"********"}`, deleted.Data.Auth)
+	require.JSONEq(t, mcpAuthConfiguredSentinel, deleted.Data.Auth)
 
-	listed, err := svc.ListServers(context.Background(), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
+	listed, err := svc.ListServers(managementContext(7), &toolapi.ListMCPToolServersRequest{SpaceID: 1})
 	require.NoError(t, err)
 	require.Empty(t, listed.Data.Servers)
 
-	_, err = svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{ServerID: 100})
-	require.ErrorIs(t, err, ErrNotFound)
+	_, err = svc.GetServer(managementContext(7), &toolapi.GetMCPToolServerRequest{ServerID: 100})
+	require.ErrorIs(t, err, ErrMCPForbidden)
 }
 
 func TestApplicationServiceListsMCPToolRegistryEntries(t *testing.T) {
-	svc := NewApplicationService(&Components{
-		Catalog: NewInMemoryCatalog(),
-		IDGen:   &sequentialIDGen{next: 100},
+	ctx := managementContext(7)
+	discoverer := &managementDiscoverer{result: &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search-docs",
+			Description: "Search internal documentation.",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+		{Name: "missing_description", InputSchema: `{"type":"object"}`},
+	}}}
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:              NewInMemoryCatalog(),
+		IDGen:                &sequentialIDGen{next: 100},
+		CapabilityDiscoverer: discoverer,
+		RuntimeExecutor: &managementRuntimeExecutor{result: &RuntimeToolResult{
+			Status: "success", Output: `{}`,
+		}},
 	})
 
-	_, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err := svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
 		Name:        "docs-mcp",
 		Description: "Documentation MCP server",
@@ -604,15 +666,25 @@ func TestApplicationServiceListsMCPToolRegistryEntries(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	discoverer.result = &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{
+			Name:        "search-docs",
+			Description: "Search internal documentation.",
+			InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		},
+		{Name: "missing_description", InputSchema: `{"type":"object"}`},
+	}}
+	_, err = svc.Discover(ctx, 100)
+	require.NoError(t, err)
 
-	_, err = svc.TestCall(context.Background(), &toolapi.TestMCPToolCallRequest{
+	_, err = svc.TestCall(ctx, &toolapi.TestMCPToolCallRequest{
 		ServerID:  100,
 		ToolName:  "search-docs",
 		Arguments: `{"query":"coze studio"}`,
 	})
 	require.NoError(t, err)
 
-	_, err = svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err = svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "disabled-mcp",
 		ServerType: "stdio",
@@ -624,8 +696,13 @@ func TestApplicationServiceListsMCPToolRegistryEntries(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	discoverer.result = &DiscoveredCapabilities{Tools: []*toolapi.MCPToolDefinition{
+		{Name: "disabled_search", Description: "Disabled search.", InputSchema: `{"type":"object"}`},
+	}}
+	_, err = svc.Discover(ctx, 101)
+	require.NoError(t, err)
 
-	resp, err := svc.ListRegistryEntries(context.Background(), &toolapi.ListMCPToolRegistryEntriesRequest{
+	resp, err := svc.ListRegistryEntries(ctx, &toolapi.ListMCPToolRegistryEntriesRequest{
 		SpaceID: 1,
 	})
 
@@ -650,17 +727,19 @@ func TestApplicationServiceListsMCPToolRegistryEntries(t *testing.T) {
 	}, resp.Data.Tools)
 	require.Equal(t, int64(1), resp.Data.Total)
 
-	direct, err := svc.ListMCPToolRegistryEntries(context.Background(), 1)
+	direct, err := svc.ListMCPToolRegistryEntries(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, resp.Data.Tools, direct)
 }
 
 func TestApplicationServiceResolvesRuntimeServerWithRawConfigAndAuth(t *testing.T) {
-	svc := NewApplicationService(&Components{
-		Catalog: NewInMemoryCatalog(),
-		IDGen:   &sequentialIDGen{next: 100},
+	ctx := managementContext(7)
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:             NewInMemoryCatalog(),
+		IDGen:               &sequentialIDGen{next: 100},
+		UserSpaceRoleReader: ownerRoleReader(1),
 	})
-	_, err := svc.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err := svc.UpsertServer(ctx, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:    1,
 		Name:       "docs-mcp",
 		ServerType: "stdio",
@@ -677,16 +756,30 @@ func TestApplicationServiceResolvesRuntimeServerWithRawConfigAndAuth(t *testing.
 	})
 	require.NoError(t, err)
 
-	server, err := svc.ResolveADKMCPRuntimeServer(context.Background(), 100)
+	server, err := svc.ResolveADKMCPRuntimeServer(ctx, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, int64(100), server.ServerID)
-	require.Equal(t, `{"command":"npx","args":["-y","@example/docs"]}`, server.Config)
-	require.Equal(t, `{"token":"raw-secret"}`, server.Auth)
+	require.Equal(t, `{"auth_args":{"0":"args.0","1":"args.1"},"command":"npx"}`, server.Config)
+	require.Equal(t, `{"args":{"0":"-y","1":"@example/docs"},"token":"raw-secret"}`, server.Auth)
 
-	response, err := svc.GetServer(context.Background(), &toolapi.GetMCPToolServerRequest{ServerID: 100})
+	response, err := svc.GetServer(ctx, &toolapi.GetMCPToolServerRequest{ServerID: 100})
 	require.NoError(t, err)
 	require.NotContains(t, response.Data.Auth, "raw-secret")
+}
+
+func newAuthorizedLegacyApplicationService(c *Components) *ApplicationService {
+	if c == nil {
+		c = &Components{}
+	}
+	if c.UserSpaceRoleReader == nil {
+		c.UserSpaceRoleReader = ownerRoleReader(1)
+	}
+	if c.CapabilityDiscoverer == nil {
+		c.CapabilityDiscoverer = &managementDiscoverer{result: &DiscoveredCapabilities{}}
+	}
+
+	return NewApplicationService(c)
 }
 
 type sequentialIDGen struct {

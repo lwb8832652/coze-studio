@@ -153,15 +153,32 @@ func TestADKMCPRuntimeRemoteEinoRunnerFailsClosedWithSanitizedErrors(
 
 func validADKMCPRuntimeRemoteExecutionForTest() ADKMCPRuntimeRemoteExecution {
 	return ADKMCPRuntimeRemoteExecution{
-		Run:           &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
-		Name:          "mcp_100_search_docs",
-		ServerID:      100,
-		ToolName:      "search-docs",
-		Arguments:     `{"query":"coze"}`,
-		TransportType: adkMCPRuntimeTransportStreamableHTTP,
-		URL:           "https://mcp.example.test/mcp",
-		Headers:       map[string]string{"Authorization": "Bearer remote-secret-token"},
+		Run:             &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+		Name:            "mcp_100_search_docs",
+		ServerID:        100,
+		ToolName:        "search-docs",
+		Arguments:       `{"query":"coze"}`,
+		TransportType:   adkMCPRuntimeTransportStreamableHTTP,
+		URL:             "https://mcp.example.test/mcp",
+		Headers:         map[string]string{"Authorization": "Bearer remote-secret-token"},
+		AllowedHosts:    []string{"mcp.example.test"},
+		AllowLocalDebug: false,
 	}
+}
+
+func TestADKMCPRemoteEinoFactoryFailsClosedWithoutSafeHTTPPolicy(t *testing.T) {
+	factory := NewADKMCPRuntimeRemoteEinoMCPClientFactory(
+		ADKMCPRuntimeRemoteEinoMCPClientFactoryOptions{},
+	)
+	execution := validADKMCPRuntimeRemoteExecutionForTest()
+	execution.AllowedHosts = nil
+
+	transport, err := factory.newTransport(execution)
+
+	require.Nil(t, transport)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), execution.URL)
+	require.NotContains(t, err.Error(), execution.Headers["Authorization"])
 }
 
 type recordingADKMCPRuntimeRemoteEinoClient struct {

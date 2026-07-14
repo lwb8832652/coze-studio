@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/domain/skill/entity"
+	"github.com/coze-dev/coze-studio/backend/domain/skill/repository"
 	"gorm.io/gorm"
 )
 
@@ -45,6 +46,17 @@ func (s *skillService) ImportDeclaration(ctx context.Context, spaceID int64, fil
 }
 
 func (s *skillService) ImportDeclarationWithDefaultType(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type) (*entity.Skill, error) {
+	return s.importDeclaration(ctx, spaceID, fileName, content, defaultType, 0)
+}
+
+func (s *skillService) ImportDeclarationWithDevelopmentThread(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
+	if developmentThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("development thread id is required")
+	}
+	return s.importDeclaration(ctx, spaceID, fileName, content, defaultType, developmentThreadID)
+}
+
+func (s *skillService) importDeclaration(ctx context.Context, spaceID int64, fileName string, content []byte, defaultType entity.Type, developmentThreadID int64) (*entity.Skill, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
 	}
@@ -68,18 +80,17 @@ func (s *skillService) ImportDeclarationWithDefaultType(ctx context.Context, spa
 	if err != nil {
 		return nil, err
 	}
+	skill.DevelopmentThreadID = developmentThreadID
 
 	now := time.Now().UnixMilli()
 	skill.CreatedAt = now
 	skill.UpdatedAt = now
-	if err := s.components.Repo.Create(ctx, skill); err != nil {
-		return nil, err
-	}
-	version, err := s.recordVersionWithSkillMD(ctx, skill, decl.SkillMD)
+	version, err := s.newVersionSnapshot(ctx, skill, decl.SkillMD)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.recordResources(ctx, skill.ID, version.ID, decl.Resources); err != nil {
+	resources := archiveResourcesForVersion(skill.ID, version.ID, decl.Resources)
+	if err := s.components.Repo.CreateWithVersion(ctx, skill, version, resources); err != nil {
 		return nil, err
 	}
 
@@ -137,27 +148,59 @@ func (s *skillService) Create(ctx context.Context, skill *entity.Skill) (*entity
 	if skill.UpdatedAt == 0 {
 		skill.UpdatedAt = skill.CreatedAt
 	}
-	if err := s.components.Repo.Create(ctx, skill); err != nil {
+	version, err := s.newVersionSnapshot(ctx, skill, "")
+	if err != nil {
 		return nil, err
 	}
-	if _, err := s.recordVersion(ctx, skill); err != nil {
+	if err := s.components.Repo.CreateWithVersion(ctx, skill, version, nil); err != nil {
 		return nil, err
 	}
 	return skill, nil
 }
 
 func (s *skillService) Update(ctx context.Context, skill *entity.Skill) (*entity.Skill, error) {
+	return s.UpdateWithExpectedVersion(ctx, skill, 0)
+}
+
+func (s *skillService) UpdateWithExpectedVersion(ctx context.Context, skill *entity.Skill, expectedVersionID int64) (*entity.Skill, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
 	}
 	if skill == nil {
 		return nil, InvalidArgumentErrorf("skill is required")
 	}
-	skill.UpdatedAt = time.Now().UnixMilli()
-	if err := s.components.Repo.Update(ctx, skill); err != nil {
+	if expectedVersionID <= 0 {
+		return nil, InvalidArgumentErrorf("expected version id is required")
+	}
+	latest, err := s.components.Repo.GetLatestVersion(ctx, skill.ID)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := s.recordVersion(ctx, skill); err != nil {
+	latestID := int64(0)
+	var resources []*entity.SkillResource
+	if latest != nil {
+		latestID = latest.ID
+		resources, err = s.components.Repo.ListResources(ctx, skill.ID, latest.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if expectedVersionID != latestID {
+		return nil, ConflictErrorf("expected version %d is stale; latest version is %d", expectedVersionID, latestID)
+	}
+	skillMD, err := rewriteSkillMarkdownMetadata(latest.SkillMD, skill)
+	if err != nil {
+		return nil, InvalidArgumentErrorf("rewrite SKILL.md metadata: %v", err)
+	}
+	skill.UpdatedAt = time.Now().UnixMilli()
+	version, err := s.newVersionSnapshot(ctx, skill, skillMD)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.components.Repo.UpdateWithVersionCAS(ctx, skill, expectedVersionID, version, cloneResourcesForVersion(skill.ID, version.ID, resources)); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			return nil, ConflictErrorf("skill changed while metadata was being saved")
+		}
 		return nil, err
 	}
 	return skill, nil
@@ -279,15 +322,14 @@ func (s *skillService) UpdateVersionContent(ctx context.Context, skillID, versio
 		return nil, err
 	}
 	restored.UpdatedAt = time.Now().UnixMilli()
-	if err := s.components.Repo.Update(ctx, restored); err != nil {
-		return nil, err
-	}
-
-	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, skillMD)
+	newVersion, err := s.newVersionSnapshot(ctx, restored, skillMD)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.components.Repo.CreateResources(ctx, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+	if err := s.components.Repo.UpdateWithVersionCAS(ctx, restored, versionID, newVersion, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			return nil, ConflictErrorf("expected version %d is no longer latest", versionID)
+		}
 		return nil, err
 	}
 
@@ -295,59 +337,23 @@ func (s *skillService) UpdateVersionContent(ctx context.Context, skillID, versio
 }
 
 func (s *skillService) UpdateVersionResource(ctx context.Context, skillID, versionID int64, resourcePath string, content []byte) (*entity.SkillVersion, error) {
-	if err := s.requireRepo(); err != nil {
-		return nil, err
-	}
-	if skillID <= 0 {
-		return nil, InvalidArgumentErrorf("skill id is required")
-	}
-	if versionID <= 0 {
-		return nil, InvalidArgumentErrorf("version id is required")
-	}
-	normalizedPath, err := editableResourcePath(resourcePath)
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(content)) > maxSkillArchiveFileBytes {
-		return nil, InvalidArgumentErrorf("skill resource %s exceeds %d bytes", normalizedPath, maxSkillArchiveFileBytes)
-	}
-
-	current, err := s.Get(ctx, skillID)
-	if err != nil {
-		return nil, err
-	}
-	version, err := s.getVersion(ctx, skillID, versionID)
-	if err != nil {
-		return nil, err
-	}
-	resources, err := s.components.Repo.ListResources(ctx, skillID, versionID)
-	if err != nil {
-		return nil, err
-	}
-
-	restored, err := skillFromVersionSnapshot(current, version)
-	if err != nil {
-		return nil, err
-	}
-	restored.UpdatedAt = time.Now().UnixMilli()
-	if err := s.components.Repo.Update(ctx, restored); err != nil {
-		return nil, err
-	}
-
-	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, version.SkillMD)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.components.Repo.CreateResources(ctx, resourcesWithEditedContent(skillID, newVersion.ID, resources, normalizedPath, content)); err != nil {
-		return nil, err
-	}
-
-	return newVersion, nil
+	return s.MutateVersionResources(ctx, skillID, versionID, []ResourceMutation{{
+		Operation: ResourceMutationUpsert,
+		Path:      resourcePath,
+		Content:   content,
+	}})
 }
 
 func (s *skillService) RollbackVersion(ctx context.Context, skillID, versionID int64) (*entity.Skill, error) {
+	return s.RollbackVersionCAS(ctx, skillID, versionID, 0)
+}
+
+func (s *skillService) RollbackVersionCAS(ctx context.Context, skillID, versionID, expectedVersionID int64) (*entity.Skill, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
+	}
+	if expectedVersionID <= 0 {
+		return nil, InvalidArgumentErrorf("expected version id is required")
 	}
 	if skillID <= 0 {
 		return nil, InvalidArgumentErrorf("skill id is required")
@@ -368,21 +374,30 @@ func (s *skillService) RollbackVersion(ctx context.Context, skillID, versionID i
 	if err != nil {
 		return nil, err
 	}
+	latest, err := s.components.Repo.GetLatestVersion(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	if latest == nil {
+		return nil, ConflictErrorf("skill has no latest version")
+	}
+	if expectedVersionID != latest.ID {
+		return nil, ConflictErrorf("expected version %d is stale; latest version is %d", expectedVersionID, latest.ID)
+	}
 
 	restored, err := skillFromVersionSnapshot(current, version)
 	if err != nil {
 		return nil, err
 	}
 	restored.UpdatedAt = time.Now().UnixMilli()
-	if err := s.components.Repo.Update(ctx, restored); err != nil {
-		return nil, err
-	}
-
-	newVersion, err := s.recordVersionWithSkillMD(ctx, restored, version.SkillMD)
+	newVersion, err := s.newVersionSnapshot(ctx, restored, version.SkillMD)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.components.Repo.CreateResources(ctx, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+	if err := s.components.Repo.UpdateWithVersionCAS(ctx, restored, expectedVersionID, newVersion, cloneResourcesForVersion(skillID, newVersion.ID, resources)); err != nil {
+		if errors.Is(err, repository.ErrVersionConflict) {
+			return nil, ConflictErrorf("skill changed while rollback was being saved")
+		}
 		return nil, err
 	}
 
@@ -396,9 +411,10 @@ func (s *skillService) TestRun(ctx context.Context, id int64, input string) (str
 	}
 
 	params := map[string]any{}
-	if strings.TrimSpace(input) != "" {
-		if err := json.Unmarshal([]byte(input), &params); err != nil {
-			return "", InvalidArgumentErrorf("invalid test input json: %v", err)
+	trimmedInput := strings.TrimSpace(input)
+	if trimmedInput != "" {
+		if err := json.Unmarshal([]byte(trimmedInput), &params); err != nil {
+			params["message"] = trimmedInput
 		}
 	}
 
@@ -439,11 +455,7 @@ func (s *skillService) requireIDGen() error {
 	return nil
 }
 
-func (s *skillService) recordVersion(ctx context.Context, skill *entity.Skill) (*entity.SkillVersion, error) {
-	return s.recordVersionWithSkillMD(ctx, skill, "")
-}
-
-func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *entity.Skill, skillMD string) (*entity.SkillVersion, error) {
+func (s *skillService) newVersionSnapshot(ctx context.Context, skill *entity.Skill, skillMD string) (*entity.SkillVersion, error) {
 	if skill == nil {
 		return nil, InvalidArgumentErrorf("skill is required")
 	}
@@ -457,7 +469,10 @@ func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *enti
 	now := time.Now().UnixMilli()
 	versionSkillMD := skillMD
 	if strings.TrimSpace(versionSkillMD) == "" {
-		versionSkillMD = skillMarkdown(skill)
+		versionSkillMD, err = buildSkillMarkdown(skill)
+		if err != nil {
+			return nil, InvalidArgumentErrorf("build SKILL.md: %v", err)
+		}
 	}
 	version := &entity.SkillVersion{
 		ID:           id,
@@ -471,10 +486,18 @@ func (s *skillService) recordVersionWithSkillMD(ctx context.Context, skill *enti
 		CreatedAt:    now,
 	}
 
-	if err := s.components.Repo.CreateVersion(ctx, version); err != nil {
+	return version, nil
+}
+
+func (s *skillService) latestVersionResources(ctx context.Context, skillID int64) ([]*entity.SkillResource, error) {
+	version, err := s.components.Repo.GetLatestVersion(ctx, skillID)
+	if err != nil {
 		return nil, err
 	}
-	return version, nil
+	if version == nil {
+		return nil, nil
+	}
+	return s.components.Repo.ListResources(ctx, skillID, version.ID)
 }
 
 func (s *skillService) getVersion(ctx context.Context, skillID, versionID int64) (*entity.SkillVersion, error) {
@@ -490,11 +513,7 @@ func (s *skillService) getVersion(ctx context.Context, skillID, versionID int64)
 	return nil, NotFoundErrorf("skill %d version %d not found", skillID, versionID)
 }
 
-func (s *skillService) recordResources(ctx context.Context, skillID, versionID int64, resources []ArchiveResource) error {
-	if len(resources) == 0 {
-		return nil
-	}
-
+func archiveResourcesForVersion(skillID, versionID int64, resources []ArchiveResource) []*entity.SkillResource {
 	items := make([]*entity.SkillResource, 0, len(resources))
 	for _, resource := range resources {
 		items = append(items, &entity.SkillResource{
@@ -507,7 +526,7 @@ func (s *skillService) recordResources(ctx context.Context, skillID, versionID i
 		})
 	}
 
-	return s.components.Repo.CreateResources(ctx, items)
+	return items
 }
 
 func skillFromVersionSnapshot(current *entity.Skill, version *entity.SkillVersion) (*entity.Skill, error) {
@@ -537,18 +556,21 @@ func skillFromVersionSnapshot(current *entity.Skill, version *entity.SkillVersio
 	}
 
 	return &entity.Skill{
-		ID:           current.ID,
-		SpaceID:      current.SpaceID,
-		Name:         decl.Name,
-		Description:  decl.Description,
-		Type:         typ,
-		Version:      firstNonEmpty(decl.Version, version.Version),
-		Enabled:      decl.Enabled,
-		InputSchema:  jsonObjectString(version.InputSchema),
-		OutputSchema: jsonObjectString(version.OutputSchema),
-		Executor:     jsonObjectString(version.Executor),
-		Permissions:  jsonObjectString(version.Permissions),
-		CreatedAt:    current.CreatedAt,
+		ID:                  current.ID,
+		SpaceID:             current.SpaceID,
+		Name:                decl.Name,
+		Description:         decl.Description,
+		Type:                typ,
+		Version:             firstNonEmpty(decl.Version, version.Version),
+		Enabled:             decl.Enabled,
+		InputSchema:         jsonObjectString(version.InputSchema),
+		OutputSchema:        jsonObjectString(version.OutputSchema),
+		Executor:            jsonObjectString(version.Executor),
+		Permissions:         jsonObjectString(version.Permissions),
+		IconURI:             current.IconURI,
+		UsageScenarios:      current.UsageScenarios,
+		DevelopmentThreadID: current.DevelopmentThreadID,
+		CreatedAt:           current.CreatedAt,
 	}, nil
 }
 
@@ -673,49 +695,20 @@ func declarationToSkill(spaceID, id int64, decl *Declaration) (*entity.Skill, er
 	}
 
 	return &entity.Skill{
-		ID:           id,
-		SpaceID:      spaceID,
-		Name:         decl.Name,
-		Description:  decl.Description,
-		Type:         typ,
-		Version:      decl.Version,
-		Enabled:      decl.Enabled,
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
-		Executor:     executor,
-		Permissions:  permissions,
+		ID:             id,
+		SpaceID:        spaceID,
+		Name:           decl.Name,
+		Description:    decl.Description,
+		Type:           typ,
+		Version:        decl.Version,
+		Enabled:        decl.Enabled,
+		InputSchema:    inputSchema,
+		OutputSchema:   outputSchema,
+		Executor:       executor,
+		Permissions:    permissions,
+		IconURI:        decl.IconURI,
+		UsageScenarios: decl.UsageScenarios,
 	}, nil
-}
-
-func skillMarkdown(skill *entity.Skill) string {
-	if skill == nil {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("---\n")
-	b.WriteString("name: ")
-	b.WriteString(skill.Name)
-	b.WriteString("\n")
-	b.WriteString("description: ")
-	b.WriteString(skill.Description)
-	b.WriteString("\n")
-	b.WriteString("type: ")
-	b.WriteString(string(skill.Type))
-	b.WriteString("\n")
-	b.WriteString("version: ")
-	b.WriteString(skill.Version)
-	b.WriteString("\n")
-	b.WriteString("enabled: ")
-	b.WriteString(strconv.FormatBool(skill.Enabled))
-	b.WriteString("\n")
-	b.WriteString("---\n")
-	if strings.TrimSpace(skill.Description) != "" {
-		b.WriteString("\n")
-		b.WriteString(skill.Description)
-		b.WriteString("\n")
-	}
-
-	return b.String()
 }
 
 func skillToDeclaration(skill *entity.Skill) (*Declaration, error) {
@@ -725,12 +718,14 @@ func skillToDeclaration(skill *entity.Skill) (*Declaration, error) {
 
 	decl := &Declaration{
 		// Original declaration IDs are not persisted yet; use the stable numeric skill ID for runtime callers.
-		ID:          strconv.FormatInt(skill.ID, 10),
-		Name:        skill.Name,
-		Description: skill.Description,
-		Type:        string(skill.Type),
-		Version:     skill.Version,
-		Enabled:     skill.Enabled,
+		ID:             strconv.FormatInt(skill.ID, 10),
+		Name:           skill.Name,
+		Description:    skill.Description,
+		Type:           string(skill.Type),
+		Version:        skill.Version,
+		Enabled:        skill.Enabled,
+		IconURI:        skill.IconURI,
+		UsageScenarios: skill.UsageScenarios,
 	}
 	if err := unmarshalString("input_schema", skill.InputSchema, &decl.InputSchema); err != nil {
 		return nil, err

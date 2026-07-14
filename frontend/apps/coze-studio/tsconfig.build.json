@@ -70,6 +70,9 @@
       "path": "../../packages/arch/bot-md-box-adapter/tsconfig.build.json"
     },
     {
+      "path": "../../packages/arch/bot-monaco-editor/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/arch/bot-typings/tsconfig.build.json"
     },
     {

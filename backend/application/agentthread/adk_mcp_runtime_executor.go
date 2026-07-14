@@ -54,11 +54,12 @@ type ADKMCPRuntimeTransportInvoker interface {
 }
 
 type ADKMCPRuntimeHealthReport struct {
-	ServerID  int64
-	Transport string
-	Success   bool
-	ErrorCode string
-	LatencyMs int64
+	ServerID          int64
+	ExpectedUpdatedAt int64
+	Transport         string
+	Success           bool
+	ErrorCode         string
+	LatencyMs         int64
 }
 
 type ADKMCPRuntimeHealthReporter interface {
@@ -263,7 +264,7 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 		},
 	)
 	if err != nil {
-		e.reportHealth(ctx, call.ServerID, transportType, false, "transport_failed", startedAt)
+		e.reportHealth(ctx, call.ServerID, server.UpdatedAt, transportType, false, "transport_failed", startedAt)
 		return fail("transport_failed", "mcp runtime transport failed")
 	}
 	outputBytes := len([]byte(result))
@@ -286,12 +287,12 @@ func (e *ADKMCPRuntimeExecutor) InvokeADKMCPRuntimeTool(
 				errorCode = "output_offload_failed"
 				message = "mcp runtime output offload failed"
 			}
-			e.reportHealth(ctx, call.ServerID, transportType, false, errorCode, startedAt)
+			e.reportHealth(ctx, call.ServerID, server.UpdatedAt, transportType, false, errorCode, startedAt)
 			return fail(errorCode, message)
 		}
 		result = offloaded.Notice
 	}
-	e.reportHealth(ctx, call.ServerID, transportType, true, "", startedAt)
+	e.reportHealth(ctx, call.ServerID, server.UpdatedAt, transportType, true, "", startedAt)
 
 	e.emitLifecycle(
 		ctx,
@@ -387,6 +388,7 @@ func (e *ADKMCPRuntimeExecutor) emitLifecycle(
 func (e *ADKMCPRuntimeExecutor) reportHealth(
 	ctx context.Context,
 	serverID int64,
+	expectedUpdatedAt int64,
 	transport string,
 	success bool,
 	errorCode string,
@@ -398,11 +400,12 @@ func (e *ADKMCPRuntimeExecutor) reportHealth(
 	_ = e.healthReporter.ReportADKMCPRuntimeHealth(
 		ctx,
 		ADKMCPRuntimeHealthReport{
-			ServerID:  serverID,
-			Transport: transport,
-			Success:   success,
-			ErrorCode: errorCode,
-			LatencyMs: time.Since(startedAt).Milliseconds(),
+			ServerID:          serverID,
+			ExpectedUpdatedAt: expectedUpdatedAt,
+			Transport:         transport,
+			Success:           success,
+			ErrorCode:         errorCode,
+			LatencyMs:         time.Since(startedAt).Milliseconds(),
 		},
 	)
 }

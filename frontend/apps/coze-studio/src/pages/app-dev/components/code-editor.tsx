@@ -14,7 +14,16 @@
  * limitations under the License.
  */
 
-import { type KeyboardEvent, useEffect } from 'react';
+import { ErrorBoundary } from 'react-error-boundary';
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+} from 'react';
+
+import { Editor } from '@coze-arch/bot-monaco-editor';
 
 import { getLanguageFromPath } from '../utils/file-utils';
 
@@ -28,6 +37,8 @@ interface CodeEditorProps {
   onSave: () => void;
 }
 
+type MonacoEditorMount = NonNullable<ComponentProps<typeof Editor>['onMount']>;
+
 export const CodeEditor = ({
   path,
   value,
@@ -40,38 +51,65 @@ export const CodeEditor = ({
   const language = path ? getLanguageFromPath(path) : 'plaintext';
   const lineCount = value ? value.split('\n').length : 1;
   const characterCount = value.length;
-  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Tab') {
-      return;
-    }
-
-    event.preventDefault();
-    const target = event.currentTarget;
-    const start = target.selectionStart;
-    const end = target.selectionEnd;
-    const nextValue = `${value.slice(0, start)}  ${value.slice(end)}`;
-    onChange(nextValue);
-    window.requestAnimationFrame(() => {
-      target.selectionStart = start + 2;
-      target.selectionEnd = start + 2;
-    });
-  };
+  const saveCommandRef = useRef({
+    disabled: Boolean(loading || saving),
+    onSave,
+  });
 
   useEffect(() => {
-    const handleKeydown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-        const target = event.target as HTMLElement | null;
-        if (!target?.closest?.('.app-dev-code-editor')) {
-          return;
-        }
-        event.preventDefault();
-        onSave();
-      }
+    saveCommandRef.current = {
+      disabled: Boolean(loading || saving),
+      onSave,
     };
+  }, [loading, onSave, saving]);
 
-    window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
-  }, [onSave]);
+  const editorOptions = useMemo(
+    () => ({
+      ariaLabel: '网页应用代码编辑器',
+      automaticLayout: true,
+      bracketPairColorization: { enabled: true },
+      cursorBlinking: 'smooth' as const,
+      cursorSmoothCaretAnimation: 'on' as const,
+      fixedOverflowWidgets: true,
+      fontFamily:
+        "'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace",
+      fontLigatures: true,
+      fontSize: 13,
+      formatOnPaste: true,
+      formatOnType: true,
+      guides: {
+        bracketPairs: true,
+        indentation: true,
+      },
+      insertSpaces: true,
+      lineHeight: 21,
+      minimap: { enabled: false },
+      padding: { bottom: 14, top: 14 },
+      readOnly: Boolean(saving),
+      renderLineHighlight: 'all' as const,
+      renderWhitespace: 'selection' as const,
+      scrollBeyondLastLine: false,
+      smoothScrolling: true,
+      stickyScroll: { enabled: true },
+      tabSize: 2,
+      wordWrap: 'off' as const,
+    }),
+    [saving],
+  );
+
+  const handleEditorMount = useCallback<MonacoEditorMount>((editor, monaco) => {
+    editor.addAction({
+      id: 'app-dev.save-current-file',
+      label: '保存当前文件',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: () => {
+        const command = saveCommandRef.current;
+        if (!command.disabled) {
+          command.onSave();
+        }
+      },
+    });
+  }, []);
 
   if (!path) {
     return (
@@ -103,15 +141,36 @@ export const CodeEditor = ({
       ) : (
         <>
           <div className="app-dev-code-editor__surface">
-            <textarea
-              key={path}
-              value={value}
-              spellCheck={false}
-              aria-label="网页应用代码编辑器"
-              readOnly={saving}
-              onChange={event => onChange(event.target.value)}
-              onKeyDown={handleEditorKeyDown}
-            />
+            <ErrorBoundary
+              resetKeys={[path]}
+              fallbackRender={() => (
+                <div
+                  className="app-dev-code-editor__editor-state app-dev-code-editor__editor-state--error"
+                  role="alert"
+                >
+                  代码编辑器加载失败，请刷新页面后重试。
+                </div>
+              )}
+            >
+              <Editor
+                className="app-dev-code-editor__monaco"
+                height="100%"
+                keepCurrentModel={false}
+                language={language}
+                loading={
+                  <div className="app-dev-code-editor__editor-state">
+                    正在加载代码编辑器...
+                  </div>
+                }
+                onChange={nextValue => onChange(nextValue ?? '')}
+                onMount={handleEditorMount}
+                options={editorOptions}
+                path={path}
+                saveViewState
+                theme="vs-dark"
+                value={value}
+              />
+            </ErrorBoundary>
           </div>
           <footer>
             <span>UTF-8</span>

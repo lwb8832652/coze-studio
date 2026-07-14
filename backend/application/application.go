@@ -19,6 +19,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/plantask"
@@ -116,17 +117,18 @@ type primaryServices struct {
 	basicServices *basicServices
 	infra         *appinfra.AppDependencies
 
-	pluginSVC      *plugin.PluginApplicationService
-	memorySVC      *memory.MemoryApplicationServices
-	knowledgeSVC   *knowledge.KnowledgeApplicationService
-	workflowSVC    *workflow.ApplicationService
-	shortcutSVC    *shortcutcmd.ShortcutCmdApplicationService
-	agentThreadSVC *agentthread.ApplicationService
-	skillSVC       *skill.ApplicationService
-	mcpToolSVC     *mcptool.ApplicationService
-	taskSVC        *task.ApplicationService
-	workbenchSVC   *workbench.ApplicationService
-	appSVC         *app.APPApplicationService
+	pluginSVC            *plugin.PluginApplicationService
+	memorySVC            *memory.MemoryApplicationServices
+	knowledgeSVC         *knowledge.KnowledgeApplicationService
+	workflowSVC          *workflow.ApplicationService
+	shortcutSVC          *shortcutcmd.ShortcutCmdApplicationService
+	agentThreadSVC       *agentthread.ApplicationService
+	skillSVC             *skill.ApplicationService
+	mcpToolSVC           *mcptool.ApplicationService
+	mcpManagementRuntime *mcpManagementRuntime
+	taskSVC              *task.ApplicationService
+	workbenchSVC         *workbench.ApplicationService
+	appSVC               *app.APPApplicationService
 }
 
 type complexServices struct {
@@ -153,8 +155,12 @@ func Init(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("Init - initBasicServices failed, err: %v", err)
 	}
+	mcpRuntimeConfig, err := agentthread.ADKMCPRuntimeBootstrapConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("Init - configure agent mcp runtime: %w", err)
+	}
 
-	primaryServices, err := initPrimaryServices(ctx, basicServices)
+	primaryServices, err := initPrimaryServices(ctx, basicServices, mcpRuntimeConfig.Enabled)
 	if err != nil {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
@@ -207,9 +213,34 @@ func Init(ctx context.Context) (err error) {
 			)
 		},
 	)
-	mcpRuntimeConfig, err := agentthread.ADKMCPRuntimeBootstrapConfigFromEnv()
+	mcpWorkdirManager, mcpWorkdirPreparer, err := newMCPRuntimeSharedWorkdir(mcpRuntimeConfig)
 	if err != nil {
-		return fmt.Errorf("Init - configure agent mcp runtime: %w", err)
+		return fmt.Errorf("Init - configure mcp workdir runtime: %w", err)
+	}
+	mcpManagementRuntime, err := bindMCPManagementRuntime(
+		primaryServices.mcpToolSVC,
+		mcpRuntimeConfig,
+		mcpWorkdirManager,
+	)
+	if err != nil {
+		if mcpWorkdirManager != nil {
+			_ = mcpWorkdirManager.Close()
+		}
+		return fmt.Errorf("Init - bind mcp management runtime: %w", err)
+	}
+	primaryServices.mcpManagementRuntime = mcpManagementRuntime
+	if mcpManagementRuntime != nil || mcpWorkdirManager != nil {
+		if err := applicationShutdowns.Register(&mcpManagementRuntimeLifecycle{
+			runtime: mcpManagementRuntime, workdirManager: mcpWorkdirManager,
+		}); err != nil {
+			if mcpManagementRuntime != nil {
+				_ = mcpManagementRuntime.Shutdown(context.Background())
+			}
+			if mcpWorkdirManager != nil {
+				_ = mcpWorkdirManager.Close()
+			}
+			return fmt.Errorf("Init - register mcp management runtime shutdown: %w", err)
+		}
 	}
 	mcpWorkdirLeaseRepository := threadrepository.NewMCPRuntimeWorkdirLeaseRepository(
 		infra.DB,
@@ -228,10 +259,11 @@ func Init(ctx context.Context) (err error) {
 			return primaryServices.mcpToolSVC.RecordRuntimeHealth(
 				ctx,
 				mcptool.MCPRuntimeHealthReport{
-					ServerID:  report.ServerID,
-					Success:   report.Success,
-					ErrorCode: report.ErrorCode,
-					LatencyMs: report.LatencyMs,
+					ServerID:          report.ServerID,
+					ExpectedUpdatedAt: report.ExpectedUpdatedAt,
+					Success:           report.Success,
+					ErrorCode:         report.ErrorCode,
+					LatencyMs:         report.LatencyMs,
 				},
 			)
 		},
@@ -246,6 +278,7 @@ func Init(ctx context.Context) (err error) {
 			Resolver:        primaryServices.mcpToolSVC,
 			LeaseRepository: mcpWorkdirLeaseRepository,
 			IDGen:           infra.IDGenSVC,
+			WorkdirPreparer: mcpWorkdirPreparer,
 			EventSink:       adkEventSink,
 			AuditRecorder:   mcpRuntimeAuditRecorder,
 			HealthReporter:  mcpRuntimeHealthReporter,
@@ -356,10 +389,14 @@ func Init(ctx context.Context) (err error) {
 		primaryServices.agentThreadSVC.GuardrailAuditRepository,
 		primaryServices.infra.OSS,
 	)
-	agentthread.StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnv(
+	_, mcpWorkdirReaperStatus := agentthread.StartADKMCPRuntimeStdioWorkdirLeaseReaperWorkerFromEnvWithStatus(
 		ctx,
 		mcpWorkdirLeaseRepository,
+		mcpWorkdirPreparer,
 	)
+	if mcpWorkdirReaperStatus.Enabled && !mcpWorkdirReaperStatus.Started {
+		return fmt.Errorf("Init - start mcp stdio workdir lease reaper: %s", mcpWorkdirReaperStatus.Reason)
+	}
 
 	// Initialize permission service first as it's required by other services
 	crosspermission.SetDefaultSVC(permissionImpl.InitDomainService(basicServices.permissionSVC.DomainSVC))
@@ -434,8 +471,24 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	}, nil
 }
 
+func mcpCatalogOptionsFromEnv(enabled bool) ([]mcptool.MySQLCatalogOption, error) {
+	if !enabled {
+		return nil, nil
+	}
+	secret := os.Getenv(mcptool.MCPAESAuthSecretEnv)
+	if secret == "" {
+		return nil, fmt.Errorf("%s is required when MCP management/runtime is enabled", mcptool.MCPAESAuthSecretEnv)
+	}
+	codec, err := mcptool.NewAESMCPAuthCodec(secret)
+	if err != nil {
+		return nil, fmt.Errorf("%s must contain a valid 16, 24, or 32-byte key: %w", mcptool.MCPAESAuthSecretEnv, err)
+	}
+
+	return []mcptool.MySQLCatalogOption{mcptool.WithMySQLCatalogAuthCodec(codec)}, nil
+}
+
 // initPrimaryServices init primary services that depends on basic services.
-func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*primaryServices, error) {
+func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpEnabled bool) (*primaryServices, error) {
 	pluginSVC, err := plugin.InitService(ctx, basicServices.toPluginServiceComponents())
 	if err != nil {
 		return nil, err
@@ -463,9 +516,16 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		ObjectStorage:   basicServices.infra.OSS,
 		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
+	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpEnabled)
+	if err != nil {
+		return nil, err
+	}
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
-		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB),
+		Enabled:                     &mcpEnabled,
+		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB, mcpCatalogOptions...),
+		AuditRepository:             mcptool.NewMySQLManagementAuditRepository(basicServices.infra.DB),
 		IDGen:                       basicServices.infra.IDGenSVC,
+		UserSpaceRoleReader:         basicServices.userSVC.DomainSVC,
 		DefaultDeerFlowMCPConfigRaw: mcptool.DefaultDeerFlowMCPConfigRaw(),
 	})
 	skillSVC := skill.InitService(&skill.ServiceComponents{
@@ -473,6 +533,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices) (*pr
 		IDGen:                 basicServices.infra.IDGenSVC,
 		CodeRunner:            basicServices.infra.CodeRunner,
 		ToolCandidateProvider: mcpToolSVC,
+		UserSpaceReader:       basicServices.userSVC.DomainSVC,
 	})
 	taskSVC := task.InitService(&task.ServiceComponents{
 		DB:    basicServices.infra.DB,

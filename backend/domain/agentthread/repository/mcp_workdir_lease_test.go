@@ -155,6 +155,70 @@ func TestMCPRuntimeWorkdirLeaseRepositoryListsExpiredActiveLeases(
 	}
 }
 
+func TestMCPRuntimeWorkdirLeaseRepositoryClaimsExpiredLeaseExactlyOnce(t *testing.T) {
+	repo := newTestMCPRuntimeWorkdirLeaseRepository(t)
+	lease := sampleMCPRuntimeWorkdirLease(4001)
+	lease.LeaseExpiresAt = 100
+	require.NoError(t, repo.CreateMCPRuntimeWorkdirLease(context.Background(), lease))
+
+	claimed, ok, err := repo.ClaimExpiredMCPRuntimeWorkdirLease(
+		context.Background(),
+		ClaimExpiredMCPRuntimeWorkdirLeaseRequest{
+			LeaseID:                4001,
+			ExpectedWorkerID:       "worker-a",
+			ExpectedWorkdir:        lease.Workdir,
+			ExpectedLeaseExpiresAt: 100,
+			ClaimWorkerID:          "reaper-claim-a",
+			Now:                    200,
+			ClaimExpiresAt:         500,
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "reaper-claim-a", claimed.WorkerID)
+	require.Equal(t, int64(500), claimed.LeaseExpiresAt)
+	_, ok, err = repo.ClaimExpiredMCPRuntimeWorkdirLease(
+		context.Background(),
+		ClaimExpiredMCPRuntimeWorkdirLeaseRequest{
+			LeaseID:                4001,
+			ExpectedWorkerID:       "worker-a",
+			ExpectedWorkdir:        lease.Workdir,
+			ExpectedLeaseExpiresAt: 100,
+			ClaimWorkerID:          "reaper-claim-b",
+			Now:                    200,
+			ClaimExpiresAt:         500,
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestMCPRuntimeWorkdirLeaseRepositoryKeepsCleanupFailureActiveWithBackoff(t *testing.T) {
+	repo := newTestMCPRuntimeWorkdirLeaseRepository(t)
+	lease := sampleMCPRuntimeWorkdirLease(4001)
+	lease.WorkerID = "reaper-claim-a"
+	require.NoError(t, repo.CreateMCPRuntimeWorkdirLease(context.Background(), lease))
+
+	retried, ok, err := repo.RetryMCPRuntimeWorkdirLease(
+		context.Background(),
+		RetryMCPRuntimeWorkdirLeaseRequest{
+			LeaseID:   4001,
+			WorkerID:  "reaper-claim-a",
+			Now:       300,
+			RetryAt:   900,
+			LastError: "cleanup retryable",
+		},
+	)
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, entity.MCPRuntimeWorkdirLeaseStatusActive, retried.Status)
+	require.Equal(t, int64(900), retried.LeaseExpiresAt)
+	require.Equal(t, int64(300), retried.UpdatedAt)
+	require.Equal(t, "cleanup retryable", retried.LastError)
+}
+
 func newTestMCPRuntimeWorkdirLeaseRepository(
 	t *testing.T,
 ) MCPRuntimeWorkdirLeaseRepository {

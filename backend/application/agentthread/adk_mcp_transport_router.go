@@ -20,13 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/coze-dev/coze-studio/backend/application/mcpruntime"
 )
 
 const (
-	adkMCPRuntimeTransportStdio          = "stdio"
-	adkMCPRuntimeTransportSSE            = "sse"
-	adkMCPRuntimeTransportStreamableHTTP = "streamable_http"
+	adkMCPRuntimeTransportStdio          = mcpruntime.ServerTypeStdio
+	adkMCPRuntimeTransportSSE            = mcpruntime.ServerTypeSSE
+	adkMCPRuntimeTransportStreamableHTTP = mcpruntime.ServerTypeStreamableHTTP
 )
 
 type ADKMCPRuntimeTransportRouterOptions struct {
@@ -142,14 +143,9 @@ func normalizeADKMCPRuntimeTransportType(
 	if call.Server == nil {
 		return ""
 	}
-	switch strings.ToLower(strings.TrimSpace(call.Server.ServerType)) {
-	case "http", "streamable-http", adkMCPRuntimeTransportStreamableHTTP:
-		return adkMCPRuntimeTransportStreamableHTTP
-	case adkMCPRuntimeTransportStdio:
-		return adkMCPRuntimeTransportStdio
-	case adkMCPRuntimeTransportSSE:
-		return adkMCPRuntimeTransportSSE
-	default:
+	serverType, err := mcpruntime.NormalizeServerType(call.Server.ServerType)
+	if err != nil {
 		return ""
 	}
+	return serverType
 }

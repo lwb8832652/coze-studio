@@ -2,7 +2,7 @@
  * Copyright 2025 coze-dev Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
- * You may not use this file except in compliance with the License.
+ * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,6 +18,8 @@ package agentthread
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -29,7 +31,9 @@ import (
 
 const (
 	defaultADKMCPRuntimeStdioWorkdirLeaseReaperBatchSize = int32(10)
+	defaultADKMCPRuntimeStdioWorkdirLeaseRetryDelay      = time.Minute
 	adkMCPRuntimeStdioWorkdirStaleLeaseError             = "stale lease expired"
+	adkMCPRuntimeStdioWorkdirRetryableError              = "cleanup retryable"
 )
 
 type ADKMCPRuntimeStdioWorkdirLeaseReaperOptions struct {
@@ -37,6 +41,9 @@ type ADKMCPRuntimeStdioWorkdirLeaseReaperOptions struct {
 	Root            string
 	WorkdirPreparer ADKMCPRuntimeStdioWorkdirPreparer
 	BatchSize       int32
+	CleanupTimeout  time.Duration
+	RetryDelay      time.Duration
+	ClaimTTL        time.Duration
 	NowMillis       func() int64
 }
 
@@ -45,13 +52,18 @@ type ADKMCPRuntimeStdioWorkdirLeaseReaper struct {
 	root            string
 	workdirPreparer ADKMCPRuntimeStdioWorkdirPreparer
 	batchSize       int32
+	cleanupTimeout  time.Duration
+	retryDelay      time.Duration
+	claimTTL        time.Duration
 	nowMillis       func() int64
 }
 
 type ADKMCPRuntimeStdioWorkdirLeaseReaperResult struct {
 	Listed   int
+	Claimed  int
 	Cleaned  int
 	Finished int
+	Retried  int
 	Invalid  int
 	Failed   int
 }
@@ -62,25 +74,41 @@ func NewADKMCPRuntimeStdioWorkdirLeaseReaper(
 	root := filepath.Clean(strings.TrimSpace(options.Root))
 	preparer := options.WorkdirPreparer
 	if preparer == nil {
-		preparer = NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
-			ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{Root: root},
+		filesystemPreparer := NewADKMCPRuntimeStdioFilesystemWorkdirPreparer(
+			ADKMCPRuntimeStdioFilesystemWorkdirPreparerOptions{
+				Root: root, CleanupTimeout: options.CleanupTimeout,
+			},
 		)
+		preparer = filesystemPreparer
+		if filesystemPreparer.Valid() {
+			root = filesystemPreparer.Root()
+		}
 	}
 	batchSize := options.BatchSize
 	if batchSize <= 0 {
 		batchSize = defaultADKMCPRuntimeStdioWorkdirLeaseReaperBatchSize
 	}
+	cleanupTimeout := options.CleanupTimeout
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = defaultADKMCPRuntimeStdioWorkdirCleanupTimeout
+	}
+	retryDelay := options.RetryDelay
+	if retryDelay <= 0 {
+		retryDelay = defaultADKMCPRuntimeStdioWorkdirLeaseRetryDelay
+	}
+	claimTTL := options.ClaimTTL
+	minimumClaimTTL := cleanupTimeout + defaultADKMCPRuntimeStdioWorkdirCleanupMargin
+	if claimTTL < minimumClaimTTL {
+		claimTTL = minimumClaimTTL
+	}
 	nowMillis := options.NowMillis
 	if nowMillis == nil {
 		nowMillis = func() int64 { return time.Now().UnixMilli() }
 	}
-
 	return &ADKMCPRuntimeStdioWorkdirLeaseReaper{
-		repository:      options.Repository,
-		root:            root,
-		workdirPreparer: preparer,
-		batchSize:       batchSize,
-		nowMillis:       nowMillis,
+		repository: options.Repository, root: root, workdirPreparer: preparer,
+		batchSize: batchSize, cleanupTimeout: cleanupTimeout,
+		retryDelay: retryDelay, claimTTL: claimTTL, nowMillis: nowMillis,
 	}
 }
 
@@ -94,50 +122,88 @@ func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) CleanupExpiredADKMCPRuntimeStdioW
 	now := r.now()
 	leases, err := r.repository.ListExpiredMCPRuntimeWorkdirLeases(
 		ctx,
-		domainrepo.ListExpiredMCPRuntimeWorkdirLeasesRequest{
-			Now:   now,
-			Limit: r.batchSize,
-		},
+		domainrepo.ListExpiredMCPRuntimeWorkdirLeasesRequest{Now: now, Limit: r.batchSize},
 	)
 	if err != nil {
 		return result, errors.New("mcp runtime stdio workdir lease cleanup failed")
 	}
 	result.Listed = len(leases)
 	for _, lease := range leases {
-		r.cleanupOne(ctx, now, lease, &result)
+		r.cleanupOne(lease, &result)
 	}
-
 	return result, nil
 }
 
 func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) cleanupOne(
-	ctx context.Context,
-	now int64,
-	lease *domainentity.MCPRuntimeWorkdirLease,
+	listed *domainentity.MCPRuntimeWorkdirLease,
 	result *ADKMCPRuntimeStdioWorkdirLeaseReaperResult,
 ) {
-	prepared, ok := r.preparedWorkdirFromLease(lease)
-	if !ok {
+	now := r.now()
+	if !validExpiredADKMCPRuntimeStdioLease(listed, now) {
 		result.Invalid++
 		result.Failed++
 		return
 	}
-	if err := r.workdirPreparer.CleanupADKMCPRuntimeStdioWorkdir(ctx, prepared); err != nil {
+	claimWorkerID, ok := newADKMCPRuntimeStdioWorkdirClaimID()
+	if !ok {
 		result.Failed++
 		return
 	}
-	result.Cleaned++
-
-	_, updated, err := r.repository.FinishMCPRuntimeWorkdirLease(
-		ctx,
-		domainrepo.FinishMCPRuntimeWorkdirLeaseRequest{
-			LeaseID:   lease.ID,
-			WorkerID:  strings.TrimSpace(lease.WorkerID),
-			Status:    domainentity.MCPRuntimeWorkdirLeaseStatusFailed,
-			Now:       now,
-			LastError: adkMCPRuntimeStdioWorkdirStaleLeaseError,
+	claimExpiresAt := now + r.claimTTL.Milliseconds()
+	claimCtx, cancelClaim := context.WithTimeout(context.Background(), r.cleanupTimeout)
+	claimed, claimedOK, err := r.repository.ClaimExpiredMCPRuntimeWorkdirLease(
+		claimCtx,
+		domainrepo.ClaimExpiredMCPRuntimeWorkdirLeaseRequest{
+			LeaseID:                listed.ID,
+			ExpectedWorkerID:       strings.TrimSpace(listed.WorkerID),
+			ExpectedWorkdir:        filepath.Clean(strings.TrimSpace(listed.Workdir)),
+			ExpectedLeaseExpiresAt: listed.LeaseExpiresAt,
+			ClaimWorkerID:          claimWorkerID,
+			Now:                    now, ClaimExpiresAt: claimExpiresAt,
 		},
 	)
+	cancelClaim()
+	if err != nil {
+		result.Failed++
+		return
+	}
+	if !claimedOK || claimed == nil {
+		return
+	}
+	result.Claimed++
+	getCtx, cancelGet := context.WithTimeout(context.Background(), r.cleanupTimeout)
+	current, err := r.repository.GetMCPRuntimeWorkdirLease(getCtx, listed.ID)
+	cancelGet()
+	if err != nil || !sameClaimedADKMCPRuntimeStdioLease(
+		listed, claimed, current, claimWorkerID, claimExpiresAt,
+	) {
+		result.Failed++
+		return
+	}
+	prepared, valid := r.preparedWorkdirFromLease(current)
+	if !valid {
+		result.Invalid++
+		r.retryClaim(current, result)
+		return
+	}
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), r.cleanupTimeout)
+	cleanupErr := r.workdirPreparer.CleanupADKMCPRuntimeStdioWorkdir(cleanupCtx, prepared)
+	cancelCleanup()
+	if cleanupErr != nil {
+		r.retryClaim(current, result)
+		return
+	}
+	result.Cleaned++
+	finishCtx, cancelFinish := context.WithTimeout(context.Background(), r.cleanupTimeout)
+	_, updated, err := r.repository.FinishMCPRuntimeWorkdirLease(
+		finishCtx,
+		domainrepo.FinishMCPRuntimeWorkdirLeaseRequest{
+			LeaseID: current.ID, WorkerID: claimWorkerID,
+			Status: domainentity.MCPRuntimeWorkdirLeaseStatusFailed,
+			Now:    r.now(), LastError: adkMCPRuntimeStdioWorkdirStaleLeaseError,
+		},
+	)
+	cancelFinish()
 	if err != nil || !updated {
 		result.Failed++
 		return
@@ -145,44 +211,105 @@ func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) cleanupOne(
 	result.Finished++
 }
 
+func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) retryClaim(
+	lease *domainentity.MCPRuntimeWorkdirLease,
+	result *ADKMCPRuntimeStdioWorkdirLeaseReaperResult,
+) {
+	now := r.now()
+	retryCtx, cancelRetry := context.WithTimeout(context.Background(), r.cleanupTimeout)
+	_, updated, err := r.repository.RetryMCPRuntimeWorkdirLease(
+		retryCtx,
+		domainrepo.RetryMCPRuntimeWorkdirLeaseRequest{
+			LeaseID: lease.ID, WorkerID: strings.TrimSpace(lease.WorkerID),
+			Now: now, RetryAt: now + r.retryDelay.Milliseconds(),
+			LastError: adkMCPRuntimeStdioWorkdirRetryableError,
+		},
+	)
+	cancelRetry()
+	if err != nil || !updated {
+		result.Failed++
+		return
+	}
+	result.Retried++
+}
+
 func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) preparedWorkdirFromLease(
 	lease *domainentity.MCPRuntimeWorkdirLease,
 ) (ADKMCPRuntimeStdioPreparedWorkdir, bool) {
-	if lease == nil ||
-		lease.ID <= 0 ||
+	if lease == nil || lease.ID <= 0 ||
 		lease.Status != domainentity.MCPRuntimeWorkdirLeaseStatusActive ||
 		strings.TrimSpace(lease.WorkerID) == "" {
 		return ADKMCPRuntimeStdioPreparedWorkdir{}, false
 	}
-	workdir := strings.TrimSpace(lease.Workdir)
-	if workdir == "" || !filepath.IsAbs(workdir) {
+	workdir := filepath.Clean(strings.TrimSpace(lease.Workdir))
+	if !filepath.IsAbs(workdir) || workdir == r.root ||
+		!adkMCPRuntimePathWithin(workdir, r.root) ||
+		!strings.HasPrefix(filepath.Base(workdir), adkMCPRuntimeStdioInvocationDirPrefix) {
 		return ADKMCPRuntimeStdioPreparedWorkdir{}, false
 	}
-	cleanWorkdir := filepath.Clean(workdir)
-	if cleanWorkdir == r.root || !adkMCPRuntimePathWithin(cleanWorkdir, r.root) {
-		return ADKMCPRuntimeStdioPreparedWorkdir{}, false
-	}
-
 	return ADKMCPRuntimeStdioPreparedWorkdir{
-		Root:          r.root,
-		WorkingDir:    cleanWorkdir,
-		LeaseID:       lease.ID,
-		LeaseWorkerID: strings.TrimSpace(lease.WorkerID),
+		Root: r.root, WorkingDir: workdir,
+		LeaseID: lease.ID, LeaseWorkerID: strings.TrimSpace(lease.WorkerID),
 	}, true
 }
 
 func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) validConfig() bool {
-	return r != nil &&
-		r.repository != nil &&
-		r.workdirPreparer != nil &&
-		filepath.IsAbs(r.root) &&
-		r.batchSize > 0
+	if r == nil || r.repository == nil || r.workdirPreparer == nil ||
+		!filepath.IsAbs(r.root) || r.batchSize <= 0 || r.cleanupTimeout <= 0 ||
+		r.retryDelay <= 0 || r.claimTTL <= r.cleanupTimeout {
+		return false
+	}
+	if preparer, ok := r.workdirPreparer.(*ADKMCPRuntimeStdioFilesystemWorkdirPreparer); ok {
+		return preparer.Valid() && preparer.Root() == r.root
+	}
+	return true
 }
 
 func (r *ADKMCPRuntimeStdioWorkdirLeaseReaper) now() int64 {
 	if r == nil || r.nowMillis == nil {
 		return time.Now().UnixMilli()
 	}
-
 	return r.nowMillis()
+}
+
+func validExpiredADKMCPRuntimeStdioLease(
+	lease *domainentity.MCPRuntimeWorkdirLease,
+	now int64,
+) bool {
+	return lease != nil && lease.ID > 0 &&
+		lease.Status == domainentity.MCPRuntimeWorkdirLeaseStatusActive &&
+		strings.TrimSpace(lease.WorkerID) != "" &&
+		filepath.IsAbs(strings.TrimSpace(lease.Workdir)) &&
+		lease.LeaseExpiresAt > 0 && lease.LeaseExpiresAt <= now
+}
+
+func sameClaimedADKMCPRuntimeStdioLease(
+	listed *domainentity.MCPRuntimeWorkdirLease,
+	claimed *domainentity.MCPRuntimeWorkdirLease,
+	current *domainentity.MCPRuntimeWorkdirLease,
+	claimWorkerID string,
+	claimExpiresAt int64,
+) bool {
+	if listed == nil || claimed == nil || current == nil {
+		return false
+	}
+	expectedPath := filepath.Clean(strings.TrimSpace(listed.Workdir))
+	for _, lease := range []*domainentity.MCPRuntimeWorkdirLease{claimed, current} {
+		if lease.ID != listed.ID ||
+			lease.Status != domainentity.MCPRuntimeWorkdirLeaseStatusActive ||
+			strings.TrimSpace(lease.WorkerID) != claimWorkerID ||
+			filepath.Clean(strings.TrimSpace(lease.Workdir)) != expectedPath ||
+			lease.LeaseExpiresAt != claimExpiresAt {
+			return false
+		}
+	}
+	return true
+}
+
+func newADKMCPRuntimeStdioWorkdirClaimID() (string, bool) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", false
+	}
+	return "reaper-" + hex.EncodeToString(nonce), true
 }
