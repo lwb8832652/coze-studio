@@ -50,6 +50,7 @@ export const SPACE_SUB_MODULE = {
   DEVELOP: 'develop',
   TOOLS: 'tools',
   WORKSPACE: 'workspace',
+  TASK_CENTER: 'task-center',
   TASKS: 'chats',
 } as const;
 
@@ -99,6 +100,11 @@ export const WORKSPACE_MENU_META = [
     label: '工作空间',
     path: SPACE_SUB_MODULE.WORKSPACE,
     dataTestId: 'navigation_workspace_settings',
+  },
+  {
+    label: '任务中心',
+    path: SPACE_SUB_MODULE.TASK_CENTER,
+    dataTestId: 'navigation_workspace_task_center',
   },
   {
     label: '全部任务',

@@ -57,6 +57,7 @@ import {
   SystemManagementPage,
   TaskDetailPage,
   TasksPage,
+  TaskCenterPage,
 } from './async-components';
 
 const TaskThreadDetailRedirect = () => {
@@ -282,6 +283,13 @@ export const router: ReturnType<typeof createBrowserRouter> =
                 },
 
                 // Tasks
+                {
+                  path: 'task-center',
+                  Component: TaskCenterPage,
+                  loader: () => ({
+                    subMenuKey: SPACE_SUB_MODULE.TASK_CENTER,
+                  }),
+                },
                 {
                   path: 'tasks/:task_id',
                   Component: TaskDetailPage,

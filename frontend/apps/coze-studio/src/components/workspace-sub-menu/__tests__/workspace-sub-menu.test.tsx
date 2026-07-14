@@ -323,6 +323,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
       '技能配置',
       '开发配置',
       '工作空间',
+      '任务中心',
       '全部任务',
     ]);
     expect(WORKSPACE_MENU_META[0]).toMatchObject({
@@ -343,7 +344,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
       path: 'workspace',
     });
     expect(paths).not.toContain('tools');
-    expect(paths).not.toContain('task-trigger');
+    expect(paths).toContain('task-center');
   });
 
   it('hides developer feature menus for every role when workspace development is disabled', () => {
@@ -360,9 +361,24 @@ describe('NewX AI WorkspaceSubMenu', () => {
       role_type: 1,
     }).map(item => item.label);
 
-    expect(memberLabels).toEqual(['新建任务', '工作空间', '全部任务']);
-    expect(adminLabels).toEqual(['新建任务', '工作空间', '全部任务']);
-    expect(ownerLabels).toEqual(['新建任务', '工作空间', '全部任务']);
+    expect(memberLabels).toEqual([
+      '新建任务',
+      '工作空间',
+      '任务中心',
+      '全部任务',
+    ]);
+    expect(adminLabels).toEqual([
+      '新建任务',
+      '工作空间',
+      '任务中心',
+      '全部任务',
+    ]);
+    expect(ownerLabels).toEqual([
+      '新建任务',
+      '工作空间',
+      '任务中心',
+      '全部任务',
+    ]);
   });
 
   it('keeps workspace settings visible for personal spaces and regular team members', () => {
@@ -521,6 +537,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
       '技能配置',
       '开发配置',
       '工作空间',
+      '任务中心',
       '全部任务',
     ]);
     expect(container.textContent).not.toContain('工具');

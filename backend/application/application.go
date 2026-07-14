@@ -40,6 +40,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/openauth"
 	"github.com/coze-dev/coze-studio/backend/application/plugin"
 	"github.com/coze-dev/coze-studio/backend/application/prompt"
+	"github.com/coze-dev/coze-studio/backend/application/scheduledtask"
 	"github.com/coze-dev/coze-studio/backend/application/search"
 	"github.com/coze-dev/coze-studio/backend/application/shortcutcmd"
 	"github.com/coze-dev/coze-studio/backend/application/singleagent"
@@ -127,6 +128,8 @@ type primaryServices struct {
 	mcpToolSVC           *mcptool.ApplicationService
 	mcpManagementRuntime *mcpManagementRuntime
 	taskSVC              *task.ApplicationService
+	scheduledTaskSVC     *scheduledtask.ApplicationService
+	scheduledTaskWorker  *scheduledtask.Worker
 	workbenchSVC         *workbench.ApplicationService
 	appSVC               *app.APPApplicationService
 }
@@ -379,6 +382,7 @@ func Init(ctx context.Context) (err error) {
 	agentthread.StartRunLeaseRecoveryWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartMemoryFlushWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartArtifactScanWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
+	primaryServices.scheduledTaskWorker.Start(ctx)
 	agentthread.StartGuardrailAuditArchiveWorkerFromEnv(
 		ctx,
 		primaryServices.agentThreadSVC.GuardrailAuditRepository,
@@ -539,6 +543,18 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpE
 		DB:    basicServices.infra.DB,
 		IDGen: basicServices.infra.IDGenSVC,
 	})
+	scheduledTaskSVC, scheduledTaskWorker, err := scheduledtask.InitService(&scheduledtask.ServiceComponents{
+		DB:                basicServices.infra.DB,
+		IDGen:             basicServices.infra.IDGenSVC,
+		UserSpaceReader:   basicServices.userSVC.DomainSVC,
+		UserProfileReader: basicServices.userSVC.DomainSVC,
+		AgentThreadClient: agentThreadSVC,
+		WorkflowDomain:    workflowDomainSVC.DomainSVC,
+		RootContext:       ctx,
+	})
+	if err != nil {
+		return nil, err
+	}
 	workbenchSVC := workbench.InitService(&workbench.ServiceComponents{
 		SkillSVC:       skillSVC,
 		TaskSVC:        taskSVC,
@@ -547,18 +563,20 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpE
 	})
 
 	return &primaryServices{
-		basicServices:  basicServices,
-		pluginSVC:      pluginSVC,
-		memorySVC:      memorySVC,
-		knowledgeSVC:   knowledgeSVC,
-		workflowSVC:    workflowDomainSVC,
-		shortcutSVC:    shortcutSVC,
-		agentThreadSVC: agentThreadSVC,
-		skillSVC:       skillSVC,
-		mcpToolSVC:     mcpToolSVC,
-		taskSVC:        taskSVC,
-		workbenchSVC:   workbenchSVC,
-		infra:          basicServices.infra,
+		basicServices:       basicServices,
+		pluginSVC:           pluginSVC,
+		memorySVC:           memorySVC,
+		knowledgeSVC:        knowledgeSVC,
+		workflowSVC:         workflowDomainSVC,
+		shortcutSVC:         shortcutSVC,
+		agentThreadSVC:      agentThreadSVC,
+		skillSVC:            skillSVC,
+		mcpToolSVC:          mcpToolSVC,
+		taskSVC:             taskSVC,
+		scheduledTaskSVC:    scheduledTaskSVC,
+		scheduledTaskWorker: scheduledTaskWorker,
+		workbenchSVC:        workbenchSVC,
+		infra:               basicServices.infra,
 	}, nil
 }
 

@@ -76,6 +76,9 @@ export const SystemManagementPage = lazy(() => import('../pages/system'));
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));
 
+// scheduled task center page
+export const TaskCenterPage = lazy(() => import('../pages/task-center'));
+
 // task detail page
 export const TaskDetailPage = lazy(() => import('../pages/tasks/detail'));
 
