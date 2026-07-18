@@ -22,6 +22,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,118 @@ import (
 	domainappdev "github.com/coze-dev/coze-studio/backend/domain/appdev"
 	infraappdev "github.com/coze-dev/coze-studio/backend/infra/appdev"
 )
+
+type archiveLocalStoreForTest struct {
+	*infraappdev.LocalStore
+
+	mu      sync.Mutex
+	intents map[string]*domainappdev.ProjectArchiveIntent
+}
+
+func newArchiveLocalStoreForTest(root string) *archiveLocalStoreForTest {
+	return &archiveLocalStoreForTest{
+		LocalStore: infraappdev.NewLocalStoreForTest(root),
+		intents:    make(map[string]*domainappdev.ProjectArchiveIntent),
+	}
+}
+
+func (s *archiveLocalStoreForTest) GetProject(
+	ctx context.Context,
+	spaceID string,
+	projectID string,
+) (*domainappdev.Project, error) {
+	project, err := s.LocalStore.GetProject(ctx, spaceID, projectID)
+	if err == nil && project.SourceVersion <= 0 {
+		project.SourceVersion = 1
+	}
+	return project, err
+}
+
+func (s *archiveLocalStoreForTest) LoadProjectArchive(
+	_ context.Context,
+	input domainappdev.LoadProjectArchiveInput,
+) (*domainappdev.ProjectArchiveIntent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent := s.intents[input.SpaceID+"/"+input.ProjectID]
+	if intent == nil {
+		return nil, domainappdev.ErrProjectArchiveNotFound
+	}
+	copy := *intent
+	return &copy, nil
+}
+
+func (s *archiveLocalStoreForTest) ReserveProjectArchive(
+	ctx context.Context,
+	input domainappdev.ReserveProjectArchiveInput,
+) (*domainappdev.ProjectArchiveIntent, error) {
+	if err := domainappdev.ValidateReserveProjectArchiveInput(input); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := input.SpaceID + "/" + input.ProjectID
+	if existing := s.intents[key]; existing != nil {
+		if existing.SourceVersion != input.ExpectedSourceVersion ||
+			existing.RuntimeGeneration != input.RuntimeGeneration {
+			return nil, domainappdev.ErrProjectArchiveConflict
+		}
+		copy := *existing
+		return &copy, nil
+	}
+	project, err := s.GetProject(ctx, input.SpaceID, input.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if project.SourceVersion != input.ExpectedSourceVersion {
+		return nil, domainappdev.ErrProjectArchiveConflict
+	}
+	identity, err := domainappdev.NewProjectArchiveIntentIdentity(
+		input.SpaceID,
+		input.ProjectID,
+		input.ExpectedSourceVersion,
+		input.RuntimeGeneration,
+		1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	intent := &domainappdev.ProjectArchiveIntent{
+		ProjectArchiveIntentIdentity: identity,
+		State:                        domainappdev.ProjectArchiveStateArchiving,
+		StartedAt:                    time.Now().UTC(),
+	}
+	s.intents[key] = intent
+	copy := *intent
+	return &copy, nil
+}
+
+func (s *archiveLocalStoreForTest) CompleteProjectArchive(
+	ctx context.Context,
+	input domainappdev.CompleteProjectArchiveInput,
+) (*domainappdev.ProjectArchiveIntent, error) {
+	if err := domainappdev.ValidateCompleteProjectArchiveInput(input); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := input.Intent.SpaceID + "/" + input.Intent.ProjectID
+	existing := s.intents[key]
+	if existing == nil ||
+		existing.OperationHash != input.Intent.OperationHash ||
+		existing.IntentVersion != input.Intent.IntentVersion {
+		return nil, domainappdev.ErrProjectArchiveConflict
+	}
+	if existing.State != domainappdev.ProjectArchiveStateArchived {
+		if _, err := s.LocalStore.ArchiveProject(ctx, input.Intent.SpaceID, input.Intent.ProjectID); err != nil {
+			return nil, err
+		}
+		existing.State = domainappdev.ProjectArchiveStateArchived
+		existing.CompletedAt = time.Now().UTC()
+	}
+	copy := *existing
+	return &copy, nil
+}
 
 func TestAppDevProjectAndFileFoundation(t *testing.T) {
 	ctx := context.Background()
@@ -151,7 +264,7 @@ func TestAppDevProjectAndFileFoundation(t *testing.T) {
 
 func TestAppDevProjectImportExportArchiveAndModels(t *testing.T) {
 	ctx := context.Background()
-	store := infraappdev.NewLocalStoreForTest(t.TempDir())
+	store := newArchiveLocalStoreForTest(t.TempDir())
 	svc := applicationappdev.NewService(store)
 
 	imported, err := svc.ImportProject(ctx, &applicationappdev.ImportProjectRequest{
@@ -202,6 +315,17 @@ func TestAppDevProjectImportExportArchiveAndModels(t *testing.T) {
 		"src/main.tsx": true,
 	}, zipEntryNames(t, exported.Content))
 
+	require.NoError(t, svc.SetProjectRuntimeLifecycleMode(applicationappdev.ProjectRuntimeLifecycleModeProviderRequired))
+	publication, publishErr := svc.PublishProviderRuntimeBindings(&applicationappdev.ProviderAPIFacade{}, applicationappdev.ProviderProjectArchiveLifecycleFunc{
+		Current: func(context.Context, string, string) (uint64, error) {
+			return 0, nil
+		},
+		Prepare: func(context.Context, applicationappdev.ProviderProjectArchiveInput) error {
+			return nil
+		},
+	})
+	require.NoError(t, publishErr)
+	defer svc.UnpublishProviderRuntimeBindings(publication)
 	_, err = svc.ArchiveProject(ctx, &applicationappdev.ArchiveProjectRequest{
 		SpaceID:       "1001",
 		CurrentUserID: 88,

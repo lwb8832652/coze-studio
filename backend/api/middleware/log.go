@@ -61,22 +61,9 @@ func AccessLogMW() app.HandlerFunc {
 		case status >= http.StatusBadRequest:
 			logs.CtxWarnf(c, "%s", baseLog)
 		default:
-			urlQuery := ctx.Request.URI().QueryString()
-			reqBody := bytesToString(ctx.Request.Body())
-			respBody := bytesToString(ctx.Response.Body())
-			maxPrintLen := 3 * 1024
-			if len(respBody) > maxPrintLen {
-				respBody = respBody[:maxPrintLen]
-			}
-			if len(reqBody) > maxPrintLen {
-				reqBody = reqBody[:maxPrintLen]
-			}
-
 			requestAuthType := ctx.GetInt32(RequestAuthTypeStr)
 			if requestAuthType != int32(RequestAuthTypeStaticFile) && filepath.Ext(path) == "" {
 				logs.CtxInfof(c, "%s ", baseLog)
-				logs.CtxDebugf(c, "query : %s \nreq : %s \nresp: %s",
-					urlQuery, reqBody, respBody)
 			}
 		}
 	}

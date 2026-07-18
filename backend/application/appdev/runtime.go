@@ -18,8 +18,11 @@ package appdev
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -40,6 +43,19 @@ type RuntimeManagerRequest struct {
 	ProjectID  string
 	ProjectDir string
 	SourceURL  string
+	Snapshot   *RuntimeSnapshotReference
+}
+
+type RuntimeSnapshotReference struct {
+	ID          string
+	Path        string
+	Digest      string
+	Size        int64
+	DownloadURL string
+}
+
+type SourceSnapshotRuntime interface {
+	RequiresSourceSnapshot() bool
 }
 
 type ProjectSourceURLProvider interface {
@@ -54,7 +70,7 @@ type RuntimeRequest struct {
 
 type RuntimeInfoDTO struct {
 	Status          string `json:"status"`
-	PreviewURL      string `json:"previewUrl,omitempty"`
+	PreviewURL      string `json:"-"`
 	Message         string `json:"message,omitempty"`
 	LastKeepAliveAt string `json:"lastKeepAliveAt,omitempty"`
 }
@@ -82,8 +98,10 @@ type RuntimeLogListResponse struct {
 	Data    RuntimeLogListData `json:"data"`
 }
 
+// StartRuntime is the legacy explicit debug path. Provider API callers must use
+// ProviderAPIFacade; Task9.5 removes this path from production handlers.
 func (s *Service) StartRuntime(ctx context.Context, req *RuntimeRequest) (*RuntimeInfoResponse, error) {
-	managerReq, err := s.runtimeRequest(ctx, req)
+	managerReq, err := s.runtimeStartRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +152,7 @@ func (s *Service) KeepAliveRuntime(ctx context.Context, req *RuntimeRequest) (*R
 }
 
 func (s *Service) RestartRuntime(ctx context.Context, req *RuntimeRequest) (*RuntimeInfoResponse, error) {
-	managerReq, err := s.runtimeRequest(ctx, req)
+	managerReq, err := s.runtimeStartRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +268,69 @@ func (s *Service) runtimeRequest(ctx context.Context, req *RuntimeRequest) (*Run
 		}
 	}
 	return managerRequest, nil
+}
+
+func (s *Service) runtimeStartRequest(ctx context.Context, req *RuntimeRequest) (*RuntimeManagerRequest, error) {
+	managerRequest, err := s.runtimeRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	requirements, ok := s.runtime.(SourceSnapshotRuntime)
+	if !ok || !requirements.RequiresSourceSnapshot() {
+		return managerRequest, nil
+	}
+	archive, _, err := s.store.ExportProjectArchive(
+		ctx,
+		strings.TrimSpace(req.SpaceID),
+		strings.TrimSpace(req.ProjectID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("prepare appdev sandbox snapshot: %w", err)
+	}
+	if len(archive) == 0 || len(archive) > 100*1024*1024 {
+		return nil, fmt.Errorf("appdev sandbox snapshot is invalid")
+	}
+	sourceProvider, ok := s.store.(ProjectSourceURLProvider)
+	if !ok {
+		return nil, fmt.Errorf("appdev source object provider is not configured")
+	}
+	downloadURL, err := sourceProvider.ProjectSourceURL(
+		ctx,
+		strings.TrimSpace(req.SpaceID),
+		strings.TrimSpace(req.ProjectID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("prepare appdev sandbox snapshot reference: %w", err)
+	}
+	normalizedURL, err := validateRuntimeSnapshotDownloadURL(downloadURL)
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(archive)
+	digestHex := hex.EncodeToString(digest[:])
+	managerRequest.ProjectDir = ""
+	managerRequest.SourceURL = ""
+	managerRequest.Snapshot = &RuntimeSnapshotReference{
+		ID:          "snapshot-" + digestHex[:32],
+		Path:        "source.zip",
+		Digest:      "sha256:" + digestHex,
+		Size:        int64(len(archive)),
+		DownloadURL: normalizedURL,
+	}
+	return managerRequest, nil
+}
+
+func validateRuntimeSnapshotDownloadURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > 8*1024 {
+		return "", fmt.Errorf("appdev sandbox snapshot URL is invalid")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Host == "" ||
+		parsed.User != nil || parsed.Fragment != "" {
+		return "", fmt.Errorf("appdev sandbox snapshot URL must use trusted HTTPS")
+	}
+	return parsed.String(), nil
 }
 
 func successRuntimeInfoResponse(info *domainappdev.RuntimeInfo) *RuntimeInfoResponse {

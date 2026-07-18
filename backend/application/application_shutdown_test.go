@@ -6,6 +6,8 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,7 +30,7 @@ func TestMCPManagementRuntimeApplicationShutdownInvokesConcreteFactory(t *testin
 		t.Fatalf("bind concrete runtime: adapter=%v err=%v", adapter, err)
 	}
 	registry := newApplicationShutdownRegistry()
-	if err := registry.Register(adapter); err != nil {
+	if _, err := registry.Register(adapter); err != nil {
 		t.Fatalf("register shutdown: %v", err)
 	}
 	if err := registry.Shutdown(context.Background()); err != nil {
@@ -47,7 +49,7 @@ func TestMCPManagementRuntimeApplicationShutdownInvokesConcreteFactory(t *testin
 func TestMCPManagementRuntimeApplicationShutdownRetriesAndReportsPendingHooks(t *testing.T) {
 	registry := newApplicationShutdownRegistry()
 	hook := &retryableApplicationShutdownHook{failures: 1}
-	if err := registry.Register(hook); err != nil {
+	if _, err := registry.Register(hook); err != nil {
 		t.Fatalf("register retryable hook: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -61,7 +63,7 @@ func TestMCPManagementRuntimeApplicationShutdownRetriesAndReportsPendingHooks(t 
 
 	permanent := newApplicationShutdownRegistry()
 	blocked := &retryableApplicationShutdownHook{failures: 1 << 30}
-	if err := permanent.Register(blocked); err != nil {
+	if _, err := permanent.Register(blocked); err != nil {
 		t.Fatalf("register blocked hook: %v", err)
 	}
 	shortCtx, shortCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -72,9 +74,100 @@ func TestMCPManagementRuntimeApplicationShutdownRetriesAndReportsPendingHooks(t 
 	}
 }
 
+func TestApplicationShutdownRegistryPreservesConcurrentRegistryIdentity(t *testing.T) {
+	registry := newApplicationShutdownRegistry()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	oldHook := &barrierApplicationShutdownHook{
+		name: "old-runtime", started: started, release: release, err: errors.New("old cleanup failed"),
+	}
+	oldRegistration, err := registry.Register(oldHook)
+	if err != nil {
+		t.Fatalf("register old hook: %v", err)
+	}
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- registry.Shutdown(context.Background())
+	}()
+	<-started
+	newHook := &barrierApplicationShutdownHook{name: "new-runtime"}
+	newRegistration, err := registry.Register(newHook)
+	if err != nil {
+		t.Fatalf("register new hook: %v", err)
+	}
+	if !registry.Unregister(oldRegistration) {
+		t.Fatal("old registration was not removed")
+	}
+	close(release)
+	shutdownErr := <-shutdownDone
+	if !errors.Is(shutdownErr, oldHook.err) || !strings.Contains(shutdownErr.Error(), "old-runtime") {
+		t.Fatalf("shutdown error lost identity: %v", shutdownErr)
+	}
+	if registry.Pending() != 1 {
+		t.Fatalf("concurrent registration was lost or old hook revived: %d", registry.Pending())
+	}
+	if !registry.Unregister(newRegistration) || registry.Pending() != 0 {
+		t.Fatal("new registration identity could not be removed")
+	}
+}
+
+func TestApplicationShutdownRegistryCommitsPartialResultsAndRetriesFailures(t *testing.T) {
+	registry := newApplicationShutdownRegistry()
+	success := &retryableApplicationShutdownHook{}
+	failureErr := errors.New("owner release unavailable")
+	failure := &barrierApplicationShutdownHook{name: "provider-runtime", err: failureErr}
+	if _, err := registry.Register(success); err != nil {
+		t.Fatal(err)
+	}
+	failureRegistration, err := registry.Register(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = registry.Shutdown(context.Background())
+	if !errors.Is(err, failureErr) || !strings.Contains(err.Error(), "provider-runtime") {
+		t.Fatalf("partial error lost: %v", err)
+	}
+	if registry.Pending() != 1 || success.calls.Load() != 1 {
+		t.Fatalf("partial commit failed: pending=%d success calls=%d", registry.Pending(), success.calls.Load())
+	}
+	failure.err = nil
+	if err := registry.Shutdown(context.Background()); err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if registry.Pending() != 0 || failure.calls.Load() != 2 {
+		t.Fatalf("retry state invalid: pending=%d calls=%d", registry.Pending(), failure.calls.Load())
+	}
+	if registry.Unregister(failureRegistration) {
+		t.Fatal("successful hook registration was resurrected")
+	}
+}
+
 type retryableApplicationShutdownHook struct {
 	calls    atomic.Int32
 	failures int32
+}
+
+type barrierApplicationShutdownHook struct {
+	name    string
+	started chan struct{}
+	release chan struct{}
+	err     error
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func (hook *barrierApplicationShutdownHook) ShutdownName() string { return hook.name }
+
+func (hook *barrierApplicationShutdownHook) Shutdown(context.Context) error {
+	hook.calls.Add(1)
+	if hook.started != nil {
+		hook.once.Do(func() { close(hook.started) })
+	}
+	if hook.release != nil {
+		<-hook.release
+	}
+	return hook.err
 }
 
 func (h *retryableApplicationShutdownHook) Shutdown(context.Context) error {

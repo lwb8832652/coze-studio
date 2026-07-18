@@ -85,27 +85,23 @@ type remoteBuildResponse struct {
 	FinishedAt        string `json:"finishedAt"`
 }
 
-func NewConfiguredRuntimeManager() appdevapp.RuntimeManager {
-	endpoint := strings.TrimSpace(os.Getenv("APP_DEV_RUNNER_ENDPOINT"))
-	if endpoint != "" {
-		manager, err := newRemoteRuntimeManager(
-			endpoint,
-			strings.TrimSpace(os.Getenv("APP_DEV_PREVIEW_GATEWAY_BASE_URL")),
-			strings.TrimSpace(os.Getenv("APP_DEV_RUNNER_TOKEN")),
-		)
-		if err == nil {
-			return manager
-		}
-		return &disabledRuntimeManager{reason: appdevapp.SanitizeAppDevOutput(err.Error())}
+func NewConfiguredRuntimeManager(options ...ConfiguredRuntimeManagerOptions) appdevapp.RuntimeManager {
+	routingEnabled := os.Getenv("SANDBOX_RUNTIME_ROUTING_ENABLED")
+	if os.Getenv("SANDBOX_CONTROL_PLANE_ENABLED") != "true" ||
+		(routingEnabled != "" && routingEnabled != "true") {
+		return &disabledRuntimeManager{reason: "isolated appdev runner is not configured"}
 	}
-
-	if appdevapp.IsAppDevHostExecutionEnabled() {
-		return NewRuntimeManager()
+	if len(options) != 1 {
+		return &disabledRuntimeManager{reason: "sandbox control plane dependencies are unavailable"}
 	}
-
-	return &disabledRuntimeManager{
-		reason: "isolated appdev runner is not configured",
+	manager, err := newConfiguredSandboxRuntimeManager(
+		options[0],
+		os.Getenv("APP_DEV_PREVIEW_GATEWAY_BASE_URL"),
+	)
+	if err != nil {
+		return &disabledRuntimeManager{reason: safeAppDevRuntimeMessage(err)}
 	}
+	return manager
 }
 
 func newRemoteRuntimeManager(endpoint string, previewBaseURL string, token string) (*remoteRuntimeManager, error) {

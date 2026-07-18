@@ -24,6 +24,7 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,9 @@ import (
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appworkbench "github.com/coze-dev/coze-studio/backend/application/workbench"
+	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
+	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
@@ -56,8 +59,10 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 			}, true, nil
 		},
 	})
+	identityContext := ctxcache.Init(context.Background())
+	ctxcache.Store(identityContext, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 7})
 
-	_, err := appmcptool.SVC.UpsertServer(context.Background(), &toolapi.UpsertMCPToolServerRequest{
+	_, err := appmcptool.SVC.UpsertServer(identityContext, &toolapi.UpsertMCPToolServerRequest{
 		SpaceID:     1,
 		Name:        "secure-tools",
 		Description: "Secure tool server",
@@ -75,7 +80,7 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, appmcptool.SVC.RecordRuntimeHealth(
-		context.Background(),
+		identityContext,
 		appmcptool.MCPRuntimeHealthReport{
 			ServerID: 100,
 			Success:  true,
@@ -83,7 +88,11 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	))
 
 	h := server.Default()
-	h.GET("/api/workbench/runtime_doctor", GetWorkbenchRuntimeDoctor)
+	h.GET("/api/workbench/runtime_doctor", func(_ context.Context, c *app.RequestContext) {
+		requestContext := ctxcache.Init(context.Background())
+		ctxcache.Store(requestContext, consts.SessionDataKeyInCtx, &userentity.Session{UserID: 7})
+		GetWorkbenchRuntimeDoctor(requestContext, c)
+	})
 
 	resp := ut.PerformRequest(
 		h.Engine,
@@ -102,11 +111,12 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	require.Contains(t, body, `"model"`)
 	require.Contains(t, body, `"live_probe":"ready"`)
 	require.Contains(t, body, `"sandbox"`)
-	require.Contains(t, body, `"runner_type":"sandbox"`)
+	require.Contains(t, body, `"runner_type":"disabled"`)
+	require.Contains(t, body, `"reason_code":"control_plane_disabled"`)
 	require.Contains(t, body, `"model.default"`)
 	require.Contains(t, body, `"model.capabilities"`)
 	require.Contains(t, body, `"model.live_connectivity"`)
-	require.Contains(t, body, `"sandbox.runner_policy"`)
+	require.Contains(t, body, `"sandbox.provider.agent"`)
 	require.Contains(t, body, `"skills.runtime_catalog"`)
 	require.Contains(t, body, `"mcp_tools"`)
 	require.Contains(t, body, `"total_servers":1`)
@@ -140,7 +150,7 @@ func TestWorkbenchRuntimeDoctorReturnsSafeSummary(t *testing.T) {
 	require.Equal(t, "warning", decoded.Data.Status)
 	require.True(t, decoded.Data.Model.Configured)
 	require.Equal(t, "ready", decoded.Data.Model.LiveProbe)
-	require.Equal(t, "ready", decoded.Data.Sandbox.Status)
-	require.Equal(t, "sandbox", decoded.Data.Sandbox.RunnerType)
+	require.Equal(t, "disabled", decoded.Data.Sandbox.Status)
+	require.Equal(t, "disabled", decoded.Data.Sandbox.RunnerType)
 	require.NotEmpty(t, decoded.Data.Checks)
 }

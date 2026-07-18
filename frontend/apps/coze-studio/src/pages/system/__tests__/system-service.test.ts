@@ -26,6 +26,7 @@ import {
   getAdminKnowledgeConfig,
   getAdminModelList,
   getSystemAdminStatus,
+  isAdminBasicConfigConflict,
   listAdminUserSpaces,
   listAdminWorkspaceMembers,
   listAdminUsers,
@@ -366,6 +367,7 @@ describe('system service', () => {
       ok: true,
       status: 200,
       json: async () => ({
+        revision: 'rev-7',
         configuration: {
           admin_emails: 'owner@example.test',
           disable_user_registration: true,
@@ -376,6 +378,7 @@ describe('system service', () => {
     globalThis.fetch = fetchMock as never;
 
     await expect(getAdminBasicConfig()).resolves.toMatchObject({
+      revision: 'rev-7',
       configuration: {
         admin_emails: 'owner@example.test',
         disable_user_registration: true,
@@ -390,34 +393,24 @@ describe('system service', () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({}),
+      json: async () => ({ revision: 'rev-8' }),
     });
     globalThis.fetch = fetchMock as never;
 
     await expect(
-      saveAdminBasicConfig({
-        admin_emails: 'owner@example.test',
-        allow_registration_email: 'example.test',
-        code_runner_type: 1,
-        disable_user_registration: true,
-        plugin_configuration: {
-          mode: 'kept',
+      saveAdminBasicConfig(
+        {
+          server_host: 'https://agent.example.test',
         },
-        server_host: 'https://agent.example.test',
-      }),
-    ).resolves.toEqual({});
+        'rev-7',
+      ),
+    ).resolves.toEqual({ revision: 'rev-8' });
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/basic/save', {
       body: JSON.stringify({
         configuration: {
-          admin_emails: 'owner@example.test',
-          allow_registration_email: 'example.test',
-          code_runner_type: 1,
-          disable_user_registration: true,
-          plugin_configuration: {
-            mode: 'kept',
-          },
           server_host: 'https://agent.example.test',
         },
+        expected_revision: 'rev-7',
       }),
       credentials: 'include',
       headers: {
@@ -425,6 +418,24 @@ describe('system service', () => {
       },
       method: 'POST',
     });
+  });
+
+  it('exposes a stable basic config conflict error', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error_code: 'BASE_CONFIG_VERSION_CONFLICT',
+        msg: 'base configuration revision is stale',
+      }),
+    }) as never;
+
+    const error = await saveAdminBasicConfig(
+      { admin_emails: 'owner@example.test' },
+      'rev-stale',
+    ).catch(reason => reason);
+
+    expect(isAdminBasicConfigConflict(error)).toBe(true);
   });
 
   it('gets admin model list config', async () => {

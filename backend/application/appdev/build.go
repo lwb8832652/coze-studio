@@ -84,8 +84,8 @@ type BuildProjectRequest struct {
 type BuildProjectData struct {
 	Status       string `json:"status"`
 	PublishType  string `json:"publishType"`
-	ArtifactPath string `json:"artifactPath"`
-	DownloadURL  string `json:"downloadUrl"`
+	ArtifactPath string `json:"-"`
+	DownloadURL  string `json:"-"`
 	Message      string `json:"message,omitempty"`
 	StartedAt    string `json:"startedAt"`
 	FinishedAt   string `json:"finishedAt"`
@@ -125,6 +125,8 @@ type BuildArtifactWriter interface {
 	SaveBuildArtifact(ctx context.Context, spaceID string, projectID string, content []byte) (string, error)
 }
 
+// BuildProject is retained only for the explicit debug path. Provider API
+// callers use ProviderAPIFacade.BeginBuild/PollBuild without host fallback.
 func (s *Service) BuildProject(ctx context.Context, req *BuildProjectRequest) (*BuildProjectResponse, error) {
 	if err := validateUserAndSpace(req.CurrentUserID, req.SpaceID); err != nil {
 		return nil, err

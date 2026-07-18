@@ -1,0 +1,242 @@
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package sandbox
+
+import (
+	"context"
+	"strings"
+	"unicode/utf8"
+)
+
+const (
+	MinPageLimit                 = 1
+	DefaultPageLimit             = 20
+	MaxPageLimit                 = 100
+	MaxPageOffset                = 100000
+	MaxProviderListKeywordLength = 128
+
+	ProviderListStableOrder        = "created_at_desc_id_desc"
+	ProviderAuditListStableOrder   = "created_at_desc_id_desc"
+	ProviderDefaultListStableOrder = "scope_asc"
+)
+
+// ProviderListRequest advances Offset from newest to oldest under
+// ProviderListStableOrder. Any cursor projection must preserve that direction.
+type ProviderListRequest struct {
+	Keyword          string
+	Type             ProviderType
+	Status           ProviderStatus
+	Health           HealthStatus
+	Scope            Scope
+	AuthorizedScopes []Scope
+	Offset           int
+	Limit            int
+}
+
+// ProviderAuditListRequest advances Offset from newest to oldest under
+// ProviderAuditListStableOrder. Any cursor projection must preserve that
+// direction.
+type ProviderAuditListRequest struct {
+	ProviderID int64
+	Action     string
+	Result     string
+	Offset     int
+	Limit      int
+}
+
+func NormalizeProviderListRequest(request ProviderListRequest) (ProviderListRequest, error) {
+	offset, limit, err := normalizePage(request.Offset, request.Limit)
+	if err != nil {
+		return ProviderListRequest{}, err
+	}
+	if request.Type != "" && !validProviderType(request.Type) {
+		return ProviderListRequest{}, ErrInvalidInput
+	}
+	if request.Status != "" && !validProviderStatus(request.Status) {
+		return ProviderListRequest{}, ErrInvalidInput
+	}
+	if request.Health != "" && !validHealthStatus(request.Health) {
+		return ProviderListRequest{}, ErrInvalidInput
+	}
+	if request.Scope != "" && !validScope(request.Scope) {
+		return ProviderListRequest{}, ErrInvalidInput
+	}
+	var authorizedScopes []Scope
+	if len(request.AuthorizedScopes) != 0 {
+		authorizedScopes, err = NormalizeScopes(request.AuthorizedScopes)
+		if err != nil {
+			return ProviderListRequest{}, err
+		}
+	}
+	keyword := strings.TrimSpace(request.Keyword)
+	if !utf8.ValidString(keyword) || len(keyword) > MaxProviderListKeywordLength || containsControl(keyword) {
+		return ProviderListRequest{}, ErrInvalidInput
+	}
+	normalized := request
+	normalized.Keyword = keyword
+	normalized.AuthorizedScopes = authorizedScopes
+	normalized.Offset = offset
+	normalized.Limit = limit
+	return normalized, nil
+}
+
+func NormalizeProviderAuditListRequest(request ProviderAuditListRequest) (ProviderAuditListRequest, error) {
+	offset, limit, err := normalizePage(request.Offset, request.Limit)
+	if err != nil || request.ProviderID < 0 {
+		return ProviderAuditListRequest{}, ErrInvalidInput
+	}
+	action, err := normalizeOptionalRepositoryFilter(request.Action, MaxAuditActionLength)
+	if err != nil {
+		return ProviderAuditListRequest{}, err
+	}
+	result, err := normalizeOptionalRepositoryFilter(request.Result, MaxAuditResultLength)
+	if err != nil {
+		return ProviderAuditListRequest{}, err
+	}
+	normalized := request
+	normalized.Action = action
+	normalized.Result = result
+	normalized.Offset = offset
+	normalized.Limit = limit
+	return normalized, nil
+}
+
+func normalizePage(offset, limit int) (int, int, error) {
+	if offset < 0 || offset > MaxPageOffset || limit < 0 || limit > MaxPageLimit {
+		return 0, 0, ErrInvalidInput
+	}
+	if limit == 0 {
+		limit = DefaultPageLimit
+	}
+	if limit < MinPageLimit {
+		return 0, 0, ErrInvalidInput
+	}
+	return offset, limit, nil
+}
+
+func normalizeOptionalRepositoryFilter(value string, maxLength int) (string, error) {
+	value = strings.TrimSpace(value)
+	if !utf8.ValidString(value) || len(value) > maxLength || containsControl(value) {
+		return "", ErrInvalidInput
+	}
+	return value, nil
+}
+
+// ProviderRepository owns persisted numeric IDs, UTC timestamps, soft-deletion
+// state, and version assignment. CreateProvider returns InitialVersion. Every
+// CAS mutation returns ExpectedVersion+1 and never rewrites ProviderKey.
+//
+// Get methods return ErrProviderNotFound when no live row exists. CAS methods
+// return ErrProviderNotFound when the target does not exist and
+// ErrVersionConflict when it exists with a different version.
+// DeleteProvider returns ErrProviderInUse when, after existence and version
+// checks succeed, any default still references the provider.
+//
+// Inputs and returned entities are detached values: implementations must clone
+// scopes, health capabilities, and policy allowlists at repository boundaries.
+// Every mutator must invoke its mandatory domain boundary before persistence:
+// NormalizeCreateProviderInput, NormalizeUpdateProviderInput,
+// NormalizeUpdateProviderStatusInput, NormalizeUpdateProviderHealthInput, or
+// ValidateDeleteProviderInput. CreateProvider maps a provider_key uniqueness
+// conflict to ErrProviderAlreadyExists.
+// ListProviders always uses ProviderListStableOrder after request normalization.
+type ProviderRepository interface {
+	CreateProvider(ctx context.Context, input CreateProviderInput) (*Provider, error)
+	GetProvider(ctx context.Context, providerID int64) (*Provider, error)
+	// GetProviderForUpdate must run on the UnitOfWork transaction and hold a
+	// row lock until that transaction commits or rolls back.
+	GetProviderForUpdate(ctx context.Context, providerID int64) (*Provider, error)
+	GetProviderByKey(ctx context.Context, providerKey string) (*Provider, error)
+	ListProviders(ctx context.Context, request ProviderListRequest) ([]*Provider, int64, error)
+	UpdateProvider(ctx context.Context, input UpdateProviderInput) (*Provider, error)
+	UpdateProviderStatus(ctx context.Context, input UpdateProviderStatusInput) (nextVersion uint64, err error)
+	UpdateProviderHealth(ctx context.Context, input UpdateProviderHealthInput) (nextVersion uint64, err error)
+	DeleteProvider(ctx context.Context, input DeleteProviderInput) (nextVersion uint64, err error)
+}
+
+// ProviderDefaultRepository owns UTC timestamps and versions for defaults.
+// SetProviderDefault must invoke NormalizeSetProviderDefaultInput with the
+// current row inside the transaction before persistence. ExpectedVersion=0
+// creates a missing scope once and returns InitialVersion. Existing rows require
+// their current positive version and return ExpectedVersion+1. A missing row
+// with a positive expected version returns ErrDefaultMissing; an existing row
+// with a stale or zero version returns ErrVersionConflict. Defaults cannot be
+// deleted or recreated, so versions never reset.
+//
+// Returned defaults are detached values. ListProviderDefaults always uses
+// ProviderDefaultListStableOrder.
+type ProviderDefaultRepository interface {
+	GetProviderDefault(ctx context.Context, scope Scope) (*ProviderDefault, error)
+	ListProviderDefaults(ctx context.Context) ([]*ProviderDefault, error)
+	SetProviderDefault(ctx context.Context, input SetProviderDefaultInput) (*ProviderDefault, error)
+}
+
+type ProviderSummary struct {
+	Total     int64
+	Enabled   int64
+	Unhealthy int64
+}
+
+// ProviderManagementRepository exposes only safe read projections needed by
+// system management. Implementations exclude soft-deleted rows and enforce
+// authorized scope boundaries in the database query.
+type ProviderManagementRepository interface {
+	ListProviderDefaults(ctx context.Context) ([]*ProviderDefault, error)
+	SummarizeProviders(ctx context.Context, authorizedScopes []Scope) (ProviderSummary, error)
+}
+
+// ProviderAuditRepository owns audit IDs and UTC CreatedAt timestamps. Metadata
+// and the complete append command must pass
+// NormalizeAppendProviderAuditEventInput and must be cloned on write and read.
+// Audit events are append-only. ListProviderAuditEvents always moves from
+// newest to oldest using ProviderAuditListStableOrder.
+type ProviderAuditRepository interface {
+	AppendProviderAuditEvent(ctx context.Context, input AppendProviderAuditEventInput) (*ProviderAuditEvent, error)
+	ListProviderAuditEvents(ctx context.Context, request ProviderAuditListRequest) ([]*ProviderAuditEvent, int64, error)
+}
+
+// TransactionRepositories contains repositories bound to one infrastructure
+// transaction. Implementations must not allow these bindings to escape the
+// callback.
+type TransactionRepositories struct {
+	Providers ProviderRepository
+	Defaults  ProviderDefaultRepository
+	Audits    ProviderAuditRepository
+}
+
+// UnitOfWork invokes one callback with Provider, Default, and Audit
+// repositories bound to the same transaction. It commits only when the
+// callback returns nil and rolls back when the callback returns an error. It
+// must not retry or invoke the callback more than once.
+type UnitOfWork interface {
+	WithinTransaction(
+		ctx context.Context,
+		callback func(context.Context, TransactionRepositories) error,
+	) error
+}
+
+// ProviderCreateUnitOfWork serializes transactions that can change whether
+// the provider table is empty. Implementations must use one database-scoped,
+// cross-process lock shared by normal provider creation and legacy import,
+// and release it only after commit succeeds or rollback completes.
+type ProviderCreateUnitOfWork interface {
+	UnitOfWork
+	WithinProviderCreateTransaction(
+		ctx context.Context,
+		callback func(context.Context, TransactionRepositories) error,
+	) error
+}

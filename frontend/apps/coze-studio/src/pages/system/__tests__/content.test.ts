@@ -25,6 +25,7 @@ describe('system management content', () => {
       'users',
       'workspaces',
       'models',
+      'sandbox',
       'settings',
     ]);
     expect(SYSTEM_SECTIONS.map(item => item.title)).toEqual([
@@ -32,6 +33,7 @@ describe('system management content', () => {
       '用户管理',
       '工作空间管理',
       '模型配置',
+      '沙箱管理',
       '系统配置',
     ]);
   });

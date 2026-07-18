@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { AccessibleDialog } from './accessible-dialog';
 
 export interface TextInputDialogOptions {
   title: string;
@@ -41,18 +43,38 @@ interface TextInputDialogState extends TextInputDialogOptions {
 
 export const useTextInputDialog = () => {
   const resolverRef = useRef<((value: string | null) => void) | null>(null);
+  const mountedRef = useRef(true);
   const [dialog, setDialog] = useState<TextInputDialogState | null>(null);
 
   const closeDialog = useCallback((value: string | null) => {
-    resolverRef.current?.(value);
+    const resolver = resolverRef.current;
     resolverRef.current = null;
-    setDialog(null);
+    resolver?.(value);
+    if (mountedRef.current) {
+      setDialog(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const resolver = resolverRef.current;
+      resolverRef.current = null;
+      resolver?.(null);
+    };
   }, []);
 
   const openTextInputDialog = useCallback(
     (options: TextInputDialogOptions) =>
       new Promise<string | null>(resolve => {
-        resolverRef.current?.(null);
+        if (!mountedRef.current) {
+          resolve(null);
+          return;
+        }
+        const previous = resolverRef.current;
+        resolverRef.current = null;
+        previous?.(null);
         resolverRef.current = resolve;
         setDialog({
           ...options,
@@ -80,49 +102,52 @@ export const useTextInputDialog = () => {
   }, [closeDialog, dialog]);
 
   const textInputDialog = dialog ? (
-    <div className="app-dev-modal-mask app-dev-modal-mask--nested">
-      <section className="app-dev-modal app-dev-modal--compact">
-        <header className="app-dev-modal__header">
-          <div>
-            <h2>{dialog.title}</h2>
-            {dialog.description ? <p>{dialog.description}</p> : null}
-          </div>
-          <button type="button" onClick={() => closeDialog(null)}>
-            关闭
-          </button>
-        </header>
-        <label className="app-dev-form-field">
-          <span>{dialog.label}</span>
-          <input
-            value={dialog.value}
-            maxLength={dialog.maxLength}
-            placeholder={dialog.placeholder}
-            onChange={event =>
-              setDialog(current =>
-                current
-                  ? {
-                      ...current,
-                      value: event.target.value,
-                      error: '',
-                    }
-                  : current,
-              )
-            }
-          />
-        </label>
-        {dialog.error ? (
-          <div className="app-dev-form-error">{dialog.error}</div>
-        ) : null}
-        <footer className="app-dev-modal__footer">
-          <button type="button" onClick={() => closeDialog(null)}>
-            取消
-          </button>
-          <button type="button" onClick={submitDialog}>
-            {dialog.confirmText || '确定'}
-          </button>
-        </footer>
-      </section>
-    </div>
+    <AccessibleDialog
+      title={dialog.title}
+      onClose={() => closeDialog(null)}
+      maskClassName="app-dev-modal-mask app-dev-modal-mask--nested"
+    >
+      <header className="app-dev-modal__header">
+        <div>
+          <h2>{dialog.title}</h2>
+          {dialog.description ? <p>{dialog.description}</p> : null}
+        </div>
+        <button type="button" onClick={() => closeDialog(null)}>
+          关闭
+        </button>
+      </header>
+      <label className="app-dev-form-field">
+        <span>{dialog.label}</span>
+        <input
+          data-dialog-autofocus
+          value={dialog.value}
+          maxLength={dialog.maxLength}
+          placeholder={dialog.placeholder}
+          onChange={event =>
+            setDialog(current =>
+              current
+                ? {
+                    ...current,
+                    value: event.target.value,
+                    error: '',
+                  }
+                : current,
+            )
+          }
+        />
+      </label>
+      {dialog.error ? (
+        <div className="app-dev-form-error">{dialog.error}</div>
+      ) : null}
+      <footer className="app-dev-modal__footer">
+        <button type="button" onClick={() => closeDialog(null)}>
+          取消
+        </button>
+        <button type="button" onClick={submitDialog}>
+          {dialog.confirmText || '确定'}
+        </button>
+      </footer>
+    </AccessibleDialog>
   ) : null;
 
   return {
@@ -133,18 +158,38 @@ export const useTextInputDialog = () => {
 
 export const useConfirmDialog = () => {
   const resolverRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const mountedRef = useRef(true);
   const [dialog, setDialog] = useState<ConfirmDialogOptions | null>(null);
 
   const closeDialog = useCallback((confirmed: boolean) => {
-    resolverRef.current?.(confirmed);
+    const resolver = resolverRef.current;
     resolverRef.current = null;
-    setDialog(null);
+    resolver?.(confirmed);
+    if (mountedRef.current) {
+      setDialog(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const resolver = resolverRef.current;
+      resolverRef.current = null;
+      resolver?.(false);
+    };
   }, []);
 
   const openConfirmDialog = useCallback(
     (options: ConfirmDialogOptions) =>
       new Promise<boolean>(resolve => {
-        resolverRef.current?.(false);
+        if (!mountedRef.current) {
+          resolve(false);
+          return;
+        }
+        const previous = resolverRef.current;
+        resolverRef.current = null;
+        previous?.(false);
         resolverRef.current = resolve;
         setDialog(options);
       }),
@@ -152,27 +197,29 @@ export const useConfirmDialog = () => {
   );
 
   const confirmDialog = dialog ? (
-    <div className="app-dev-modal-mask app-dev-modal-mask--nested">
-      <section className="app-dev-modal app-dev-modal--compact">
-        <header className="app-dev-modal__header">
-          <div>
-            <h2>{dialog.title}</h2>
-            <p>{dialog.description}</p>
-          </div>
-          <button type="button" onClick={() => closeDialog(false)}>
-            关闭
-          </button>
-        </header>
-        <footer className="app-dev-modal__footer">
-          <button type="button" onClick={() => closeDialog(false)}>
-            {dialog.cancelText || '取消'}
-          </button>
-          <button type="button" onClick={() => closeDialog(true)}>
-            {dialog.confirmText || '确认'}
-          </button>
-        </footer>
-      </section>
-    </div>
+    <AccessibleDialog
+      title={dialog.title}
+      onClose={() => closeDialog(false)}
+      maskClassName="app-dev-modal-mask app-dev-modal-mask--nested"
+    >
+      <header className="app-dev-modal__header">
+        <div>
+          <h2>{dialog.title}</h2>
+          <p>{dialog.description}</p>
+        </div>
+        <button type="button" onClick={() => closeDialog(false)}>
+          关闭
+        </button>
+      </header>
+      <footer className="app-dev-modal__footer">
+        <button type="button" onClick={() => closeDialog(false)}>
+          {dialog.cancelText || '取消'}
+        </button>
+        <button type="button" onClick={() => closeDialog(true)}>
+          {dialog.confirmText || '确认'}
+        </button>
+      </footer>
+    </AccessibleDialog>
   ) : null;
 
   return {

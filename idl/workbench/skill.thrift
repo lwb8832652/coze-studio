@@ -31,9 +31,9 @@ struct Skill {
     11: required string permissions
     12: required i64 created_at
     13: required i64 updated_at
-    14: optional string icon_uri
-    15: optional string usage_scenarios
-    16: optional i64 development_thread_id (agw.js_conv="str", api.js_conv="true")
+    14: string icon_uri
+    15: string usage_scenarios
+    16: i64 development_thread_id (agw.js_conv="str", api.js_conv="true")
 }
 
 struct UpsertSkillRequest {
@@ -48,8 +48,8 @@ struct UpsertSkillRequest {
     9: required string output_schema
     10: required string executor
     11: required string permissions
-    12: optional string icon_uri
-    13: optional string usage_scenarios
+    12: string icon_uri
+    13: string usage_scenarios
     255: optional base.Base Base (api.none="true")
 }
 
@@ -65,8 +65,8 @@ struct UpdateSkillRequest {
     9: required string output_schema
     10: required string executor
     11: required string permissions
-    12: optional string icon_uri
-    13: optional string usage_scenarios
+    12: string icon_uri
+    13: string usage_scenarios
     14: required i64 expected_version_id (agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
@@ -107,7 +107,7 @@ struct SkillVersion {
     1: required i64 id (agw.js_conv="str", api.js_conv="true")
     2: required i64 skill_id (agw.js_conv="str", api.js_conv="true")
     3: required string version
-    4: required string skill_md
+    4: required string SkillMD (go.tag = "json:\"skill_md,required\"")
     5: required string input_schema
     6: required string output_schema
     7: required string executor
@@ -145,7 +145,7 @@ struct SkillResource {
     4: required string path
     5: required string content_base64
     6: required i64 size
-    7: required string sha256
+    7: required string SHA256 (go.tag = "json:\"sha256,required\"")
     8: required i64 created_at
 }
 
@@ -171,15 +171,15 @@ struct UpdateSkillVersionResourceRequest {
     2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
     3: required string path
     4: required string content_base64
-    5: optional SkillResourceOperation operation
-    6: optional string target_path
+    5: SkillResourceOperation operation (go.tag="json:\"operation,omitempty\"")
+    6: string target_path (go.tag="json:\"target_path,omitempty\"")
     255: optional base.Base Base (api.none="true")
 }
 
 struct UpdateSkillVersionContentRequest {
     1: required i64 skill_id (api.path="skill_id", agw.js_conv="str", api.js_conv="true")
     2: required i64 version_id (api.path="version_id", agw.js_conv="str", api.js_conv="true")
-    3: required string skill_md
+    3: required string SkillMD (api.body = "skill_md", go.tag = "json:\"skill_md,required\"")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -255,9 +255,9 @@ struct SkillToolCandidate {
     3: required string description
     4: required string category
     5: required string visibility
-    6: optional string source
-    7: optional string source_id
-    8: optional string source_name
+    6: string source (go.tag="json:\"source,omitempty\"")
+    7: string source_id (go.tag="json:\"source_id,omitempty\"")
+    8: string source_name (go.tag="json:\"source_name,omitempty\"")
 }
 
 struct ListSkillToolCandidatesData {

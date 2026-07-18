@@ -74,6 +74,7 @@ func startHttpServer() {
 	opts := []config.Option{
 		server.WithHostPorts(addr),
 		server.WithMaxRequestBodySize(int(maxSize)),
+		server.WithStreamBody(true),
 	}
 
 	useSSL := getEnv(consts.UseSSL, "0")
@@ -100,6 +101,7 @@ func startHttpServer() {
 	// Middleware order matters
 	s.Use(middleware.ContextCacheMW())     // must be first
 	s.Use(middleware.RequestInspectorMW()) // must be second
+	s.Use(middleware.RequestBodyCompatibilityMW(int(maxSize)))
 	s.Use(middleware.SetHostMW())
 	s.Use(middleware.SetLogIDMW())
 	s.Use(corsHandler)

@@ -63,14 +63,20 @@ describe('AppDev preview security', () => {
     await act(async () => {
       root?.render(
         <PreviewPanel
-          runtime={{ status: 'running', previewUrl: 'javascript:alert(1)' }}
+          runtime={{
+            generation: 1,
+            status: 'running',
+            canStart: false,
+            recovering: false,
+            stopping: false,
+          }}
           onRefresh={vi.fn()}
         />,
       );
     });
 
     expect(container.querySelector('iframe')).toBeNull();
-    expect(container.textContent).toContain('预览地址不安全');
+    expect(container.textContent).toContain('预览地址尚未就绪');
   });
 
   it('sandboxes the embedded preview', async () => {
@@ -81,9 +87,15 @@ describe('AppDev preview security', () => {
       root?.render(
         <PreviewPanel
           runtime={{
+            generation: 1,
             status: 'running',
-            previewUrl: 'https://preview.example.com/app',
+            canStart: false,
+            recovering: false,
+            stopping: false,
           }}
+          trustedPreviewUrl={normalizeAppDevPreviewUrl(
+            'https://preview.example.com/app',
+          )}
           onRefresh={vi.fn()}
         />,
       );
@@ -94,5 +106,157 @@ describe('AppDev preview security', () => {
       'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads',
     );
     expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer');
+  });
+
+  it('traps fullscreen focus, closes on Escape, and restores its trigger', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <PreviewPanel
+          runtime={{
+            generation: 1,
+            status: 'running',
+            canStart: false,
+            recovering: false,
+            stopping: false,
+          }}
+          trustedPreviewUrl={normalizeAppDevPreviewUrl(
+            'https://preview.example.com/app',
+          )}
+          onRefresh={vi.fn()}
+        />,
+      );
+    });
+    const trigger = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '全屏',
+    )!;
+    trigger.focus();
+    await act(async () => trigger.click());
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+    const close = Array.from(dialog.querySelectorAll('button')).find(
+      button => button.textContent === '关闭',
+    )!;
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(document.activeElement).toBe(close);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    container.remove();
+  });
+
+  it('exposes device and design mode toggles with aria-pressed', async () => {
+    container = document.createElement('div');
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <PreviewPanel
+          runtime={{
+            generation: 1,
+            status: 'running',
+            canStart: false,
+            recovering: false,
+            stopping: false,
+          }}
+          trustedPreviewUrl={normalizeAppDevPreviewUrl(
+            'https://preview.example.com/app',
+          )}
+          onRefresh={vi.fn()}
+          onOpenDesignMode={vi.fn()}
+        />,
+      );
+    });
+    const desktop = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '桌面',
+    );
+    const mobile = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '手机',
+    );
+    const design = container.querySelector<HTMLButtonElement>(
+      '.app-dev-preview-panel__design-status',
+    );
+    expect(desktop?.getAttribute('aria-pressed')).toBe('true');
+    expect(mobile?.getAttribute('aria-pressed')).toBe('false');
+    expect(design?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('shows a safe empty state when a running projection has no preview URL', async () => {
+    container = document.createElement('div');
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <PreviewPanel
+          runtime={{
+            generation: 2,
+            status: 'running',
+            canStart: false,
+            recovering: false,
+            stopping: false,
+          }}
+          onRefresh={vi.fn()}
+        />,
+      );
+    });
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.textContent).toContain('预览地址尚未就绪');
+  });
+
+  it.each([
+    ['stopped', '开发环境未启动'],
+    ['starting', '正在启动开发环境'],
+    ['recovering', '正在恢复开发环境'],
+    ['stopping', '正在停止开发环境'],
+    ['cleanup_pending', '正在清理运行资源'],
+    ['error', '预览异常'],
+  ] as const)(
+    'renders the %s runtime empty state safely',
+    async (status, title) => {
+      if (root) {
+        act(() => root?.unmount());
+      }
+      container = document.createElement('div');
+      root = createRoot(container);
+      await act(async () => {
+        root?.render(
+          <PreviewPanel
+            runtime={{
+              generation: 3,
+              status,
+              canStart: status === 'stopped' || status === 'error',
+              recovering: status === 'recovering',
+              stopping: status === 'stopping' || status === 'cleanup_pending',
+            }}
+            onRefresh={vi.fn()}
+          />,
+        );
+      });
+      expect(container.querySelector('iframe')).toBeNull();
+      expect(container.textContent).toContain(title);
+    },
+  );
+
+  it('shows explicit recovery and cleanup empty states without an iframe', async () => {
+    container = document.createElement('div');
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <PreviewPanel
+          runtime={{
+            generation: 3,
+            status: 'recovering',
+            canStart: false,
+            recovering: true,
+            stopping: false,
+          }}
+          onRefresh={vi.fn()}
+        />,
+      );
+    });
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.textContent).toContain('正在恢复');
   });
 });

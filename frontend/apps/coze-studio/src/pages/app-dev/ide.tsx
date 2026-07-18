@@ -18,25 +18,39 @@
 /* eslint-disable max-lines, complexity -- Cohesive orchestrator. */
 
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { useUserInfo } from '@coze-arch/foundation-sdk';
 
 import { isAppDevReleaseStale } from './utils/release-status';
-import type { AppDevBuildResult, AppDevSnapshot } from './types';
 import {
-  buildAppDevProject,
+  clearAppDevPendingOperation,
+  createAppDevOperationID,
+  readAppDevPendingOperationResult,
+  writeAppDevPendingOperation,
+} from './utils/provider-operation';
+import { downloadAppDevBlob } from './utils/download-blob';
+import { canBuildAppDevRuntime } from './utils/runtime-capabilities';
+import { normalizeAppDevPreviewUrl } from './utils/preview-url';
+import type { AppDevSnapshot } from './types';
+import {
   createAppDevSnapshot,
   downloadAppDevRelease,
   exportAppDevProject,
   importAppDevProject,
+  isAppDevDeterministicError,
+  isAppDevReleaseStaleError,
   listAppDevSnapshots,
   normalizeAppDevError,
   restoreAppDevSnapshot,
   updateAppDevProject,
 } from './service';
+import { useAppDevBuild } from './hooks/use-app-dev-build';
 import { useAppDevRuntime } from './hooks/use-app-dev-runtime';
 import { useAppDevProjectInfo } from './hooks/use-app-dev-project-info';
 import { useAppDevFiles } from './hooks/use-app-dev-files';
 import { useConfirmDialog } from './components/text-input-dialog';
+import { AccessibleDialog } from './components/accessible-dialog';
 import { RuntimeToolbar } from './components/runtime-toolbar';
 import { PreviewPanel } from './components/preview-panel';
 import { ImportProjectModal } from './components/import-project-modal';
@@ -54,17 +68,17 @@ import './index.less';
 export default function AppDevIDEPage() {
   const navigate = useNavigate();
   const { space_id: spaceId = '', project_id: projectId = '' } = useParams();
+  const userInfo = useUserInfo();
+  const principalId = userInfo?.user_id_str?.trim() || undefined;
   const projectState = useAppDevProjectInfo(spaceId, projectId);
   const refreshProject = projectState.refresh;
   const fileState = useAppDevFiles(spaceId, projectId);
-  const runtimeState = useAppDevRuntime(spaceId, projectId);
+  const runtimeState = useAppDevRuntime(spaceId, projectId, principalId);
+  const buildState = useAppDevBuild(spaceId, projectId, principalId);
   const [exporting, setExporting] = useState(false);
-  const [building, setBuilding] = useState(false);
   const [downloadingRelease, setDownloadingRelease] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [importingProject, setImportingProject] = useState(false);
-  const [lastBuildResult, setLastBuildResult] =
-    useState<AppDevBuildResult | null>(null);
   const [snapshotModalVisible, setSnapshotModalVisible] = useState(false);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotActionLoading, setSnapshotActionLoading] = useState(false);
@@ -101,23 +115,106 @@ export default function AppDevIDEPage() {
   const [logsVisible, setLogsVisible] = useState(false);
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
   const [notice, setNotice] = useState('');
+  const providerActionEpochRef = useRef(0);
+  const snapshotActionRef = useRef<{
+    operationId: string;
+    promise: Promise<void>;
+    controller: AbortController;
+  }>();
+  const snapshotRequestRef = useRef<{
+    sequence: number;
+    controller: AbortController;
+  }>();
+  const snapshotRequestSequenceRef = useRef(0);
+  const releaseActionRef = useRef<{
+    promise: Promise<void>;
+    controller: AbortController;
+  }>();
+  const exportActionRef = useRef<{
+    promise: Promise<void>;
+    controller: AbortController;
+  }>();
+  const identityKey = `${spaceId}\u0000${projectId}\u0000${principalId || ''}`;
   const { openConfirmDialog, confirmDialog } = useConfirmDialog();
+
+  useEffect(() => {
+    providerActionEpochRef.current += 1;
+    snapshotActionRef.current?.controller.abort();
+    snapshotRequestRef.current?.controller.abort();
+    snapshotRequestSequenceRef.current += 1;
+    releaseActionRef.current?.controller.abort();
+    exportActionRef.current?.controller.abort();
+    snapshotActionRef.current = undefined;
+    snapshotRequestRef.current = undefined;
+    releaseActionRef.current = undefined;
+    exportActionRef.current = undefined;
+    setSnapshotActionLoading(false);
+    setSnapshotLoading(false);
+    setSnapshots([]);
+    setDownloadingRelease(false);
+    setExporting(false);
+    setReleaseStale(false);
+    setNotice('');
+    return () => {
+      providerActionEpochRef.current += 1;
+      snapshotActionRef.current?.controller.abort();
+      snapshotRequestRef.current?.controller.abort();
+      snapshotRequestSequenceRef.current += 1;
+      releaseActionRef.current?.controller.abort();
+      exportActionRef.current?.controller.abort();
+    };
+  }, [identityKey]);
   const refreshSnapshots = useCallback(async () => {
     if (!spaceId || !projectId) {
       setSnapshots([]);
+      setSnapshotLoading(false);
       return;
     }
+    snapshotRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const sequence = ++snapshotRequestSequenceRef.current;
+    const epoch = providerActionEpochRef.current;
+    const key = identityKey;
+    snapshotRequestRef.current = { sequence, controller };
     setSnapshotLoading(true);
     setNotice('');
     try {
-      const result = await listAppDevSnapshots({ spaceId, projectId });
+      const result = await listAppDevSnapshots({
+        spaceId,
+        projectId,
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted ||
+        providerActionEpochRef.current !== epoch ||
+        identityKey !== key ||
+        snapshotRequestSequenceRef.current !== sequence
+      ) {
+        return;
+      }
       setSnapshots(result.items);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '快照列表加载失败');
+      if (
+        !controller.signal.aborted &&
+        providerActionEpochRef.current === epoch &&
+        identityKey === key &&
+        snapshotRequestSequenceRef.current === sequence
+      ) {
+        setNotice(normalizeAppDevError(error));
+      }
     } finally {
-      setSnapshotLoading(false);
+      if (
+        providerActionEpochRef.current === epoch &&
+        identityKey === key &&
+        snapshotRequestSequenceRef.current === sequence
+      ) {
+        setSnapshotLoading(false);
+        if (snapshotRequestRef.current?.sequence === sequence) {
+          snapshotRequestRef.current = undefined;
+        }
+      }
     }
-  }, [projectId, spaceId]);
+  }, [identityKey, projectId, spaceId]);
   const openSnapshotModal = useCallback(() => {
     setSnapshotModalVisible(true);
     void refreshSnapshots();
@@ -170,50 +267,228 @@ export default function AppDevIDEPage() {
       setSnapshotNameModalVisible(false);
       setNotice('快照已保存');
     } catch (error) {
-      const message = error instanceof Error ? error.message : '保存快照失败';
+      const message = normalizeAppDevError(error);
       setNotice(message);
       setSnapshotNameError(message);
     } finally {
       setSnapshotActionLoading(false);
     }
   }, [projectId, refreshSnapshots, snapshotName, spaceId]);
+  const executeSnapshotRestore = useCallback(
+    (
+      operation: {
+        operationId: string;
+        snapshotId: string;
+        phase?: 'pending' | 'requesting' | 'observed';
+        createdAt?: number;
+      },
+      label?: string,
+    ): Promise<void> => {
+      const identity = { spaceId, projectId, principalId };
+      const active = snapshotActionRef.current;
+      if (active?.operationId === operation.operationId) {
+        return active.promise;
+      }
+      active?.controller.abort();
+      const controller = new AbortController();
+      const epoch = providerActionEpochRef.current;
+      const key = identityKey;
+      setSnapshotActionLoading(true);
+      setNotice('');
+      const stored = writeAppDevPendingOperation(identity, 'snapshot-restore', {
+        operationId: operation.operationId,
+        snapshotId: operation.snapshotId,
+        phase: 'requesting',
+        createdAt: operation.createdAt,
+      });
+      if (stored.warning) {
+        setNotice(stored.warning);
+      }
+      if (!stored.value) {
+        return;
+      }
+      const promise = restoreAppDevSnapshot({
+        ...identity,
+        snapshotId: operation.snapshotId,
+        operationId: operation.operationId,
+        signal: controller.signal,
+      })
+        .then(async () => {
+          if (
+            controller.signal.aborted ||
+            providerActionEpochRef.current !== epoch ||
+            identityKey !== key
+          ) {
+            return;
+          }
+          const cleared = clearAppDevPendingOperation(
+            identity,
+            'snapshot-restore',
+            operation.operationId,
+          );
+          if (cleared.warning) {
+            setNotice(cleared.warning);
+          }
+          await fileState.refreshTree();
+          if (
+            controller.signal.aborted ||
+            providerActionEpochRef.current !== epoch
+          ) {
+            return;
+          }
+          if (fileState.selectedPath) {
+            await fileState.openFile(fileState.selectedPath);
+          }
+          if (
+            controller.signal.aborted ||
+            providerActionEpochRef.current !== epoch
+          ) {
+            return;
+          }
+          void runtimeState.refreshStatus();
+          void runtimeState.refreshLogs();
+          setPreviewRefreshSignal(signal => signal + 1);
+          setReleaseStale(true);
+          buildState.markStale();
+          setActiveWorkspaceTab('preview');
+          setNotice(
+            label
+              ? `已恢复到快照「${label}」，请重新发布产物`
+              : '快照恢复已完成，请重新发布产物',
+          );
+          setSnapshotModalVisible(false);
+        })
+        .catch(error => {
+          if (isAppDevDeterministicError(error)) {
+            const cleared = clearAppDevPendingOperation(
+              identity,
+              'snapshot-restore',
+              operation.operationId,
+            );
+            if (cleared.warning) {
+              setNotice(cleared.warning);
+            }
+          }
+          if (
+            !controller.signal.aborted &&
+            providerActionEpochRef.current === epoch &&
+            identityKey === key
+          ) {
+            setNotice(normalizeAppDevError(error));
+          }
+        })
+        .finally(() => {
+          if (snapshotActionRef.current?.promise === promise) {
+            snapshotActionRef.current = undefined;
+            if (
+              providerActionEpochRef.current === epoch &&
+              identityKey === key
+            ) {
+              setSnapshotActionLoading(false);
+            }
+          }
+        });
+      snapshotActionRef.current = {
+        operationId: operation.operationId,
+        promise,
+        controller,
+      };
+      return promise;
+    },
+    [
+      buildState.markStale,
+      fileState.openFile,
+      fileState.refreshTree,
+      fileState.selectedPath,
+      identityKey,
+      projectId,
+      runtimeState.refreshLogs,
+      runtimeState.refreshStatus,
+      spaceId,
+      principalId,
+    ],
+  );
+
   const restoreSnapshot = useCallback(
     async (snapshot: AppDevSnapshot) => {
+      const confirmEpoch = providerActionEpochRef.current;
+      const confirmIdentityKey = identityKey;
       const confirmed = await openConfirmDialog({
         title: '恢复快照',
         description: `确认恢复到「${snapshot.label}」吗？当前文件会被覆盖。`,
         confirmText: '恢复',
       });
-      if (!confirmed) {
+      if (
+        !confirmed ||
+        providerActionEpochRef.current !== confirmEpoch ||
+        identityKey !== confirmIdentityKey
+      ) {
         return;
       }
-      setSnapshotActionLoading(true);
-      setNotice('');
-      try {
-        await restoreAppDevSnapshot({
-          spaceId,
-          projectId,
-          snapshotId: snapshot.id,
-        });
-        await fileState.refreshTree();
-        if (fileState.selectedPath) {
-          await fileState.openFile(fileState.selectedPath);
-        }
-        void runtimeState.refreshStatus();
-        void runtimeState.refreshLogs();
-        setPreviewRefreshSignal(signal => signal + 1);
-        setReleaseStale(true);
-        setActiveWorkspaceTab('preview');
-        setNotice(`已恢复到快照「${snapshot.label}」，请重新发布产物`);
-        setSnapshotModalVisible(false);
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : '恢复快照失败');
-      } finally {
-        setSnapshotActionLoading(false);
+      const identity = { spaceId, projectId, principalId };
+      const pendingResult = readAppDevPendingOperationResult(
+        identity,
+        'snapshot-restore',
+      );
+      if (pendingResult.warning) {
+        setNotice(pendingResult.warning);
       }
+      const pending = pendingResult.value;
+      const operationId =
+        pending?.snapshotId === snapshot.id
+          ? pending.operationId
+          : createAppDevOperationID();
+      if (pending && pending.snapshotId !== snapshot.id) {
+        const cleared = clearAppDevPendingOperation(
+          identity,
+          'snapshot-restore',
+          pending.operationId,
+        );
+        if (cleared.warning) {
+          setNotice(cleared.warning);
+        }
+      }
+      await executeSnapshotRestore(
+        {
+          operationId,
+          snapshotId: snapshot.id,
+          createdAt:
+            pending?.snapshotId === snapshot.id ? pending.createdAt : undefined,
+        },
+        snapshot.label,
+      );
     },
-    [fileState, openConfirmDialog, projectId, spaceId],
+    [
+      executeSnapshotRestore,
+      identityKey,
+      openConfirmDialog,
+      principalId,
+      projectId,
+      spaceId,
+    ],
   );
+
+  useEffect(() => {
+    if (!spaceId || !projectId) {
+      return;
+    }
+    const pendingResult = readAppDevPendingOperationResult(
+      { spaceId, projectId, principalId },
+      'snapshot-restore',
+    );
+    if (pendingResult.warning) {
+      setNotice(pendingResult.warning);
+    }
+    const pending = pendingResult.value;
+    if (pending?.snapshotId) {
+      void executeSnapshotRestore({
+        operationId: pending.operationId,
+        snapshotId: pending.snapshotId,
+        phase: pending.phase,
+        createdAt: pending.createdAt,
+      });
+    }
+  }, [executeSnapshotRestore, identityKey, principalId, projectId, spaceId]);
   const openProjectMetaEditor = useCallback(() => {
     setProjectMetaForm({
       name: projectState.project?.name || '',
@@ -242,7 +517,7 @@ export default function AppDevIDEPage() {
       setProjectMetaEditing(false);
       setNotice('项目信息已更新');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '项目信息更新失败');
+      setNotice(normalizeAppDevError(error));
     } finally {
       setSavingProjectMeta(false);
     }
@@ -306,39 +581,38 @@ export default function AppDevIDEPage() {
         : state,
     );
   }, []);
-  const buildStatus = building
-    ? 'building'
-    : projectState.project?.lastBuildStatus ||
-      lastBuildResult?.status ||
-      'idle';
+  const building = buildState.building;
+  const canBuild = canBuildAppDevRuntime({
+    runtime: runtimeState.runtime,
+    runtimeLoading: runtimeState.loading,
+    building,
+  });
+  const trustedPreviewUrl = normalizeAppDevPreviewUrl(
+    runtimeState.runtime.previewUrl,
+  );
+  const buildStatus = buildState.projection.state;
   const releaseReady =
-    lastBuildResult?.status === 'success' ||
-    projectState.project?.lastBuildStatus === 'success';
+    buildStatus === 'ready' && buildState.projection.releaseAvailable;
   const sourceChangedAfterBuild = isAppDevReleaseStale({
     lastBuildStatus: releaseReady ? 'success' : buildStatus,
     sourceUpdatedAt: projectState.project?.sourceUpdatedAt,
-    lastBuildAt:
-      lastBuildResult?.finishedAt || projectState.project?.lastBuildAt,
+    lastBuildAt: buildState.projection.updatedAt,
   });
-  const effectiveReleaseStale = releaseStale || sourceChangedAfterBuild;
+  const effectiveReleaseStale =
+    releaseStale || buildState.projection.stale || sourceChangedAfterBuild;
   const buildStatusLabel =
     effectiveReleaseStale && releaseReady
       ? '源码已更新'
       : buildStatus === 'building'
         ? '发布中'
-        : buildStatus === 'success'
+        : buildStatus === 'ready'
           ? '已发布'
-          : buildStatus === 'error'
+          : buildStatus === 'failed'
             ? '发布失败'
             : '未发布';
-  const buildArtifactPath =
-    lastBuildResult?.artifactPath ||
-    projectState.project?.lastBuildArtifact ||
-    '';
-  const buildFinishedAt =
-    lastBuildResult?.finishedAt || projectState.project?.lastBuildAt || '';
-  const buildDurationText = lastBuildResult?.durationMs
-    ? `${Math.max(1, Math.round(lastBuildResult.durationMs / 1000))} 秒`
+  const buildFinishedAt = buildState.projection.updatedAt || '';
+  const buildSizeText = buildState.projection.size
+    ? `${Math.max(1, Math.ceil(buildState.projection.size / 1024))} KB`
     : '';
   const buildFinishedAtText = (() => {
     if (!buildFinishedAt) {
@@ -359,101 +633,155 @@ export default function AppDevIDEPage() {
       minute: '2-digit',
     });
   })();
-  const formatPublishType = (publishType?: string) => {
-    switch (publishType) {
-      case 'AGENT':
-        return '应用';
-      case 'PAGE':
-      case 'page':
-        return '页面';
-      default:
-        return publishType || '页面';
-    }
-  };
   const handleBuild = useCallback(
-    async (publishType = 'PAGE') => {
-      const publishTypeLabel = formatPublishType(publishType);
-      setBuilding(true);
-      setNotice(`正在发布为${publishTypeLabel}，请稍候...`);
-      try {
-        const result = await buildAppDevProject({
-          spaceId,
-          projectId,
-          publishType,
-        });
-        setLastBuildResult(result);
-        await fileState.refreshTree();
-        await refreshProject();
-        setReleaseStale(false);
-        setNotice(
-          `发布为${formatPublishType(result.publishType)}成功，产物目录：${result.artifactPath}，耗时 ${Math.max(
-            1,
-            Math.round(result.durationMs / 1000),
-          )} 秒`,
-        );
-      } catch (error) {
-        await refreshProject();
-        setNotice(error instanceof Error ? error.message : '发布构建失败');
-      } finally {
-        setBuilding(false);
+    async (_publishType = 'PAGE') => {
+      setNotice('已提交发布任务，正在构建...');
+      const result = await buildState.beginBuild();
+      if (result?.state === 'building') {
+        setNotice('发布任务正在后台构建，可继续编辑或查看预览');
       }
     },
-    [fileState.refreshTree, projectId, refreshProject, spaceId],
+    [buildState.beginBuild],
   );
+
+  useEffect(() => {
+    if (buildState.error) {
+      setNotice(buildState.error);
+      return;
+    }
+    if (buildState.projection.state === 'ready') {
+      setReleaseStale(buildState.projection.stale);
+      setNotice(
+        buildState.projection.stale
+          ? '发布已完成，但源码已更新，请重新发布后下载'
+          : '发布构建完成，可以下载产物',
+      );
+      void refreshProject();
+    } else if (buildState.projection.state === 'failed') {
+      setNotice(buildState.projection.safeMessage || '发布构建失败，请重试');
+    }
+  }, [
+    buildState.error,
+    buildState.projection.safeMessage,
+    buildState.projection.stale,
+    buildState.projection.state,
+    refreshProject,
+  ]);
   const handleDownloadRelease = useCallback(async () => {
+    if (!releaseReady || effectiveReleaseStale) {
+      setNotice('当前发布产物不可下载，请先完成最新构建');
+      return;
+    }
+    if (releaseActionRef.current) {
+      return releaseActionRef.current.promise;
+    }
+    const controller = new AbortController();
+    const epoch = providerActionEpochRef.current;
+    const key = identityKey;
     setDownloadingRelease(true);
     setNotice('正在准备发布产物，请稍候...');
-    try {
-      const blob = await downloadAppDevRelease({
-        spaceId,
-        projectId,
+    const promise = downloadAppDevRelease({
+      spaceId,
+      projectId,
+      signal: controller.signal,
+    })
+      .then(blob => {
+        if (
+          controller.signal.aborted ||
+          providerActionEpochRef.current !== epoch ||
+          identityKey !== key
+        ) {
+          return;
+        }
+        downloadAppDevBlob(
+          blob,
+          `${projectState.project?.name || 'appdev-project'}-release.zip`,
+        );
+        setNotice('发布产物已开始下载');
+      })
+      .catch(error => {
+        if (
+          controller.signal.aborted ||
+          providerActionEpochRef.current !== epoch ||
+          identityKey !== key
+        ) {
+          return;
+        }
+        if (isAppDevReleaseStaleError(error)) {
+          setReleaseStale(true);
+          buildState.markStale();
+          void buildState.reconcile();
+        }
+        setNotice(normalizeAppDevError(error));
+      })
+      .finally(() => {
+        if (releaseActionRef.current?.promise === promise) {
+          releaseActionRef.current = undefined;
+          if (providerActionEpochRef.current === epoch && identityKey === key) {
+            setDownloadingRelease(false);
+          }
+        }
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${projectState.project?.name || 'appdev-project'}-release.zip`;
-      link.rel = 'noreferrer';
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      window.setTimeout(() => {
-        URL.revokeObjectURL(url);
-        link.remove();
-      }, 0);
-      setNotice('发布产物已开始下载');
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '发布产物下载失败');
-    } finally {
-      setDownloadingRelease(false);
-    }
-  }, [projectId, projectState.project?.name, spaceId]);
+    releaseActionRef.current = { promise, controller };
+    return promise;
+  }, [
+    buildState.markStale,
+    buildState.reconcile,
+    effectiveReleaseStale,
+    identityKey,
+    projectId,
+    projectState.project?.name,
+    releaseReady,
+    spaceId,
+  ]);
   const handleExportSource = useCallback(async () => {
+    if (exportActionRef.current) {
+      return exportActionRef.current.promise;
+    }
+    const controller = new AbortController();
+    const epoch = providerActionEpochRef.current;
+    const key = identityKey;
     setExporting(true);
     setNotice('正在准备源码包，请稍候...');
-    try {
-      const blob = await exportAppDevProject({
-        spaceId,
-        projectId,
+    const promise = exportAppDevProject({
+      spaceId,
+      projectId,
+      signal: controller.signal,
+    })
+      .then(blob => {
+        if (
+          controller.signal.aborted ||
+          providerActionEpochRef.current !== epoch ||
+          identityKey !== key
+        ) {
+          return;
+        }
+        downloadAppDevBlob(
+          blob,
+          `${projectState.project?.name || 'appdev-project'}.zip`,
+        );
+        setNotice('项目导出已开始下载');
+      })
+      .catch(error => {
+        if (
+          !controller.signal.aborted &&
+          providerActionEpochRef.current === epoch &&
+          identityKey === key
+        ) {
+          setNotice(normalizeAppDevError(error));
+        }
+      })
+      .finally(() => {
+        if (exportActionRef.current?.promise === promise) {
+          exportActionRef.current = undefined;
+          if (providerActionEpochRef.current === epoch && identityKey === key) {
+            setExporting(false);
+          }
+        }
       });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${projectState.project?.name || 'appdev-project'}.zip`;
-      link.rel = 'noreferrer';
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-      window.setTimeout(() => {
-        URL.revokeObjectURL(url);
-        link.remove();
-      }, 0);
-      setNotice('项目导出已开始下载');
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '导出失败');
-    } finally {
-      setExporting(false);
-    }
-  }, [projectId, projectState.project?.name, spaceId]);
+    exportActionRef.current = { promise, controller };
+    return promise;
+  }, [identityKey, projectId, projectState.project?.name, spaceId]);
 
   return (
     <main className="app-dev-ide">
@@ -507,7 +835,11 @@ export default function AppDevIDEPage() {
             </button>
           </div>
         </header>
-        {notice ? <div className="app-dev-ide__notice">{notice}</div> : null}
+        {notice ? (
+          <div className="app-dev-ide__notice" role="status" aria-live="polite">
+            {notice}
+          </div>
+        ) : null}
         <section className="app-dev-ide__section">
           <div className="app-dev-ide__main-row">
             <aside className="app-dev-ide__left-panel">
@@ -563,7 +895,8 @@ export default function AppDevIDEPage() {
                 <div className="app-dev-ide__editor-actions">
                   <RuntimeToolbar
                     runtime={runtimeState.runtime}
-                    project={projectState.project}
+                    trustedPreviewUrl={trustedPreviewUrl}
+                    build={buildState.projection}
                     loading={runtimeState.loading || exporting}
                     building={building}
                     downloadingRelease={downloadingRelease}
@@ -578,6 +911,7 @@ export default function AppDevIDEPage() {
                     onRefresh={() => {
                       void runtimeState.refreshStatus();
                       void runtimeState.refreshLogs();
+                      void buildState.reconcile();
                     }}
                     onOpenLogs={() => {
                       void runtimeState.refreshLogs();
@@ -585,6 +919,12 @@ export default function AppDevIDEPage() {
                     }}
                     onImportProject={() => setImportModalVisible(true)}
                     onFullscreenPreview={() => {
+                      if (
+                        runtimeState.runtime.status !== 'running' ||
+                        !trustedPreviewUrl
+                      ) {
+                        return;
+                      }
                       setActiveWorkspaceTab('preview');
                       setPreviewFullscreenSignal(signal => signal + 1);
                     }}
@@ -620,31 +960,22 @@ export default function AppDevIDEPage() {
                   <p>
                     {effectiveReleaseStale && releaseReady
                       ? '源码已更新，预览已刷新。请重新发布后再下载最新产物。'
-                      : buildArtifactPath
-                        ? `产物目录：${buildArtifactPath}`
-                        : '发布后可下载静态产物，也可以随时导出当前源码包。'}
+                      : buildState.projection.safeMessage ||
+                        '发布后可下载静态产物，也可以随时导出当前源码包。'}
                   </p>
                 </div>
                 <div className="app-dev-release-panel__meta">
-                  <span>
-                    类型：
-                    {formatPublishType(
-                      lastBuildResult?.publishType ||
-                        projectState.project?.lastBuildType,
-                    )}
-                  </span>
+                  <span>类型：静态发布包</span>
                   {buildFinishedAtText ? (
                     <span>完成时间：{buildFinishedAtText}</span>
                   ) : null}
-                  {buildDurationText ? (
-                    <span>耗时：{buildDurationText}</span>
-                  ) : null}
+                  {buildSizeText ? <span>大小：{buildSizeText}</span> : null}
                 </div>
                 <div className="app-dev-release-panel__actions">
                   <button
                     type="button"
                     onClick={() => void handleBuild()}
-                    disabled={building || runtimeState.loading}
+                    disabled={!canBuild}
                   >
                     {building ? '发布中...' : '重新发布'}
                   </button>
@@ -722,6 +1053,7 @@ export default function AppDevIDEPage() {
                       {activeWorkspaceTab === 'preview' ? (
                         <PreviewPanel
                           runtime={runtimeState.runtime}
+                          trustedPreviewUrl={trustedPreviewUrl}
                           onRefresh={() => void runtimeState.refreshStatus()}
                           onOpenLogs={() => {
                             void runtimeState.refreshLogs();
@@ -791,182 +1123,202 @@ export default function AppDevIDEPage() {
       </div>
 
       {projectMetaEditing ? (
-        <div className="app-dev-modal-mask">
-          <section className="app-dev-modal app-dev-modal--compact app-dev-project-settings-modal">
-            <header className="app-dev-modal__header">
-              <div>
-                <h2>项目设置</h2>
-                <p>修改当前网页应用的名称和说明，保存后会同步到项目列表。</p>
-              </div>
-              <button
-                type="button"
-                disabled={savingProjectMeta}
-                onClick={() => setProjectMetaEditing(false)}
-              >
-                关闭
-              </button>
-            </header>
-            <label className="app-dev-form-field">
-              <span>项目名称</span>
-              <input
-                maxLength={50}
-                value={projectMetaForm.name}
-                disabled={savingProjectMeta}
-                onChange={event =>
-                  setProjectMetaForm(current => ({
-                    ...current,
-                    name: event.target.value,
-                  }))
-                }
-                placeholder="请输入项目名称"
-              />
-            </label>
-            <label className="app-dev-form-field">
-              <span>项目描述</span>
-              <textarea
-                maxLength={200}
-                value={projectMetaForm.description}
-                disabled={savingProjectMeta}
-                onChange={event =>
-                  setProjectMetaForm(current => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-                placeholder="描述这个网页应用的用途、场景或交付目标"
-              />
-            </label>
-            <footer className="app-dev-modal__footer">
-              <button
-                type="button"
-                disabled={savingProjectMeta}
-                onClick={() => setProjectMetaEditing(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                disabled={savingProjectMeta}
-                onClick={() => void saveProjectMeta()}
-              >
-                {savingProjectMeta ? '保存中...' : '保存'}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <AccessibleDialog
+          title="项目设置"
+          className="app-dev-modal app-dev-modal--compact app-dev-project-settings-modal"
+          onClose={() => {
+            if (!savingProjectMeta) {
+              setProjectMetaEditing(false);
+            }
+          }}
+        >
+          <header className="app-dev-modal__header">
+            <div>
+              <h2>项目设置</h2>
+              <p>修改当前网页应用的名称和说明，保存后会同步到项目列表。</p>
+            </div>
+            <button
+              type="button"
+              disabled={savingProjectMeta}
+              onClick={() => setProjectMetaEditing(false)}
+            >
+              关闭
+            </button>
+          </header>
+          <label className="app-dev-form-field">
+            <span>项目名称</span>
+            <input
+              data-dialog-autofocus
+              maxLength={50}
+              value={projectMetaForm.name}
+              disabled={savingProjectMeta}
+              onChange={event =>
+                setProjectMetaForm(current => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              placeholder="请输入项目名称"
+            />
+          </label>
+          <label className="app-dev-form-field">
+            <span>项目描述</span>
+            <textarea
+              maxLength={200}
+              value={projectMetaForm.description}
+              disabled={savingProjectMeta}
+              onChange={event =>
+                setProjectMetaForm(current => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+              placeholder="描述这个网页应用的用途、场景或交付目标"
+            />
+          </label>
+          <footer className="app-dev-modal__footer">
+            <button
+              type="button"
+              disabled={savingProjectMeta}
+              onClick={() => setProjectMetaEditing(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={savingProjectMeta}
+              onClick={() => void saveProjectMeta()}
+            >
+              {savingProjectMeta ? '保存中...' : '保存'}
+            </button>
+          </footer>
+        </AccessibleDialog>
       ) : null}
 
       {snapshotModalVisible ? (
-        <div className="app-dev-modal-mask">
-          <section className="app-dev-modal app-dev-modal--compact app-dev-snapshot-modal">
-            <header className="app-dev-modal__header">
-              <div>
-                <h2>版本历史</h2>
-                <p>保存和恢复当前网页应用的文件快照，方便在迭代中回退。</p>
-              </div>
-              <button
-                type="button"
-                disabled={snapshotActionLoading}
-                onClick={() => setSnapshotModalVisible(false)}
-              >
-                关闭
-              </button>
-            </header>
-            <div className="app-dev-snapshot-modal__toolbar">
-              <button
-                type="button"
-                disabled={snapshotLoading || snapshotActionLoading}
-                onClick={() => void refreshSnapshots()}
-              >
-                刷新
-              </button>
-              <button
-                type="button"
-                disabled={snapshotActionLoading}
-                onClick={openSnapshotNameModal}
-              >
-                保存新快照
-              </button>
+        <AccessibleDialog
+          title="版本历史"
+          className="app-dev-modal app-dev-modal--compact app-dev-snapshot-modal"
+          onClose={() => {
+            if (!snapshotActionLoading) {
+              setSnapshotModalVisible(false);
+            }
+          }}
+        >
+          <header className="app-dev-modal__header">
+            <div>
+              <h2>版本历史</h2>
+              <p>保存和恢复当前网页应用的文件快照，方便在迭代中回退。</p>
             </div>
-            {snapshotLoading ? (
-              <div className="app-dev-snapshot-modal__state">加载快照中...</div>
-            ) : null}
-            {!snapshotLoading && !snapshots.length ? (
-              <div className="app-dev-snapshot-modal__state">
-                暂无快照，可以先保存一个当前版本。
-              </div>
-            ) : null}
-            {!snapshotLoading && snapshots.length ? (
-              <ol className="app-dev-snapshot-modal__list">
-                {snapshots.map(snapshot => (
-                  <li key={snapshot.id}>
-                    <div>
-                      <strong>{snapshot.label}</strong>
-                      <span>{snapshot.createdAt || snapshot.id}</span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={snapshotActionLoading}
-                      onClick={() => void restoreSnapshot(snapshot)}
-                    >
-                      恢复
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            ) : null}
-          </section>
-        </div>
+            <button
+              type="button"
+              disabled={snapshotActionLoading}
+              onClick={() => setSnapshotModalVisible(false)}
+            >
+              关闭
+            </button>
+          </header>
+          <div className="app-dev-snapshot-modal__toolbar">
+            <button
+              type="button"
+              disabled={snapshotLoading || snapshotActionLoading}
+              onClick={() => void refreshSnapshots()}
+            >
+              刷新
+            </button>
+            <button
+              type="button"
+              disabled={snapshotActionLoading}
+              onClick={openSnapshotNameModal}
+            >
+              保存新快照
+            </button>
+          </div>
+          {snapshotLoading ? (
+            <div className="app-dev-snapshot-modal__state">加载快照中...</div>
+          ) : null}
+          {!snapshotLoading && !snapshots.length ? (
+            <div className="app-dev-snapshot-modal__state">
+              暂无快照，可以先保存一个当前版本。
+            </div>
+          ) : null}
+          {!snapshotLoading && snapshots.length ? (
+            <ol className="app-dev-snapshot-modal__list">
+              {snapshots.map(snapshot => (
+                <li key={snapshot.id}>
+                  <div>
+                    <strong>{snapshot.label}</strong>
+                    <span>{snapshot.createdAt || snapshot.id}</span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={snapshotActionLoading}
+                    onClick={() => void restoreSnapshot(snapshot)}
+                  >
+                    恢复
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </AccessibleDialog>
       ) : null}
       {snapshotNameModalVisible ? (
-        <div className="app-dev-modal-mask app-dev-modal-mask--nested">
-          <section className="app-dev-modal app-dev-modal--compact">
-            <header className="app-dev-modal__header">
-              <div>
-                <h2>保存快照</h2>
-                <p>为当前网页应用文件创建一个可恢复版本。</p>
-              </div>
-              <button
-                type="button"
-                disabled={snapshotActionLoading}
-                onClick={() => setSnapshotNameModalVisible(false)}
-              >
-                关闭
-              </button>
-            </header>
-            <label className="app-dev-form-field">
-              <span>快照名称</span>
-              <input
-                value={snapshotName}
-                disabled={snapshotActionLoading}
-                placeholder="例如：完成首页首版"
-                onChange={event => {
-                  setSnapshotName(event.target.value);
-                  setSnapshotNameError('');
-                }}
-              />
-            </label>
-            {snapshotNameError ? (
-              <div className="app-dev-form-error">{snapshotNameError}</div>
-            ) : null}
-            <footer className="app-dev-modal__footer">
-              <button
-                type="button"
-                disabled={snapshotActionLoading}
-                onClick={() => setSnapshotNameModalVisible(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                disabled={snapshotActionLoading}
-                onClick={() => void createSnapshot()}
-              >
-                {snapshotActionLoading ? '保存中...' : '保存'}
-              </button>
-            </footer>
-          </section>
-        </div>
+        <AccessibleDialog
+          title="保存快照"
+          maskClassName="app-dev-modal-mask app-dev-modal-mask--nested"
+          onClose={() => {
+            if (!snapshotActionLoading) {
+              setSnapshotNameModalVisible(false);
+            }
+          }}
+        >
+          <header className="app-dev-modal__header">
+            <div>
+              <h2>保存快照</h2>
+              <p>为当前网页应用文件创建一个可恢复版本。</p>
+            </div>
+            <button
+              type="button"
+              disabled={snapshotActionLoading}
+              onClick={() => setSnapshotNameModalVisible(false)}
+            >
+              关闭
+            </button>
+          </header>
+          <label className="app-dev-form-field">
+            <span>快照名称</span>
+            <input
+              data-dialog-autofocus
+              value={snapshotName}
+              disabled={snapshotActionLoading}
+              placeholder="例如：完成首页首版"
+              onChange={event => {
+                setSnapshotName(event.target.value);
+                setSnapshotNameError('');
+              }}
+            />
+          </label>
+          {snapshotNameError ? (
+            <div className="app-dev-form-error">{snapshotNameError}</div>
+          ) : null}
+          <footer className="app-dev-modal__footer">
+            <button
+              type="button"
+              disabled={snapshotActionLoading}
+              onClick={() => setSnapshotNameModalVisible(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={snapshotActionLoading}
+              onClick={() => void createSnapshot()}
+            >
+              {snapshotActionLoading ? '保存中...' : '保存'}
+            </button>
+          </footer>
+        </AccessibleDialog>
       ) : null}
       <ImportProjectModal
         visible={importModalVisible}

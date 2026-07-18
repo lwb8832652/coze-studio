@@ -36,6 +36,7 @@ const mockCreateAdminModel = vi.hoisted(() => vi.fn());
 const mockCreateAdminUser = vi.hoisted(() => vi.fn());
 const mockDeleteAdminModel = vi.hoisted(() => vi.fn());
 const mockSaveAdminBasicConfig = vi.hoisted(() => vi.fn());
+const mockIsAdminBasicConfigConflict = vi.hoisted(() => vi.fn());
 const mockResetAdminUserPassword = vi.hoisted(() => vi.fn());
 const mockUpdateAdminUser = vi.hoisted(() => vi.fn());
 
@@ -52,6 +53,7 @@ vi.mock('../service', () => ({
   getAdminKnowledgeConfig: mockGetAdminKnowledgeConfig,
   getAdminModelList: mockGetAdminModelList,
   getSystemAdminStatus: mockGetSystemAdminStatus,
+  isAdminBasicConfigConflict: mockIsAdminBasicConfigConflict,
   listAdminUserSpaces: mockListAdminUserSpaces,
   listAdminWorkspaceMembers: mockListAdminWorkspaceMembers,
   listAdminUsers: mockListAdminUsers,
@@ -123,6 +125,7 @@ describe('SystemManagementPage', () => {
       ],
     });
     mockGetAdminBasicConfig.mockResolvedValue({
+      revision: 'rev-7',
       configuration: {
         admin_emails: 'owner@example.test',
         allow_registration_email: 'example.test',
@@ -163,7 +166,10 @@ describe('SystemManagementPage', () => {
         },
       },
     });
-    mockSaveAdminBasicConfig.mockResolvedValue({});
+    mockSaveAdminBasicConfig.mockResolvedValue({ revision: 'rev-8' });
+    mockIsAdminBasicConfigConflict.mockImplementation(
+      error => error?.errorCode === 'BASE_CONFIG_VERSION_CONFLICT',
+    );
     mockCreateAdminUser.mockResolvedValue({
       user: {
         user_id: '99',
@@ -602,7 +608,7 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('42');
   });
 
-  it('saves basic config from settings section without dropping hidden fields', async () => {
+  it('saves only changed basic config fields with its revision', async () => {
     mockUseParams.mockReturnValue({ section: 'settings' });
 
     await renderPage();
@@ -625,17 +631,44 @@ describe('SystemManagementPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockSaveAdminBasicConfig).toHaveBeenCalledWith({
-      admin_emails: 'owner@example.test',
-      allow_registration_email: 'example.test',
-      code_runner_type: 1,
-      disable_user_registration: true,
-      plugin_configuration: {
-        mode: 'kept',
+    expect(mockSaveAdminBasicConfig).toHaveBeenCalledWith(
+      {
+        server_host: 'https://agent.example.test',
       },
-      server_host: 'https://agent.example.test',
-    });
+      'rev-7',
+    );
     expect(container.textContent).toContain('系统基础配置已保存');
+  });
+
+  it('shows a refresh action after a concurrent basic config conflict', async () => {
+    mockUseParams.mockReturnValue({ section: 'settings' });
+    mockSaveAdminBasicConfig.mockRejectedValue({
+      errorCode: 'BASE_CONFIG_VERSION_CONFLICT',
+    });
+    await renderPage();
+
+    const serverHostInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="系统服务地址"]',
+    )!;
+    await act(async () => {
+      serverHostInput.value = 'https://agent.example.test';
+      Simulate.change(serverHostInput);
+    });
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存系统基础配置"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain(
+      '配置已被其他管理员更新，请刷新后重试',
+    );
+    expect(
+      container.querySelector('button[aria-label="刷新系统基础配置"]'),
+    ).not.toBeNull();
   });
 
   it('renders model config section from model APIs', async () => {

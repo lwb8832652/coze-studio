@@ -1,0 +1,60 @@
+CREATE TABLE `sandbox_providers` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `provider_key` VARCHAR(64) NOT NULL,
+  `name` VARCHAR(128) NOT NULL,
+  `provider_type` VARCHAR(32) NOT NULL,
+  `endpoint_secret` TEXT NULL,
+  `endpoint_hint` VARCHAR(255) NOT NULL DEFAULT '',
+  `credential_secret` TEXT NULL,
+  `credential_fingerprint` VARCHAR(64) NOT NULL DEFAULT '',
+  `scopes_json` JSON NOT NULL,
+  `policy_json` JSON NOT NULL,
+  `max_concurrency` INT UNSIGNED NOT NULL DEFAULT 1,
+  `status` VARCHAR(32) NOT NULL,
+  `health_status` VARCHAR(32) NOT NULL,
+  `last_health_capabilities_json` JSON NOT NULL,
+  `last_health_code` VARCHAR(64) NOT NULL DEFAULT '',
+  `last_health_message` VARCHAR(255) NOT NULL DEFAULT '',
+  `last_health_latency_ms` INT UNSIGNED NOT NULL DEFAULT 0,
+  `last_health_at` DATETIME(3) NULL,
+  `legacy_source_hash` VARCHAR(64) NULL,
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  `created_by` BIGINT UNSIGNED NOT NULL,
+  `updated_by` BIGINT UNSIGNED NOT NULL,
+  `created_at` DATETIME(3) NOT NULL,
+  `updated_at` DATETIME(3) NOT NULL,
+  `deleted_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sandbox_providers_provider_key` (`provider_key`),
+  UNIQUE KEY `uk_sandbox_providers_legacy_source_hash` (`legacy_source_hash`),
+  KEY `idx_sandbox_providers_status_deleted` (`status`, `deleted_at`),
+  KEY `idx_sandbox_providers_created_id` (`created_at`, `id`),
+  KEY `idx_sandbox_providers_updated_id` (`updated_at`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `sandbox_provider_defaults` (
+  `scope` VARCHAR(32) NOT NULL,
+  `provider_id` BIGINT UNSIGNED NOT NULL,
+  `version` BIGINT UNSIGNED NOT NULL DEFAULT 1,
+  `updated_by` BIGINT UNSIGNED NOT NULL,
+  `created_at` DATETIME(3) NOT NULL,
+  `updated_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`scope`),
+  KEY `idx_sandbox_provider_defaults_provider_id` (`provider_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `sandbox_provider_audit_events` (
+  `event_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `provider_id` BIGINT UNSIGNED NULL,
+  `actor_user_id` BIGINT UNSIGNED NOT NULL,
+  `action` VARCHAR(64) NOT NULL,
+  `result` VARCHAR(64) NOT NULL,
+  `request_id` VARCHAR(128) NOT NULL,
+  `metadata_json` JSON NOT NULL,
+  `created_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`event_id`),
+  KEY `idx_sandbox_audit_provider_created_event` (`provider_id`, `created_at`, `event_id`),
+  KEY `idx_sandbox_audit_created_event` (`created_at`, `event_id`),
+  KEY `idx_sandbox_audit_action_created_event` (`action`, `created_at`, `event_id`),
+  KEY `idx_sandbox_audit_result_created_event` (`result`, `created_at`, `event_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

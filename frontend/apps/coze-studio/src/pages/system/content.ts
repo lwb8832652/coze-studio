@@ -36,6 +36,11 @@ export const SYSTEM_SECTIONS = [
     description: '公共模型、供应商和接入密钥管理',
   },
   {
+    key: 'sandbox',
+    title: '沙箱管理',
+    description: '运行 Provider、健康状态和默认范围',
+  },
+  {
     key: 'settings',
     title: '系统配置',
     description: '知识库和基础服务配置',
@@ -162,6 +167,28 @@ export const SECTION_CONTENT: Record<
         title: '删除模型',
         description: '删除前二次确认，避免误删公共模型。',
         value: '可删除',
+      },
+    ],
+  },
+  sandbox: {
+    heading: '沙箱管理',
+    summary:
+      '统一管理 Agent、MCP stdio 和网页应用开发使用的运行 Provider、健康状态与安全边界。',
+    cards: [
+      {
+        title: 'Provider 管理',
+        description: '创建、编辑、启停和安全删除运行 Provider。',
+        value: '已接 API',
+      },
+      {
+        title: '运行健康',
+        description: '执行受控健康检查并展示安全状态摘要。',
+        value: '可检查',
+      },
+      {
+        title: '默认范围',
+        description: '为 Agent、MCP stdio 和 AppDev 设置默认 Provider。',
+        value: '受版本保护',
       },
     ],
   },

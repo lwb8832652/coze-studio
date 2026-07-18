@@ -11,8 +11,9 @@ do not form one production control plane:
   filesystem, process, network, FFI, timeout, and memory restrictions.
 - `backend/infra/coderunner/impl` consumes that configuration for code runner
   execution.
-- AppDev supports a remote runner through `APP_DEV_RUNNER_ENDPOINT` and
-  `APP_DEV_RUNNER_TOKEN`.
+- AppDev resolves an enabled `appdev` remote provider from the persistent
+  Sandbox provider repository. Remote endpoints must use HTTPS and provider
+  credentials remain encrypted at rest.
 - MCP stdio has policy and sandbox boundaries, but the project documentation
   still records the concrete production provider as incomplete.
 - Runtime Doctor can display a bounded sandbox summary, while the new system
@@ -226,12 +227,27 @@ only when all of these conditions are true:
 
 It cannot be enabled in production or shared test environments.
 
-### 9.3 AppDev Compatibility
+### 9.3 AppDev Production Wiring
 
-The existing `APP_DEV_RUNNER_ENDPOINT` and token remain a compatibility source.
-AppDev runtime construction moves behind the provider router. Once a persisted
-AppDev default provider exists, it is authoritative. Environment-only fallback
-is limited to the documented migration window and remains fail-closed.
+The persistent Sandbox provider repository is the only production source for
+the AppDev remote endpoint, credential, enabled state, and `appdev` scope.
+`APP_DEV_RUNNER_ENDPOINT` and `APP_DEV_RUNNER_TOKEN` have been removed and are
+not compatibility inputs.
+
+Production wiring requires `SANDBOX_CONTROL_PLANE_ENABLED=true`, an enabled
+default remote provider with an HTTPS endpoint and encrypted credential, and a
+stable keyring supplied through `SANDBOX_CREDENTIAL_KEYS_JSON` plus
+`SANDBOX_CREDENTIAL_ACTIVE_KEY_ID`. The same stable keyring protects provider
+credentials and encrypted execution checkpoints across restarts. It also
+requires production Redis, object storage,
+`APP_DEV_PREVIEW_GATEWAY_BASE_URL`, `APP_DEV_ARTIFACT_GATEWAY_BASE_URL`, and
+`APP_DEV_PROVIDER_AUTH_TOKEN`; trusted proxy deployments additionally configure
+`APP_DEV_ARTIFACT_TRUSTED_PROXY_CIDRS`. Missing dependencies fail closed without
+an in-memory or host-runtime fallback.
+
+Host execution and loopback HTTP preview/artifact gateways are allowed only
+when both `APP_ENV=debug` and `APP_DEV_HOST_RUNTIME_ENABLED=true`. The HTTP
+exception accepts literal loopback IP addresses only, not `localhost` DNS.
 
 ### 9.4 Agent and MCP
 
@@ -397,9 +413,36 @@ Use the Codex in-app browser and record:
 7. Keep local debug execution unavailable outside explicit debug mode throughout
    the rollout.
 
-Rollback disables new routing and returns to the previous AppDev compatibility
-path only when that path is explicitly configured and valid. It never enables
-host execution in production.
+Rollback disables new runtime routing while retaining the Provider control plane
+and audit data. Running workloads finish or are explicitly cancelled. It never
+returns to an environment-only endpoint, another Provider, or host execution in
+production.
+
+### Implementation Status
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| Provider CRUD, health, defaults, and encrypted credentials | implemented | Sandbox application and infra targeted tests |
+| Scope routing, capacity, timeout, and cancellation | implemented | Router, Service, and Provider targeted tests |
+| Agent, AppDev, MCP, and CodeRunner integration | implemented | application, infra/appdev, and mcpruntime targeted tests |
+| Runtime Doctor bounded projection | implemented | Workbench backend and frontend component tests |
+| Low-cardinality Prometheus metrics | implemented | Sandbox metrics tests; deployment flag remains opt-in |
+| Configuration and runtime audit | implemented | runtime audit backend and audit drawer frontend tests |
+| Staged rollout and fail-closed rollback | implemented | wiring configuration-matrix tests |
+| MySQL integration and real Provider E2E | pending environment acceptance | requires an exclusive test DSN and controlled Provider |
+| Browser acceptance | pending | Codex in-app browser evidence required |
+
+Management and runtime traffic use separate switches. Operators first enable
+`SANDBOX_CONTROL_PLANE_ENABLED` with
+`SANDBOX_RUNTIME_ROUTING_ENABLED=false`, configure and validate the three
+scopes, and only then enable runtime routing. The unset runtime-routing value
+retains the old enabled behavior for compatibility, but production deployments
+must set it explicitly.
+
+Operational details are maintained in
+`docs/superpowers/runbooks/sandbox-control-plane-operations.md`. A row is not
+marked accepted merely because its code exists; the final status requires the
+Task 16 runtime and browser evidence.
 
 ## 17. Decisions
 

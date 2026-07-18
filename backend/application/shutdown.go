@@ -6,6 +6,9 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
+	"sort"
 	"sync"
 	"time"
 )
@@ -24,21 +27,48 @@ type applicationShutdownHook interface {
 type applicationShutdownRegistry struct {
 	mu         sync.Mutex
 	shutdownMu sync.Mutex
-	hooks      []applicationShutdownHook
+	nextID     uint64
+	hooks      map[uint64]*applicationShutdownEntry
+}
+
+type applicationShutdownEntry struct {
+	id   uint64
+	name string
+	hook applicationShutdownHook
+}
+
+type applicationShutdownRegistration struct {
+	registry *applicationShutdownRegistry
+	id       uint64
 }
 
 func newApplicationShutdownRegistry() *applicationShutdownRegistry {
-	return &applicationShutdownRegistry{}
+	return &applicationShutdownRegistry{hooks: make(map[uint64]*applicationShutdownEntry)}
 }
 
-func (r *applicationShutdownRegistry) Register(hook applicationShutdownHook) error {
+func (r *applicationShutdownRegistry) Register(hook applicationShutdownHook) (applicationShutdownRegistration, error) {
 	if r == nil || hook == nil {
-		return errApplicationShutdownFailed
+		return applicationShutdownRegistration{}, errApplicationShutdownFailed
 	}
 	r.mu.Lock()
-	r.hooks = append(r.hooks, hook)
-	r.mu.Unlock()
-	return nil
+	defer r.mu.Unlock()
+	r.nextID++
+	entry := &applicationShutdownEntry{id: r.nextID, name: applicationShutdownHookName(hook), hook: hook}
+	r.hooks[entry.id] = entry
+	return applicationShutdownRegistration{registry: r, id: entry.id}, nil
+}
+
+func (r *applicationShutdownRegistry) Unregister(registration applicationShutdownRegistration) bool {
+	if r == nil || registration.registry != r || registration.id == 0 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.hooks[registration.id]; !exists {
+		return false
+	}
+	delete(r.hooks, registration.id)
+	return true
 }
 
 func (r *applicationShutdownRegistry) Shutdown(ctx context.Context) error {
@@ -48,26 +78,51 @@ func (r *applicationShutdownRegistry) Shutdown(ctx context.Context) error {
 	r.shutdownMu.Lock()
 	defer r.shutdownMu.Unlock()
 	r.mu.Lock()
-	hooks := append([]applicationShutdownHook(nil), r.hooks...)
+	entries := make([]*applicationShutdownEntry, 0, len(r.hooks))
+	for _, entry := range r.hooks {
+		entries = append(entries, entry)
+	}
 	r.mu.Unlock()
-	remaining := make([]applicationShutdownHook, 0, len(hooks))
-	failed := false
-	for index := len(hooks) - 1; index >= 0; index-- {
-		if ctx.Err() != nil || hooks[index].Shutdown(ctx) != nil {
-			failed = true
-			remaining = append(remaining, hooks[index])
+	sort.Slice(entries, func(left, right int) bool { return entries[left].id > entries[right].id })
+	var shutdownErrors []error
+	for _, entry := range entries {
+		var err error
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		} else {
+			err = entry.hook.Shutdown(ctx)
+		}
+		r.mu.Lock()
+		current, stillRegistered := r.hooks[entry.id]
+		if err == nil && stillRegistered && current == entry {
+			delete(r.hooks, entry.id)
+		}
+		r.mu.Unlock()
+		if err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Errorf(
+				"shutdown hook %s[%d]: %w",
+				entry.name,
+				entry.id,
+				err,
+			))
 		}
 	}
-	r.mu.Lock()
-	for left, right := 0, len(remaining)-1; left < right; left, right = left+1, right-1 {
-		remaining[left], remaining[right] = remaining[right], remaining[left]
-	}
-	r.hooks = remaining
-	r.mu.Unlock()
-	if failed {
-		return errApplicationShutdownFailed
+	if len(shutdownErrors) > 0 {
+		return errors.Join(append([]error{errApplicationShutdownFailed}, shutdownErrors...)...)
 	}
 	return nil
+}
+
+func applicationShutdownHookName(hook applicationShutdownHook) string {
+	if named, ok := hook.(interface{ ShutdownName() string }); ok {
+		if name := named.ShutdownName(); name != "" {
+			return name
+		}
+	}
+	if kind := reflect.TypeOf(hook); kind != nil {
+		return kind.String()
+	}
+	return "unknown"
 }
 
 func (r *applicationShutdownRegistry) Pending() int {
@@ -96,7 +151,7 @@ func shutdownRegistryWithRetry(
 			return nil
 		}
 		if ctx.Err() != nil {
-			return errApplicationShutdownFailed
+			return errors.Join(errApplicationShutdownFailed, err, ctx.Err())
 		}
 		timer := time.NewTimer(backoff)
 		select {
@@ -105,7 +160,7 @@ func shutdownRegistryWithRetry(
 			if !timer.Stop() {
 				<-timer.C
 			}
-			return errApplicationShutdownFailed
+			return errors.Join(errApplicationShutdownFailed, err, ctx.Err())
 		}
 	}
 }

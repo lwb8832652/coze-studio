@@ -35,6 +35,7 @@ type ServiceComponents struct {
 	KnowledgeSVC      crossknowledge.Knowledge
 	AgentRunSVC       agentrun.Run
 	ChatModelProvider chatModelProvider
+	SandboxRepository SandboxRuntimeDiagnosticRepository
 }
 
 func InitService(c *ServiceComponents) *ApplicationService {
@@ -61,6 +62,9 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	}
 	if c.ChatModelProvider != nil {
 		SVC.chatModelProvider = c.ChatModelProvider
+	}
+	if c.SandboxRepository != nil {
+		SVC.sandboxRepository = c.SandboxRepository
 	}
 	return SVC
 }

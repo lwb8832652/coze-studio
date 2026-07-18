@@ -99,7 +99,7 @@ func TestPolicyParseRemoteEnforcesNetworkAndHeaderBoundary(t *testing.T) {
 }
 
 func TestPolicyParseRemoteAllowsExplicitLocalHTTPAndProjectsSecrets(t *testing.T) {
-	t.Parallel()
+	enableLocalMCPHTTP(t)
 
 	policy := testPolicy(t.TempDir())
 	policy.AllowInsecureHTTP = true

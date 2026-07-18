@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/rand"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -35,11 +36,40 @@ import (
 
 type minioClient struct {
 	client          *minio.Client
+	streamOpener    minioObjectStreamOpener
+	readinessCheck  func(context.Context, string) (bool, error)
 	accessKeyID     string
 	secretAccessKey string
 	bucketName      string
 	endpoint        string
 }
+
+type minioObjectStreamOpener interface {
+	OpenObjectStream(context.Context, string, string) (io.ReadCloser, error)
+}
+
+type minioSDKObjectStreamOpener struct{ client *minio.Client }
+
+var _ minioObjectStreamOpener = (*minioSDKObjectStreamOpener)(nil)
+
+func (opener *minioSDKObjectStreamOpener) OpenObjectStream(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	if opener == nil || opener.client == nil {
+		return nil, fmt.Errorf("GetObject stream client is unavailable")
+	}
+	object, err := opener.client.GetObject(ctx, bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("GetObject failed: %w", err)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("GetObject returned an empty stream")
+	}
+	return object, nil
+}
+
+var (
+	_ storage.StreamingStorage = (*minioClient)(nil)
+	_ storage.ReadinessChecker = (*minioClient)(nil)
+)
 
 func New(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool) (storage.Storage, error) {
 	m, err := getMinioClient(ctx, endpoint, accessKeyID, secretAccessKey, bucketName, useSSL)
@@ -61,6 +91,8 @@ func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey,
 
 	m := &minioClient{
 		client:          client,
+		streamOpener:    &minioSDKObjectStreamOpener{client: client},
+		readinessCheck:  client.BucketExists,
 		accessKeyID:     accessKeyID,
 		secretAccessKey: secretAccessKey,
 		bucketName:      bucketName,
@@ -74,6 +106,26 @@ func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey,
 
 	// m.test()
 	return m, nil
+}
+
+func (m *minioClient) CheckReadiness(ctx context.Context) error {
+	if ctx == nil || m == nil || m.readinessCheck == nil || strings.TrimSpace(m.bucketName) == "" {
+		return storage.ErrReadinessUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	exists, err := m.readinessCheck(ctx, m.bucketName)
+	if err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return storage.ErrReadinessUnavailable
+	}
+	if !exists {
+		return storage.ErrReadinessUnavailable
+	}
+	return nil
 }
 
 func (m *minioClient) createBucketIfNeed(ctx context.Context, client *minio.Client, bucketName, region string) error {
@@ -195,19 +247,40 @@ func (m *minioClient) PutObjectWithReader(ctx context.Context, objectKey string,
 }
 
 func (m *minioClient) GetObject(ctx context.Context, objectKey string) ([]byte, error) {
-	obj, err := m.client.GetObject(ctx, m.bucketName, objectKey, minio.GetObjectOptions{})
+	obj, err := m.OpenObjectStream(ctx, objectKey)
 	if err != nil {
-		return nil, fmt.Errorf("GetObject failed: %v", err)
+		return nil, err
 	}
 	defer obj.Close()
 	data, err := io.ReadAll(obj)
 	if err != nil {
 		return nil, fmt.Errorf("ReadObject failed: %v", err)
 	}
-
-	defer obj.Close()
-
 	return data, nil
+}
+
+func (m *minioClient) OpenObjectStream(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("GetObject context is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m == nil || m.streamOpener == nil {
+		return nil, fmt.Errorf("GetObject stream opener is unavailable")
+	}
+	obj, err := m.streamOpener.OpenObjectStream(ctx, m.bucketName, objectKey)
+	if err != nil {
+		return nil, fmt.Errorf("GetObject failed: %w", err)
+	}
+	if obj == nil {
+		return nil, fmt.Errorf("GetObject returned an empty stream")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = obj.Close()
+		return nil, err
+	}
+	return obj, nil
 }
 
 func (m *minioClient) DeleteObject(ctx context.Context, objectKey string) error {

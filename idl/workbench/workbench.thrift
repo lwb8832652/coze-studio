@@ -87,12 +87,56 @@ struct RuntimeDoctorMCPToolsData {
     6: required i64 unknown_servers
 }
 
+struct RuntimeDoctorModelCapabilities {
+    1: required bool native_tool_search
+    2: required bool thinking
+    3: required bool reasoning
+    4: required bool vision
+    5: required bool pdf
+    6: required bool file
+    7: required bool audio
+    8: required bool video
+}
+
+struct RuntimeDoctorModelData {
+    1: required string status
+    2: required bool configured
+    3: required string live_probe
+    4: optional RuntimeDoctorModelCapabilities capabilities
+    5: optional string message
+}
+
+struct RuntimeDoctorSandboxScopeData {
+    1: required string scope
+    2: required bool configured
+    3: required bool available
+    4: required bool selected
+    5: required string health_status
+    6: required string reason_code
+    7: optional string provider_type
+    8: optional string provider_ref
+    9: optional string checked_at
+}
+
+struct RuntimeDoctorSandboxData {
+    1: required string status
+    2: required string runner_type
+    3: required string network
+    4: required string process
+    5: required string ffi
+    6: required string node_modules
+    7: optional string message
+    8: optional list<RuntimeDoctorSandboxScopeData> scopes
+}
+
 struct WorkbenchRuntimeDoctorData {
     1: required string status
     2: required RuntimeDoctorRuntimeData runtime
     3: required RuntimeDoctorWebToolsData web_tools
     4: required RuntimeDoctorMCPToolsData mcp_tools
     5: required list<RuntimeDoctorCheck> checks
+    6: required RuntimeDoctorModelData model
+    7: required RuntimeDoctorSandboxData sandbox
 }
 
 struct WorkbenchRuntimeDoctorResponse {

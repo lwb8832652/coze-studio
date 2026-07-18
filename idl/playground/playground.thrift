@@ -285,6 +285,8 @@ struct BotSpaceV2 {
     19: optional string    owner_icon_url  // Space owner image
     20: optional SpaceApplyStatus space_apply_status // The current visiting user joins the space status
     21: optional i64       total_member_num // The total number of space members, only the organization space can be queried.
+    22: bool               allow_develop // Whether AppDev is enabled for the workspace.
+    23: bool               receive_publish // Whether the workspace accepts published resources.
 }
 
 struct SpaceInfo {

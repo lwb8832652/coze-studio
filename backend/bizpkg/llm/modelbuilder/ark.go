@@ -24,10 +24,8 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
 	"github.com/coze-dev/coze-studio/backend/api/model/app/bot_common"
-	"github.com/coze-dev/coze-studio/backend/pkg/lang/conv"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ternary"
-	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 type arkModelBuilder struct {
@@ -118,8 +116,6 @@ func (b *arkModelBuilder) Build(ctx context.Context, params *LLMParams) (ToolCal
 	}
 
 	b.applyParamsToChatModelConfig(chatModelConf, params)
-
-	logs.CtxDebugf(ctx, "build ark model with config: %v", conv.DebugJsonToStr(chatModelConf))
 
 	return ark.NewChatModel(ctx, chatModelConf)
 }

@@ -94,6 +94,8 @@ func (s *Service) ListSnapshots(ctx context.Context, req *ProjectFileRequest) (*
 	}, nil
 }
 
+// RestoreSnapshot is the legacy debug flow. Provider-enabled restoration uses
+// ProviderAPIFacade.RestoreSnapshot so it cannot race the old RuntimeManager.
 func (s *Service) RestoreSnapshot(ctx context.Context, req *RestoreSnapshotRequest) (*FileMutationResponse, error) {
 	if err := validateProjectFileRequest(req.SpaceID, req.CurrentUserID, req.ProjectID); err != nil {
 		return nil, err
@@ -118,7 +120,7 @@ func (s *Service) RestoreSnapshot(ctx context.Context, req *RestoreSnapshotReque
 		return nil, err
 	}
 	if runtimeWasActive {
-		freshRuntimeReq, runtimeReqErr := s.runtimeRequest(ctx, &RuntimeRequest{
+		freshRuntimeReq, runtimeReqErr := s.runtimeStartRequest(ctx, &RuntimeRequest{
 			SpaceID:       spaceID,
 			CurrentUserID: req.CurrentUserID,
 			ProjectID:     projectID,

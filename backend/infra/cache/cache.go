@@ -18,10 +18,14 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
-var Nil error
+var (
+	Nil                     error
+	ErrReadinessUnavailable = errors.New("cache readiness unavailable")
+)
 
 func SetDefaultNilError(err error) {
 	Nil = err
@@ -33,6 +37,21 @@ type Cmdable interface {
 	HashCmdable
 	GenericCmdable
 	ListCmdable
+	ScriptCmdable
+}
+
+// ReadinessChecker performs a bounded, side-effect-free connectivity check.
+// Provider control-plane wiring requires this capability and never falls back
+// to command-interface presence as a readiness signal.
+type ReadinessChecker interface {
+	CheckReadiness(context.Context) error
+}
+
+// ScriptCmdable executes one server-side script through the shared cache
+// connection. Implementations should use the script SHA and transparently
+// fall back to EVAL when Redis has not loaded it yet.
+type ScriptCmdable interface {
+	RunScript(ctx context.Context, script string, keys []string, args ...interface{}) ScriptCmd
 }
 
 type StringCmdable interface {
@@ -109,4 +128,9 @@ type StringCmd interface {
 type StringSliceCmd interface {
 	baseCmd
 	Result() ([]string, error)
+}
+
+type ScriptCmd interface {
+	baseCmd
+	Result() (interface{}, error)
 }

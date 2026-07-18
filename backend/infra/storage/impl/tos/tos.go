@@ -37,9 +37,41 @@ import (
 )
 
 type tosClient struct {
-	client     *tos.ClientV2
-	bucketName string
+	client         *tos.ClientV2
+	streamOpener   tosObjectStreamOpener
+	readinessCheck func(context.Context, string) error
+	bucketName     string
 }
+
+type tosObjectStreamOpener interface {
+	OpenObjectStream(context.Context, string, string) (io.ReadCloser, error)
+}
+
+type tosSDKObjectStreamOpener struct{ client *tos.ClientV2 }
+
+var _ tosObjectStreamOpener = (*tosSDKObjectStreamOpener)(nil)
+
+func (opener *tosSDKObjectStreamOpener) OpenObjectStream(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	if opener == nil || opener.client == nil {
+		return nil, fmt.Errorf("GetObject stream client is unavailable")
+	}
+	output, err := opener.client.GetObjectV2(ctx, &tos.GetObjectV2Input{
+		Bucket: bucket, Key: objectKey,
+		ResponseContentType: "application/json", ResponseContentEncoding: "deflate",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if output == nil || output.Content == nil {
+		return nil, fmt.Errorf("GetObject returned an empty stream")
+	}
+	return output.Content, nil
+}
+
+var (
+	_ storage.StreamingStorage = (*tosClient)(nil)
+	_ storage.ReadinessChecker = (*tosClient)(nil)
+)
 
 func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (storage.Storage, error) {
 	t, err := getTosClient(ctx, ak, sk, bucketName, endpoint, region)
@@ -59,7 +91,12 @@ func getTosClient(ctx context.Context, ak, sk, bucketName, endpoint, region stri
 	}
 
 	t := &tosClient{
-		client:     client,
+		client:       client,
+		streamOpener: &tosSDKObjectStreamOpener{client: client},
+		readinessCheck: func(ctx context.Context, bucket string) error {
+			_, err := client.HeadBucket(ctx, &tos.HeadBucketInput{Bucket: bucket})
+			return err
+		},
 		bucketName: bucketName,
 	}
 
@@ -70,6 +107,22 @@ func getTosClient(ctx context.Context, ak, sk, bucketName, endpoint, region stri
 	}
 
 	return t, nil
+}
+
+func (t *tosClient) CheckReadiness(ctx context.Context) error {
+	if ctx == nil || t == nil || t.readinessCheck == nil || strings.TrimSpace(t.bucketName) == "" {
+		return storage.ErrReadinessUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.readinessCheck(ctx, t.bucketName); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return storage.ErrReadinessUnavailable
+	}
+	return nil
 }
 
 func (t *tosClient) test() {
@@ -205,30 +258,40 @@ func (t *tosClient) PutObjectWithReader(ctx context.Context, objectKey string, c
 }
 
 func (t *tosClient) GetObject(ctx context.Context, objectKey string) ([]byte, error) {
-	client := t.client
-	bucketName := t.bucketName
-
-	// Download data to memory
-	getOutput, err := client.GetObjectV2(ctx, &tos.GetObjectV2Input{
-		Bucket:                  bucketName,
-		Key:                     objectKey,
-		ResponseContentType:     "application/json",
-		ResponseContentEncoding: "deflate",
-	})
+	body, err := t.OpenObjectStream(ctx, objectKey)
 	if err != nil {
 		return nil, err
 	}
-
-	// logs.CtxDebugf(ctx, "GetObject resp: %v, err: %v", conv.DebugJsonToStr(getOutput), err)
-
-	body, err := io.ReadAll(getOutput.Content)
+	defer body.Close()
+	content, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err
 	}
+	return content, nil
+}
 
-	defer getOutput.Content.Close()
-
-	return body, nil
+func (t *tosClient) OpenObjectStream(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("GetObject context is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if t == nil || t.streamOpener == nil {
+		return nil, fmt.Errorf("GetObject stream opener is unavailable")
+	}
+	content, err := t.streamOpener.OpenObjectStream(ctx, t.bucketName, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	if content == nil {
+		return nil, fmt.Errorf("GetObject returned an empty stream")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = content.Close()
+		return nil, err
+	}
+	return content, nil
 }
 
 func (t *tosClient) DeleteObject(ctx context.Context, objectKey string) error {

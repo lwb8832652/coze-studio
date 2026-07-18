@@ -207,6 +207,7 @@ vi.mock('@coze-arch/coze-design', () => {
 });
 
 import ToolsPage from '../index';
+import { MCPToolSettingsPanel } from '../mcp-settings-panel';
 
 const customServer = {
   server_id: '100',
@@ -442,6 +443,21 @@ describe('ToolsPage', () => {
 
     cleanup(container, root);
   });
+
+  it('exposes the complete MCP workflow in account settings', async () => {
+    const { container, root } = await renderMcpSettingsPanel();
+
+    expect(container.textContent).toContain('browser-tools');
+    expect(container.textContent).toContain('新建 MCP 服务');
+    expect(container.textContent).toContain('查看能力');
+    expect(container.textContent).toContain('编辑配置');
+    expect(container.textContent).toContain('服务导出');
+    expect(
+      container.querySelector('[aria-label="关闭 browser-tools"]'),
+    ).toBeTruthy();
+
+    cleanup(container, root);
+  });
 });
 
 const renderToolsPage = async () => {
@@ -451,6 +467,18 @@ const renderToolsPage = async () => {
   await act(async () => {
     root = createRoot(container);
     root.render(<ToolsPage />);
+    await Promise.resolve();
+  });
+  return { container, root };
+};
+
+const renderMcpSettingsPanel = async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | undefined;
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<MCPToolSettingsPanel spaceId="123" />);
     await Promise.resolve();
   });
   return { container, root };

@@ -100,6 +100,53 @@ export interface AdminBasicConfig {
   server_host?: string;
 }
 
+export type AdminBasicConfigPatch = Pick<
+  AdminBasicConfig,
+  | 'admin_emails'
+  | 'disable_user_registration'
+  | 'allow_registration_email'
+  | 'plugin_configuration'
+  | 'server_host'
+>;
+
+export interface AdminBasicConfigResponse {
+  configuration: AdminBasicConfig;
+  revision: string;
+}
+
+export interface AdminBasicConfigSaveResponse {
+  revision: string;
+}
+
+export class AdminAPIError extends Error {
+  readonly status: number;
+  readonly errorCode?: string;
+
+  constructor(status: number, message: string, errorCode?: string) {
+    super(message);
+    this.name = 'AdminAPIError';
+    this.status = status;
+    this.errorCode = errorCode;
+  }
+}
+
+const throwAdminAPIError = async (response: Response): Promise<never> => {
+  const payload = (await response.json().catch(() => ({}))) as {
+    error_code?: string;
+    msg?: string;
+  };
+  throw new AdminAPIError(
+    response.status,
+    payload.msg || `request failed: ${response.status}`,
+    payload.error_code,
+  );
+};
+
+export const isAdminBasicConfigConflict = (error: unknown): boolean =>
+  error instanceof AdminAPIError &&
+  error.status === 409 &&
+  error.errorCode === 'BASE_CONFIG_VERSION_CONFLICT';
+
 export interface AdminI18nText {
   zh_cn?: string;
   en_us?: string;
@@ -183,7 +230,7 @@ export const getSystemAdminStatus = async (): Promise<SystemAdminStatus> => {
   }
 
   if (!response.ok) {
-    throw new Error(`request failed: ${response.status}`);
+    await throwAdminAPIError(response);
   }
 
   const payload = (await response.json()) as SystemAdminStatusResponse;
@@ -203,7 +250,7 @@ const postJSON = async <T>(url: string, body: unknown): Promise<T> => {
   });
 
   if (!response.ok) {
-    throw new Error(`request failed: ${response.status}`);
+    await throwAdminAPIError(response);
   }
 
   return response.json() as Promise<T>;
@@ -252,25 +299,34 @@ export const listAdminWorkspaceMembers = (params: { space_id: string }) =>
 export const listAdminUserSpaces = (params: { user_id: string }) =>
   postJSON<{ spaces: AdminUserSpace[] }>('/api/admin/users/spaces', params);
 
-export const getAdminBasicConfig = async (): Promise<{
-  configuration?: AdminBasicConfig;
-}> => {
-  const response = await fetch('/api/admin/config/basic/get', {
-    credentials: 'include',
-  });
+export const getAdminBasicConfig =
+  async (): Promise<AdminBasicConfigResponse> => {
+    const response = await fetch('/api/admin/config/basic/get', {
+      credentials: 'include',
+    });
 
-  if (!response.ok) {
-    throw new Error(`request failed: ${response.status}`);
-  }
+    if (!response.ok) {
+      await throwAdminAPIError(response);
+    }
 
-  return response.json() as Promise<{
-    configuration?: AdminBasicConfig;
-  }>;
-};
+    const payload =
+      (await response.json()) as Partial<AdminBasicConfigResponse>;
+    if (!payload.configuration || !payload.revision) {
+      throw new AdminAPIError(
+        500,
+        'basic configuration response is incomplete',
+      );
+    }
+    return payload as AdminBasicConfigResponse;
+  };
 
-export const saveAdminBasicConfig = (configuration: AdminBasicConfig) =>
-  postJSON<Record<string, never>>('/api/admin/config/basic/save', {
+export const saveAdminBasicConfig = (
+  configuration: AdminBasicConfigPatch,
+  expectedRevision: string,
+) =>
+  postJSON<AdminBasicConfigSaveResponse>('/api/admin/config/basic/save', {
     configuration,
+    expected_revision: expectedRevision,
   });
 
 export const getAdminModelList = async (): Promise<AdminModelListResponse> => {

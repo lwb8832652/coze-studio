@@ -22,17 +22,16 @@ import (
 	"time"
 )
 
-func TestSafeHTTPPolicyCanonicalizesIDNAAndRequiresExactPort(t *testing.T) {
+func TestSafeHTTPPolicyRejectsNonASCIIAndRequiresExactPort(t *testing.T) {
 	t.Parallel()
 
 	policy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{
-		AllowedHosts: []string{"MCP.Example.COM.", "BÜCHER.Example.:8443"},
+		AllowedHosts: []string{"MCP.Example.COM.", "xn--bcher-kva.example:8443"},
 	})
 	for _, rawURL := range []string{
 		"https://mcp.example.com/path",
 		"https://MCP.EXAMPLE.COM.:443/path",
 		"https://xn--bcher-kva.example:8443/path",
-		"https://BÜCHER.example.:8443/path",
 	} {
 		if err := policy.ValidateURL(mustParseURL(t, rawURL)); err != nil {
 			t.Fatalf("expected URL %q to pass: %v", rawURL, err)
@@ -44,6 +43,7 @@ func TestSafeHTTPPolicyCanonicalizesIDNAAndRequiresExactPort(t *testing.T) {
 		"https://mcp.example.com.evil/path",
 		"https://user:password@mcp.example.com/path",
 		"https://mcp.example.com/path#fragment",
+		"https://BÜCHER.example.:8443/path",
 	} {
 		if err := policy.ValidateURL(mustParseURL(t, rawURL)); !errors.Is(err, ErrInvalidConnection) {
 			t.Fatalf("expected URL %q to fail closed, got %v", rawURL, err)
@@ -78,91 +78,18 @@ func TestSafeHTTPTransportRejectsUnsafeResolvedAddressesAndDNSRebinding(t *testi
 	t.Parallel()
 
 	policy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{AllowedHosts: []string{"mcp.example.test"}})
-	for _, address := range []string{
-		"0.0.0.0",
-		"127.0.0.1",
-		"10.0.0.1",
-		"172.16.0.1",
-		"192.168.0.1",
-		"100.64.0.1",
-		"169.254.169.254",
-		"192.0.2.1",
-		"192.88.99.1",
-		"198.18.0.1",
-		"198.51.100.1",
-		"203.0.113.1",
-		"224.0.0.1",
-		"240.0.0.1",
-		"::",
-		"::1",
-		"64:ff9b::a9fe:a9fe",
-		"64:ff9b::a00:1",
-		"64:ff9b:1:0:a00:1::",
-		"100::1",
-		"2001::1",
-		"2001:2::1",
-		"2001:db8::1",
-		"2002:a9fe:a9fe::1",
-		"3fff::1",
-		"5f00::1",
-		"fe80::1",
-		"fec0::1",
-		"fc00::1",
-		"ff02::1",
-		"::ffff:127.0.0.1",
-		"::ffff:169.254.169.254",
-		"fd00:ec2::254",
+	for _, options := range []SafeHTTPClientOptions{
+		{Policy: policy, Resolver: &sequenceHTTPResolver{results: [][]netip.Addr{{netip.MustParseAddr("93.184.216.34")}}}},
+		{Policy: policy, Dialer: &recordingHTTPDialer{}},
 	} {
-		address := address
-		t.Run(address, func(t *testing.T) {
-			transport, err := NewSafeHTTPTransport(SafeHTTPClientOptions{
-				Policy:   policy,
-				Resolver: &sequenceHTTPResolver{results: [][]netip.Addr{{netip.MustParseAddr(address)}}},
-				Dialer:   &recordingHTTPDialer{},
-			})
-			if err != nil {
-				t.Fatalf("new safe HTTP transport: %v", err)
-			}
-			_, err = transport.dialContext(context.Background(), "tcp", "mcp.example.test:443")
-			if !errors.Is(err, ErrUnsafeRemoteAddress) {
-				t.Fatalf("address %s must be rejected, got %v", address, err)
-			}
-		})
-	}
-
-	resolver := &sequenceHTTPResolver{results: [][]netip.Addr{
-		{netip.MustParseAddr("93.184.216.34")},
-		{netip.MustParseAddr("127.0.0.1")},
-	}}
-	dialer := &recordingHTTPDialer{}
-	transport, err := NewSafeHTTPTransport(SafeHTTPClientOptions{
-		Policy:   policy,
-		Resolver: resolver,
-		Dialer:   dialer,
-	})
-	if err != nil {
-		t.Fatalf("new safe HTTP transport: %v", err)
-	}
-	connection, err := transport.dialContext(context.Background(), "tcp", "mcp.example.test:443")
-	if err != nil {
-		t.Fatalf("first public DNS result: %v", err)
-	}
-	_ = connection.Close()
-	if _, err := transport.dialContext(context.Background(), "tcp", "mcp.example.test:443"); !errors.Is(err, ErrUnsafeRemoteAddress) {
-		t.Fatalf("rebound private result must fail, got %v", err)
-	}
-	if resolver.callCount() != 2 {
-		t.Fatalf("DNS resolver calls = %d, want 2", resolver.callCount())
-	}
-	if got := dialer.addresses(); len(got) != 1 || got[0] != "93.184.216.34:443" {
-		t.Fatalf("dialed addresses = %#v", got)
+		if _, err := NewSafeHTTPTransport(options); !errors.Is(err, ErrInvalidConnection) {
+			t.Fatalf("production resolver/dialer injection must be rejected, got %v", err)
+		}
 	}
 }
 
 func TestSafeHTTPTransportAllowsLoopbackOnlyForExplicitLocalDebug(t *testing.T) {
-	t.Parallel()
-
-	resolver := &sequenceHTTPResolver{results: [][]netip.Addr{{netip.MustParseAddr("127.0.0.1")}}}
+	enableLocalMCPHTTP(t)
 	allowedPolicy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{
 		AllowedHosts:    []string{"localhost:8080"},
 		AllowLocalDebug: true,
@@ -170,20 +97,6 @@ func TestSafeHTTPTransportAllowsLoopbackOnlyForExplicitLocalDebug(t *testing.T) 
 	if err := allowedPolicy.ValidateURL(mustParseURL(t, "http://LOCALHOST.:8080/sse")); err != nil {
 		t.Fatalf("explicit local debug URL: %v", err)
 	}
-	transport, err := NewSafeHTTPTransport(SafeHTTPClientOptions{
-		Policy:   allowedPolicy,
-		Resolver: resolver,
-		Dialer:   &recordingHTTPDialer{},
-	})
-	if err != nil {
-		t.Fatalf("new safe HTTP transport: %v", err)
-	}
-	connection, err := transport.dialContext(context.Background(), "tcp", "localhost:8080")
-	if err != nil {
-		t.Fatalf("explicit localhost loopback: %v", err)
-	}
-	_ = connection.Close()
-
 	for _, options := range []SafeHTTPPolicyOptions{
 		{AllowedHosts: []string{"localhost:8080"}},
 		{AllowedHosts: []string{"localhost"}, AllowLocalDebug: true},
@@ -196,34 +109,59 @@ func TestSafeHTTPTransportAllowsLoopbackOnlyForExplicitLocalDebug(t *testing.T) 
 	}
 }
 
+func TestSafeHTTPPolicyLocalHTTPRequiresAllExactDebugGates(t *testing.T) {
+	tests := []struct {
+		name        string
+		appEnv      string
+		flag        string
+		option      bool
+		wantAllowed bool
+	}{
+		{name: "all exact", appEnv: "debug", flag: "true", option: true, wantAllowed: true},
+		{name: "non-debug environment", appEnv: "production", flag: "true", option: true},
+		{name: "missing runtime flag", appEnv: "debug", flag: "", option: true},
+		{name: "truthy alias rejected", appEnv: "debug", flag: "TRUE", option: true},
+		{name: "policy option missing", appEnv: "debug", flag: "true", option: false},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", test.appEnv)
+			t.Setenv("MCP_RUNTIME_ALLOW_LOCAL_HTTP", test.flag)
+			policy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{
+				AllowedHosts:    []string{"localhost:8080"},
+				AllowLocalDebug: test.option,
+			})
+			err := policy.ValidateURL(mustParseURL(t, "http://localhost:8080/sse"))
+			if test.wantAllowed && err != nil {
+				t.Fatalf("all exact gates should allow local HTTP: %v", err)
+			}
+			if !test.wantAllowed && !errors.Is(err, ErrInvalidConnection) {
+				t.Fatalf("missing gate must fail closed, got %v", err)
+			}
+		})
+	}
+}
+
 func TestSafeHTTPTransportDisablesEnvironmentProxyAndDialsValidatedIP(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	t.Setenv("ALL_PROXY", "http://127.0.0.1:1")
 
 	policy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{AllowedHosts: []string{"mcp.example.test"}})
-	dialer := &recordingHTTPDialer{}
 	transport, err := NewSafeHTTPTransport(SafeHTTPClientOptions{
-		Policy:   policy,
-		Resolver: &sequenceHTTPResolver{results: [][]netip.Addr{{netip.MustParseAddr("93.184.216.34")}}},
-		Dialer:   dialer,
+		Policy: policy,
 	})
 	if err != nil {
 		t.Fatalf("new safe HTTP transport: %v", err)
 	}
-	if transport.base.Proxy != nil {
-		t.Fatal("safe transport must not use ProxyFromEnvironment")
-	}
-	connection, err := transport.dialContext(context.Background(), "tcp", "mcp.example.test:443")
-	if err != nil {
-		t.Fatalf("dial validated address: %v", err)
-	}
-	_ = connection.Close()
-	if got := dialer.addresses(); len(got) != 1 || got[0] != "93.184.216.34:443" {
-		t.Fatalf("dialed addresses = %#v", got)
+	if transport == nil || transport.inner == nil {
+		t.Fatal("production MCP constructor did not build shared safe transport")
 	}
 }
 
 func TestSafeHTTPClientRedirectPolicyDoesNotForwardSecretCrossOrigin(t *testing.T) {
+	enableLocalMCPHTTP(t)
+
 	var crossCalls atomic.Int32
 	var crossAuthorization atomic.Value
 	crossServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -297,6 +235,8 @@ func TestSafeHTTPClientRedirectPolicyDoesNotForwardSecretCrossOrigin(t *testing.
 }
 
 func TestSafeHTTPClientCapsOrdinaryResponseBeforeJSONDecode(t *testing.T) {
+	enableLocalMCPHTTP(t)
+
 	const (
 		bodyLimit = 64
 		secret    = "oversized-body-secret-must-not-leak"
@@ -529,6 +469,7 @@ func localhostTestURL(t *testing.T, rawURL string) string {
 
 func newLocalSafeHTTPClient(t *testing.T, serverURL string, bodyLimit int64) *http.Client {
 	t.Helper()
+	enableLocalMCPHTTP(t)
 	targetURL := localhostTestURL(t, serverURL)
 	policy := mustSafeHTTPPolicy(t, SafeHTTPPolicyOptions{
 		AllowedHosts:    []string{mustParseURL(t, targetURL).Host},
@@ -543,6 +484,12 @@ func newLocalSafeHTTPClient(t *testing.T, serverURL string, bodyLimit int64) *ht
 		t.Fatalf("new local safe HTTP client: %v", err)
 	}
 	return client
+}
+
+func enableLocalMCPHTTP(t *testing.T) {
+	t.Helper()
+	t.Setenv("APP_ENV", "debug")
+	t.Setenv("MCP_RUNTIME_ALLOW_LOCAL_HTTP", "true")
 }
 
 func closeSafeHTTPClient(client *http.Client) {

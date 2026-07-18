@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ const (
 	agentThreadMCPRuntimeTimeoutMsEnv      = "AGENT_THREAD_MCP_RUNTIME_TIMEOUT_MS"
 	agentThreadMCPRuntimeMaxOutputBytesEnv = "AGENT_THREAD_MCP_RUNTIME_MAX_OUTPUT_BYTES"
 
+	agentThreadMCPStdioProviderEnabledEnv           = "AGENT_THREAD_MCP_STDIO_PROVIDER_ENABLED"
 	agentThreadMCPStdioDryRunEnabledEnv             = "AGENT_THREAD_MCP_STDIO_DRY_RUN_ENABLED"
 	agentThreadMCPStdioEinoEnabledEnv               = "AGENT_THREAD_MCP_STDIO_EINO_ENABLED"
 	agentThreadMCPStdioDebugHostExecutionEnabledEnv = "AGENT_THREAD_MCP_STDIO_DEBUG_HOST_EXECUTION_ENABLED"
@@ -79,6 +81,7 @@ type ADKMCPRuntimeBootstrapConfig struct {
 	Enabled bool
 	AppEnv  string
 
+	StdioProviderEnabled           bool
 	StdioDryRunEnabled             bool
 	StdioEinoEnabled               bool
 	StdioDebugHostExecutionEnabled bool
@@ -112,19 +115,27 @@ type ADKMCPRuntimeBootstrapConfig struct {
 }
 
 type ADKMCPRuntimeBootstrapDependencies struct {
-	Resolver        ADKMCPRuntimeServerResolver
-	LeaseRepository domainrepo.MCPRuntimeWorkdirLeaseRepository
-	IDGen           idgen.IDGenerator
-	WorkdirPreparer *ADKMCPRuntimeStdioFilesystemWorkdirPreparer
-	EventSink       RunEventSink
-	AuditRecorder   ADKMCPRuntimeAuditRecorder
-	HealthReporter  ADKMCPRuntimeHealthReporter
-	OutputOffloader ADKMCPRuntimeOutputOffloader
-	Config          ADKMCPRuntimeBootstrapConfig
+	Resolver             ADKMCPRuntimeServerResolver
+	LeaseRepository      domainrepo.MCPRuntimeWorkdirLeaseRepository
+	IDGen                idgen.IDGenerator
+	WorkdirPreparer      *ADKMCPRuntimeStdioFilesystemWorkdirPreparer
+	SandboxBindingSource ADKMCPRuntimeSandboxBindingSource
+	EventSink            RunEventSink
+	AuditRecorder        ADKMCPRuntimeAuditRecorder
+	HealthReporter       ADKMCPRuntimeHealthReporter
+	OutputOffloader      ADKMCPRuntimeOutputOffloader
+	Config               ADKMCPRuntimeBootstrapConfig
 }
 
 func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error) {
 	enabled, err := adkMCPRuntimeBoolEnv(agentThreadMCPRuntimeEnabledEnv, false)
+	if err != nil {
+		return ADKMCPRuntimeBootstrapConfig{}, err
+	}
+	stdioProviderEnabled, err := adkMCPRuntimeBoolEnv(
+		agentThreadMCPStdioProviderEnabledEnv,
+		false,
+	)
 	if err != nil {
 		return ADKMCPRuntimeBootstrapConfig{}, err
 	}
@@ -175,6 +186,7 @@ func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error)
 	config := ADKMCPRuntimeBootstrapConfig{
 		Enabled:                        enabled,
 		AppEnv:                         strings.TrimSpace(os.Getenv("APP_ENV")),
+		StdioProviderEnabled:           stdioProviderEnabled,
 		StdioDryRunEnabled:             stdioDryRunEnabled,
 		StdioEinoEnabled:               stdioEinoEnabled,
 		StdioDebugHostExecutionEnabled: stdioDebugHostExecutionEnabled,
@@ -216,22 +228,50 @@ func ADKMCPRuntimeBootstrapConfigFromEnv() (ADKMCPRuntimeBootstrapConfig, error)
 func NewADKMCPRuntimeToolExecutorFromConfig(
 	deps ADKMCPRuntimeBootstrapDependencies,
 ) ADKMCPRuntimeToolExecutor {
+	executor, _ := NewADKMCPRuntimeToolExecutorFromConfigStrict(deps)
+	return executor
+}
+
+func NewADKMCPRuntimeToolExecutorFromConfigStrict(
+	deps ADKMCPRuntimeBootstrapDependencies,
+) (ADKMCPRuntimeToolExecutor, error) {
 	config := deps.Config.withDefaults()
 	if !config.Enabled || !config.hasEnabledMCPRuntimeTransport() {
-		return nil
+		return nil, nil
 	}
 	if deps.Resolver == nil {
-		return nil
-	}
-	if config.stdioEnabled() && (deps.LeaseRepository == nil || deps.IDGen == nil) {
-		return nil
+		return nil, errors.New("mcp runtime resolver is not configured")
 	}
 	if err := config.validate(); err != nil {
-		return nil
+		return nil, err
+	}
+	if config.StdioProviderEnabled && deps.SandboxBindingSource == nil {
+		return nil, errors.New("mcp runtime sandbox control plane is not configured")
+	}
+	if config.localStdioEnabled() && (deps.LeaseRepository == nil || deps.IDGen == nil) {
+		return nil, errors.New("mcp runtime local stdio dependencies are not configured")
 	}
 
 	routerOptions := ADKMCPRuntimeTransportRouterOptions{}
-	if config.stdioEnabled() {
+	if config.StdioProviderEnabled {
+		policy, err := newADKMCPRuntimeLogicalStdioPolicy(config)
+		if err != nil {
+			return nil, fmt.Errorf("build mcp runtime logical stdio policy: %w", err)
+		}
+		transport, err := NewADKMCPRuntimeStdioProviderTransport(
+			ADKMCPRuntimeStdioProviderTransportOptions{
+				BindingSource:  deps.SandboxBindingSource,
+				Policy:         policy,
+				AuditRecorder:  deps.AuditRecorder,
+				MaxConfigBytes: config.StdioMaxConfigBytes,
+				MaxResultBytes: config.ExecutorMaxOutputBytes,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		routerOptions.Stdio = transport
+	} else if config.localStdioEnabled() {
 		routerOptions.Stdio = newADKMCPRuntimeStdioTransportFromBootstrap(config, deps)
 	}
 	if config.RemoteEinoEnabled {
@@ -252,7 +292,7 @@ func NewADKMCPRuntimeToolExecutorFromConfig(
 			newADKMCPRuntimeHealthReporterFromEnv(deps.HealthReporter),
 		),
 		WithADKMCPRuntimeExecutorOutputOffloader(deps.OutputOffloader),
-	)
+	), nil
 }
 
 func newADKMCPRuntimeHealthReporterFromEnv(
@@ -372,9 +412,20 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	if !c.Enabled {
 		return nil
 	}
-	if c.StdioDryRunEnabled && c.StdioEinoEnabled {
+	stdioModes := 0
+	if c.StdioProviderEnabled {
+		stdioModes++
+	}
+	if c.StdioDryRunEnabled {
+		stdioModes++
+	}
+	if c.StdioEinoEnabled {
+		stdioModes++
+	}
+	if stdioModes > 1 {
 		return fmt.Errorf(
-			"%s and %s cannot both be true",
+			"%s, %s, and %s are mutually exclusive",
+			agentThreadMCPStdioProviderEnabledEnv,
 			agentThreadMCPStdioDryRunEnabledEnv,
 			agentThreadMCPStdioEinoEnabledEnv,
 		)
@@ -405,30 +456,17 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	if !c.stdioEnabled() {
 		return nil
 	}
+	if c.StdioDryRunEnabled && strings.TrimSpace(c.AppEnv) != "debug" {
+		return fmt.Errorf("%s requires APP_ENV=debug", agentThreadMCPStdioDryRunEnabledEnv)
+	}
 	if c.StdioEinoEnabled && !mcpruntime.NewStdioExecutionMode(
 		c.AppEnv,
 		c.StdioDebugHostExecutionEnabled,
 	).AllowsHostExecution() {
 		return fmt.Errorf("%s requires APP_ENV=debug", agentThreadMCPStdioDebugHostExecutionEnabledEnv)
 	}
-	if strings.TrimSpace(c.StdioWorkdirRoot) == "" ||
-		!filepath.IsAbs(strings.TrimSpace(c.StdioWorkdirRoot)) {
-		return fmt.Errorf("%s must be an absolute path", agentThreadMCPStdioWorkdirRootEnv)
-	}
-	if strings.TrimSpace(c.StdioWorkerID) == "" {
-		return fmt.Errorf("%s is required", agentThreadMCPStdioWorkerIDEnv)
-	}
 	if len(adkMCPRuntimeStringSet(c.StdioAllowedCommands)) == 0 {
 		return fmt.Errorf("%s is required", agentThreadMCPStdioAllowedCommandsEnv)
-	}
-	if _, err := mcpruntime.NewStdioCommandPolicy(mcpruntime.StdioCommandPolicyOptions{
-		AllowedCommands: c.StdioAllowedCommands,
-		NpxPackages:     c.StdioAllowedNpxPackages,
-		UvxPackages:     c.StdioAllowedUVXPackages,
-		NodeScriptRoots: c.StdioAllowedNodeScriptRoots,
-		CommandRules:    c.StdioCommandRules,
-	}); err != nil {
-		return fmt.Errorf("%s is invalid", agentThreadMCPStdioAllowedCommandsEnv)
 	}
 	if c.StdioMaxArgs < 0 {
 		return fmt.Errorf("%s must be non-negative", agentThreadMCPStdioMaxArgsEnv)
@@ -441,6 +479,28 @@ func (c ADKMCPRuntimeBootstrapConfig) validate() error {
 	}
 	if c.StdioMaxEnvValueBytes <= 0 {
 		return fmt.Errorf("%s must be positive", agentThreadMCPStdioMaxEnvValueBytesEnv)
+	}
+	if c.StdioProviderEnabled {
+		if _, err := newADKMCPRuntimeLogicalStdioPolicy(c); err != nil {
+			return fmt.Errorf("%s is invalid", agentThreadMCPStdioAllowedCommandsEnv)
+		}
+		return nil
+	}
+	if strings.TrimSpace(c.StdioWorkdirRoot) == "" ||
+		!filepath.IsAbs(strings.TrimSpace(c.StdioWorkdirRoot)) {
+		return fmt.Errorf("%s must be an absolute path", agentThreadMCPStdioWorkdirRootEnv)
+	}
+	if strings.TrimSpace(c.StdioWorkerID) == "" {
+		return fmt.Errorf("%s is required", agentThreadMCPStdioWorkerIDEnv)
+	}
+	if _, err := mcpruntime.NewStdioCommandPolicy(mcpruntime.StdioCommandPolicyOptions{
+		AllowedCommands: c.StdioAllowedCommands,
+		NpxPackages:     c.StdioAllowedNpxPackages,
+		UvxPackages:     c.StdioAllowedUVXPackages,
+		NodeScriptRoots: c.StdioAllowedNodeScriptRoots,
+		CommandRules:    c.StdioCommandRules,
+	}); err != nil {
+		return fmt.Errorf("%s is invalid", agentThreadMCPStdioAllowedCommandsEnv)
 	}
 	if c.StdioLeaseTTLMillis <= 0 {
 		return fmt.Errorf("%s must be positive", agentThreadMCPStdioLeaseTTLMsEnv)
@@ -510,7 +570,28 @@ func (c ADKMCPRuntimeBootstrapConfig) hasEnabledMCPRuntimeTransport() bool {
 }
 
 func (c ADKMCPRuntimeBootstrapConfig) stdioEnabled() bool {
+	return c.StdioProviderEnabled || c.localStdioEnabled()
+}
+
+func (c ADKMCPRuntimeBootstrapConfig) localStdioEnabled() bool {
 	return c.StdioDryRunEnabled || c.StdioEinoEnabled
+}
+
+func newADKMCPRuntimeLogicalStdioPolicy(
+	config ADKMCPRuntimeBootstrapConfig,
+) (*mcpruntime.LogicalStdioPolicy, error) {
+	return mcpruntime.NewLogicalStdioPolicy(mcpruntime.LogicalStdioPolicyOptions{
+		AllowedCommands:  config.StdioAllowedCommands,
+		NpxPackages:      config.StdioAllowedNpxPackages,
+		UvxPackages:      config.StdioAllowedUVXPackages,
+		NodeScriptRoots:  config.StdioAllowedNodeScriptRoots,
+		CommandRules:     config.StdioCommandRules,
+		AllowedEnvKeys:   config.StdioAllowedEnvKeys,
+		MaxArgs:          config.StdioMaxArgs,
+		MaxArgBytes:      config.StdioMaxArgBytes,
+		MaxEnvVars:       config.StdioMaxEnvVars,
+		MaxEnvValueBytes: config.StdioMaxEnvValueBytes,
+	})
 }
 
 func newADKMCPRuntimeStdioTransportFromBootstrap(

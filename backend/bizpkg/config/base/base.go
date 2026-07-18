@@ -37,7 +37,26 @@ const (
 )
 
 type BaseConfig struct {
-	base *kvstore.KVStore[config.BasicConfiguration]
+	base basicConfigurationStore
+}
+
+type basicConfigurationStore interface {
+	GetVersioned(context.Context, string, string) (*config.BasicConfiguration, string, error)
+	CompareAndSwap(context.Context, string, string, string, *config.BasicConfiguration) (string, error)
+}
+
+type BasicConfigurationPatch struct {
+	AdminEmails             *string
+	DisableUserRegistration *bool
+	AllowRegistrationEmail  *string
+	PluginConfiguration     *config.PluginConfiguration
+	ServerHost              *string
+}
+
+func (p BasicConfigurationPatch) IsEmpty() bool {
+	return p.AdminEmails == nil && p.DisableUserRegistration == nil &&
+		p.AllowRegistrationEmail == nil && p.PluginConfiguration == nil &&
+		p.ServerHost == nil
 }
 
 func NewBaseConfig(db *gorm.DB) *BaseConfig {
@@ -47,20 +66,95 @@ func NewBaseConfig(db *gorm.DB) *BaseConfig {
 }
 
 func (c *BaseConfig) GetBaseConfig(ctx context.Context) (*config.BasicConfiguration, error) {
-	conf, err := c.base.Get(ctx, consts.BaseConfigNameSpace, baseConfigKey)
-	if err != nil {
-		if errors.Is(err, kvstore.ErrKeyNotFound) {
-			return getBasicConfigurationFromOldConfig(), nil
-		}
-
-		return nil, err
-	}
-
-	return conf, nil
+	conf, _, err := c.GetBaseConfigWithRevision(ctx)
+	return conf, err
 }
 
-func (c *BaseConfig) SaveBaseConfig(ctx context.Context, v *config.BasicConfiguration) error {
-	return c.base.Save(ctx, consts.BaseConfigNameSpace, baseConfigKey, v)
+func (c *BaseConfig) GetBaseConfigWithRevision(ctx context.Context) (*config.BasicConfiguration, string, error) {
+	if c == nil || c.base == nil || ctx == nil {
+		return nil, "", errors.New("basic configuration read input is invalid")
+	}
+	conf, revision, err := c.base.GetVersioned(ctx, consts.BaseConfigNameSpace, baseConfigKey)
+	if err != nil {
+		if errors.Is(err, kvstore.ErrKeyNotFound) {
+			return getBasicConfigurationFromOldConfig(), kvstore.MissingRevision, nil
+		}
+		return nil, "", err
+	}
+	if conf == nil {
+		return nil, "", errors.New("basic configuration read returned no value")
+	}
+	return cloneConfiguration(conf), revision, nil
+}
+
+func (c *BaseConfig) SaveBaseConfig(ctx context.Context, patch BasicConfigurationPatch, expectedRevision string) (string, error) {
+	if c == nil || c.base == nil || ctx == nil || expectedRevision == "" || patch.IsEmpty() {
+		return "", errors.New("basic configuration save input is invalid")
+	}
+	current, currentRevision, err := c.base.GetVersioned(ctx, consts.BaseConfigNameSpace, baseConfigKey)
+	if err != nil {
+		if !errors.Is(err, kvstore.ErrKeyNotFound) {
+			return "", err
+		}
+		current = getBasicConfigurationFromOldConfig()
+		currentRevision = kvstore.MissingRevision
+	}
+	if current == nil {
+		return "", errors.New("basic configuration read returned no value")
+	}
+	if currentRevision != expectedRevision {
+		return "", kvstore.ErrVersionConflict
+	}
+
+	toSave := cloneConfiguration(current)
+	if patch.AdminEmails != nil {
+		toSave.AdminEmails = *patch.AdminEmails
+	}
+	if patch.DisableUserRegistration != nil {
+		toSave.DisableUserRegistration = *patch.DisableUserRegistration
+	}
+	if patch.AllowRegistrationEmail != nil {
+		toSave.AllowRegistrationEmail = *patch.AllowRegistrationEmail
+	}
+	if patch.PluginConfiguration != nil {
+		plugin := *patch.PluginConfiguration
+		toSave.PluginConfiguration = &plugin
+	}
+	if patch.ServerHost != nil {
+		toSave.ServerHost = *patch.ServerHost
+	}
+	return c.base.CompareAndSwap(ctx, consts.BaseConfigNameSpace, baseConfigKey, expectedRevision, toSave)
+}
+
+func cloneConfiguration(value *config.BasicConfiguration) *config.BasicConfiguration {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	if value.PluginConfiguration != nil {
+		plugin := *value.PluginConfiguration
+		cloned.PluginConfiguration = &plugin
+	}
+	if value.SandboxConfig != nil {
+		sandbox := *value.SandboxConfig
+		cloned.SandboxConfig = &sandbox
+	}
+	return &cloned
+}
+
+// GetLegacySandboxConfig is the sole compatibility read path for the retired
+// SandboxConfig data source. Callers receive a copy and cannot mutate config
+// state in place.
+func (c *BaseConfig) GetLegacySandboxConfig(ctx context.Context) (*config.SandboxConfig, error) {
+	conf, err := c.GetBaseConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if conf == nil || conf.SandboxConfig == nil {
+		return nil, nil
+	}
+	cloned := *conf.SandboxConfig
+	return &cloned, nil
 }
 
 func getBasicConfigurationFromOldConfig() *config.BasicConfiguration {
@@ -71,6 +165,21 @@ func getBasicConfigurationFromOldConfig() *config.BasicConfiguration {
 	timeoutSeconds := conv.StrToFloat64D(timeoutSecondsStr, 60)
 	memoryLimitMbStr := os.Getenv(consts.CodeRunnerMemoryLimitMB)
 	memoryLimitMB := conv.StrToInt64D(memoryLimitMbStr, 100)
+
+	var sandboxConfig *config.SandboxConfig
+	if legacySandboxEnvironmentPresent() {
+		sandboxConfig = &config.SandboxConfig{
+			AllowEnv:       os.Getenv(consts.CodeRunnerAllowEnv),
+			AllowRead:      os.Getenv(consts.CodeRunnerAllowRead),
+			AllowWrite:     os.Getenv(consts.CodeRunnerAllowWrite),
+			AllowNet:       os.Getenv(consts.CodeRunnerAllowNet),
+			AllowRun:       os.Getenv(consts.CodeRunnerAllowRun),
+			AllowFfi:       os.Getenv(consts.CodeRunnerAllowFFI),
+			NodeModulesDir: os.Getenv(consts.CodeRunnerNodeModulesDir),
+			TimeoutSeconds: timeoutSeconds,
+			MemoryLimitMb:  memoryLimitMB,
+		}
+	}
 
 	const ServerHost = "SERVER_HOST"
 	return &config.BasicConfiguration{
@@ -84,18 +193,28 @@ func getBasicConfigurationFromOldConfig() *config.BasicConfiguration {
 		},
 		CodeRunnerType: codeRunnerType,
 		ServerHost:     os.Getenv(ServerHost),
-		SandboxConfig: &config.SandboxConfig{
-			AllowEnv:       os.Getenv(consts.CodeRunnerAllowEnv),
-			AllowRead:      os.Getenv(consts.CodeRunnerAllowRead),
-			AllowWrite:     os.Getenv(consts.CodeRunnerAllowWrite),
-			AllowNet:       os.Getenv(consts.CodeRunnerAllowNet),
-			AllowRun:       os.Getenv(consts.CodeRunnerAllowRun),
-			AllowFfi:       os.Getenv(consts.CodeRunnerAllowFFI),
-			NodeModulesDir: os.Getenv(consts.CodeRunnerNodeModulesDir),
-			TimeoutSeconds: timeoutSeconds,
-			MemoryLimitMb:  memoryLimitMB,
-		},
+		SandboxConfig:  sandboxConfig,
 	}
+}
+
+func legacySandboxEnvironmentPresent() bool {
+	for _, key := range []string{
+		consts.CodeRunnerType,
+		consts.CodeRunnerAllowEnv,
+		consts.CodeRunnerAllowRead,
+		consts.CodeRunnerAllowWrite,
+		consts.CodeRunnerAllowNet,
+		consts.CodeRunnerAllowRun,
+		consts.CodeRunnerAllowFFI,
+		consts.CodeRunnerNodeModulesDir,
+		consts.CodeRunnerTimeoutSeconds,
+		consts.CodeRunnerMemoryLimitMB,
+	} {
+		if _, ok := os.LookupEnv(key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *BaseConfig) GetServerHost(ctx context.Context) (string, error) {

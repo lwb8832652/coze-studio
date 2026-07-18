@@ -18,10 +18,6 @@ package mcptool
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,34 +31,11 @@ import (
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 )
 
-const (
-	MCPAESAuthSecretEnv         = "MCP_AES_AUTH_SECRET"
-	mcpAESAuthEnvelopeVersion   = "aes-gcm-v1"
-	mcpLegacyAuthMaxCASAttempts = 3
-)
+const mcpLegacyAuthMaxCASAttempts = 3
 
 type MySQLCatalog struct {
 	db        *gorm.DB
 	authCodec MCPAuthCodec
-}
-
-type MCPAuthCodec interface {
-	EncodeMCPAuth(ctx context.Context, auth string) (string, error)
-	DecodeMCPAuth(ctx context.Context, stored string) (string, error)
-}
-
-type AESMCPAuthCodec struct {
-	secret string
-}
-
-type mcpAESAuthEnvelope struct {
-	Payload mcpAESAuthEnvelopePayload `json:"_coze_mcp_auth"`
-}
-
-type mcpAESAuthEnvelopePayload struct {
-	Version    string `json:"version"`
-	Nonce      string `json:"nonce"`
-	Ciphertext string `json:"ciphertext"`
 }
 
 type MySQLCatalogOption func(*MySQLCatalog)
@@ -119,111 +92,6 @@ func WithMySQLCatalogAuthCodec(codec MCPAuthCodec) MySQLCatalogOption {
 			catalog.authCodec = codec
 		}
 	}
-}
-
-func NewAESMCPAuthCodec(secret string) (*AESMCPAuthCodec, error) {
-	if strings.TrimSpace(secret) == "" {
-		return nil, fmt.Errorf("%s is required", MCPAESAuthSecretEnv)
-	}
-	switch len([]byte(secret)) {
-	case 16, 24, 32:
-		return &AESMCPAuthCodec{secret: secret}, nil
-	default:
-		return nil, fmt.Errorf("%s must be 16, 24, or 32 bytes", MCPAESAuthSecretEnv)
-	}
-}
-
-func (c *AESMCPAuthCodec) EncodeMCPAuth(
-	ctx context.Context,
-	auth string,
-) (string, error) {
-	aead, err := c.newAEAD()
-	if err != nil {
-		return "", errors.New("mcp auth AES encryption failed")
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", errors.New("mcp auth AES encryption failed")
-	}
-	ciphertext := aead.Seal(
-		nil,
-		nonce,
-		[]byte(auth),
-		[]byte(mcpAESAuthEnvelopeVersion),
-	)
-	encoded, err := json.Marshal(&mcpAESAuthEnvelope{
-		Payload: mcpAESAuthEnvelopePayload{
-			Version:    mcpAESAuthEnvelopeVersion,
-			Nonce:      base64.RawURLEncoding.EncodeToString(nonce),
-			Ciphertext: base64.RawURLEncoding.EncodeToString(ciphertext),
-		},
-	})
-	if err != nil {
-		return "", errors.New("mcp auth AES encryption failed")
-	}
-
-	return string(encoded), nil
-}
-
-func (c *AESMCPAuthCodec) DecodeMCPAuth(
-	ctx context.Context,
-	stored string,
-) (string, error) {
-	var outerEnvelope map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(stored), &outerEnvelope); err != nil ||
-		len(outerEnvelope) != 1 {
-		return "", errors.New("mcp auth AES envelope is invalid")
-	}
-	payload, exists := outerEnvelope["_coze_mcp_auth"]
-	if !exists {
-		return "", errors.New("mcp auth AES envelope is invalid")
-	}
-	var envelope mcpAESAuthEnvelopePayload
-	if err := json.Unmarshal(payload, &envelope); err != nil ||
-		envelope.Version != mcpAESAuthEnvelopeVersion ||
-		strings.TrimSpace(envelope.Nonce) == "" ||
-		strings.TrimSpace(envelope.Ciphertext) == "" {
-		return "", errors.New("mcp auth AES envelope is invalid")
-	}
-	aead, err := c.newAEAD()
-	if err != nil {
-		return "", errors.New("mcp auth AES decryption failed")
-	}
-	nonce, err := base64.RawURLEncoding.DecodeString(envelope.Nonce)
-	if err != nil || len(nonce) != aead.NonceSize() {
-		return "", errors.New("mcp auth AES envelope is invalid")
-	}
-	ciphertext, err := base64.RawURLEncoding.DecodeString(envelope.Ciphertext)
-	if err != nil || len(ciphertext) < aead.Overhead() {
-		return "", errors.New("mcp auth AES envelope is invalid")
-	}
-	decoded, err := aead.Open(
-		nil,
-		nonce,
-		ciphertext,
-		[]byte(mcpAESAuthEnvelopeVersion),
-	)
-	if err != nil || !json.Valid(decoded) {
-		return "", errors.New("mcp auth AES decryption failed")
-	}
-
-	return string(decoded), nil
-}
-
-func (c *AESMCPAuthCodec) newAEAD() (cipher.AEAD, error) {
-	if c == nil || c.secret == "" {
-		return nil, errors.New("mcp auth AES codec is not configured")
-	}
-	block, err := aes.NewCipher([]byte(c.secret))
-	if err != nil {
-		return nil, errors.New("mcp auth AES codec is invalid")
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, errors.New("mcp auth AES codec is invalid")
-	}
-
-	return aead, nil
 }
 
 func (c *MySQLCatalog) Upsert(ctx context.Context, server *toolapi.MCPToolServer) error {
@@ -808,11 +676,11 @@ func mcpResourcesFromPO(resources []mcpResourcePO) []*toolapi.MCPResource {
 }
 
 func (c *MySQLCatalog) encodeAuth(ctx context.Context, auth string) (string, error) {
-	empty, err := validateCatalogMCPAuthObject(auth)
+	parsed, err := parseBoundedMCPAuthObjectString(auth, maxMCPAuthPlaintextBytes)
 	if err != nil {
-		return "", err
+		return "", errors.New("mcp tool auth must be a JSON object")
 	}
-	if empty {
+	if isEmptyCatalogMCPAuth(parsed) {
 		return "{}", nil
 	}
 	if c == nil || c.authCodec == nil {
@@ -822,8 +690,11 @@ func (c *MySQLCatalog) encodeAuth(ctx context.Context, auth string) (string, err
 	if err != nil {
 		return "", errors.New("mcp tool auth encode failed")
 	}
+	if len(encoded) > maxMCPAuthEnvelopeBytes {
+		return "", errors.New("mcp tool auth encode failed")
+	}
 	encoded = strings.TrimSpace(encoded)
-	if encoded == "" || !json.Valid([]byte(encoded)) {
+	if _, err := parseBoundedMCPAuthObjectString(encoded, maxMCPAuthEnvelopeBytes); err != nil {
 		return "", errors.New("mcp tool auth encode failed")
 	}
 
@@ -831,9 +702,17 @@ func (c *MySQLCatalog) encodeAuth(ctx context.Context, auth string) (string, err
 }
 
 func (c *MySQLCatalog) decodeAuth(ctx context.Context, stored string) (string, error) {
-	if isEmptyCatalogMCPAuth(stored) {
+	parsed, err := parseBoundedMCPAuthObjectString(stored, maxMCPAuthEnvelopeBytes)
+	if err != nil {
+		return "", errors.New("mcp tool auth decode failed")
+	}
+	if isEmptyCatalogMCPAuth(parsed) {
 		return "{}", nil
 	}
+	return c.decodeParsedAuth(ctx, stored)
+}
+
+func (c *MySQLCatalog) decodeParsedAuth(ctx context.Context, stored string) (string, error) {
 	if c == nil || c.authCodec == nil {
 		return "", errors.New("mcp tool auth codec is required")
 	}
@@ -841,8 +720,11 @@ func (c *MySQLCatalog) decodeAuth(ctx context.Context, stored string) (string, e
 	if err != nil {
 		return "", errors.New("mcp tool auth decode failed")
 	}
+	if len(decoded) > maxMCPAuthPlaintextBytes {
+		return "", errors.New("mcp tool auth decode failed")
+	}
 	decoded = strings.TrimSpace(decoded)
-	if decoded == "" || !json.Valid([]byte(decoded)) {
+	if _, err := parseBoundedMCPAuthObjectString(decoded, maxMCPAuthPlaintextBytes); err != nil {
 		return "", errors.New("mcp tool auth decode failed")
 	}
 
@@ -853,10 +735,17 @@ func (c *MySQLCatalog) decodeAuthForRead(
 	ctx context.Context,
 	stored string,
 ) (auth string, migratedAuth string, err error) {
-	if isEmptyCatalogMCPAuth(stored) {
+	parsed, err := parseBoundedMCPAuthObjectString(stored, maxMCPAuthEnvelopeBytes)
+	if err != nil {
+		return "", "", errors.New("mcp tool auth decode failed")
+	}
+	if isEmptyCatalogMCPAuth(parsed) {
 		return "{}", "", nil
 	}
-	if isLegacyCatalogMCPAuth(stored) {
+	if isLegacyCatalogMCPAuth(parsed) {
+		if len(stored) > maxMCPAuthPlaintextBytes {
+			return "", "", errors.New("mcp tool auth decode failed")
+		}
 		codec, ok := c.authCodec.(*AESMCPAuthCodec)
 		if !ok || codec == nil {
 			return "", "", errors.New("mcp tool legacy auth migration requires AES-GCM codec")
@@ -865,10 +754,17 @@ func (c *MySQLCatalog) decodeAuthForRead(
 		if err != nil {
 			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
 		}
+		if len(encoded) > maxMCPAuthEnvelopeBytes {
+			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
+		}
+		encoded = strings.TrimSpace(encoded)
+		if _, err := parseBoundedMCPAuthObjectString(encoded, maxMCPAuthEnvelopeBytes); err != nil {
+			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
+		}
 
 		return stored, encoded, nil
 	}
-	decoded, err := c.decodeAuth(ctx, stored)
+	decoded, err := c.decodeParsedAuth(ctx, stored)
 	if err != nil {
 		return "", "", err
 	}
@@ -957,30 +853,19 @@ func normalizeCatalogJSONText(value, fallback string) string {
 	return value
 }
 
-func isEmptyCatalogMCPAuth(value string) bool {
-	empty, err := validateCatalogMCPAuthObject(value)
-
-	return err == nil && empty
+func isEmptyCatalogMCPAuth(parsed mcpAuthObjectParseResult) bool {
+	return parsed.fieldCount == 0
 }
 
 func validateCatalogMCPAuthObject(value string) (bool, error) {
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &payload); err != nil || payload == nil {
+	parsed, err := parseBoundedMCPAuthObjectString(value, maxMCPAuthPlaintextBytes)
+	if err != nil {
 		return false, errors.New("mcp tool auth must be a JSON object")
 	}
 
-	return len(payload) == 0, nil
+	return isEmptyCatalogMCPAuth(parsed), nil
 }
 
-func isLegacyCatalogMCPAuth(value string) bool {
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &payload); err != nil ||
-		payload == nil || len(payload) == 0 {
-		return false
-	}
-	if _, exists := payload["_coze_mcp_auth"]; exists {
-		return false
-	}
-
-	return true
+func isLegacyCatalogMCPAuth(parsed mcpAuthObjectParseResult) bool {
+	return parsed.fieldCount > 0 && !parsed.hasReservedEnvelopeField
 }

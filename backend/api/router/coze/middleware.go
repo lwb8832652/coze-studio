@@ -20,7 +20,6 @@ package coze
 
 import (
 	"github.com/cloudwego/hertz/pkg/app"
-	"github.com/coze-dev/coze-studio/backend/api/middleware"
 )
 
 func rootMw() []app.HandlerFunc {
@@ -29,6 +28,320 @@ func rootMw() []app.HandlerFunc {
 }
 
 func _apiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _adminMw() []app.HandlerFunc {
+	return []app.HandlerFunc{adminAuthMiddlewareFactory()}
+}
+
+func _configMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _basicMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getbasicconfigurationMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _savebasicconfigurationMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _knowledgeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getknowledgeconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateknowledgeconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _modelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createmodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletemodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getmodellistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _app_devMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _spacesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _space_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevmodelsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _projectsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevprojectsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _importappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _project_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _archiveappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getappdevbuildstatusMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _buildappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _chatMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _sendappdevchatmessageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _cancelappdevchatMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _subscribeappdevchateventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevchathistoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getappdevchatstatusMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _filesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deleteappdevfileMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getappdevfilecontentMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _saveappdevfilecontentMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _renameappdevfileMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _uploadappdevfilesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevfilesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _downloadappdevreleaseMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _snapshotsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevsnapshotsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _snapshot_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _restoreappdevsnapshotMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createappdevsnapshotMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _runtimeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _keepaliveappdevruntimeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listappdevruntimelogsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _restartappdevruntimeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _startappdevruntimeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getappdevruntimestatusMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _stopappdevruntimeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _project_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _duplicateappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createappdevprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _botMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettypelistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _uploadfileMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _commonMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _uploadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _applyuploadactionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _applyuploadaction0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _commonuploadMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -68,7 +381,22 @@ func _getmessagelistMw() []app.HandlerFunc {
 	return nil
 }
 
+func _developerMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _geticonMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _draftbotMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _checkdraftbotcommitMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -128,6 +456,71 @@ func _intelligence_apiMw() []app.HandlerFunc {
 	return nil
 }
 
+func _draft_projectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _draftprojectcopyMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _draftprojectcreateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _draftprojectdeleteMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _draftprojectinnertasklistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _draftprojectupdateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publish0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _checkprojectversionnumberMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _projectpublishconnectorlistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getprojectpublishedconnectorMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publishprojectMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getpublishrecorddetailMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getpublishrecordlistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _searchMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -148,7 +541,7 @@ func _getuserrecentlyeditintelligenceMw() []app.HandlerFunc {
 	return nil
 }
 
-func _knowledgeMw() []app.HandlerFunc {
+func _knowledge0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -218,6 +611,16 @@ func _getdocumentprogressMw() []app.HandlerFunc {
 	return nil
 }
 
+func _iconMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _geticonfordatasetMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _photoMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -233,7 +636,32 @@ func _photodetailMw() []app.HandlerFunc {
 	return nil
 }
 
+func _extractphotocaptionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _listphotoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _reviewMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createdocumentreviewMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _mgetdocumentreviewMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _savedocumentreviewMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -278,6 +706,81 @@ func _validatetableschemaMw() []app.HandlerFunc {
 	return nil
 }
 
+func _marketplaceMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _productMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetproductcallinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetmarketpluginconfigMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetproductdetailMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicduplicateproductMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _favoriteMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicfavoriteproductMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetuserfavoritelistv2Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetproductlistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _search0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicsearchproductMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicsearchsuggestMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _categoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publicgetproductcategorylistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _memoryMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -289,6 +792,11 @@ func _getdocumenttableinfoMw() []app.HandlerFunc {
 }
 
 func _getsysvariableconfMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getmodeconfigMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -314,6 +822,11 @@ func _deletedatabaseMw() []app.HandlerFunc {
 }
 
 func _getdatabasebyidMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getconnectornameMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -348,6 +861,11 @@ func _updatedatabaseMw() []app.HandlerFunc {
 	return nil
 }
 
+func _updatedatabasebotswitchMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _updatedatabaserecordsMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -358,12 +876,18 @@ func _tableMw() []app.HandlerFunc {
 	return nil
 }
 
+func _getbotdatabaseMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _resetbottableMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
 func _projectMw() []app.HandlerFunc {
+	// your code...
 	return nil
 }
 
@@ -382,7 +906,38 @@ func _updateprojectvariableMw() []app.HandlerFunc {
 	return nil
 }
 
+func _table_fileMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _databasefileprogressdataMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _submitdatabaseinserttaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _table_schema0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getdatabasetableschemaMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _validatedatabasetableschemaMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _variable0Mw() []app.HandlerFunc {
+	// your code...
 	return nil
 }
 
@@ -406,7 +961,112 @@ func _setkvmemoryMw() []app.HandlerFunc {
 	return nil
 }
 
+func _oauthMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _oauthauthorizationcodeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _accountMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _infoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _v2Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportaccountinfov2Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _webMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _emailMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _loginMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportwebemailloginpostMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passwordMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _resetMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportwebemailpasswordresetgetMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _registerMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _v20Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportwebemailregisterv2postMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _logoutMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _passportweblogoutgetMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _permission_apiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _coze_web_appMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _impersonatecozeuserMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -436,11 +1096,52 @@ func _listpersonalaccesstokensMw() []app.HandlerFunc {
 	return nil
 }
 
+func _updatepersonalaccesstokenandpermissionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _playgroundMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getonboardingMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _upload0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getuploadauthtokenMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _playground_apiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createupdateshortcutcommandMw() []app.HandlerFunc {
+	// your code...
 	return nil
 }
 
 func _deletepromptresourceMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getfileurlsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getimagexshorturlMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -451,6 +1152,16 @@ func _getofficialpromptresourcelistMw() []app.HandlerFunc {
 }
 
 func _getpromptresourceinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _mgetuserbasicinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _reportuserbehaviorMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -475,7 +1186,62 @@ func _updatedraftbotinfoagwMw() []app.HandlerFunc {
 	return nil
 }
 
+func _operateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getbotpopupinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatebotpopupinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _spaceMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getspacelistv2Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _pluginMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getoauthschemaMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _oauth0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _pluginoauthconfirmMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _pluginoauthinfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _plugin_apiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _batchcreateapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -485,7 +1251,17 @@ func _checkandlockplugineditMw() []app.HandlerFunc {
 	return nil
 }
 
+func _convert2openapiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _createapiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _debugapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -505,7 +1281,12 @@ func _getbotdefaultparamsMw() []app.HandlerFunc {
 	return nil
 }
 
-func _getoauthschemaMw() []app.HandlerFunc {
+func _getdevpluginlistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getoauthschemaapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -526,6 +1307,16 @@ func _getpluginapisMw() []app.HandlerFunc {
 }
 
 func _getplugininfoMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getpluginnextversionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getqueriedoauthpluginlistMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -555,6 +1346,11 @@ func _publishpluginMw() []app.HandlerFunc {
 	return nil
 }
 
+func _registerpluginMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _registerpluginmetaMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -580,6 +1376,16 @@ func _resourcecopyretryMw() []app.HandlerFunc {
 	return nil
 }
 
+func _revokeauthtokenMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _unlockplugineditMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _updatepluginMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -596,6 +1402,461 @@ func _updatebotdefaultparamsMw() []app.HandlerFunc {
 }
 
 func _updatepluginmetaMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _plugin_oauthMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _plugin_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _pluginoauthauthorizationcodeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _userMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _userupdateprofileMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateuserprofilecheckMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _web0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _user0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _upload_avatarMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _userupdateavatarMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _workbenchMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _workbenchchatMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getworkbenchruntimedoctorMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listscheduledtaskcronpresetsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listscheduledtasktargetsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _scheduled_tasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listscheduledtasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _task_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletescheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _disablescheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _enablescheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _executescheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listscheduledtaskexecutionsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getscheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatescheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createscheduledtaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skillsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listskillsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skill_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deleteskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _testrunskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _versionsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listskillversionsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _version_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateskillversioncontentMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportskillversionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listskillversionresourcesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateskillversionresourceMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _rollbackskillversionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listskilltoolcandidatesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _skills0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _importskillMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _installskillfromartifactMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _task_threadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _thread_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettaskthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _artifactsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadartifactsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _artifact_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettaskthreadartifactsignedurlMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _guardrail_audit_eventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadguardrailauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exporttaskthreadguardrailauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadmcpruntimeauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _memoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadmemoryauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _cleartaskthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exporttaskthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _importtaskthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _memory_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletetaskthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _restoretaskthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatetaskthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadmessagesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _appendtaskthreadmessageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadruneventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _runsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskthreadrunsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _run_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _canceltaskthreadrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _resumetaskthreadrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _retrytaskthreadsubagentrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createtaskthreadrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _generatetaskthreadsuggestionsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettaskthreadtokenusageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createtaskthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _tasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtasksMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _task_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gettaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _canceltaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listtaskeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _retrytaskMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createtaskMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -650,6 +1911,11 @@ func _getdeletestrategyMw() []app.HandlerFunc {
 	return nil
 }
 
+func _getexampleworkflowlistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _getnodeexecutehistoryMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -661,6 +1927,11 @@ func _getworkflowprocessMw() []app.HandlerFunc {
 }
 
 func _gettracesdkMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _gethistoryschemaMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -810,857 +2081,12 @@ func _updateprojectconversationdefMw() []app.HandlerFunc {
 	return nil
 }
 
-func _debugapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _spaceMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getspacelistv2Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _savespacev2Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _userMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _userupdateprofileMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _accountMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _infoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _v2Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportaccountinfov2Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _webMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _emailMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _loginMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportwebemailloginpostMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passwordMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _resetMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportwebemailpasswordresetgetMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _registerMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _v20Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportwebemailregisterv2postMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _logoutMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _passportweblogoutgetMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _web0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _user0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updateMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _upload_avatarMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _userupdateavatarMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getconnectornameMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createconversationMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _messageMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getapimessagelistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _v1Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listconversationsapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _conversationsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _conversation_idMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _clearconversationapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _v3Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _chatv3Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updatepersonalaccesstokenandpermissionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _developerMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _geticonMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getmodeconfigMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _botMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _reviewMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _playgroundMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _createdocumentreviewMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _uploadMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _mgetdocumentreviewMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getuploadauthtokenMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _unlockplugineditMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getimagexshorturlMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _mgetuserbasicinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _uploadfileMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getpluginnextversionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _savedocumentreviewMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getbotdatabaseMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _operateMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getbotpopupinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updatebotpopupinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _marketplaceMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _checkdraftbotcommitMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _productMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetproductlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetproductdetailMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getonboardingMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updatedatabasebotswitchMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _table_schema0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _gettableschema0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getdatabasetableschemaMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _table_fileMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _databasefileprogressdataMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _submitdatabaseinserttaskMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _validatedatabasetableschemaMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updateuserprofilecheckMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _registerpluginMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _upload0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getworkflowuploadauthtokenMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _conversation0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draft_projectMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draftprojectcreateMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draftprojectdeleteMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draftprojectupdateMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicfavoriteproductMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _workflowMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapigetworkflowrunhistoryMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapirunflowMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapistreamresumeflowMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapistreamrunflowMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _workflowsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapichatflowrunMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapigetworkflowinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _gettypelistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _iconMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _geticon0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _geticonfordatasetMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createshortcutcommandMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createupdateshortcutcommandMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publish0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _checkprojectversionnumberMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getprojectpublishedconnectorMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publishprojectMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getpublishrecordlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _reportuserbehaviorMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getdevpluginlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _projectpublishconnectorlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getpublishrecorddetailMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _favoriteMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetuserfavoritelistv2Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _extractphotocaptionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _publicduplicateproductMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getfileurlsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _convert2openapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _pluginMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getoauthschemaapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _batchcreateapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _revokeauthtokenMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _gethistoryschemaMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _filesMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _uploadfileopenMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draftprojectinnertasklistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _draftprojectcopyMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getexampleworkflowlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _bot0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getbotonlineinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _oauthMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _oauthauthorizationcodeMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getqueriedoauthpluginlistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _applyimageactionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _commonuploadMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _applyimagexactionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _applyimagexaction0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _applyuploadactionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _applyuploadaction0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _commonMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
 func _upload1Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _conversation1Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _openapicreateconversationMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _coze_web_appMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _impersonatecozeuserMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _botsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _opengetbotinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _deleteconversationapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updateconversationapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _conversations0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _chatMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _cancelchatapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _appsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getonlineappdataMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _search0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _adminMw() []app.HandlerFunc {
-	return []app.HandlerFunc{middleware.AdminAuthMW()}
-}
-
-func _configMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicsearchproductMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _basicMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicsearchsuggestMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _getbasicconfigurationMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetproductcallinfoMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _categoryMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _getknowledgeconfigMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetproductcategorylistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _updateknowledgeconfigMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publicgetmarketpluginconfigMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-func _modelMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createmodelMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _deletemodelMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getmodellistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updatemodelMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _knowledge0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _savebasicconfigurationMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _retrieveconversationapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _retrievechatopenMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _chat0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _message0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listchatmessageapiMw() []app.HandlerFunc {
+func _getworkflowuploadauthtokenMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -1691,6 +2117,31 @@ func _listdocumentopenapiMw() []app.HandlerFunc {
 }
 
 func _updatedocumentopenapiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _v1Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _conversationsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listconversationsapiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deleteconversationapiMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateconversationapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -1735,162 +2186,172 @@ func _createdatasetopenapiMw() []app.HandlerFunc {
 	return nil
 }
 
-func _oauth0Mw() []app.HandlerFunc {
+func _appsMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _pluginoauthconfirmMw() []app.HandlerFunc {
+func _getonlineappdataMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _pluginoauthinfoMw() []app.HandlerFunc {
+func _bot0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _plugin_oauthMw() []app.HandlerFunc {
+func _getbotonlineinfoMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _plugin_idMw() []app.HandlerFunc {
+func _botsMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _pluginoauthauthorizationcodeMw() []app.HandlerFunc {
+func _opengetbotinfoMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _workbenchMw() []app.HandlerFunc {
+func _conversation0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _workbenchchatMw() []app.HandlerFunc {
+func _createconversationMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _skillsMw() []app.HandlerFunc {
+func _retrieveconversationapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _listskillsMw() []app.HandlerFunc {
+func _messageMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _skill_idMw() []app.HandlerFunc {
+func _getapimessagelistMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _getskillMw() []app.HandlerFunc {
+func _conversations0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _listskillversionsMw() []app.HandlerFunc {
+func _conversation_idMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _listskillversionresourcesMw() []app.HandlerFunc {
+func _clearconversationapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _updateskillversionresourceMw() []app.HandlerFunc {
+func _files0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _updateskillversioncontentMw() []app.HandlerFunc {
+func _uploadfileopenMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _exportskillversionMw() []app.HandlerFunc {
+func _workflowMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _rollbackskillversionMw() []app.HandlerFunc {
+func _openapigetworkflowrunhistoryMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _exportskillMw() []app.HandlerFunc {
+func _openapirunflowMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _testrunskillMw() []app.HandlerFunc {
+func _openapistreamresumeflowMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _skills0Mw() []app.HandlerFunc {
+func _openapistreamrunflowMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _createskillMw() []app.HandlerFunc {
+func _conversation1Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _updateskillMw() []app.HandlerFunc {
+func _openapicreateconversationMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _importskillMw() []app.HandlerFunc {
+func _workflowsMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _tasksMw() []app.HandlerFunc {
+func _openapichatflowrunMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _listtasksMw() []app.HandlerFunc {
+func _openapigetworkflowinfoMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _task_idMw() []app.HandlerFunc {
+func _v3Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _gettaskMw() []app.HandlerFunc {
+func _chat0Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _canceltaskMw() []app.HandlerFunc {
+func _chatv3Mw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _listtaskeventsMw() []app.HandlerFunc {
+func _cancelchatapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _retrytaskMw() []app.HandlerFunc {
+func _retrievechatopenMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
 
-func _createtaskMw() []app.HandlerFunc {
+func _chat1Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _message0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listchatmessageapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }

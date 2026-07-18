@@ -22,27 +22,129 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	domainappdev "github.com/coze-dev/coze-studio/backend/domain/appdev"
 )
 
 type Service struct {
-	store   domainappdev.Store
-	runtime RuntimeManager
-	chat    ChatManager
+	store                domainappdev.Store
+	runtime              RuntimeManager
+	chat                 ChatManager
+	providerAPI          *ProviderAPIFacade
+	providerArchiveMu    sync.RWMutex
+	providerArchive      ProviderProjectArchiveLifecycle
+	runtimeLifecycleMode ProjectRuntimeLifecycleMode
+	providerGeneration   uint64
+}
+
+type ProviderRuntimePublication struct {
+	service    *Service
+	generation uint64
+}
+
+func (ProviderRuntimePublication) String() string {
+	return "ProviderRuntimePublication{owner:<redacted>}"
+}
+
+func (ProviderRuntimePublication) GoString() string {
+	return "ProviderRuntimePublication{owner:<redacted>}"
+}
+
+func (ProviderRuntimePublication) Format(state fmt.State, _ rune) {
+	_, _ = fmt.Fprint(state, "ProviderRuntimePublication{owner:<redacted>}")
+}
+
+type ProjectRuntimeLifecycleMode uint8
+
+const (
+	ProjectRuntimeLifecycleModeUnconfigured ProjectRuntimeLifecycleMode = iota
+	ProjectRuntimeLifecycleModeNonProvider
+	ProjectRuntimeLifecycleModeProviderRequired
+	ProjectRuntimeLifecycleModeLegacyDebug
+)
+
+func (s *Service) SetProjectRuntimeLifecycleMode(mode ProjectRuntimeLifecycleMode) error {
+	if s == nil || mode <= ProjectRuntimeLifecycleModeUnconfigured ||
+		mode > ProjectRuntimeLifecycleModeLegacyDebug {
+		return ErrProviderControlInvalid
+	}
+	s.providerArchiveMu.Lock()
+	defer s.providerArchiveMu.Unlock()
+	s.runtimeLifecycleMode = mode
+	return nil
+}
+
+func (s *Service) PublishProviderRuntimeBindings(
+	facade *ProviderAPIFacade,
+	lifecycle ProviderProjectArchiveLifecycle,
+) (ProviderRuntimePublication, error) {
+	if s == nil || facade == nil || lifecycle == nil {
+		return ProviderRuntimePublication{}, ErrProviderControlInvalid
+	}
+	s.providerArchiveMu.Lock()
+	defer s.providerArchiveMu.Unlock()
+	s.providerGeneration++
+	s.providerAPI = facade
+	s.providerArchive = lifecycle
+	return ProviderRuntimePublication{service: s, generation: s.providerGeneration}, nil
+}
+
+func (s *Service) UnpublishProviderRuntimeBindings(publication ProviderRuntimePublication) bool {
+	if s == nil || publication.service != s || publication.generation == 0 {
+		return false
+	}
+	s.providerArchiveMu.Lock()
+	defer s.providerArchiveMu.Unlock()
+	if s.providerGeneration != publication.generation {
+		return false
+	}
+	s.providerAPI = nil
+	s.providerArchive = nil
+	s.providerGeneration++
+	return true
+}
+
+func (s *Service) IsProviderRuntimePublicationCurrent(publication ProviderRuntimePublication) bool {
+	if s == nil || publication.service != s || publication.generation == 0 {
+		return false
+	}
+	s.providerArchiveMu.RLock()
+	defer s.providerArchiveMu.RUnlock()
+	return s.providerGeneration == publication.generation
+}
+
+func (s *Service) providerArchiveConfiguration() (ProviderProjectArchiveLifecycle, ProjectRuntimeLifecycleMode) {
+	if s == nil {
+		return nil, ProjectRuntimeLifecycleModeUnconfigured
+	}
+	s.providerArchiveMu.RLock()
+	defer s.providerArchiveMu.RUnlock()
+	return s.providerArchive, s.runtimeLifecycleMode
 }
 
 var SVC = &Service{}
+var serviceInitMu sync.Mutex
 
 func InitService(store domainappdev.Store, runtime RuntimeManager, chat ChatManager) *Service {
-	initialized := NewServiceWithChat(store, runtime, chat)
-	*SVC = *initialized
+	serviceInitMu.Lock()
+	defer serviceInitMu.Unlock()
+	SVC.providerArchiveMu.Lock()
+	SVC.store = store
+	SVC.runtime = runtime
+	SVC.chat = chat
+	SVC.providerAPI = nil
+	SVC.providerArchive = nil
+	SVC.runtimeLifecycleMode = ProjectRuntimeLifecycleModeUnconfigured
+	SVC.providerGeneration++
+	SVC.providerArchiveMu.Unlock()
 	return SVC
 }
 
@@ -123,10 +225,10 @@ type ProjectDTO struct {
 	Prompt            string `json:"prompt,omitempty"`
 	Status            string `json:"status"`
 	RuntimeStatus     string `json:"runtimeStatus,omitempty"`
-	PreviewURL        string `json:"previewUrl,omitempty"`
+	PreviewURL        string `json:"-"`
 	LastBuildStatus   string `json:"lastBuildStatus,omitempty"`
 	LastBuildType     string `json:"lastBuildType,omitempty"`
-	LastBuildArtifact string `json:"lastBuildArtifact,omitempty"`
+	LastBuildArtifact string `json:"-"`
 	LastBuildMessage  string `json:"lastBuildMessage,omitempty"`
 	LastBuildAt       string `json:"lastBuildAt,omitempty"`
 	SourceUpdatedAt   string `json:"sourceUpdatedAt,omitempty"`
@@ -320,25 +422,100 @@ func (s *Service) ArchiveProject(ctx context.Context, req *ArchiveProjectRequest
 	if projectID == "" {
 		return nil, fmt.Errorf("project_id cannot be empty")
 	}
-	if s.runtime != nil {
-		if _, err := s.StopRuntime(ctx, &RuntimeRequest{
-			SpaceID:       strings.TrimSpace(req.SpaceID),
-			CurrentUserID: req.CurrentUserID,
-			ProjectID:     projectID,
+	spaceID := strings.TrimSpace(req.SpaceID)
+	project, err := s.store.GetProject(ctx, spaceID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	archiveStore, ok := s.store.(domainappdev.ProjectArchiveRepository)
+	if !ok || archiveStore == nil {
+		return nil, ErrProviderControlUnavailable
+	}
+	providerArchive, lifecycleMode := s.providerArchiveConfiguration()
+	if lifecycleMode == ProjectRuntimeLifecycleModeUnconfigured {
+		return nil, ErrProviderControlUnavailable
+	}
+	intent, loadErr := archiveStore.LoadProjectArchive(ctx, domainappdev.LoadProjectArchiveInput{
+		SpaceID: spaceID, ProjectID: projectID,
+	})
+	if loadErr != nil && !errors.Is(loadErr, domainappdev.ErrProjectArchiveNotFound) {
+		return nil, normalizeProjectArchiveApplicationError(ctx, loadErr)
+	}
+	if intent != nil && intent.State == domainappdev.ProjectArchiveStateArchived {
+		return successfulProjectArchiveResponse(), nil
+	}
+	if intent == nil {
+		generation := uint64(0)
+		if providerArchive != nil {
+			generation, err = providerArchive.CurrentProjectArchiveGeneration(ctx, spaceID, projectID)
+			if err != nil {
+				return nil, err
+			}
+		} else if lifecycleMode == ProjectRuntimeLifecycleModeProviderRequired {
+			return nil, ErrProviderControlUnavailable
+		}
+		intent, err = archiveStore.ReserveProjectArchive(ctx, domainappdev.ReserveProjectArchiveInput{
+			SpaceID: spaceID, ProjectID: projectID,
+			ExpectedSourceVersion: project.SourceVersion,
+			RuntimeGeneration:     generation,
+		})
+		if err != nil {
+			return nil, normalizeProjectArchiveApplicationError(ctx, err)
+		}
+	}
+	if intent == nil || intent.State != domainappdev.ProjectArchiveStateArchiving {
+		return nil, ErrProviderControlConflict
+	}
+	if providerArchive != nil {
+		if err := providerArchive.PrepareProjectArchive(ctx, ProviderProjectArchiveInput{
+			SpaceID: spaceID, ProjectID: projectID,
+			OperationID:        intent.OperationID,
+			ExpectedGeneration: intent.RuntimeGeneration,
+		}); err != nil {
+			return nil, err
+		}
+	} else if lifecycleMode == ProjectRuntimeLifecycleModeLegacyDebug && s.runtime != nil {
+		if _, err := s.runtime.Stop(ctx, &RuntimeManagerRequest{
+			SpaceID: spaceID, ProjectID: projectID,
 		}); err != nil {
 			return nil, fmt.Errorf("stop appdev runtime before archive: %w", err)
 		}
+	} else if lifecycleMode != ProjectRuntimeLifecycleModeNonProvider {
+		return nil, ErrProviderControlUnavailable
 	}
 
-	if _, err := s.store.ArchiveProject(ctx, strings.TrimSpace(req.SpaceID), projectID); err != nil {
-		return nil, err
+	completed, err := archiveStore.CompleteProjectArchive(ctx, domainappdev.CompleteProjectArchiveInput{
+		Intent: *intent,
+	})
+	if err != nil {
+		return nil, normalizeProjectArchiveApplicationError(ctx, err)
 	}
+	if completed == nil || completed.State != domainappdev.ProjectArchiveStateArchived {
+		return nil, ErrProviderControlConflict
+	}
+	return successfulProjectArchiveResponse(), nil
+}
 
+func normalizeProjectArchiveApplicationError(ctx context.Context, err error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	switch {
+	case errors.Is(err, domainappdev.ErrProjectArchiveConflict):
+		return ErrProviderControlConflict
+	case errors.Is(err, domainappdev.ErrProjectArchiveUnavailable):
+		return ErrProviderControlUnavailable
+	default:
+		return err
+	}
+}
+
+func successfulProjectArchiveResponse() *ActionResponse {
 	return &ActionResponse{
 		Code:    0,
 		Message: "success",
 		Data:    map[string]bool{"success": true},
-	}, nil
+	}
 }
 
 func (s *Service) GetProject(ctx context.Context, req *GetProjectRequest) (*ProjectResponse, error) {

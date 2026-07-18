@@ -6667,6 +6667,836 @@ table "chat_task_events" {
     columns = [column.task_id, column.created_at]
   }
 }
+table "sandbox_providers" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null           = false
+    type           = bigint
+    unsigned       = true
+    auto_increment = true
+  }
+  column "provider_key" {
+    null = false
+    type = varchar(64)
+  }
+  column "name" {
+    null = false
+    type = varchar(128)
+  }
+  column "provider_type" {
+    null = false
+    type = varchar(32)
+  }
+  column "endpoint_secret" {
+    null = true
+    type = text
+  }
+  column "endpoint_hint" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "credential_secret" {
+    null = true
+    type = text
+  }
+  column "credential_fingerprint" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "scopes_json" {
+    null = false
+    type = json
+  }
+  column "policy_json" {
+    null = false
+    type = json
+  }
+  column "max_concurrency" {
+    null     = false
+    type     = int
+    unsigned = true
+    default  = 1
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "health_status" {
+    null = false
+    type = varchar(32)
+  }
+  column "last_health_capabilities_json" {
+    null = false
+    type = json
+  }
+  column "last_health_code" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "last_health_message" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "last_health_latency_ms" {
+    null     = false
+    type     = int
+    unsigned = true
+    default  = 0
+  }
+  column "last_health_at" {
+    null = true
+    type = datetime(3)
+  }
+  column "legacy_source_hash" {
+    null = true
+    type = varchar(64)
+  }
+  column "version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 1
+  }
+  column "created_by" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "updated_by" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "deleted_at" {
+    null = true
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "uk_sandbox_providers_provider_key" {
+    unique  = true
+    columns = [column.provider_key]
+  }
+  index "uk_sandbox_providers_legacy_source_hash" {
+    unique  = true
+    columns = [column.legacy_source_hash]
+  }
+  index "idx_sandbox_providers_status_deleted" {
+    columns = [column.status, column.deleted_at]
+  }
+  index "idx_sandbox_providers_created_id" {
+    columns = [column.created_at, column.id]
+  }
+  index "idx_sandbox_providers_updated_id" {
+    columns = [column.updated_at, column.id]
+  }
+}
+table "sandbox_provider_defaults" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "scope" {
+    null = false
+    type = varchar(32)
+  }
+  column "provider_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 1
+  }
+  column "updated_by" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.scope]
+  }
+  index "idx_sandbox_provider_defaults_provider_id" {
+    columns = [column.provider_id]
+  }
+}
+table "sandbox_provider_audit_events" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "event_id" {
+    null           = false
+    type           = bigint
+    unsigned       = true
+    auto_increment = true
+  }
+  column "provider_id" {
+    null     = true
+    type     = bigint
+    unsigned = true
+  }
+  column "actor_user_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "action" {
+    null = false
+    type = varchar(64)
+  }
+  column "result" {
+    null = false
+    type = varchar(64)
+  }
+  column "request_id" {
+    null = false
+    type = varchar(128)
+  }
+  column "metadata_json" {
+    null = false
+    type = json
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.event_id]
+  }
+  index "idx_sandbox_audit_provider_created_event" {
+    columns = [column.provider_id, column.created_at, column.event_id]
+  }
+  index "idx_sandbox_audit_created_event" {
+    columns = [column.created_at, column.event_id]
+  }
+  index "idx_sandbox_audit_action_created_event" {
+    columns = [column.action, column.created_at, column.event_id]
+  }
+  index "idx_sandbox_audit_result_created_event" {
+    columns = [column.result, column.created_at, column.event_id]
+  }
+}
+table "appdev_projects" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = varchar(64)
+  }
+  column "space_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "name" {
+    null = false
+    type = varchar(128)
+  }
+  column "description" {
+    null    = false
+    type    = varchar(1024)
+    default = ""
+  }
+  column "prompt" {
+    null = true
+    type = text
+  }
+  column "status" {
+    null = false
+    type = varchar(32)
+  }
+  column "runtime_status" {
+    null = false
+    type = varchar(32)
+  }
+  column "preview_url" {
+    null    = false
+    type    = varchar(2048)
+    default = ""
+  }
+  column "last_build_status" {
+    null    = false
+    type    = varchar(32)
+    default = ""
+  }
+  column "last_build_type" {
+    null    = false
+    type    = varchar(32)
+    default = ""
+  }
+  column "last_build_artifact" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+  column "last_build_message" {
+    null    = false
+    type    = varchar(2048)
+    default = ""
+  }
+  column "last_build_at" {
+    null = true
+    type = datetime(3)
+  }
+  column "source_object_key" {
+    null = false
+    type = varchar(512)
+  }
+  column "source_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "source_updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "archive_state" {
+    null    = false
+    type    = varchar(16)
+    default = "none"
+  }
+  column "archive_intent_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "archive_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "archive_source_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "archive_runtime_generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "archive_started_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "archive_completed_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "restore_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "restore_parent_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "restore_snapshot_id" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "restore_phase" {
+    null    = false
+    type    = varchar(24)
+    default = "none"
+  }
+  column "restore_runtime_generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "restore_restart_required" {
+    null    = false
+    type    = sql("tinyint(1)")
+    default = 0
+  }
+  column "restore_source_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "restore_result_source_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "restore_started_generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "restore_safe_error_code" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "restore_safe_error_message" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "restore_updated_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "creator_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "creator_name" {
+    null    = false
+    type    = varchar(128)
+    default = ""
+  }
+  column "created_at" {
+    null = false
+    type = datetime(3)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(3)
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "idx_appdev_projects_space_updated" {
+    columns = [column.space_id, column.updated_at]
+  }
+  index "idx_appdev_projects_status" {
+    columns = [column.status]
+  }
+  index "idx_appdev_projects_archive" {
+    columns = [column.archive_state, column.archive_started_at]
+  }
+}
+table "appdev_source_object_cleanups" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "object_key" {
+    null = false
+    type = varchar(512)
+  }
+  column "space_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "project_id" {
+    null = false
+    type = varchar(64)
+  }
+  column "restore_operation_hash" {
+    null = false
+    type = binary(32)
+  }
+  column "source_version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "cleanup_after" {
+    null = false
+    type = datetime(6)
+  }
+  column "cleanup_state" {
+    null    = false
+    type    = varchar(16)
+    default = "pending"
+  }
+  column "claim_token_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "claim_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "attempt_count" {
+    null     = false
+    type     = int
+    unsigned = true
+    default  = 0
+  }
+  column "last_attempt_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "deleted_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "tombstone_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "created_at" {
+    null = false
+    type = datetime(6)
+  }
+  column "updated_at" {
+    null    = false
+    type    = datetime(6)
+    default = sql("CURRENT_TIMESTAMP(6)")
+  }
+  primary_key {
+    columns = [column.object_key]
+  }
+  index "idx_appdev_source_cleanup_due" {
+    columns = [column.cleanup_after, column.space_id, column.project_id]
+  }
+  index "idx_appdev_source_cleanup_project" {
+    columns = [column.space_id, column.project_id, column.source_version]
+  }
+  index "idx_appdev_source_cleanup_claim" {
+    columns = [column.cleanup_state, column.cleanup_after, column.claim_expires_at, column.space_id, column.project_id]
+  }
+  index "idx_appdev_source_cleanup_tombstone" {
+    columns = [column.cleanup_state, column.tombstone_expires_at]
+  }
+}
+table "appdev_provider_execution_quarantine_audits" {
+  schema = schema.opencoze
+  column "id" {
+    type = varchar(64)
+    null = false
+  }
+  column "execution_id" {
+    type = varchar(64)
+    null = false
+  }
+  column "space_id" {
+    type     = bigint
+    unsigned = true
+    null     = false
+  }
+  column "project_id" {
+    type = varchar(64)
+    null = false
+  }
+  column "generation" {
+    type     = bigint
+    unsigned = true
+    null     = false
+  }
+  column "expected_version" {
+    type     = bigint
+    unsigned = true
+    null     = false
+  }
+  column "owner_identity_hash" {
+    type = binary(32)
+    null = false
+  }
+  column "owner_epoch" {
+    type     = bigint
+    unsigned = true
+    null     = false
+  }
+  column "actor_id" {
+    type     = bigint
+    unsigned = true
+    null     = false
+  }
+  column "operation_hash" {
+    type = binary(32)
+    null = false
+  }
+  column "acknowledgement" {
+    type = varchar(32)
+    null = false
+  }
+  column "reason" {
+    type = varchar(64)
+    null = false
+  }
+  column "evidence_hash" {
+    type = binary(32)
+    null = false
+  }
+  column "created_at" {
+    type = datetime(6)
+    null = false
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "uk_appdev_provider_quarantine_audit_operation" {
+    unique  = true
+    columns = [column.space_id, column.project_id, column.generation, column.operation_hash]
+  }
+  index "idx_appdev_provider_quarantine_audit_execution" {
+    columns = [column.space_id, column.project_id, column.generation, column.created_at]
+  }
+}
+
+table "appdev_provider_executions" {
+  schema  = schema.opencoze
+  collate = "utf8mb4_unicode_ci"
+  column "id" {
+    null = false
+    type = varchar(64)
+  }
+  column "space_id" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "project_id" {
+    null = false
+    type = varchar(64)
+  }
+  column "generation" {
+    null     = false
+    type     = bigint
+    unsigned = true
+  }
+  column "idempotency_key" {
+    null = false
+    type = varbinary(128)
+  }
+  column "desired_state" {
+    null = false
+    type = varchar(32)
+  }
+  column "observed_state" {
+    null = false
+    type = varchar(32)
+  }
+  column "provider_key" {
+    null = false
+    type = varchar(64)
+  }
+  column "provider_scope" {
+    null = false
+    type = varchar(32)
+  }
+  column "provider_execution_id" {
+    null = false
+    type = varbinary(128)
+  }
+  column "submission_started_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "launch_state" {
+    null    = false
+    type    = varchar(24)
+    default = "none"
+  }
+  column "launch_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "launch_provider_operation_id" {
+    null    = false
+    type    = varbinary(128)
+    default = ""
+  }
+  column "launch_request_digest" {
+    null = true
+    type = binary(32)
+  }
+  column "launch_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "checkpoint_envelope" {
+    null = false
+    type = mediumtext
+  }
+  column "checkpoint_write_revision" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "checkpoint_write_pending" {
+    null    = false
+    type    = tinyint(1)
+    default = 0
+  }
+  column "checkpoint_write_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "checkpoint_write_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "checkpoint_last_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "cleanup_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "terminal_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "release_owner_operation_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "provider_lease_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "owner_identity_hash" {
+    null = true
+    type = binary(32)
+  }
+  column "owner_epoch" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 0
+  }
+  column "owner_expires_at" {
+    null = true
+    type = datetime(6)
+  }
+  column "preview_route" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+  column "artifact_object_key" {
+    null    = false
+    type    = varchar(512)
+    default = ""
+  }
+	column "build_operation_id" {
+		null = false
+		type = varbinary(128)
+		default = ""
+	}
+	column "build_operation_hash" {
+		null = true
+		type = binary(32)
+	}
+	column "artifact_status" {
+		null = false
+		type = varchar(32)
+		default = "none"
+	}
+	column "artifact_kind" {
+		null = false
+		type = varchar(64)
+		default = ""
+	}
+	column "artifact_digest" {
+		null = false
+		type = varchar(71)
+		default = ""
+	}
+	column "artifact_size" {
+		null = false
+		type = bigint
+		unsigned = true
+		default = 0
+	}
+	column "artifact_version" {
+		null = false
+		type = bigint
+		unsigned = true
+		default = 0
+	}
+	column "build_started_at" {
+		null = true
+		type = datetime(6)
+	}
+	column "artifact_updated_at" {
+		null = true
+		type = datetime(6)
+	}
+	column "artifact_safe_error_code" {
+		null = false
+		type = varchar(64)
+		default = ""
+	}
+	column "artifact_safe_error_message" {
+		null = false
+		type = varchar(255)
+		default = ""
+	}
+  column "safe_error_code" {
+    null    = false
+    type    = varchar(64)
+    default = ""
+  }
+  column "safe_error_message" {
+    null    = false
+    type    = varchar(255)
+    default = ""
+  }
+  column "version" {
+    null     = false
+    type     = bigint
+    unsigned = true
+    default  = 1
+  }
+  column "created_at" {
+    null = false
+    type = datetime(6)
+  }
+  column "updated_at" {
+    null = false
+    type = datetime(6)
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  index "uk_appdev_provider_exec_generation" {
+    unique  = true
+    columns = [column.space_id, column.project_id, column.generation]
+  }
+  index "uk_appdev_provider_exec_idempotency" {
+    unique  = true
+    columns = [column.space_id, column.project_id, column.idempotency_key]
+  }
+  index "idx_appdev_provider_exec_recoverable" {
+    columns = [column.space_id, column.project_id, column.observed_state, column.desired_state, column.owner_expires_at, column.updated_at, column.id]
+  }
+  index "idx_appdev_provider_exec_provider_id" {
+    columns = [column.space_id, column.project_id, column.provider_key, column.provider_execution_id]
+  }
+  index "idx_appdev_provider_exec_launch" {
+    columns = [column.space_id, column.project_id, column.launch_state, column.launch_expires_at]
+  }
+}
 schema "opencoze" {
   charset = "utf8mb4"
   collate = "utf8mb4_unicode_ci"

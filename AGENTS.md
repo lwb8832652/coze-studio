@@ -248,10 +248,28 @@ nuwax-ai 演示环境用于页面样式和交互对齐：
 
 - 从 `bin` 启动后端时使用 `APP_ENV=debug`，否则可能加载 `bin/.env` 而不是
   `bin/.env.debug`。
+- 本地数据库尚未持久化 `basic_config` 时，可用
+  `COZE_SYSTEM_ADMIN_EMAILS` 引导首位系统管理员；一旦配置落库，数据库优先
+  且环境变量不能覆盖。不要把真实生产管理员邮箱写入 tracked 文件。
 - AppDev 本机运行时只允许在 `APP_ENV=debug` 且
-  `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；生产和共享测试环境必须配置
-  `APP_DEV_RUNNER_ENDPOINT`、`APP_DEV_RUNNER_TOKEN` 和 HTTPS
-  `APP_DEV_PREVIEW_GATEWAY_BASE_URL`，缺失时按 fail-closed 处理。
+  `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；debug HTTP gateway 只允许字面
+  loopback IP。生产和共享测试环境以数据库中启用、支持 `appdev` scope 的
+  HTTPS remote provider 为唯一 endpoint/credential 来源，并要求
+  `SANDBOX_CREDENTIAL_KEYS_JSON`、`SANDBOX_CREDENTIAL_ACTIVE_KEY_ID`、
+  `APP_DEV_PREVIEW_GATEWAY_BASE_URL`、`APP_DEV_ARTIFACT_GATEWAY_BASE_URL` 和
+  `APP_DEV_PROVIDER_AUTH_TOKEN`。Redis、对象存储或任一安全依赖缺失时按
+  fail-closed 处理。`APP_DEV_RUNNER_ENDPOINT` 与 `APP_DEV_RUNNER_TOKEN` 已移除，
+  不再兼容或回退。
+- Sandbox 上线必须分离管理面和运行流量：
+  `SANDBOX_CONTROL_PLANE_ENABLED=true` 可先用于配置 Provider、健康检查和默
+  认项，`SANDBOX_RUNTIME_ROUTING_ENABLED=false` 时 Agent、AppDev、MCP 和
+  CodeRunner 不得获得运行路由；完成 `agent`、`appdev`、`mcp` 三类 scope
+  验证后再显式开启。回滚只关闭运行时路由并保留配置和审计，绝不回退宿主
+  机。完整操作见
+  `docs/superpowers/runbooks/sandbox-control-plane-operations.md`。
+- Sandbox 页面验收包括管理员 `/system/sandbox`、普通用户服务端 `403`、
+  Runtime Doctor 安全状态、真实 Provider 最小任务和控制台错误；默认使用
+  Codex 自带 in-app browser。
 - 前端页面调试和验收优先使用当前 Codex 线程的 in-app browser。需要重新登
   录时，优先在 in-app browser 内恢复会话；不要因为会话过期或自动化连接
   抖动就切换到 Chrome 作为默认验证路径。

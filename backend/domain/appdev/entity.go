@@ -36,24 +36,29 @@ const (
 )
 
 type Project struct {
-	ID                string        `json:"id"`
-	SpaceID           string        `json:"space_id"`
-	Name              string        `json:"name"`
-	Description       string        `json:"description,omitempty"`
-	Prompt            string        `json:"prompt,omitempty"`
-	Status            ProjectStatus `json:"status"`
-	RuntimeStatus     RuntimeStatus `json:"runtime_status"`
-	PreviewURL        string        `json:"preview_url,omitempty"`
-	LastBuildStatus   string        `json:"last_build_status,omitempty"`
-	LastBuildType     string        `json:"last_build_type,omitempty"`
-	LastBuildArtifact string        `json:"last_build_artifact,omitempty"`
-	LastBuildMessage  string        `json:"last_build_message,omitempty"`
-	LastBuildAt       time.Time     `json:"last_build_at,omitempty"`
-	SourceUpdatedAt   time.Time     `json:"source_updated_at,omitempty"`
-	CreatorID         string        `json:"creator_id"`
-	CreatorName       string        `json:"creator_name,omitempty"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	ID                       string              `json:"id"`
+	SpaceID                  string              `json:"space_id"`
+	Name                     string              `json:"name"`
+	Description              string              `json:"description,omitempty"`
+	Prompt                   string              `json:"prompt,omitempty"`
+	Status                   ProjectStatus       `json:"status"`
+	RuntimeStatus            RuntimeStatus       `json:"runtime_status"`
+	PreviewURL               string              `json:"-"`
+	LastBuildStatus          string              `json:"last_build_status,omitempty"`
+	LastBuildType            string              `json:"last_build_type,omitempty"`
+	LastBuildArtifact        string              `json:"-"`
+	LastBuildMessage         string              `json:"last_build_message,omitempty"`
+	LastBuildAt              time.Time           `json:"last_build_at,omitempty"`
+	SourceVersion            int64               `json:"-"`
+	SourceUpdatedAt          time.Time           `json:"source_updated_at,omitempty"`
+	ArchiveState             ProjectArchiveState `json:"-"`
+	ArchiveIntentVersion     uint64              `json:"-"`
+	ArchiveSourceVersion     int64               `json:"-"`
+	ArchiveRuntimeGeneration uint64              `json:"-"`
+	CreatorID                string              `json:"creator_id"`
+	CreatorName              string              `json:"creator_name,omitempty"`
+	CreatedAt                time.Time           `json:"created_at"`
+	UpdatedAt                time.Time           `json:"updated_at"`
 }
 
 type FileNode struct {
@@ -81,7 +86,7 @@ type ProjectSnapshot struct {
 
 type RuntimeInfo struct {
 	Status          RuntimeStatus `json:"status"`
-	PreviewURL      string        `json:"preview_url,omitempty"`
+	PreviewURL      string        `json:"-"`
 	Message         string        `json:"message,omitempty"`
 	LastKeepAliveAt time.Time     `json:"last_keep_alive_at,omitempty"`
 }

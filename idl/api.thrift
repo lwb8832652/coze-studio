@@ -18,6 +18,7 @@ include "./workflow/workflow_svc.thrift"
 include "./app/bot_open_api.thrift"
 include "./upload/upload.thrift"
 include "./admin/config.thrift"
+include "./appdev/app_dev.thrift"
 
 
 
@@ -44,3 +45,4 @@ service ConfigService extends config.ConfigService {}
 service WorkbenchChatService extends workbench.WorkbenchChatService {}
 service WorkbenchSkillService extends skill.WorkbenchSkillService {}
 service WorkbenchTaskService extends workbench.WorkbenchTaskService {}
+service AppDevService extends app_dev.AppDevService {}

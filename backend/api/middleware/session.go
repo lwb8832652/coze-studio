@@ -18,7 +18,11 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/mail"
 	"os"
+	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 
@@ -27,11 +31,44 @@ import (
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	"github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
-	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
+	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
-	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
+
+const systemAdminBootstrapEmailsEnv = "COZE_SYSTEM_ADMIN_EMAILS"
+
+var loadAdminAuthEmailConfig = func(ctx context.Context) (string, error) {
+	baseConf, revision, err := config.Base().GetBaseConfigWithRevision(ctx)
+	if err != nil {
+		return "", err
+	}
+	return resolveAdminAuthEmailConfig(baseConf.AdminEmails, revision, os.Getenv), nil
+}
+
+func resolveAdminAuthEmailConfig(configured, revision string, getenv func(string) string) string {
+	if configured != "" || revision != kvstore.MissingRevision || getenv == nil {
+		return configured
+	}
+	return getenv(systemAdminBootstrapEmailsEnv)
+}
+
+var loadAdminAuthEmails = func(ctx context.Context) (string, error) {
+	raw, err := loadAdminAuthEmailConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	adminEmails, valid := canonicalAdminAuthEmails(raw)
+	if !valid {
+		logs.CtxWarnf(ctx, "[AdminAuthMW] admin email configuration is invalid")
+		return "", nil
+	}
+	return adminEmails, nil
+}
+
+var validateSession = func(ctx context.Context, sessionID string) (*entity.Session, error) {
+	return user.UserApplicationSVC.ValidateSession(ctx, sessionID)
+}
 
 var noNeedSessionCheckPath = map[string]bool{
 	"/api/passport/web/email/login/":       true,
@@ -39,6 +76,10 @@ var noNeedSessionCheckPath = map[string]bool{
 }
 
 func SessionAuthMW() app.HandlerFunc {
+	return SessionAuthMWWithValidator(validateSession)
+}
+
+func SessionAuthMWWithValidator(validator func(context.Context, string) (*entity.Session, error)) app.HandlerFunc {
 	return func(c context.Context, ctx *app.RequestContext) {
 		requestAuthType := ctx.GetInt32(RequestAuthTypeStr)
 		if requestAuthType != int32(RequestAuthTypeWebAPI) {
@@ -54,56 +95,104 @@ func SessionAuthMW() app.HandlerFunc {
 		s := ctx.Cookie(entity.SessionKey)
 		if len(s) == 0 {
 			logs.Errorf("[SessionAuthMW] session id is nil")
-			httputil.Unauthorized(ctx, "missing session_key in cookie")
+			authenticationRequired(ctx)
 			return
 		}
 
-		// sessionID -> sessionData
-		session, err := user.UserApplicationSVC.ValidateSession(c, string(s))
+		if validator == nil {
+			logs.Errorf("[SessionAuthMW] session validator is nil")
+			authenticationRequired(ctx)
+			return
+		}
+		session, err := validator(c, string(s))
 		if err != nil {
-			logs.Errorf("[SessionAuthMW] validate session failed, err: %v", err)
-			httputil.InternalError(c, ctx, err)
+			logs.Errorf("[SessionAuthMW] validate session failed")
+			authenticationRequired(ctx)
+			return
+		}
+		if session == nil || session.UserID <= 0 {
+			logs.Errorf("[SessionAuthMW] validated session is empty")
+			authenticationRequired(ctx)
 			return
 		}
 
-		if session != nil {
-			ctxcache.Store(c, consts.SessionDataKeyInCtx, session)
-		}
-
+		ctxcache.Store(c, consts.SessionDataKeyInCtx, session)
 		ctx.Next(c)
 	}
 }
 
+func canonicalAdminAuthEmails(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", true
+	}
+	seen := make(map[string]struct{})
+	canonical := make([]string, 0, strings.Count(raw, ",")+1)
+	for _, item := range strings.Split(raw, ",") {
+		candidate := strings.TrimSpace(item)
+		address, err := mail.ParseAddress(candidate)
+		if err != nil || address == nil || address.Name != "" || !strings.EqualFold(candidate, address.Address) {
+			return "", false
+		}
+		email := strings.ToLower(strings.TrimSpace(address.Address))
+		if email == "" {
+			return "", false
+		}
+		if _, exists := seen[email]; exists {
+			continue
+		}
+		seen[email] = struct{}{}
+		canonical = append(canonical, email)
+	}
+	return strings.Join(canonical, ","), true
+}
+
+func authenticationRequired(ctx *app.RequestContext) {
+	ctx.AbortWithStatusJSON(http.StatusUnauthorized, map[string]any{
+		"code":       http.StatusUnauthorized,
+		"error_code": "AUTHENTICATION_REQUIRED",
+		"msg":        "authentication required",
+	})
+}
+
 func AdminAuthMW() app.HandlerFunc {
+	return AdminAuthMWWithEmailLoader(loadAdminAuthEmails)
+}
+
+func AdminAuthMWWithEmailLoader(loader func(context.Context) (string, error)) app.HandlerFunc {
 	return func(c context.Context, ctx *app.RequestContext) {
 		session, ok := ctxcache.Get[*entity.Session](c, consts.SessionDataKeyInCtx)
-		if !ok {
+		if !ok || session == nil || session.UserID <= 0 {
 			logs.Errorf("[AdminAuthMW] session data is nil")
-			httputil.InternalError(c, ctx,
-				errorx.New(errno.ErrUserAuthenticationFailed, errorx.KV("reason", "session data is nil")))
+			authenticationRequired(ctx)
 			return
 		}
 
-		baseConf, err := config.Base().GetBaseConfig(c)
+		if loader == nil {
+			logs.Errorf("[AdminAuthMW] admin email loader is nil")
+			httputil.InternalError(c, ctx, errors.New("admin authentication configuration unavailable"))
+			return
+		}
+		adminEmails, err := loader(c)
 		if err != nil {
-			logs.Errorf("[AdminAuthMW] get base config failed, err: %v", err)
+			logs.Errorf("[AdminAuthMW] get base config failed")
 			httputil.InternalError(c, ctx, err)
 			return
 		}
 
-		if baseConf.AdminEmails == "" {
-			baseConf.AdminEmails = os.Getenv(consts.AllowRegistrationEmail)
+		if adminEmails == "" {
+			logs.CtxWarnf(c, "[AdminAuthMW] admin emails are empty")
 		}
 
-		if baseConf.AdminEmails == "" {
-			logs.CtxWarnf(c, "[AdminAuthMW] admin emails is empty, you can set it by env %s", consts.AllowRegistrationEmail)
-		}
-
-		if user.IsSystemAdminEmail(session.UserEmail, baseConf.AdminEmails) {
+		if user.IsSystemAdminEmail(session.UserEmail, adminEmails) {
 			ctx.Next(c)
 			return
 		}
 
-		httputil.Unauthorized(ctx, "the account does not have permission to access")
+		ctx.AbortWithStatusJSON(http.StatusForbidden, map[string]any{
+			"code":       http.StatusForbidden,
+			"error_code": "ADMIN_PERMISSION_DENIED",
+			"msg":        "the account does not have permission to access",
+		})
 	}
 }

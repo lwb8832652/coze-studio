@@ -23,6 +23,7 @@ import (
 
 	"gorm.io/gorm"
 
+	appsandbox "github.com/coze-dev/coze-studio/backend/application/sandbox"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
@@ -40,6 +41,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/imagex"
 	"github.com/coze-dev/coze-studio/backend/infra/imagex/impl/veimagex"
 	"github.com/coze-dev/coze-studio/backend/infra/orm/impl/mysql"
+	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	storage "github.com/coze-dev/coze-studio/backend/infra/storage/impl"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
@@ -62,6 +64,7 @@ type AppDependencies struct {
 	Rewriter                 messages2query.MessagesToQuery
 	NL2SQL                   nl2sql.NL2SQL
 	WorkflowBuildInChatModel modelbuilder.BaseChatModel
+	LocalCodeRunner          infrasandbox.LocalExecutionDelegate
 }
 
 func Init(ctx context.Context) (*AppDependencies, error) {
@@ -88,16 +91,18 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init model config failed, err=%w", err)
 	}
+	if err := appsandbox.ImportLegacySandboxConfigIfEnabled(
+		ctx,
+		config.Base().GetLegacySandboxConfig,
+		appsandbox.NewLegacyImportStore(infrasandbox.NewMySQLRepository(deps.DB)),
+	); err != nil {
+		return nil, fmt.Errorf("import legacy sandbox configuration failed: %w", err)
+	}
 
 	knowledgeConfig, err := config.Knowledge().GetKnowledgeConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get knowledge config failed, err=%w", err)
 	}
-	basicConfig, err := config.Base().GetBaseConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get basic config failed, err=%w", err)
-	}
-
 	deps.ESClient, err = es.New()
 	if err != nil {
 		return nil, fmt.Errorf("init es client failed, err=%w", err)
@@ -135,7 +140,12 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 		return nil, fmt.Errorf("init nl2sql failed, err=%w", err)
 	}
 
-	deps.CodeRunner = coderunner.New(basicConfig)
+	baseConfig, err := config.Base().GetBaseConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get base config failed, err=%w", err)
+	}
+	deps.LocalCodeRunner = coderunner.NewLegacyLocalExecutionDelegate(baseConfig)
+	deps.CodeRunner = coderunner.New(baseConfig)
 
 	ocrIns := ocr.New(knowledgeConfig)
 

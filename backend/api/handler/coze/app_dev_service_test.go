@@ -135,14 +135,16 @@ func TestAppDevManagementRoutesRequireOwnerOrAdmin(t *testing.T) {
 	cozerouter.Register(h)
 
 	managementRoutes := []struct {
-		method string
-		path   string
+		method       string
+		path         string
+		expectedCode int
+		expectedText string
 	}{
-		{method: http.MethodDelete, path: "/api/app-dev/spaces/1001/projects/appdev_test"},
-		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/build"},
-		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/start"},
-		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/restart"},
-		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/stop"},
+		{method: http.MethodDelete, path: "/api/app-dev/spaces/1001/projects/appdev_test", expectedCode: http.StatusOK, expectedText: "workspace owner or admin role is required"},
+		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/build", expectedCode: http.StatusForbidden, expectedText: `"code":"forbidden"`},
+		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/start", expectedCode: http.StatusForbidden, expectedText: `"code":"forbidden"`},
+		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/restart", expectedCode: http.StatusForbidden, expectedText: `"code":"forbidden"`},
+		{method: http.MethodPost, path: "/api/app-dev/spaces/1001/projects/appdev_test/runtime/stop", expectedCode: http.StatusForbidden, expectedText: `"code":"forbidden"`},
 	}
 
 	for _, route := range managementRoutes {
@@ -150,9 +152,8 @@ func TestAppDevManagementRoutesRequireOwnerOrAdmin(t *testing.T) {
 			resp := ut.PerformRequest(h.Engine, route.method, route.path, nil)
 			body := string(resp.Result().Body())
 
-			require.Equal(t, http.StatusOK, resp.Code)
-			require.Contains(t, body, `"code":700000007`)
-			require.Contains(t, body, "workspace owner or admin role is required")
+			require.Equal(t, route.expectedCode, resp.Code)
+			require.Contains(t, body, route.expectedText)
 		})
 	}
 }

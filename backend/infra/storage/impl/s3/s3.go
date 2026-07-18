@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -38,9 +39,38 @@ import (
 )
 
 type s3Client struct {
-	client     *s3.Client
-	bucketName string
+	client         *s3.Client
+	streamOpener   s3ObjectStreamOpener
+	readinessCheck func(context.Context, string) error
+	bucketName     string
 }
+
+type s3ObjectStreamOpener interface {
+	OpenObjectStream(context.Context, string, string) (io.ReadCloser, error)
+}
+
+type s3SDKObjectStreamOpener struct{ client *s3.Client }
+
+var _ s3ObjectStreamOpener = (*s3SDKObjectStreamOpener)(nil)
+
+func (opener *s3SDKObjectStreamOpener) OpenObjectStream(ctx context.Context, bucket, objectKey string) (io.ReadCloser, error) {
+	if opener == nil || opener.client == nil {
+		return nil, fmt.Errorf("get object stream client is unavailable")
+	}
+	result, err := opener.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(objectKey)})
+	if err != nil {
+		return nil, fmt.Errorf("get object failed: %w", err)
+	}
+	if result == nil || result.Body == nil {
+		return nil, fmt.Errorf("get object returned an empty stream")
+	}
+	return result.Body, nil
+}
+
+var (
+	_ storage.StreamingStorage = (*s3Client)(nil)
+	_ storage.ReadinessChecker = (*s3Client)(nil)
+)
 
 func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (storage.Storage, error) {
 	t, err := getS3Client(ctx, ak, sk, bucketName, endpoint, region)
@@ -77,7 +107,12 @@ func getS3Client(ctx context.Context, ak, sk, bucketName, endpoint, region strin
 	})
 
 	t := &s3Client{
-		client:     c,
+		client:       c,
+		streamOpener: &s3SDKObjectStreamOpener{client: c},
+		readinessCheck: func(ctx context.Context, bucket string) error {
+			_, err := c.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+			return err
+		},
 		bucketName: bucketName,
 	}
 
@@ -87,6 +122,22 @@ func getS3Client(ctx context.Context, ak, sk, bucketName, endpoint, region strin
 	}
 
 	return t, nil
+}
+
+func (t *s3Client) CheckReadiness(ctx context.Context) error {
+	if ctx == nil || t == nil || t.readinessCheck == nil || strings.TrimSpace(t.bucketName) == "" {
+		return storage.ErrReadinessUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.readinessCheck(ctx, t.bucketName); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return storage.ErrReadinessUnavailable
+	}
+	return nil
 }
 
 func (t *s3Client) test() {
@@ -192,26 +243,40 @@ func (t *s3Client) PutObjectWithReader(ctx context.Context, objectKey string, co
 }
 
 func (t *s3Client) GetObject(ctx context.Context, objectKey string) ([]byte, error) {
-	client := t.client
-	bucket := t.bucketName
-
-	result, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(objectKey),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get object failed : %v", err)
-	}
-	defer result.Body.Close()
-
-	body, err := io.ReadAll(result.Body)
+	body, err := t.OpenObjectStream(ctx, objectKey)
 	if err != nil {
 		return nil, err
 	}
+	defer body.Close()
+	content, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	return content, nil
+}
 
-	defer result.Body.Close()
-
-	return body, nil
+func (t *s3Client) OpenObjectStream(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("get object context is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if t == nil || t.streamOpener == nil {
+		return nil, fmt.Errorf("get object stream opener is unavailable")
+	}
+	result, err := t.streamOpener.OpenObjectStream(ctx, t.bucketName, objectKey)
+	if err != nil {
+		return nil, fmt.Errorf("get object failed: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("get object returned an empty stream")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = result.Close()
+		return nil, err
+	}
+	return result, nil
 }
 
 func (t *s3Client) DeleteObject(ctx context.Context, objectKey string) error {

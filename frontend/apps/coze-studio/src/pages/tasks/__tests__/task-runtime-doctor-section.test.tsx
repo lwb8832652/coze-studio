@@ -23,9 +23,13 @@ import { createRoot, type Root } from 'react-dom/client';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockGetWorkbenchRuntimeDoctor = vi.hoisted(() => vi.fn());
+const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
 
 vi.mock('../service', () => ({
   getWorkbenchRuntimeDoctor: mockGetWorkbenchRuntimeDoctor,
+}));
+vi.mock('../../system/service', () => ({
+  getSystemAdminStatus: mockGetSystemAdminStatus,
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -97,6 +101,8 @@ const renderRuntimeDoctorSection = async (spaceId = 'space-1') => {
 describe('TaskRuntimeDoctorSection', () => {
   beforeEach(() => {
     mockGetWorkbenchRuntimeDoctor.mockReset();
+    mockGetSystemAdminStatus.mockReset();
+    mockGetSystemAdminStatus.mockResolvedValue({ is_admin: false });
     mockGetWorkbenchRuntimeDoctor.mockResolvedValue({
       data: {
         status: 'warning',
@@ -121,12 +127,25 @@ describe('TaskRuntimeDoctorSection', () => {
         },
         sandbox: {
           status: 'ready',
-          runner_type: 'sandbox',
+          runner_type: 'control_plane',
           network: 'configured',
           process: 'restricted',
           ffi: 'restricted',
           node_modules: 'configured',
-          message: 'sandbox code runner policy is configured',
+          message: 'Agent sandbox provider is ready',
+          scopes: [
+            {
+              scope: 'agent',
+              configured: true,
+              available: true,
+              selected: true,
+              health_status: 'healthy',
+              reason_code: 'ready',
+              provider_type: 'remote',
+              provider_ref: 'sha256:62d2f48ab223',
+              checked_at: '2026-07-18T10:00:00Z',
+            },
+          ],
         },
         web_tools: {
           web_fetch: {
@@ -227,9 +246,12 @@ describe('TaskRuntimeDoctorSection', () => {
     expect(container.textContent).toContain(
       'Workbench default chat model is configured',
     );
-    expect(container.textContent).toContain('Sandbox');
-    expect(container.textContent).toContain('Runner sandbox');
-    expect(container.textContent).toContain('网络 configured');
+    expect(container.textContent).toContain('Sandbox Provider');
+    expect(container.textContent).toContain('Agent · Provider 已就绪');
+    expect(container.textContent).toContain('类型 remote');
+    expect(container.textContent).toContain('健康 正常');
+    expect(container.textContent).toContain('原因 ready');
+    expect(container.textContent).toContain('Provider sha256:62d2f48ab223');
     expect(container.textContent).toContain('Skill 检查');
     expect(container.textContent).toContain(
       '2 enabled / 3 total skills: research, writer',
@@ -259,6 +281,29 @@ describe('TaskRuntimeDoctorSection', () => {
     expect(mockGetWorkbenchRuntimeDoctor).toHaveBeenLastCalledWith({
       space_id: 'space-1',
     });
+
+    unmount();
+  });
+
+  it('links unavailable sandbox recovery only for system administrators', async () => {
+    const response = await mockGetWorkbenchRuntimeDoctor();
+    response.data.sandbox.status = 'warning';
+    response.data.sandbox.scopes[0].available = false;
+    response.data.sandbox.scopes[0].reason_code = 'provider_unhealthy';
+    mockGetWorkbenchRuntimeDoctor.mockReset();
+    mockGetWorkbenchRuntimeDoctor.mockResolvedValue(response);
+    mockGetSystemAdminStatus.mockResolvedValue({ is_admin: true });
+
+    const { container, unmount } = await renderRuntimeDoctorSection();
+    const link = container.querySelector<HTMLAnchorElement>(
+      'a[href="/system/sandbox"]',
+    );
+
+    expect(link?.textContent).toContain('打开沙箱管理');
+    expect(container.textContent).toContain('Provider 不可用');
+    expect(container.textContent).toContain(
+      '请联系系统管理员检查沙箱 Provider',
+    );
 
     unmount();
   });

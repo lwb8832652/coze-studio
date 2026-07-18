@@ -20,8 +20,27 @@ export type AppDevRuntimeStatus =
   | 'stopped'
   | 'starting'
   | 'running'
-  | 'restarting'
+  | 'recovering'
+  | 'stopping'
+  | 'cleanup_pending'
   | 'error';
+
+export type AppDevBuildState = 'idle' | 'building' | 'ready' | 'failed';
+
+export const APP_DEV_BUILD_SAFE_ERROR_CODES = [
+  'build_failed',
+  'source_invalid',
+  'dependency_failed',
+  'provider_unavailable',
+  'provider_capability_missing',
+  'provider_contract_violation',
+  'build_timed_out',
+  'build_canceled',
+  'artifact_invalid',
+] as const;
+
+export type AppDevBuildSafeErrorCode =
+  (typeof APP_DEV_BUILD_SAFE_ERROR_CODES)[number];
 
 export type AppDevChatRole = 'user' | 'assistant' | 'system';
 
@@ -44,7 +63,6 @@ export interface AppDevProject {
   previewUrl?: string;
   lastBuildStatus?: 'building' | 'success' | 'error';
   lastBuildType?: string;
-  lastBuildArtifact?: string;
   lastBuildMessage?: string;
   lastBuildAt?: string;
   sourceUpdatedAt?: string;
@@ -71,10 +89,25 @@ export interface AppDevFileContent {
 }
 
 export interface AppDevRuntimeInfo {
+  generation: number;
   status: AppDevRuntimeStatus;
+  canStart: boolean;
+  recovering: boolean;
+  stopping: boolean;
   previewUrl?: string;
   message?: string;
   lastKeepAliveAt?: string;
+}
+
+export interface AppDevBuildInfo {
+  generation: number;
+  state: AppDevBuildState;
+  releaseAvailable: boolean;
+  size: number;
+  updatedAt?: string;
+  stale: boolean;
+  safeErrorCode?: AppDevBuildSafeErrorCode;
+  safeMessage?: string;
 }
 
 export interface AppDevRuntimeLog {
@@ -159,17 +192,6 @@ export interface AppDevCreateProjectParams {
 export interface AppDevProjectIdentity {
   spaceId: string;
   projectId: string;
-}
-
-export interface AppDevBuildResult {
-  status: 'success';
-  publishType: string;
-  artifactPath: string;
-  downloadUrl: string;
-  message?: string;
-  startedAt: string;
-  finishedAt: string;
-  durationMs: number;
 }
 
 export interface AppDevSnapshot {

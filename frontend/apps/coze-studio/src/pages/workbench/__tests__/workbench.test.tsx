@@ -25,9 +25,7 @@ import { workbench } from '@coze-studio/api-schema';
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
-const mockUseSearchParams = vi.hoisted(() =>
-  vi.fn(() => [new URLSearchParams(), vi.fn()]),
-);
+const mockUseLocation = vi.hoisted(() => vi.fn(() => ({ state: null })));
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockCreateTaskThread = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
@@ -41,8 +39,9 @@ const mockListMCPToolRegistryEntries = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
+  useLocation: mockUseLocation,
   useParams: mockUseParams,
-  useSearchParams: mockUseSearchParams,
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
 vi.mock('../service', () => ({
@@ -334,7 +333,7 @@ describe('WorkbenchPage', () => {
   beforeEach(() => {
     window.localStorage.clear();
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
-    mockUseSearchParams.mockReturnValue([new URLSearchParams(), vi.fn()]);
+    mockUseLocation.mockReturnValue({ state: null });
     mockNavigate.mockReset();
     mockCreateTaskThread.mockReset();
     mockCreateTaskThreadRun.mockReset();
@@ -499,30 +498,41 @@ describe('WorkbenchPage', () => {
     expect(markup).not.toContain('aria-pressed="false"');
   });
 
-  it('renders DeerFlow skill-creator mode from the new skill entry', () => {
-    mockUseSearchParams.mockReturnValue([
-      new URLSearchParams('mode=skill'),
-      vi.fn(),
-    ]);
+  it('renders skill creation intent in the shared workbench home', () => {
+    mockUseLocation.mockReturnValue({
+      state: {
+        workbenchIntent: 'create_skill',
+        initialMessage:
+          '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+      },
+    });
 
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
-    expect(markup).toContain('✨ 创建你自己的 Agent SKill ✨');
-    expect(markup).toContain('创建你的 Agent Skill 来释放 DeerFlow 的潜力。');
-    expect(markup).toContain('第一步请先直接问我');
-    expect(markup).toContain('想创建什么技能');
-    expect(markup).toContain('不要创建文件或生成 .skill 包');
-    expect(markup).toContain('.skill');
-    expect(markup).not.toContain('create_skill_package');
-    expect(markup).not.toContain('present_files');
-    expect(markup).not.toContain('公开模板 6268');
+    expect(markup).toContain('欢迎来到 刘文波 的工作空间');
+    expect(markup).toContain('AI 创建技能');
+    expect(markup).toContain('描述你想创建的技能、使用场景和期望输出');
+    expect(markup).toContain(
+      '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+    );
+    expect(markup).toContain('placeholder="今天想做什么？"');
+    expect(markup).toContain('公开模板 6268');
+    expect(markup).not.toContain('✨ 创建你自己的 Agent SKill ✨');
+    expect(markup).not.toContain(
+      '创建你的 Agent Skill 来释放 DeerFlow 的潜力。',
+    );
+    expect(markup).not.toContain('第一步请先直接问我');
+    expect(markup).not.toContain('不要创建文件或生成 .skill 包');
   });
 
   it('activates skill-creator when sending from DeerFlow skill-creator mode', async () => {
-    mockUseSearchParams.mockReturnValue([
-      new URLSearchParams('mode=skill'),
-      vi.fn(),
-    ]);
+    mockUseLocation.mockReturnValue({
+      state: {
+        workbenchIntent: 'create_skill',
+        initialMessage:
+          '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+      },
+    });
     mockCreateTaskThread.mockResolvedValue(
       buildCreateTaskThreadResponse(
         'thread-skill-creator-mode',
@@ -540,6 +550,15 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '创建一个项目周报技能' },
+      } as unknown as Event);
+    });
+
     const sendButton = getSendButton(container);
     await act(async () => {
       sendButton.click();
@@ -548,7 +567,7 @@ describe('WorkbenchPage', () => {
 
     expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
-      message: expect.stringContaining('skill-creator'),
+      message: '创建一个项目周报技能',
       config: expect.any(String),
     });
     expect(
@@ -2111,6 +2130,15 @@ describe('WorkbenchPage', () => {
       root.render(<WorkbenchPage />);
     });
 
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    act(() => {
+      Simulate.change(textarea, {
+        target: { value: '用选择的技能创建总结能力' },
+      } as unknown as Event);
+    });
+
     const atButton = container.querySelector(
       'button[aria-label="添加上下文"]',
     ) as HTMLButtonElement;
@@ -2140,15 +2168,6 @@ describe('WorkbenchPage', () => {
       skillButton.click();
     });
 
-    const textarea = container.querySelector(
-      'textarea[aria-label="任务描述"]',
-    ) as HTMLTextAreaElement;
-    act(() => {
-      Simulate.change(textarea, {
-        target: { value: '用选择的技能创建总结能力' },
-      } as unknown as Event);
-    });
-
     const sendButton = getSendButton(container);
     await act(async () => {
       sendButton.click();
@@ -2157,7 +2176,7 @@ describe('WorkbenchPage', () => {
 
     expect(mockCreateTaskThread).toHaveBeenCalledWith({
       space_id: 'space-1',
-      message: '用选择的技能创建总结能力',
+      message: '用选择的技能创建总结能力 @Research Skill',
       config: expect.any(String),
     });
     expect(

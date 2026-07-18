@@ -19,7 +19,6 @@ package appdev
 import (
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -49,9 +48,5 @@ func SanitizeAppDevOutput(value string) string {
 }
 
 func IsAppDevHostExecutionEnabled() bool {
-	if !strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "debug") {
-		return false
-	}
-	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("APP_DEV_HOST_RUNTIME_ENABLED")))
-	return err == nil && enabled
+	return os.Getenv("APP_ENV") == "debug" && os.Getenv("APP_DEV_HOST_RUNTIME_ENABLED") == "true"
 }

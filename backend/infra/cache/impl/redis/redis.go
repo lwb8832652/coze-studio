@@ -61,6 +61,24 @@ type redisImpl struct {
 	client *redis.Client
 }
 
+var _ cache.ReadinessChecker = (*redisImpl)(nil)
+
+func (r *redisImpl) CheckReadiness(ctx context.Context) error {
+	if ctx == nil || r == nil || r.client == nil {
+		return cache.ErrReadinessUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.client.Ping(ctx).Err(); err != nil {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		return cache.ErrReadinessUnavailable
+	}
+	return nil
+}
+
 // Del implements cache.Cmdable.
 func (r *redisImpl) Del(ctx context.Context, keys ...string) cache.IntCmd {
 	return r.client.Del(ctx, keys...)
@@ -135,6 +153,17 @@ func (r *redisImpl) Pipeline() cache.Pipeliner {
 // RPush implements cache.Cmdable.
 func (r *redisImpl) RPush(ctx context.Context, key string, values ...interface{}) cache.IntCmd {
 	return r.client.RPush(ctx, key, values...)
+}
+
+// RunScript implements cache.Cmdable using EVALSHA with go-redis's EVAL
+// fallback. It reuses the existing client and connection pool.
+func (r *redisImpl) RunScript(
+	ctx context.Context,
+	script string,
+	keys []string,
+	args ...interface{},
+) cache.ScriptCmd {
+	return redis.NewScript(script).Run(ctx, r.client, keys, args...)
 }
 
 // Set implements cache.Cmdable.
@@ -244,6 +273,16 @@ func (p *pipelineImpl) Pipeline() cache.Pipeliner {
 // RPush implements cache.Pipeliner.
 func (p *pipelineImpl) RPush(ctx context.Context, key string, values ...interface{}) cache.IntCmd {
 	return p.p.RPush(ctx, key, values...)
+}
+
+// RunScript implements cache.Pipeliner.
+func (p *pipelineImpl) RunScript(
+	ctx context.Context,
+	script string,
+	keys []string,
+	args ...interface{},
+) cache.ScriptCmd {
+	return p.p.Eval(ctx, script, keys, args...)
 }
 
 // Set implements cache.Pipeliner.

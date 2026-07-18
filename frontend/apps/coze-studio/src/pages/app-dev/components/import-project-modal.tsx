@@ -16,6 +16,8 @@
 
 import { useState } from 'react';
 
+import { AccessibleDialog } from './accessible-dialog';
+
 import { formatFileSize } from '../utils/file-utils';
 
 interface ImportProjectModalProps {
@@ -77,67 +79,70 @@ export const ImportProjectModal = ({
   };
 
   return (
-    <div className="app-dev-modal-mask" role="presentation">
-      <section
-        className="app-dev-modal app-dev-modal--page-create"
-        role="dialog"
-        aria-modal="true"
-      >
-        <header className="app-dev-modal__header">
-          <div>
-            <h2>导入网页应用</h2>
-            <p>上传 zip 项目包后进入网页应用开发工作台。</p>
-          </div>
-          <button type="button" onClick={onCancel} disabled={loading}>
-            关闭
-          </button>
-        </header>
+    <AccessibleDialog
+      title="导入网页应用"
+      className="app-dev-modal app-dev-modal--page-create"
+      onClose={() => {
+        if (!loading) {
+          onCancel();
+        }
+      }}
+    >
+      <header className="app-dev-modal__header">
+        <div>
+          <h2>导入网页应用</h2>
+          <p>上传 zip 项目包后进入网页应用开发工作台。</p>
+        </div>
+        <button type="button" onClick={onCancel} disabled={loading}>
+          关闭
+        </button>
+      </header>
 
-        <label className="app-dev-form-field">
-          <span>项目名称</span>
-          <input
-            value={name}
-            maxLength={50}
-            disabled={loading}
-            placeholder="可选，默认使用压缩包名称"
-            onChange={event => setName(event.target.value)}
-          />
-        </label>
+      <label className="app-dev-form-field">
+        <span>项目名称</span>
+        <input
+          data-dialog-autofocus
+          value={name}
+          maxLength={50}
+          disabled={loading}
+          placeholder="可选，默认使用压缩包名称"
+          onChange={event => setName(event.target.value)}
+        />
+      </label>
 
-        <label className="app-dev-upload-field app-dev-upload-field--dragger">
-          <strong aria-hidden="true">⇧</strong>
-          <span>
-            {file
-              ? `${file.name} · ${formatFileSize(file.size)}`
-              : '选择 .zip 项目包'}
-          </span>
-          <p>点击或拖拽 zip 文件到这里上传</p>
-          <input
-            type="file"
-            accept=".zip,application/zip"
-            disabled={loading}
-            onChange={event => {
-              setFile(event.target.files?.[0]);
-              setError('');
-            }}
-          />
-        </label>
+      <label className="app-dev-upload-field app-dev-upload-field--dragger">
+        <strong aria-hidden="true">⇧</strong>
+        <span>
+          {file
+            ? `${file.name} · ${formatFileSize(file.size)}`
+            : '选择 .zip 项目包'}
+        </span>
+        <p>点击或拖拽 zip 文件到这里上传</p>
+        <input
+          type="file"
+          accept=".zip,application/zip"
+          disabled={loading}
+          onChange={event => {
+            setFile(event.target.files?.[0]);
+            setError('');
+          }}
+        />
+      </label>
 
-        {error ? <div className="app-dev-form-error">{error}</div> : null}
+      {error ? <div className="app-dev-form-error">{error}</div> : null}
 
-        <footer className="app-dev-modal__footer">
-          <button type="button" onClick={onCancel} disabled={loading}>
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={loading || !file}
-          >
-            {loading ? '导入中...' : '导入并进入开发'}
-          </button>
-        </footer>
-      </section>
-    </div>
+      <footer className="app-dev-modal__footer">
+        <button type="button" onClick={onCancel} disabled={loading}>
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={loading || !file}
+        >
+          {loading ? '导入中...' : '导入并进入开发'}
+        </button>
+      </footer>
+    </AccessibleDialog>
   );
 };

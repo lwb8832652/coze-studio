@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	appdevapp "github.com/coze-dev/coze-studio/backend/application/appdev"
 	domainappdev "github.com/coze-dev/coze-studio/backend/domain/appdev"
 )
 
@@ -84,4 +85,24 @@ func TestRuntimeEntryRedactsSensitiveLogs(t *testing.T) {
 	require.NotContains(t, entry.logs[0].Message, "secret-value")
 	require.NotContains(t, entry.logs[0].Message, "abc.def.ghi")
 	require.True(t, strings.Contains(entry.logs[0].Message, "[REDACTED]"))
+}
+
+func TestRuntimeManagerSecurityHostExecutionRequiresExactDebugDualGate(t *testing.T) {
+	t.Setenv("APP_ENV", "debug")
+	t.Setenv("APP_DEV_HOST_RUNTIME_ENABLED", "true")
+	require.True(t, appdevapp.IsAppDevHostExecutionEnabled())
+
+	for _, testCase := range []struct {
+		appEnv  string
+		enabled string
+	}{
+		{appEnv: "DEBUG", enabled: "true"},
+		{appEnv: "debug", enabled: "TRUE"},
+		{appEnv: "debug", enabled: "1"},
+		{appEnv: " debug ", enabled: "true"},
+	} {
+		t.Setenv("APP_ENV", testCase.appEnv)
+		t.Setenv("APP_DEV_HOST_RUNTIME_ENABLED", testCase.enabled)
+		require.False(t, appdevapp.IsAppDevHostExecutionEnabled())
+	}
 }

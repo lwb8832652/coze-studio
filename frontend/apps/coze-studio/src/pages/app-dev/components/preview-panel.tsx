@@ -19,12 +19,14 @@
 
 import { useEffect, useState } from 'react';
 
-import { normalizeAppDevPreviewUrl } from '../utils/preview-url';
+import type { TrustedAppDevPreviewURL } from '../utils/preview-url';
 import type { AppDevDesignSelection } from './chat-panel';
 import type { AppDevRuntimeInfo } from '../types';
+import { AccessibleDialog } from './accessible-dialog';
 
 interface PreviewPanelProps {
-  runtime: AppDevRuntimeInfo;
+  runtime: Omit<AppDevRuntimeInfo, 'previewUrl'>;
+  trustedPreviewUrl?: TrustedAppDevPreviewURL;
   onRefresh: () => void;
   onOpenLogs?: () => void;
   refreshSignal?: number;
@@ -66,6 +68,7 @@ const PREVIEW_SANDBOX =
 
 export const PreviewPanel = ({
   runtime,
+  trustedPreviewUrl,
   onRefresh,
   onOpenLogs,
   refreshSignal,
@@ -85,10 +88,7 @@ export const PreviewPanel = ({
     'desktop',
   );
   const [pickingElement, setPickingElement] = useState(false);
-  const previewUrl = normalizeAppDevPreviewUrl(runtime.previewUrl);
-  const unsafePreviewUrl = Boolean(
-    runtime.status === 'running' && runtime.previewUrl && !previewUrl,
-  );
+  const previewUrl = trustedPreviewUrl;
   const refreshPreview = () => {
     setRefreshKey(key => key + 1);
     onRefresh();
@@ -102,39 +102,61 @@ export const PreviewPanel = ({
     setRefreshKey(key => key + 1);
   }, [refreshSignal]);
 
-  useEffect(() => {
-    if (!fullscreen) {
-      return;
-    }
+  const openFullscreen = (_trigger?: HTMLElement) => setFullscreen(true);
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setFullscreen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [fullscreen]);
+  const closeFullscreen = () => setFullscreen(false);
 
   useEffect(() => {
     if (!fullscreenSignal || runtime.status !== 'running' || !previewUrl) {
       return;
     }
 
-    setFullscreen(true);
+    openFullscreen();
   }, [fullscreenSignal, previewUrl, runtime.status]);
 
   if (runtime.status !== 'running' || !previewUrl) {
-    const title = unsafePreviewUrl
-      ? '预览地址不安全'
-      : runtime.status === 'error'
-        ? '预览异常'
-        : '暂无预览';
-    const description = unsafePreviewUrl
-      ? '预览地址未通过安全校验，请检查 Preview Gateway 配置。'
-      : runtime.status === 'starting' || runtime.status === 'restarting'
-        ? '开发环境正在启动，首次启动会安装依赖，请稍等片刻。'
-        : runtime.message || '启动开发环境后，这里会显示网页应用实时预览。';
+    const stateCopy: Record<
+      Exclude<AppDevRuntimeInfo['status'], 'running'>,
+      { title: string; description: string }
+    > = {
+      stopped: {
+        title: '开发环境未启动',
+        description:
+          runtime.message || '启动开发环境后，这里会显示网页应用实时预览。',
+      },
+      starting: {
+        title: '正在启动开发环境',
+        description: '首次启动可能需要准备依赖，请稍候。',
+      },
+      recovering: {
+        title: '正在恢复开发环境',
+        description: '控制面正在恢复已有执行，不会创建新的运行实例。',
+      },
+      stopping: {
+        title: '正在停止开发环境',
+        description: '运行实例正在终止，完成前不会启动新的实例。',
+      },
+      cleanup_pending: {
+        title: '正在清理运行资源',
+        description: '服务已进入安全清理阶段，请稍候。',
+      },
+      error: {
+        title: '预览异常',
+        description: runtime.message || '请查看安全日志并按提示重试。',
+      },
+    };
+    const runningWithoutPreview = runtime.status === 'running';
+    const copy = runningWithoutPreview
+      ? undefined
+      : stateCopy[
+          runtime.status as Exclude<AppDevRuntimeInfo['status'], 'running'>
+        ];
+    const title = runningWithoutPreview
+      ? '预览地址尚未就绪'
+      : copy?.title || '预览暂不可用';
+    const description = runningWithoutPreview
+      ? '运行环境已启动，正在等待可信 Preview Gateway 地址。'
+      : copy?.description || '请刷新运行状态后重试。';
 
     return (
       <div className="app-dev-preview-panel app-dev-preview-panel--empty">
@@ -152,7 +174,7 @@ export const PreviewPanel = ({
               key={step.key}
               data-active={
                 step.key === runtime.status ||
-                (runtime.status === 'restarting' && step.key === 'starting')
+                (runtime.status === 'recovering' && step.key === 'starting')
               }
               data-done={
                 runtime.status === 'running' && step.key === 'starting'
@@ -195,6 +217,7 @@ export const PreviewPanel = ({
               key={option}
               type="button"
               data-active={device === option}
+              aria-pressed={device === option}
               onClick={() => setDevice(option)}
             >
               {option === 'desktop'
@@ -210,6 +233,7 @@ export const PreviewPanel = ({
             type="button"
             className="app-dev-preview-panel__design-status"
             data-active={designModeActive}
+            aria-pressed={designModeActive}
             onClick={onOpenDesignMode}
           >
             <span>{designModeActive ? '设计中' : '设计模式'}</span>
@@ -221,6 +245,7 @@ export const PreviewPanel = ({
             <button
               type="button"
               data-active={pickingElement}
+              aria-pressed={pickingElement}
               onClick={() => setPickingElement(active => !active)}
             >
               {pickingElement ? '退出选择' : '选择元素'}
@@ -229,7 +254,10 @@ export const PreviewPanel = ({
           <button type="button" onClick={refreshPreview}>
             刷新
           </button>
-          <button type="button" onClick={() => setFullscreen(true)}>
+          <button
+            type="button"
+            onClick={event => openFullscreen(event.currentTarget)}
+          >
             全屏
           </button>
           <a href={previewUrl} target="_blank" rel="noreferrer noopener">
@@ -248,6 +276,7 @@ export const PreviewPanel = ({
               key={option}
               type="button"
               data-active={designTarget === option}
+              aria-pressed={designTarget === option}
               onClick={() => onSelectDesignTarget(option)}
             >
               {option}
@@ -310,52 +339,50 @@ export const PreviewPanel = ({
         ) : null}
       </div>
       {fullscreen ? (
-        <div
-          className="app-dev-preview-panel__fullscreen"
-          role="dialog"
-          aria-modal="true"
-          aria-label="全屏预览"
-          onClick={event => {
-            if (event.target === event.currentTarget) {
-              setFullscreen(false);
-            }
-          }}
+        <AccessibleDialog
+          title="全屏预览"
+          maskClassName="app-dev-preview-panel__fullscreen"
+          className="app-dev-preview-panel__fullscreen-content"
+          onClose={closeFullscreen}
+          closeOnBackdrop
         >
-          <section>
-            <header>
-              <span>{previewUrl}</span>
-              <div>
-                <button type="button" onClick={refreshPreview}>
-                  刷新
+          <header>
+            <span>{previewUrl}</span>
+            <div>
+              <button type="button" onClick={refreshPreview}>
+                刷新
+              </button>
+              {onOpenDesignMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFullscreen(false);
+                    onOpenDesignMode();
+                  }}
+                >
+                  设计模式
                 </button>
-                {onOpenDesignMode ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFullscreen(false);
-                      onOpenDesignMode();
-                    }}
-                  >
-                    设计模式
-                  </button>
-                ) : null}
-                <a href={previewUrl} target="_blank" rel="noreferrer noopener">
-                  新窗口打开
-                </a>
-                <button type="button" onClick={() => setFullscreen(false)}>
-                  关闭
-                </button>
-              </div>
-            </header>
-            <iframe
-              key={`fullscreen-${previewUrl}-${refreshKey}`}
-              title="网页应用全屏预览"
-              src={previewUrl}
-              sandbox={PREVIEW_SANDBOX}
-              referrerPolicy="no-referrer"
-            />
-          </section>
-        </div>
+              ) : null}
+              <a href={previewUrl} target="_blank" rel="noreferrer noopener">
+                新窗口打开
+              </a>
+              <button
+                data-dialog-autofocus
+                type="button"
+                onClick={closeFullscreen}
+              >
+                关闭
+              </button>
+            </div>
+          </header>
+          <iframe
+            key={`fullscreen-${previewUrl}-${refreshKey}`}
+            title="网页应用全屏预览"
+            src={previewUrl}
+            sandbox={PREVIEW_SANDBOX}
+            referrerPolicy="no-referrer"
+          />
+        </AccessibleDialog>
       ) : null}
     </div>
   );

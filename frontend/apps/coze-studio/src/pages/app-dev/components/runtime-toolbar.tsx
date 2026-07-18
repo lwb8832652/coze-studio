@@ -14,16 +14,19 @@
  * limitations under the License.
  */
 
-/* eslint-disable @coze-arch/max-line-per-function -- Cohesive orchestrator. */
-/* eslint-disable complexity -- Cohesive orchestrator. */
+/* eslint-disable @coze-arch/max-line-per-function, complexity -- Lifecycle controls are rendered together. */
 
-import type { AppDevProject, AppDevRuntimeInfo } from '../types';
+import type { AppDevBuildInfo, AppDevRuntimeInfo } from '../types';
+import { canBuildAppDevRuntime } from '../utils/runtime-capabilities';
+import type { TrustedAppDevPreviewURL } from '../utils/preview-url';
 
 const STATUS_LABELS: Record<AppDevRuntimeInfo['status'], string> = {
   stopped: '未启动',
   starting: '启动中',
   running: '运行中',
-  restarting: '重启中',
+  recovering: '恢复中',
+  stopping: '停止中',
+  cleanup_pending: '清理中',
   error: '异常',
 };
 
@@ -31,30 +34,33 @@ const CONNECTION_LABELS: Record<AppDevRuntimeInfo['status'], string> = {
   stopped: '服务未启动',
   starting: '环境准备中',
   running: '服务已连接',
-  restarting: '环境重启中',
+  recovering: '正在恢复服务状态',
+  stopping: '正在停止服务',
+  cleanup_pending: '正在清理运行资源',
   error: '服务异常',
+};
+
+const BUILD_LABELS: Record<AppDevBuildInfo['state'], string> = {
+  idle: '未发布',
+  building: '构建中',
+  ready: '已发布',
+  failed: '构建失败',
 };
 
 const formatRuntimeTime = (value?: string) => {
   if (!value) {
     return '';
   }
-
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 };
 
 interface RuntimeToolbarProps {
-  runtime: AppDevRuntimeInfo;
-  project?: AppDevProject;
+  runtime: Omit<AppDevRuntimeInfo, 'previewUrl'>;
+  trustedPreviewUrl?: TrustedAppDevPreviewURL;
+  build: AppDevBuildInfo;
   loading?: boolean;
   building?: boolean;
   downloadingRelease?: boolean;
@@ -75,7 +81,8 @@ interface RuntimeToolbarProps {
 
 export const RuntimeToolbar = ({
   runtime,
-  project,
+  trustedPreviewUrl,
+  build,
   loading,
   building,
   downloadingRelease,
@@ -93,18 +100,31 @@ export const RuntimeToolbar = ({
   onDownloadRelease,
   onExport,
 }: RuntimeToolbarProps) => {
-  const runtimeBusy =
-    loading || runtime.status === 'starting' || runtime.status === 'restarting';
-  const releaseReady = project?.lastBuildStatus === 'success';
-  const downloadReleaseDisabled =
-    loading || downloadingRelease || !releaseReady || releaseStale;
+  const lifecycleLocked = [
+    'recovering',
+    'stopping',
+    'cleanup_pending',
+  ].includes(runtime.status);
+  const runtimeBusy = Boolean(
+    loading || runtime.status === 'starting' || lifecycleLocked,
+  );
+  const releaseReady = build.state === 'ready' && build.releaseAvailable;
+  const effectiveStale = Boolean(releaseStale || build.stale);
+  const downloadReleaseDisabled = Boolean(
+    runtimeBusy || downloadingRelease || !releaseReady || effectiveStale,
+  );
   const lastKeepAliveLabel = formatRuntimeTime(runtime.lastKeepAliveAt);
   const previewReady =
-    runtime.status === 'running' && Boolean(runtime.previewUrl);
+    runtime.status === 'running' && Boolean(trustedPreviewUrl);
+  const buildDisabled = !canBuildAppDevRuntime({
+    runtime,
+    runtimeLoading: loading,
+    building,
+  });
 
   return (
     <div className="app-dev-runtime-toolbar">
-      <div>
+      <div role="status" aria-live="polite">
         <span
           className="app-dev-runtime-toolbar__status"
           data-status={runtime.status}
@@ -123,20 +143,11 @@ export const RuntimeToolbar = ({
           ) : null}
         </div>
         {runtime.message ? <small>{runtime.message}</small> : null}
-        {project?.lastBuildStatus ? (
-          <small>
-            发布状态：
-            {project.lastBuildStatus === 'building'
-              ? '构建中'
-              : project.lastBuildStatus === 'success'
-                ? '已构建'
-                : '构建失败'}
-            {project.lastBuildAt ? ` · ${project.lastBuildAt}` : ''}
-          </small>
-        ) : null}
-        {project?.lastBuildMessage ? (
-          <small>{project.lastBuildMessage}</small>
-        ) : null}
+        <small>
+          发布状态：{BUILD_LABELS[build.state]}
+          {build.stale ? ' · 已过期' : ''}
+        </small>
+        {build.safeMessage ? <small>{build.safeMessage}</small> : null}
       </div>
       <div className="app-dev-runtime-toolbar__actions">
         {runtime.status === 'running' ? (
@@ -149,25 +160,26 @@ export const RuntimeToolbar = ({
             >
               重启
             </button>
-            <button type="button" onClick={onStop} disabled={loading}>
+            <button type="button" onClick={onStop} disabled={runtimeBusy}>
               停止
             </button>
           </>
-        ) : runtime.status === 'starting' || runtime.status === 'restarting' ? (
-          <>
-            <button type="button" disabled>
-              {runtime.status === 'restarting' ? '重启中...' : '启动中...'}
-            </button>
-            <button type="button" onClick={onStop} disabled={loading}>
-              停止
-            </button>
-          </>
+        ) : runtime.status === 'starting' || lifecycleLocked ? (
+          <button type="button" disabled>
+            {runtime.status === 'starting'
+              ? '启动中...'
+              : runtime.status === 'recovering'
+                ? '恢复中...'
+                : runtime.status === 'cleanup_pending'
+                  ? '清理中...'
+                  : '停止中...'}
+          </button>
         ) : (
           <button
             type="button"
             className="app-dev-runtime-toolbar__primary-action"
             onClick={onStart}
-            disabled={loading}
+            disabled={Boolean(loading || !runtime.canStart)}
           >
             {loading ? '启动中...' : '启动环境'}
           </button>
@@ -181,7 +193,7 @@ export const RuntimeToolbar = ({
             className="app-dev-runtime-toolbar__logs-action"
             data-has-error={hasLogErrors ? 'true' : 'false'}
             onClick={onOpenLogs}
-            disabled={loading}
+            disabled={runtimeBusy}
           >
             日志
             {hasLogErrors ? <span aria-label="存在错误日志" /> : null}
@@ -191,7 +203,7 @@ export const RuntimeToolbar = ({
           type="button"
           className="app-dev-runtime-toolbar__publish-action"
           onClick={() => onBuild('PAGE')}
-          disabled={loading || building}
+          disabled={buildDisabled}
         >
           {building ? '发布中...' : '发布'}
         </button>
@@ -202,7 +214,7 @@ export const RuntimeToolbar = ({
               <button
                 type="button"
                 onClick={onImportProject}
-                disabled={loading || importingProject}
+                disabled={runtimeBusy || importingProject}
               >
                 {importingProject ? '导入中...' : '导入项目'}
               </button>
@@ -211,7 +223,7 @@ export const RuntimeToolbar = ({
               <button
                 type="button"
                 onClick={onFullscreenPreview}
-                disabled={loading || !previewReady}
+                disabled={runtimeBusy || !previewReady}
               >
                 全屏预览
               </button>
@@ -219,14 +231,14 @@ export const RuntimeToolbar = ({
             <button
               type="button"
               onClick={() => onBuild('PAGE')}
-              disabled={loading || building}
+              disabled={buildDisabled}
             >
               发布为页面
             </button>
             <button
               type="button"
               onClick={() => onBuild('AGENT')}
-              disabled={loading || building}
+              disabled={buildDisabled}
             >
               发布为应用
             </button>
@@ -235,13 +247,13 @@ export const RuntimeToolbar = ({
               onClick={onDownloadRelease}
               disabled={downloadReleaseDisabled}
             >
-              {releaseStale
+              {effectiveStale
                 ? '需重新发布'
                 : downloadingRelease
                   ? '下载中...'
                   : '下载产物'}
             </button>
-            <button type="button" onClick={onExport} disabled={loading}>
+            <button type="button" onClick={onExport} disabled={runtimeBusy}>
               导出源码
             </button>
           </div>

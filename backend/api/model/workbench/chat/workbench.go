@@ -134,10 +134,10 @@ type WorkbenchChatRequest struct {
 	Mode            ChatMode   `thrift:"mode,4,required,ChatMode" form:"mode,required" json:"mode,required" query:"mode,required"`
 	SelectedSkillID *int64     `thrift:"selected_skill_id,5,optional" form:"selected_skill_id" json:"selected_skill_id,string,omitempty" query:"selected_skill_id"`
 	TaskID          *int64     `thrift:"task_id,6,optional" form:"task_id" json:"task_id,string,omitempty" query:"task_id"`
-	EnableSkills    []string   `thrift:"enable_skills,7,optional" form:"enable_skills" json:"enable_skills,omitempty" query:"enable_skills"`
-	EnableMcp       []string   `thrift:"enable_mcp,8,optional" form:"enable_mcp" json:"enable_mcp,omitempty" query:"enable_mcp"`
-	EnableKbs       []string   `thrift:"enable_kbs,9,optional" form:"enable_kbs" json:"enable_kbs,omitempty" query:"enable_kbs"`
-	EnableDatabases []string   `thrift:"enable_databases,10,optional" form:"enable_databases" json:"enable_databases,omitempty" query:"enable_databases"`
+	EnableSkills    []string   `thrift:"enable_skills,7,optional,list<string>" form:"enable_skills" json:"enable_skills,omitempty" query:"enable_skills"`
+	EnableMcp       []string   `thrift:"enable_mcp,8,optional,list<string>" form:"enable_mcp" json:"enable_mcp,omitempty" query:"enable_mcp"`
+	EnableKbs       []string   `thrift:"enable_kbs,9,optional,list<string>" form:"enable_kbs" json:"enable_kbs,omitempty" query:"enable_kbs"`
+	EnableDatabases []string   `thrift:"enable_databases,10,optional,list<string>" form:"enable_databases" json:"enable_databases,omitempty" query:"enable_databases"`
 	ModelType       *int64     `thrift:"model_type,11,optional" form:"model_type" json:"model_type,string,omitempty" query:"model_type"`
 	ModelName       *string    `thrift:"model_name,12,optional" form:"model_name" json:"model_name,omitempty" query:"model_name"`
 	RuntimeSettings *string    `thrift:"runtime_settings,13,optional" form:"runtime_settings" json:"runtime_settings,omitempty" query:"runtime_settings"`
@@ -1881,8 +1881,2315 @@ func (p *WorkbenchChatResponse) String() string {
 
 }
 
+type GetWorkbenchRuntimeDoctorRequest struct {
+	SpaceID int64      `thrift:"space_id,1,required" form:"space_id,required" json:"space_id,string,required" query:"space_id,required"`
+	Base    *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
+}
+
+func NewGetWorkbenchRuntimeDoctorRequest() *GetWorkbenchRuntimeDoctorRequest {
+	return &GetWorkbenchRuntimeDoctorRequest{}
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) InitDefault() {
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
+var GetWorkbenchRuntimeDoctorRequest_Base_DEFAULT *base.Base
+
+func (p *GetWorkbenchRuntimeDoctorRequest) GetBase() (v *base.Base) {
+	if !p.IsSetBase() {
+		return GetWorkbenchRuntimeDoctorRequest_Base_DEFAULT
+	}
+	return p.Base
+}
+
+var fieldIDToName_GetWorkbenchRuntimeDoctorRequest = map[int16]string{
+	1:   "space_id",
+	255: "Base",
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) IsSetBase() bool {
+	return p.Base != nil
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetSpaceID bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetSpaceID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_GetWorkbenchRuntimeDoctorRequest[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_GetWorkbenchRuntimeDoctorRequest[fieldId]))
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
+func (p *GetWorkbenchRuntimeDoctorRequest) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBase()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Base = _field
+	return nil
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetWorkbenchRuntimeDoctorRequest"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) writeField255(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBase() {
+		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Base.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *GetWorkbenchRuntimeDoctorRequest) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("GetWorkbenchRuntimeDoctorRequest(%+v)", *p)
+
+}
+
+type RuntimeDoctorCheck struct {
+	Name     string  `thrift:"name,1,required" form:"name,required" json:"name,required" query:"name,required"`
+	Category string  `thrift:"category,2,required" form:"category,required" json:"category,required" query:"category,required"`
+	Status   string  `thrift:"status,3,required" form:"status,required" json:"status,required" query:"status,required"`
+	Message  *string `thrift:"message,4,optional" form:"message" json:"message,omitempty" query:"message"`
+}
+
+func NewRuntimeDoctorCheck() *RuntimeDoctorCheck {
+	return &RuntimeDoctorCheck{}
+}
+
+func (p *RuntimeDoctorCheck) InitDefault() {
+}
+
+func (p *RuntimeDoctorCheck) GetName() (v string) {
+	return p.Name
+}
+
+func (p *RuntimeDoctorCheck) GetCategory() (v string) {
+	return p.Category
+}
+
+func (p *RuntimeDoctorCheck) GetStatus() (v string) {
+	return p.Status
+}
+
+var RuntimeDoctorCheck_Message_DEFAULT string
+
+func (p *RuntimeDoctorCheck) GetMessage() (v string) {
+	if !p.IsSetMessage() {
+		return RuntimeDoctorCheck_Message_DEFAULT
+	}
+	return *p.Message
+}
+
+var fieldIDToName_RuntimeDoctorCheck = map[int16]string{
+	1: "name",
+	2: "category",
+	3: "status",
+	4: "message",
+}
+
+func (p *RuntimeDoctorCheck) IsSetMessage() bool {
+	return p.Message != nil
+}
+
+func (p *RuntimeDoctorCheck) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetName bool = false
+	var issetCategory bool = false
+	var issetStatus bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetName = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCategory = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStatus = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetName {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetCategory {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetStatus {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_RuntimeDoctorCheck[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_RuntimeDoctorCheck[fieldId]))
+}
+
+func (p *RuntimeDoctorCheck) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Name = _field
+	return nil
+}
+func (p *RuntimeDoctorCheck) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Category = _field
+	return nil
+}
+func (p *RuntimeDoctorCheck) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Status = _field
+	return nil
+}
+func (p *RuntimeDoctorCheck) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Message = _field
+	return nil
+}
+
+func (p *RuntimeDoctorCheck) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RuntimeDoctorCheck"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *RuntimeDoctorCheck) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("name", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Name); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorCheck) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("category", thrift.STRING, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Category); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorCheck) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("status", thrift.STRING, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Status); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorCheck) writeField4(oprot thrift.TProtocol) (err error) {
+	if p.IsSetMessage() {
+		if err = oprot.WriteFieldBegin("message", thrift.STRING, 4); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Message); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorCheck) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RuntimeDoctorCheck(%+v)", *p)
+
+}
+
+type RuntimeDoctorRuntimeData struct {
+	DefaultMode    string `thrift:"default_mode,1,required" form:"default_mode,required" json:"default_mode,required" query:"default_mode,required"`
+	EinoAdkEnabled bool   `thrift:"eino_adk_enabled,2,required" form:"eino_adk_enabled,required" json:"eino_adk_enabled,required" query:"eino_adk_enabled,required"`
+}
+
+func NewRuntimeDoctorRuntimeData() *RuntimeDoctorRuntimeData {
+	return &RuntimeDoctorRuntimeData{}
+}
+
+func (p *RuntimeDoctorRuntimeData) InitDefault() {
+}
+
+func (p *RuntimeDoctorRuntimeData) GetDefaultMode() (v string) {
+	return p.DefaultMode
+}
+
+func (p *RuntimeDoctorRuntimeData) GetEinoAdkEnabled() (v bool) {
+	return p.EinoAdkEnabled
+}
+
+var fieldIDToName_RuntimeDoctorRuntimeData = map[int16]string{
+	1: "default_mode",
+	2: "eino_adk_enabled",
+}
+
+func (p *RuntimeDoctorRuntimeData) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetDefaultMode bool = false
+	var issetEinoAdkEnabled bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetDefaultMode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetEinoAdkEnabled = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetDefaultMode {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetEinoAdkEnabled {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_RuntimeDoctorRuntimeData[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_RuntimeDoctorRuntimeData[fieldId]))
+}
+
+func (p *RuntimeDoctorRuntimeData) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.DefaultMode = _field
+	return nil
+}
+func (p *RuntimeDoctorRuntimeData) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.EinoAdkEnabled = _field
+	return nil
+}
+
+func (p *RuntimeDoctorRuntimeData) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RuntimeDoctorRuntimeData"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *RuntimeDoctorRuntimeData) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("default_mode", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.DefaultMode); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorRuntimeData) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("eino_adk_enabled", thrift.BOOL, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.EinoAdkEnabled); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorRuntimeData) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RuntimeDoctorRuntimeData(%+v)", *p)
+
+}
+
+type RuntimeDoctorWebToolStatus struct {
+	Status     string  `thrift:"status,1,required" form:"status,required" json:"status,required" query:"status,required"`
+	Configured bool    `thrift:"configured,2,required" form:"configured,required" json:"configured,required" query:"configured,required"`
+	Message    *string `thrift:"message,3,optional" form:"message" json:"message,omitempty" query:"message"`
+}
+
+func NewRuntimeDoctorWebToolStatus() *RuntimeDoctorWebToolStatus {
+	return &RuntimeDoctorWebToolStatus{}
+}
+
+func (p *RuntimeDoctorWebToolStatus) InitDefault() {
+}
+
+func (p *RuntimeDoctorWebToolStatus) GetStatus() (v string) {
+	return p.Status
+}
+
+func (p *RuntimeDoctorWebToolStatus) GetConfigured() (v bool) {
+	return p.Configured
+}
+
+var RuntimeDoctorWebToolStatus_Message_DEFAULT string
+
+func (p *RuntimeDoctorWebToolStatus) GetMessage() (v string) {
+	if !p.IsSetMessage() {
+		return RuntimeDoctorWebToolStatus_Message_DEFAULT
+	}
+	return *p.Message
+}
+
+var fieldIDToName_RuntimeDoctorWebToolStatus = map[int16]string{
+	1: "status",
+	2: "configured",
+	3: "message",
+}
+
+func (p *RuntimeDoctorWebToolStatus) IsSetMessage() bool {
+	return p.Message != nil
+}
+
+func (p *RuntimeDoctorWebToolStatus) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetStatus bool = false
+	var issetConfigured bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStatus = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.BOOL {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetConfigured = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetStatus {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetConfigured {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_RuntimeDoctorWebToolStatus[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_RuntimeDoctorWebToolStatus[fieldId]))
+}
+
+func (p *RuntimeDoctorWebToolStatus) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Status = _field
+	return nil
+}
+func (p *RuntimeDoctorWebToolStatus) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field bool
+	if v, err := iprot.ReadBool(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Configured = _field
+	return nil
+}
+func (p *RuntimeDoctorWebToolStatus) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Message = _field
+	return nil
+}
+
+func (p *RuntimeDoctorWebToolStatus) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RuntimeDoctorWebToolStatus"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolStatus) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("status", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Status); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolStatus) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("configured", thrift.BOOL, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteBool(p.Configured); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolStatus) writeField3(oprot thrift.TProtocol) (err error) {
+	if p.IsSetMessage() {
+		if err = oprot.WriteFieldBegin("message", thrift.STRING, 3); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Message); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolStatus) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RuntimeDoctorWebToolStatus(%+v)", *p)
+
+}
+
+type RuntimeDoctorWebToolsData struct {
+	WebFetch  *RuntimeDoctorWebToolStatus `thrift:"web_fetch,1,required" form:"web_fetch,required" json:"web_fetch,required" query:"web_fetch,required"`
+	WebSearch *RuntimeDoctorWebToolStatus `thrift:"web_search,2,required" form:"web_search,required" json:"web_search,required" query:"web_search,required"`
+}
+
+func NewRuntimeDoctorWebToolsData() *RuntimeDoctorWebToolsData {
+	return &RuntimeDoctorWebToolsData{}
+}
+
+func (p *RuntimeDoctorWebToolsData) InitDefault() {
+}
+
+var RuntimeDoctorWebToolsData_WebFetch_DEFAULT *RuntimeDoctorWebToolStatus
+
+func (p *RuntimeDoctorWebToolsData) GetWebFetch() (v *RuntimeDoctorWebToolStatus) {
+	if !p.IsSetWebFetch() {
+		return RuntimeDoctorWebToolsData_WebFetch_DEFAULT
+	}
+	return p.WebFetch
+}
+
+var RuntimeDoctorWebToolsData_WebSearch_DEFAULT *RuntimeDoctorWebToolStatus
+
+func (p *RuntimeDoctorWebToolsData) GetWebSearch() (v *RuntimeDoctorWebToolStatus) {
+	if !p.IsSetWebSearch() {
+		return RuntimeDoctorWebToolsData_WebSearch_DEFAULT
+	}
+	return p.WebSearch
+}
+
+var fieldIDToName_RuntimeDoctorWebToolsData = map[int16]string{
+	1: "web_fetch",
+	2: "web_search",
+}
+
+func (p *RuntimeDoctorWebToolsData) IsSetWebFetch() bool {
+	return p.WebFetch != nil
+}
+
+func (p *RuntimeDoctorWebToolsData) IsSetWebSearch() bool {
+	return p.WebSearch != nil
+}
+
+func (p *RuntimeDoctorWebToolsData) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetWebFetch bool = false
+	var issetWebSearch bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetWebFetch = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetWebSearch = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetWebFetch {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetWebSearch {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_RuntimeDoctorWebToolsData[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_RuntimeDoctorWebToolsData[fieldId]))
+}
+
+func (p *RuntimeDoctorWebToolsData) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewRuntimeDoctorWebToolStatus()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.WebFetch = _field
+	return nil
+}
+func (p *RuntimeDoctorWebToolsData) ReadField2(iprot thrift.TProtocol) error {
+	_field := NewRuntimeDoctorWebToolStatus()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.WebSearch = _field
+	return nil
+}
+
+func (p *RuntimeDoctorWebToolsData) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RuntimeDoctorWebToolsData"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolsData) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("web_fetch", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.WebFetch.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolsData) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("web_search", thrift.STRUCT, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.WebSearch.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorWebToolsData) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RuntimeDoctorWebToolsData(%+v)", *p)
+
+}
+
+type RuntimeDoctorMCPToolsData struct {
+	Status           string `thrift:"status,1,required" form:"status,required" json:"status,required" query:"status,required"`
+	TotalServers     int64  `thrift:"total_servers,2,required" form:"total_servers,required" json:"total_servers,required" query:"total_servers,required"`
+	EnabledServers   int64  `thrift:"enabled_servers,3,required" form:"enabled_servers,required" json:"enabled_servers,required" query:"enabled_servers,required"`
+	HealthyServers   int64  `thrift:"healthy_servers,4,required" form:"healthy_servers,required" json:"healthy_servers,required" query:"healthy_servers,required"`
+	UnhealthyServers int64  `thrift:"unhealthy_servers,5,required" form:"unhealthy_servers,required" json:"unhealthy_servers,required" query:"unhealthy_servers,required"`
+	UnknownServers   int64  `thrift:"unknown_servers,6,required" form:"unknown_servers,required" json:"unknown_servers,required" query:"unknown_servers,required"`
+}
+
+func NewRuntimeDoctorMCPToolsData() *RuntimeDoctorMCPToolsData {
+	return &RuntimeDoctorMCPToolsData{}
+}
+
+func (p *RuntimeDoctorMCPToolsData) InitDefault() {
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetStatus() (v string) {
+	return p.Status
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetTotalServers() (v int64) {
+	return p.TotalServers
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetEnabledServers() (v int64) {
+	return p.EnabledServers
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetHealthyServers() (v int64) {
+	return p.HealthyServers
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetUnhealthyServers() (v int64) {
+	return p.UnhealthyServers
+}
+
+func (p *RuntimeDoctorMCPToolsData) GetUnknownServers() (v int64) {
+	return p.UnknownServers
+}
+
+var fieldIDToName_RuntimeDoctorMCPToolsData = map[int16]string{
+	1: "status",
+	2: "total_servers",
+	3: "enabled_servers",
+	4: "healthy_servers",
+	5: "unhealthy_servers",
+	6: "unknown_servers",
+}
+
+func (p *RuntimeDoctorMCPToolsData) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetStatus bool = false
+	var issetTotalServers bool = false
+	var issetEnabledServers bool = false
+	var issetHealthyServers bool = false
+	var issetUnhealthyServers bool = false
+	var issetUnknownServers bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStatus = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetTotalServers = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetEnabledServers = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetHealthyServers = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetUnhealthyServers = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetUnknownServers = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetStatus {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetTotalServers {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetEnabledServers {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetHealthyServers {
+		fieldId = 4
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetUnhealthyServers {
+		fieldId = 5
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetUnknownServers {
+		fieldId = 6
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_RuntimeDoctorMCPToolsData[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_RuntimeDoctorMCPToolsData[fieldId]))
+}
+
+func (p *RuntimeDoctorMCPToolsData) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Status = _field
+	return nil
+}
+func (p *RuntimeDoctorMCPToolsData) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.TotalServers = _field
+	return nil
+}
+func (p *RuntimeDoctorMCPToolsData) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.EnabledServers = _field
+	return nil
+}
+func (p *RuntimeDoctorMCPToolsData) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.HealthyServers = _field
+	return nil
+}
+func (p *RuntimeDoctorMCPToolsData) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.UnhealthyServers = _field
+	return nil
+}
+func (p *RuntimeDoctorMCPToolsData) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.UnknownServers = _field
+	return nil
+}
+
+func (p *RuntimeDoctorMCPToolsData) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RuntimeDoctorMCPToolsData"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("status", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Status); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("total_servers", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.TotalServers); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("enabled_servers", thrift.I64, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.EnabledServers); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("healthy_servers", thrift.I64, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.HealthyServers); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("unhealthy_servers", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.UnhealthyServers); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("unknown_servers", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.UnknownServers); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *RuntimeDoctorMCPToolsData) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("RuntimeDoctorMCPToolsData(%+v)", *p)
+
+}
+
+type WorkbenchRuntimeDoctorData struct {
+	Status   string                     `thrift:"status,1,required" form:"status,required" json:"status,required" query:"status,required"`
+	Runtime  *RuntimeDoctorRuntimeData  `thrift:"runtime,2,required" form:"runtime,required" json:"runtime,required" query:"runtime,required"`
+	WebTools *RuntimeDoctorWebToolsData `thrift:"web_tools,3,required" form:"web_tools,required" json:"web_tools,required" query:"web_tools,required"`
+	McpTools *RuntimeDoctorMCPToolsData `thrift:"mcp_tools,4,required" form:"mcp_tools,required" json:"mcp_tools,required" query:"mcp_tools,required"`
+	Checks   []*RuntimeDoctorCheck      `thrift:"checks,5,required,list<RuntimeDoctorCheck>" form:"checks,required" json:"checks,required" query:"checks,required"`
+}
+
+func NewWorkbenchRuntimeDoctorData() *WorkbenchRuntimeDoctorData {
+	return &WorkbenchRuntimeDoctorData{}
+}
+
+func (p *WorkbenchRuntimeDoctorData) InitDefault() {
+}
+
+func (p *WorkbenchRuntimeDoctorData) GetStatus() (v string) {
+	return p.Status
+}
+
+var WorkbenchRuntimeDoctorData_Runtime_DEFAULT *RuntimeDoctorRuntimeData
+
+func (p *WorkbenchRuntimeDoctorData) GetRuntime() (v *RuntimeDoctorRuntimeData) {
+	if !p.IsSetRuntime() {
+		return WorkbenchRuntimeDoctorData_Runtime_DEFAULT
+	}
+	return p.Runtime
+}
+
+var WorkbenchRuntimeDoctorData_WebTools_DEFAULT *RuntimeDoctorWebToolsData
+
+func (p *WorkbenchRuntimeDoctorData) GetWebTools() (v *RuntimeDoctorWebToolsData) {
+	if !p.IsSetWebTools() {
+		return WorkbenchRuntimeDoctorData_WebTools_DEFAULT
+	}
+	return p.WebTools
+}
+
+var WorkbenchRuntimeDoctorData_McpTools_DEFAULT *RuntimeDoctorMCPToolsData
+
+func (p *WorkbenchRuntimeDoctorData) GetMcpTools() (v *RuntimeDoctorMCPToolsData) {
+	if !p.IsSetMcpTools() {
+		return WorkbenchRuntimeDoctorData_McpTools_DEFAULT
+	}
+	return p.McpTools
+}
+
+func (p *WorkbenchRuntimeDoctorData) GetChecks() (v []*RuntimeDoctorCheck) {
+	return p.Checks
+}
+
+var fieldIDToName_WorkbenchRuntimeDoctorData = map[int16]string{
+	1: "status",
+	2: "runtime",
+	3: "web_tools",
+	4: "mcp_tools",
+	5: "checks",
+}
+
+func (p *WorkbenchRuntimeDoctorData) IsSetRuntime() bool {
+	return p.Runtime != nil
+}
+
+func (p *WorkbenchRuntimeDoctorData) IsSetWebTools() bool {
+	return p.WebTools != nil
+}
+
+func (p *WorkbenchRuntimeDoctorData) IsSetMcpTools() bool {
+	return p.McpTools != nil
+}
+
+func (p *WorkbenchRuntimeDoctorData) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetStatus bool = false
+	var issetRuntime bool = false
+	var issetWebTools bool = false
+	var issetMcpTools bool = false
+	var issetChecks bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetStatus = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRuntime = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetWebTools = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMcpTools = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.LIST {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetChecks = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetStatus {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRuntime {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetWebTools {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMcpTools {
+		fieldId = 4
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetChecks {
+		fieldId = 5
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchRuntimeDoctorData[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_WorkbenchRuntimeDoctorData[fieldId]))
+}
+
+func (p *WorkbenchRuntimeDoctorData) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Status = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorData) ReadField2(iprot thrift.TProtocol) error {
+	_field := NewRuntimeDoctorRuntimeData()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Runtime = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorData) ReadField3(iprot thrift.TProtocol) error {
+	_field := NewRuntimeDoctorWebToolsData()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.WebTools = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorData) ReadField4(iprot thrift.TProtocol) error {
+	_field := NewRuntimeDoctorMCPToolsData()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.McpTools = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorData) ReadField5(iprot thrift.TProtocol) error {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
+		return err
+	}
+	_field := make([]*RuntimeDoctorCheck, 0, size)
+	values := make([]RuntimeDoctorCheck, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
+	}
+	p.Checks = _field
+	return nil
+}
+
+func (p *WorkbenchRuntimeDoctorData) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("WorkbenchRuntimeDoctorData"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("status", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Status); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("runtime", thrift.STRUCT, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Runtime.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("web_tools", thrift.STRUCT, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.WebTools.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("mcp_tools", thrift.STRUCT, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.McpTools.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("checks", thrift.LIST, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Checks)); err != nil {
+		return err
+	}
+	for _, v := range p.Checks {
+		if err := v.Write(oprot); err != nil {
+			return err
+		}
+	}
+	if err := oprot.WriteListEnd(); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorData) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchRuntimeDoctorData(%+v)", *p)
+
+}
+
+type WorkbenchRuntimeDoctorResponse struct {
+	Data     *WorkbenchRuntimeDoctorData `thrift:"data,1,optional" form:"data" json:"data,omitempty" query:"data"`
+	Code     int64                       `thrift:"code,253,required" form:"code,required" json:"code,required" query:"code,required"`
+	Msg      string                      `thrift:"msg,254,required" form:"msg,required" json:"msg,required" query:"msg,required"`
+	BaseResp *base.BaseResp              `thrift:"BaseResp,255,optional" form:"-" json:"-" query:"-"`
+}
+
+func NewWorkbenchRuntimeDoctorResponse() *WorkbenchRuntimeDoctorResponse {
+	return &WorkbenchRuntimeDoctorResponse{}
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) InitDefault() {
+}
+
+var WorkbenchRuntimeDoctorResponse_Data_DEFAULT *WorkbenchRuntimeDoctorData
+
+func (p *WorkbenchRuntimeDoctorResponse) GetData() (v *WorkbenchRuntimeDoctorData) {
+	if !p.IsSetData() {
+		return WorkbenchRuntimeDoctorResponse_Data_DEFAULT
+	}
+	return p.Data
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) GetCode() (v int64) {
+	return p.Code
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) GetMsg() (v string) {
+	return p.Msg
+}
+
+var WorkbenchRuntimeDoctorResponse_BaseResp_DEFAULT *base.BaseResp
+
+func (p *WorkbenchRuntimeDoctorResponse) GetBaseResp() (v *base.BaseResp) {
+	if !p.IsSetBaseResp() {
+		return WorkbenchRuntimeDoctorResponse_BaseResp_DEFAULT
+	}
+	return p.BaseResp
+}
+
+var fieldIDToName_WorkbenchRuntimeDoctorResponse = map[int16]string{
+	1:   "data",
+	253: "code",
+	254: "msg",
+	255: "BaseResp",
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) IsSetData() bool {
+	return p.Data != nil
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) IsSetBaseResp() bool {
+	return p.BaseResp != nil
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetCode bool = false
+	var issetMsg bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 253:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField253(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCode = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 254:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField254(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMsg = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 255:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField255(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetCode {
+		fieldId = 253
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMsg {
+		fieldId = 254
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchRuntimeDoctorResponse[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_WorkbenchRuntimeDoctorResponse[fieldId]))
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewWorkbenchRuntimeDoctorData()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Data = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorResponse) ReadField253(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Code = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorResponse) ReadField254(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Msg = _field
+	return nil
+}
+func (p *WorkbenchRuntimeDoctorResponse) ReadField255(iprot thrift.TProtocol) error {
+	_field := base.NewBaseResp()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.BaseResp = _field
+	return nil
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("WorkbenchRuntimeDoctorResponse"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField253(oprot); err != nil {
+			fieldId = 253
+			goto WriteFieldError
+		}
+		if err = p.writeField254(oprot); err != nil {
+			fieldId = 254
+			goto WriteFieldError
+		}
+		if err = p.writeField255(oprot); err != nil {
+			fieldId = 255
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) writeField1(oprot thrift.TProtocol) (err error) {
+	if p.IsSetData() {
+		if err = oprot.WriteFieldBegin("data", thrift.STRUCT, 1); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Data.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) writeField253(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("code", thrift.I64, 253); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.Code); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 253 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) writeField254(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("msg", thrift.STRING, 254); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Msg); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 254 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) writeField255(oprot thrift.TProtocol) (err error) {
+	if p.IsSetBaseResp() {
+		if err = oprot.WriteFieldBegin("BaseResp", thrift.STRUCT, 255); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.BaseResp.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 255 end error: ", p), err)
+}
+
+func (p *WorkbenchRuntimeDoctorResponse) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchRuntimeDoctorResponse(%+v)", *p)
+
+}
+
 type WorkbenchChatService interface {
 	WorkbenchChat(ctx context.Context, request *WorkbenchChatRequest) (r *WorkbenchChatResponse, err error)
+
+	GetWorkbenchRuntimeDoctor(ctx context.Context, request *GetWorkbenchRuntimeDoctorRequest) (r *WorkbenchRuntimeDoctorResponse, err error)
 }
 
 type WorkbenchChatServiceClient struct {
@@ -1920,7 +4227,17 @@ func (p *WorkbenchChatServiceClient) WorkbenchChat(ctx context.Context, request 
 	}
 	return _result.GetSuccess(), nil
 }
+func (p *WorkbenchChatServiceClient) GetWorkbenchRuntimeDoctor(ctx context.Context, request *GetWorkbenchRuntimeDoctorRequest) (r *WorkbenchRuntimeDoctorResponse, err error) {
+	var _args WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs
+	_args.Request = request
+	var _result WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult
+	if err = p.Client_().Call(ctx, "GetWorkbenchRuntimeDoctor", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
 
+// Re-export through workbench to avoid the task include alias collision in idl/api.thrift.
 type WorkbenchTaskService interface {
 	task.WorkbenchTaskService
 }
@@ -1968,6 +4285,7 @@ func (p *WorkbenchChatServiceProcessor) ProcessorMap() map[string]thrift.TProces
 func NewWorkbenchChatServiceProcessor(handler WorkbenchChatService) *WorkbenchChatServiceProcessor {
 	self := &WorkbenchChatServiceProcessor{handler: handler, processorMap: make(map[string]thrift.TProcessorFunction)}
 	self.AddToProcessorMap("WorkbenchChat", &workbenchChatServiceProcessorWorkbenchChat{handler: handler})
+	self.AddToProcessorMap("GetWorkbenchRuntimeDoctor", &workbenchChatServiceProcessorGetWorkbenchRuntimeDoctor{handler: handler})
 	return self
 }
 func (p *WorkbenchChatServiceProcessor) Process(ctx context.Context, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
@@ -2019,6 +4337,54 @@ func (p *workbenchChatServiceProcessorWorkbenchChat) Process(ctx context.Context
 		result.Success = retval
 	}
 	if err2 = oprot.WriteMessageBegin("WorkbenchChat", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchChatServiceProcessorGetWorkbenchRuntimeDoctor struct {
+	handler WorkbenchChatService
+}
+
+func (p *workbenchChatServiceProcessorGetWorkbenchRuntimeDoctor) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("GetWorkbenchRuntimeDoctor", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult{}
+	var retval *WorkbenchRuntimeDoctorResponse
+	if retval, err2 = p.handler.GetWorkbenchRuntimeDoctor(ctx, args.Request); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing GetWorkbenchRuntimeDoctor: "+err2.Error())
+		oprot.WriteMessageBegin("GetWorkbenchRuntimeDoctor", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("GetWorkbenchRuntimeDoctor", thrift.REPLY, seqId); err2 != nil {
 		err = err2
 	}
 	if err2 = result.Write(oprot); err == nil && err2 != nil {
@@ -2327,6 +4693,300 @@ func (p *WorkbenchChatServiceWorkbenchChatResult) String() string {
 		return "<nil>"
 	}
 	return fmt.Sprintf("WorkbenchChatServiceWorkbenchChatResult(%+v)", *p)
+
+}
+
+type WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs struct {
+	Request *GetWorkbenchRuntimeDoctorRequest `thrift:"request,1"`
+}
+
+func NewWorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs() *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs {
+	return &WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs{}
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) InitDefault() {
+}
+
+var WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs_Request_DEFAULT *GetWorkbenchRuntimeDoctorRequest
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) GetRequest() (v *GetWorkbenchRuntimeDoctorRequest) {
+	if !p.IsSetRequest() {
+		return WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs_Request_DEFAULT
+	}
+	return p.Request
+}
+
+var fieldIDToName_WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs = map[int16]string{
+	1: "request",
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) IsSetRequest() bool {
+	return p.Request != nil
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := NewGetWorkbenchRuntimeDoctorRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Request = _field
+	return nil
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetWorkbenchRuntimeDoctor_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("request", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Request.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchChatServiceGetWorkbenchRuntimeDoctorArgs(%+v)", *p)
+
+}
+
+type WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult struct {
+	Success *WorkbenchRuntimeDoctorResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchChatServiceGetWorkbenchRuntimeDoctorResult() *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult {
+	return &WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult{}
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) InitDefault() {
+}
+
+var WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult_Success_DEFAULT *WorkbenchRuntimeDoctorResponse
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) GetSuccess() (v *WorkbenchRuntimeDoctorResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewWorkbenchRuntimeDoctorResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetWorkbenchRuntimeDoctor_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchChatServiceGetWorkbenchRuntimeDoctorResult(%+v)", *p)
 
 }
 

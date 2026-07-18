@@ -101,15 +101,16 @@ type eventbusImpl struct {
 }
 
 type basicServices struct {
-	infra        *appinfra.AppDependencies
-	eventbus     *eventbusImpl
-	modelMgrSVC  *modelmgr.ModelmgrApplicationService
-	connectorSVC *connector.ConnectorApplicationService
-	userSVC      *user.UserApplicationService
-	promptSVC    *prompt.PromptApplicationService
-	templateSVC  *template.ApplicationService
-	openAuthSVC  *openauth.OpenAuthApplicationService
-	uploadSVC    *upload.UploadService
+	infra                 *appinfra.AppDependencies
+	eventbus              *eventbusImpl
+	appDevProviderRuntime *appDevProviderRuntime
+	modelMgrSVC           *modelmgr.ModelmgrApplicationService
+	connectorSVC          *connector.ConnectorApplicationService
+	userSVC               *user.UserApplicationService
+	promptSVC             *prompt.PromptApplicationService
+	templateSVC           *template.ApplicationService
+	openAuthSVC           *openauth.OpenAuthApplicationService
+	uploadSVC             *upload.UploadService
 
 	permissionSVC *permission.PermissionApplicationService
 }
@@ -158,6 +159,22 @@ func Init(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("Init - initBasicServices failed, err: %v", err)
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if basicServices.appDevProviderRuntime != nil {
+			rollbackCtx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx),
+				defaultApplicationShutdownAttemptTimeout,
+			)
+			defer cancel()
+			if shutdownErr := basicServices.appDevProviderRuntime.Shutdown(rollbackCtx); shutdownErr == nil {
+				applicationShutdowns.Unregister(basicServices.appDevProviderRuntime.shutdownOwner)
+			}
+		}
+		clearSandboxControlPlane()
+	}()
 	mcpRuntimeConfig, err := agentthread.ADKMCPRuntimeBootstrapConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("Init - configure agent mcp runtime: %w", err)
@@ -233,7 +250,7 @@ func Init(ctx context.Context) (err error) {
 	}
 	primaryServices.mcpManagementRuntime = mcpManagementRuntime
 	if mcpManagementRuntime != nil || mcpWorkdirManager != nil {
-		if err := applicationShutdowns.Register(&mcpManagementRuntimeLifecycle{
+		if _, err := applicationShutdowns.Register(&mcpManagementRuntimeLifecycle{
 			runtime: mcpManagementRuntime, workdirManager: mcpWorkdirManager,
 		}); err != nil {
 			if mcpManagementRuntime != nil {
@@ -276,19 +293,23 @@ func Init(ctx context.Context) (err error) {
 			BackendFactory: adkOffloadBackendFactory,
 		},
 	)
-	mcpRuntimeExecutor := agentthread.NewADKMCPRuntimeToolExecutorFromConfig(
+	mcpRuntimeExecutor, err := agentthread.NewADKMCPRuntimeToolExecutorFromConfigStrict(
 		agentthread.ADKMCPRuntimeBootstrapDependencies{
-			Resolver:        primaryServices.mcpToolSVC,
-			LeaseRepository: mcpWorkdirLeaseRepository,
-			IDGen:           infra.IDGenSVC,
-			WorkdirPreparer: mcpWorkdirPreparer,
-			EventSink:       adkEventSink,
-			AuditRecorder:   mcpRuntimeAuditRecorder,
-			HealthReporter:  mcpRuntimeHealthReporter,
-			OutputOffloader: mcpRuntimeOutputOffloader,
-			Config:          mcpRuntimeConfig,
+			Resolver:             primaryServices.mcpToolSVC,
+			LeaseRepository:      mcpWorkdirLeaseRepository,
+			IDGen:                infra.IDGenSVC,
+			WorkdirPreparer:      mcpWorkdirPreparer,
+			SandboxBindingSource: sandboxMCPRuntimeBindingSource{},
+			EventSink:            adkEventSink,
+			AuditRecorder:        mcpRuntimeAuditRecorder,
+			HealthReporter:       mcpRuntimeHealthReporter,
+			OutputOffloader:      mcpRuntimeOutputOffloader,
+			Config:               mcpRuntimeConfig,
 		},
 	)
+	if err != nil {
+		return fmt.Errorf("Init - bind mcp runtime executor: %w", err)
+	}
 	adkContextStore := agentthread.NewApplicationADKContextStore(
 		primaryServices.agentThreadSVC,
 	)
@@ -447,11 +468,27 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	connectorSVC := connector.InitService(infra.OSS)
 	userSVC := user.InitService(ctx, infra.DB, infra.OSS, infra.IDGenSVC)
 	admin.InitService(userSVC.DomainSVC)
-	appdevapp.InitService(
-		infraappdev.NewConfiguredStore(infra.DB, infra.OSS),
-		infraappdev.NewConfiguredRuntimeManager(),
+	if err := initSandboxControlPlaneForApplication(infra); err != nil {
+		return nil, err
+	}
+	appDevStore := infraappdev.NewPersistentStore(infra.DB, infra.OSS)
+	appDevService := appdevapp.InitService(
+		appDevStore,
+		nil,
 		infraappdev.NewChatBrokerWithPersistence(infraappdev.NewPersistentChatRepository(infra.DB)),
 	)
+	if err := appDevService.SetProjectRuntimeLifecycleMode(appDevProjectRuntimeLifecycleMode(os.Getenv)); err != nil {
+		clearSandboxControlPlane()
+		return nil, err
+	}
+	appDevProviderRuntime, err := initAppDevProviderRuntimeForApplication(ctx, appDevProviderWiringDependencies{
+		Infra: infra, Service: appDevService, Store: appDevStore,
+		Providers: SandboxRuntimeRepository, Router: SandboxRouter,
+	})
+	if err != nil {
+		clearSandboxControlPlane()
+		return nil, err
+	}
 	templateSVC := template.InitService(ctx, &template.ServiceComponents{
 		DB:      infra.DB,
 		IDGen:   infra.IDGenSVC,
@@ -461,15 +498,16 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	permissionSVC := permission.InitService(&permission.ServiceComponents{})
 
 	return &basicServices{
-		infra:        infra,
-		eventbus:     e,
-		modelMgrSVC:  modelMgrSVC,
-		connectorSVC: connectorSVC,
-		userSVC:      userSVC,
-		promptSVC:    promptSVC,
-		templateSVC:  templateSVC,
-		openAuthSVC:  openAuthSVC,
-		uploadSVC:    uploadSVC,
+		infra:                 infra,
+		eventbus:              e,
+		appDevProviderRuntime: appDevProviderRuntime,
+		modelMgrSVC:           modelMgrSVC,
+		connectorSVC:          connectorSVC,
+		userSVC:               userSVC,
+		promptSVC:             promptSVC,
+		templateSVC:           templateSVC,
+		openAuthSVC:           openAuthSVC,
+		uploadSVC:             uploadSVC,
 
 		permissionSVC: permissionSVC,
 	}, nil
@@ -556,10 +594,11 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpE
 		return nil, err
 	}
 	workbenchSVC := workbench.InitService(&workbench.ServiceComponents{
-		SkillSVC:       skillSVC,
-		TaskSVC:        taskSVC,
-		AgentThreadSVC: agentThreadSVC,
-		MCPToolSVC:     mcpToolSVC,
+		SkillSVC:          skillSVC,
+		TaskSVC:           taskSVC,
+		AgentThreadSVC:    agentThreadSVC,
+		MCPToolSVC:        mcpToolSVC,
+		SandboxRepository: SandboxRuntimeRepository,
 	})
 
 	return &primaryServices{

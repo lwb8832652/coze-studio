@@ -52,13 +52,26 @@ type RuntimeDoctorModelData struct {
 }
 
 type RuntimeDoctorSandboxData struct {
-	Status      string `json:"status"`
-	RunnerType  string `json:"runner_type"`
-	Network     string `json:"network"`
-	Process     string `json:"process"`
-	FFI         string `json:"ffi"`
-	NodeModules string `json:"node_modules"`
-	Message     string `json:"message,omitempty"`
+	Status      string                           `json:"status"`
+	RunnerType  string                           `json:"runner_type"`
+	Network     string                           `json:"network"`
+	Process     string                           `json:"process"`
+	FFI         string                           `json:"ffi"`
+	NodeModules string                           `json:"node_modules"`
+	Message     string                           `json:"message,omitempty"`
+	Scopes      []*RuntimeDoctorSandboxScopeData `json:"scopes,omitempty"`
+}
+
+type RuntimeDoctorSandboxScopeData struct {
+	Scope        string `json:"scope"`
+	Configured   bool   `json:"configured"`
+	Available    bool   `json:"available"`
+	Selected     bool   `json:"selected"`
+	HealthStatus string `json:"health_status"`
+	ReasonCode   string `json:"reason_code"`
+	ProviderType string `json:"provider_type,omitempty"`
+	ProviderRef  string `json:"provider_ref,omitempty"`
+	CheckedAt    string `json:"checked_at,omitempty"`
 }
 
 type RuntimeDoctorWebToolStatus struct {

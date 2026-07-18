@@ -26,6 +26,7 @@ import {
   Toast,
 } from '@coze-arch/coze-design';
 
+import { createSkillCreationNavigationState } from '../workbench/skill-creation-intent';
 import {
   createSkill,
   deleteSkill,
@@ -473,7 +474,11 @@ const SkillListPage = ({ spaceID }: { spaceID: string }) => {
           </Button>
           <Button
             className="skill-secondary-button"
-            onClick={() => navigate(`/space/${spaceID}/chats/new?mode=skill`)}
+            onClick={() =>
+              navigate(`/space/${spaceID}/chats/new`, {
+                state: createSkillCreationNavigationState(),
+              })
+            }
           >
             使用 AI 创建
           </Button>

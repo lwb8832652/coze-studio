@@ -252,6 +252,28 @@ describe('Nuwax parity skill management', () => {
     expect(container.textContent).not.toContain('58461');
   });
 
+  it('opens AI skill creation in the shared workbench home', async () => {
+    await renderPage();
+
+    const createWithAIButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(
+      button => button.textContent === '使用 AI 创建',
+    ) as HTMLButtonElement;
+
+    act(() => {
+      createWithAIButton.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/space/1/chats/new', {
+      state: {
+        workbenchIntent: 'create_skill',
+        initialMessage:
+          '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+      },
+    });
+  });
+
   it('accepts only importable skill formats and exposes single-file upload', async () => {
     expect(isSupportedSkillImportFile('project.skill')).toBe(true);
     expect(isSupportedSkillImportFile('SKILL.md')).toBe(true);

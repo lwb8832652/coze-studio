@@ -16,7 +16,10 @@
 
 package coderunner
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type Language string
 
@@ -33,6 +36,16 @@ type RunRequest struct {
 type RunResponse struct {
 	Result map[string]any
 }
+
+var (
+	ErrCodeRunnerInvalidRequest    = errors.New("code runner request is invalid")
+	ErrCodeRunnerUnavailable       = errors.New("code runner is unavailable")
+	ErrCodeRunnerCapacityExhausted = errors.New("code runner capacity is exhausted")
+	ErrCodeRunnerTimeout           = errors.New("code runner execution timed out")
+	ErrCodeRunnerCanceled          = errors.New("code runner execution was canceled")
+	ErrCodeRunnerOutputLimit       = errors.New("code runner output limit exceeded")
+	ErrCodeRunnerExecutionFailed   = errors.New("code runner execution failed")
+)
 
 //go:generate mockgen -destination  ../../internal/mock/domain/workflow/crossdomain/code/code_mock.go  --package code  -source code.go
 type Runner interface {

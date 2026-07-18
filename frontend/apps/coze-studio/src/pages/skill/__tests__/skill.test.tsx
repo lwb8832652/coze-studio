@@ -334,9 +334,13 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/new?mode=skill',
-    );
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/new', {
+      state: {
+        workbenchIntent: 'create_skill',
+        initialMessage:
+          '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+      },
+    });
 
     act(() => {
       root?.unmount();
@@ -450,9 +454,13 @@ describe('SkillPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/chats/new?mode=skill',
-    );
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats/new', {
+      state: {
+        workbenchIntent: 'create_skill',
+        initialMessage:
+          '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
+      },
+    });
 
     act(() => {
       emptyRoot?.unmount();

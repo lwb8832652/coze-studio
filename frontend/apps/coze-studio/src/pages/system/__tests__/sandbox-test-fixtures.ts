@@ -1,0 +1,45 @@
+/* Copyright 2025 coze-dev Authors */
+
+export const fullPolicy = {
+  timeout_seconds: 60,
+  memory_limit_mb: 512,
+  cpu_limit: 1,
+  max_output_bytes: 65536,
+  max_concurrency: 8,
+  allow_network: true,
+  network_allowlist: ['api.example.test'],
+  allowed_env_names: ['PATH'],
+  virtual_read_prefixes: ['inputs', 'workspace/src'],
+  virtual_write_prefixes: ['outputs'],
+  allowed_executables: ['node'],
+  ffi_enabled: false,
+  node_modules_mode: 'approved_directory' as const,
+  node_modules_directory_ref: 'node-modules-v1',
+};
+
+export const providerFixture = {
+  id: 17,
+  name: 'Primary',
+  type: 'remote_http' as const,
+  endpoint_hint: 'https://***.test',
+  credential_configured: true,
+  credential_fingerprint: 'sha256:bounded',
+  active: false,
+  needs_rewrap: false,
+  scopes: ['agent' as const, 'appdev' as const],
+  policy: fullPolicy,
+  status: 'enabled' as const,
+  health: {
+    status: 'healthy' as const,
+    capabilities: ['agent' as const, 'appdev' as const],
+    reason_code: 'AVAILABLE',
+    message: 'bounded health message',
+    latency_bucket: 'lt_100ms',
+    checked_at: new Date().toISOString(),
+  },
+  version: 7,
+  created_at: '2026-07-15T08:00:00Z',
+  updated_at: '2026-07-16T08:00:00Z',
+  credential: 'must-never-survive',
+  endpoint: 'https://private.example.test/secret',
+};

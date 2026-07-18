@@ -18,6 +18,8 @@ package appdev
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -119,9 +121,48 @@ func TestPersistentStoreRestoresLatestSourceAcrossInstances(t *testing.T) {
 	require.Equal(t, artifact, persistedArtifact)
 }
 
+func TestPersistentStoreLoadsTenantScopedProviderRuntimeSourceArtifactByStreaming(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:appdev-provider-runtime-source?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&appDevProjectRecord{}, &appDevSnapshotRecord{}, &appDevRuntimeRecord{}))
+
+	ctx := context.Background()
+	objects := newMemoryObjectStorage()
+	store := NewPersistentStoreForTest(db, objects, t.TempDir())
+	project := &domainappdev.Project{
+		ID: "source-project", SpaceID: "2001", Name: "Source", Status: domainappdev.ProjectStatusReady, CreatorID: "42",
+	}
+	_, err = store.CreateProject(ctx, project, map[string]string{"src/main.ts": "export const value = 1"})
+	require.NoError(t, err)
+
+	artifact, err := store.LoadProviderRuntimeSourceArtifact(ctx, project.SpaceID, project.ID)
+	require.NoError(t, err)
+	require.Greater(t, artifact.Size(), int64(0))
+	require.True(t, strings.HasPrefix(artifact.Digest(), "sha256:"))
+	require.Equal(t, artifact.Size(), objects.streamedBytes)
+	require.NotEmpty(t, artifact.ObjectKey())
+	formatted := fmt.Sprintf("%v|%+v|%#v", artifact, artifact, artifact)
+	require.NotContains(t, formatted, artifact.ObjectKey())
+	_, err = json.Marshal(artifact)
+	require.Error(t, err)
+
+	_, err = store.LoadProviderRuntimeSourceArtifact(ctx, "2002", project.ID)
+	require.ErrorIs(t, err, domainappdev.ErrNotFound)
+	_, err = store.LoadProviderRuntimeSourceArtifact(ctx, project.SpaceID, "other-project")
+	require.ErrorIs(t, err, domainappdev.ErrNotFound)
+
+	objects.mu.Lock()
+	for key, content := range objects.objects {
+		digest := sha256.Sum256(content)
+		require.Equal(t, fmt.Sprintf("sha256:%x", digest[:]), artifact.Digest(), key)
+	}
+	objects.mu.Unlock()
+}
+
 type memoryObjectStorage struct {
-	mu      sync.Mutex
-	objects map[string][]byte
+	mu            sync.Mutex
+	objects       map[string][]byte
+	streamedBytes int64
 }
 
 func newMemoryObjectStorage() *memoryObjectStorage {
@@ -147,6 +188,17 @@ func (s *memoryObjectStorage) GetObject(_ context.Context, key string) ([]byte, 
 		return nil, storage.ErrObjectNotFound
 	}
 	return append([]byte(nil), content...), nil
+}
+
+func (s *memoryObjectStorage) OpenObjectStream(_ context.Context, key string) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	content, ok := s.objects[key]
+	if !ok {
+		return nil, storage.ErrObjectNotFound
+	}
+	s.streamedBytes = int64(len(content))
+	return io.NopCloser(strings.NewReader(string(content))), nil
 }
 
 func (s *memoryObjectStorage) DeleteObject(_ context.Context, key string) error {

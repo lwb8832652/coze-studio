@@ -18,7 +18,7 @@
 /* eslint-disable max-lines -- Cohesive orchestrator. */
 
 import { useNavigate, useParams } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import '../../components/workspace-prototype.less';
 import { WorkspaceManagementSection } from './workspace-management-section';
@@ -33,6 +33,7 @@ import {
   getAdminBasicConfig,
   getAdminKnowledgeConfig,
   getAdminModelList,
+  isAdminBasicConfigConflict,
   listAdminUserSpaces,
   listAdminWorkspaceMembers,
   listAdminUsers,
@@ -43,6 +44,7 @@ import {
   type AdminCreateModelPayload,
   type AdminCreateUserPayload,
   type AdminBasicConfig,
+  type AdminBasicConfigPatch,
   type AdminKnowledgeConfig,
   type AdminProviderModelListItem,
   type AdminResetUserPasswordPayload,
@@ -55,6 +57,7 @@ import {
 import { OverviewSection } from './overview-section';
 import { ModelConfigSection } from './model-config-section';
 import { SYSTEM_SECTIONS } from './content';
+import { SandboxManagementSection } from './sandbox-management-section';
 
 const ADMIN_PAGE_SIZE = 20;
 
@@ -80,7 +83,12 @@ const SystemManagementPage = () => {
   const [userSpaces, setUserSpaces] = useState<AdminUserSpace[]>([]);
   const [userSpacesLoading, setUserSpacesLoading] = useState(false);
   const [userSpacesError, setUserSpacesError] = useState('');
-  const [basicConfig, setBasicConfig] = useState<AdminBasicConfig>({});
+  const [basicConfig, setBasicConfig] = useState<AdminBasicConfig | null>(null);
+  const [basicConfigRevision, setBasicConfigRevision] = useState('');
+  const [basicConfigLoading, setBasicConfigLoading] = useState(true);
+  const [basicConfigLoadError, setBasicConfigLoadError] = useState('');
+  const [basicConfigRefreshRequired, setBasicConfigRefreshRequired] =
+    useState(false);
   const [modelProviders, setModelProviders] = useState<
     AdminProviderModelListItem[]
   >([]);
@@ -89,6 +97,8 @@ const SystemManagementPage = () => {
   );
   const [loading, setLoading] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [adminResolved, setAdminResolved] = useState(false);
+  const [isSystemAdmin, setIsSystemAdmin] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [modelSaving, setModelSaving] = useState(false);
   const [modelRefreshing, setModelRefreshing] = useState(false);
@@ -99,6 +109,23 @@ const SystemManagementPage = () => {
   const [userActionMessage, setUserActionMessage] = useState('');
   const activeSection = getActiveSystemSection(section);
   const content = getSystemSectionContent(section);
+
+  const loadBasicConfiguration = useCallback(async () => {
+    setBasicConfigLoading(true);
+    setBasicConfigLoadError('');
+    try {
+      const response = await getAdminBasicConfig();
+      setBasicConfig(response.configuration);
+      setBasicConfigRevision(response.revision);
+      setBasicConfigRefreshRequired(false);
+    } catch (error) {
+      setBasicConfig(null);
+      setBasicConfigRevision('');
+      setBasicConfigLoadError('加载系统基础配置失败，请重试');
+    } finally {
+      setBasicConfigLoading(false);
+    }
+  }, []);
 
   const loadWorkspaces = async (params?: {
     keyword?: string;
@@ -141,6 +168,7 @@ const SystemManagementPage = () => {
     let canceled = false;
 
     const loadSystemData = async () => {
+      let adminVerified = false;
       setLoading(true);
       setErrorMessage('');
       try {
@@ -149,12 +177,17 @@ const SystemManagementPage = () => {
           return;
         }
         if (!adminStatus.is_admin) {
+          setIsSystemAdmin(false);
+          setAdminResolved(true);
           setAccessDenied(true);
           return;
         }
+        adminVerified = true;
+        setIsSystemAdmin(true);
+        setAdminResolved(true);
         setAccessDenied(false);
 
-        const [workspaceResp, userResp, configResp, modelResp, knowledgeResp] =
+        const [workspaceResp, userResp, modelResp, knowledgeResp] =
           await Promise.all([
             listAdminWorkspaces({
               page: 1,
@@ -164,9 +197,9 @@ const SystemManagementPage = () => {
               page: 1,
               size: ADMIN_PAGE_SIZE,
             }),
-            getAdminBasicConfig(),
             getAdminModelList(),
             getAdminKnowledgeConfig(),
+            loadBasicConfiguration(),
           ]);
         if (canceled) {
           return;
@@ -175,11 +208,15 @@ const SystemManagementPage = () => {
         setWorkspaceTotal(workspaceResp.total);
         setUsers(userResp.users);
         setUserTotal(userResp.total);
-        setBasicConfig(configResp.configuration ?? {});
         setModelProviders(modelResp.provider_model_list ?? []);
         setKnowledgeConfig(knowledgeResp.knowledge_config ?? {});
       } catch (error) {
         if (!canceled) {
+          if (!adminVerified) {
+            setIsSystemAdmin(false);
+            setAdminResolved(true);
+            setAccessDenied(true);
+          }
           setErrorMessage('加载系统管理数据失败');
         }
       } finally {
@@ -194,7 +231,7 @@ const SystemManagementPage = () => {
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [loadBasicConfiguration]);
 
   const searchUsers = async () => {
     setLoading(true);
@@ -428,31 +465,43 @@ const SystemManagementPage = () => {
     }
   };
 
-  const handleSaveBasicConfig = async (updates: AdminBasicConfig) => {
+  const handleSaveBasicConfig = async (updates: AdminBasicConfigPatch) => {
+    if (!basicConfig || !basicConfigRevision) {
+      setBasicConfigMessage('系统基础配置尚未加载，请刷新后重试');
+      return;
+    }
     setBasicConfigSaving(true);
     setBasicConfigMessage('');
-    const nextConfig = {
-      ...basicConfig,
-      ...updates,
-    };
     try {
-      await saveAdminBasicConfig(nextConfig);
-      const configResp = await getAdminBasicConfig();
-      setBasicConfig(configResp.configuration ?? nextConfig);
+      const response = await saveAdminBasicConfig(updates, basicConfigRevision);
+      setBasicConfig({ ...basicConfig, ...updates });
+      setBasicConfigRevision(response.revision);
+      setBasicConfigRefreshRequired(false);
       setBasicConfigMessage('系统基础配置已保存');
     } catch (error) {
-      setBasicConfigMessage('保存系统基础配置失败，请检查服务地址和配置格式');
+      if (isAdminBasicConfigConflict(error)) {
+        setBasicConfigRefreshRequired(true);
+        setBasicConfigMessage('配置已被其他管理员更新，请刷新后重试');
+      } else {
+        setBasicConfigMessage('保存系统基础配置失败，请检查服务地址和配置格式');
+      }
       throw error;
     } finally {
       setBasicConfigSaving(false);
     }
   };
 
+  const reloadBasicConfiguration = async () => {
+    setBasicConfigMessage('');
+    setBasicConfigRefreshRequired(false);
+    await loadBasicConfiguration();
+  };
+
   const renderOverview = () => (
     <OverviewSection
       userTotal={userTotal}
       workspaceTotal={workspaceTotal}
-      basicConfig={basicConfig}
+      basicConfig={basicConfig ?? {}}
       users={users}
       workspaces={workspaces}
     />
@@ -508,9 +557,13 @@ const SystemManagementPage = () => {
   const renderSettings = () => (
     <SystemSettingsSection
       basicConfig={basicConfig}
+      basicConfigLoadError={basicConfigLoadError}
+      basicConfigLoading={basicConfigLoading}
       basicConfigMessage={basicConfigMessage}
+      basicConfigRefreshRequired={basicConfigRefreshRequired}
       basicConfigSaving={basicConfigSaving}
       knowledgeConfig={knowledgeConfig}
+      onReloadBasicConfig={reloadBasicConfiguration}
       onSaveBasicConfig={handleSaveBasicConfig}
     />
   );
@@ -540,6 +593,9 @@ const SystemManagementPage = () => {
     if (activeSection === 'models') {
       return renderModels();
     }
+    if (activeSection === 'sandbox') {
+      return <SandboxManagementSection />;
+    }
     return renderOverview();
   };
 
@@ -552,7 +608,9 @@ const SystemManagementPage = () => {
             <p>后台管理员控制台</p>
           </div>
           <nav className="coze-prototype-system-nav-list">
-            {SYSTEM_SECTIONS.map(item => (
+            {SYSTEM_SECTIONS.filter(
+              item => item.key !== 'sandbox' || isSystemAdmin,
+            ).map(item => (
               <button
                 key={item.key}
                 type="button"
@@ -569,11 +627,19 @@ const SystemManagementPage = () => {
 
         <section className="coze-prototype-system-content">
           <header className="coze-prototype-system-hero">
-            <h1>{content.heading}</h1>
-            <p>{content.summary}</p>
+            <h1>
+              {!adminResolved || accessDenied ? '系统管理' : content.heading}
+            </h1>
+            <p>
+              {!adminResolved
+                ? '正在验证系统管理权限...'
+                : accessDenied
+                  ? '后台能力仅对系统管理员开放。'
+                  : content.summary}
+            </p>
           </header>
 
-          {loading ? <p>加载中...</p> : null}
+          {!adminResolved || loading ? <p role="status">加载中...</p> : null}
           {errorMessage ? <p>{errorMessage}</p> : null}
           {accessDenied ? (
             <section className="coze-prototype-workspace-settings-list">
@@ -586,7 +652,9 @@ const SystemManagementPage = () => {
               </article>
             </section>
           ) : null}
-          {!loading && !accessDenied ? renderActiveSection() : null}
+          {adminResolved && !loading && isSystemAdmin && !accessDenied
+            ? renderActiveSection()
+            : null}
         </section>
       </div>
     </main>

@@ -559,10 +559,32 @@ const createReferenceSegment = (
 const createWorkbenchComposerMessage = (
   segments: WorkbenchAtSegment[],
   value: string,
-) =>
-  `${segments
-    .map(segment => (segment.type === 'text' ? segment.text : ''))
-    .join('')}${value}`;
+) => {
+  const segmentMessage = segments.reduce((message, segment, index) => {
+    if (segment.type === 'text') {
+      const previousSegment = segments[index - 1];
+      const separator =
+        previousSegment?.type === 'reference' &&
+        segment.text &&
+        !segment.text.startsWith(' ')
+          ? ' '
+          : '';
+
+      return `${message}${separator}${segment.text}`;
+    }
+
+    const separator = message && !message.endsWith(' ') ? ' ' : '';
+
+    return `${message}${separator}@${segment.reference.name}`;
+  }, '');
+  const lastSegment = segments[segments.length - 1];
+  const valueSeparator =
+    lastSegment?.type === 'reference' && value && !value.startsWith(' ')
+      ? ' '
+      : '';
+
+  return `${segmentMessage}${valueSeparator}${value}`;
+};
 
 const hasReferenceSegment = (
   segments: WorkbenchAtSegment[],

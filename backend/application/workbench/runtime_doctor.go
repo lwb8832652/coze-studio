@@ -18,6 +18,8 @@ package workbench
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -33,6 +35,7 @@ import (
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
 	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
+	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
@@ -41,6 +44,8 @@ const (
 	runtimeDoctorStatusWarning  = "warning"
 	runtimeDoctorStatusError    = "error"
 	runtimeDoctorStatusDisabled = "disabled"
+
+	runtimeDoctorSandboxHealthMaxAge = 5 * time.Minute
 )
 
 type workbenchMCPToolDiagnosticService interface {
@@ -55,6 +60,13 @@ type workbenchSkillDiagnosticService interface {
 		ctx context.Context,
 		req *skillapi.ListSkillsRequest,
 	) (*skillapi.ListSkillsResponse, error)
+}
+
+// SandboxRuntimeDiagnosticRepository intentionally exposes only the two safe
+// reads required by the ordinary-user Runtime Doctor projection.
+type SandboxRuntimeDiagnosticRepository interface {
+	GetProviderDefault(ctx context.Context, scope domainsandbox.Scope) (*domainsandbox.ProviderDefault, error)
+	GetProvider(ctx context.Context, providerID int64) (*domainsandbox.Provider, error)
 }
 
 func (s *ApplicationService) GetRuntimeDoctor(
@@ -75,7 +87,17 @@ func (s *ApplicationService) GetRuntimeDoctor(
 	}
 	modelData, modelChecks := runtimeDoctorModelDiagnostics(ctx, chatModelProvider)
 	checks = append(checks, modelChecks...)
-	sandboxData, sandboxCheck := runtimeDoctorSandboxData()
+	var sandboxRepository SandboxRuntimeDiagnosticRepository
+	if s != nil {
+		sandboxRepository = s.sandboxRepository
+	}
+	sandboxData, sandboxCheck := runtimeDoctorSandboxProviderData(
+		ctx,
+		sandboxRepository,
+		runtimeDoctorSandboxControlPlaneEnabled(),
+		runtimeDoctorSandboxRoutingEnabled(),
+		time.Now().UTC(),
+	)
 	checks = append(checks, sandboxCheck)
 	checks = append(checks, runtimeDoctorSkillCheck(ctx, s.skillDiagnosticService(), req.SpaceID))
 
@@ -355,6 +377,202 @@ func runtimeDoctorSandboxData() (
 				data.NodeModules,
 			),
 		}
+}
+
+func runtimeDoctorSandboxProviderData(
+	ctx context.Context,
+	repository SandboxRuntimeDiagnosticRepository,
+	controlPlaneEnabled bool,
+	runtimeRoutingEnabled bool,
+	now time.Time,
+) (
+	*diagnosticapi.RuntimeDoctorSandboxData,
+	*diagnosticapi.RuntimeDoctorCheck,
+) {
+	data, _ := runtimeDoctorSandboxData()
+	data.RunnerType = "control_plane"
+	scopeData := &diagnosticapi.RuntimeDoctorSandboxScopeData{
+		Scope:        string(domainsandbox.ScopeAgent),
+		HealthStatus: string(domainsandbox.HealthStatusUnknown),
+	}
+	data.Scopes = []*diagnosticapi.RuntimeDoctorSandboxScopeData{scopeData}
+	check := &diagnosticapi.RuntimeDoctorCheck{
+		Name:     "sandbox.provider.agent",
+		Category: "sandbox",
+	}
+
+	complete := func(status, reasonCode, message string) (
+		*diagnosticapi.RuntimeDoctorSandboxData,
+		*diagnosticapi.RuntimeDoctorCheck,
+	) {
+		data.Status = status
+		data.Message = message
+		scopeData.ReasonCode = reasonCode
+		check.Status = status
+		check.Message = message
+		return data, check
+	}
+
+	if !controlPlaneEnabled {
+		data.RunnerType = "disabled"
+		return complete(
+			runtimeDoctorStatusDisabled,
+			"control_plane_disabled",
+			"Sandbox control plane is disabled",
+		)
+	}
+	if repository == nil {
+		return complete(
+			runtimeDoctorStatusError,
+			"repository_unavailable",
+			"Sandbox provider diagnostics are unavailable; contact the system administrator",
+		)
+	}
+
+	defaultProvider, err := repository.GetProviderDefault(ctx, domainsandbox.ScopeAgent)
+	if err != nil {
+		if errors.Is(err, domainsandbox.ErrDefaultMissing) {
+			return complete(
+				runtimeDoctorStatusWarning,
+				"default_missing",
+				"Agent sandbox provider is not configured; contact the system administrator",
+			)
+		}
+		return complete(
+			runtimeDoctorStatusError,
+			"default_lookup_failed",
+			"Agent sandbox provider status is unavailable; contact the system administrator",
+		)
+	}
+	if defaultProvider == nil || defaultProvider.ProviderID <= 0 {
+		return complete(
+			runtimeDoctorStatusWarning,
+			"default_missing",
+			"Agent sandbox provider is not configured; contact the system administrator",
+		)
+	}
+
+	scopeData.Configured = true
+	scopeData.Selected = true
+	provider, err := repository.GetProvider(ctx, defaultProvider.ProviderID)
+	if err != nil || provider == nil {
+		return complete(
+			runtimeDoctorStatusError,
+			"provider_lookup_failed",
+			"Agent sandbox provider status is unavailable; contact the system administrator",
+		)
+	}
+
+	scopeData.ProviderType = string(provider.Type)
+	scopeData.ProviderRef = runtimeDoctorSandboxProviderRef(provider.ProviderKey)
+	scopeData.HealthStatus = string(provider.Health.Status)
+	if !provider.Health.CheckedAt.IsZero() {
+		scopeData.CheckedAt = provider.Health.CheckedAt.UTC().Format(time.RFC3339)
+	}
+	scopeData.Available = domainsandbox.HealthUsableForScope(
+		provider.Health,
+		domainsandbox.ScopeAgent,
+		now,
+		runtimeDoctorSandboxHealthMaxAge,
+	) && provider.Status == domainsandbox.ProviderStatusEnabled
+	reasonCode := runtimeDoctorSandboxProviderReason(provider, domainsandbox.ScopeAgent, now)
+	if !runtimeRoutingEnabled {
+		scopeData.Available = false
+		return complete(
+			runtimeDoctorStatusDisabled,
+			"runtime_routing_disabled",
+			"Sandbox runtime routing is disabled",
+		)
+	}
+	if scopeData.Available {
+		return complete(
+			runtimeDoctorStatusReady,
+			reasonCode,
+			"Agent sandbox provider is ready",
+		)
+	}
+	return complete(
+		runtimeDoctorStatusWarning,
+		reasonCode,
+		"Agent sandbox provider is unavailable; contact the system administrator",
+	)
+}
+
+func runtimeDoctorSandboxControlPlaneEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_CONTROL_PLANE_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeDoctorSandboxRoutingEnabled() bool {
+	if !runtimeDoctorSandboxControlPlaneEnabled() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_RUNTIME_ROUTING_ENABLED"))) {
+	case "", "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeDoctorSandboxProviderRef(providerKey string) string {
+	providerKey = strings.TrimSpace(providerKey)
+	if providerKey == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte("runtime-doctor-provider:" + providerKey))
+	return fmt.Sprintf("sha256:%x", digest[:6])
+}
+
+func runtimeDoctorSandboxProviderReason(
+	provider *domainsandbox.Provider,
+	scope domainsandbox.Scope,
+	now time.Time,
+) string {
+	if provider == nil {
+		return "provider_missing"
+	}
+	if provider.Status != domainsandbox.ProviderStatusEnabled {
+		return "provider_disabled"
+	}
+	if provider.Health.Status != domainsandbox.HealthStatusHealthy {
+		if reasonCode := runtimeDoctorSafeReasonCode(string(provider.Health.ReasonCode)); reasonCode != "" {
+			return reasonCode
+		}
+		return "health_" + strings.ToLower(string(provider.Health.Status))
+	}
+	if now.IsZero() ||
+		provider.Health.CheckedAt.IsZero() ||
+		provider.Health.CheckedAt.After(now) ||
+		now.Sub(provider.Health.CheckedAt) > runtimeDoctorSandboxHealthMaxAge {
+		return "health_stale"
+	}
+	for _, capability := range provider.Health.Capabilities {
+		if capability == scope {
+			return "ready"
+		}
+	}
+	return "scope_unsupported"
+}
+
+func runtimeDoctorSafeReasonCode(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(value) > 64 {
+		return ""
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') &&
+			character != '_' {
+			return ""
+		}
+	}
+	return value
 }
 
 func runtimeDoctorConfiguredOrRestricted(value string) string {

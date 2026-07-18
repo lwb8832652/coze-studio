@@ -97,6 +97,18 @@ export interface RuntimeDoctorSandboxData {
   ffi: string,
   node_modules: string,
   message?: string,
+  scopes?: RuntimeDoctorSandboxScopeData[],
+}
+export interface RuntimeDoctorSandboxScopeData {
+  scope: string,
+  configured: boolean,
+  available: boolean,
+  selected: boolean,
+  health_status: string,
+  reason_code: string,
+  provider_type?: string,
+  provider_ref?: string,
+  checked_at?: string,
 }
 export interface RuntimeDoctorWebToolStatus {
   status: string,

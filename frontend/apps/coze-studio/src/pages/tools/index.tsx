@@ -19,7 +19,6 @@ import { useParams } from 'react-router-dom';
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
 import { MCPToolSettingsPanel } from './mcp-settings-panel';
-import './index.less';
 
 interface ToolsPageHeaderProps {
   description: string;

@@ -111,7 +111,7 @@ const serverUpsertPayload = (
 });
 
 export const MCPToolSettingsPanel = ({
-  mode = 'compact',
+  mode = 'full',
   spaceId,
 }: MCPToolSettingsPanelProps) => {
   const userInfo = useUserInfo();
@@ -715,3 +715,4 @@ export const MCPToolSettingsPanel = ({
     </section>
   );
 };
+import './index.less';

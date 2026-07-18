@@ -24,7 +24,8 @@ import (
 )
 
 var (
-	ErrObjectNotFound = errors.New("object not found")
+	ErrObjectNotFound       = errors.New("object not found")
+	ErrReadinessUnavailable = errors.New("storage readiness unavailable")
 )
 
 //go:generate  mockgen -destination ../../internal/mock/infra/storage/storage_mock.go -package mock -source storage.go Factory
@@ -48,6 +49,19 @@ type Storage interface {
 	// ListObjectsPaginated returns objects with pagination support.
 	// Use this method when dealing with large number of objects.
 	ListObjectsPaginated(ctx context.Context, input *ListObjectsPaginatedInput, opts ...GetOptFn) (*ListObjectsPaginatedOutput, error)
+}
+
+// StreamingStorage is the bounded-download extension used by security-sensitive
+// callers. Implementations must return the provider SDK stream directly and
+// must not buffer the complete object before returning.
+type StreamingStorage interface {
+	OpenObjectStream(ctx context.Context, objectKey string) (io.ReadCloser, error)
+}
+
+// ReadinessChecker performs a bounded, read-only bucket capability check.
+// Implementations must not create buckets or write probe objects.
+type ReadinessChecker interface {
+	CheckReadiness(context.Context) error
 }
 
 type SecurityToken struct {

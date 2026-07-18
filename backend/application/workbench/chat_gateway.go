@@ -46,6 +46,7 @@ type ApplicationService struct {
 	knowledgeSVC      crossknowledge.Knowledge
 	agentRunSVC       agentrun.Run
 	chatModelProvider chatModelProvider
+	sandboxRepository SandboxRuntimeDiagnosticRepository
 	runAsync          func(func())
 }
 

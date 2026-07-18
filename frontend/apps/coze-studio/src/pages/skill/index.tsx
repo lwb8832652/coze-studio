@@ -20,6 +20,7 @@ import { useState } from 'react';
 import type { workbenchSkill } from '@coze-studio/api-schema';
 
 import '../../components/workspace-prototype.less';
+import { createSkillCreationNavigationState } from '../workbench/skill-creation-intent';
 import { SkillVersionPanel } from './skill-version-panel';
 import { useSkillListLoader, useSkillRunActions } from './skill-page-hooks';
 import {
@@ -53,7 +54,9 @@ const SkillPage = () => {
       return;
     }
 
-    navigate(`/space/${space_id}/chats/new?mode=skill`);
+    navigate(`/space/${space_id}/chats/new`, {
+      state: createSkillCreationNavigationState(),
+    });
   };
 
   return (

@@ -18,9 +18,11 @@ package workbench
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -29,6 +31,7 @@ import (
 	diagnosticapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/diagnostic"
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainsandbox "github.com/coze-dev/coze-studio/backend/domain/sandbox"
 	"github.com/coze-dev/coze-studio/backend/internal/testutil"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
@@ -179,6 +182,120 @@ func TestRuntimeDoctorSandboxDataWarnsForLocalRunner(t *testing.T) {
 	require.Contains(t, check.Message, "local code runner")
 }
 
+func TestRuntimeDoctorSandboxProviderDataReportsHealthyAgentProviderWithoutSecrets(t *testing.T) {
+	now := time.Date(2026, time.July, 18, 10, 0, 0, 0, time.UTC)
+	repository := &fakeRuntimeDoctorSandboxRepository{
+		defaultProvider: &domainsandbox.ProviderDefault{
+			Scope:      domainsandbox.ScopeAgent,
+			ProviderID: 42,
+		},
+		provider: &domainsandbox.Provider{
+			ID:               42,
+			ProviderKey:      "provider-key-must-not-leak",
+			Type:             domainsandbox.ProviderType("remote"),
+			Status:           domainsandbox.ProviderStatusEnabled,
+			EndpointSecret:   "https://secret-provider.example.test",
+			CredentialSecret: "encrypted-secret-must-not-leak",
+			Health: domainsandbox.HealthSnapshot{
+				Status:        domainsandbox.HealthStatusHealthy,
+				CheckedAt:     now.Add(-time.Minute),
+				LatencyMillis: 25,
+				Capabilities:  []domainsandbox.Scope{domainsandbox.ScopeAgent},
+			},
+		},
+	}
+
+	data, check := runtimeDoctorSandboxProviderData(
+		context.Background(),
+		repository,
+		true,
+		true,
+		now,
+	)
+
+	require.Equal(t, runtimeDoctorStatusReady, data.Status)
+	require.Equal(t, "control_plane", data.RunnerType)
+	require.Len(t, data.Scopes, 1)
+	require.Equal(t, "agent", data.Scopes[0].Scope)
+	require.True(t, data.Scopes[0].Configured)
+	require.True(t, data.Scopes[0].Available)
+	require.True(t, data.Scopes[0].Selected)
+	require.Equal(t, "healthy", data.Scopes[0].HealthStatus)
+	require.Equal(t, "ready", data.Scopes[0].ReasonCode)
+	require.Equal(t, "remote", data.Scopes[0].ProviderType)
+	require.Contains(t, data.Scopes[0].ProviderRef, "sha256:")
+	require.Equal(t, runtimeDoctorStatusReady, check.Status)
+
+	payload, err := json.Marshal(data)
+	require.NoError(t, err)
+	require.NotContains(t, string(payload), "provider-key-must-not-leak")
+	require.NotContains(t, string(payload), "secret-provider.example.test")
+	require.NotContains(t, string(payload), "encrypted-secret-must-not-leak")
+}
+
+func TestRuntimeDoctorSandboxProviderDataReturnsActionableMissingDefault(t *testing.T) {
+	data, check := runtimeDoctorSandboxProviderData(
+		context.Background(),
+		&fakeRuntimeDoctorSandboxRepository{defaultErr: domainsandbox.ErrDefaultMissing},
+		true,
+		true,
+		time.Now().UTC(),
+	)
+
+	require.Equal(t, runtimeDoctorStatusWarning, data.Status)
+	require.Len(t, data.Scopes, 1)
+	require.False(t, data.Scopes[0].Configured)
+	require.False(t, data.Scopes[0].Available)
+	require.Equal(t, "default_missing", data.Scopes[0].ReasonCode)
+	require.Contains(t, check.Message, "contact the system administrator")
+}
+
+func TestRuntimeDoctorSandboxProviderDataReportsDisabledControlPlaneWithoutRepositoryReads(t *testing.T) {
+	repository := &fakeRuntimeDoctorSandboxRepository{}
+
+	data, check := runtimeDoctorSandboxProviderData(
+		context.Background(),
+		repository,
+		false,
+		false,
+		time.Now().UTC(),
+	)
+
+	require.Equal(t, runtimeDoctorStatusDisabled, data.Status)
+	require.Equal(t, "disabled", data.RunnerType)
+	require.Equal(t, "control_plane_disabled", data.Scopes[0].ReasonCode)
+	require.Zero(t, repository.defaultCalls)
+	require.Zero(t, repository.providerCalls)
+	require.Equal(t, runtimeDoctorStatusDisabled, check.Status)
+}
+
+func TestRuntimeDoctorSandboxProviderDataShowsConfiguredProviderWhileRoutingDisabled(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &fakeRuntimeDoctorSandboxRepository{
+		defaultProvider: &domainsandbox.ProviderDefault{
+			Scope: domainsandbox.ScopeAgent, ProviderID: 42,
+		},
+		provider: &domainsandbox.Provider{
+			ID: 42, ProviderKey: "provider-key", Type: domainsandbox.ProviderTypeRemoteHTTP,
+			Status: domainsandbox.ProviderStatusEnabled,
+			Health: domainsandbox.HealthSnapshot{
+				Status: domainsandbox.HealthStatusHealthy, CheckedAt: now,
+				LatencyMillis: 1, Capabilities: []domainsandbox.Scope{domainsandbox.ScopeAgent},
+			},
+		},
+	}
+
+	data, check := runtimeDoctorSandboxProviderData(
+		context.Background(), repository, true, false, now,
+	)
+
+	require.Equal(t, runtimeDoctorStatusDisabled, data.Status)
+	require.True(t, data.Scopes[0].Configured)
+	require.False(t, data.Scopes[0].Available)
+	require.Equal(t, "runtime_routing_disabled", data.Scopes[0].ReasonCode)
+	require.Equal(t, runtimeDoctorStatusDisabled, check.Status)
+}
+
 func TestRuntimeDoctorSkillCheckSummarizesCountsAndSafeNames(t *testing.T) {
 	ctx := context.Background()
 	service := &fakeRuntimeDoctorSkillService{
@@ -265,6 +382,31 @@ func (f *fakeRuntimeDoctorSkillService) ListSkills(
 ) (*skillapi.ListSkillsResponse, error) {
 	f.req = req
 	return f.resp, f.err
+}
+
+type fakeRuntimeDoctorSandboxRepository struct {
+	defaultProvider *domainsandbox.ProviderDefault
+	defaultErr      error
+	provider        *domainsandbox.Provider
+	providerErr     error
+	defaultCalls    int
+	providerCalls   int
+}
+
+func (f *fakeRuntimeDoctorSandboxRepository) GetProviderDefault(
+	_ context.Context,
+	_ domainsandbox.Scope,
+) (*domainsandbox.ProviderDefault, error) {
+	f.defaultCalls++
+	return f.defaultProvider, f.defaultErr
+}
+
+func (f *fakeRuntimeDoctorSandboxRepository) GetProvider(
+	_ context.Context,
+	_ int64,
+) (*domainsandbox.Provider, error) {
+	f.providerCalls++
+	return f.provider, f.providerErr
 }
 
 type fakeRuntimeDoctorCapabilityModel struct {

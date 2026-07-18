@@ -41,22 +41,48 @@ APP_DEV_LOCAL_STORE_ENABLED=true \
 load env file: .env.debug
 ```
 
-生产和共享测试环境禁止启用 `APP_DEV_HOST_RUNTIME_ENABLED`。必须配置隔离 Runner
-和独立 HTTPS Preview Gateway：
+生产和共享测试环境禁止启用 `APP_DEV_HOST_RUNTIME_ENABLED`。生产 AppDev 使用
+数据库中的、已启用且支持 `appdev` scope 的默认 remote provider；provider
+endpoint 必须为 HTTPS，credential 必须加密保存。部署至少需要：
 
 ```bash
-APP_DEV_RUNNER_ENDPOINT=https://runner.internal.example.com
-APP_DEV_RUNNER_TOKEN=replace-with-secret-manager-value
+SANDBOX_CONTROL_PLANE_ENABLED=true
+SANDBOX_CREDENTIAL_KEYS_JSON=<stable-keyring-from-secret-manager>
+SANDBOX_CREDENTIAL_ACTIVE_KEY_ID=<primary-key-id>
 APP_DEV_PREVIEW_GATEWAY_BASE_URL=https://preview.example.com/apps
+APP_DEV_ARTIFACT_GATEWAY_BASE_URL=https://artifacts.example.com/internal
+APP_DEV_PROVIDER_AUTH_TOKEN=<provider-gateway-secret>
 ```
 
-未配置隔离 Runner 时，AppDev 运行和构建按 fail-closed 处理，不回退到宿主机
-执行。隔离 Runner 需实现 `/v1/appdev/runtimes/*` 与 `/v1/appdev/builds` 合同，并
-将构建产物写入请求限定的 OSS 前缀。`APP_DEV_RUNNER_TOKEN` 只能来自部署环境的
-密钥管理，不写入 tracked 文件。
+Redis 和对象存储复用服务端生产基础设施配置，缺失时 grant、artifact gateway、
+runtime 和 build 均 fail closed，不使用内存 fallback。可信反向代理场景按需配置
+`APP_DEV_ARTIFACT_TRUSTED_PROXY_CIDRS`。上述 keyring 必须跨重启稳定，不能使用
+临时随机 key；所有 credential/token 只能来自密钥管理，不能写入 tracked 文件。
+
+`APP_DEV_RUNNER_ENDPOINT` 和 `APP_DEV_RUNNER_TOKEN` 已删除，不再作为兼容配置
+或 fallback 来源。debug host runtime 仅在 `APP_ENV=debug` 且
+`APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；此模式的 HTTP gateway 只允许字面
+loopback IP，不接受 `localhost` 或非 loopback 地址。
 
 只有任务明确涉及 Agent Runtime 时，才额外启用 Eino ADK 相关变量；AppDev 页面
 调试不依赖这些变量。
+
+### Sandbox 分阶段启用
+
+- 首次启动且 `basic_config` 从未持久化时，可显式设置
+  `COZE_SYSTEM_ADMIN_EMAILS=<local-test-email>` 引导系统管理员。配置一旦落库，
+  数据库立即成为唯一事实源，环境变量不能覆盖已保存或已撤销的管理员权限。
+- `SANDBOX_CONTROL_PLANE_ENABLED=true` 只表示 Provider 管理面可用。
+- `SANDBOX_RUNTIME_ROUTING_ENABLED=false` 可在 Provider 配置、健康检查和默
+  认项准备期间阻止真实任务进入 Provider；本地验收完成后再显式改为 `true`。
+- 生产和共享测试环境必须显式设置运行时路由开关，不依赖兼容默认值。
+- 本机 AppDev 宿主运行时仍只允许
+  `APP_ENV=debug` 与 `APP_DEV_HOST_RUNTIME_ENABLED=true` 同时满足；任一条件
+  不满足都必须 fail closed，不能成为远程 Provider 的回退路径。
+- 需要验证监控时显式设置 `SANDBOX_PROMETHEUS_METRICS_ENABLED=true`；指标
+  不得包含 endpoint、凭据、用户、空间或执行 ID。
+- Provider 运维、密钥轮换、上线和回滚流程见
+  `docs/superpowers/runbooks/sandbox-control-plane-operations.md`。
 
 ### MCP management/runtime
 

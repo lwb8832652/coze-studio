@@ -24,6 +24,7 @@ import {
   type RuntimeDoctorCheck,
   type WorkbenchRuntimeDoctorData,
 } from './service';
+import { getSystemAdminStatus } from '../system/service';
 
 const RUNTIME_DOCTOR_PENDING_MESSAGE = '后端深度检查待接入';
 
@@ -115,12 +116,27 @@ const modelCapabilitySummary = (
   return enabled.length ? enabled.join('、') : '未检测到 provider 能力标记';
 };
 
+const sandboxHealthLabel = (status?: string) => {
+  switch (status) {
+    case 'healthy':
+      return '正常';
+    case 'degraded':
+      return '降级';
+    case 'unhealthy':
+      return '异常';
+    default:
+      return '未知';
+  }
+};
+
 const RuntimeDoctorCard = ({
+  action,
   detail,
   meta,
   status,
   title,
 }: {
+  action?: React.ReactNode;
   detail?: string;
   meta?: string;
   status?: string;
@@ -141,6 +157,7 @@ const RuntimeDoctorCard = ({
         {sanitizeRuntimeDoctorText(detail)}
       </span>
     ) : null}
+    {action}
   </li>
 );
 
@@ -171,6 +188,7 @@ const RuntimeDoctorCheckRow = ({ check }: { check: RuntimeDoctorCheck }) => (
 const RuntimeDoctorCardGrid = ({
   data,
   derivedChecks,
+  isSystemAdmin,
 }: {
   data: WorkbenchRuntimeDoctorData;
   derivedChecks: {
@@ -178,16 +196,37 @@ const RuntimeDoctorCardGrid = ({
     model: RuntimeDoctorCheck;
     skill: RuntimeDoctorCheck;
   };
+  isSystemAdmin: boolean;
 }) => {
   const modelLiveProbeDetail = `Live Probe ${statusLabel(
     data.model.live_probe,
   )}${data.model.message ? ` · ${data.model.message}` : ''}`;
-  const sandboxDetail = [
-    `网络 ${data.sandbox.network}`,
-    `进程 ${data.sandbox.process}`,
-    `FFI ${data.sandbox.ffi}`,
-    `Node Modules ${data.sandbox.node_modules}`,
-  ].join(' · ');
+  const agentSandboxScope = data.sandbox.scopes?.find(
+    scope => scope.scope === 'agent',
+  );
+  const sandboxMeta = agentSandboxScope
+    ? `Agent · ${
+        agentSandboxScope.available ? 'Provider 已就绪' : 'Provider 不可用'
+      }`
+    : `Runner ${data.sandbox.runner_type}`;
+  const sandboxDetail = agentSandboxScope
+    ? [
+        `类型 ${agentSandboxScope.provider_type || '未配置'}`,
+        `健康 ${sandboxHealthLabel(agentSandboxScope.health_status)}`,
+        `原因 ${agentSandboxScope.reason_code || 'unknown'}`,
+        agentSandboxScope.provider_ref
+          ? `Provider ${agentSandboxScope.provider_ref}`
+          : '',
+        agentSandboxScope.available ? '' : '请联系系统管理员检查沙箱 Provider',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : [
+        `网络 ${data.sandbox.network}`,
+        `进程 ${data.sandbox.process}`,
+        `FFI ${data.sandbox.ffi}`,
+        `Node Modules ${data.sandbox.node_modules}`,
+      ].join(' · ');
   const mcpMeta = `总计 ${data.mcp_tools.total_servers} · 启用 ${data.mcp_tools.enabled_servers}`;
   const mcpDetail = [
     `健康 ${data.mcp_tools.healthy_servers}`,
@@ -234,10 +273,15 @@ const RuntimeDoctorCardGrid = ({
         detail={derivedChecks.model.message}
       />
       <RuntimeDoctorCard
-        title="Sandbox"
+        title="Sandbox Provider"
         status={data.sandbox.status}
-        meta={`Runner ${data.sandbox.runner_type}`}
+        meta={sandboxMeta}
         detail={sandboxDetail}
+        action={
+          agentSandboxScope && !agentSandboxScope.available && isSystemAdmin ? (
+            <a href="/system/sandbox">打开沙箱管理</a>
+          ) : undefined
+        }
       />
       <RuntimeDoctorCard
         title="Skill 检查"
@@ -273,6 +317,25 @@ export const TaskRuntimeDoctorSection = ({ spaceId }: { spaceId?: string }) => {
   const [data, setData] = useState<WorkbenchRuntimeDoctorData>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isSystemAdmin, setIsSystemAdmin] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void getSystemAdminStatus()
+      .then(status => {
+        if (active) {
+          setIsSystemAdmin(status.is_admin);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setIsSystemAdmin(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const loadRuntimeDoctor = useCallback(async () => {
     if (!spaceId) {
@@ -349,7 +412,11 @@ export const TaskRuntimeDoctorSection = ({ spaceId }: { spaceId?: string }) => {
       <Spin spinning={loading}>
         {data ? (
           <>
-            <RuntimeDoctorCardGrid data={data} derivedChecks={derivedChecks} />
+            <RuntimeDoctorCardGrid
+              data={data}
+              derivedChecks={derivedChecks}
+              isSystemAdmin={isSystemAdmin}
+            />
             <RuntimeDoctorCheckList checks={checks} />
           </>
         ) : (

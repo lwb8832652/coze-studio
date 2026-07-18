@@ -17,8 +17,11 @@
 package conv
 
 import (
+	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
 )
@@ -56,13 +59,67 @@ func StrToInt64D(v string, defaultValue int64) int64 {
 	return toV
 }
 
-// DebugJsonToStr
+const debugJSONRedactedValue = "[REDACTED]"
+
+// DebugJsonToStr serializes debug data while removing credential-bearing fields.
 func DebugJsonToStr(v interface{}) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}
-	return string(b)
+
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(b))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return ""
+	}
+
+	redactDebugJSON(value)
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(redacted)
+}
+
+func redactDebugJSON(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if isSensitiveDebugJSONKey(key) {
+				typed[key] = debugJSONRedactedValue
+				continue
+			}
+			redactDebugJSON(item)
+		}
+	case []any:
+		for _, item := range typed {
+			redactDebugJSON(item)
+		}
+	}
+}
+
+func isSensitiveDebugJSONKey(key string) bool {
+	var normalized strings.Builder
+	normalized.Grow(len(key))
+	for _, char := range key {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			normalized.WriteRune(unicode.ToLower(char))
+		}
+	}
+
+	compact := normalized.String()
+	return strings.Contains(compact, "credential") ||
+		strings.Contains(compact, "password") ||
+		strings.HasSuffix(compact, "apikey") ||
+		strings.HasSuffix(compact, "accesskey") ||
+		strings.HasSuffix(compact, "secretkey") ||
+		strings.HasSuffix(compact, "authorization") ||
+		strings.HasSuffix(compact, "cookie") ||
+		strings.HasSuffix(compact, "token") ||
+		strings.HasSuffix(compact, "clientsecret") ||
+		strings.HasSuffix(compact, "privatekey")
 }
 
 func BoolToInt(p bool) int {

@@ -16,12 +16,18 @@
 
 const LOCAL_PREVIEW_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
+declare const trustedAppDevPreviewURLBrand: unique symbol;
+
+export type TrustedAppDevPreviewURL = string & {
+  readonly [trustedAppDevPreviewURLBrand]: true;
+};
+
 export const normalizeAppDevPreviewUrl = (
   value?: string,
   applicationOrigin = typeof window === 'undefined'
     ? undefined
     : window.location.origin,
-) => {
+): TrustedAppDevPreviewURL | undefined => {
   if (!value) {
     return undefined;
   }
@@ -35,10 +41,10 @@ export const normalizeAppDevPreviewUrl = (
       return undefined;
     }
     if (url.protocol === 'https:') {
-      return url.toString();
+      return url.toString() as TrustedAppDevPreviewURL;
     }
     if (url.protocol === 'http:' && LOCAL_PREVIEW_HOSTS.has(url.hostname)) {
-      return url.toString();
+      return url.toString() as TrustedAppDevPreviewURL;
     }
   } catch {
     return undefined;

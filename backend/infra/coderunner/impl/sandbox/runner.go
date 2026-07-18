@@ -79,7 +79,7 @@ func (runner *runner) Run(ctx context.Context, request *coderunner.RunRequest) (
 	if err = pw.Close(); err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(runner.pyPath, runner.scriptPath)
+	cmd := exec.CommandContext(ctx, runner.pyPath, runner.scriptPath)
 	cmd.ExtraFiles = []*os.File{w, pr}
 	if err = cmd.Start(); err != nil {
 		return nil, err
