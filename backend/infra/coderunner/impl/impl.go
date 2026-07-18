@@ -51,7 +51,7 @@ func New(conf *config.BasicConfiguration) Runner {
 	if os.Getenv("SANDBOX_CONTROL_PLANE_ENABLED") == "true" {
 		return failedRunner{err: coderunner.ErrCodeRunnerUnavailable}
 	}
-	return newLegacyRunner(conf)
+	return guardLegacyRunner(newLegacyRunner(conf))
 }
 
 func newLegacyRunner(conf *config.BasicConfiguration) Runner {
@@ -131,6 +131,46 @@ func NewLegacyLocalExecutionDelegate(
 
 func NewUnavailable() Runner {
 	return failedRunner{err: ErrRunnerUnavailable}
+}
+
+type legacyPurposeGuardRunner struct {
+	Runner
+}
+
+func (r *legacyPurposeGuardRunner) Run(
+	ctx context.Context,
+	request *coderunner.RunRequest,
+) (*coderunner.RunResponse, error) {
+	if request != nil {
+		switch request.Purpose {
+		case "", coderunner.PurposeAgent:
+		case coderunner.PurposePlugin:
+			return nil, coderunner.ErrCodeRunnerUnavailable
+		default:
+			return nil, coderunner.ErrCodeRunnerInvalidRequest
+		}
+	}
+	if r == nil || r.Runner == nil {
+		return nil, coderunner.ErrCodeRunnerUnavailable
+	}
+	return r.Runner.Run(ctx, request)
+}
+
+type legacyLocalExecutionPurposeGuard struct {
+	*legacyPurposeGuardRunner
+	infrasandbox.LocalExecutionDelegate
+}
+
+func guardLegacyRunner(runner Runner) Runner {
+	guard := &legacyPurposeGuardRunner{Runner: runner}
+	delegate, ok := runner.(infrasandbox.LocalExecutionDelegate)
+	if !ok {
+		return guard
+	}
+	return &legacyLocalExecutionPurposeGuard{
+		legacyPurposeGuardRunner: guard,
+		LocalExecutionDelegate:   delegate,
+	}
 }
 
 type legacyLocalExecutionRunner struct {

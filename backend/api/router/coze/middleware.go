@@ -2355,3 +2355,23 @@ func _listchatmessageapiMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
+
+func _debugcodepluginMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcodeplugindraftMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcodepluginversionMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _savecodeplugindraftMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}

@@ -23,6 +23,12 @@ const (
 	defaultCodeRunnerCleanupTimeout = 5 * time.Second
 )
 
+type codeRunnerRoute struct {
+	scope      domainsandbox.Scope
+	workload   infrasandbox.WorkloadKind
+	entrypoint string
+}
+
 type ProviderDefaultRepository interface {
 	GetProviderDefault(
 		ctx context.Context,
@@ -135,6 +141,10 @@ func (r *runner) Run(
 		input.Code == "" {
 		return nil, coderunner.ErrCodeRunnerInvalidRequest
 	}
+	route, ok := codeRunnerRouteForPurpose(input.Purpose)
+	if !ok {
+		return nil, coderunner.ErrCodeRunnerInvalidRequest
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, mapCodeRunnerError(err)
 	}
@@ -166,10 +176,10 @@ func (r *runner) Run(
 	}
 	defaultProvider, err := binding.ProviderDefaults.GetProviderDefault(
 		ctx,
-		domainsandbox.ScopeAgent,
+		route.scope,
 	)
 	if err != nil || defaultProvider == nil ||
-		defaultProvider.Scope != domainsandbox.ScopeAgent ||
+		defaultProvider.Scope != route.scope ||
 		defaultProvider.ProviderID <= 0 {
 		return nil, mapCodeRunnerError(err)
 	}
@@ -181,7 +191,7 @@ func (r *runner) Run(
 	selection, err := binding.Router.ResolveCodeRunnerSandbox(
 		ctx,
 		provider.ProviderKey,
-		domainsandbox.ScopeAgent,
+		route.scope,
 	)
 	if err != nil || selection == nil {
 		return nil, mapCodeRunnerError(err)
@@ -212,12 +222,12 @@ func (r *runner) Run(
 		return nil, coderunner.ErrCodeRunnerTimeout
 	}
 	request := infrasandbox.ExecuteRequest{
-		Scope:          domainsandbox.ScopeAgent,
-		WorkloadKind:   infrasandbox.WorkloadAgent,
+		Scope:          route.scope,
+		WorkloadKind:   route.workload,
 		IdempotencyKey: "code_runner_" + operationID,
 		Deadline:       deadline.UTC(),
 		Policy:         policy,
-		Entrypoint:     codeRunnerEntrypoint,
+		Entrypoint:     route.entrypoint,
 		Stdin:          stdin,
 	}
 	execution, err := selection.Execute(ctx, request)
@@ -333,6 +343,25 @@ func validateCodeRunnerPolicy(
 		return domainsandbox.RuntimePolicy{}, domainsandbox.ErrExecutionForbidden
 	}
 	return policy, nil
+}
+
+func codeRunnerRouteForPurpose(purpose coderunner.Purpose) (codeRunnerRoute, bool) {
+	switch purpose {
+	case "", coderunner.PurposeAgent:
+		return codeRunnerRoute{
+			scope:      domainsandbox.ScopeAgent,
+			workload:   infrasandbox.WorkloadAgent,
+			entrypoint: codeRunnerEntrypoint,
+		}, true
+	case coderunner.PurposePlugin:
+		return codeRunnerRoute{
+			scope:      domainsandbox.ScopePlugin,
+			workload:   infrasandbox.WorkloadPlugin,
+			entrypoint: infrasandbox.PluginCodeRunnerEntrypoint,
+		}, true
+	default:
+		return codeRunnerRoute{}, false
+	}
 }
 
 func marshalCodeRunnerParams(params map[string]any) ([]byte, error) {

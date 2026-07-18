@@ -255,7 +255,7 @@ export const authOptionsPlaceholder = {
 };
 
 export const CLOUD_PLUGIN_COZE = `${PluginTypeFromApi.PLUGIN}-${CreationMethod.COZE}`;
-export const CLOUD_PLUGIN_IDE = `${PluginTypeFromApi.PLUGIN}-${CreationMethod.IDE}`;
+export const CLOUD_PLUGIN_IDE = `${PluginTypeFromApi.FUNC}-${CreationMethod.IDE}`;
 export const LOCAL_PLUGIN_COZE = `${PluginTypeFromApi.LOCAL}-${CreationMethod.COZE}`;
 
 export const doGetCreationMethodTips = () => extInfoText.creation_method;

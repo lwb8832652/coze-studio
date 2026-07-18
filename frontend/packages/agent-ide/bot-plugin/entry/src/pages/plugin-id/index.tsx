@@ -74,6 +74,7 @@ import {
 } from '../../hooks';
 import { CodeSnippetModal } from '../../components';
 import { CreateTool, useCreateTool } from './create-tool';
+import { CodePluginWorkspace, isCodePlugin } from './code-plugin-workspace';
 
 import s from './index.module.less';
 
@@ -134,7 +135,10 @@ const PluginDetailPage = ({
       updatePluginInfoByImmer: store.updatePluginInfoByImmer,
     })),
   );
-  const isCloudIDEPlugin = pluginInfo?.creation_method === CreationMethod.IDE;
+  const isCodePluginDetail = isCodePlugin(
+    pluginInfo?.plugin_type,
+    pluginInfo?.creation_method,
+  );
   const isCozePlugin = pluginInfo?.creation_method === CreationMethod.COZE;
   const isInLibraryScope = typeof projectId === 'undefined';
   const pluginHistoryController = usePluginHistoryController();
@@ -166,6 +170,11 @@ const PluginDetailPage = ({
   const [showDropdownItem, setShowDropDownItem] = useState<
     PluginAPIInfo | undefined
   >();
+  const [codePluginPublishReady, setCodePluginPublishReady] = useState(false);
+
+  useEffect(() => {
+    setCodePluginPublishReady(false);
+  }, [isCodePluginDetail, pluginID, spaceID]);
 
   const { modal: codeModal, setShowCodePluginModel } = useBotCodeEditInPlugin({
     modalProps: {
@@ -192,6 +201,7 @@ const PluginDetailPage = ({
   const { data, loading } = useRequest(
     () => PluginDevelopApi.GetPluginAPIs(params),
     {
+      ready: Boolean(pluginInfo && !isCodePluginDetail),
       refreshDeps: [params],
       onError: error => {
         capture(
@@ -228,7 +238,7 @@ const PluginDetailPage = ({
   }, [pluginInfo?.meta_info?.name]);
 
   useReportTti({
-    isLive: !!data && !loading,
+    isLive: isCodePluginDetail ? initSuccessed : !!data && !loading,
     extra: {
       renderSize: `${data?.api_info?.length}`,
     },
@@ -301,7 +311,7 @@ const PluginDetailPage = ({
   useUpdateEffect(() => {
     if (initSuccessed) {
       onStatusChange?.('normal');
-      if (isCloudIDEPlugin) {
+      if (isCodePluginDetail) {
         preloadIDE?.handleInitIde(!canEdit);
       }
     } else {
@@ -314,7 +324,7 @@ const PluginDetailPage = ({
     toolId = '',
   ) => {
     // IDE logic
-    if (isCloudIDEPlugin) {
+    if (isCodePluginDetail) {
       // Change the routing address and it will be cleared when returning.
       preloadIDE?.handleShowIde({ initialAction, toolId });
     } else if (toolId) {
@@ -327,7 +337,7 @@ const PluginDetailPage = ({
       if (record?.api_id) {
         setShowDropDownItem(undefined);
 
-        if (isCloudIDEPlugin) {
+        if (isCodePluginDetail) {
           handleIdeJump(InitialAction.SELECT_TOOL, record?.api_id);
           return;
         }
@@ -403,17 +413,17 @@ const PluginDetailPage = ({
     });
   };
 
-  const isRenderCodePluginButton = !isCloudIDEPlugin;
+  const isRenderCodePluginButton = !isCodePluginDetail;
 
   const isRenderCreateToolButton = canEdit && Boolean(data?.total);
 
-  const isRenderImportButton = canEdit && !isCloudIDEPlugin;
+  const isRenderImportButton = canEdit && !isCodePluginDetail;
 
   const isRenderPublishButton = isRenderCreateToolButton && isInLibraryScope;
 
-  const isRenderIDEPublishButton = isRenderPublishButton && isCloudIDEPlugin;
-
   const isRenderCozePluginPublishButton = isRenderPublishButton && isCozePlugin;
+  const isRenderCodePluginPublishButton =
+    canEdit && isCodePluginDetail && isInLibraryScope;
 
   return (
     <div className={s['tool-wrapper']}>
@@ -501,7 +511,7 @@ const PluginDetailPage = ({
                       onClickWrapper={wrapWithCheckLock}
                       onBeforeClick={() => {
                         setShowDropDownItem(undefined);
-                        if (isCloudIDEPlugin) {
+                        if (isCodePluginDetail) {
                           // Change the routing address and it will be cleared when returning.
                           preloadIDE?.handleShowIde({
                             initialAction: InitialAction.CREATE_TOOL,
@@ -530,22 +540,39 @@ const PluginDetailPage = ({
                     </Button>
                   ) : null}
                   {/* ! Post button */}
-                  {isRenderIDEPublishButton ? (
-                    <Tooltip
-                      position="left"
-                      content={I18n.t('Plugin_button_publish_tooltip')}
+                  {isRenderCodePluginPublishButton ? (
+                    <BizPluginPublishPopover
+                      spaceId={spaceID}
+                      pluginInfo={pluginInfo}
+                      pluginId={pluginID}
+                      isInLibraryScope={isInLibraryScope}
+                      isPluginHasPublished={Boolean(pluginInfo.published)}
+                      visible={isPublishPopShow}
+                      onClickOutside={() => setPublishPopShow(false)}
+                      onPublishSuccess={handlePublishSuccess}
                     >
-                      <Button
-                        disabled={!data?.total}
-                        theme="solid"
-                        onClick={() => {
-                          setShowDropDownItem(undefined);
-                          handleIdeJump();
-                        }}
-                      >
-                        {I18n.t('Publish')}
-                      </Button>
-                    </Tooltip>
+                      <span>
+                        <Tooltip
+                          position="left"
+                          content={
+                            codePluginPublishReady
+                              ? I18n.t('Plugin_button_publish_tooltip')
+                              : '请先保存代码并通过试运行'
+                          }
+                        >
+                          <Button
+                            disabled={!codePluginPublishReady}
+                            theme="solid"
+                            onClick={() => {
+                              setShowDropDownItem(undefined);
+                              setPublishPopShow(true);
+                            }}
+                          >
+                            {I18n.t('Publish')}
+                          </Button>
+                        </Tooltip>
+                      </span>
+                    </BizPluginPublishPopover>
                   ) : null}
                   {isRenderCozePluginPublishButton ? (
                     <Popconfirm
@@ -598,64 +625,64 @@ const PluginDetailPage = ({
               }
             />
           ) : null}
+          {isCodePluginDetail ? (
+            <CodePluginWorkspace
+              key={`${spaceID}:${pluginID}`}
+              pluginID={pluginID}
+              spaceID={spaceID}
+              canEdit={canEdit}
+              onPublishReadyChange={setCodePluginPublishReady}
+            />
+          ) : null}
           {/* Tool List Form */}
-          {!!dataSource?.length && (
+          {!isCodePluginDetail && !!dataSource?.length && (
             <div className="mb-[24px] mt-[36px] text-[18px] weight-[600]">
               {I18n.t('plugin_api_list_table_name')}
             </div>
           )}
-          <Table
-            ref={tableRef}
-            offsetY={390}
-            tableProps={{
-              rowKey: 'api_id',
-              loading,
-              dataSource,
-              columns,
-              onRow,
-              onChange: e => {
-                if (e.sorter?.sortOrder) {
-                  //chronological sorting
-                  setParams(p => ({
-                    ...p,
-                    page: 1,
-                    size: 10,
-                    order: {
-                      desc: e.sorter?.sortOrder === 'descend',
-                    },
-                  }));
-                }
-              },
-            }}
-            empty={
-              <UIEmpty
-                empty={{
-                  title: I18n.t('plugin_empty_desc'),
-                  btnText: canEdit ? createToolText : undefined,
-                  btnOnClick: () => {
-                    if (isCloudIDEPlugin) {
-                      // Change the routing address and it will be cleared when returning.
-                      preloadIDE?.handleShowIde({
-                        initialAction: InitialAction.CREATE_TOOL,
-                        toolId: '',
-                      });
-                      return;
-                    } else {
-                      openCreateToolModal();
-                    }
-                  },
-                }}
-              />
-            }
-            enableLoad
-            total={Number(data?.total || 0)}
-            onLoad={() => {
-              setParams(p => ({
-                ...p,
-                page: (params.page ?? 0) + 1,
-              }));
-            }}
-          />
+          {!isCodePluginDetail ? (
+            <Table
+              ref={tableRef}
+              offsetY={390}
+              tableProps={{
+                rowKey: 'api_id',
+                loading,
+                dataSource,
+                columns,
+                onRow,
+                onChange: e => {
+                  if (e.sorter?.sortOrder) {
+                    //chronological sorting
+                    setParams(p => ({
+                      ...p,
+                      page: 1,
+                      size: 10,
+                      order: {
+                        desc: e.sorter?.sortOrder === 'descend',
+                      },
+                    }));
+                  }
+                },
+              }}
+              empty={
+                <UIEmpty
+                  empty={{
+                    title: I18n.t('plugin_empty_desc'),
+                    btnText: canEdit ? createToolText : undefined,
+                    btnOnClick: openCreateToolModal,
+                  }}
+                />
+              }
+              enableLoad
+              total={Number(data?.total || 0)}
+              onLoad={() => {
+                setParams(p => ({
+                  ...p,
+                  page: (params.page ?? 0) + 1,
+                }));
+              }}
+            />
+          ) : null}
           {createToolContent}
         </Layout.Content>
       </Layout>

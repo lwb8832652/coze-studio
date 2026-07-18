@@ -44,9 +44,9 @@ export interface Skill {
   permissions: string,
   created_at: number,
   updated_at: number,
-  icon_uri?: string,
-  usage_scenarios?: string,
-  development_thread_id?: string,
+  icon_uri: string,
+  usage_scenarios: string,
+  development_thread_id: string,
 }
 export interface UpsertSkillRequest {
   id?: string,
@@ -60,8 +60,8 @@ export interface UpsertSkillRequest {
   output_schema: string,
   executor: string,
   permissions: string,
-  icon_uri?: string,
-  usage_scenarios?: string,
+  icon_uri: string,
+  usage_scenarios: string,
 }
 export interface UpdateSkillRequest {
   id: string,
@@ -75,8 +75,8 @@ export interface UpdateSkillRequest {
   output_schema: string,
   executor: string,
   permissions: string,
-  icon_uri?: string,
-  usage_scenarios?: string,
+  icon_uri: string,
+  usage_scenarios: string,
   expected_version_id: string,
 }
 export interface ImportSkillRequest {
@@ -360,8 +360,7 @@ export const ListSkillVersionResources = /*#__PURE__*/createAPI<ListSkillVersion
   "name": "ListSkillVersionResources",
   "reqType": "ListSkillVersionResourcesRequest",
   "reqMapping": {
-    "path": ["skill_id", "version_id"],
-    "body": ["expected_version_id"]
+    "path": ["skill_id", "version_id"]
   },
   "resType": "ListSkillVersionResourcesResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",
@@ -411,7 +410,8 @@ export const RollbackSkillVersion = /*#__PURE__*/createAPI<RollbackSkillVersionR
   "name": "RollbackSkillVersion",
   "reqType": "RollbackSkillVersionRequest",
   "reqMapping": {
-    "path": ["skill_id", "version_id"]
+    "path": ["skill_id", "version_id"],
+    "body": ["expected_version_id"]
   },
   "resType": "SkillResponse",
   "schemaRoot": "api://schemas/idl_workbench_skill",

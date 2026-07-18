@@ -397,6 +397,9 @@ func normalizeProviderConfiguration(
 	if err != nil {
 		return "", "", nil, RuntimePolicy{}, err
 	}
+	if !providerTypeSupportsScopes(providerType, normalizedScopes) {
+		return "", "", nil, RuntimePolicy{}, ErrInvalidInput
+	}
 	normalizedPolicy, err := NormalizeRuntimePolicy(policy)
 	if err != nil {
 		return "", "", nil, RuntimePolicy{}, err
@@ -423,7 +426,7 @@ func NormalizeScopes(scopes []Scope) ([]Scope, error) {
 	}
 
 	normalized := make([]Scope, 0, len(seen))
-	for _, scope := range []Scope{ScopeAgent, ScopeMCPStdio, ScopeAppDev} {
+	for _, scope := range []Scope{ScopeAgent, ScopeMCPStdio, ScopeAppDev, ScopePlugin} {
 		if _, ok := seen[scope]; ok {
 			normalized = append(normalized, scope)
 		}
@@ -1016,6 +1019,18 @@ func validProviderType(providerType ProviderType) bool {
 	return providerType == ProviderTypeRemoteHTTP || providerType == ProviderTypeLocalDebug
 }
 
+func providerTypeSupportsScopes(providerType ProviderType, scopes []Scope) bool {
+	if providerType != ProviderTypeLocalDebug {
+		return true
+	}
+	for _, scope := range scopes {
+		if scope == ScopePlugin {
+			return false
+		}
+	}
+	return true
+}
+
 func validProviderStatus(status ProviderStatus) bool {
 	return status == ProviderStatusDisabled || status == ProviderStatusEnabled
 }
@@ -1030,7 +1045,8 @@ func validHealthStatus(status HealthStatus) bool {
 }
 
 func validScope(scope Scope) bool {
-	return scope == ScopeAgent || scope == ScopeMCPStdio || scope == ScopeAppDev
+	return scope == ScopeAgent || scope == ScopeMCPStdio || scope == ScopeAppDev ||
+		scope == ScopePlugin
 }
 
 func isLowerASCIIAlphaNumeric(character byte) bool {

@@ -35,9 +35,12 @@ import (
 	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
 
+const codePluginIDEConfig = `{"code_runtime_enum":{"default":"1","options":[{"label":"Python","value":"1"},{"label":"JavaScript","value":"2"}]}}`
+
 func (p *PluginApplicationService) GetOAuthSchema(ctx context.Context, req *pluginAPI.GetOAuthSchemaRequest) (resp *pluginAPI.GetOAuthSchemaResponse, err error) {
 	return &pluginAPI.GetOAuthSchemaResponse{
 		OauthSchema: pluginConf.GetOAuthSchema(),
+		IdeConf:     codePluginIDEConfig,
 	}, nil
 }
 
@@ -147,18 +150,29 @@ func (p *PluginApplicationService) RevokeAuthToken(ctx context.Context, req *plu
 }
 
 func (p *PluginApplicationService) GetUserAuthority(ctx context.Context, req *pluginAPI.GetUserAuthorityRequest) (resp *pluginAPI.GetUserAuthorityResponse, err error) {
-	resp = &pluginAPI.GetUserAuthorityResponse{
-		Data: &common.GetUserAuthorityData{
-			CanEdit:          true,
-			CanRead:          true,
-			CanDelete:        true,
-			CanDebug:         true,
-			CanPublish:       true,
-			CanReadChangelog: true,
-		},
+	uid := ctxutil.GetUIDFromCtx(ctx)
+	if uid == nil {
+		return nil, errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required"))
 	}
-
-	return resp, nil
+	draftPlugin, err := p.DomainSVC.GetDraftPlugin(ctx, req.PluginID)
+	if err != nil {
+		return nil, errorx.Wrapf(err, "GetDraftPlugin failed, pluginID=%d", req.PluginID)
+	}
+	role, member, err := p.getSpaceRole(ctx, draftPlugin.SpaceID, *uid)
+	if err != nil {
+		return nil, err
+	}
+	data := &common.GetUserAuthorityData{}
+	if member {
+		data.CanRead = true
+		data.CanReadChangelog = true
+		canEdit := canCreateOrEditPlugin(role)
+		data.CanEdit = canEdit
+		data.CanDelete = canEdit
+		data.CanDebug = canEdit
+		data.CanPublish = canEdit
+	}
+	return &pluginAPI.GetUserAuthorityResponse{Data: data}, nil
 }
 
 // PluginOauthAuthorizationCode handles the OAuth provider callback in the two-step confirmation flow.

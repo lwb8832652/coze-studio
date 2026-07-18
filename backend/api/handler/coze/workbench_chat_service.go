@@ -54,6 +54,3 @@ func workbenchChatErrorResponse(ctx context.Context, c *app.RequestContext, err 
 	}
 	workbenchThreadErrorResponse(ctx, c, err)
 }
-
-// GetWorkbenchRuntimeDoctor .
-// @router /api/workbench/runtime_doctor [GET]

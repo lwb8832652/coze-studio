@@ -25,7 +25,30 @@ export const SANDBOX_SCOPE_OPTIONS: Array<{
     label: '网页应用开发',
     description: 'AppDev 构建与预览运行时',
   },
+  {
+    value: 'plugin',
+    label: '代码插件',
+    description: '代码插件的受控执行环境',
+  },
 ];
+
+export const isSandboxScopeAllowedForProviderType = (
+  providerType: SandboxProvider['type'],
+  scope: SandboxScope,
+) => providerType !== 'local_debug' || scope !== 'plugin';
+
+export const getSandboxScopeOptions = (providerType: SandboxProvider['type']) =>
+  SANDBOX_SCOPE_OPTIONS.filter(option =>
+    isSandboxScopeAllowedForProviderType(providerType, option.value),
+  );
+
+export const filterSandboxScopesForProviderType = (
+  providerType: SandboxProvider['type'],
+  scopes: SandboxScope[],
+) =>
+  scopes.filter(scope =>
+    isSandboxScopeAllowedForProviderType(providerType, scope),
+  );
 
 export const HEALTH_STALE_AFTER_MS = 5 * 60 * 1000;
 

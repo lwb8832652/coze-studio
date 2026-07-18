@@ -413,9 +413,12 @@ func Register(r *server.Hertz) {
 			_plugin_api.POST("/convert_to_openapi", append(_convert2openapiMw(), coze.Convert2OpenAPI)...)
 			_plugin_api.POST("/create_api", append(_createapiMw(), coze.CreateAPI)...)
 			_plugin_api.POST("/debug_api", append(_debugapiMw(), coze.DebugAPI)...)
+			_plugin_api.POST("/debug_code_plugin", append(_debugcodepluginMw(), coze.DebugCodePlugin)...)
 			_plugin_api.POST("/del_plugin", append(_delpluginMw(), coze.DelPlugin)...)
 			_plugin_api.POST("/delete_api", append(_deleteapiMw(), coze.DeleteAPI)...)
 			_plugin_api.POST("/get_bot_default_params", append(_getbotdefaultparamsMw(), coze.GetBotDefaultParams)...)
+			_plugin_api.POST("/get_code_plugin_draft", append(_getcodeplugindraftMw(), coze.GetCodePluginDraft)...)
+			_plugin_api.POST("/get_code_plugin_version", append(_getcodepluginversionMw(), coze.GetCodePluginVersion)...)
 			_plugin_api.POST("/get_dev_plugin_list", append(_getdevpluginlistMw(), coze.GetDevPluginList)...)
 			_plugin_api.POST("/get_oauth_schema", append(_getoauthschemaapiMw(), coze.GetOAuthSchemaAPI)...)
 			_plugin_api.POST("/get_oauth_status", append(_getoauthstatusMw(), coze.GetOAuthStatus)...)
@@ -436,6 +439,7 @@ func Register(r *server.Hertz) {
 			_plugin_api.POST("/resource_copy_dispatch", append(_resourcecopydispatchMw(), coze.ResourceCopyDispatch)...)
 			_plugin_api.POST("/resource_copy_retry", append(_resourcecopyretryMw(), coze.ResourceCopyRetry)...)
 			_plugin_api.POST("/revoke_auth_token", append(_revokeauthtokenMw(), coze.RevokeAuthToken)...)
+			_plugin_api.POST("/save_code_plugin_draft", append(_savecodeplugindraftMw(), coze.SaveCodePluginDraft)...)
 			_plugin_api.POST("/unlock_plugin_edit", append(_unlockplugineditMw(), coze.UnlockPluginEdit)...)
 			_plugin_api.POST("/update", append(_updatepluginMw(), coze.UpdatePlugin)...)
 			_plugin_api.POST("/update_api", append(_updateapiMw(), coze.UpdateAPI)...)
@@ -699,5 +703,4 @@ func Register(r *server.Hertz) {
 			}
 		}
 	}
-	registerCustomRoutes(r)
 }

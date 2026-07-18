@@ -28,6 +28,7 @@ import (
 func TestRegisterIncludesWorkbenchSkillVersionRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	versions := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/100/versions", nil)
 	resources := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/skills/100/versions/200/resources", nil)

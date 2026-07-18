@@ -28,6 +28,7 @@ import (
 func GeneratedRegister(r *server.Hertz) {
 	//INSERT_POINT: DO NOT DELETE THIS LINE!
 	coze.Register(r)
+	coze.RegisterCustomRoutes(r)
 	handler := handlercoze.NewDynamicAppDevArtifactGatewayHandler()
 	if err := coze.RegisterAppDevArtifactGatewayRoutes(&coze.AppDevArtifactGatewayRouteConfig{Root: r.Group("")}, handler); err != nil {
 		panic("register appdev artifact gateway")

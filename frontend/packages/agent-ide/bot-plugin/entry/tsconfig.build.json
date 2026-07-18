@@ -15,6 +15,9 @@
   "include": ["src"],
   "references": [
     {
+      "path": "../../../arch/api-schema/tsconfig.build.json"
+    },
+    {
       "path": "../../../arch/bot-api/tsconfig.build.json"
     },
     {

@@ -27,6 +27,7 @@ const config = [
       workbench: './idl/workbench/workbench.thrift',
       workbenchSkill: './idl/workbench/skill.thrift',
       workbenchTask: './idl/workbench/task.thrift',
+      pluginDevelop: './idl/plugin/plugin_develop.thrift',
     },
     commonCodePath: path.resolve(__dirname, './src/api/config.ts'), // custom profile
     output: './src', // Product location

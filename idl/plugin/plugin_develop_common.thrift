@@ -424,3 +424,60 @@ struct DuplicateAPIInfo{
     2: string path  ,
     3: i64    count ,
 }
+
+enum CodePluginRuntime {
+    Python     = 1,
+    JavaScript = 2,
+}
+
+enum CodePluginDebugStatus {
+    Success      = 1,
+    RuntimeError = 2,
+    Timeout      = 3,
+    Capacity     = 4,
+    OutputLimit  = 5,
+    Canceled     = 6,
+    Unavailable  = 7,
+}
+
+struct CodePluginFile {
+    1: required string path   ,
+    2: required string content,
+    3: optional string sha256 ,
+}
+
+struct CodePluginDraftData {
+    1: required i64               plugin_id              (api.js_conv = "str"),
+    2: required i64               space_id               (api.js_conv = "str"),
+    3: required CodePluginRuntime runtime                ,
+    4: required string            entry_file             ,
+    5: required list<CodePluginFile> files               ,
+    6: required i64               revision               ,
+    7: required i64               last_debugged_revision ,
+    8: required bool              debug_ready            ,
+    9: required string            input_schema_json      ,
+    10: required string           output_schema_json     ,
+}
+
+struct CodePluginVersionData {
+    1: required i64               plugin_id       (api.js_conv = "str"),
+    2: required i64               space_id        (api.js_conv = "str"),
+    3: required string            version         ,
+    4: required CodePluginRuntime runtime         ,
+    5: required string            entry_file      ,
+    6: required list<CodePluginFile> files        ,
+    7: required i64               source_revision ,
+    8: required i64               created_by      (api.js_conv = "str"),
+    9: required string            input_schema_json ,
+    10: required string           output_schema_json,
+}
+
+struct CodePluginDebugData {
+    1: required bool                  success      ,
+    2: required CodePluginDebugStatus status       ,
+    3: required string                result       ,
+    4: required string                reason       ,
+    5: required i64                   duration_ms  ,
+    6: required i64                   output_bytes ,
+    7: required i64                   revision     ,
+}

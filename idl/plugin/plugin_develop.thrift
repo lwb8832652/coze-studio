@@ -47,6 +47,10 @@ service PluginDevelopService {
     BatchCreateAPIResponse BatchCreateAPI(1: BatchCreateAPIRequest request)(api.post='/api/plugin_api/batch_create_api', api.category="plugin", api.gen_path="plugin", agw.preserve_base="true")
     RevokeAuthTokenResponse RevokeAuthToken(1: RevokeAuthTokenRequest request)(api.post='/api/plugin_api/revoke_auth_token', api.category="plugin", api.gen_path="plugin", agw.preserve_base="true")
     GetQueriedOAuthPluginListResponse GetQueriedOAuthPluginList(1: GetQueriedOAuthPluginListRequest request)(api.post='/api/plugin_api/get_queried_oauth_plugins', api.category="plugin", api.gen_path="plugin", agw.preserve_base="true")
+    GetCodePluginDraftResponse GetCodePluginDraft(1: GetCodePluginDraftRequest request)(api.post='/api/plugin_api/get_code_plugin_draft', api.category="plugin", api.gen_path="plugin")
+    SaveCodePluginDraftResponse SaveCodePluginDraft(1: SaveCodePluginDraftRequest request)(api.post='/api/plugin_api/save_code_plugin_draft', api.category="plugin", api.gen_path="plugin")
+    DebugCodePluginResponse DebugCodePlugin(1: DebugCodePluginRequest request)(api.post='/api/plugin_api/debug_code_plugin', api.category="plugin", api.gen_path="plugin")
+    GetCodePluginVersionResponse GetCodePluginVersion(1: GetCodePluginVersionRequest request)(api.post='/api/plugin_api/get_code_plugin_version', api.category="plugin", api.gen_path="plugin")
 }
 
 struct GetPlaygroundPluginListRequest {
@@ -622,4 +626,65 @@ struct GetQueriedOAuthPluginListResponse {
     253: i64 code
     254: string msg
     255: required base.BaseResp         BaseResp         ,
+}
+
+struct GetCodePluginDraftRequest {
+    1  : required i64 plugin_id (api.js_conv = "str", api.body = "plugin_id"),
+    2  : required i64 space_id  (api.js_conv = "str", api.body = "space_id") ,
+    255: optional base.Base Base,
+}
+
+struct GetCodePluginDraftResponse {
+    1  : required i64                                           code,
+    2  : required string                                        msg ,
+    3  : optional plugin_develop_common.CodePluginDraftData     data,
+    255: optional base.BaseResp BaseResp,
+}
+
+struct SaveCodePluginDraftRequest {
+    1  : required i64                                           plugin_id  (api.js_conv = "str", api.body = "plugin_id") ,
+    2  : required i64                                           space_id   (api.js_conv = "str", api.body = "space_id")  ,
+    3  : required i64                                           revision   (api.body = "revision")                        ,
+    4  : required plugin_develop_common.CodePluginRuntime       runtime    (api.body = "runtime")                         ,
+    5  : required string                                        entry_file (api.body = "entry_file")                      ,
+    6  : required list<plugin_develop_common.CodePluginFile>    files      (api.body = "files")                           ,
+    7  : optional string                                        input_schema_json  (api.body = "input_schema_json")        ,
+    8  : optional string                                        output_schema_json (api.body = "output_schema_json")       ,
+    255: optional base.Base Base,
+}
+
+struct SaveCodePluginDraftResponse {
+    1  : required i64                                           code,
+    2  : required string                                        msg ,
+    3  : optional plugin_develop_common.CodePluginDraftData     data,
+    255: optional base.BaseResp BaseResp,
+}
+
+struct DebugCodePluginRequest {
+    1  : required i64    plugin_id        (api.js_conv = "str", api.body = "plugin_id")       ,
+    2  : required i64    space_id         (api.js_conv = "str", api.body = "space_id")        ,
+    3  : required i64    revision         (api.body = "revision")                              ,
+    4  : required string arguments_in_json (api.body = "arguments_in_json")                    ,
+    255: optional base.Base Base,
+}
+
+struct DebugCodePluginResponse {
+    1  : required i64                                           code,
+    2  : required string                                        msg ,
+    3  : optional plugin_develop_common.CodePluginDebugData     data,
+    255: optional base.BaseResp BaseResp,
+}
+
+struct GetCodePluginVersionRequest {
+    1  : required i64    plugin_id (api.js_conv = "str", api.body = "plugin_id"),
+    2  : required i64    space_id  (api.js_conv = "str", api.body = "space_id") ,
+    3  : required string version   (api.body = "version")                         ,
+    255: optional base.Base Base,
+}
+
+struct GetCodePluginVersionResponse {
+    1  : required i64                                           code,
+    2  : required string                                        msg ,
+    3  : optional plugin_develop_common.CodePluginVersionData   data,
+    255: optional base.BaseResp BaseResp,
 }

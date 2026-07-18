@@ -70,11 +70,18 @@ func (p *PluginApplicationService) GetPluginInfo(ctx context.Context, req *plugi
 		Creator:        common.NewCreator(),
 		StatisticData:  common.NewPluginStatisticData(),
 		PluginType:     draftPlugin.PluginType,
-		CreationMethod: common.CreationMethod_COZE,
+		CreationMethod: pluginCreationMethod(draftPlugin.PluginType),
 		Published:      exist,
 	}
 
 	return resp, nil
+}
+
+func pluginCreationMethod(pluginType common.PluginType) common.CreationMethod {
+	if pluginType == common.PluginType_FUNC {
+		return common.CreationMethod_IDE
+	}
+	return common.CreationMethod_COZE
 }
 
 func (p *PluginApplicationService) getPluginCodeInfo(ctx context.Context, draftPlugin *entity.PluginInfo) (*common.CodeInfo, error) {
@@ -253,27 +260,36 @@ func (p *PluginApplicationService) UpdatePlugin(ctx context.Context, req *plugin
 }
 
 func (p *PluginApplicationService) UpdatePluginMeta(ctx context.Context, req *pluginAPI.UpdatePluginMetaRequest) (resp *pluginAPI.UpdatePluginMetaResponse, err error) {
-	_, err = p.validateDraftPluginAccess(ctx, req.PluginID)
+	draftPlugin, err := p.validateDraftPluginAccess(ctx, req.PluginID)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "validateUpdatePluginMetaRequest failed")
 	}
 
-	authInfo, err := getUpdateAuthInfo(ctx, req)
+	var authInfo *dto.PluginAuthInfo
+	if draftPlugin.PluginType == common.PluginType_FUNC {
+		authInfo, err = getCodePluginUpdateAuthInfo(req)
+	} else {
+		authInfo, err = getUpdateAuthInfo(ctx, req)
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	updateReq := &dto.UpdateDraftPluginRequest{
-		PluginID:     req.PluginID,
-		Name:         req.Name,
-		Desc:         req.Desc,
-		URL:          req.URL,
-		Icon:         req.Icon,
-		CommonParams: req.CommonParams,
-		AuthInfo:     authInfo,
+		PluginID:        req.PluginID,
+		Name:            req.Name,
+		Desc:            req.Desc,
+		URL:             req.URL,
+		Icon:            req.Icon,
+		CommonParams:    req.CommonParams,
+		AuthInfo:        authInfo,
+		ClearHTTPConfig: draftPlugin.PluginType == common.PluginType_FUNC,
 	}
 	err = p.DomainSVC.UpdateDraftPlugin(ctx, updateReq)
 	if err != nil {
+		if draftPlugin.PluginType == common.PluginType_FUNC {
+			return nil, codePluginUnavailable(errorx.Wrapf(err, "UpdateDraftPlugin failed, pluginID=%d", req.PluginID))
+		}
 		return nil, errorx.Wrapf(err, "UpdateDraftPlugin failed, pluginID=%d", req.PluginID)
 	}
 
@@ -293,6 +309,28 @@ func (p *PluginApplicationService) UpdatePluginMeta(ctx context.Context, req *pl
 	resp = &pluginAPI.UpdatePluginMetaResponse{}
 
 	return resp, nil
+}
+
+func getCodePluginUpdateAuthInfo(req *pluginAPI.UpdatePluginMetaRequest) (*dto.PluginAuthInfo, error) {
+	if req.AuthType != nil && req.GetAuthType() != common.AuthorizationType_None {
+		return nil, codePluginInvalid(fmt.Errorf("code plugin auth type must be none"))
+	}
+	if req.URL != nil ||
+		req.Location != nil ||
+		req.Key != nil ||
+		req.ServiceToken != nil ||
+		req.OauthInfo != nil ||
+		req.SubAuthType != nil ||
+		req.AuthPayload != nil ||
+		req.FixedExportIP != nil ||
+		len(req.CommonParams) > 0 {
+		return nil, codePluginInvalid(fmt.Errorf("code plugin HTTP configuration is not supported"))
+	}
+
+	authType := consts.AuthzTypeOfNone
+	return &dto.PluginAuthInfo{
+		AuthzType: &authType,
+	}, nil
 }
 
 func getUpdateAuthInfo(ctx context.Context, req *pluginAPI.UpdatePluginMetaRequest) (authInfo *dto.PluginAuthInfo, err error) {

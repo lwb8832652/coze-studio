@@ -28,6 +28,7 @@ import (
 func TestRegisterIncludesWorkbenchMCPToolRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	list := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/mcp_tools?space_id=1", nil)
 	registryEntries := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/mcp_tools/registry_entries?space_id=1", nil)

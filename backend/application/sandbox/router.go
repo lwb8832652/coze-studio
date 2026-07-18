@@ -1783,7 +1783,8 @@ func (r LookupProviderExecutionRequest) finishResolve(consumed bool) {
 
 func validRouterScope(scope domainsandbox.Scope) bool {
 	switch scope {
-	case domainsandbox.ScopeAgent, domainsandbox.ScopeMCPStdio, domainsandbox.ScopeAppDev:
+	case domainsandbox.ScopeAgent, domainsandbox.ScopeMCPStdio, domainsandbox.ScopeAppDev,
+		domainsandbox.ScopePlugin:
 		return true
 	default:
 		return false

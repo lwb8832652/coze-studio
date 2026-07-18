@@ -60,7 +60,7 @@ export interface WorkbenchChatResponse {
   msg: string,
 }
 export interface GetWorkbenchRuntimeDoctorRequest {
-  space_id: string,
+  space_id: string
 }
 export interface RuntimeDoctorCheck {
   name: string,
@@ -71,44 +71,6 @@ export interface RuntimeDoctorCheck {
 export interface RuntimeDoctorRuntimeData {
   default_mode: string,
   eino_adk_enabled: boolean,
-}
-export interface RuntimeDoctorModelCapabilities {
-  native_tool_search: boolean,
-  thinking: boolean,
-  reasoning: boolean,
-  vision: boolean,
-  pdf: boolean,
-  file: boolean,
-  audio: boolean,
-  video: boolean,
-}
-export interface RuntimeDoctorModelData {
-  status: string,
-  configured: boolean,
-  live_probe: string,
-  capabilities?: RuntimeDoctorModelCapabilities,
-  message?: string,
-}
-export interface RuntimeDoctorSandboxData {
-  status: string,
-  runner_type: string,
-  network: string,
-  process: string,
-  ffi: string,
-  node_modules: string,
-  message?: string,
-  scopes?: RuntimeDoctorSandboxScopeData[],
-}
-export interface RuntimeDoctorSandboxScopeData {
-  scope: string,
-  configured: boolean,
-  available: boolean,
-  selected: boolean,
-  health_status: string,
-  reason_code: string,
-  provider_type?: string,
-  provider_ref?: string,
-  checked_at?: string,
 }
 export interface RuntimeDoctorWebToolStatus {
   status: string,
@@ -127,14 +89,52 @@ export interface RuntimeDoctorMCPToolsData {
   unhealthy_servers: number,
   unknown_servers: number,
 }
+export interface RuntimeDoctorModelCapabilities {
+  native_tool_search: boolean,
+  thinking: boolean,
+  reasoning: boolean,
+  vision: boolean,
+  pdf: boolean,
+  file: boolean,
+  audio: boolean,
+  video: boolean,
+}
+export interface RuntimeDoctorModelData {
+  status: string,
+  configured: boolean,
+  live_probe: string,
+  capabilities?: RuntimeDoctorModelCapabilities,
+  message?: string,
+}
+export interface RuntimeDoctorSandboxScopeData {
+  scope: string,
+  configured: boolean,
+  available: boolean,
+  selected: boolean,
+  health_status: string,
+  reason_code: string,
+  provider_type?: string,
+  provider_ref?: string,
+  checked_at?: string,
+}
+export interface RuntimeDoctorSandboxData {
+  status: string,
+  runner_type: string,
+  network: string,
+  process: string,
+  ffi: string,
+  node_modules: string,
+  message?: string,
+  scopes?: RuntimeDoctorSandboxScopeData[],
+}
 export interface WorkbenchRuntimeDoctorData {
   status: string,
   runtime: RuntimeDoctorRuntimeData,
-  model: RuntimeDoctorModelData,
-  sandbox: RuntimeDoctorSandboxData,
   web_tools: RuntimeDoctorWebToolsData,
   mcp_tools: RuntimeDoctorMCPToolsData,
   checks: RuntimeDoctorCheck[],
+  model: RuntimeDoctorModelData,
+  sandbox: RuntimeDoctorSandboxData,
 }
 export interface WorkbenchRuntimeDoctorResponse {
   data?: WorkbenchRuntimeDoctorData,
@@ -147,21 +147,7 @@ export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, Workbe
   "name": "WorkbenchChat",
   "reqType": "WorkbenchChatRequest",
   "reqMapping": {
-    "body": [
-      "space_id",
-      "conversation_id",
-      "message",
-      "mode",
-      "selected_skill_id",
-      "task_id",
-      "enable_skills",
-      "enable_mcp",
-      "enable_kbs",
-      "enable_databases",
-      "model_type",
-      "model_name",
-      "runtime_settings"
-    ]
+    "body": ["space_id", "conversation_id", "message", "mode", "selected_skill_id", "task_id", "enable_skills", "enable_mcp", "enable_kbs", "enable_databases", "model_type", "model_name", "runtime_settings"]
   },
   "resType": "WorkbenchChatResponse",
   "schemaRoot": "api://schemas/idl_workbench_workbench",
@@ -173,9 +159,7 @@ export const GetWorkbenchRuntimeDoctor = /*#__PURE__*/createAPI<GetWorkbenchRunt
   "name": "GetWorkbenchRuntimeDoctor",
   "reqType": "GetWorkbenchRuntimeDoctorRequest",
   "reqMapping": {
-    "query": [
-      "space_id"
-    ]
+    "query": ["space_id"]
   },
   "resType": "WorkbenchRuntimeDoctorResponse",
   "schemaRoot": "api://schemas/idl_workbench_workbench",

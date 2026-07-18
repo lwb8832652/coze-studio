@@ -683,7 +683,8 @@ func normalizeExecuteRequestForReconciliation(input ExecuteRequest, now time.Tim
 }
 
 func normalizeExecuteRequestWithTemporalMode(input ExecuteRequest, now time.Time, allowExpired bool) (ExecuteRequest, error) {
-	if !scopeMatchesWorkload(input.Scope, input.WorkloadKind) || !validIdentifier(input.IdempotencyKey) ||
+	if !scopeMatchesWorkloadEntrypoint(input.Scope, input.WorkloadKind, input.Entrypoint) ||
+		!validIdentifier(input.IdempotencyKey) ||
 		input.Deadline.IsZero() || (!allowExpired && !input.Deadline.After(now)) || input.Deadline.After(now.Add(MaxExecutionDeadlineAhead)) ||
 		!validLogicalPath(input.Entrypoint) || len(input.Args) > MaxArgs || len(input.Env) > MaxEnvVars ||
 		len(input.Stdin) > MaxStdinBytes || len(input.Files) > MaxFiles || len(input.ArtifactReferences) > MaxArtifacts {
@@ -909,7 +910,19 @@ func validExecutionID(value string) bool { return validIdentifier(value) }
 func scopeMatchesWorkload(scope domainsandbox.Scope, kind WorkloadKind) bool {
 	return scope == domainsandbox.ScopeAgent && kind == WorkloadAgent ||
 		scope == domainsandbox.ScopeMCPStdio && kind == WorkloadMCPStdio ||
-		scope == domainsandbox.ScopeAppDev && kind == WorkloadAppDev
+		scope == domainsandbox.ScopeAppDev && kind == WorkloadAppDev ||
+		scope == domainsandbox.ScopePlugin && kind == WorkloadPlugin
+}
+
+func scopeMatchesWorkloadEntrypoint(
+	scope domainsandbox.Scope,
+	kind WorkloadKind,
+	entrypoint string,
+) bool {
+	if !scopeMatchesWorkload(scope, kind) {
+		return false
+	}
+	return scope != domainsandbox.ScopePlugin || entrypoint == PluginCodeRunnerEntrypoint
 }
 
 func validIdentifier(value string) bool {

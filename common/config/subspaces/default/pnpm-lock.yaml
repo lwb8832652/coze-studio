@@ -1831,6 +1831,9 @@ importers:
       '@coze-common/biz-components':
         specifier: workspace:*
         version: link:../../../common/biz-components
+      '@coze-studio/api-schema':
+        specifier: workspace:*
+        version: link:../../../arch/api-schema
       '@coze-studio/bot-detail-store':
         specifier: workspace:*
         version: link:../../../studio/stores/bot-detail

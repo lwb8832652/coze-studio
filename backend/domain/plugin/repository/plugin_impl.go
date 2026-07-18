@@ -285,6 +285,7 @@ func (p *pluginRepoImpl) PublishPlugin(ctx context.Context, draftPlugin *entity.
 	if err != nil {
 		return err
 	}
+	draftTools = toolsForPluginPublish(draftPlugin.PluginType, draftTools)
 
 	activatedTools := make([]*entity.ToolInfo, 0, len(draftTools))
 	for _, tool := range draftTools {
@@ -297,7 +298,7 @@ func (p *pluginRepoImpl) PublishPlugin(ctx context.Context, draftPlugin *entity.
 		activatedTools = append(activatedTools, tool)
 	}
 
-	if len(activatedTools) == 0 {
+	if len(activatedTools) == 0 && pluginPublishRequiresActivatedTools(draftPlugin.PluginType) {
 		return errorx.New(errno.ErrPluginToolsCheckFailed, errorx.KVf(errno.PluginMsgKey,
 			"at least one activated tool is required in plugin '%s'", draftPlugin.GetName()))
 	}
@@ -336,18 +337,37 @@ func (p *pluginRepoImpl) PublishPlugin(ctx context.Context, draftPlugin *entity.
 	if err != nil {
 		return err
 	}
-
-	err = p.toolDAO.BatchCreateWithTX(ctx, tx, activatedTools)
-	if err != nil {
-		return err
+	if draftPlugin.PluginType == common.PluginType_FUNC {
+		err = p.toolDraftDAO.DeleteAllWithTX(ctx, tx, draftPlugin.ID)
+		if err != nil {
+			return err
+		}
 	}
 
-	err = p.toolVersionDAO.BatchCreateWithTX(ctx, tx, activatedTools)
-	if err != nil {
-		return err
+	if len(activatedTools) > 0 {
+		err = p.toolDAO.BatchCreateWithTX(ctx, tx, activatedTools)
+		if err != nil {
+			return err
+		}
+
+		err = p.toolVersionDAO.BatchCreateWithTX(ctx, tx, activatedTools)
+		if err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()
+}
+
+func pluginPublishRequiresActivatedTools(pluginType common.PluginType) bool {
+	return pluginType != common.PluginType_FUNC
+}
+
+func toolsForPluginPublish(pluginType common.PluginType, tools []*entity.ToolInfo) []*entity.ToolInfo {
+	if pluginType == common.PluginType_FUNC {
+		return nil
+	}
+	return tools
 }
 
 func (p *pluginRepoImpl) PublishPlugins(ctx context.Context, draftPlugins []*entity.PluginInfo) (err error) {
@@ -361,6 +381,7 @@ func (p *pluginRepoImpl) PublishPlugins(ctx context.Context, draftPlugins []*ent
 		if mErr != nil {
 			return mErr
 		}
+		draftTools = toolsForPluginPublish(draftPlugin.PluginType, draftTools)
 
 		activatedTools := make([]*entity.ToolInfo, 0, len(draftTools))
 		for _, tool := range draftTools {
@@ -379,7 +400,7 @@ func (p *pluginRepoImpl) PublishPlugins(ctx context.Context, draftPlugins []*ent
 			activatedTools = append(activatedTools, tool)
 		}
 
-		if len(activatedTools) == 0 {
+		if len(activatedTools) == 0 && pluginPublishRequiresActivatedTools(draftPlugin.PluginType) {
 			return errorx.New(errno.ErrPluginToolsCheckFailed, errorx.KVf(errno.PluginMsgKey,
 				"at least one activated tool is required in plugin '%s'", draftPlugin.GetName()))
 		}
@@ -424,15 +445,23 @@ func (p *pluginRepoImpl) PublishPlugins(ctx context.Context, draftPlugins []*ent
 		if err != nil {
 			return err
 		}
-
-		err = p.toolDAO.BatchCreateWithTX(ctx, tx, tools)
-		if err != nil {
-			return err
+		if draftPlugin.PluginType == common.PluginType_FUNC {
+			err = p.toolDraftDAO.DeleteAllWithTX(ctx, tx, draftPlugin.ID)
+			if err != nil {
+				return err
+			}
 		}
 
-		err = p.toolVersionDAO.BatchCreateWithTX(ctx, tx, tools)
-		if err != nil {
-			return err
+		if len(tools) > 0 {
+			err = p.toolDAO.BatchCreateWithTX(ctx, tx, tools)
+			if err != nil {
+				return err
+			}
+
+			err = p.toolVersionDAO.BatchCreateWithTX(ctx, tx, tools)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

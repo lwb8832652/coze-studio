@@ -29,6 +29,7 @@ import (
 	search "github.com/coze-dev/coze-studio/backend/domain/search/service"
 	user "github.com/coze-dev/coze-studio/backend/domain/user/service"
 	"github.com/coze-dev/coze-studio/backend/infra/cache"
+	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
@@ -60,6 +61,7 @@ func InitService(ctx context.Context, components *ServiceComponents) (*PluginApp
 		IDGen: components.IDGen,
 		DB:    components.DB,
 	})
+	codeRepo := repository.NewCodePluginRepository(components.DB)
 
 	oauthRepo := repository.NewOAuthRepo(&repository.OAuthRepoComponents{
 		IDGen: components.IDGen,
@@ -74,6 +76,7 @@ func InitService(ctx context.Context, components *ServiceComponents) (*PluginApp
 		PluginRepo: pluginRepo,
 		ToolRepo:   toolRepo,
 		OAuthRepo:  oauthRepo,
+		CodeRepo:   codeRepo,
 	})
 
 	err = checkIDExist(ctx, pluginSVC)
@@ -85,8 +88,11 @@ func InitService(ctx context.Context, components *ServiceComponents) (*PluginApp
 	PluginApplicationSVC.eventbus = components.EventBus
 	PluginApplicationSVC.oss = components.OSS
 	PluginApplicationSVC.userSVC = components.UserSVC
+	PluginApplicationSVC.spaceAccess = components.UserSVC
 	PluginApplicationSVC.pluginRepo = pluginRepo
 	PluginApplicationSVC.toolRepo = toolRepo
+	PluginApplicationSVC.codeRepo = codeRepo
+	PluginApplicationSVC.codeRunner = coderunner.GetCodeRunner()
 
 	return PluginApplicationSVC, nil
 }

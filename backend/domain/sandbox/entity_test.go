@@ -27,11 +27,28 @@ import (
 )
 
 func TestProviderEnumsAreStable(t *testing.T) {
-	if ScopeAgent != "agent" || ScopeMCPStdio != "mcp_stdio" || ScopeAppDev != "appdev" {
-		t.Fatalf("unexpected scope values: %q, %q, %q", ScopeAgent, ScopeMCPStdio, ScopeAppDev)
+	if ScopeAgent != "agent" || ScopeMCPStdio != "mcp_stdio" ||
+		ScopeAppDev != "appdev" || ScopePlugin != "plugin" {
+		t.Fatalf(
+			"unexpected scope values: %q, %q, %q, %q",
+			ScopeAgent,
+			ScopeMCPStdio,
+			ScopeAppDev,
+			ScopePlugin,
+		)
 	}
 	if ProviderTypeRemoteHTTP != "remote_http" || ProviderTypeLocalDebug != "local_debug" {
 		t.Fatalf("unexpected provider type values: %q, %q", ProviderTypeRemoteHTTP, ProviderTypeLocalDebug)
+	}
+}
+
+func TestProviderNormalizesPluginScope(t *testing.T) {
+	scopes, err := NormalizeScopes([]Scope{ScopePlugin, ScopeAgent, ScopePlugin})
+	if err != nil {
+		t.Fatalf("NormalizeScopes() error = %v", err)
+	}
+	if want := []Scope{ScopeAgent, ScopePlugin}; !reflect.DeepEqual(scopes, want) {
+		t.Fatalf("NormalizeScopes() = %#v, want %#v", scopes, want)
 	}
 }
 

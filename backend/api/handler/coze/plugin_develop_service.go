@@ -20,6 +20,7 @@ package coze
 
 import (
 	"context"
+	"errors"
 	"regexp"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -29,6 +30,8 @@ import (
 	common "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop/common"
 	"github.com/coze-dev/coze-studio/backend/application/plugin"
 	appworkflow "github.com/coze-dev/coze-studio/backend/application/workflow"
+	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 // GetPlaygroundPluginList .
@@ -103,7 +106,19 @@ func RegisterPluginMeta(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, "plugin icon is invalid")
 		return
 	}
-	if req.AuthType == nil {
+	isHTTPPlugin := req.GetPluginType() == common.PluginType_PLUGIN &&
+		req.GetCreationMethod() == common.CreationMethod_COZE
+	isCodePlugin := req.GetPluginType() == common.PluginType_FUNC &&
+		req.GetCreationMethod() == common.CreationMethod_IDE
+	if !isHTTPPlugin && !isCodePlugin {
+		invalidParamRequestResponse(c, "plugin creation combination is invalid")
+		return
+	}
+	if req.AuthType == nil && !isCodePlugin {
+		invalidParamRequestResponse(c, "plugin auth type is invalid")
+		return
+	}
+	if isCodePlugin && req.AuthType != nil && req.GetAuthType() != common.AuthorizationType_None {
 		invalidParamRequestResponse(c, "plugin auth type is invalid")
 		return
 	}
@@ -117,14 +132,10 @@ func RegisterPluginMeta(ctx context.Context, c *app.RequestContext) {
 			return
 		}
 	}
-	if req.GetPluginType() != common.PluginType_PLUGIN {
-		invalidParamRequestResponse(c, "plugin type is invalid")
-		return
-	}
 
 	resp, err := plugin.PluginApplicationSVC.RegisterPluginMeta(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		codePluginErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -346,7 +357,7 @@ func DelPlugin(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := plugin.PluginApplicationSVC.DelPlugin(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		codePluginErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -368,7 +379,7 @@ func PublishPlugin(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, "pluginID is invalid")
 		return
 	}
-	if req.VersionName == "" || len(req.VersionName) > 255 {
+	if req.VersionName == "" || len(req.VersionName) > entity.MaxCodeVersionLength {
 		invalidParamRequestResponse(c, "version name is invalid")
 		return
 	}
@@ -386,7 +397,7 @@ func PublishPlugin(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := plugin.PluginApplicationSVC.PublishPlugin(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		codePluginErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -423,7 +434,7 @@ func UpdatePluginMeta(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := plugin.PluginApplicationSVC.UpdatePluginMeta(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		codePluginErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -912,4 +923,110 @@ func GetQueriedOAuthPluginList(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+// GetCodePluginDraft .
+// @router /api/plugin_api/get_code_plugin_draft [POST]
+func GetCodePluginDraft(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req plugin_develop.GetCodePluginDraftRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		codePluginBindError(ctx, c, "get draft", err)
+		return
+	}
+
+	resp, err := plugin.PluginApplicationSVC.GetCodePluginDraft(ctx, &req)
+	if err != nil {
+		codePluginErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// SaveCodePluginDraft .
+// @router /api/plugin_api/save_code_plugin_draft [POST]
+func SaveCodePluginDraft(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req plugin_develop.SaveCodePluginDraftRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		codePluginBindError(ctx, c, "save draft", err)
+		return
+	}
+
+	resp, err := plugin.PluginApplicationSVC.SaveCodePluginDraft(ctx, &req)
+	if err != nil {
+		codePluginErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// DebugCodePlugin .
+// @router /api/plugin_api/debug_code_plugin [POST]
+func DebugCodePlugin(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req plugin_develop.DebugCodePluginRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		codePluginBindError(ctx, c, "debug", err)
+		return
+	}
+
+	resp, err := plugin.PluginApplicationSVC.DebugCodePlugin(ctx, &req)
+	if err != nil {
+		codePluginErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// GetCodePluginVersion .
+// @router /api/plugin_api/get_code_plugin_version [POST]
+func GetCodePluginVersion(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req plugin_develop.GetCodePluginVersionRequest
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		codePluginBindError(ctx, c, "get version", err)
+		return
+	}
+
+	resp, err := plugin.PluginApplicationSVC.GetCodePluginVersion(ctx, &req)
+	if err != nil {
+		codePluginErrorResponse(ctx, c, err)
+		return
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+func codePluginBindError(ctx context.Context, c *app.RequestContext, operation string, err error) {
+	logs.CtxWarnf(ctx, "[CodePlugin] %s request binding failed: %v", operation, err)
+	c.String(consts.StatusBadRequest, "invalid code plugin request")
+}
+
+func codePluginErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	status := consts.StatusInternalServerError
+	code := "code_plugin_internal"
+	message := "code plugin request failed"
+	switch {
+	case errors.Is(err, plugin.ErrCodePluginInvalidRequest):
+		status, code, message = consts.StatusBadRequest, "code_plugin_invalid_request", "invalid code plugin request"
+	case errors.Is(err, plugin.ErrCodePluginPermission):
+		status, code, message = consts.StatusForbidden, "code_plugin_forbidden", "code plugin operation is forbidden"
+	case errors.Is(err, plugin.ErrCodePluginValidation):
+		status, code, message = consts.StatusUnprocessableEntity, "code_plugin_validation_failed", "code plugin schema or input validation failed"
+	case errors.Is(err, plugin.ErrCodePluginConflict):
+		status, code, message = consts.StatusConflict, "code_plugin_conflict", "code plugin revision or version conflict"
+	case errors.Is(err, plugin.ErrCodePluginUnavailable):
+		status, code, message = consts.StatusServiceUnavailable, "code_plugin_unavailable", "code plugin execution service unavailable"
+	default:
+		logs.CtxErrorf(ctx, "[CodePlugin] internal request failure: %v", err)
+	}
+	c.JSON(status, map[string]string{"code": code, "msg": message})
 }

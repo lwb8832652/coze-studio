@@ -28,6 +28,7 @@ import (
 func TestRegisterIncludesAdminAuthStatusRoute(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	resp := ut.PerformRequest(
 		h.Engine,
@@ -42,6 +43,7 @@ func TestRegisterIncludesAdminAuthStatusRoute(t *testing.T) {
 func TestRegisterIncludesAdminManagementRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	workspacesResp := ut.PerformRequest(
 		h.Engine,

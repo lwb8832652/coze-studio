@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Legacy Go wire payloads may expose PascalCase policy fields. */
 /* eslint-disable no-control-regex, max-lines, max-params -- The centralized API client redacts control characters and preserves endpoint signatures. */
 
-export type SandboxScope = 'agent' | 'mcp_stdio' | 'appdev';
+export type SandboxScope = 'agent' | 'mcp_stdio' | 'appdev' | 'plugin';
 export type SandboxProviderType = 'remote_http' | 'local_debug';
 export type SandboxProviderStatus = 'enabled' | 'disabled';
 export type SandboxHealthStatus =

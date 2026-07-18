@@ -22,9 +22,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"golang.org/x/mod/semver"
 
 	common "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop/common"
+	"github.com/coze-dev/coze-studio/backend/crossdomain/plugin/consts"
 	"github.com/coze-dev/coze-studio/backend/crossdomain/plugin/model"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/repository"
@@ -34,6 +36,24 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
+
+func sanitizeCodePluginHTTPConfiguration(plugin *entity.PluginInfo) {
+	if plugin == nil {
+		return
+	}
+	emptyURL := ""
+	plugin.ServerURL = &emptyURL
+	if plugin.Manifest == nil {
+		plugin.Manifest = &model.PluginManifest{}
+	}
+	plugin.Manifest.Auth = &model.AuthV2{Type: consts.AuthzTypeOfNone}
+	plugin.Manifest.CommonParams = map[consts.HTTPParamLocation][]*common.CommonParamSchema{}
+	if plugin.OpenapiDoc == nil {
+		plugin.OpenapiDoc = &model.Openapi3T{}
+	}
+	plugin.OpenapiDoc.Servers = openapi3.Servers{}
+	plugin.OpenapiDoc.Paths = openapi3.Paths{}
+}
 
 func (p *pluginServiceImpl) GetPluginNextVersion(ctx context.Context, pluginID int64) (version string, err error) {
 	const defaultVersion = "v1.0.0"
@@ -72,10 +92,18 @@ func (p *pluginServiceImpl) PublishPlugin(ctx context.Context, req *model.Publis
 	if !exist {
 		return errorx.New(errno.ErrPluginRecordNotFound)
 	}
+	if draftPlugin.PluginType == common.PluginType_FUNC {
+		sanitizeCodePluginHTTPConfiguration(draftPlugin)
+		if err = p.pluginRepo.UpdateDraftPlugin(ctx, draftPlugin); err != nil {
+			return errorx.Wrapf(err, "clear code plugin HTTP configuration failed, pluginID=%d", req.PluginID)
+		}
+	}
 
-	err = p.checkToolsDebugStatus(ctx, req.PluginID)
-	if err != nil {
-		return err
+	if pluginPublishRequiresTools(draftPlugin.PluginType) {
+		err = p.checkToolsDebugStatus(ctx, req.PluginID)
+		if err != nil {
+			return err
+		}
 	}
 
 	onlinePlugin, exist, err := p.pluginRepo.GetOnlinePlugin(ctx, req.PluginID)
@@ -101,6 +129,10 @@ func (p *pluginServiceImpl) PublishPlugin(ctx context.Context, req *model.Publis
 	return nil
 }
 
+func pluginPublishRequiresTools(pluginType common.PluginType) bool {
+	return pluginType != common.PluginType_FUNC
+}
+
 func (p *pluginServiceImpl) PublishAPPPlugins(ctx context.Context, req *model.PublishAPPPluginsRequest) (resp *model.PublishAPPPluginsResponse, err error) {
 	resp = &model.PublishAPPPluginsResponse{}
 
@@ -109,12 +141,24 @@ func (p *pluginServiceImpl) PublishAPPPlugins(ctx context.Context, req *model.Pu
 		return nil, errorx.Wrapf(err, "GetAPPAllDraftPlugins failed, appID=%d", req.APPID)
 	}
 
-	failedPluginIDs, err := p.checkCanPublishAPPPlugins(ctx, req.Version, draftPlugins)
+	pluginsToCheck := make([]*entity.PluginInfo, 0, len(draftPlugins))
+	for _, draftPlugin := range draftPlugins {
+		if draftPlugin.PluginType != common.PluginType_FUNC {
+			pluginsToCheck = append(pluginsToCheck, draftPlugin)
+		}
+	}
+	failedPluginIDs, err := p.checkCanPublishAPPPlugins(ctx, req.Version, pluginsToCheck)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "checkCanPublishAPPPlugins failed, appID=%d, appVerion=%s", req.APPID, req.Version)
 	}
 
 	for _, draftPlugin := range draftPlugins {
+		if draftPlugin.PluginType == common.PluginType_FUNC {
+			sanitizeCodePluginHTTPConfiguration(draftPlugin)
+			if err = p.pluginRepo.UpdateDraftPlugin(ctx, draftPlugin); err != nil {
+				return nil, errorx.Wrapf(err, "clear code plugin HTTP configuration failed, pluginID=%d", draftPlugin.ID)
+			}
+		}
 		draftPlugin.Version = &req.Version
 		draftPlugin.VersionDesc = ptr.Of(fmt.Sprintf("publish %s", req.Version))
 		resp.AllDraftPlugins = append(resp.AllDraftPlugins, draftPlugin.PluginInfo)
@@ -136,9 +180,30 @@ func (p *pluginServiceImpl) PublishAPPPlugins(ctx context.Context, req *model.Pu
 		return resp, nil
 	}
 
-	err = p.pluginRepo.PublishPlugins(ctx, draftPlugins)
+	publishablePlugins, preparedCodeVersions, err := p.prepareAPPCodePluginVersions(ctx, req.Version, draftPlugins)
 	if err != nil {
-		return nil, errorx.Wrapf(err, "PublishPlugins failed, appID=%d", req.APPID)
+		return nil, errorx.Wrapf(err, "prepareAPPCodePluginVersions failed, appID=%d, version=%s", req.APPID, req.Version)
+	}
+
+	if len(publishablePlugins) > 0 {
+		err = p.pluginRepo.PublishPlugins(ctx, publishablePlugins)
+	}
+	if err != nil {
+		if len(preparedCodeVersions) == 0 {
+			return nil, errorx.Wrapf(err, "PublishPlugins failed, appID=%d", req.APPID)
+		}
+		recovered, reconciliationErr := p.reconcileAmbiguousAPPCodePluginPublish(
+			ctx,
+			currentAPPCodePluginPublishEvidence(preparedCodeVersions),
+			err,
+		)
+		if recovered {
+			return resp, nil
+		}
+		return nil, reconciliationErr
+	}
+	if err = p.ensureAPPCodePluginVersions(ctx, preparedCodeVersions); err != nil {
+		return nil, errorx.Wrapf(err, "ensureAPPCodePluginVersions failed, appID=%d, version=%s", req.APPID, req.Version)
 	}
 
 	return resp, nil
@@ -176,6 +241,9 @@ func (p *pluginServiceImpl) checkCanPublishAPPPlugins(ctx context.Context, versi
 
 	// 2. check debug status
 	for _, draftPlugin := range draftPlugins {
+		if !pluginPublishRequiresTools(draftPlugin.PluginType) {
+			continue
+		}
 		err = p.checkToolsDebugStatus(ctx, draftPlugin.ID)
 		if err != nil {
 			failedPluginIDs = append(failedPluginIDs, draftPlugin.ID)

@@ -461,6 +461,9 @@ func (p *pluginServiceImpl) UpdateDraftPlugin(ctx context.Context, req *dto.Upda
 	if !exist {
 		return errorx.New(errno.ErrPluginRecordNotFound)
 	}
+	if req.ClearHTTPConfig {
+		sanitizeCodePluginHTTPConfiguration(oldPlugin)
+	}
 
 	doc, err := updatePluginOpenapiDoc(ctx, oldPlugin.OpenapiDoc, req)
 	if err != nil {
@@ -478,6 +481,14 @@ func (p *pluginServiceImpl) UpdateDraftPlugin(ctx context.Context, req *dto.Upda
 		Manifest:   mf,
 		OpenapiDoc: doc,
 	})
+	if req.ClearHTTPConfig {
+		sanitizeCodePluginHTTPConfiguration(newPlugin)
+		err = p.pluginRepo.UpdateDraftPlugin(ctx, newPlugin)
+		if err != nil {
+			return errorx.Wrapf(err, "UpdateDraftPlugin failed, pluginID=%d", req.PluginID)
+		}
+		return nil
+	}
 
 	if newPlugin.GetServerURL() == "" ||
 		oldPlugin.GetServerURL() == newPlugin.GetServerURL() {

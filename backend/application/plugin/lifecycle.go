@@ -18,6 +18,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	pluginAPI "github.com/coze-dev/coze-studio/backend/api/model/plugin_develop"
@@ -27,6 +28,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/crossdomain/plugin/model"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/dto"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
+	"github.com/coze-dev/coze-studio/backend/domain/plugin/repository"
 	searchEntity "github.com/coze-dev/coze-studio/backend/domain/search/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
@@ -35,18 +37,65 @@ import (
 )
 
 func (p *PluginApplicationService) PublishPlugin(ctx context.Context, req *pluginAPI.PublishPluginRequest) (resp *pluginAPI.PublishPluginResponse, err error) {
-	_, err = p.validateDraftPluginAccess(ctx, req.PluginID)
+	draftPlugin, err := p.validateDraftPluginAccess(ctx, req.PluginID)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "validatePublishPluginRequest failed")
 	}
 
-	err = p.DomainSVC.PublishPlugin(ctx, &model.PublishPluginRequest{
-		PluginID:    req.PluginID,
-		Version:     req.VersionName,
-		VersionDesc: req.VersionDesc,
-	})
-	if err != nil {
-		return nil, errorx.Wrapf(err, "PublishPlugin failed, pluginID=%d", req.PluginID)
+	if draftPlugin.PluginType == common.PluginType_FUNC {
+		if p.codeRepo == nil {
+			return nil, codePluginUnavailable(fmt.Errorf("code plugin repository is unavailable"))
+		}
+		uid := ctxutil.GetUIDFromCtx(ctx)
+		if uid == nil {
+			return nil, errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required"))
+		}
+		recoverable, ok := p.codeRepo.(repository.RecoverableCodePluginRepository)
+		if !ok {
+			return nil, codePluginUnavailable(fmt.Errorf("recoverable code plugin repository is unavailable"))
+		}
+		prepared, prepareErr := recoverable.PrepareDebuggedVersion(ctx, draftPlugin.ID, req.VersionName, *uid)
+		if prepareErr != nil {
+			return nil, classifyCodePluginRepositoryError(prepareErr)
+		}
+		if prepared.State != repository.CodeVersionAlreadyPublished {
+			err = p.DomainSVC.PublishPlugin(ctx, &model.PublishPluginRequest{
+				PluginID:    req.PluginID,
+				Version:     req.VersionName,
+				VersionDesc: req.VersionDesc,
+			})
+		}
+		if err != nil {
+			published, compensationErr := recoverable.CompensatePreparedVersion(ctx, prepared)
+			recovered := false
+			var ensureErr error
+			if published {
+				if ensureErr = recoverable.EnsurePublishedVersion(ctx, prepared); ensureErr == nil {
+					recovered = true
+				}
+			}
+			if !recovered && compensationErr != nil {
+				logs.CtxErrorf(ctx, "compensate code plugin publish failed, pluginID=%d, version=%s, err=%v", draftPlugin.ID, req.VersionName, compensationErr)
+				return nil, codePluginUnavailable(fmt.Errorf("code plugin publish compensation failed"))
+			}
+			if !recovered && ensureErr != nil {
+				return nil, codePluginUnavailable(fmt.Errorf("ensure published code snapshot failed: %w", ensureErr))
+			}
+			if !recovered {
+				return nil, codePluginUnavailable(fmt.Errorf("plugin publish failed before a published outcome could be confirmed"))
+			}
+		} else if err = recoverable.EnsurePublishedVersion(ctx, prepared); err != nil {
+			return nil, codePluginUnavailable(fmt.Errorf("ensure published code snapshot failed: %w", err))
+		}
+	} else {
+		err = p.DomainSVC.PublishPlugin(ctx, &model.PublishPluginRequest{
+			PluginID:    req.PluginID,
+			Version:     req.VersionName,
+			VersionDesc: req.VersionDesc,
+		})
+		if err != nil {
+			return nil, errorx.Wrapf(err, "PublishPlugin failed, pluginID=%d", req.PluginID)
+		}
 	}
 
 	err = p.eventbus.PublishResources(ctx, &searchEntity.ResourceDomainEvent{
@@ -66,19 +115,17 @@ func (p *PluginApplicationService) PublishPlugin(ctx context.Context, req *plugi
 
 	return resp, nil
 }
-
 func (p *PluginApplicationService) DelPlugin(ctx context.Context, req *pluginAPI.DelPluginRequest) (resp *pluginAPI.DelPluginResponse, err error) {
 	_, err = p.validateDraftPluginAccess(ctx, req.PluginID)
 	if err != nil {
 		return nil, errorx.Wrapf(err, "validateDelPluginRequest failed")
 	}
-
 	err = p.DomainSVC.DeleteDraftPlugin(ctx, req.PluginID)
 	if err != nil {
-		return nil, errorx.Wrapf(err, "DeleteDraftPlugin failed, pluginID=%d", req.PluginID)
+		return nil, codePluginUnavailable(errorx.Wrapf(err, "DeleteDraftPlugin failed, pluginID=%d", req.PluginID))
 	}
 
-	err = p.eventbus.PublishResources(ctx, &searchEntity.ResourceDomainEvent{
+	resourceErr := p.eventbus.PublishResources(ctx, &searchEntity.ResourceDomainEvent{
 		OpType: searchEntity.Deleted,
 		Resource: &searchEntity.ResourceDocument{
 			ResType:      resCommon.ResType_Plugin,
@@ -86,8 +133,8 @@ func (p *PluginApplicationService) DelPlugin(ctx context.Context, req *pluginAPI
 			UpdateTimeMS: ptr.Of(time.Now().UnixMilli()),
 		},
 	})
-	if err != nil {
-		return nil, errorx.Wrapf(err, "publish resource '%d' failed", req.PluginID)
+	if resourceErr != nil {
+		logs.CtxErrorf(ctx, "publish deleted resource failed after plugin commit, pluginID=%d, err=%v", req.PluginID, resourceErr)
 	}
 
 	resp = &pluginAPI.DelPluginResponse{}
@@ -201,6 +248,36 @@ func (p *PluginApplicationService) CopyPlugin(ctx context.Context, req *dto.Copy
 	}
 
 	plugin := res.Plugin
+	if plugin.PluginType == common.PluginType_FUNC {
+		if plugin.Published() {
+			return nil, p.compensateCodePluginCopy(
+				ctx,
+				plugin.ID,
+				"published_target",
+				"copy code plugin target inherited published state",
+				nil,
+			)
+		}
+		if p.codeRepo == nil {
+			return nil, p.compensateCodePluginCopy(
+				ctx,
+				plugin.ID,
+				"repository_unavailable",
+				"copy code plugin source failed",
+				nil,
+			)
+		}
+		copyErr := p.codeRepo.CopyDraft(ctx, req.PluginID, plugin.ID, plugin.SpaceID)
+		if copyErr != nil {
+			return nil, p.compensateCodePluginCopy(
+				ctx,
+				plugin.ID,
+				"draft_copy_failed",
+				"copy code plugin source failed",
+				copyErr,
+			)
+		}
+	}
 
 	now := time.Now().UnixMilli()
 	resDoc := &searchEntity.ResourceDocument{
@@ -224,7 +301,7 @@ func (p *PluginApplicationService) CopyPlugin(ctx context.Context, req *dto.Copy
 		Resource: resDoc,
 	})
 	if err != nil {
-		return nil, errorx.Wrapf(err, "publish resource '%d' failed", plugin.ID)
+		logs.CtxErrorf(ctx, "publish resource failed after plugin copy committed, pluginID=%d, err=%v", plugin.ID, err)
 	}
 
 	resp = &dto.CopyPluginResponse{
@@ -233,6 +310,34 @@ func (p *PluginApplicationService) CopyPlugin(ctx context.Context, req *dto.Copy
 	}
 
 	return resp, nil
+}
+
+func (p *PluginApplicationService) compensateCodePluginCopy(
+	ctx context.Context,
+	targetPluginID int64,
+	reason string,
+	publicMessage string,
+	copyErr error,
+) error {
+	logs.CtxErrorf(
+		ctx,
+		"code plugin copy failed, targetPluginID=%d, reason=%s, err_type=%T",
+		targetPluginID,
+		reason,
+		copyErr,
+	)
+	compensationErr := p.DomainSVC.DeleteDraftPlugin(ctx, targetPluginID)
+	if compensationErr != nil {
+		logs.CtxErrorf(
+			ctx,
+			"compensate code plugin copy failed, targetPluginID=%d, reason=%s, err_type=%T",
+			targetPluginID,
+			reason,
+			compensationErr,
+		)
+		return fmt.Errorf("%s; compensation incomplete", publicMessage)
+	}
+	return fmt.Errorf("%s", publicMessage)
 }
 
 func (p *PluginApplicationService) MoveAPPPluginToLibrary(ctx context.Context, pluginID int64) (plugin *entity.PluginInfo, err error) {

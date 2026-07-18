@@ -79,6 +79,7 @@
     "@coze-arch/report-tti": "workspace:*",
     "@coze-common/assets": "workspace:*",
     "@coze-common/biz-components": "workspace:*",
+    "@coze-studio/api-schema": "workspace:*",
     "@coze-studio/bot-detail-store": "workspace:*",
     "@coze-studio/bot-plugin-store": "workspace:*",
     "@coze-studio/bot-utils": "workspace:*",
