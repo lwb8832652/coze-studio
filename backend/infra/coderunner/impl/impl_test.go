@@ -136,3 +136,81 @@ func TestControlPlaneEnabledCodeRunnerNeverFallsBackToDirect(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 }
+
+func TestControlPlaneDisabledPluginFailsClosedBeforeLegacyRunner(t *testing.T) {
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "false")
+	t.Setenv("APP_ENV", "production")
+
+	runner := New(invalidLegacySandboxConfiguration())
+	response, err := runner.Run(context.Background(), &coderunner.RunRequest{
+		Purpose:  coderunner.PurposePlugin,
+		Language: coderunner.Python,
+		Code:     "async def main(args): return {'unsafe': True}",
+		Params:   map[string]any{},
+	})
+
+	if !errors.Is(err, coderunner.ErrCodeRunnerUnavailable) {
+		t.Fatalf("Run() error = %v, want %v", err, coderunner.ErrCodeRunnerUnavailable)
+	}
+	if response != nil {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestControlPlaneDisabledUnknownPurposeIsInvalidRequest(t *testing.T) {
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "false")
+	t.Setenv("APP_ENV", "production")
+
+	runner := New(invalidLegacySandboxConfiguration())
+	response, err := runner.Run(context.Background(), &coderunner.RunRequest{
+		Purpose:  coderunner.Purpose("future_non_agent"),
+		Language: coderunner.Python,
+		Code:     "async def main(args): return {'unsafe': True}",
+		Params:   map[string]any{},
+	})
+
+	if !errors.Is(err, coderunner.ErrCodeRunnerInvalidRequest) {
+		t.Fatalf("Run() error = %v, want %v", err, coderunner.ErrCodeRunnerInvalidRequest)
+	}
+	if response != nil {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestLegacyRunnerPurposeGuardKeepsEmptyAndAgentCompatibility(t *testing.T) {
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "false")
+	t.Setenv("APP_ENV", "production")
+
+	for _, purpose := range []coderunner.Purpose{"", coderunner.PurposeAgent} {
+		name := string(purpose)
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			runner := New(invalidLegacySandboxConfiguration())
+			response, err := runner.Run(context.Background(), &coderunner.RunRequest{
+				Purpose:  purpose,
+				Language: coderunner.Python,
+				Code:     "async def main(args): return {}",
+				Params:   map[string]any{},
+			})
+
+			if !errors.Is(err, ErrInvalidConfiguration) {
+				t.Fatalf("Run() error = %v, want %v", err, ErrInvalidConfiguration)
+			}
+			if response != nil {
+				t.Fatalf("response = %#v", response)
+			}
+		})
+	}
+}
+
+func invalidLegacySandboxConfiguration() *config.BasicConfiguration {
+	return &config.BasicConfiguration{
+		CodeRunnerType: config.CodeRunnerType_Sandbox,
+		SandboxConfig: &config.SandboxConfig{
+			MemoryLimitMb:  63,
+			TimeoutSeconds: 60,
+		},
+	}
+}

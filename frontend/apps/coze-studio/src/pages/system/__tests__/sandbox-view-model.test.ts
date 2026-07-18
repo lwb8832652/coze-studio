@@ -3,9 +3,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SANDBOX_SCOPE_OPTIONS,
   createSandboxViewState,
+  filterSandboxScopesForProviderType,
   getHealthFreshness,
   getLocalDebugAvailability,
+  getSandboxScopeOptions,
   getScopeLabel,
   sandboxViewReducer,
   validateSandboxRuntimePolicy,
@@ -144,5 +147,20 @@ describe('sandbox view model', () => {
       memory_limit_mb: expect.any(String),
     });
     expect(getScopeLabel('mcp_stdio')).toBe('MCP stdio');
+    expect(getScopeLabel('plugin')).toBe('代码插件');
+    expect(SANDBOX_SCOPE_OPTIONS).toContainEqual({
+      value: 'plugin',
+      label: '代码插件',
+      description: '代码插件的受控执行环境',
+    });
+    expect(getSandboxScopeOptions('remote_http')).toContainEqual(
+      expect.objectContaining({ value: 'plugin' }),
+    );
+    expect(getSandboxScopeOptions('local_debug')).not.toContainEqual(
+      expect.objectContaining({ value: 'plugin' }),
+    );
+    expect(
+      filterSandboxScopesForProviderType('local_debug', ['agent', 'plugin']),
+    ).toEqual(['agent']);
   });
 });

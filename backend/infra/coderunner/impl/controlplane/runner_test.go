@@ -34,7 +34,8 @@ func TestControlPlaneRunnerBuildsCanonicalAgentRequest(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 	if harness.router.scope != domainsandbox.ScopeAgent ||
-		harness.router.providerKey != "agent-provider" {
+		harness.router.providerKey != "agent-provider" ||
+		harness.defaults.scope != domainsandbox.ScopeAgent {
 		t.Fatalf("selection = %q %q", harness.router.scope, harness.router.providerKey)
 	}
 	if len(harness.selection.requests) != 1 {
@@ -65,6 +66,97 @@ func TestControlPlaneRunnerBuildsCanonicalAgentRequest(t *testing.T) {
 	}
 	if harness.selection.releaseCalls != 1 {
 		t.Fatalf("release calls = %d", harness.selection.releaseCalls)
+	}
+}
+
+func TestControlPlaneRunnerBuildsCanonicalPluginRequest(t *testing.T) {
+	harness := newControlPlaneRunnerHarness(t)
+	configurePluginHarness(harness)
+	runner := newControlPlaneRunnerForTest(t, harness.source, 4096)
+
+	response, err := runner.Run(context.Background(), &coderunner.RunRequest{
+		Purpose:  coderunner.PurposePlugin,
+		Language: coderunner.Python,
+		Code:     "async def main(args):\n    return {'ok': True}",
+		Params:   map[string]any{"query": "safe input"},
+	})
+
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if response == nil || response.Result["ok"] != true {
+		t.Fatalf("response = %#v", response)
+	}
+	if harness.defaults.scope != domainsandbox.ScopePlugin ||
+		harness.router.scope != domainsandbox.ScopePlugin ||
+		harness.router.providerKey != "plugin-provider" {
+		t.Fatalf(
+			"selection = default:%q router:%q provider:%q",
+			harness.defaults.scope,
+			harness.router.scope,
+			harness.router.providerKey,
+		)
+	}
+	if len(harness.selection.requests) != 1 {
+		t.Fatalf("execute requests = %d", len(harness.selection.requests))
+	}
+	request := harness.selection.requests[0]
+	if request.Scope != domainsandbox.ScopePlugin ||
+		request.WorkloadKind != infrasandbox.WorkloadPlugin ||
+		request.Entrypoint != "plugin/code/run" {
+		t.Fatalf("request identity = %#v", request)
+	}
+}
+
+func TestControlPlaneRunnerPluginFailsClosed(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*controlPlaneRunnerHarness)
+	}{
+		{
+			name: "runtime routing disabled",
+			configure: func(h *controlPlaneRunnerHarness) {
+				h.source.ok = false
+			},
+		},
+		{
+			name: "provider missing",
+			configure: func(h *controlPlaneRunnerHarness) {
+				h.providers.value = nil
+			},
+		},
+		{
+			name: "scope unsupported",
+			configure: func(h *controlPlaneRunnerHarness) {
+				h.router.err = domainsandbox.ErrScopeUnsupported
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newControlPlaneRunnerHarness(t)
+			configurePluginHarness(harness)
+			test.configure(harness)
+			runner := newControlPlaneRunnerForTest(t, harness.source, 4096)
+
+			response, err := runner.Run(context.Background(), &coderunner.RunRequest{
+				Purpose:  coderunner.PurposePlugin,
+				Language: coderunner.Python,
+				Code:     "async def main(args): return {}",
+				Params:   map[string]any{},
+			})
+
+			if !errors.Is(err, coderunner.ErrCodeRunnerUnavailable) {
+				t.Fatalf("Run() error = %v, want %v", err, coderunner.ErrCodeRunnerUnavailable)
+			}
+			if response != nil {
+				t.Fatalf("response = %#v", response)
+			}
+			if len(harness.selection.requests) != 0 {
+				t.Fatalf("fail-closed path executed %d requests", len(harness.selection.requests))
+			}
+		})
 	}
 }
 
@@ -270,6 +362,11 @@ func newControlPlaneRunnerHarness(t *testing.T) *controlPlaneRunnerHarness {
 	}
 }
 
+func configurePluginHarness(harness *controlPlaneRunnerHarness) {
+	harness.defaults.value.Scope = domainsandbox.ScopePlugin
+	harness.providers.value.ProviderKey = "plugin-provider"
+}
+
 type codeRunnerBindingSource struct {
 	binding Binding
 	ok      bool
@@ -282,9 +379,14 @@ func (s *codeRunnerBindingSource) LoadCodeRunnerSandboxBinding() (Binding, bool)
 type codeRunnerDefaultRepository struct {
 	value *domainsandbox.ProviderDefault
 	err   error
+	scope domainsandbox.Scope
 }
 
-func (r *codeRunnerDefaultRepository) GetProviderDefault(context.Context, domainsandbox.Scope) (*domainsandbox.ProviderDefault, error) {
+func (r *codeRunnerDefaultRepository) GetProviderDefault(
+	_ context.Context,
+	scope domainsandbox.Scope,
+) (*domainsandbox.ProviderDefault, error) {
+	r.scope = scope
 	if r.err != nil {
 		return nil, r.err
 	}

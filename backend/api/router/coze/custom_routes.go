@@ -10,9 +10,9 @@ import (
 	handler "github.com/coze-dev/coze-studio/backend/api/handler/coze"
 )
 
-// registerCustomRoutes keeps hand-written HTTP contracts alongside generated
+// RegisterCustomRoutes keeps hand-written HTTP contracts alongside generated
 // IDL routes. Existing generated routes are intentionally not duplicated.
-func registerCustomRoutes(r *server.Hertz) {
+func RegisterCustomRoutes(r *server.Hertz) {
 	root := r.Group("/", rootMw()...)
 	api := root.Group("/api", _apiMw()...)
 

@@ -121,6 +121,39 @@ describe('sandbox service', () => {
     expect(capabilities.local_debug.available).toBe(true);
   });
 
+  it('preserves the plugin scope in filters and provider projections', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      ok({
+        items: [
+          {
+            ...providerFixture,
+            scopes: ['plugin'],
+            health: {
+              ...providerFixture.health,
+              capabilities: ['plugin'],
+            },
+          },
+        ],
+        total: 1,
+      }),
+    ) as never;
+
+    const result = await listSandboxProviders({
+      limit: 20,
+      offset: 0,
+      scope: 'plugin',
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/admin/sandboxes?scope=plugin&offset=0&limit=20',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(result.items[0]).toMatchObject({
+      scopes: ['plugin'],
+      health: { capabilities: ['plugin'] },
+    });
+  });
+
   it('adds a unique secure request ID to every mutation and keeps CAS versions distinct', async () => {
     const fetchMock = vi.fn().mockResolvedValue(ok(providerFixture));
     globalThis.fetch = fetchMock as never;

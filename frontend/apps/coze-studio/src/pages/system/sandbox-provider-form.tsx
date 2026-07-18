@@ -6,8 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  filterSandboxScopesForProviderType,
   getLocalDebugAvailability,
-  SANDBOX_SCOPE_OPTIONS,
+  getSandboxScopeOptions,
   splitPolicyList,
   validateSandboxRuntimePolicy,
 } from './sandbox-view-model';
@@ -164,6 +165,10 @@ export const SandboxProviderForm = ({
     setSubmitting(false);
     submittingRef.current = false;
   }, [clearSensitiveState, open, provider]);
+
+  useEffect(() => {
+    setScopes(current => filterSandboxScopesForProviderType(type, current));
+  }, [type]);
 
   if (!open) {
     return null;
@@ -456,7 +461,7 @@ export const SandboxProviderForm = ({
           <fieldset className={styles.fieldset}>
             <legend>适用范围</legend>
             <div className={styles.scopeGrid}>
-              {SANDBOX_SCOPE_OPTIONS.map(option => (
+              {getSandboxScopeOptions(type).map(option => (
                 <label className={styles.scopeOption} key={option.value}>
                   <input
                     checked={scopes.includes(option.value)}

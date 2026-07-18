@@ -28,7 +28,15 @@ const (
 	JavaScript Language = "JavaScript"
 )
 
+type Purpose string
+
+const (
+	PurposeAgent  Purpose = "agent"
+	PurposePlugin Purpose = "plugin"
+)
+
 type RunRequest struct {
+	Purpose  Purpose
 	Code     string
 	Params   map[string]any
 	Language Language

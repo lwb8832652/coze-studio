@@ -64,6 +64,52 @@ func TestRemoteProviderExecuteUsesV1ProtocolAndReturnsBoundedProjection(t *testi
 	}
 }
 
+func TestRemoteProviderPluginSerializesCanonicalRouteAndReturnsResult(t *testing.T) {
+	t.Parallel()
+
+	var captured executeRequestV1
+	provider := mustRemoteProvider(t, providerDoerFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/executions" {
+			t.Fatalf("plugin execute request = %s %s", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode plugin execute request: %v", err)
+		}
+		return jsonResponse(request, http.StatusOK, `{
+			"schema":"coze.sandbox.execute.v1",
+			"execution_id":"execution_plugin",
+			"status":"succeeded",
+			"exit_code":0,
+			"stdout":"plugin-result",
+			"stderr":"",
+			"artifacts":[]
+		}`), nil
+	}))
+	request := validExecuteRequest()
+	request.Scope = domainsandbox.ScopePlugin
+	request.WorkloadKind = WorkloadPlugin
+	request.Entrypoint = PluginCodeRunnerEntrypoint
+	request.Files = nil
+
+	result, err := provider.Execute(context.Background(), request)
+
+	if err != nil {
+		t.Fatalf("execute plugin: %v", err)
+	}
+	if captured.Scope != domainsandbox.ScopePlugin ||
+		captured.WorkloadKind != WorkloadPlugin ||
+		captured.Entrypoint != PluginCodeRunnerEntrypoint {
+		t.Fatalf("plugin execute envelope = %#v", captured)
+	}
+	if result.ExecutionID != "execution_plugin" ||
+		result.Status != ExecutionStatusSucceeded ||
+		result.Stdout != "plugin-result" ||
+		result.ExitCode == nil ||
+		*result.ExitCode != 0 {
+		t.Fatalf("plugin execute result = %#v", result)
+	}
+}
+
 func TestRemoteProviderMCPStdioUsesExistingExecutionEndpoint(t *testing.T) {
 	t.Parallel()
 

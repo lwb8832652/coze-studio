@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -34,9 +35,11 @@ import (
 	"github.com/coze-dev/coze-studio/backend/crossdomain/plugin/convert"
 	"github.com/coze-dev/coze-studio/backend/crossdomain/plugin/model"
 	"github.com/coze-dev/coze-studio/backend/domain/plugin/dto"
+	"github.com/coze-dev/coze-studio/backend/domain/plugin/entity"
 	searchEntity "github.com/coze-dev/coze-studio/backend/domain/search/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	commonConsts "github.com/coze-dev/coze-studio/backend/types/consts"
 	"github.com/coze-dev/coze-studio/backend/types/errno"
 )
@@ -44,17 +47,57 @@ import (
 func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *pluginAPI.RegisterPluginMetaRequest) (resp *pluginAPI.RegisterPluginMetaResponse, err error) {
 	userID := ctxutil.GetUIDFromCtx(ctx)
 	if userID == nil {
-		return nil, errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required"))
+		return nil, codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required")))
 	}
 
-	_authType, ok := convert.ToAuthType(req.GetAuthType())
+	isCodePlugin, err := validateRegisterPluginMetaApplicationRequest(req)
+	if err != nil {
+		return nil, codePluginInvalid(err)
+	}
+	if err := p.requirePluginEditor(ctx, req.GetSpaceID(), *userID); err != nil {
+		return nil, err
+	}
+
+	codeRuntime := entity.CodeRuntimePython
+	if isCodePlugin {
+		if req.URL != nil ||
+			req.Location != nil ||
+			req.Key != nil ||
+			req.ServiceToken != nil ||
+			req.OauthInfo != nil ||
+			req.SubAuthType != nil ||
+			req.AuthPayload != nil ||
+			req.FixedExportIP != nil ||
+			len(req.CommonParams) > 0 {
+			return nil, codePluginInvalid(fmt.Errorf("code plugin HTTP configuration is not supported"))
+		}
+		if p.codeRepo == nil {
+			return nil, codePluginUnavailable(fmt.Errorf("code plugin repository is unavailable"))
+		}
+		codeRuntime, err = registrationCodeRuntime(req.IdeCodeRuntime)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	authTypeValue := req.GetAuthType()
+	if isCodePlugin {
+		if req.AuthType != nil && authTypeValue != common.AuthorizationType_None {
+			return nil, codePluginInvalid(fmt.Errorf("code plugin auth type must be none"))
+		}
+		authTypeValue = common.AuthorizationType_None
+	} else if req.AuthType == nil {
+		return nil, fmt.Errorf("plugin auth type is required")
+	}
+
+	_authType, ok := convert.ToAuthType(authTypeValue)
 	if !ok {
-		return nil, fmt.Errorf("invalid auth type '%d'", req.GetAuthType())
+		return nil, fmt.Errorf("invalid auth type '%d'", authTypeValue)
 	}
 	authType := ptr.Of(_authType)
 
 	var authSubType *consts.AuthzSubType
-	if req.SubAuthType != nil {
+	if !isCodePlugin && req.SubAuthType != nil {
 		_authSubType, ok := convert.ToAuthSubType(req.GetSubAuthType())
 		if !ok {
 			return nil, fmt.Errorf("invalid sub authz type '%d'", req.GetSubAuthType())
@@ -63,7 +106,7 @@ func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *
 	}
 
 	var loc consts.HTTPParamLocation
-	if *authType == consts.AuthzTypeOfService {
+	if !isCodePlugin && *authType == consts.AuthzTypeOfService {
 		if req.GetLocation() == common.AuthorizationServiceLocation_Query {
 			loc = consts.ParamInQuery
 		} else if req.GetLocation() == common.AuthorizationServiceLocation_Header {
@@ -71,6 +114,18 @@ func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *
 		} else {
 			return nil, fmt.Errorf("invalid location '%s'", req.GetLocation())
 		}
+	}
+
+	authInfo := &dto.PluginAuthInfo{
+		AuthzType: authType,
+	}
+	if !isCodePlugin {
+		authInfo.Location = ptr.Of(loc)
+		authInfo.Key = req.Key
+		authInfo.ServiceToken = req.ServiceToken
+		authInfo.OAuthInfo = req.OauthInfo
+		authInfo.AuthzSubType = authSubType
+		authInfo.AuthzPayload = req.AuthPayload
 	}
 
 	r := &dto.CreateDraftPluginRequest{
@@ -83,19 +138,34 @@ func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *
 		Desc:         req.GetDesc(),
 		ServerURL:    req.GetURL(),
 		CommonParams: req.CommonParams,
-		AuthInfo: &dto.PluginAuthInfo{
-			AuthzType:    authType,
-			Location:     ptr.Of(loc),
-			Key:          req.Key,
-			ServiceToken: req.ServiceToken,
-			OAuthInfo:    req.OauthInfo,
-			AuthzSubType: authSubType,
-			AuthzPayload: req.AuthPayload,
-		},
+		AuthInfo:     authInfo,
 	}
 	pluginID, err := p.DomainSVC.CreateDraftPlugin(ctx, r)
 	if err != nil {
+		if isCodePlugin {
+			return nil, codePluginUnavailable(errorx.Wrapf(err, "CreateDraftPlugin failed"))
+		}
 		return nil, errorx.Wrapf(err, "CreateDraftPlugin failed")
+	}
+
+	if isCodePlugin {
+		_, initErr := p.codeRepo.SaveDraftCAS(
+			ctx,
+			defaultCodeDraft(pluginID, req.GetSpaceID(), codeRuntime),
+			0,
+		)
+		if initErr != nil {
+			compensationErr := p.DomainSVC.DeleteDraftPlugin(ctx, pluginID)
+			if compensationErr != nil {
+				logs.CtxErrorf(
+					ctx,
+					"compensate code plugin creation failed, pluginID=%d, err=%v",
+					pluginID,
+					compensationErr,
+				)
+			}
+			return nil, classifyCodePluginRepositoryError(initErr)
+		}
 	}
 
 	err = p.eventbus.PublishResources(ctx, &searchEntity.ResourceDomainEvent{
@@ -113,7 +183,7 @@ func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("publish resource '%d' failed, err=%v", pluginID, err)
+		logs.CtxErrorf(ctx, "publish created resource failed after plugin commit, pluginID=%d, err=%v", pluginID, err)
 	}
 
 	resp = &pluginAPI.RegisterPluginMetaResponse{
@@ -121,6 +191,48 @@ func (p *PluginApplicationService) RegisterPluginMeta(ctx context.Context, req *
 	}
 
 	return resp, nil
+}
+
+func validateRegisterPluginMetaApplicationRequest(req *pluginAPI.RegisterPluginMetaRequest) (bool, error) {
+	if req == nil {
+		return false, fmt.Errorf("register plugin request is required")
+	}
+	if req.GetName() == "" {
+		return false, fmt.Errorf("plugin name is invalid")
+	}
+	if req.GetDesc() == "" {
+		return false, fmt.Errorf("plugin desc is invalid")
+	}
+	if req.URL != nil && (strings.TrimSpace(*req.URL) == "" || len(*req.URL) > 512) {
+		return false, fmt.Errorf("plugin url is invalid")
+	}
+	if req.Icon == nil || req.Icon.URI == "" || len(req.Icon.URI) > 512 {
+		return false, fmt.Errorf("plugin icon is invalid")
+	}
+	if req.GetSpaceID() <= 0 {
+		return false, fmt.Errorf("spaceID is invalid")
+	}
+	if req.ProjectID != nil && *req.ProjectID <= 0 {
+		return false, fmt.Errorf("projectID is invalid")
+	}
+
+	pluginType := req.GetPluginType()
+	creationMethod := req.GetCreationMethod()
+	switch {
+	case pluginType == common.PluginType_PLUGIN && creationMethod == common.CreationMethod_COZE:
+		if req.URL == nil {
+			return false, fmt.Errorf("plugin url is required")
+		}
+		return false, nil
+	case pluginType == common.PluginType_FUNC && creationMethod == common.CreationMethod_IDE:
+		return true, nil
+	default:
+		return false, fmt.Errorf(
+			"unsupported plugin creation combination: plugin_type=%s, creation_method=%s",
+			pluginType.String(),
+			creationMethod.String(),
+		)
+	}
 }
 
 func (p *PluginApplicationService) RegisterPlugin(ctx context.Context, req *pluginAPI.RegisterPluginRequest) (resp *pluginAPI.RegisterPluginResponse, err error) {

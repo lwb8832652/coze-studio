@@ -20,6 +20,7 @@ package coze
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -32,6 +33,7 @@ import (
 	task "github.com/coze-dev/coze-studio/backend/api/model/app/intelligence/task"
 	appApplication "github.com/coze-dev/coze-studio/backend/application/app"
 	"github.com/coze-dev/coze-studio/backend/application/search"
+	pluginservice "github.com/coze-dev/coze-studio/backend/domain/plugin/service"
 )
 
 // GetDraftIntelligenceList .
@@ -257,11 +259,22 @@ func PublishProject(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appApplication.APPApplicationSVC.PublishAPP(ctx, &req)
 	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
+		publishProjectErrorResponse(ctx, c, err)
 		return
 	}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+func publishProjectErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	if errors.Is(err, pluginservice.ErrAPPCodePluginPublishUnavailable) {
+		c.JSON(consts.StatusServiceUnavailable, map[string]string{
+			"code": "plugin_publish_unavailable",
+			"msg":  "plugin publish result is temporarily unavailable",
+		})
+		return
+	}
+	internalServerErrorResponse(ctx, c, err)
 }
 
 // GetPublishRecordList .

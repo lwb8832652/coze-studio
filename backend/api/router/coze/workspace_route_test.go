@@ -28,6 +28,7 @@ import (
 func TestRegisterIncludesWorkspaceRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	detailResp := ut.PerformRequest(
 		h.Engine,

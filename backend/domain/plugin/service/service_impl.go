@@ -37,6 +37,7 @@ type Components struct {
 	PluginRepo repository.PluginRepository
 	ToolRepo   repository.ToolRepository
 	OAuthRepo  repository.OAuthRepository
+	CodeRepo   repository.CodePluginRepository
 }
 
 func NewService(components *Components) PluginService {
@@ -46,6 +47,7 @@ func NewService(components *Components) PluginService {
 		pluginRepo: components.PluginRepo,
 		toolRepo:   components.ToolRepo,
 		oauthRepo:  components.OAuthRepo,
+		codeRepo:   components.CodeRepo,
 		oauthCache: dal.NewOAuthCache(components.CacheCli),
 	}
 
@@ -65,5 +67,6 @@ type pluginServiceImpl struct {
 	pluginRepo repository.PluginRepository
 	toolRepo   repository.ToolRepository
 	oauthRepo  repository.OAuthRepository
+	codeRepo   repository.CodePluginRepository
 	oauthCache *dal.OAuthCache
 }

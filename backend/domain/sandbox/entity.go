@@ -24,6 +24,7 @@ const (
 	ScopeAgent    Scope = "agent"
 	ScopeMCPStdio Scope = "mcp_stdio"
 	ScopeAppDev   Scope = "appdev"
+	ScopePlugin   Scope = "plugin"
 )
 
 type ProviderType string

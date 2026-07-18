@@ -17,6 +17,7 @@
 export * as passport from './idl/passport/passport';
 export * as explore from './idl/marketplace/public_api';
 export * as workbench from './idl/workbench/workbench';
-export * as workbenchSkill from './idl/workbench/skill';
 export * as workbenchTask from './idl/workbench/task';
+export * as workbenchSkill from './idl/workbench/skill';
 export * as workbenchTool from './idl/workbench/tool';
+export * as pluginDevelop from './idl/plugin/plugin_develop';

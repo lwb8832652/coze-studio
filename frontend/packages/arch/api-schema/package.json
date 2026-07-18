@@ -12,7 +12,8 @@
     "./workbench": "./src/idl/workbench/workbench.ts",
     "./workbench-skill": "./src/idl/workbench/skill.ts",
     "./workbench-task": "./src/idl/workbench/task.ts",
-    "./workbench-tool": "./src/idl/workbench/tool.ts"
+    "./workbench-tool": "./src/idl/workbench/tool.ts",
+    "./plugin-develop": "./src/idl/plugin/plugin_develop.ts"
   },
   "main": "src/index.ts",
   "typesVersions": {
@@ -34,6 +35,9 @@
       ],
       "workbench-tool": [
         "./src/idl/workbench/tool.ts"
+      ],
+      "plugin-develop": [
+        "./src/idl/plugin/plugin_develop.ts"
       ]
     }
   },

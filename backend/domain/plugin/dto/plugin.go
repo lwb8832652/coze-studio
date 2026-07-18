@@ -45,13 +45,14 @@ type UpdateDraftPluginWithCodeRequest struct {
 }
 
 type UpdateDraftPluginRequest struct {
-	PluginID     int64
-	Name         *string
-	Desc         *string
-	URL          *string
-	Icon         *common.PluginIcon
-	CommonParams map[common.ParameterLocation][]*common.CommonParamSchema
-	AuthInfo     *PluginAuthInfo
+	PluginID        int64
+	Name            *string
+	Desc            *string
+	URL             *string
+	Icon            *common.PluginIcon
+	CommonParams    map[common.ParameterLocation][]*common.CommonParamSchema
+	AuthInfo        *PluginAuthInfo
+	ClearHTTPConfig bool
 }
 
 type ListDraftPluginsRequest struct {

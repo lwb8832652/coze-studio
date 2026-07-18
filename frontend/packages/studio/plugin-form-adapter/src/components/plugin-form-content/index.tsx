@@ -26,6 +26,7 @@ import { useRequest } from 'ahooks';
 import { useBenefitBasic, UserLevel } from '@coze-studio/premium-store-adapter';
 import {
   CLOUD_PLUGIN_COZE,
+  CLOUD_PLUGIN_IDE,
   doGetCreationMethodTips,
   extInfoText,
   locationOption,
@@ -82,6 +83,10 @@ const getOptionList = () => [
     label: I18n.t('plugin_creation_method_cloud_plugin_use_existing_services'),
     value: CLOUD_PLUGIN_COZE,
   },
+  {
+    label: I18n.t('plugin_creation_method_cloud_plugin_use_ide'),
+    value: CLOUD_PLUGIN_IDE,
+  },
 ];
 
 export const PluginForm: FC<{
@@ -102,6 +107,8 @@ export const PluginForm: FC<{
     pluginTypeCreationMethod,
     setPluginTypeCreationMethod,
     authOption,
+    runtimeOptions,
+    defaultRuntime,
   } = pluginState;
 
   const [FLAGS] = useFlags();
@@ -701,6 +708,30 @@ export const PluginForm: FC<{
             </Typography.Text>
           )}
         </Form.Slot>
+        {isCreate && pluginTypeCreationMethod === CLOUD_PLUGIN_IDE ? (
+          <FormSelect
+            disabled={disabled}
+            field="ide_code_runtime"
+            label={I18n.t('plugin_creation_ide_develop_runtime')}
+            optionList={
+              runtimeOptions.length
+                ? runtimeOptions
+                : [
+                    { label: 'Python', value: '1' },
+                    { label: 'JavaScript', value: '2' },
+                  ]
+            }
+            initValue={defaultRuntime || '1'}
+            rules={[
+              {
+                required: true,
+                message: I18n.t(
+                  'plugin_creation_select_creation_method_warning',
+                ),
+              },
+            ]}
+          />
+        ) : null}
       </>
 
       {pluginTypeCreationMethod === CLOUD_PLUGIN_COZE

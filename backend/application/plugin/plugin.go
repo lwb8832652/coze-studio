@@ -18,6 +18,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ import (
 	search "github.com/coze-dev/coze-studio/backend/domain/search/service"
 	userEntity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	user "github.com/coze-dev/coze-studio/backend/domain/user/service"
+	"github.com/coze-dev/coze-studio/backend/infra/coderunner"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/ptr"
@@ -49,13 +51,77 @@ import (
 var PluginApplicationSVC = &PluginApplicationService{}
 
 type PluginApplicationService struct {
-	DomainSVC service.PluginService
-	eventbus  search.ResourceEventBus
-	oss       storage.Storage
-	userSVC   user.User
+	DomainSVC   service.PluginService
+	eventbus    search.ResourceEventBus
+	oss         storage.Storage
+	userSVC     user.User
+	spaceAccess pluginSpaceMemberReader
 
 	toolRepo   repository.ToolRepository
 	pluginRepo repository.PluginRepository
+	codeRepo   repository.CodePluginRepository
+	codeRunner coderunner.Runner
+}
+
+type pluginSpaceMemberReader interface {
+	GetSpaceMembers(ctx context.Context, spaceID int64) ([]*userEntity.SpaceMember, error)
+}
+
+func (p *PluginApplicationService) getSpaceRole(
+	ctx context.Context,
+	spaceID int64,
+	userID int64,
+) (common.SpaceRoleType, bool, error) {
+	if p.spaceAccess == nil {
+		return 0, false, fmt.Errorf("space membership projection is unavailable")
+	}
+	members, err := p.spaceAccess.GetSpaceMembers(ctx, spaceID)
+	if err != nil {
+		return 0, false, errorx.Wrapf(err, "GetSpaceMembers failed, spaceID=%d", spaceID)
+	}
+	for _, member := range members {
+		if member != nil && member.UserID == userID {
+			return common.SpaceRoleType(member.RoleType), true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func canCreateOrEditPlugin(role common.SpaceRoleType) bool {
+	return role == common.SpaceRoleType_Owner || role == common.SpaceRoleType_Admin
+}
+
+func (p *PluginApplicationService) requirePluginReader(
+	ctx context.Context,
+	spaceID int64,
+	userID int64,
+) error {
+	_, member, err := p.getSpaceRole(ctx, spaceID, userID)
+	if err != nil {
+		return codePluginUnavailable(err)
+	}
+	if !member {
+		return codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "user is not a space member")))
+	}
+	return nil
+}
+
+func (p *PluginApplicationService) requirePluginEditor(
+	ctx context.Context,
+	spaceID int64,
+	userID int64,
+) error {
+	role, member, err := p.getSpaceRole(ctx, spaceID, userID)
+	if err != nil {
+		return codePluginUnavailable(err)
+	}
+	if !member {
+		return codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "user is not a space member")))
+	}
+	if !canCreateOrEditPlugin(role) {
+		return codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "space role cannot edit plugins")))
+	}
+	return nil
 }
 
 func (p *PluginApplicationService) CheckAndLockPluginEdit(ctx context.Context, req *pluginAPI.CheckAndLockPluginEditRequest) (resp *pluginAPI.CheckAndLockPluginEditResponse, err error) {
@@ -305,18 +371,34 @@ func (p *PluginApplicationService) PublicGetProductDetail(ctx context.Context, r
 func (p *PluginApplicationService) validateDraftPluginAccess(ctx context.Context, pluginID int64) (plugin *entity.PluginInfo, err error) {
 	uid := ctxutil.GetUIDFromCtx(ctx)
 	if uid == nil {
-		return nil, errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required"))
+		return nil, codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required")))
 	}
 
 	plugin, err = p.DomainSVC.GetDraftPlugin(ctx, pluginID)
 	if err != nil {
-		return nil, errorx.Wrapf(err, "GetDraftPlugin failed, pluginID=%d", pluginID)
+		return nil, codePluginUnavailable(errorx.Wrapf(err, "GetDraftPlugin failed, pluginID=%d", pluginID))
 	}
 
-	if plugin.DeveloperID != *uid {
-		return nil, errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "you are not the plugin owner"))
+	if err := p.requirePluginEditor(ctx, plugin.SpaceID, *uid); err != nil {
+		return nil, err
 	}
 
+	return plugin, nil
+}
+
+func (p *PluginApplicationService) validateDraftPluginReadAccess(ctx context.Context, pluginID int64) (plugin *entity.PluginInfo, err error) {
+	uid := ctxutil.GetUIDFromCtx(ctx)
+	if uid == nil {
+		return nil, codePluginPermission(errorx.New(errno.ErrPluginPermissionCode, errorx.KV(errno.PluginMsgKey, "session is required")))
+	}
+
+	plugin, err = p.DomainSVC.GetDraftPlugin(ctx, pluginID)
+	if err != nil {
+		return nil, codePluginUnavailable(errorx.Wrapf(err, "GetDraftPlugin failed, pluginID=%d", pluginID))
+	}
+	if err := p.requirePluginReader(ctx, plugin.SpaceID, *uid); err != nil {
+		return nil, err
+	}
 	return plugin, nil
 }
 

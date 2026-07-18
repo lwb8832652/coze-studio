@@ -28,6 +28,7 @@ import (
 func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	list := ut.PerformRequest(h.Engine, http.MethodGet, "/api/workbench/task_threads?space_id=1", nil)
 	createThread := ut.PerformRequest(h.Engine, http.MethodPost, "/api/workbench/task_threads", nil)
@@ -97,6 +98,7 @@ func TestRegisterIncludesWorkbenchTaskThreadRoutes(t *testing.T) {
 func TestRegisterIncludesLangGraphThreadRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	createThread := ut.PerformRequest(h.Engine, http.MethodPost, "/api/threads", nil)
 	getThread := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
@@ -124,6 +126,7 @@ func TestRegisterIncludesLangGraphThreadRoutes(t *testing.T) {
 func TestRegisterIncludesLangGraphRunRoutes(t *testing.T) {
 	h := server.Default()
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	createStatelessRun := ut.PerformRequest(h.Engine, http.MethodPost, "/api/runs", nil)
 	createStatelessRunStream := ut.PerformRequest(h.Engine, http.MethodPost, "/api/runs/stream", nil)

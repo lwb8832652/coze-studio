@@ -27,6 +27,70 @@ const (
 	testRouterLeaseFence  = "AgICAgICAgICAgICAgICAg"
 )
 
+func TestProviderRouterRoutesPluginWithoutAppDevLookupRequirement(t *testing.T) {
+	now := time.Unix(2_000_000_010, 0).UTC()
+	provider := healthyRouterProvider(now)
+	provider.Scopes = []domainsandbox.Scope{domainsandbox.ScopePlugin}
+	provider.Health.Capabilities = []domainsandbox.Scope{domainsandbox.ScopePlugin}
+	router := newRouterForTest(
+		t,
+		now,
+		provider,
+		&runtimeProviderFactoryFuncs{},
+		&capacityLimiterFuncs{},
+	)
+	request, err := NewResolveProviderRequest(
+		testRouterProviderKey,
+		domainsandbox.ScopePlugin,
+	)
+	if err != nil {
+		t.Fatalf("NewResolveProviderRequest() error = %v", err)
+	}
+
+	selected, err := router.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if selected.Scope != domainsandbox.ScopePlugin {
+		t.Fatalf("selected scope = %q, want %q", selected.Scope, domainsandbox.ScopePlugin)
+	}
+	if err := selected.Release(context.Background()); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
+func TestProviderRouterPluginScopeFailsClosedWhenProviderDoesNotSupportIt(t *testing.T) {
+	now := time.Unix(2_000_000_020, 0).UTC()
+	provider := healthyRouterProvider(now)
+	acquireCalls := 0
+	router := newRouterForTest(
+		t,
+		now,
+		provider,
+		&runtimeProviderFactoryFuncs{},
+		&capacityLimiterFuncs{
+			acquire: func(context.Context, string, string, string, int, time.Duration) (int64, error) {
+				acquireCalls++
+				return now.Add(time.Minute).UnixMilli(), nil
+			},
+		},
+	)
+	request, err := NewResolveProviderRequest(
+		testRouterProviderKey,
+		domainsandbox.ScopePlugin,
+	)
+	if err != nil {
+		t.Fatalf("NewResolveProviderRequest() error = %v", err)
+	}
+
+	if _, err := router.Resolve(context.Background(), request); !errors.Is(err, domainsandbox.ErrScopeUnsupported) {
+		t.Fatalf("Resolve() error = %v, want %v", err, domainsandbox.ErrScopeUnsupported)
+	}
+	if acquireCalls != 0 {
+		t.Fatalf("unsupported plugin scope acquired capacity %d times", acquireCalls)
+	}
+}
+
 type cleanupTraceKey struct{}
 
 type failingRequestEntropy struct{}

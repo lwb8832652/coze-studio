@@ -111,6 +111,7 @@ func performAdminSandboxRouteRequest(email, method, path, body string) *ut.Respo
 		return &userentity.Session{UserID: 42, UserEmail: email}, nil
 	}))
 	Register(h)
+	RegisterCustomRoutes(h)
 
 	var requestBody *ut.Body
 	headers := make([]ut.Header, 0, 2)
