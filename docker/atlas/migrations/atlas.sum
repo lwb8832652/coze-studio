@@ -1,4 +1,4 @@
-h1:4dH7kjGOO2YFsrrP7BXu6TD2O2utWaEP90JN/NqMCXM=
+h1:ghRfv0V4Rv1kwC3BRBj4fJDQqlESZsJ4f8Hho3UPaC0=
 20250703095335_initial.sql h1:/joaeUTMhXqAEc0KwsSve5+bYM0qPOp+9OizJtsRc+U=
 20250703115304_update.sql h1:cbYo6Q6Lh96hB4hu5KW2Nn/Mr0VDpg7a1WPgpIb1SOc=
 20250704040445_update.sql h1:QWmoPY//oQ+GFZwET9w/oAWa8mM0KVaD5G8Yiu9bMqY=
@@ -63,3 +63,4 @@ h1:4dH7kjGOO2YFsrrP7BXu6TD2O2utWaEP90JN/NqMCXM=
 20260717000600_appdev_provider_legacy_launch_recovery.sql h1:iWfB1lRUFBvxTSsMBaDkuJ4LDh8tkRHHDX7/yJyRPbs=
 20260717000700_appdev_provider_quarantine_disposition.sql h1:SZIf5sCgsr5DkLq0QAJWbWHCFvrWI2/kLzdvVWToZ40=
 20260718000100_plugin_code_parity.sql h1:F2rNeDJQWBnISgRuKoxDAO08jiPzjOgnV4cMPZk3QR4=
+20260719000100_feishu_im_channel.sql h1:It3QMgb0q+6oy3FGCq3NVEH5A5V24oTGQvaHVfPxXGk=

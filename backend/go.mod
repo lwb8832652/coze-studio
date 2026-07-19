@@ -321,6 +321,7 @@ require (
 	github.com/hamba/avro/v2 v2.26.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/larksuite/oapi-sdk-go/v3 v3.9.9 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

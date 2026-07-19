@@ -49,6 +49,10 @@ import {
   MCP_TOOL_SETTINGS_TAB_ID,
   MCPToolSettingsPanel,
 } from '../../pages/tools/mcp-settings-panel';
+import {
+  FEISHU_IM_SETTINGS_TAB_ID,
+  FeishuIMSettingsPanel,
+} from '../../pages/tools/feishu-im-settings-panel';
 import { getSystemAdminStatus } from '../../pages/system/service';
 import { WorkspaceTaskList } from './workspace-task-list';
 import {
@@ -501,12 +505,17 @@ export const WorkspaceSubMenu = () => {
       ) : undefined,
     title: () => item.label,
   }));
-  const mcpSettingsTabs = useMemo<AccountSettingsExtraTab[]>(
+  const accountSettingsTabs = useMemo<AccountSettingsExtraTab[]>(
     () => [
       {
         id: MCP_TOOL_SETTINGS_TAB_ID,
         tabName: 'MCP 配置',
         content: () => <MCPToolSettingsPanel spaceId={currentSpace?.id} />,
+      },
+      {
+        id: FEISHU_IM_SETTINGS_TAB_ID,
+        tabName: 'IM 机器人',
+        content: () => <FeishuIMSettingsPanel spaceId={currentSpace?.id} />,
       },
     ],
     [currentSpace?.id],
@@ -598,7 +607,7 @@ export const WorkspaceSubMenu = () => {
     <div className="coze-prototype-sidebar-footer">
       <div className="flex min-w-0 items-center gap-[8px]">
         <AccountDropdown
-          extraSettingsTabs={mcpSettingsTabs}
+          extraSettingsTabs={accountSettingsTabs}
           extraMenuItems={accountExtraMenuItems}
         />
         <Typography.Text

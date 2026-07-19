@@ -54,6 +54,15 @@ func registerAdminCustomRoutes(api *route.RouterGroup) {
 func registerWorkbenchCustomRoutes(api *route.RouterGroup) {
 	workbench := api.Group("/workbench", _workbenchMw()...)
 
+	workbench.GET("/im_channels", handler.ListIMChannels)
+	workbench.POST("/im_channels", handler.CreateIMChannel)
+	workbench.PUT("/im_channels/:channel_id", handler.UpdateIMChannel)
+	workbench.DELETE("/im_channels/:channel_id", handler.DeleteIMChannel)
+	imChannel := workbench.Group("/im_channels/:channel_id")
+	imChannel.POST("/enable", handler.EnableIMChannel)
+	imChannel.POST("/disable", handler.DisableIMChannel)
+	imChannel.POST("/test", handler.TestIMChannelConnection)
+
 	workbench.GET("/mcp_tools", handler.ListMCPToolServers)
 	workbench.POST("/mcp_tools", handler.UpsertMCPToolServer)
 	workbench.GET("/mcp_tools/registry_entries", handler.ListMCPToolRegistryEntries)

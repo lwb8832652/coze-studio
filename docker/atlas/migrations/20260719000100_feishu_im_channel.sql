@@ -1,0 +1,71 @@
+-- Workspace-scoped Feishu IM channel control plane and durable runtime state.
+
+CREATE TABLE `im_channel_configs` (
+  `id` BIGINT NOT NULL,
+  `space_id` BIGINT NOT NULL,
+  `creator_id` BIGINT NOT NULL,
+  `updated_by` BIGINT NOT NULL,
+  `agent_id` BIGINT NOT NULL,
+  `channel_type` VARCHAR(32) NOT NULL DEFAULT 'feishu',
+  `name` VARCHAR(80) NOT NULL,
+  `app_id` VARCHAR(128) NOT NULL,
+  `app_secret_ciphertext` MEDIUMTEXT NOT NULL,
+  `app_secret_fingerprint` VARCHAR(64) NOT NULL,
+  `enabled` TINYINT(1) NOT NULL DEFAULT 0,
+  `reply_mode` VARCHAR(16) NOT NULL DEFAULT 'final',
+  `group_policy` VARCHAR(32) NOT NULL DEFAULT 'mention_only',
+  `runtime_status` VARCHAR(24) NOT NULL DEFAULT 'disabled',
+  `runtime_error` VARCHAR(512) NOT NULL DEFAULT '',
+  `bot_open_id` VARCHAR(128) NOT NULL DEFAULT '',
+  `bot_name` VARCHAR(128) NOT NULL DEFAULT '',
+  `last_connected_at` DATETIME(3) NULL,
+  `last_tested_at` DATETIME(3) NULL,
+  `runtime_owner` VARCHAR(128) NOT NULL DEFAULT '',
+  `runtime_lease_expires_at` DATETIME(3) NULL,
+  `version` BIGINT NOT NULL DEFAULT 1,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `deleted_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_im_channel_space_app` (`space_id`, `app_id`),
+  KEY `idx_im_channel_runtime` (`enabled`, `deleted_at`, `runtime_lease_expires_at`),
+  KEY `idx_im_channel_agent` (`space_id`, `agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `im_channel_sessions` (
+  `id` BIGINT NOT NULL,
+  `config_id` BIGINT NOT NULL,
+  `space_id` BIGINT NOT NULL,
+  `chat_id` VARCHAR(256) NOT NULL,
+  `chat_type` VARCHAR(32) NOT NULL DEFAULT '',
+  `external_user_id` VARCHAR(256) NOT NULL DEFAULT '',
+  `thread_id` BIGINT NOT NULL,
+  `last_message_id` VARCHAR(256) NOT NULL DEFAULT '',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_im_channel_session_chat` (`config_id`, `chat_id`),
+  KEY `idx_im_channel_session_thread` (`thread_id`),
+  KEY `idx_im_channel_session_space` (`space_id`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `im_channel_events` (
+  `id` BIGINT NOT NULL,
+  `config_id` BIGINT NOT NULL,
+  `event_key` VARCHAR(256) NOT NULL,
+  `message_id` VARCHAR(256) NOT NULL DEFAULT '',
+  `payload_json` MEDIUMTEXT NOT NULL,
+  `status` VARCHAR(24) NOT NULL DEFAULT 'pending',
+  `attempt_count` INT NOT NULL DEFAULT 0,
+  `next_retry_at` DATETIME(3) NULL,
+  `processing_owner` VARCHAR(128) NOT NULL DEFAULT '',
+  `processing_lease_until` DATETIME(3) NULL,
+  `last_error` VARCHAR(512) NOT NULL DEFAULT '',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `completed_at` DATETIME(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_im_channel_event` (`config_id`, `event_key`),
+  KEY `idx_im_channel_event_claim` (`config_id`, `status`, `next_retry_at`, `processing_lease_until`),
+  KEY `idx_im_channel_event_cleanup` (`status`, `completed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

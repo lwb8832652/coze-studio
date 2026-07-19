@@ -33,6 +33,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
 	"github.com/coze-dev/coze-studio/backend/application/connector"
 	"github.com/coze-dev/coze-studio/backend/application/conversation"
+	appimchannel "github.com/coze-dev/coze-studio/backend/application/imchannel"
 	"github.com/coze-dev/coze-studio/backend/application/knowledge"
 	"github.com/coze-dev/coze-studio/backend/application/mcptool"
 	"github.com/coze-dev/coze-studio/backend/application/memory"
@@ -558,6 +559,15 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpE
 		ObjectStorage:   basicServices.infra.OSS,
 		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
+	if _, _, err := appimchannel.InitService(&appimchannel.Components{
+		DB:           basicServices.infra.DB,
+		IDGen:        basicServices.infra.IDGenSVC,
+		Roles:        basicServices.userSVC.DomainSVC,
+		AgentThreads: agentThreadSVC,
+		RootContext:  ctx,
+	}); err != nil {
+		return nil, fmt.Errorf("init Feishu IM channel service: %w", err)
+	}
 	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpEnabled)
 	if err != nil {
 		return nil, err

@@ -40,8 +40,10 @@
 - 质量第一：代码质量、租户隔离、权限、安全边界和可测试性不可妥协。
 - 透明记录：关键决策、任务状态、验证命令和已知风险必须能在文档或提交中
   追溯。
-- 不做 IM Channels：不新增 Telegram、Slack、Discord、飞书、钉钉、微信等
-  channel 适配、设置、菜单、凭据或 worker。
+- IM Channels 当前只做飞书：仅允许使用飞书官方 Go SDK
+  `github.com/larksuite/oapi-sdk-go/v3`，入口放在现有设置弹窗内并按工作空间
+  隔离；暂不新增 Telegram、Slack、Discord、钉钉、企业微信、微信等其它
+  channel，也不新增生态市场或额外一级菜单。
 
 ## 当前功能对齐硬规则
 
@@ -124,6 +126,9 @@ Coze Studio 是 React + TypeScript + Go 的 AI Agent 平台，前端由 Rush.js 
   系统配置等后台管理员能力；
 - 个人中心：保留账号身份能力边界，个人资料、API 授权、退出登录等仍属于账
   号下拉/个人中心范畴；
+- IM 机器人：在设置弹窗中提供工作空间级飞书机器人配置，使用官方 SDK 长
+  连接、真实 Agent、持久化会话与事件去重；App Secret 只写入、加密保存且
+  不回显；
 - 前后端都必须是生产级边界，不接受只做 UI 壳或内存 stub。
 
 ## 常用命令
@@ -217,6 +222,13 @@ nuwax-ai 演示环境用于页面样式和交互对齐：
 - 身份、空间、权限以服务端认证上下文为准，不能信任客户端提交的
   `user_id`、`space_id` 或 owner 字段。
 - 新增持久化能力要考虑租户隔离、幂等、重试、取消、恢复和安全审计。
+- 飞书 IM 只使用官方 Go SDK 的 Channel + WebSocket 长连接；配置修改仅工作
+  空间 Owner/Admin 可执行，普通成员只读。外部消息必须先持久化去重，再映
+  射到 Coze `agentthread`，不得在回调中同步执行长耗时 Agent。
+- 飞书 App Secret 使用
+  `IM_CHANNEL_CREDENTIAL_KEYS_JSON` /
+  `IM_CHANNEL_CREDENTIAL_ACTIVE_KEY_ID` 加密；未单独配置时允许复用 Sandbox
+  keyring，但禁止明文落库、回显、日志输出或发送到前端。
 
 ## Agent Runtime 规则
 
