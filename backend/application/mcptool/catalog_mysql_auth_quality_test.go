@@ -347,11 +347,11 @@ func TestMCPAESAuthCodecRejectsTamperingTruncationAndWrongKey(t *testing.T) {
 func TestMCPAESAuthCodecRejectsMissingAndInvalidSecrets(t *testing.T) {
 	require.Equal(t, "MCP_AES_AUTH_SECRET", MCPAESAuthSecretEnv)
 	for name, secret := range map[string]string{
-		"missing":  "",
+		"missing":   "",
 		"too short": "short",
-		"15 bytes": strings.Repeat("x", 15),
-		"17 bytes": strings.Repeat("x", 17),
-		"33 bytes": strings.Repeat("x", 33),
+		"15 bytes":  strings.Repeat("x", 15),
+		"17 bytes":  strings.Repeat("x", 17),
+		"33 bytes":  strings.Repeat("x", 33),
 	} {
 		t.Run(name, func(t *testing.T) {
 			codec, err := NewAESMCPAuthCodec(secret)
@@ -580,6 +580,37 @@ func TestMySQLCatalogLegacyAuthRejectsDamagedNamespacedEnvelope(t *testing.T) {
 			require.Equal(t, stored, loadStoredAuthForTest(t, db, 100))
 		})
 	}
+}
+
+func TestMySQLCatalogManagementListDegradesUnreadableAuthWithoutWeakeningStrictReads(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+	writerCodec, err := NewAESMCPAuthCodec("0123456789abcdef")
+	require.NoError(t, err)
+	readerCodec, err := NewAESMCPAuthCodec("fedcba9876543210")
+	require.NoError(t, err)
+	writer := NewMySQLCatalog(db, WithMySQLCatalogAuthCodec(writerCodec))
+	require.NoError(t, writer.Upsert(
+		context.Background(),
+		mcpServerForAuthTest(100, `{"token":"top-secret"}`),
+	))
+	reader := NewMySQLCatalog(db, WithMySQLCatalogAuthCodec(readerCodec))
+
+	_, err = reader.List(context.Background(), 1)
+	require.EqualError(t, err, "mcp tool auth decode failed")
+
+	servers, err := reader.ListForManagement(context.Background(), 1)
+	require.NoError(t, err)
+	require.Len(t, servers, 1)
+	require.Equal(t, mcpAuthConfiguredSentinel, servers[0].Auth)
+	require.False(t, servers[0].Enabled)
+	require.Equal(t, mcpToolHealthStatusUnhealthy, servers[0].HealthStatus)
+	require.Equal(t, "credential_unavailable", servers[0].HealthError)
+	require.NotContains(t, servers[0].Auth, "top-secret")
+
+	_, err = reader.Get(context.Background(), 100)
+	require.EqualError(t, err, "mcp tool auth decode failed")
 }
 
 func sqliteIndexColumnNames(t *testing.T, db *gorm.DB, indexName string) []string {

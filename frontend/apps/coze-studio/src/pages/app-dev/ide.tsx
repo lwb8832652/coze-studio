@@ -64,6 +64,7 @@ import type {
 } from './components/chat-panel';
 
 import './index.less';
+import './newx-refresh.less';
 
 export default function AppDevIDEPage() {
   const navigate = useNavigate();

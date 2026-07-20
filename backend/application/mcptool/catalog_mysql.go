@@ -363,15 +363,8 @@ func (c *MySQLCatalog) Get(ctx context.Context, serverID int64) (*toolapi.MCPToo
 }
 
 func (c *MySQLCatalog) List(ctx context.Context, spaceID int64) ([]*toolapi.MCPToolServer, error) {
-	if c == nil || c.db == nil {
-		return nil, errors.New("mcp tool catalog db is required")
-	}
-
-	pos := make([]*mcpToolServerPO, 0)
-	if err := c.db.WithContext(ctx).
-		Where("space_id = ? AND deleted_at = 0", spaceID).
-		Order("updated_at DESC, server_id DESC").
-		Find(&pos).Error; err != nil {
+	pos, err := c.listPOs(ctx, spaceID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -385,6 +378,46 @@ func (c *MySQLCatalog) List(ctx context.Context, spaceID int64) ([]*toolapi.MCPT
 	}
 
 	return servers, nil
+}
+
+func (c *MySQLCatalog) ListForManagement(
+	ctx context.Context,
+	spaceID int64,
+) ([]*toolapi.MCPToolServer, error) {
+	pos, err := c.listPOs(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	servers := make([]*toolapi.MCPToolServer, 0, len(pos))
+	for _, po := range pos {
+		server, err := c.poToManagementAPI(ctx, po)
+		if err != nil {
+			return nil, err
+		}
+		servers = append(servers, server)
+	}
+
+	return servers, nil
+}
+
+func (c *MySQLCatalog) listPOs(
+	ctx context.Context,
+	spaceID int64,
+) ([]*mcpToolServerPO, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("mcp tool catalog db is required")
+	}
+
+	pos := make([]*mcpToolServerPO, 0)
+	if err := c.db.WithContext(ctx).
+		Where("space_id = ? AND deleted_at = 0", spaceID).
+		Order("updated_at DESC, server_id DESC").
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	return pos, nil
 }
 
 func (c *MySQLCatalog) Delete(ctx context.Context, serverID int64) error {
@@ -608,6 +641,38 @@ func (c *MySQLCatalog) poToAPI(
 	}
 	po = currentPO
 
+	return mcpToolServerFromPO(po, auth)
+}
+
+func (c *MySQLCatalog) poToManagementAPI(
+	ctx context.Context,
+	po *mcpToolServerPO,
+) (*toolapi.MCPToolServer, error) {
+	server, err := c.poToAPI(ctx, po)
+	if err == nil {
+		return server, nil
+	}
+	if !isMCPToolAuthReadError(err) {
+		return nil, err
+	}
+
+	server, err = mcpToolServerFromPO(po, mcpAuthConfiguredSentinel)
+	if err != nil {
+		return nil, err
+	}
+	server.Enabled = false
+	server.HealthStatus = mcpToolHealthStatusUnhealthy
+	server.HealthCheckedAt = 0
+	server.HealthLatencyMs = 0
+	server.HealthError = "credential_unavailable"
+
+	return server, nil
+}
+
+func mcpToolServerFromPO(
+	po *mcpToolServerPO,
+	auth string,
+) (*toolapi.MCPToolServer, error) {
 	tools := make([]*toolapi.MCPToolDefinition, 0)
 	if len(po.Tools) > 0 {
 		if err := json.Unmarshal(po.Tools, &tools); err != nil {
@@ -704,7 +769,7 @@ func (c *MySQLCatalog) encodeAuth(ctx context.Context, auth string) (string, err
 func (c *MySQLCatalog) decodeAuth(ctx context.Context, stored string) (string, error) {
 	parsed, err := parseBoundedMCPAuthObjectString(stored, maxMCPAuthEnvelopeBytes)
 	if err != nil {
-		return "", errors.New("mcp tool auth decode failed")
+		return "", errMCPToolAuthDecodeFailed
 	}
 	if isEmptyCatalogMCPAuth(parsed) {
 		return "{}", nil
@@ -714,18 +779,18 @@ func (c *MySQLCatalog) decodeAuth(ctx context.Context, stored string) (string, e
 
 func (c *MySQLCatalog) decodeParsedAuth(ctx context.Context, stored string) (string, error) {
 	if c == nil || c.authCodec == nil {
-		return "", errors.New("mcp tool auth codec is required")
+		return "", errMCPToolAuthCodecRequired
 	}
 	decoded, err := c.authCodec.DecodeMCPAuth(ctx, stored)
 	if err != nil {
-		return "", errors.New("mcp tool auth decode failed")
+		return "", errMCPToolAuthDecodeFailed
 	}
 	if len(decoded) > maxMCPAuthPlaintextBytes {
-		return "", errors.New("mcp tool auth decode failed")
+		return "", errMCPToolAuthDecodeFailed
 	}
 	decoded = strings.TrimSpace(decoded)
 	if _, err := parseBoundedMCPAuthObjectString(decoded, maxMCPAuthPlaintextBytes); err != nil {
-		return "", errors.New("mcp tool auth decode failed")
+		return "", errMCPToolAuthDecodeFailed
 	}
 
 	return decoded, nil
@@ -737,29 +802,29 @@ func (c *MySQLCatalog) decodeAuthForRead(
 ) (auth string, migratedAuth string, err error) {
 	parsed, err := parseBoundedMCPAuthObjectString(stored, maxMCPAuthEnvelopeBytes)
 	if err != nil {
-		return "", "", errors.New("mcp tool auth decode failed")
+		return "", "", errMCPToolAuthDecodeFailed
 	}
 	if isEmptyCatalogMCPAuth(parsed) {
 		return "{}", "", nil
 	}
 	if isLegacyCatalogMCPAuth(parsed) {
 		if len(stored) > maxMCPAuthPlaintextBytes {
-			return "", "", errors.New("mcp tool auth decode failed")
+			return "", "", errMCPToolAuthDecodeFailed
 		}
 		codec, ok := c.authCodec.(*AESMCPAuthCodec)
 		if !ok || codec == nil {
-			return "", "", errors.New("mcp tool legacy auth migration requires AES-GCM codec")
+			return "", "", errMCPToolLegacyAuthMigrationRequiresAESGCM
 		}
 		encoded, err := codec.EncodeMCPAuth(ctx, stored)
 		if err != nil {
-			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
+			return "", "", errMCPToolLegacyAuthReEncryptionFailed
 		}
 		if len(encoded) > maxMCPAuthEnvelopeBytes {
-			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
+			return "", "", errMCPToolLegacyAuthReEncryptionFailed
 		}
 		encoded = strings.TrimSpace(encoded)
 		if _, err := parseBoundedMCPAuthObjectString(encoded, maxMCPAuthEnvelopeBytes); err != nil {
-			return "", "", errors.New("mcp tool legacy auth re-encryption failed")
+			return "", "", errMCPToolLegacyAuthReEncryptionFailed
 		}
 
 		return stored, encoded, nil
@@ -787,7 +852,7 @@ func (c *MySQLCatalog) resolveAuthForRead(
 			return current, auth, nil
 		}
 		if attempt >= mcpLegacyAuthMaxCASAttempts {
-			return nil, "", errors.New("mcp tool legacy auth migration conflict")
+			return nil, "", errMCPToolLegacyAuthMigrationConflict
 		}
 		updated, err := c.persistMigratedAuth(ctx, current.ServerID, stored, migratedAuth)
 		if err != nil {
@@ -810,7 +875,7 @@ func (c *MySQLCatalog) persistMigratedAuth(
 	encoded string,
 ) (bool, error) {
 	if c == nil || c.db == nil {
-		return false, errors.New("mcp tool legacy auth migration failed")
+		return false, errMCPToolLegacyAuthMigrationFailed
 	}
 	db := c.db.WithContext(ctx).
 		Model(&mcpToolServerPO{}).
@@ -821,10 +886,28 @@ func (c *MySQLCatalog) persistMigratedAuth(
 		).
 		Update("auth", datatypes.JSON(encoded))
 	if db.Error != nil {
-		return false, errors.New("mcp tool legacy auth migration failed")
+		return false, errMCPToolLegacyAuthMigrationFailed
 	}
 
 	return db.RowsAffected == 1, nil
+}
+
+var (
+	errMCPToolAuthDecodeFailed                  = errors.New("mcp tool auth decode failed")
+	errMCPToolAuthCodecRequired                 = errors.New("mcp tool auth codec is required")
+	errMCPToolLegacyAuthMigrationRequiresAESGCM = errors.New("mcp tool legacy auth migration requires AES-GCM codec")
+	errMCPToolLegacyAuthReEncryptionFailed      = errors.New("mcp tool legacy auth re-encryption failed")
+	errMCPToolLegacyAuthMigrationConflict       = errors.New("mcp tool legacy auth migration conflict")
+	errMCPToolLegacyAuthMigrationFailed         = errors.New("mcp tool legacy auth migration failed")
+)
+
+func isMCPToolAuthReadError(err error) bool {
+	return errors.Is(err, errMCPToolAuthDecodeFailed) ||
+		errors.Is(err, errMCPToolAuthCodecRequired) ||
+		errors.Is(err, errMCPToolLegacyAuthMigrationRequiresAESGCM) ||
+		errors.Is(err, errMCPToolLegacyAuthReEncryptionFailed) ||
+		errors.Is(err, errMCPToolLegacyAuthMigrationConflict) ||
+		errors.Is(err, errMCPToolLegacyAuthMigrationFailed)
 }
 
 func (c *MySQLCatalog) reloadMCPToolServerPO(

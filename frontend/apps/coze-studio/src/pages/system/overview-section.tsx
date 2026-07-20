@@ -25,6 +25,9 @@ interface OverviewSectionProps {
   workspaces: AdminWorkspace[];
 }
 
+const getSnapshotInitial = (value: string) =>
+  Array.from(value.trim())[0]?.toLocaleUpperCase() || '?';
+
 export const OverviewSection = ({
   userTotal,
   workspaceTotal,
@@ -51,44 +54,88 @@ export const OverviewSection = ({
       </article>
     </section>
 
-    <section className="coze-prototype-workspace-settings-list">
-      <article className="coze-prototype-workspace-settings-card">
-        <div>
+    <section className="coze-prototype-system-snapshot-grid">
+      <article className="coze-prototype-system-snapshot-card">
+        <header className="coze-prototype-system-snapshot-header">
           <h2>最近用户</h2>
           <p>展示本次加载到的用户快照，便于管理员快速定位账号。</p>
-        </div>
-        <div className="coze-prototype-system-list">
+        </header>
+        <div className="coze-prototype-system-snapshot-list" role="list">
           {users.length ? (
-            users.slice(0, 3).map(user => (
-              <p key={user.user_id}>
-                {user.name || user.email || user.user_id} ·{' '}
-                {user.email || '未绑定邮箱'}
-              </p>
-            ))
+            users.slice(0, 3).map(user => {
+              const displayName = user.name || user.email || user.user_id;
+              return (
+                <div
+                  className="coze-prototype-system-snapshot-row"
+                  key={user.user_id}
+                  role="listitem"
+                >
+                  <span
+                    className="coze-prototype-system-snapshot-avatar"
+                    aria-hidden="true"
+                  >
+                    {getSnapshotInitial(displayName)}
+                  </span>
+                  <span className="coze-prototype-system-snapshot-copy">
+                    <strong>{displayName}</strong>
+                    <span>{user.email || '未绑定邮箱'}</span>
+                  </span>
+                </div>
+              );
+            })
           ) : (
-            <p>暂无用户快照</p>
+            <p className="coze-prototype-system-snapshot-empty">
+              暂无用户快照
+            </p>
           )}
         </div>
-        <span>{userTotal} 人</span>
+        <footer className="coze-prototype-system-snapshot-footer">
+          <span>已展示 {Math.min(users.length, 3)} 条</span>
+          <strong>{userTotal} 人</strong>
+        </footer>
       </article>
-      <article className="coze-prototype-workspace-settings-card">
-        <div>
+      <article className="coze-prototype-system-snapshot-card">
+        <header className="coze-prototype-system-snapshot-header">
           <h2>最近工作空间</h2>
           <p>展示本次加载到的工作空间快照，便于管理员快速巡检。</p>
-        </div>
-        <div className="coze-prototype-system-list">
+        </header>
+        <div className="coze-prototype-system-snapshot-list" role="list">
           {workspaces.length ? (
-            workspaces.slice(0, 3).map(workspace => (
-              <p key={workspace.id}>
-                {getWorkspaceDisplayName(workspace)} ·{' '}
-                {workspace.owner_name || workspace.owner_user_id || '-'}
-              </p>
-            ))
+            workspaces.slice(0, 3).map(workspace => {
+              const displayName = getWorkspaceDisplayName(workspace);
+              const owner =
+                workspace.owner_name || workspace.owner_user_id || '未知';
+              return (
+                <div
+                  className="coze-prototype-system-snapshot-row"
+                  key={workspace.id}
+                  role="listitem"
+                >
+                  <span
+                    className="coze-prototype-system-snapshot-avatar coze-prototype-system-snapshot-avatar-workspace"
+                    aria-hidden="true"
+                  >
+                    {getSnapshotInitial(displayName)}
+                  </span>
+                  <span className="coze-prototype-system-snapshot-copy">
+                    <strong>{displayName}</strong>
+                    <span>
+                      所有者：{owner} · {workspace.total_member_num || 0} 人
+                    </span>
+                  </span>
+                </div>
+              );
+            })
           ) : (
-            <p>暂无工作空间快照</p>
+            <p className="coze-prototype-system-snapshot-empty">
+              暂无工作空间快照
+            </p>
           )}
         </div>
-        <span>{workspaceTotal} 个空间</span>
+        <footer className="coze-prototype-system-snapshot-footer">
+          <span>已展示 {Math.min(workspaces.length, 3)} 条</span>
+          <strong>{workspaceTotal} 个空间</strong>
+        </footer>
       </article>
     </section>
   </>

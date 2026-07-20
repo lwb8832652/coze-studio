@@ -27,6 +27,7 @@ export const Layout = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-layout',
         'min-h-[100%]',
         'flex flex-col gap-[16px]',
         'overflow-hidden',
@@ -45,6 +46,7 @@ export const Header = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-header',
         'flex-shrink-0',
         'w-full h-[32px]',
         'flex items-center justify-between',
@@ -62,6 +64,7 @@ export const HeaderTitle = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-title',
         'text-[20px] font-[500]',
         'flex items-center gap-[8px]',
       )}
@@ -78,6 +81,7 @@ export const HeaderActions = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-actions',
         'flex items-center gap-[8px] ml-[32px]',
       )}
     >
@@ -93,6 +97,7 @@ export const SubHeader = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-toolbar',
         'flex-shrink-0',
         'w-full h-[32px]',
         'flex items-center justify-between',
@@ -108,7 +113,11 @@ export const SubHeaderFilters = forwardRef<HTMLDivElement, LayoutBaseProps>(
     <div
       {...restProps}
       ref={ref}
-      className={classNames(restProps.className, 'flex items-center gap-[8px]')}
+      className={classNames(
+        restProps.className,
+        'newx-adapter-list-filters',
+        'flex items-center gap-[8px]',
+      )}
     >
       {children}
     </div>
@@ -117,7 +126,11 @@ export const SubHeaderFilters = forwardRef<HTMLDivElement, LayoutBaseProps>(
 
 export const SubHeaderSearch = forwardRef<HTMLDivElement, LayoutBaseProps>(
   ({ children, ...restProps }, ref) => (
-    <div {...restProps} ref={ref} className={classNames(restProps.className)}>
+    <div
+      {...restProps}
+      ref={ref}
+      className={classNames(restProps.className, 'newx-adapter-list-search')}
+    >
       {children}
     </div>
   ),
@@ -130,6 +143,7 @@ export const Content = forwardRef<HTMLDivElement, LayoutBaseProps>(
       ref={ref}
       className={classNames(
         restProps.className,
+        'newx-adapter-list-content',
         'flex-grow',
         'overflow-x-hidden overflow-y-auto',
       )}

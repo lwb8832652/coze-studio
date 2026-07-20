@@ -20,10 +20,16 @@ import { useState } from 'react';
 import {
   IconCozArrowDown,
   IconCozBell,
+  IconCozBot,
+  IconCozCode,
+  IconCozDocument,
   IconCozImage,
   IconCozPlus,
   IconCozUpload,
+  IconCozWorkflow,
 } from '@coze-arch/coze-design/icons';
+import { useUserInfo } from '@coze-arch/foundation-sdk';
+import { Avatar } from '@coze-arch/coze-design';
 
 import './index.less';
 
@@ -128,6 +134,8 @@ const TEMPLATE_CARDS = [
       stars: 371,
       uses: 5440,
     },
+    icon: IconCozDocument,
+    tone: 'green',
   },
   {
     title: '通过代码生成研发年度报告',
@@ -138,6 +146,8 @@ const TEMPLATE_CARDS = [
       stars: 127,
       uses: 8578,
     },
+    icon: IconCozCode,
+    tone: 'blue',
   },
   {
     title: '通用自动化产品 Meego Bug 根因分析与修复',
@@ -149,6 +159,8 @@ const TEMPLATE_CARDS = [
       stars: 33,
       uses: 322,
     },
+    icon: IconCozBot,
+    tone: 'violet',
   },
   {
     title: '后端架构整体方案设计',
@@ -160,6 +172,8 @@ const TEMPLATE_CARDS = [
       stars: 859,
       uses: 2396,
     },
+    icon: IconCozWorkflow,
+    tone: 'orange',
   },
   {
     title: 'Go 专家为你 CodeReview',
@@ -171,44 +185,76 @@ const TEMPLATE_CARDS = [
       stars: 874,
       uses: 7977,
     },
+    icon: IconCozCode,
+    tone: 'amber',
+  },
+  {
+    title: '生成 agent 学习路线',
+    description: '基于你的背景与目标，生成结构化的 Agent 学习路线图。',
+    tags: ['学习规划', '通用', '公开'],
+    prompt: '请根据我的技术背景和学习目标，生成一份 Agent 学习路线图。',
+    stats: {
+      stars: 412,
+      uses: 3186,
+    },
+    icon: IconCozBot,
+    tone: 'cyan',
   },
 ];
 
-const ColorDots = () => (
-  <span className="chat-workbench-color-dots" aria-hidden="true">
-    <span data-color="coral" />
-    <span data-color="blue" />
-    <span data-color="green" />
-  </span>
-);
+const formatTemplateStat = (value: number) =>
+  value.toLocaleString('en-US');
 
-const WorkbenchTopbar = () => (
-  <header className="chat-workbench-topbar" aria-label="工作台状态">
-    <div className="chat-workbench-assistant-status">
-      <span className="chat-workbench-status-dot" />
-      <span>NewX AI 专属助理准备好,先聊聊吧~</span>
-      <button type="button">去聊天专属助理</button>
-    </div>
-    <button
-      type="button"
-      className="chat-workbench-icon-button"
-      aria-label="通知"
-    >
-      <IconCozBell />
-    </button>
-    <div className="chat-workbench-avatar" aria-label="当前用户">
-      wb
-    </div>
-  </header>
-);
+const getUserDisplayName = (
+  userInfo: ReturnType<typeof useUserInfo>,
+): string =>
+  userInfo?.name || userInfo?.screen_name || userInfo?.email || '用户';
 
-const WorkbenchTitle = () => (
-  <header className="chat-workbench-header">
-    <h1 aria-label="欢迎来到 刘文波 的工作空间">
-      欢迎来到 <span>刘文波 的工作空间</span>
-    </h1>
-  </header>
-);
+const WorkbenchTopbar = () => {
+  const userInfo = useUserInfo();
+  const userDisplayName = getUserDisplayName(userInfo);
+
+  return (
+    <header className="chat-workbench-topbar" aria-label="工作台状态">
+      <div className="chat-workbench-assistant-status">
+        <span className="chat-workbench-status-dot" />
+        <span>NewX AI 专属助理已就绪，随时可以开始对话</span>
+        <button type="button">去聊天专属助理</button>
+      </div>
+      <button
+        type="button"
+        className="chat-workbench-icon-button"
+        aria-label="通知"
+      >
+        <IconCozBell />
+      </button>
+      <span aria-label={`当前用户：${userDisplayName}`}>
+        <Avatar
+          src={userInfo?.avatar_url}
+          className="chat-workbench-avatar"
+          style={{
+            color: '#fff',
+            backgroundColor: 'var(--newx-color-accent)',
+          }}
+        >
+          {userDisplayName}
+        </Avatar>
+      </span>
+    </header>
+  );
+};
+
+const WorkbenchTitle = () => {
+  const userDisplayName = getUserDisplayName(useUserInfo());
+
+  return (
+    <header className="chat-workbench-header">
+      <h1 aria-label={`欢迎回来，${userDisplayName}`}>
+        欢迎回来，<span>{userDisplayName}</span>
+      </h1>
+    </header>
+  );
+};
 
 const SkillCreationIntent = () => (
   <section className="chat-workbench-skill-intent" aria-label="AI 创建技能模式">
@@ -250,63 +296,68 @@ const WorkbenchTemplateSection = ({
           推荐排序
           <IconCozArrowDown />
         </button>
-      </div>
-    </div>
-
-    <div className="chat-workbench-templates">
-      <article className="chat-workbench-create-card">
-        <h2>创建模板</h2>
-        <p>沉淀可复用的指令与配置</p>
-        <div className="chat-workbench-create-preview">
-          <span>Template</span>
-        </div>
-        <div className="chat-workbench-create-actions">
+        <div
+          className="chat-workbench-template-create-actions"
+          aria-label="模板操作"
+        >
           <button
             type="button"
             onClick={() => onTemplateSelect('创建一个新的任务模板')}
           >
             <IconCozPlus />
-            创建
+            创建模板
           </button>
           <button type="button">
             <IconCozUpload />
             导入
           </button>
         </div>
-      </article>
+      </div>
+    </div>
 
-      {TEMPLATE_CARDS.map(card => (
-        <button
-          key={card.title}
-          type="button"
-          className="chat-workbench-template-card"
-          aria-label={`${card.title} 模板`}
-          onClick={() => onTemplateSelect(card.prompt)}
-        >
-          <span className="chat-workbench-template-title">{card.title}</span>
-          <span className="chat-workbench-tags">
-            {card.tags.map(tag => (
-              <span key={tag}>{tag}</span>
-            ))}
-          </span>
-          <span className="chat-workbench-template-desc">
-            {card.description}
-          </span>
-          <span className="chat-workbench-card-footer">
-            <ColorDots />
-            <span className="chat-workbench-card-stats">
-              <span>☆ {card.stats.stars}</span>
-              <span>
-                <IconCozImage />
-                {card.stats.uses}
+    <div className="chat-workbench-templates">
+      {TEMPLATE_CARDS.map(card => {
+        const TemplateIcon = card.icon;
+
+        return (
+          <button
+            key={card.title}
+            type="button"
+            className="chat-workbench-template-card"
+            aria-label={`${card.title} 模板`}
+            onClick={() => onTemplateSelect(card.prompt)}
+          >
+            <span
+              className="chat-workbench-template-icon"
+              data-tone={card.tone}
+              aria-hidden="true"
+            >
+              <TemplateIcon />
+            </span>
+            <span className="chat-workbench-template-title">{card.title}</span>
+            <span className="chat-workbench-tags">
+              {card.tags.map(tag => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </span>
+            <span className="chat-workbench-template-desc">
+              {card.description}
+            </span>
+            <span className="chat-workbench-card-footer">
+              <span className="chat-workbench-card-stats">
+                <span>☆ {formatTemplateStat(card.stats.stars)}</span>
+                <span>
+                  <IconCozImage />
+                  {formatTemplateStat(card.stats.uses)}
+                </span>
+              </span>
+              <span className="chat-workbench-card-action" aria-hidden="true">
+                →
               </span>
             </span>
-            <span className="chat-workbench-card-action" aria-hidden="true">
-              →
-            </span>
-          </span>
-        </button>
-      ))}
+          </button>
+        );
+      })}
     </div>
   </section>
 );

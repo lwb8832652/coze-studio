@@ -1,11 +1,11 @@
 .skill-management-page,
 .skill-detail-page {
-  --skill-ink: #16212f;
-  --skill-muted: #6c7685;
-  --skill-line: #e7eaf0;
-  --skill-canvas: #f6f7f9;
-  --skill-accent: #166534;
-  --skill-accent-strong: #0f4d2b;
+  --skill-ink: var(--newx-color-text-primary, #1d2520);
+  --skill-muted: var(--newx-color-text-secondary, #607067);
+  --skill-line: var(--newx-color-border, #dfe6e0);
+  --skill-canvas: var(--newx-color-page, #f7f8f6);
+  --skill-accent: var(--newx-color-accent, #218c55);
+  --skill-accent-strong: var(--newx-color-accent-hover, #187443);
 
   overflow: auto;
 
@@ -15,12 +15,12 @@
   color: var(--skill-ink);
 
   background:
-    radial-gradient(circle at 88% 4%, rgb(190 242 100 / 14%), transparent 24rem),
-    linear-gradient(180deg, #fbfcfd 0%, var(--skill-canvas) 100%);
+    radial-gradient(circle at 88% 2%, rgba(61, 153, 86, 7%), transparent 24rem),
+    var(--skill-canvas);
 }
 
 .skill-management-page {
-  padding: 34px 42px 52px;
+  padding: 32px 40px 48px;
 }
 
 .skill-page-hero {
@@ -35,9 +35,11 @@
 
 .skill-page-hero h1 {
   margin: 6px 0 7px;
+
   font-family: "Avenir Next", "PingFang SC", sans-serif;
-  font-size: 32px;
-  letter-spacing: -0.04em;
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
 }
 
 .skill-page-hero p {
@@ -61,9 +63,11 @@
 
 .skill-primary-button {
   color: #fff !important;
-  background: var(--skill-accent-strong) !important;
-  border-color: var(--skill-accent-strong) !important;
-  box-shadow: 0 7px 18px rgb(15 77 43 / 16%);
+
+  background: var(--skill-accent) !important;
+  border-color: var(--skill-accent) !important;
+  border-radius: 8px !important;
+  box-shadow: none;
 }
 
 .skill-secondary-button {
@@ -77,13 +81,12 @@
 
   max-width: 1440px;
   margin: 0 auto 20px;
-  padding: 12px;
+  padding: 10px;
 
-  background: rgb(255 255 255 / 82%);
-  backdrop-filter: blur(12px);
+  background: var(--newx-color-surface, #fff);
   border: 1px solid var(--skill-line);
-  border-radius: 14px;
-  box-shadow: 0 10px 28px rgb(30 41 59 / 4%);
+  border-radius: 10px;
+  box-shadow: var(--newx-shadow-sm, 0 5px 18px rgba(31, 55, 38, 4%));
 }
 
 .skill-toolbar select,
@@ -101,8 +104,8 @@
 
 .skill-toolbar select:focus,
 .skill-form-stack select:focus {
-  border-color: #86a996;
-  box-shadow: 0 0 0 3px rgb(22 101 52 / 8%);
+  border-color: var(--skill-accent);
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
 }
 
 .skill-search {
@@ -112,10 +115,13 @@
 .skill-refresh-button {
   cursor: pointer;
 
+  flex: none;
+
   height: 32px;
   padding: 0 12px;
 
   color: #4b5563;
+  white-space: nowrap;
 
   background: transparent;
   border: 0;
@@ -127,9 +133,13 @@
 }
 
 .skill-result-count {
+  flex: none;
+
   margin-left: auto;
+
   font-size: 12px;
   color: var(--skill-muted);
+  white-space: nowrap;
 }
 
 .skill-card-grid {
@@ -146,23 +156,21 @@
 
   overflow: visible;
 
-  min-height: 248px;
+  min-height: 236px;
 
-  background: rgb(255 255 255 / 94%);
+  background: var(--newx-color-surface, #fff);
   border: 1px solid var(--skill-line);
-  border-radius: 16px;
-  box-shadow: 0 5px 18px rgb(31 41 55 / 4%);
+  border-radius: 12px;
+  box-shadow: var(--newx-shadow-sm, 0 4px 16px rgba(31, 55, 38, 4%));
 
   transition:
-    transform 0.2s ease,
     border-color 0.2s ease,
     box-shadow 0.2s ease;
 }
 
 .skill-card:hover {
-  transform: translateY(-2px);
-  border-color: #c9d8cf;
-  box-shadow: 0 16px 32px rgb(31 41 55 / 9%);
+  border-color: rgba(33, 140, 85, 32%);
+  box-shadow: 0 8px 24px rgba(31, 55, 38, 8%);
 }
 
 .skill-card-main {
@@ -217,8 +225,8 @@
 
 .skill-card-scenario {
   padding: 11px 12px;
-  background: #f6f8f7;
-  border-radius: 10px;
+  background: var(--newx-color-surface-muted, #f6f8f6);
+  border-radius: 8px;
 }
 
 .skill-card-scenario strong {

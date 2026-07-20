@@ -159,6 +159,14 @@ export const PluginPage = lazy(() => import('../pages/plugin/page'));
 // plugin tool page
 export const PluginToolPage = lazy(() => import('../pages/plugin/tool/page'));
 
+// Plugin mock set pages
+export const PluginMockSetPage = lazy(
+  () => import('../pages/plugin/tool/plugin-mock-set/page'),
+);
+export const PluginMockSetDetailPage = lazy(
+  () => import('../pages/plugin/tool/plugin-mock-set/detail/page'),
+);
+
 // Explore the experience page secondary navigation component
 export const exploreSubMenu = lazy(() =>
   import('@coze-community/explore').then(exps => ({

@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
+/* eslint-disable max-lines -- Route registry centralizes product and legacy compatibility routes. */
+
+import {
+  createBrowserRouter,
+  Navigate,
+  useLocation,
+  useParams,
+} from 'react-router-dom';
 
 import { SpaceSubModuleEnum } from '@coze-foundation/space-ui-adapter';
 import { GlobalError } from '@coze-foundation/layout';
@@ -41,6 +48,8 @@ import {
   PluginLayout,
   PluginToolPage,
   PluginPage,
+  PluginMockSetPage,
+  PluginMockSetDetailPage,
   KnowledgePreview,
   KnowledgeUpload,
   DatabaseDetail,
@@ -68,6 +77,78 @@ const TaskThreadDetailRedirect = () => {
   }
 
   return <Navigate to={`/space/${space_id}/tasks/${thread_id}`} replace />;
+};
+
+const LegacySignOAuthRedirect = () => {
+  const { search } = useLocation();
+
+  return <Navigate to={`/sign${search}`} replace />;
+};
+
+const LegacyAgentAnalysisRedirect = () => {
+  const { space_id, bot_id } = useParams();
+  const { search } = useLocation();
+
+  if (!space_id || !bot_id) {
+    return <Navigate to="/space" replace />;
+  }
+
+  const query = new URLSearchParams(search);
+  query.set('tab', 'analysis');
+
+  return (
+    <Navigate
+      to={`/space/${space_id}/bot/${bot_id}/publish?${query.toString()}`}
+      replace
+    />
+  );
+};
+
+const LegacyAgentPublishRedirect = () => {
+  const { space_id, bot_id } = useParams();
+  const { search } = useLocation();
+
+  if (!space_id || !bot_id) {
+    return <Navigate to="/space" replace />;
+  }
+
+  return (
+    <Navigate
+      to={`/space/${space_id}/bot/${bot_id}/publish${search}`}
+      replace
+    />
+  );
+};
+
+const LegacyProjectPublishRedirect = () => {
+  const { space_id, project_id } = useParams();
+  const { search } = useLocation();
+
+  if (!space_id || !project_id) {
+    return <Navigate to="/space" replace />;
+  }
+
+  return (
+    <Navigate
+      to={`/space/${space_id}/project-ide/${project_id}/publish${search}`}
+      replace
+    />
+  );
+};
+
+const LegacyWorkflowPublishRedirect = () => {
+  const { space_id, workflow_id } = useParams();
+  const { search } = useLocation();
+
+  if (!space_id || !workflow_id) {
+    return <Navigate to="/space" replace />;
+  }
+
+  const query = new URLSearchParams(search);
+  query.set('space_id', space_id);
+  query.set('workflow_id', workflow_id);
+
+  return <Navigate to={`/work_flow?${query.toString()}`} replace />;
 };
 
 export const router: ReturnType<typeof createBrowserRouter> =
@@ -112,6 +193,14 @@ export const router: ReturnType<typeof createBrowserRouter> =
           path: 'sign',
           Component: LoginPage,
           errorElement: <GlobalError />,
+          loader: () => ({
+            hasSider: false,
+            requireAuth: false,
+          }),
+        },
+        {
+          path: 'sign/oauth',
+          Component: LegacySignOAuthRedirect,
           loader: () => ({
             hasSider: false,
             requireAuth: false,
@@ -177,6 +266,13 @@ export const router: ReturnType<typeof createBrowserRouter> =
 
                 // Agent IDE
                 {
+                  path: 'bot/:bot_id/analysis',
+                  Component: LegacyAgentAnalysisRedirect,
+                  loader: () => ({
+                    hasSider: false,
+                  }),
+                },
+                {
                   path: 'bot/:bot_id',
                   Component: AgentIDELayout,
                   children: [
@@ -208,6 +304,27 @@ export const router: ReturnType<typeof createBrowserRouter> =
                 },
 
                 // Project IDE
+                {
+                  path: 'publish/app/:project_id',
+                  Component: LegacyProjectPublishRedirect,
+                  loader: () => ({
+                    hasSider: false,
+                  }),
+                },
+                {
+                  path: 'publish/agent/:bot_id',
+                  Component: LegacyAgentPublishRedirect,
+                  loader: () => ({
+                    hasSider: false,
+                  }),
+                },
+                {
+                  path: 'workflow/:workflow_id/publish',
+                  Component: LegacyWorkflowPublishRedirect,
+                  loader: () => ({
+                    hasSider: false,
+                  }),
+                },
                 {
                   path: 'project-ide/:project_id/publish',
                   loader: () => ({
@@ -364,6 +481,22 @@ export const router: ReturnType<typeof createBrowserRouter> =
                         {
                           index: true,
                           Component: PluginToolPage,
+                        },
+                        {
+                          path: 'plugin-mock-set',
+                          loader: () => ({
+                            pageModeByQuery: true,
+                          }),
+                          children: [
+                            {
+                              index: true,
+                              Component: PluginMockSetPage,
+                            },
+                            {
+                              path: ':mockset_id',
+                              Component: PluginMockSetDetailPage,
+                            },
+                          ],
                         },
                       ],
                     },

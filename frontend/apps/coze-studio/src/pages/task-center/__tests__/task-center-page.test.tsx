@@ -22,6 +22,10 @@ vi.mock('react-router-dom', () => ({
   useParams: () => ({ space_id: '200' }),
 }));
 
+vi.mock('../../../components/workspace-page-top-bar', () => ({
+  WorkspacePageTopBar: () => <div data-testid="workspace-page-top-bar" />,
+}));
+
 vi.mock('@coze-arch/coze-design', () => ({
   Modal: ({
     visible,

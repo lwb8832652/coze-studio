@@ -27,6 +27,7 @@ import { SpaceType } from '@coze-arch/bot-api/developer_api';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import '../../components/workspace-prototype.less';
+import './newx-workspace-ui.less';
 import {
   addWorkspaceMembers,
   deleteWorkspace,
@@ -531,7 +532,7 @@ const WorkspacePage = () => {
   };
 
   return (
-    <main className="coze-prototype-page coze-prototype-team-setting-page">
+    <main className="coze-prototype-page coze-prototype-team-setting-page newx-menu-page">
       <WorkspacePageTopBar />
       <section className="coze-prototype-page-inner">
         <Loading loading={loading} />

@@ -151,7 +151,12 @@ func (s *ApplicationService) ensureDefaultDeerFlowMCPServersWithAccess(
 	if len(config.MCPServers) == 0 {
 		return nil
 	}
-	existing, err := s.components.Catalog.List(ctx, spaceID)
+	var existing []*toolapi.MCPToolServer
+	if requireManage {
+		existing, err = listMCPToolServersForManagement(ctx, s.components.Catalog, spaceID)
+	} else {
+		existing, err = s.components.Catalog.List(ctx, spaceID)
+	}
 	if err != nil {
 		return err
 	}

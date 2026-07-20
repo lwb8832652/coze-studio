@@ -27,6 +27,7 @@ import (
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
 	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 // UpsertMCPToolServer .
@@ -186,7 +187,7 @@ func ListMCPToolAuditEvents(ctx context.Context, c *app.RequestContext) {
 }
 
 func workbenchMCPToolErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
-	_ = ctx
+	logs.CtxErrorf(ctx, "MCP management request failed: %v", err)
 	switch {
 	case errors.Is(err, appmcptool.ErrMCPDisabled):
 		workbenchMCPToolJSONError(c, http.StatusServiceUnavailable, "mcp service disabled")

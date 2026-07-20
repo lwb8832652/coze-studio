@@ -1,5 +1,8 @@
 // !NOTE: 全局样式代码，不要随便修改！！！
 
+@import './styles/newx-tokens.less';
+@import './styles/newx-components.less';
+
 html,
 body {
   width: 100%;
@@ -10,9 +13,10 @@ body {
   padding: 0;
   // 原来的版本是 冬青(Hiragino) > 苹方；但是项目里大量使用 semi 组件自带 font family，没有暴露出来
   // 这里修复一下顺序 PingFang > Hiragino
-  font-family: 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family: var(--newx-font-sans);
+  color: var(--newx-color-text-primary);
 
-  background: linear-gradient(to bottom, transparent, #fff) #eceeef;
+  background: var(--newx-color-bg-app);
 }
 
 body {
@@ -33,26 +37,26 @@ p {
 
 * {
   box-sizing: border-box;
-  font-family: 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family: var(--newx-font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-// 去除 safari 浏览器按钮 focus 状态的蓝色框
-a:focus,
-input:focus,
-p:focus,
-li:focus,
-div:focus,
-svg:focus,
-a:focus-visible,
-input:focus-visible,
-p:focus-visible,
-li:focus-visible,
-div:focus-visible {
+// Hide pointer focus decoration without suppressing keyboard focus.
+a:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+p:focus:not(:focus-visible),
+li:focus:not(:focus-visible),
+div:focus:not(:focus-visible),
+svg:focus:not(:focus-visible) {
   outline: none;
 
   -webkit-tap-highlight-color: rgb(0 0 0 / 0% / 0);
+}
+
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--newx-color-focus);
+  outline-offset: 2px;
 }
 
 // TODO: 底层库依赖了这个 class，暂时不移除
@@ -65,8 +69,8 @@ div:focus-visible {
 
   line-height: 56px;
 
-  background-color: #fff;
-  border-bottom: 1px solid rgb(46 50 56 / 5%);
+  background-color: var(--newx-color-bg-canvas);
+  border-bottom: 1px solid var(--newx-color-border);
 
   .semi-tabs-content {
     display: none;
@@ -81,7 +85,7 @@ div:focus-visible {
 
   font-size: 18px;
   line-height: 24px;
-  color: var(--light-color-grey-grey-9, #1c1f23);
+  color: var(--newx-color-text-primary);
 
   * {
     user-select: none;
@@ -109,12 +113,12 @@ div:focus-visible {
 }
 
 .operation-admin-base-aside {
-  border-right: 1px solid rgb(229 231 235);
+  border-right: 1px solid var(--newx-color-border);
 
   // 非本期改动，但阻塞了ci的构建
   /* stylelint-disable-next-line selector-class-pattern */
   .ud__layout__sider-trigger {
-    border-right: 1px solid rgb(229 231 235);
+    border-right: 1px solid var(--newx-color-border);
   }
 }
 
@@ -197,7 +201,7 @@ div:focus-visible {
 
 // styled-scrollbar 给需要滚动的元素添加的滚动条样式 增加这个 class 即可
 .styled-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(31, 35, 41, 30%);
+  background-color: rgb(23 26 24 / 28%);
   background-clip: padding-box;
   border: 2px solid transparent;
   border-radius: 9999px;
@@ -213,7 +217,7 @@ div:focus-visible {
 }
 
 .styled-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(31, 35, 41, 60%);
+  background-color: rgb(23 26 24 / 52%);
 }
 
 .styled-scrollbar::-webkit-scrollbar:hover {

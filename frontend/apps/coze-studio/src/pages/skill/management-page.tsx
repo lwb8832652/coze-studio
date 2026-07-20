@@ -27,6 +27,7 @@ import {
 } from '@coze-arch/coze-design';
 
 import { createSkillCreationNavigationState } from '../workbench/skill-creation-intent';
+import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import {
   createSkill,
   deleteSkill,
@@ -457,7 +458,11 @@ const SkillListPage = ({ spaceID }: { spaceID: string }) => {
   };
 
   return (
-    <main className="skill-management-page" data-testid="skill-management-page">
+    <main
+      className="skill-management-page newx-menu-page"
+      data-testid="skill-management-page"
+    >
+      <WorkspacePageTopBar />
       <section className="skill-page-hero">
         <div>
           <span className="skill-eyebrow">SKILL WORKSPACE</span>

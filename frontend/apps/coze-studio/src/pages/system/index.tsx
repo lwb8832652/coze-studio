@@ -21,6 +21,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
 
 import '../../components/workspace-prototype.less';
+import './newx-system-ui.less';
 import { WorkspaceManagementSection } from './workspace-management-section';
 import { getActiveSystemSection, getSystemSectionContent } from './view-model';
 import { UserManagementSection } from './user-management-section';

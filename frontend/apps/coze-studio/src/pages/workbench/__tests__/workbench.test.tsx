@@ -44,6 +44,15 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
+vi.mock('@coze-arch/foundation-sdk', () => ({
+  useUserInfo: () => ({
+    name: '刘文波',
+    screen_name: 'wb',
+    email: '840582614@qq.com',
+    avatar_url: '',
+  }),
+}));
+
 vi.mock('../service', () => ({
   createTaskThread: mockCreateTaskThread,
   createTaskThreadRun: mockCreateTaskThreadRun,
@@ -64,6 +73,28 @@ vi.mock('../../tools/service', () => ({
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
 vi.mock('@coze-arch/coze-design', () => ({
+  Avatar: ({
+    'aria-label': ariaLabel,
+    children,
+    className,
+    src,
+    style,
+  }: {
+    'aria-label'?: string;
+    children?: ReactNode;
+    className?: string;
+    src?: string;
+    style?: Record<string, string>;
+  }) => (
+    <span
+      aria-label={ariaLabel}
+      className={className}
+      data-avatar-src={src}
+      style={style}
+    >
+      {children}
+    </span>
+  ),
   Button: ({
     'aria-label': ariaLabel,
     children,
@@ -177,6 +208,9 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozArrowDown: () => <span />,
   IconCozAt: () => <span />,
   IconCozBell: () => <span />,
+  IconCozBot: () => <span />,
+  IconCozCode: () => <span />,
+  IconCozDocument: () => <span />,
   IconCozImage: () => <span />,
   IconCozLink: () => <span />,
   IconCozLightbulb: () => <span />,
@@ -187,6 +221,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozSetting: () => <span />,
   IconCozStar: () => <span />,
   IconCozUpload: () => <span />,
+  IconCozWorkflow: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
@@ -464,9 +499,10 @@ describe('WorkbenchPage', () => {
   it('renders the static chat workbench first screen', () => {
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
-    expect(markup).toContain('欢迎来到 刘文波 的工作空间');
-    expect(markup).toContain('NewX AI 专属助理准备好,先聊聊吧~');
+    expect(markup).toContain('欢迎回来，刘文波');
+    expect(markup).toContain('NewX AI 专属助理已就绪，随时可以开始对话');
     expect(markup).toContain('去聊天专属助理');
+    expect(markup).toContain('aria-label="当前用户：刘文波"');
     expect(markup).toContain('aria-label="任务描述"');
     expect(markup).toContain('data-composer-style="deerflow"');
     expect(markup).toContain('placeholder="今天想做什么？"');
@@ -475,7 +511,7 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('Pro');
     expect(markup).not.toContain('Auto');
     expect(markup).not.toContain('Ask');
-    expect(markup).not.toContain('Agent');
+    expect(markup).not.toContain('>Agent<');
     expect(markup).toContain('aria-label="拓展"');
     expect(markup).toContain('公开模板 6268');
     expect(markup).toContain('我收藏的');
@@ -488,6 +524,10 @@ describe('WorkbenchPage', () => {
     expect(markup).toContain('通用自动化产品 Meego Bug 根因分析与修复');
     expect(markup).toContain('后端架构整体方案设计');
     expect(markup).toContain('Go 专家为你 CodeReview');
+    expect(markup).toContain('生成 agent 学习路线');
+    expect(markup).toContain('chat-workbench-template-icon');
+    expect(markup).toContain('chat-workbench-template-create-actions');
+    expect(markup).not.toContain('chat-workbench-create-card');
     expect(markup).toContain('文档撰写');
     expect(markup).toContain('代码开发');
     expect(markup).toContain('质量检测');
@@ -509,7 +549,7 @@ describe('WorkbenchPage', () => {
 
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
-    expect(markup).toContain('欢迎来到 刘文波 的工作空间');
+    expect(markup).toContain('欢迎回来，刘文波');
     expect(markup).toContain('AI 创建技能');
     expect(markup).toContain('描述你想创建的技能、使用场景和期望输出');
     expect(markup).toContain(

@@ -31,6 +31,10 @@ import {
   IconCozArrowDown,
   IconCozAsynchronousTask,
   IconCozAsynchronousTaskFill,
+  IconCozBot,
+  IconCozBotFill,
+  IconCozClock,
+  IconCozClockFill,
   IconCozCode,
   IconCozCodeFill,
   IconCozKnowledge,
@@ -38,8 +42,10 @@ import {
   IconCozMore,
   IconCozPlus,
   IconCozSetting,
-  IconCozSettingFill,
   IconCozSideExpand,
+  IconCozSkill,
+  IconCozWorkspace,
+  IconCozWorkspaceFill,
 } from '@coze-arch/coze-design/icons';
 import { Input, Modal, Toast, Typography } from '@coze-arch/coze-design';
 import { useRouteConfig } from '@coze-arch/bot-hooks';
@@ -81,16 +87,20 @@ const MENU_ICONS = {
     activeIcon: <IconCozCodeFill />,
   },
   [SPACE_SUB_MODULE.SKILL]: {
-    icon: <IconCozSetting />,
-    activeIcon: <IconCozSettingFill />,
+    icon: <IconCozSkill />,
+    activeIcon: <IconCozSkill />,
   },
   [SPACE_SUB_MODULE.DEVELOP]: {
-    icon: <IconCozCode />,
-    activeIcon: <IconCozCodeFill />,
+    icon: <IconCozBot />,
+    activeIcon: <IconCozBotFill />,
   },
   [SPACE_SUB_MODULE.WORKSPACE]: {
-    icon: <IconCozSetting />,
-    activeIcon: <IconCozSettingFill />,
+    icon: <IconCozWorkspace />,
+    activeIcon: <IconCozWorkspaceFill />,
+  },
+  [SPACE_SUB_MODULE.TASK_CENTER]: {
+    icon: <IconCozClock />,
+    activeIcon: <IconCozClockFill />,
   },
   [SPACE_SUB_MODULE.TASKS]: {
     icon: <IconCozAsynchronousTask />,
@@ -594,7 +604,10 @@ export const WorkspaceSubMenu = () => {
       <div className="coze-prototype-sidebar-section">
         <div className="coze-prototype-assistant-card">
           <span className="coze-prototype-assistant-dot" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate text-[13px] leading-[20px] text-[#232938]">
+          <span
+            className="min-w-0 flex-1 truncate text-[13px] leading-[20px]"
+            style={{ color: 'var(--newx-color-text-primary)' }}
+          >
             {ASSISTANT_LABEL}
           </span>
           <span className="coze-prototype-beta-pill">{ASSISTANT_BADGE}</span>
@@ -612,7 +625,8 @@ export const WorkspaceSubMenu = () => {
         />
         <Typography.Text
           ellipsis={{ showTooltip: true, rows: 1 }}
-          className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500] text-[#232938]"
+          className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500]"
+          style={{ color: 'var(--newx-color-text-primary)' }}
         >
           {userInfo.name || userInfo.screen_name}
         </Typography.Text>

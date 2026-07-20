@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import React from 'react';
+import React, { Children } from 'react';
 
 import { I18n } from '@coze-arch/i18n';
 import { IconCozPlus } from '@coze-arch/coze-design/icons';
@@ -25,20 +25,28 @@ import { type LibraryEntityConfig } from '../types';
 export const LibraryHeader: React.FC<{
   entityConfigs: LibraryEntityConfig[];
 }> = ({ entityConfigs }) => (
-  <div className="flex items-center justify-between mb-[16px]">
-    <div className="font-[500] text-[20px]">
-      {I18n.t('navigation_workspace_library')}
+  <div className="workspace-library-header flex items-center justify-between mb-[16px]">
+    <div className="workspace-library-heading">
+      <div className="workspace-library-title font-[500] text-[20px]">
+        {I18n.t('navigation_workspace_library')}
+      </div>
+      <p className="workspace-library-description">
+        集中管理知识库、工作流、数据库和其它可复用资源。
+      </p>
     </div>
     <Menu
       position="bottomRight"
       className="w-120px mt-4px mb-4px"
       render={
         <Menu.SubMenu mode="menu">
-          {entityConfigs.map(config => config.renderCreateMenu?.() ?? null)}
+          {Children.toArray(
+            entityConfigs.map(config => config.renderCreateMenu?.() ?? null),
+          )}
         </Menu.SubMenu>
       }
     >
       <Button
+        className="workspace-library-create"
         theme="solid"
         type="primary"
         icon={<IconCozPlus />}

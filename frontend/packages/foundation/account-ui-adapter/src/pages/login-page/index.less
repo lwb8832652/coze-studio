@@ -23,24 +23,29 @@ body.coze-auth-body #root {
 
   overflow: auto;
   display: grid;
-  grid-template-columns: minmax(0, 57fr) minmax(470px, 43fr);
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
+  gap: clamp(32px, 6vw, 96px);
 
   width: 100%;
   min-width: 0;
   height: 100%;
   min-height: 100dvh;
+  padding: 24px;
 
   font-family: 'Avenir Next', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  color: rgba(0, 0, 0, 88%);
+  color: var(--newx-color-text-primary, #1d2520);
 
-  background: #f4f7ff url('./auth-background.png') center / cover no-repeat;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(61, 153, 86, 12%), transparent 34%),
+    radial-gradient(circle at 72% 86%, rgba(61, 153, 86, 7%), transparent 28%),
+    linear-gradient(145deg, #f4f7f2 0%, #fbfcfa 48%, #eef4ef 100%);
 }
 
 .coze-auth-brand {
   position: fixed;
   z-index: 3;
-  top: 40px;
-  left: 40px;
+  top: 32px;
+  left: 32px;
 }
 
 .coze-auth-language {
@@ -60,18 +65,23 @@ body.coze-auth-body #root {
 
   font: inherit;
   font-size: 14px;
-  color: rgba(0, 0, 0, 72%);
+  color: var(--newx-color-text-secondary, #526158);
 
-  background: rgba(255, 255, 255, 80%);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 72%);
+  background: rgba(255, 255, 255, 84%);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--newx-color-border, #dfe6e0);
   border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(31, 48, 104, 8%);
+  box-shadow: var(--newx-shadow-sm, 0 4px 16px rgba(32, 54, 39, 7%));
+}
+
+.coze-auth-language:hover {
+  color: var(--newx-color-text-primary, #1d2520);
+  background: #fff;
 }
 
 .coze-auth-language:focus-visible,
 .coze-auth-tabs button:focus-visible {
-  outline: 2px solid #5147ff;
+  outline: 2px solid var(--newx-color-accent, #218c55);
   outline-offset: 2px;
 }
 
@@ -81,12 +91,12 @@ body.coze-auth-body #root {
   justify-content: flex-start;
 
   min-width: 0;
-  padding: 100px 20px;
+  padding: 96px clamp(28px, 8vw, 128px);
 }
 
 .coze-auth-intro-content {
   width: 100%;
-  max-width: 540px;
+  max-width: 600px;
 }
 
 .coze-auth-intro-name,
@@ -97,23 +107,24 @@ body.coze-auth-body #root {
 
 .coze-auth-intro-name,
 .coze-auth-intro h1 {
-  font-size: 32px;
-  font-weight: 400;
-  line-height: 1.45;
+  font-size: clamp(32px, 3.2vw, 48px);
+  font-weight: 650;
+  line-height: 1.22;
+  letter-spacing: -0.025em;
 }
 
 .coze-auth-intro h1 {
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .coze-auth-intro-description {
   max-width: 510px;
-  margin-top: 28px;
+  margin-top: 24px;
 
   font-size: 16px;
-  font-weight: 500;
-  line-height: 24px;
-  color: rgba(0, 0, 0, 52%);
+  font-weight: 400;
+  line-height: 1.7;
+  color: var(--newx-color-text-secondary, #607067);
 }
 
 .coze-auth-content {
@@ -122,33 +133,31 @@ body.coze-auth-body #root {
   justify-content: center;
 
   min-width: 0;
-  padding: 48px 0;
+  padding: 56px 24px 56px 0;
 }
 
 .coze-auth-panel {
   position: relative;
 
-  overflow: auto;
+  width: min(440px, 100%);
+  padding: 38px 40px 28px;
 
-  width: min(470px, 100%);
-  min-height: 680px;
-  padding: 48px 64px;
-
-  background: rgba(255, 255, 255, 85%);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 60%);
+  background: rgba(255, 255, 255, 92%);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--newx-color-border, #dfe6e0);
   border-radius: 16px;
-  box-shadow: 0 8px 48px rgba(0, 0, 0, 16%);
+  box-shadow: var(--newx-shadow-lg, 0 24px 64px rgba(31, 55, 38, 12%));
 }
 
 .coze-auth-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 
-  height: 38px;
+  height: 40px;
   padding: 2px;
 
-  background: rgba(12, 20, 40, 4%);
+  background: var(--newx-color-surface-muted, #f1f4f1);
+  border: 1px solid var(--newx-color-border-subtle, #e7ebe7);
   border-radius: 8px;
 }
 
@@ -162,54 +171,64 @@ body.coze-auth-body #root {
 
   font: inherit;
   font-size: 14px;
-  color: rgba(0, 0, 0, 45%);
+  font-weight: 500;
+  color: var(--newx-color-text-tertiary, #7c8980);
   text-overflow: ellipsis;
   white-space: nowrap;
 
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .coze-auth-tabs button.is-active {
-  color: #5147ff;
-  background: rgba(255, 255, 255, 94%);
-  box-shadow: 0 1px 4px rgba(12, 20, 40, 10%);
+  color: var(--newx-color-accent, #218c55);
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(31, 55, 38, 10%);
 }
 
 .coze-auth-form h2 {
-  margin: 48px 0 36px;
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 32px;
+  margin: 36px 0 28px;
+
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 34px;
+  letter-spacing: -0.015em;
 }
 
 .coze-auth-field {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .coze-auth-field .semi-input-wrapper {
   overflow: hidden;
 
   width: 100%;
-  height: 38px;
-  padding: 0 16px;
+  height: 42px;
+  padding: 0 14px;
 
-  background: rgba(12, 20, 40, 4%);
-  border: 0;
+  background: #fff;
+  border: 1px solid var(--newx-color-border, #d8dfd9);
   border-radius: 8px;
   box-shadow: none;
+
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
 
-.coze-auth-field .semi-input-wrapper:hover,
+.coze-auth-field .semi-input-wrapper:hover {
+  border-color: var(--newx-color-border-strong, #aebbb1);
+}
+
 .coze-auth-field .semi-input-wrapper:focus-within {
-  background: rgba(12, 20, 40, 6%);
-  border: 0;
-  box-shadow: none;
+  border-color: var(--newx-color-accent, #218c55);
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 11%);
 }
 
 .coze-auth-field .semi-input-wrapper.semi-input-wrapper-error {
-  box-shadow: inset 0 0 0 1px #d92d20;
+  border-color: var(--newx-color-danger, #d92d20);
+  box-shadow: 0 0 0 3px rgba(217, 45, 32, 8%);
 }
 
 .coze-auth-field .semi-input {
@@ -221,14 +240,24 @@ body.coze-auth-body #root {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 16px;
-  color: #d92d20;
+  color: var(--newx-color-danger, #d92d20);
 }
 
 .coze-auth-submit {
   width: 100%;
-  height: 38px;
-  margin-top: 2px;
+  height: 42px;
+  margin-top: 4px;
+
+  font-weight: 600;
+
+  background: var(--newx-color-accent, #218c55) !important;
+  border-color: var(--newx-color-accent, #218c55) !important;
   border-radius: 8px;
+}
+
+.coze-auth-submit:hover:not(:disabled) {
+  background: var(--newx-color-accent-hover, #187443) !important;
+  border-color: var(--newx-color-accent-hover, #187443) !important;
 }
 
 .coze-auth-agreement {
@@ -240,9 +269,9 @@ body.coze-auth-body #root {
 
   margin-top: 14px;
 
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
-  color: rgba(0, 0, 0, 52%);
+  color: var(--newx-color-text-secondary, #607067);
 }
 
 .coze-auth-agreement input {
@@ -252,30 +281,27 @@ body.coze-auth-body #root {
   height: 16px;
   margin: 2px 0 0;
 
-  accent-color: #5147ff;
+  accent-color: var(--newx-color-accent, #218c55);
 }
 
 .coze-auth-agreement a {
-  color: rgba(0, 0, 0, 55%);
+  color: var(--newx-color-accent, #218c55);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .coze-auth-footer {
-  position: absolute;
-  right: 64px;
-  bottom: 24px;
-  left: 64px;
-
+  margin-top: 40px;
   font-size: 12px;
-  color: rgba(0, 0, 0, 42%);
+  color: var(--newx-color-text-tertiary, #89948d);
   text-align: center;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .coze-auth-page {
     display: block;
     min-height: 100dvh;
+    padding: 0;
     background-position: center;
   }
 
@@ -285,25 +311,30 @@ body.coze-auth-body #root {
   }
 
   .coze-auth-content {
-    display: block;
+    display: flex;
+    align-items: center;
     min-height: 100dvh;
-    padding: 82px 0;
+    padding: 76px 20px 28px;
   }
 
   .coze-auth-panel {
-    width: 100%;
-    height: calc(100dvh - 164px);
-    min-height: 680px;
-    padding: 50px 25px 32px;
+    width: min(440px, 100%);
+    min-height: 0;
+    padding: 32px 24px 24px;
 
-    background: rgba(255, 255, 255, 90%);
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
+    background: rgba(255, 255, 255, 94%);
+    border-radius: 14px;
+    box-shadow: var(--newx-shadow-lg, 0 18px 48px rgba(31, 55, 38, 12%));
   }
 
-  .coze-auth-footer {
-    right: 25px;
-    left: 25px;
+  .coze-auth-language {
+    top: 18px;
+    right: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coze-auth-field .semi-input-wrapper {
+    transition: none;
   }
 }

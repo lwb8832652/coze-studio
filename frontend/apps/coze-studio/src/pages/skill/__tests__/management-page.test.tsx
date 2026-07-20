@@ -32,6 +32,10 @@ vi.mock('react-router-dom', () => ({
   useParams: mockUseParams,
 }));
 
+vi.mock('../../../components/workspace-page-top-bar', () => ({
+  WorkspacePageTopBar: () => <div data-testid="workspace-page-top-bar" />,
+}));
+
 vi.mock('@coze-foundation/space-store', () => ({
   useSpaceStore: (selector: (state: unknown) => unknown) =>
     selector({ spaceList: [{ id: '1', name: '测试空间' }] }),

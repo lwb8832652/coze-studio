@@ -60,3 +60,44 @@ func TestMCPStartupCatalogOptionsRequireExplicitAESKeyWhenEnabled(t *testing.T) 
 		})
 	}
 }
+
+func TestMCPManagementEnablementIsIndependentFromRuntime(t *testing.T) {
+	t.Run("unset follows runtime enablement", func(t *testing.T) {
+		t.Setenv(mcpManagementEnabledEnv, "")
+
+		disabled, err := mcpManagementEnabledFromEnv(false)
+		require.NoError(t, err)
+		require.False(t, disabled)
+
+		enabled, err := mcpManagementEnabledFromEnv(true)
+		require.NoError(t, err)
+		require.True(t, enabled)
+	})
+
+	t.Run("management can be enabled while runtime is disabled", func(t *testing.T) {
+		t.Setenv(mcpManagementEnabledEnv, "true")
+
+		enabled, err := mcpManagementEnabledFromEnv(false)
+
+		require.NoError(t, err)
+		require.True(t, enabled)
+	})
+
+	t.Run("management can be disabled while runtime is enabled", func(t *testing.T) {
+		t.Setenv(mcpManagementEnabledEnv, "false")
+
+		enabled, err := mcpManagementEnabledFromEnv(true)
+
+		require.NoError(t, err)
+		require.False(t, enabled)
+	})
+
+	t.Run("invalid explicit value fails closed", func(t *testing.T) {
+		t.Setenv(mcpManagementEnabledEnv, "sometimes")
+
+		_, err := mcpManagementEnabledFromEnv(false)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), mcpManagementEnabledEnv)
+	})
+}

@@ -1,8 +1,14 @@
 .update-avatar {
-  margin-bottom: 24px;
+  margin-bottom: 28px;
+
+  :global(.semi-avatar) {
+    box-shadow: 0 0 0 4px rgba(33, 140, 85, 9%);
+  }
 }
 
 .edit-profile {
+  max-width: 640px;
+
   :global {
     .coz-icon-button-mini {
       line-height: 1;
@@ -11,39 +17,62 @@
     .coz-typography {
       @apply coz-fg-primary;
     }
+
+    .semi-input-wrapper,
+    .semi-textarea-wrapper {
+      border-color: var(--newx-color-border, #d8dfd9);
+      border-radius: 8px;
+    }
+
+    .semi-input-wrapper:focus-within,
+    .semi-textarea-wrapper:focus-within {
+      border-color: var(--newx-color-accent, #218c55);
+      box-shadow: 0 0 0 3px rgba(33, 140, 85, 10%);
+    }
   }
 }
 
 .label-wrap {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   align-items: center;
   align-self: flex-start;
   justify-content: flex-start;
 
   width: 100%;
-  margin-bottom: 20px;
+  min-height: 40px;
+  margin-bottom: 14px;
 }
 
 .label {
-  width: 76px;
+  flex: 0 0 84px;
+
+  width: 84px;
   margin-bottom: 0;
 
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 20px;
+  color: var(--newx-color-text-secondary, #607067);
 }
 
 .submit {
   width: 100%;
-  margin-top: 48px;
+  margin-top: 32px;
+
+  :global(.semi-button-primary) {
+    min-height: 40px;
+    font-weight: 600;
+    background: var(--newx-color-accent, #218c55);
+    border-radius: 8px;
+  }
 }
 
 .count {
   margin: 0 12px 0 8px;
   font-size: 12px;
   line-height: 16px;
-  color: #737577;
+  color: var(--newx-color-text-tertiary, #7c8980);
 }
 
 .upload-button {
@@ -52,17 +81,25 @@
 
   a {
     font-weight: 400;
-    color: var(--light-usage-primary-color-primary, #0077fa);
+    color: var(--newx-color-accent, #218c55);
   }
 }
 
 .filed-readonly {
   display: flex;
   align-items: center;
+
   width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+
+  background: var(--newx-color-surface-muted, #f6f8f6);
+  border: 1px solid var(--newx-color-border-subtle, #e8ece8);
+  border-radius: 8px;
 
   .text {
     line-height: 20px;
+    color: var(--newx-color-text-primary, #1d2520);
   }
 
   > button {
@@ -87,6 +124,17 @@
   }
 
   .btn {
-    margin-left: 16px;
+    margin-left: 10px;
+  }
+}
+
+@media screen and (max-width: 720px) {
+  .label-wrap {
+    display: grid;
+    gap: 6px;
+  }
+
+  .label {
+    width: auto;
   }
 }

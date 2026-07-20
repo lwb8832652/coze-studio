@@ -18,9 +18,18 @@ import { useParams } from 'react-router-dom';
 
 import { Develop } from '@coze-studio/workspace-adapter/develop';
 
+import { WorkspacePageTopBar } from '../components/workspace-page-top-bar';
+
 const Page = () => {
   const { space_id } = useParams();
-  return space_id ? <Develop spaceId={space_id} /> : null;
+  return space_id ? (
+    <main className="newx-menu-page newx-menu-page--develop">
+      <WorkspacePageTopBar />
+      <div className="newx-menu-page__adapter-content">
+        <Develop spaceId={space_id} />
+      </div>
+    </main>
+  ) : null;
 };
 
 export default Page;

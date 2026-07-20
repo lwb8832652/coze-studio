@@ -82,18 +82,15 @@
 }
 
 .chat-workbench-avatar {
-  display: grid;
-  place-items: center;
+  flex: none;
 
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
 
   font-size: 12px;
   line-height: 16px;
   color: #fff;
-  text-transform: lowercase;
 
-  background: linear-gradient(135deg, #fdba74 0%, #f472b6 100%);
   border-radius: 50%;
 }
 
@@ -2053,5 +2050,377 @@ textarea.chat-workbench-input {
 
   .chat-workbench-templates {
     grid-template-columns: 1fr;
+  }
+}
+
+/*
+ * Final NewX visual direction:
+ * compact template rows, stronger hierarchy and shared product tokens.
+ */
+.chat-workbench-page {
+  color: var(--newx-color-text-primary);
+  background: var(--newx-color-bg-canvas);
+}
+
+.chat-workbench-topbar {
+  height: 56px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--newx-color-border);
+}
+
+.chat-workbench-assistant-status {
+  color: var(--newx-color-text-secondary);
+}
+
+.chat-workbench-assistant-status button {
+  color: var(--newx-color-link);
+}
+
+.chat-workbench-icon-button {
+  width: 32px;
+  height: 32px;
+
+  color: var(--newx-color-text-primary);
+
+  border-color: var(--newx-color-border);
+  border-radius: var(--newx-radius-control);
+}
+
+.chat-workbench-shell {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 46px 48px 64px;
+}
+
+.chat-workbench-header {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.chat-workbench-header h1 {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 42px;
+  color: var(--newx-color-text-primary);
+  letter-spacing: -0.02em;
+}
+
+.chat-workbench-header h1 span {
+  color: var(--newx-color-accent);
+}
+
+.chat-workbench-composer {
+  width: min(1100px, 100%);
+  margin-top: 24px;
+  padding: 12px;
+
+  border-color: var(--newx-color-border-strong);
+  border-radius: var(--newx-radius-dialog);
+  box-shadow: 0 8px 28px rgb(23 32 26 / 4%);
+}
+
+.chat-workbench-rich-input {
+  min-height: 106px;
+  padding: 10px 12px;
+}
+
+.chat-workbench-input-text {
+  color: var(--newx-color-text-primary);
+}
+
+.chat-workbench-toolbar[data-presentation='deerflow'] {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--newx-color-border);
+}
+
+.chat-workbench-extension.chat-workbench-extension-deerflow:hover,
+.chat-workbench-toolbar-actions > button:hover,
+.chat-workbench-mode-button:hover,
+.chat-workbench-icon-action:hover,
+.chat-workbench-deerflow-mode-trigger:hover {
+  background: var(--newx-color-bg-hover) !important;
+}
+
+.chat-workbench-toolbar-actions .chat-workbench-send-deerflow {
+  color: var(--newx-color-text-primary);
+  border-color: var(--newx-color-border);
+  box-shadow: 0 2px 8px rgb(23 32 26 / 6%);
+}
+
+.chat-workbench-template-section {
+  width: min(1100px, 100%);
+  margin-top: 34px;
+}
+
+.chat-workbench-template-controls {
+  gap: 20px;
+  padding: 0;
+  border-bottom-color: var(--newx-color-border);
+}
+
+.chat-workbench-template-tabs button {
+  color: var(--newx-color-text-secondary);
+}
+
+.chat-workbench-template-tabs button[data-active='true'] {
+  font-weight: 600;
+  color: var(--newx-color-text-primary);
+  border-bottom-color: var(--newx-color-text-primary);
+}
+
+.chat-workbench-template-tools {
+  gap: 10px;
+}
+
+.chat-workbench-search {
+  height: 36px;
+
+  color: var(--newx-color-text-tertiary);
+
+  background: var(--newx-color-bg-canvas);
+  border-color: var(--newx-color-border);
+  border-radius: var(--newx-radius-control);
+}
+
+.chat-workbench-sort {
+  height: 36px;
+  padding: 0 12px;
+
+  color: var(--newx-color-text-secondary);
+
+  background: var(--newx-color-bg-canvas);
+  border: 1px solid var(--newx-color-border);
+  border-radius: var(--newx-radius-control);
+}
+
+.chat-workbench-template-create-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-workbench-template-create-actions button {
+  cursor: pointer;
+
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+
+  height: 36px;
+  padding: 0 12px;
+
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--newx-color-text-secondary);
+
+  background: var(--newx-color-bg-canvas);
+  border: 1px solid var(--newx-color-border);
+  border-radius: var(--newx-radius-control);
+}
+
+.chat-workbench-template-create-actions button:first-child {
+  color: #fff;
+  background: var(--newx-color-accent);
+  border-color: var(--newx-color-accent);
+}
+
+.chat-workbench-template-create-actions button:hover {
+  color: var(--newx-color-text-primary);
+  background: var(--newx-color-bg-hover);
+  border-color: var(--newx-color-border-strong);
+}
+
+.chat-workbench-template-create-actions button:first-child:hover {
+  color: #fff;
+  background: var(--newx-color-accent-hover);
+  border-color: var(--newx-color-accent-hover);
+}
+
+.chat-workbench-templates {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+
+  margin-top: 8px;
+  padding: 0;
+
+  border-bottom: 1px solid var(--newx-color-border);
+}
+
+.chat-workbench-template-card {
+  display: grid;
+  grid-template-areas:
+    'icon title tags footer'
+    'icon desc tags footer';
+  grid-template-columns: 48px minmax(0, 1fr) 190px 184px;
+  gap: 2px 14px;
+  align-items: center;
+
+  min-height: 76px;
+  padding: 12px 8px;
+
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--newx-color-border);
+  border-radius: 0;
+}
+
+.chat-workbench-template-card::before {
+  content: none;
+}
+
+.chat-workbench-template-card:hover {
+  background: var(--newx-color-bg-hover);
+}
+
+.chat-workbench-template-card:focus-visible {
+  position: relative;
+  z-index: 2;
+  outline-offset: -2px;
+}
+
+.chat-workbench-template-icon {
+  display: grid;
+  grid-area: icon;
+  place-items: center;
+
+  width: 40px;
+  height: 40px;
+
+  font-size: 20px;
+  color: var(--newx-color-accent);
+
+  background: var(--newx-color-accent-soft);
+  border-radius: 11px;
+}
+
+.chat-workbench-template-icon[data-tone='blue'] {
+  color: #315bd8;
+  background: #eef2ff;
+}
+
+.chat-workbench-template-icon[data-tone='violet'] {
+  color: #7c3aed;
+  background: #f3efff;
+}
+
+.chat-workbench-template-icon[data-tone='orange'] {
+  color: #e15c16;
+  background: #fff1e9;
+}
+
+.chat-workbench-template-icon[data-tone='amber'] {
+  color: #d97706;
+  background: #fff7df;
+}
+
+.chat-workbench-template-icon[data-tone='cyan'] {
+  color: #0d98a6;
+  background: #e9f8f8;
+}
+
+.chat-workbench-template-title {
+  grid-area: title;
+
+  min-height: 20px;
+
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  color: var(--newx-color-text-primary);
+
+  -webkit-line-clamp: 1;
+}
+
+.chat-workbench-template-desc {
+  grid-area: desc;
+
+  min-height: 18px;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--newx-color-text-tertiary);
+
+  -webkit-line-clamp: 1;
+}
+
+.chat-workbench-tags {
+  grid-area: tags;
+  justify-self: start;
+}
+
+.chat-workbench-tags span {
+  color: var(--newx-color-text-secondary);
+  background: var(--newx-color-bg-hover);
+}
+
+.chat-workbench-card-footer {
+  grid-area: footer;
+  gap: 14px;
+  width: 100%;
+  margin: 0;
+}
+
+.chat-workbench-card-stats {
+  gap: 16px;
+  color: var(--newx-color-text-tertiary);
+}
+
+.chat-workbench-card-action {
+  font-size: 18px;
+  color: var(--newx-color-text-tertiary);
+}
+
+@media (max-width: 1100px) {
+  .chat-workbench-shell {
+    padding-right: 32px;
+    padding-left: 32px;
+  }
+
+  .chat-workbench-template-create-actions button {
+    justify-content: center;
+    width: 36px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .chat-workbench-template-create-actions button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .chat-workbench-template-card {
+    grid-template-areas:
+      'icon title footer'
+      'icon desc footer';
+    grid-template-columns: 48px minmax(0, 1fr) 184px;
+  }
+
+  .chat-workbench-tags {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .chat-workbench-shell {
+    padding: 28px 20px 40px;
+  }
+
+  .chat-workbench-template-controls {
+    flex-direction: column;
+    align-items: stretch;
+    padding-bottom: 12px;
+  }
+
+  .chat-workbench-template-tools {
+    margin-left: 0;
+  }
+
+  .chat-workbench-template-card {
+    grid-template-columns: 44px minmax(0, 1fr) 160px;
+    padding-right: 4px;
+    padding-left: 4px;
   }
 }

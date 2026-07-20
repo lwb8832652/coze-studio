@@ -19,6 +19,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { useState } from 'react';
 
+import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import { exportAppDevProject } from './service';
 import { useAppDevProjects } from './hooks/use-app-dev-projects';
 import {
@@ -30,6 +31,7 @@ import { ImportProjectModal } from './components/import-project-modal';
 import { CreateProjectModal } from './components/create-project-modal';
 
 import './index.less';
+import './newx-refresh.less';
 
 export default function AppDevPage() {
   const navigate = useNavigate();
@@ -57,7 +59,8 @@ export default function AppDevPage() {
   } = useAppDevProjects(spaceId);
 
   return (
-    <main className="app-dev-page">
+    <main className="app-dev-page newx-menu-page">
+      <WorkspacePageTopBar />
       {notice ? <div className="app-dev-page__notice">{notice}</div> : null}
 
       <ProjectList

@@ -1,17 +1,17 @@
 .coze-prototype-tools-settings-page {
   background:
-    radial-gradient(circle at 84% 2%, rgba(54, 92, 255, 8%), transparent 28%),
-    linear-gradient(180deg, #f7f8fb 0, #fbfbfd 220px, #fff 100%);
+    radial-gradient(circle at 88% 0, rgba(61, 153, 86, 7%), transparent 26%),
+    var(--newx-color-page, #f7f8f6);
 }
 
 .mcp-management-panel {
-  --mcp-ink: #172033;
-  --mcp-muted: #697386;
-  --mcp-line: #e7eaf0;
-  --mcp-primary: #315cec;
-  --mcp-primary-soft: #edf2ff;
-  --mcp-success: #14804a;
-  --mcp-danger: #c93c4a;
+  --mcp-ink: var(--newx-color-text-primary, #1d2520);
+  --mcp-muted: var(--newx-color-text-secondary, #607067);
+  --mcp-line: var(--newx-color-border, #dfe6e0);
+  --mcp-primary: var(--newx-color-accent, #218c55);
+  --mcp-primary-soft: rgba(33, 140, 85, 9%);
+  --mcp-success: var(--newx-color-success, #218c55);
+  --mcp-danger: var(--newx-color-danger, #c93c4a);
 
   color: var(--mcp-ink);
 }
@@ -49,6 +49,8 @@
 .mcp-management-toolbar > .semi-input-wrapper {
   width: min(320px, 32vw);
   margin-left: auto;
+  border-color: var(--mcp-line);
+  border-radius: 8px;
 }
 
 .mcp-management-source-tabs {
@@ -57,10 +59,9 @@
 
   padding: 4px;
 
-  background: rgba(255, 255, 255, 82%);
+  background: var(--newx-color-surface-muted, #f3f5f3);
   border: 1px solid var(--mcp-line);
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(25, 36, 64, 4%);
+  border-radius: 8px;
 }
 
 .mcp-management-source-tabs button {
@@ -79,9 +80,9 @@
 }
 
 .mcp-management-source-tabs button[aria-selected='true'] {
-  color: #173cba;
+  color: var(--mcp-primary);
   background: #fff;
-  box-shadow: 0 2px 8px rgba(30, 52, 96, 12%);
+  box-shadow: 0 1px 4px rgba(31, 55, 38, 10%);
 }
 
 .mcp-management-filters {
@@ -91,9 +92,9 @@
   margin-bottom: 18px;
   padding: 8px 12px;
 
-  background: rgba(255, 255, 255, 66%);
-  border: 1px solid rgba(231, 234, 240, 90%);
-  border-radius: 10px;
+  background: var(--newx-color-surface, #fff);
+  border: 1px solid var(--mcp-line);
+  border-radius: 8px;
 }
 
 .mcp-management-filters label {
@@ -120,8 +121,8 @@
 
 .mcp-management-filters select:focus,
 .mcp-management-field select:focus {
-  border-color: #8da6ff;
-  box-shadow: 0 0 0 3px rgba(49, 92, 236, 10%);
+  border-color: var(--mcp-primary);
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 10%);
 }
 
 .mcp-management-permission-tip {
@@ -150,40 +151,19 @@
   min-width: 0;
   padding: 18px;
 
-  background: rgba(255, 255, 255, 94%);
+  background: var(--newx-color-surface, #fff);
   border: 1px solid var(--mcp-line);
-  border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(23, 32, 51, 5%);
+  border-radius: 12px;
+  box-shadow: var(--newx-shadow-sm, 0 5px 18px rgba(31, 55, 38, 5%));
 
   transition:
-    transform 180ms ease,
     border-color 180ms ease,
     box-shadow 180ms ease;
 }
 
-.mcp-management-card::before {
-  content: '';
-
-  position: absolute;
-  inset: 0 0 auto;
-
-  height: 3px;
-
-  opacity: 0;
-  background: linear-gradient(90deg, #355df0, #34b49a);
-  border-radius: 14px 14px 0 0;
-
-  transition: opacity 180ms ease;
-}
-
 .mcp-management-card:hover {
-  transform: translateY(-2px);
-  border-color: #cbd5f7;
-  box-shadow: 0 14px 32px rgba(23, 32, 51, 9%);
-}
-
-.mcp-management-card:hover::before {
-  opacity: 1;
+  border-color: rgba(33, 140, 85, 34%);
+  box-shadow: 0 8px 24px rgba(31, 55, 38, 8%);
 }
 
 .mcp-management-card-top {
@@ -204,11 +184,9 @@
   font-weight: 700;
   color: #fff;
 
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 28%), transparent),
-    linear-gradient(135deg, #315cec, #20a88b);
-  border-radius: 12px;
-  box-shadow: 0 8px 18px rgba(49, 92, 236, 20%);
+  background: var(--mcp-primary);
+  border-radius: 10px;
+  box-shadow: 0 0 0 4px rgba(33, 140, 85, 9%);
 }
 
 .mcp-management-card-title {
@@ -242,9 +220,9 @@
   padding: 2px 6px;
 
   font-size: 10px;
-  color: #42608b;
+  color: var(--mcp-primary);
 
-  background: #eff3f8;
+  background: var(--mcp-primary-soft);
   border-radius: 5px;
 }
 
@@ -282,7 +260,7 @@
   color: #596579;
   white-space: nowrap;
 
-  background: #f4f6f9;
+  background: var(--newx-color-surface-muted, #f3f5f3);
   border-radius: 6px;
 }
 
@@ -309,8 +287,8 @@
 }
 
 .mcp-management-card-status span[data-health='healthy'] i {
-  background: #26a269;
-  box-shadow: 0 0 0 3px rgba(38, 162, 105, 12%);
+  background: var(--mcp-success);
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 12%);
 }
 
 .mcp-management-card-status span[data-health='unhealthy'] i {
@@ -459,10 +437,10 @@
 
   font-size: 22px;
   font-weight: 700;
-  color: #5f77c7;
+  color: var(--mcp-primary);
 
-  background: linear-gradient(145deg, #eff3ff, #e9f8f4);
-  border-radius: 16px;
+  background: var(--mcp-primary-soft);
+  border-radius: 12px;
 }
 
 .mcp-management-empty h2 {
@@ -486,9 +464,12 @@
 
 .mcp-management-form-intro {
   gap: 12px;
+
   padding: 14px;
-  background: linear-gradient(135deg, #f0f4ff, #eef9f6);
-  border-radius: 11px;
+
+  background: var(--mcp-primary-soft);
+  border: 1px solid rgba(33, 140, 85, 12%);
+  border-radius: 10px;
 }
 
 .mcp-management-form-intro strong {
@@ -545,7 +526,7 @@ textarea.mcp-management-code-input {
 .mcp-management-capability-hero {
   gap: 14px;
   padding: 20px 24px;
-  background: linear-gradient(135deg, #f7f9ff, #f5fbf9);
+  background: var(--newx-color-surface-muted, #f6f8f6);
   border-bottom: 1px solid var(--mcp-line);
 }
 
@@ -691,7 +672,7 @@ textarea.mcp-management-code-input {
   cursor: pointer;
   margin-bottom: 8px;
   font-size: 12px;
-  color: #49608f;
+  color: var(--mcp-primary);
 }
 
 .mcp-management-test-output {
@@ -700,7 +681,8 @@ textarea.mcp-management-code-input {
 
   color: #7b8493;
 
-  background: #f7f8fa;
+  background: var(--newx-color-surface-muted, #f6f8f6);
+  border: 1px solid var(--mcp-line);
   border-radius: 10px;
 }
 

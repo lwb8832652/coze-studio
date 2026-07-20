@@ -1,0 +1,255 @@
+.coze-prototype-system-page,
+.coze-prototype-page[class*='system'] {
+  --system-ink: var(--newx-color-text-primary, #1d2520);
+  --system-muted: var(--newx-color-text-secondary, #607067);
+  --system-line: var(--newx-color-border, #dfe6e0);
+  --system-accent: var(--newx-color-accent, #218c55);
+
+  color: var(--system-ink);
+  background:
+    radial-gradient(circle at 92% 0, rgba(61, 153, 86, 6%), transparent 24%),
+    var(--newx-color-page, #f7f8f6);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.coze-prototype-system-sidebar, .coze-prototype-system-nav) {
+  background: var(--newx-color-surface, #fff);
+  border-color: var(--system-line);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.coze-prototype-system-nav-item, .coze-prototype-system-menu-item) {
+  min-height: 38px;
+  color: var(--system-muted);
+  border-radius: 8px;
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.coze-prototype-system-nav-item, .coze-prototype-system-menu-item)
+  [aria-current='page'],
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(
+    .coze-prototype-system-nav-item[aria-current='page'],
+    .coze-prototype-system-menu-item.is-active
+  ) {
+  color: var(--system-accent);
+  background: rgba(33, 140, 85, 9%);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(
+    .coze-prototype-workspace-settings-list,
+    .coze-prototype-admin-table-wrap,
+    .coze-prototype-system-card,
+    .coze-prototype-system-panel
+  ) {
+  background: var(--newx-color-surface, #fff);
+  border-color: var(--system-line);
+  border-radius: 12px;
+  box-shadow: var(--newx-shadow-sm, 0 5px 18px rgba(31, 55, 38, 5%));
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  .coze-prototype-workspace-settings-row {
+  border-color: var(--newx-color-border-subtle, #e9ede9);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  .coze-prototype-workspace-settings-row:hover {
+  background: rgba(33, 140, 85, 3%);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(input, textarea, select, .semi-input-wrapper, .semi-select) {
+  border-color: var(--system-line);
+  border-radius: 8px;
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(input, textarea, select, .semi-input-wrapper):focus,
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(input, textarea, select, .semi-input-wrapper):focus-within {
+  border-color: var(--system-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.semi-table-wrapper, table) {
+  border-color: var(--system-line);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.semi-table-thead, thead) {
+  color: var(--system-muted);
+  background: var(--newx-color-surface-muted, #f3f5f3);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(.semi-table-row:hover .semi-table-row-cell, tbody tr:hover td) {
+  background: rgba(33, 140, 85, 4%);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  :where(button, a):focus-visible {
+  outline: 2px solid var(--system-accent);
+  outline-offset: 2px;
+}
+
+.coze-prototype-system-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.coze-prototype-system-snapshot-card {
+  overflow: hidden;
+
+  background: var(--newx-color-surface, #fff);
+  border: 1px solid var(--system-line);
+  border-radius: 12px;
+  box-shadow: var(--newx-shadow-sm, 0 5px 18px rgba(31, 55, 38, 5%));
+}
+
+.coze-prototype-system-snapshot-header {
+  padding: 18px 18px 14px;
+}
+
+.coze-prototype-system-snapshot-header h2 {
+  margin: 0;
+
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
+  color: var(--system-ink);
+}
+
+.coze-prototype-system-snapshot-header p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--system-muted);
+}
+
+.coze-prototype-system-snapshot-list {
+  padding: 0 18px;
+}
+
+.coze-prototype-system-snapshot-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+
+  min-width: 0;
+  padding: 12px 0;
+
+  border-top: 1px solid var(--newx-color-border-subtle, #e9ede9);
+}
+
+.coze-prototype-system-snapshot-avatar {
+  display: grid;
+  flex: 0 0 34px;
+  place-items: center;
+
+  width: 34px;
+  height: 34px;
+
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+
+  background: var(--system-accent);
+  border-radius: 10px;
+  box-shadow: 0 4px 10px rgba(33, 140, 85, 14%);
+}
+
+.coze-prototype-system-snapshot-avatar-workspace {
+  color: var(--system-accent);
+  background: rgba(33, 140, 85, 10%);
+  border: 1px solid rgba(33, 140, 85, 18%);
+  box-shadow: none;
+}
+
+.coze-prototype-system-snapshot-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.coze-prototype-system-snapshot-copy strong,
+.coze-prototype-system-snapshot-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coze-prototype-system-snapshot-copy strong {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 21px;
+  color: var(--system-ink);
+}
+
+.coze-prototype-system-snapshot-copy > span {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--system-muted);
+}
+
+.coze-prototype-system-snapshot-empty {
+  margin: 0;
+  padding: 24px 0;
+
+  font-size: 13px;
+  color: var(--system-muted);
+  text-align: center;
+
+  border-top: 1px solid var(--newx-color-border-subtle, #e9ede9);
+}
+
+.coze-prototype-system-snapshot-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  min-height: 42px;
+  padding: 0 18px;
+
+  font-size: 12px;
+  color: var(--system-muted);
+
+  background: var(--newx-color-surface-muted, #f3f5f3);
+  border-top: 1px solid var(--newx-color-border-subtle, #e9ede9);
+}
+
+.coze-prototype-system-snapshot-footer strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--system-accent);
+}
+
+:where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+  .coze-prototype-system-card
+  > strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  :where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+    :where(.coze-prototype-system-shell, .coze-prototype-system-layout) {
+    grid-template-columns: 1fr;
+  }
+
+  :where(.coze-prototype-system-page, .coze-prototype-page[class*='system'])
+    :where(.coze-prototype-system-sidebar, .coze-prototype-system-nav) {
+    overflow-x: auto;
+  }
+
+  .coze-prototype-system-grid,
+  .coze-prototype-system-snapshot-grid {
+    grid-template-columns: 1fr;
+  }
+}

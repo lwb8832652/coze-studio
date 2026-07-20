@@ -106,6 +106,22 @@ type Catalog interface {
 	UpdateHealth(ctx context.Context, serverID, expectedUpdatedAt int64, health MCPToolHealthSnapshot) error
 }
 
+type managementCatalog interface {
+	ListForManagement(ctx context.Context, spaceID int64) ([]*toolapi.MCPToolServer, error)
+}
+
+func listMCPToolServersForManagement(
+	ctx context.Context,
+	catalog Catalog,
+	spaceID int64,
+) ([]*toolapi.MCPToolServer, error) {
+	if management, ok := catalog.(managementCatalog); ok {
+		return management.ListForManagement(ctx, spaceID)
+	}
+
+	return catalog.List(ctx, spaceID)
+}
+
 type trustedMCPServerFields struct {
 	CreatorID  int64
 	SourceType toolapi.MCPServerSourceType
@@ -391,7 +407,7 @@ func (s *ApplicationService) ListServers(ctx context.Context, req *toolapi.ListM
 		return nil, err
 	}
 
-	servers, err := s.components.Catalog.List(ctx, req.SpaceID)
+	servers, err := listMCPToolServersForManagement(ctx, s.components.Catalog, req.SpaceID)
 	if err != nil {
 		return nil, err
 	}

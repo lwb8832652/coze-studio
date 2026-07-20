@@ -87,6 +87,14 @@ describe('OverviewSection', () => {
     expect(container.textContent).toContain('畅享 AI');
     expect(container.textContent).toContain('个人空间');
     expect(container.textContent).not.toContain('Personal Space');
+    expect(
+      container.querySelectorAll('.coze-prototype-system-snapshot-row'),
+    ).toHaveLength(3);
+    expect(
+      container.querySelectorAll('.coze-prototype-system-snapshot-avatar'),
+    ).toHaveLength(3);
+    expect(container.textContent).toContain('已展示 1 条');
+    expect(container.textContent).toContain('已展示 2 条');
   });
 
   it('renders empty snapshot hints when overview lists are empty', () => {

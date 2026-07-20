@@ -29,7 +29,7 @@ export const BaseLibraryItem: React.FC<{
   customAvatar?: ReactNode;
   tag?: ReactNode;
 }> = ({ resourceInfo, defaultIcon, customAvatar, tag }) => (
-  <div className="flex items-center w-full h-[48px]">
+  <div className="workspace-library-item flex items-center w-full h-[48px]">
     {customAvatar ?? (
       <CozAvatar
         size="lg"

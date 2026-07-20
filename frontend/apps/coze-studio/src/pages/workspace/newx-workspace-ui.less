@@ -1,0 +1,114 @@
+.coze-prototype-page[class*='workspace'] {
+  --workspace-ink: var(--newx-color-text-primary, #1d2520);
+  --workspace-muted: var(--newx-color-text-secondary, #607067);
+  --workspace-line: var(--newx-color-border, #dfe6e0);
+  --workspace-accent: var(--newx-color-accent, #218c55);
+
+  color: var(--workspace-ink);
+  background:
+    radial-gradient(circle at 90% 0, rgba(61, 153, 86, 6%), transparent 24%),
+    var(--newx-color-page, #f7f8f6);
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(
+    .coze-prototype-workspace-summary,
+    .coze-prototype-team-panel,
+    .coze-prototype-workspace-settings-list,
+    .coze-prototype-member-table
+  ) {
+  background: var(--newx-color-surface, #fff);
+  border-color: var(--workspace-line);
+  border-radius: 12px;
+  box-shadow: var(--newx-shadow-sm, 0 5px 18px rgba(31, 55, 38, 5%));
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(input, textarea, select, .semi-input-wrapper, .semi-select) {
+  border-color: var(--workspace-line);
+  border-radius: 8px;
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(input, textarea, select, .semi-input-wrapper):focus,
+.coze-prototype-page[class*='workspace']
+  :where(input, textarea, select, .semi-input-wrapper):focus-within {
+  border-color: var(--workspace-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(
+    .coze-prototype-workspace-tab,
+    .coze-prototype-team-tab,
+    .coze-prototype-member-filter
+  )[aria-selected='true'],
+.coze-prototype-page[class*='workspace']
+  :where(
+    .coze-prototype-workspace-tab,
+    .coze-prototype-team-tab,
+    .coze-prototype-member-filter
+  ).is-active {
+  color: var(--workspace-accent);
+  background: rgba(33, 140, 85, 8%);
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(
+    .coze-prototype-workspace-primary-button,
+    .coze-prototype-team-primary-button
+  ) {
+  min-height: 38px;
+
+  color: #fff;
+
+  background: var(--workspace-accent);
+  border-color: var(--workspace-accent);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(
+    .coze-prototype-workspace-primary-button,
+    .coze-prototype-team-primary-button
+  ):hover {
+  background: var(--newx-color-accent-hover, #187443);
+  border-color: var(--newx-color-accent-hover, #187443);
+}
+
+.coze-prototype-page[class*='workspace']
+  :where(.coze-prototype-team-member-row, .coze-prototype-workspace-settings-row) {
+  border-color: var(--newx-color-border-subtle, #e9ede9);
+}
+
+.coze-prototype-page[class*='workspace']
+  .coze-prototype-workspace-settings-row:hover {
+  background: rgba(33, 140, 85, 3%);
+}
+
+.coze-prototype-team-role-owner,
+.coze-prototype-team-role-admin {
+  color: var(--workspace-accent);
+  background: rgba(33, 140, 85, 9%);
+  border-color: rgba(33, 140, 85, 16%);
+}
+
+.coze-prototype-team-role-member {
+  color: var(--workspace-muted);
+  background: var(--newx-color-surface-muted, #f3f5f3);
+  border-color: var(--workspace-line);
+}
+
+@media (max-width: 768px) {
+  .coze-prototype-page[class*='workspace'] .coze-prototype-page-inner {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .coze-prototype-page[class*='workspace']
+    :where(.coze-prototype-team-toolbar, .coze-prototype-workspace-toolbar) {
+    flex-wrap: wrap;
+  }
+}

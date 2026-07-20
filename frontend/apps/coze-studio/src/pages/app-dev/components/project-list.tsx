@@ -100,7 +100,12 @@ export const ProjectList = ({
     <section className="app-dev-project-list">
       <div className="app-dev-project-list__header">
         <div className="app-dev-project-list__header-left">
-          <h1>网页应用开发</h1>
+          <div className="app-dev-project-list__title-block">
+            <h1>网页应用开发</h1>
+            <p className="app-dev-project-list__description">
+              使用 AI 创建、迭代和发布网页应用，集中管理项目与发布状态。
+            </p>
+          </div>
           <button
             type="button"
             className="app-dev-project-list__filter-pill"

@@ -4,28 +4,34 @@
 .profile-modal {
   .profile-left {
     position: relative;
-    min-width: 200px;
-    padding: 0 8px;
+    min-width: 216px;
+    padding: 24px 16px;
+    background: var(--newx-color-surface-muted, #f6f8f6);
 
     :global {
       .semi-tabs-tab-button.semi-tabs-tab {
         @apply coz-fg-plus;
 
-        padding: 8px;
+        min-height: 38px;
+        padding: 9px 12px;
 
-        font-size: 14px;
-        font-weight: 500;
+        font-size: 13px;
+        font-weight: 550;
         font-style: normal;
         line-height: 20px;
+
+        border-radius: 8px;
       }
 
       .semi-tabs-tab-button.semi-tabs-tab-active,
       .semi-tabs-tab-button:hover {
-        @apply coz-mg-primary;
+        color: var(--newx-color-text-primary, #1d2520);
+        background: rgba(33, 140, 85, 9%);
       }
 
-      .semi-tabs-tab:focus {
-        outline: none;
+      .semi-tabs-tab:focus-visible {
+        outline: 2px solid var(--newx-color-accent, #218c55);
+        outline-offset: 1px;
       }
 
       .semi-tabs-bar-left {
@@ -41,7 +47,7 @@
       }
 
       .semi-tabs-bar-button.semi-tabs-bar-left .semi-tabs-tab:not(:last-of-type) {
-        margin-bottom: 6px;
+        margin-bottom: 4px;
       }
 
       .semi-tabs-tab:last-child::before {
@@ -54,18 +60,18 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 200px;
+    left: 216px;
 
-    height: 600px;
+    height: 100%;
 
-    border-right: 1px solid var(--coz-stroke-primary);
+    border-right: 1px solid var(--newx-color-border, #dfe6e0);
   }
 
   .text-20 {
     @apply coz-fg-plus;
 
     font-size: 20px;
-    font-weight: 500;
+    font-weight: 650;
     line-height: 28px;
   }
 
@@ -73,80 +79,119 @@
     @apply coz-fg-plus;
 
     font-size: 16px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 22px;
   }
 
   .profile-right {
     overflow-y: auto;
-    padding: 0 8px;
+    padding: 24px 32px 32px;
+    background: var(--newx-color-surface, #fff);
 
     .title {
       position: sticky;
       z-index: 1;
-      top:0;
+      top: 0;
 
       width: 100%;
+      margin-bottom: 20px;
 
       font-size: 20px;
-      font-weight: 500 !important;
+      font-weight: 650 !important;
       line-height: 40px;
+      color: var(--newx-color-text-primary, #1d2520);
 
-      @apply coz-fg-plus bg-background-2;
+      background: var(--newx-color-surface, #fff);
     }
-
   }
 
-  .container{
+  .container {
     width: 100%;
-    height: calc(100% - 86px);
+    height: 100%;
   }
 
   :global {
+    .semi-modal {
+      overflow: hidden;
+      border: 1px solid var(--newx-color-border, #dfe6e0);
+      border-radius: 16px;
+      box-shadow: var(--newx-shadow-lg, 0 24px 72px rgba(31, 55, 38, 16%));
+    }
+
     .semi-modal .semi-modal-content {
       max-height: 600px;
-      padding-top:0;
+      padding-top: 0;
       padding-left: 0;
+
+      background: var(--newx-color-surface, #fff);
+      border-radius: 16px;
 
       .semi-modal-body {
         padding-top: 0;
-
       }
     }
 
     .semi-modal-close {
       position: absolute;
       z-index: 2;
-      right:24px;
-      background-color: rgba(var(--coze-bg-2), 1);
+      top: 20px;
+      right: 20px;
+
+      color: var(--newx-color-text-secondary, #607067);
+
+      background: var(--newx-color-surface-muted, #f3f5f3);
+      border-radius: 8px;
     }
   }
 
   /* When the height of the browser window is greater than or equal to 760px, the height is fixed */
   @media screen and (min-height: 760px) {
-      :global {
-        .semi-modal {
-          height: 600px;
-        }
+    :global {
+      .semi-modal {
+        height: 600px;
       }
+    }
 
-      .profile-right {
-        height: 574px; // = 600px - 26px(margin-top + border)
-      }
+    .profile-right {
+      height: 600px;
+    }
   }
 
   /* When the height of the browser window is less than 760px, the height is 100vh - 160px. */
   @media screen and (max-height: 759px) {
-      :global {
-        .semi-modal {
-          height: calc(100vh - 160px);
-        }
+    :global {
+      .semi-modal {
+        height: calc(100vh - 96px);
+      }
+    }
+
+    .profile-right {
+      height: max(448px, calc(100vh - 96px));
+    }
+  }
+
+  @media screen and (max-width: 720px) {
+    .profile-left {
+      min-width: 152px;
+      padding: 20px 10px;
+    }
+
+    .divider {
+      left: 152px;
+    }
+
+    .profile-right {
+      padding: 20px 18px 24px;
+    }
+
+    :global {
+      .semi-tabs-bar-left {
+        width: 132px;
       }
 
-      .profile-right {
-        height:  max(448px, calc(100vh - 160px - 26px));
+      .semi-modal {
+        width: calc(100vw - 24px) !important;
       }
+    }
   }
 }
-
-

@@ -68,13 +68,15 @@ export const GlobalLayoutAccountDropdown: FC<
   if (!userInfo) {
     return null;
   }
+  const userDisplayName =
+    userInfo.name || userInfo.screen_name || userInfo.email || '用户';
+
   return (
     <>
       <Dropdown
         trigger="custom"
         position={'rightBottom'}
         visible={visible}
-        onVisibleChange={onVisibleChange}
         onClickOutSide={() => {
           if (!disableVisibleChange) {
             onVisibleChange?.(false);
@@ -113,13 +115,18 @@ export const GlobalLayoutAccountDropdown: FC<
           </Dropdown.Menu>
         }
       >
-        <div
+        <button
+          type="button"
           className={classNames(
             'relative',
             'p-[4px] rounded-[8px] transition-colors hover:coz-mg-secondary-hovered',
             'leading-none',
+            'border-0 bg-transparent cursor-pointer',
             visible && 'coz-mg-secondary-hovered',
           )}
+          aria-label="账号菜单"
+          aria-haspopup="menu"
+          aria-expanded={visible}
           onClick={() => {
             if (!disableVisibleChange) {
               onVisibleChange?.(!visible);
@@ -138,10 +145,16 @@ export const GlobalLayoutAccountDropdown: FC<
             <Avatar
               src={userInfo.avatar_url}
               className={classNames('w-[32px] h-[32px] rounded-full')}
-            />
+              style={{
+                color: '#fff',
+                backgroundColor: 'var(--newx-color-accent)',
+              }}
+            >
+              {userDisplayName}
+            </Avatar>
           </Badge>
           {userTips}
-        </div>
+        </button>
       </Dropdown>
       {children}
     </>

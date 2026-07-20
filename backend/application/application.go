@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/plantask"
@@ -180,8 +182,12 @@ func Init(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("Init - configure agent mcp runtime: %w", err)
 	}
+	mcpManagementEnabled, err := mcpManagementEnabledFromEnv(mcpRuntimeConfig.Enabled)
+	if err != nil {
+		return fmt.Errorf("Init - configure mcp management: %w", err)
+	}
 
-	primaryServices, err := initPrimaryServices(ctx, basicServices, mcpRuntimeConfig.Enabled)
+	primaryServices, err := initPrimaryServices(ctx, basicServices, mcpManagementEnabled)
 	if err != nil {
 		return fmt.Errorf("Init - initPrimaryServices failed, err: %v", err)
 	}
@@ -514,6 +520,20 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	}, nil
 }
 
+const mcpManagementEnabledEnv = "MCP_MANAGEMENT_ENABLED"
+
+func mcpManagementEnabledFromEnv(runtimeEnabled bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(mcpManagementEnabledEnv))
+	if value == "" {
+		return runtimeEnabled, nil
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", mcpManagementEnabledEnv)
+	}
+	return enabled, nil
+}
+
 func mcpCatalogOptionsFromEnv(enabled bool) ([]mcptool.MySQLCatalogOption, error) {
 	if !enabled {
 		return nil, nil
@@ -531,7 +551,7 @@ func mcpCatalogOptionsFromEnv(enabled bool) ([]mcptool.MySQLCatalogOption, error
 }
 
 // initPrimaryServices init primary services that depends on basic services.
-func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpEnabled bool) (*primaryServices, error) {
+func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpManagementEnabled bool) (*primaryServices, error) {
 	pluginSVC, err := plugin.InitService(ctx, basicServices.toPluginServiceComponents())
 	if err != nil {
 		return nil, err
@@ -568,12 +588,12 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpE
 	}); err != nil {
 		return nil, fmt.Errorf("init Feishu IM channel service: %w", err)
 	}
-	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpEnabled)
+	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpManagementEnabled)
 	if err != nil {
 		return nil, err
 	}
 	mcpToolSVC := mcptool.InitService(&mcptool.Components{
-		Enabled:                     &mcpEnabled,
+		Enabled:                     &mcpManagementEnabled,
 		Catalog:                     mcptool.NewMySQLCatalog(basicServices.infra.DB, mcpCatalogOptions...),
 		AuditRepository:             mcptool.NewMySQLManagementAuditRepository(basicServices.infra.DB),
 		IDGen:                       basicServices.infra.IDGenSVC,

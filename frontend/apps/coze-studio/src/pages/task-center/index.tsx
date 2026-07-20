@@ -7,8 +7,10 @@ import { useParams } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { workbenchTask } from '@coze-studio/api-schema';
+import { IconCozClock, IconCozPlus } from '@coze-arch/coze-design/icons';
 import { Modal, Toast } from '@coze-arch/coze-design';
 
+import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
 import {
   buildTaskPayload,
   formatScheduleSummary,
@@ -241,7 +243,8 @@ const TaskCenterPage = () => {
   };
 
   return (
-    <main className="task-center-page">
+    <main className="task-center-page newx-menu-page">
+      <WorkspacePageTopBar />
       <div className="task-center-page__ambient" aria-hidden="true" />
       <header className="task-center-hero">
         <div>
@@ -257,7 +260,7 @@ const TaskCenterPage = () => {
             setFormOpen(true);
           }}
         >
-          <span aria-hidden="true">+</span>
+          <IconCozPlus aria-hidden="true" />
           新建任务
         </button>
       </header>
@@ -388,9 +391,8 @@ const TaskCenterPage = () => {
         ) : null}
         {!loading && !error && !tasks.length ? (
           <div className="task-center-state task-center-state--empty">
-            <div aria-hidden="true">
-              <span>00</span>
-              <i />
+            <div className="task-center-state__icon" aria-hidden="true">
+              <IconCozClock />
             </div>
             <strong>
               {keyword ? '没有匹配的任务' : '让第一项工作自动运行'}

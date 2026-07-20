@@ -1,4 +1,8 @@
 .input {
+  overflow: hidden;
+  background: var(--newx-color-surface, #fff);
+  border-radius: 8px;
+
   input {
     /* stylelint-disable-next-line declaration-no-important */
     padding: 6px 0 6px 16px !important;
@@ -10,11 +14,12 @@
     margin: 0;
     padding: 0 16px;
 
+    background: var(--newx-color-surface-muted, #f6f8f6);
     border-radius: 8px 0 0 8px;
   }
 
   :global(.semi-input-suffix) {
-    >span {
+    > span {
       padding-right: 16px;
       font-size: 14px;
       font-weight: 400;
@@ -31,19 +36,20 @@
   }
 
   &.page {
-    border-color: rgba(29, 28, 35, 16%);
+    border-color: var(--newx-color-border, #d8dfd9);
   }
 
   &.modal {
-    border-color: rgba(29, 28, 35, 8%);
+    border-color: var(--newx-color-border, #d8dfd9);
   }
 
   &:hover {
-    border-color: var(--semi-color-focus-border);
+    border-color: var(--newx-color-border-strong, #aebbb1);
   }
 
   &:focus-within {
-    border-color: var(--semi-color-focus-border);
+    border-color: var(--newx-color-accent, #218c55);
+    box-shadow: 0 0 0 3px rgba(33, 140, 85, 10%);
   }
 
   &.error {
@@ -68,7 +74,7 @@
   margin-bottom: 12px;
 
   :global(.semi-input-prefix) {
-    border-right: 1px solid rgba(29, 28, 35, 16%);
+    border-right: 1px solid var(--newx-color-border, #d8dfd9);
   }
 
   &.error {
@@ -82,7 +88,7 @@
   margin-bottom: 8px;
 
   :global(.semi-input-prefix) {
-    border-right: 1px solid rgba(29, 28, 35, 8%);
+    border-right: 1px solid var(--newx-color-border, #d8dfd9);
   }
 
   &.error {
@@ -91,4 +97,3 @@
     }
   }
 }
-

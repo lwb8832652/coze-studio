@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import './newx-task-ui.less';
+
 /* eslint-disable max-lines -- P0 DeerFlow parity wiring; split after parity stabilizes. */
 
 import { useParams } from 'react-router-dom';

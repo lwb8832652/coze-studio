@@ -21,6 +21,7 @@ import { useLogout } from '@coze-foundation/account-ui-adapter';
 import { I18n } from '@coze-arch/i18n';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
 import {
+  IconCozBot,
   IconCozExit,
   IconCozPlugin,
   IconCozSetting,
@@ -66,8 +67,10 @@ export const AccountDropdown = ({
       return <Dropdown.Divider key={`extra-settings-divider-${index}`} />;
     }
 
+    const isIMSettings = item.id.toLowerCase().includes('im');
+
     return {
-      prefixIcon: <IconCozPlugin />,
+      prefixIcon: isIMSettings ? <IconCozBot /> : <IconCozPlugin />,
       title: item.tabName,
       onClick: () => {
         openAccountSettings(item.id);
@@ -88,7 +91,7 @@ export const AccountDropdown = ({
         <UserInfoMenu />,
         <Dropdown.Divider />,
         {
-          prefixIcon: <IconCozExit />,
+          prefixIcon: <IconCozPlugin />,
           title: I18n.t('settings_api_authorization'),
           onClick: () => {
             openAccountSettings('api-auth');

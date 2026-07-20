@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { type FC, useRef } from 'react';
+import { Children, type FC, useRef } from 'react';
 
 import {
   BaseLibraryPage,
@@ -43,6 +43,13 @@ export const LibraryPage: FC<{ spaceId: string }> = ({ spaceId }) => {
     usePromptConfig(configCommonParams);
   const { config: databaseConfig, modals: databaseModals } =
     useDatabaseConfig(configCommonParams);
+  const modalNodes = Children.toArray([
+    pluginModals,
+    workflowModals,
+    promptModals,
+    databaseModals,
+    knowledgeModals,
+  ]);
 
   return (
     <>
@@ -57,11 +64,7 @@ export const LibraryPage: FC<{ spaceId: string }> = ({ spaceId }) => {
           databaseConfig,
         ]}
       />
-      {pluginModals}
-      {workflowModals}
-      {promptModals}
-      {databaseModals}
-      {knowledgeModals}
+      {modalNodes}
     </>
   );
 };

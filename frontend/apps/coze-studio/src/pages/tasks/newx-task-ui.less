@@ -1,0 +1,103 @@
+.coze-prototype-task-detail-page {
+  --task-detail-ink: var(--newx-color-text-primary, #1d2520);
+  --task-detail-muted: var(--newx-color-text-secondary, #607067);
+  --task-detail-line: var(--newx-color-border, #dfe6e0);
+  --task-detail-accent: var(--newx-color-accent, #218c55);
+
+  color: var(--task-detail-ink);
+  background:
+    radial-gradient(circle at 90% 0, rgba(61, 153, 86, 6%), transparent 24%),
+    var(--newx-color-page, #f7f8f6);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-detail-split {
+  gap: 1px;
+  background: var(--task-detail-line);
+  border-top: 1px solid var(--task-detail-line);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-task-action {
+  min-height: 34px;
+  padding: 0 11px;
+
+  font-size: 13px;
+  color: var(--task-detail-muted);
+
+  background: var(--newx-color-surface, #fff);
+  border: 1px solid var(--task-detail-line);
+  border-radius: 8px;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-task-action:hover {
+  color: var(--task-detail-accent);
+  border-color: rgba(33, 140, 85, 32%);
+}
+
+.coze-prototype-task-detail-page .coze-prototype-task-action:focus-visible {
+  outline: 2px solid var(--task-detail-accent);
+  outline-offset: 2px;
+}
+
+.coze-prototype-task-detail-page .coze-prototype-error {
+  padding: 12px 14px;
+
+  color: var(--newx-color-danger, #c93c4a);
+
+  background: #fff4f4;
+  border: 1px solid rgba(201, 60, 74, 18%);
+  border-radius: 8px;
+}
+
+.coze-prototype-detail-inspector,
+.coze-prototype-artifacts-panel {
+  color: var(--task-detail-ink);
+}
+
+.coze-prototype-artifact-mode-switch {
+  display: inline-flex;
+  gap: 4px;
+
+  margin-bottom: 16px;
+  padding: 3px;
+
+  background: var(--newx-color-surface-muted, #f3f5f3);
+  border: 1px solid var(--task-detail-line);
+  border-radius: 8px;
+}
+
+.coze-prototype-artifacts-panel .semi-list {
+  overflow: hidden;
+  border: 1px solid var(--task-detail-line);
+  border-radius: 10px;
+}
+
+.coze-prototype-artifacts-panel .semi-list-item {
+  border-bottom-color: var(--newx-color-border-subtle, #e9ede9);
+}
+
+.coze-prototype-artifacts-empty {
+  padding: 40px 20px;
+  color: var(--task-detail-muted);
+  text-align: center;
+}
+
+.coze-prototype-detail-loading-bar {
+  background: linear-gradient(
+    90deg,
+    var(--newx-color-surface-muted, #eef1ee),
+    #f8faf8,
+    var(--newx-color-surface-muted, #eef1ee)
+  );
+}
+
+@media (max-width: 900px) {
+  .coze-prototype-task-detail-page .coze-prototype-detail-split {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coze-prototype-detail-loading-bar {
+    animation: none;
+  }
+}

@@ -1,0 +1,151 @@
+.app-dev-page,
+.app-dev-ide,
+.app-dev-ide-page {
+  --app-dev-ink: var(--newx-color-text-primary, #1d2520);
+  --app-dev-muted: var(--newx-color-text-secondary, #607067);
+  --app-dev-line: var(--newx-color-border, #dfe6e0);
+  --app-dev-accent: var(--newx-color-accent, #218c55);
+  --app-dev-surface: var(--newx-color-surface, #fff);
+  --app-dev-surface-muted: var(--newx-color-surface-muted, #f3f5f3);
+
+  color: var(--app-dev-ink);
+  background:
+    radial-gradient(circle at 90% 0, rgba(61, 153, 86, 6%), transparent 24%),
+    var(--newx-color-page, #f7f8f6);
+}
+
+.app-dev-page__notice {
+  color: var(--app-dev-accent);
+  background: rgba(33, 140, 85, 8%);
+  border: 1px solid rgba(33, 140, 85, 15%);
+  border-radius: 8px;
+}
+
+.app-dev-page :where(button, input, select, textarea),
+.app-dev-ide :where(button, input, select, textarea),
+.app-dev-ide-page :where(button, input, select, textarea) {
+  border-radius: 8px;
+}
+
+.app-dev-page :where(button, input, select, textarea):focus-visible,
+.app-dev-ide :where(button, input, select, textarea):focus-visible,
+.app-dev-ide-page :where(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--app-dev-accent);
+  outline-offset: 2px;
+}
+
+.app-dev-chat-panel,
+.app-dev-preview-panel,
+.app-dev-code-editor,
+.app-dev-file-tree,
+.app-dev-dev-logs {
+  min-width: 0;
+
+  background: var(--app-dev-surface);
+  border-color: var(--app-dev-line);
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.app-dev-chat-panel__header,
+.app-dev-preview-panel__bar,
+.app-dev-runtime-toolbar {
+  background: var(--app-dev-surface);
+  border-color: var(--app-dev-line);
+}
+
+.app-dev-chat-panel__assistant-avatar {
+  color: #fff;
+  background: var(--app-dev-accent);
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
+}
+
+.app-dev-chat-panel__header-meta > span[data-active='true'],
+.app-dev-preview-panel__design-status[data-active='true'],
+.app-dev-preview-panel__devices button[data-active='true'],
+.app-dev-preview-panel__design-targets button[data-active='true'] {
+  color: var(--app-dev-accent);
+  background: rgba(33, 140, 85, 9%);
+  border-color: rgba(33, 140, 85, 22%);
+}
+
+.app-dev-chat-panel__welcome > span,
+.app-dev-preview-panel__address > span {
+  color: var(--app-dev-accent);
+}
+
+.app-dev-chat-panel__quick-prompts button {
+  color: var(--app-dev-muted);
+  background: var(--app-dev-surface);
+  border-color: var(--app-dev-line);
+}
+
+.app-dev-chat-panel__quick-prompts button:hover {
+  color: var(--app-dev-accent);
+  background: rgba(33, 140, 85, 5%);
+  border-color: rgba(33, 140, 85, 26%);
+}
+
+.app-dev-preview-panel__viewport {
+  background: var(--app-dev-surface-muted);
+  border-color: var(--app-dev-line);
+}
+
+.app-dev-preview-panel__viewport iframe {
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(31, 55, 38, 8%);
+}
+
+.app-dev-preview-panel--empty {
+  color: var(--app-dev-muted);
+  background: var(--app-dev-surface);
+  border: 1px solid var(--app-dev-line);
+}
+
+.app-dev-preview-panel__empty-actions button,
+.app-dev-preview-panel__actions button,
+.app-dev-preview-panel__actions a {
+  color: var(--app-dev-muted);
+  background: var(--app-dev-surface);
+  border-color: var(--app-dev-line);
+}
+
+.app-dev-preview-panel__empty-actions button:first-child {
+  color: #fff;
+  background: var(--app-dev-accent);
+  border-color: var(--app-dev-accent);
+}
+
+.app-dev-preview-panel__pick-layer {
+  color: var(--app-dev-ink);
+  background: rgba(247, 248, 246, 88%);
+  border: 1px dashed var(--app-dev-accent);
+}
+
+.app-dev-preview-panel__selection-marker {
+  border-color: var(--app-dev-accent);
+  box-shadow: 0 0 0 4px rgba(33, 140, 85, 16%);
+}
+
+@media (max-width: 900px) {
+  .app-dev-chat-panel,
+  .app-dev-preview-panel,
+  .app-dev-code-editor,
+  .app-dev-file-tree {
+    border-radius: 8px;
+  }
+
+  .app-dev-preview-panel__bar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-dev-page *,
+  .app-dev-ide *,
+  .app-dev-ide-page * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

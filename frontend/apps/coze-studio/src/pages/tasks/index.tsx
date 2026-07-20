@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import './newx-task-ui.less';
+
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
@@ -156,7 +158,7 @@ interface TasksHeaderProps {
 }
 
 const TasksHeader = ({ loading, spaceId, onRefresh }: TasksHeaderProps) => (
-  <div className="text-center">
+  <div className="newx-page-heading">
     <h1 className="coze-prototype-page-title">全部任务</h1>
     <p className="coze-prototype-page-subtitle">
       这里收纳您当前工作空间内的全部任务
@@ -436,7 +438,7 @@ const TasksPage = () => {
   };
 
   return (
-    <main className="coze-prototype-page">
+    <main className="coze-prototype-page newx-menu-page newx-tasks-page-shell">
       <WorkspacePageTopBar />
       <section className="coze-prototype-page-inner">
         <TasksHeader

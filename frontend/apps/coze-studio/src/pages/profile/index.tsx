@@ -198,7 +198,7 @@ const ProfilePage = () => {
                 />
               </label>
               <p className="profile-page__hint">
-                邮箱、头像和密码仍沿用现有账号设置能力；这一页先承接产品内个人资料入口。
+                邮箱、头像和密码可在账号设置中管理，资料保存后会同步用于工作空间展示。
               </p>
 
               <div
