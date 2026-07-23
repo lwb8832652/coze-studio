@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
+	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
@@ -65,7 +67,25 @@ func TestModelRunTitleGeneratorBuildsDeerFlowPromptAndCleansTitle(t *testing.T) 
 	require.NotNil(t, chatModel.options.Model)
 	require.Equal(t, "title-model", *chatModel.options.Model)
 	require.NotNil(t, chatModel.options.MaxTokens)
-	require.LessOrEqual(t, *chatModel.options.MaxTokens, 96)
+	require.Equal(t, 256, *chatModel.options.MaxTokens)
+}
+
+func TestRunTitleModelOptionsDisablesArkThinking(t *testing.T) {
+	options := runTitleModelOptions(
+		&arkmodel.ChatModel{},
+		runTitleGenerationConfig{},
+	)
+
+	require.Len(t, options, 1)
+}
+
+func TestRunTitleModelOptionsDisablesDeepSeekThinking(t *testing.T) {
+	options := runTitleModelOptions(
+		&deepseekmodel.ChatModel{},
+		runTitleGenerationConfig{},
+	)
+
+	require.Len(t, options, 1)
 }
 
 func TestBuildRunTitlePromptRemovesKnownResourceMarkers(t *testing.T) {

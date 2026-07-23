@@ -767,9 +767,10 @@ func TestRunProcessorTitleGeneratorTimeoutDoesNotBlockFinalization(t *testing.T)
 			return &RunExecutionResult{Message: "季度复盘已整理"}, nil
 		}),
 		RunProcessorOptions{
-			WorkerID:       "worker-a",
-			BatchSize:      1,
-			TitleGenerator: generator,
+			WorkerID:               "worker-a",
+			BatchSize:              1,
+			TitleGenerator:         generator,
+			TitleGenerationTimeout: 10 * time.Millisecond,
 		},
 	)
 	parentCtx, cancel := context.WithCancel(context.Background())
@@ -783,6 +784,12 @@ func TestRunProcessorTitleGeneratorTimeoutDoesNotBlockFinalization(t *testing.T)
 	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
 	require.Nil(t, domainSVC.updateThreadTitleReq)
 	require.JSONEq(t, `{"thread_title":""}`, domainSVC.finalizeRunSuccessReq.TitleEventPayload)
+}
+
+func TestRunProcessorUsesProductionTitleGenerationTimeoutByDefault(t *testing.T) {
+	processor := NewRunProcessor(nil, nil, RunProcessorOptions{})
+
+	require.Equal(t, 8*time.Second, processor.titleGenerationTimeout)
 }
 
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {

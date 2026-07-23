@@ -83,6 +83,20 @@ const appendUniqueTaskThreads = (
   return next;
 };
 
+const applyPendingTaskThreadPatches = (
+  tasks: TaskThread[],
+  pendingPatches: Map<string, WorkspaceTaskThreadUpsertDetail['thread']>,
+) =>
+  tasks.map(task => {
+    const patch = pendingPatches.get(task.thread_id);
+    if (!patch) {
+      return task;
+    }
+
+    pendingPatches.delete(task.thread_id);
+    return { ...task, ...patch };
+  });
+
 const useTaskThreadInfiniteScroll = ({
   hasMore,
   listRef,
@@ -127,6 +141,8 @@ const useTaskThreadInfiniteScroll = ({
   }, [hasMore, listRef, loadMoreTasks, sentinelRef]);
 };
 
+// Pagination and race-safe live title patches share one state boundary.
+// eslint-disable-next-line @coze-arch/max-line-per-function
 const useWorkspaceTaskThreads = (spaceId?: string) => {
   const [tasks, setTasks] = useState<TaskThread[]>([]);
   const [loading, setLoading] = useState(false);
@@ -134,9 +150,14 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
   const [total, setTotal] = useState(0);
   const pageRef = useRef(1);
   const loadingMoreRef = useRef(false);
+  const pendingPatchesRef = useRef<
+    Map<string, WorkspaceTaskThreadUpsertDetail['thread']>
+  >(new Map());
+  const tasksRef = useRef<TaskThread[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const hasMore = tasks.length < total;
+  tasksRef.current = tasks;
 
   const loadMoreTasks = useCallback(async () => {
     if (
@@ -158,7 +179,10 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
         page: nextPage,
         page_size: RECENT_TASK_PAGE_SIZE,
       });
-      const nextThreads = response.data?.threads ?? [];
+      const nextThreads = applyPendingTaskThreadPatches(
+        response.data?.threads ?? [],
+        pendingPatchesRef.current,
+      );
       setTasks(current => appendUniqueTaskThreads(current, nextThreads));
       setTotal(response.data?.total ?? tasks.length + nextThreads.length);
       pageRef.current = nextPage;
@@ -171,6 +195,8 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
   }, [loading, spaceId, tasks.length, total]);
 
   useEffect(() => {
+    pendingPatchesRef.current.clear();
+
     if (!spaceId) {
       setTasks([]);
       setTotal(0);
@@ -190,7 +216,11 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
         });
 
         if (!canceled) {
-          setTasks(response.data?.threads ?? []);
+          const nextThreads = applyPendingTaskThreadPatches(
+            response.data?.threads ?? [],
+            pendingPatchesRef.current,
+          );
+          setTasks(nextThreads);
           setTotal(response.data?.total ?? response.data?.threads?.length ?? 0);
           pageRef.current = 1;
         }
@@ -225,16 +255,35 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
         return;
       }
 
-      const taskExists = tasks.some(
+      const taskExists = tasksRef.current.some(
         task => task.thread_id === detail.thread.thread_id,
       );
-      setTasks(current =>
-        upsertTaskThread(current, detail.thread, detail.mode),
+      if (detail.mode === 'patch' && !taskExists) {
+        const pendingPatch = pendingPatchesRef.current.get(
+          detail.thread.thread_id,
+        );
+        pendingPatchesRef.current.set(detail.thread.thread_id, {
+          ...pendingPatch,
+          ...detail.thread,
+        });
+      }
+
+      const pendingPatch = pendingPatchesRef.current.get(
+        detail.thread.thread_id,
       );
+      const nextThread =
+        detail.mode !== 'patch' && pendingPatch
+          ? { ...detail.thread, ...pendingPatch }
+          : detail.thread;
+      if (detail.mode !== 'patch' && pendingPatch) {
+        pendingPatchesRef.current.delete(detail.thread.thread_id);
+      }
+
+      setTasks(current => upsertTaskThread(current, nextThread, detail.mode));
       setTotal(current =>
         taskExists || detail.mode === 'patch'
           ? current
-          : Math.max(current + 1, tasks.length + 1),
+          : Math.max(current + 1, tasksRef.current.length + 1),
       );
     };
 
@@ -249,7 +298,7 @@ const useWorkspaceTaskThreads = (spaceId?: string) => {
         handleTaskThreadUpsert,
       );
     };
-  }, [spaceId, tasks]);
+  }, [spaceId]);
 
   useTaskThreadInfiniteScroll({
     hasMore,

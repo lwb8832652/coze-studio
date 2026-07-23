@@ -33,6 +33,7 @@ const (
 	agentThreadWorkerIntervalMsEnv          = "AGENT_THREAD_WORKER_INTERVAL_MS"
 	agentThreadWorkerLeaseTTLMsEnv          = "AGENT_THREAD_WORKER_LEASE_TTL_MS"
 	agentThreadWorkerHeartbeatIntervalMsEnv = "AGENT_THREAD_WORKER_HEARTBEAT_INTERVAL_MS"
+	agentThreadTitleGenerationTimeoutMsEnv  = "AGENT_THREAD_TITLE_GENERATION_TIMEOUT_MS"
 
 	agentThreadResumeWorkerEnabledEnv             = "AGENT_THREAD_RESUME_WORKER_ENABLED"
 	agentThreadResumeWorkerIDEnv                  = "AGENT_THREAD_RESUME_WORKER_ID"
@@ -204,10 +205,14 @@ func StartRunWorkerFromEnv(ctx context.Context, app *ApplicationService, executo
 
 	eventSink := NewApplicationRunEventSink(app)
 	processor := NewRunProcessor(app, executor, RunProcessorOptions{
-		WorkerID:          envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
-		BatchSize:         envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
-		EventSink:         eventSink,
-		TitleGenerator:    NewModelRunTitleGenerator(DefaultChatModelProvider),
+		WorkerID:       envkey.GetStringD(agentThreadWorkerIDEnv, defaultRunProcessorWorkerID),
+		BatchSize:      envkey.GetI32D(agentThreadWorkerBatchSizeEnv, defaultRunProcessorBatchSize),
+		EventSink:      eventSink,
+		TitleGenerator: NewModelRunTitleGenerator(DefaultChatModelProvider),
+		TitleGenerationTimeout: time.Duration(envkey.GetIntD(
+			agentThreadTitleGenerationTimeoutMsEnv,
+			int(defaultRunTitleGenerationTimeout/time.Millisecond),
+		)) * time.Millisecond,
 		LeaseTTL:          time.Duration(envkey.GetIntD(agentThreadWorkerLeaseTTLMsEnv, int(defaultRunLeaseTTL/time.Millisecond))) * time.Millisecond,
 		HeartbeatInterval: time.Duration(envkey.GetIntD(agentThreadWorkerHeartbeatIntervalMsEnv, int(defaultRunLeaseHeartbeatInterval/time.Millisecond))) * time.Millisecond,
 	})

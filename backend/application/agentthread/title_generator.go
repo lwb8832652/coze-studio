@@ -22,15 +22,18 @@ import (
 	"fmt"
 	"strings"
 
+	arkmodel "github.com/cloudwego/eino-ext/components/model/ark"
+	deepseekmodel "github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	arkruntime "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
 )
 
 const (
 	defaultRunTitleMaxWords    = 6
 	defaultRunTitleMaxChars    = 60
 	defaultRunTitlePromptChars = 500
-	defaultRunTitleMaxTokens   = 96
+	defaultRunTitleMaxTokens   = 256
 )
 
 type ModelRunTitleGenerator struct {
@@ -83,7 +86,7 @@ func (g *ModelRunTitleGenerator) GenerateTitle(
 	resp, err := chatModel.Generate(
 		ctx,
 		[]*schema.Message{schema.UserMessage(buildRunTitlePrompt(input, cfg))},
-		runTitleModelOptions(cfg)...,
+		runTitleModelOptions(chatModel, cfg)...,
 	)
 	if err != nil {
 		return "", err
@@ -216,13 +219,30 @@ func truncateRunTitlePromptText(text string, limit int) string {
 	return string(runes[:limit])
 }
 
-func runTitleModelOptions(cfg runTitleGenerationConfig) []model.Option {
-	options := make([]model.Option, 0, 2)
+func runTitleModelOptions(
+	chatModel model.BaseChatModel,
+	cfg runTitleGenerationConfig,
+) []model.Option {
+	options := make([]model.Option, 0, 3)
 	if cfg.ModelName != "" {
 		options = append(options, model.WithModel(cfg.ModelName))
 	}
 	if cfg.MaxTokens > 0 {
 		options = append(options, model.WithMaxTokens(cfg.MaxTokens))
+	}
+	switch chatModel.(type) {
+	case *arkmodel.ChatModel:
+		options = append(options, arkmodel.WithThinking(&arkruntime.Thinking{
+			Type: arkruntime.ThinkingTypeDisabled,
+		}))
+	case *deepseekmodel.ChatModel:
+		options = append(options, deepseekmodel.WithExtraFields(
+			map[string]interface{}{
+				"thinking": map[string]interface{}{
+					"type": "disabled",
+				},
+			},
+		))
 	}
 	return options
 }

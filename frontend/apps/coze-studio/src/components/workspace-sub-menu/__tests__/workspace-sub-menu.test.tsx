@@ -1141,6 +1141,81 @@ describe('NewX AI WorkspaceSubMenu', () => {
     container.remove();
   });
 
+  it('keeps a generated title patch that arrives before the task list response', async () => {
+    let releaseListRequest = () => undefined;
+    const listRequestBarrier = new Promise<void>(resolve => {
+      releaseListRequest = resolve;
+    });
+    mockListTaskThreads.mockImplementation(async () => {
+      await listRequestBarrier;
+      return {
+        data: {
+          threads: [
+            {
+              thread_id: 'thread-delayed-title',
+              legacy_task_id: '0',
+              space_id: 'space-1',
+              creator_id: 'user-1',
+              title:
+                '请为一款面向中小企业的智能协作平台设计完整的季度产品发布计划',
+              status: 'completed',
+              source: 'task',
+              progress: 100,
+              last_user_message: '',
+              last_agent_message: '',
+              created_at: 1717000000000,
+              updated_at: 1717000300000,
+            },
+          ],
+          total: 1,
+        },
+        code: 0,
+        msg: '',
+      };
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<WorkspaceTaskList />);
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('coze:workspace-task-thread-upsert', {
+          detail: {
+            mode: 'patch',
+            space_id: 'space-1',
+            thread: {
+              thread_id: 'thread-delayed-title',
+              title: '中小企业智能协作平台发布计划',
+              updated_at: 1717000400000,
+            },
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      releaseListRequest();
+      await listRequestBarrier;
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('.coze-prototype-sidebar-task-name')?.textContent,
+    ).toBe('中小企业智能协作平台发布计划');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
   it('opens canonical recent task thread when legacy task id is zero string', async () => {
     mockNavigate.mockReset();
     mockListTaskThreads.mockResolvedValue({

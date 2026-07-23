@@ -34,7 +34,7 @@ import (
 const defaultRunProcessorWorkerID = "agent-harness"
 const defaultRunProcessorBatchSize int32 = 10
 const defaultRunLeaseCleanupTimeout = 5 * time.Second
-const defaultRunTitleGenerationTimeout = 2 * time.Second
+const defaultRunTitleGenerationTimeout = 8 * time.Second
 
 const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
@@ -92,25 +92,27 @@ type RunTitleGenerator interface {
 }
 
 type RunProcessorOptions struct {
-	WorkerID          string
-	BatchSize         int32
-	EventSink         RunEventSink
-	TitleGenerator    RunTitleGenerator
-	MetricsCollector  RuntimeMetricsCollector
-	LeaseTTL          time.Duration
-	HeartbeatInterval time.Duration
-	LeaseClock        RunLeaseClock
+	WorkerID               string
+	BatchSize              int32
+	EventSink              RunEventSink
+	TitleGenerator         RunTitleGenerator
+	TitleGenerationTimeout time.Duration
+	MetricsCollector       RuntimeMetricsCollector
+	LeaseTTL               time.Duration
+	HeartbeatInterval      time.Duration
+	LeaseClock             RunLeaseClock
 }
 
 type RunProcessor struct {
-	app              *ApplicationService
-	executor         RunExecutor
-	eventSink        RunEventSink
-	titleGenerator   RunTitleGenerator
-	metricsCollector RuntimeMetricsCollector
-	workerID         string
-	batchSize        int32
-	leaseConfig      runLeaseHeartbeatConfig
+	app                    *ApplicationService
+	executor               RunExecutor
+	eventSink              RunEventSink
+	titleGenerator         RunTitleGenerator
+	titleGenerationTimeout time.Duration
+	metricsCollector       RuntimeMetricsCollector
+	workerID               string
+	batchSize              int32
+	leaseConfig            runLeaseHeartbeatConfig
 }
 
 type RunProcessResult struct {
@@ -147,16 +149,21 @@ func NewRunProcessor(app *ApplicationService, executor RunExecutor, opts RunProc
 	if eventSink == nil {
 		eventSink = NewApplicationRunEventSink(app)
 	}
+	titleGenerationTimeout := opts.TitleGenerationTimeout
+	if titleGenerationTimeout <= 0 {
+		titleGenerationTimeout = defaultRunTitleGenerationTimeout
+	}
 
 	return &RunProcessor{
-		app:              app,
-		executor:         executor,
-		eventSink:        eventSink,
-		titleGenerator:   opts.TitleGenerator,
-		metricsCollector: opts.MetricsCollector,
-		workerID:         workerID,
-		batchSize:        batchSize,
-		leaseConfig:      normalizeRunLeaseHeartbeatConfig(opts.LeaseTTL, opts.HeartbeatInterval, opts.LeaseClock),
+		app:                    app,
+		executor:               executor,
+		eventSink:              eventSink,
+		titleGenerator:         opts.TitleGenerator,
+		titleGenerationTimeout: titleGenerationTimeout,
+		metricsCollector:       opts.MetricsCollector,
+		workerID:               workerID,
+		batchSize:              batchSize,
+		leaseConfig:            normalizeRunLeaseHeartbeatConfig(opts.LeaseTTL, opts.HeartbeatInterval, opts.LeaseClock),
 	}
 }
 
@@ -939,20 +946,60 @@ func (p *RunProcessor) generatedThreadTitle(
 		if titleCtx == nil {
 			titleCtx = context.Background()
 		}
+		titleGenerationTimeout := p.titleGenerationTimeout
+		if titleGenerationTimeout <= 0 {
+			titleGenerationTimeout = defaultRunTitleGenerationTimeout
+		}
 		titleCtx, cancel := context.WithTimeout(
 			titleCtx,
-			defaultRunTitleGenerationTimeout,
+			titleGenerationTimeout,
 		)
+		startedAt := time.Now()
 		title, err := p.titleGenerator.GenerateTitle(titleCtx, RunTitleGenerationInput{
 			Run:              run,
 			UserMessage:      userMessage,
 			AssistantMessage: strings.TrimSpace(resultMessage(result)),
 		})
 		cancel()
+		durationMillis := time.Since(startedAt).Milliseconds()
+		runID, threadID := int64(0), int64(0)
+		if run != nil {
+			runID = run.RunID
+			threadID = run.ThreadID
+		}
 		if err == nil {
 			if title := normalizeTitle(title); title != "" {
+				log.Printf(
+					"[agent-run-main] title_generation_succeeded run_id=%d thread_id=%d duration_ms=%d title_runes=%d",
+					runID,
+					threadID,
+					durationMillis,
+					len([]rune(title)),
+				)
 				return title
 			}
+			log.Printf(
+				"[agent-run-main] title_generation_empty run_id=%d thread_id=%d duration_ms=%d",
+				runID,
+				threadID,
+				durationMillis,
+			)
+		} else {
+			errorClass := "provider_error"
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				errorClass = "timeout"
+			case errors.Is(err, context.Canceled):
+				errorClass = "canceled"
+			}
+			log.Printf(
+				"[agent-run-main] title_generation_failed run_id=%d thread_id=%d duration_ms=%d timeout_ms=%d error_class=%s",
+				runID,
+				threadID,
+				durationMillis,
+				titleGenerationTimeout.Milliseconds(),
+				errorClass,
+			)
 		}
 	}
 	if title := normalizeTitle(extractQuotedGeneratedThreadTitle(userMessage)); title != "" {

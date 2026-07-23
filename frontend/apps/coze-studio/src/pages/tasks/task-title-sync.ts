@@ -71,10 +71,29 @@ export const useTaskThreadTitleSync = ({
   const taskRef = useRef<ChatTask | undefined>();
   const setCurrentTask = useCallback(
     (nextTask?: ChatTask) => {
+      const previousTask = taskRef.current;
       taskRef.current = nextTask;
       setTask(nextTask);
+
+      const nextTitle = nextTask?.title?.trim();
+      if (
+        !nextTask ||
+        !nextTitle ||
+        previousTask?.id !== nextTask.id ||
+        previousTask.title?.trim() === nextTitle
+      ) {
+        return;
+      }
+
+      emitThreadTitlePatch({
+        spaceID,
+        task: {
+          ...nextTask,
+          title: nextTitle,
+        },
+      });
     },
-    [setTask],
+    [setTask, spaceID],
   );
   const handleThreadTitleUpdated = useCallback(
     ({ threadId, title }: { threadId: string; title: string }) => {
@@ -88,9 +107,8 @@ export const useTaskThreadTitleSync = ({
       }
 
       setCurrentTask(nextTask);
-      emitThreadTitlePatch({ spaceID, task: nextTask });
     },
-    [setCurrentTask, spaceID],
+    [setCurrentTask],
   );
 
   return {
