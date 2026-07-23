@@ -58,8 +58,33 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 		},
 		{
 			name:    "multiple markers and internal whitespace",
-			message: "  请   分析 @skill-creator \n 并使用 @project.tool_1  输出结果。  ",
+			message: "  请   分析 @skill-creator \n 并使用 @skill-creator  输出结果。  ",
 			want:    "请 分析 并使用 输出结果",
+		},
+		{
+			name:    "leading sentence noise",
+			message: "，请分析",
+			want:    "请分析",
+		},
+		{
+			name:    "known marker with trailing exclamation",
+			message: "@skill-creator!",
+			want:    "新建任务",
+		},
+		{
+			name:    "known marker wrapped in parentheses",
+			message: "(@skill-creator)",
+			want:    "新建任务",
+		},
+		{
+			name:    "ordinary ASCII mention is preserved",
+			message: "请联系 @alice 跟进",
+			want:    "请联系 @alice 跟进",
+		},
+		{
+			name:    "known marker prefix is not removed",
+			message: "@skill-creatorHelp me",
+			want:    "@skill-creatorHelp me",
 		},
 		{
 			name:    "Unicode-only marker is preserved",
@@ -95,6 +120,11 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			name:    "format controls only",
 			message: "\u200b\u200c\u200d\u2060\ufeff",
 			want:    "新建任务",
+		},
+		{
+			name:    "control and bidirectional runes are filtered",
+			message: "\x00请\u202e分\u2066析\u2069\x1f",
+			want:    "请分析",
 		},
 		{
 			name:    "emoji joiner is preserved",
@@ -296,6 +326,53 @@ func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically(t *testin
 	require.Nil(t, domainSVC.createReq)
 	require.Nil(t, domainSVC.createRunReq)
 	require.Nil(t, domainSVC.appendReq)
+}
+
+func TestApplicationCreateTaskThreadUsesActivatedSkillCreatorForProvisionalTitle(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+			Thread: &entity.Thread{
+				ID: 10, SpaceID: 1, CreatorID: 2, Title: "创建技能",
+				Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			},
+			Run: &entity.Run{
+				ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+				RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+			},
+			Message: &entity.Message{
+				ID: 30, ThreadID: 10, RunID: 20,
+				Role: entity.MessageRoleUser,
+			},
+		},
+	}
+	policy := RuntimePolicy{
+		DefaultMode:    RuntimeModeEinoADK,
+		EinoADKEnabled: true,
+	}
+	app := &ApplicationService{
+		ThreadSVC:     domainSVC,
+		RuntimePolicy: &policy,
+	}
+
+	resp, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+		SpaceID: 1,
+		UserID:  2,
+		Message: "我想创建一个技能，请先询问我技能用途、使用场景和期望输出。",
+		Config: `{
+			"runtime":"eino_adk",
+			"mode":"pro",
+			"enable_skills":["skill-creator"],
+			"skills":{
+				"enabled":true,
+				"allowed_skills":["skill-creator"]
+			}
+		}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, domainSVC.createThreadRunMessageReq)
+	require.Equal(t, "创建技能", domainSVC.createThreadRunMessageReq.Thread.Title)
 }
 
 func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *testing.T) {

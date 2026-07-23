@@ -210,7 +210,7 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 		return nil, err
 	}
 
-	title := taskThreadTitle(req.Title, message)
+	title := taskThreadTitleWithRunConfig(req.Title, message, runConfig)
 	if req.DeferStart {
 		threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
 			SpaceID:  req.SpaceID,
@@ -273,12 +273,29 @@ const (
 	explicitTaskTitleMaxRunes    = 80
 	provisionalTaskTitleMaxRunes = 32
 	defaultTaskThreadTitle       = "新建任务"
+	taskTitleSkillCreator        = "skill-creator"
 )
 
 func taskThreadTitle(title, message string) string {
+	return taskThreadTitleWithActivatedResources(title, message, nil)
+}
+
+func taskThreadTitleWithRunConfig(title, message, runConfig string) string {
+	return taskThreadTitleWithActivatedResources(
+		title,
+		message,
+		taskTitleActivatedResources(runConfig),
+	)
+}
+
+func taskThreadTitleWithActivatedResources(
+	title string,
+	message string,
+	activatedResources map[string]struct{},
+) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
-		return provisionalTaskThreadTitle(message)
+		return provisionalTaskThreadTitleWithActivatedResources(message, activatedResources)
 	}
 
 	runes := []rune(trimmed)
@@ -290,11 +307,19 @@ func taskThreadTitle(title, message string) string {
 }
 
 func provisionalTaskThreadTitle(message string) string {
-	source, hasSkillCreatorMarker := cleanTaskTitleSourceDetails(message)
+	return provisionalTaskThreadTitleWithActivatedResources(message, nil)
+}
+
+func provisionalTaskThreadTitleWithActivatedResources(
+	message string,
+	activatedResources map[string]struct{},
+) string {
+	source, hasSkillCreatorMarker := cleanTaskTitleSourceDetails(message, activatedResources)
 	if !hasVisibleTaskTitleRune(source) {
 		return defaultTaskThreadTitle
 	}
-	if hasSkillCreatorMarker &&
+	_, skillCreatorActivated := activatedResources[taskTitleSkillCreator]
+	if (hasSkillCreatorMarker || skillCreatorActivated) &&
 		(strings.Contains(source, "创建一个技能") || strings.Contains(source, "创建技能")) {
 		return "创建技能"
 	}
@@ -308,12 +333,15 @@ func provisionalTaskThreadTitle(message string) string {
 }
 
 func cleanTaskTitleSource(source string) string {
-	cleaned, _ := cleanTaskTitleSourceDetails(source)
+	cleaned, _ := cleanTaskTitleSourceDetails(source, nil)
 	return cleaned
 }
 
-func cleanTaskTitleSourceDetails(source string) (string, bool) {
-	runes := []rune(source)
+func cleanTaskTitleSourceDetails(
+	source string,
+	activatedResources map[string]struct{},
+) (string, bool) {
+	runes := sanitizedTaskTitleRunes(source)
 	cleaned := make([]rune, 0, len(runes))
 	hasSkillCreatorMarker := false
 	for i := 0; i < len(runes); {
@@ -323,10 +351,13 @@ func cleanTaskTitleSourceDetails(source string) (string, bool) {
 				end++
 			}
 			if end > i+1 {
-				hasSkillCreatorMarker = hasSkillCreatorMarker ||
-					string(runes[i+1:end]) == "skill-creator"
-				i = end
-				continue
+				resourceName := string(runes[i+1 : end])
+				if isTaskTitleResourceMarker(resourceName, activatedResources) {
+					hasSkillCreatorMarker = hasSkillCreatorMarker ||
+						resourceName == taskTitleSkillCreator
+					i = end
+					continue
+				}
 			}
 		}
 		cleaned = append(cleaned, runes[i])
@@ -334,7 +365,62 @@ func cleanTaskTitleSourceDetails(source string) (string, bool) {
 	}
 
 	collapsed := strings.Join(strings.Fields(string(cleaned)), " ")
-	return strings.TrimRightFunc(collapsed, isTaskTitleTrailingSeparator), hasSkillCreatorMarker
+	trimmed := strings.TrimLeftFunc(collapsed, isTaskTitleLeadingNoise)
+	trimmed = strings.TrimRightFunc(trimmed, isTaskTitleTrailingNoise)
+	return trimmed, hasSkillCreatorMarker
+}
+
+func taskTitleActivatedResources(runConfig string) map[string]struct{} {
+	selection, err := runtimeSkillSelectionFromConfig(runConfig)
+	if err != nil || len(selection.selectors) == 0 {
+		return nil
+	}
+
+	resources := make(map[string]struct{}, len(selection.selectors))
+	for _, selector := range selection.selectors {
+		if isASCIIResourceMarkerName(selector) {
+			resources[selector] = struct{}{}
+		}
+	}
+	return resources
+}
+
+func isTaskTitleResourceMarker(
+	resourceName string,
+	activatedResources map[string]struct{},
+) bool {
+	if resourceName == taskTitleSkillCreator {
+		return true
+	}
+	_, ok := activatedResources[resourceName]
+	return ok
+}
+
+func isASCIIResourceMarkerName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !isASCIIResourceMarkerRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizedTaskTitleRunes(source string) []rune {
+	runes := make([]rune, 0, len([]rune(source)))
+	for _, r := range source {
+		if unicode.IsSpace(r) {
+			runes = append(runes, ' ')
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) && r != '\u200d' {
+			continue
+		}
+		runes = append(runes, r)
+	}
+	return runes
 }
 
 func isTaskTitleResourceMarkerStart(runes []rune, index int) bool {
@@ -359,13 +445,21 @@ func isASCIIResourceMarkerRune(r rune) bool {
 		r == '-'
 }
 
-func isTaskTitleTrailingSeparator(r rune) bool {
+func isTaskTitleLeadingNoise(r rune) bool {
 	switch r {
-	case '，', '。', ',', '.', '；', ';', ':', '：':
+	case '，', '。', ',', '；', ';', ':', '：',
+		'!', '！', '?', '？', '、',
+		'(', ')', '（', '）', '[', ']', '【', '】',
+		'{', '}', '<', '>', '《', '》',
+		'"', '\'', '“', '”', '‘', '’', '…':
 		return true
 	default:
 		return unicode.IsSpace(r)
 	}
+}
+
+func isTaskTitleTrailingNoise(r rune) bool {
+	return r == '.' || isTaskTitleLeadingNoise(r)
 }
 
 func hasVisibleTaskTitleRune(source string) bool {
