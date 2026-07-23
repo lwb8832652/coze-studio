@@ -290,11 +290,12 @@ func taskThreadTitle(title, message string) string {
 }
 
 func provisionalTaskThreadTitle(message string) string {
-	source := cleanTaskTitleSource(message)
-	if source == "" {
+	source, hasSkillCreatorMarker := cleanTaskTitleSourceDetails(message)
+	if !hasVisibleTaskTitleRune(source) {
 		return defaultTaskThreadTitle
 	}
-	if strings.Contains(source, "创建一个技能") || strings.Contains(source, "创建技能") {
+	if hasSkillCreatorMarker &&
+		(strings.Contains(source, "创建一个技能") || strings.Contains(source, "创建技能")) {
 		return "创建技能"
 	}
 
@@ -307,15 +308,23 @@ func provisionalTaskThreadTitle(message string) string {
 }
 
 func cleanTaskTitleSource(source string) string {
+	cleaned, _ := cleanTaskTitleSourceDetails(source)
+	return cleaned
+}
+
+func cleanTaskTitleSourceDetails(source string) (string, bool) {
 	runes := []rune(source)
 	cleaned := make([]rune, 0, len(runes))
+	hasSkillCreatorMarker := false
 	for i := 0; i < len(runes); {
-		if runes[i] == '@' && (i == 0 || !isTaskTitleResourceMarkerRune(runes[i-1])) {
+		if runes[i] == '@' && isTaskTitleResourceMarkerStart(runes, i) {
 			end := i + 1
-			for end < len(runes) && isTaskTitleResourceMarkerRune(runes[end]) {
+			for end < len(runes) && isASCIIResourceMarkerRune(runes[end]) {
 				end++
 			}
-			if end > i+1 && (end == len(runes) || !isTaskTitleResourceMarkerRune(runes[end])) {
+			if end > i+1 {
+				hasSkillCreatorMarker = hasSkillCreatorMarker ||
+					string(runes[i+1:end]) == "skill-creator"
 				i = end
 				continue
 			}
@@ -324,14 +333,48 @@ func cleanTaskTitleSource(source string) string {
 		i++
 	}
 
-	trimmed := strings.TrimFunc(string(cleaned), func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsPunct(r)
-	})
-	return strings.Join(strings.Fields(trimmed), " ")
+	collapsed := strings.Join(strings.Fields(string(cleaned)), " ")
+	return strings.TrimRightFunc(collapsed, isTaskTitleTrailingSeparator), hasSkillCreatorMarker
 }
 
-func isTaskTitleResourceMarkerRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-'
+func isTaskTitleResourceMarkerStart(runes []rune, index int) bool {
+	if index == 0 {
+		return true
+	}
+
+	previous := runes[index-1]
+	return !unicode.IsLetter(previous) &&
+		!unicode.IsDigit(previous) &&
+		previous != '.' &&
+		previous != '_' &&
+		previous != '-'
+}
+
+func isASCIIResourceMarkerRune(r rune) bool {
+	return r >= 'a' && r <= 'z' ||
+		r >= 'A' && r <= 'Z' ||
+		r >= '0' && r <= '9' ||
+		r == '.' ||
+		r == '_' ||
+		r == '-'
+}
+
+func isTaskTitleTrailingSeparator(r rune) bool {
+	switch r {
+	case '，', '。', ',', '.', '；', ';', ':', '：':
+		return true
+	default:
+		return unicode.IsSpace(r)
+	}
+}
+
+func hasVisibleTaskTitleRune(source string) bool {
+	for _, r := range source {
+		if !unicode.IsSpace(r) && !unicode.Is(unicode.Cf, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func taskThreadRunInputFromMessage(message string) (string, error) {

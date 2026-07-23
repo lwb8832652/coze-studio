@@ -47,6 +47,76 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			want:    "创建技能",
 		},
 		{
+			name:    "marker before adjacent Chinese text",
+			message: "介绍 @skill-creator的能力",
+			want:    "介绍 的能力",
+		},
+		{
+			name:    "leading marker before adjacent Chinese text",
+			message: "@skill-creator帮我生成周报",
+			want:    "帮我生成周报",
+		},
+		{
+			name:    "multiple markers and internal whitespace",
+			message: "  请   分析 @skill-creator \n 并使用 @project.tool_1  输出结果。  ",
+			want:    "请 分析 并使用 输出结果",
+		},
+		{
+			name:    "Unicode-only marker is preserved",
+			message: "请保留 @技能 内容",
+			want:    "请保留 @技能 内容",
+		},
+		{
+			name:    "skill phrase without marker is not rewritten",
+			message: "不要创建技能，只解释流程",
+			want:    "不要创建技能，只解释流程",
+		},
+		{
+			name:    "skill comparison without marker is not rewritten",
+			message: "比较创建技能和导入技能的区别",
+			want:    "比较创建技能和导入技能的区别",
+		},
+		{
+			name:    "leading dot is preserved",
+			message: ".NET 项目规划",
+			want:    ".NET 项目规划",
+		},
+		{
+			name:    "C sharp suffix is preserved",
+			message: "迁移到 C#",
+			want:    "迁移到 C#",
+		},
+		{
+			name:    "F sharp suffix is preserved",
+			message: "评估 F#",
+			want:    "评估 F#",
+		},
+		{
+			name:    "format controls only",
+			message: "\u200b\u200c\u200d\u2060\ufeff",
+			want:    "新建任务",
+		},
+		{
+			name:    "emoji joiner is preserved",
+			message: "👩‍💻 修复登录问题",
+			want:    "👩‍💻 修复登录问题",
+		},
+		{
+			name:    "provisional title with 31 runes",
+			message: strings.Repeat("字", 31),
+			want:    strings.Repeat("字", 31),
+		},
+		{
+			name:    "provisional title with 32 runes",
+			message: strings.Repeat("字", 32),
+			want:    strings.Repeat("字", 32),
+		},
+		{
+			name:    "provisional title with 33 runes",
+			message: strings.Repeat("字", 33),
+			want:    strings.Repeat("字", 31) + "…",
+		},
+		{
 			name:    "long message",
 			message: "请根据这段很长的需求整理项目上线计划，包含排期、风险、负责人、验收标准以及回滚方案",
 			want:    "请根据这段很长的需求整理项目上线计划，包含排期、风险、负责人、…",
@@ -61,6 +131,18 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			title:   "  @skill-creator 专项任务  ",
 			message: "我想创建一个技能",
 			want:    "@skill-creator 专项任务",
+		},
+		{
+			name:    "explicit title with 80 runes",
+			title:   strings.Repeat("题", 80),
+			message: "我想创建一个技能 @skill-creator",
+			want:    strings.Repeat("题", 80),
+		},
+		{
+			name:    "explicit title with 81 runes",
+			title:   strings.Repeat("题", 81),
+			message: "我想创建一个技能 @skill-creator",
+			want:    strings.Repeat("题", 80),
 		},
 	}
 
@@ -170,6 +252,7 @@ func TestApplicationCreateTaskThreadCanDeferRunStartForUploads(t *testing.T) {
 	require.Nil(t, resp.Message)
 	require.Nil(t, resp.Run)
 	require.NotNil(t, domainSVC.createReq)
+	require.Equal(t, "请分析附件", domainSVC.createReq.Title)
 	require.Nil(t, domainSVC.createRunReq)
 	require.Nil(t, domainSVC.appendReq)
 }
@@ -205,6 +288,7 @@ func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically(t *testin
 	require.NotNil(t, domainSVC.createThreadRunMessageReq)
 	require.Equal(t, int64(1), domainSVC.createThreadRunMessageReq.Thread.SpaceID)
 	require.Equal(t, int64(2), domainSVC.createThreadRunMessageReq.Thread.UserID)
+	require.Equal(t, "请分析客户反馈", domainSVC.createThreadRunMessageReq.Thread.Title)
 	require.Equal(t, entity.ThreadSourceWeb, domainSVC.createThreadRunMessageReq.Thread.Source)
 	require.JSONEq(t, `{"messages":[{"role":"user","content":"请分析客户反馈"}]}`, domainSVC.createThreadRunMessageReq.Run.Input)
 	require.Equal(t, "new-task-key", domainSVC.createThreadRunMessageReq.Run.IdempotencyKey)
