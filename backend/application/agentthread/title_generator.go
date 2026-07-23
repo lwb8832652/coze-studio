@@ -91,7 +91,11 @@ func (g *ModelRunTitleGenerator) GenerateTitle(
 	if resp == nil {
 		return "", fmt.Errorf("agent thread title model returned empty response")
 	}
-	return normalizeGeneratedThreadTitleWithLimit(resp.Content, cfg.MaxChars), nil
+	return normalizeGeneratedThreadTitleWithLimits(
+		resp.Content,
+		cfg.MaxWords,
+		cfg.MaxChars,
+	), nil
 }
 
 func runTitleGenerationConfigFromRun(
@@ -152,8 +156,12 @@ func buildRunTitlePrompt(
 	input RunTitleGenerationInput,
 	cfg runTitleGenerationConfig,
 ) string {
+	var activatedResources map[string]struct{}
+	if input.Run != nil {
+		activatedResources = taskTitleActivatedResources(input.Run.Config)
+	}
 	userMessage := truncateRunTitlePromptText(
-		cleanRunTitlePromptText(input.UserMessage),
+		cleanRunTitlePromptText(input.UserMessage, activatedResources),
 		defaultRunTitlePromptChars,
 	)
 	assistantMessage := truncateRunTitlePromptText(
@@ -162,6 +170,7 @@ func buildRunTitlePrompt(
 				strings.TrimSpace(input.AssistantMessage),
 				"",
 			),
+			activatedResources,
 		),
 		defaultRunTitlePromptChars,
 	)
@@ -174,9 +183,12 @@ func buildRunTitlePrompt(
 	)
 }
 
-func cleanRunTitlePromptText(text string) string {
+func cleanRunTitlePromptText(
+	text string,
+	activatedResources map[string]struct{},
+) string {
 	source := strings.TrimSpace(text)
-	cleaned := cleanTaskTitleSource(source)
+	cleaned, _ := cleanTaskTitleSourceDetails(source, activatedResources)
 	if cleaned == "" {
 		return ""
 	}
@@ -216,17 +228,26 @@ func runTitleModelOptions(cfg runTitleGenerationConfig) []model.Option {
 }
 
 func normalizeGeneratedThreadTitleWithLimit(title string, limit int) string {
-	if limit <= 0 {
-		limit = defaultRunTitleMaxChars
+	return normalizeGeneratedThreadTitleWithLimits(title, 0, limit)
+}
+
+func normalizeGeneratedThreadTitleWithLimits(
+	title string,
+	maxWords int,
+	maxChars int,
+) string {
+	if maxChars <= 0 {
+		maxChars = defaultRunTitleMaxChars
 	}
 	title = strings.TrimSpace(title)
 	title = generatedThreadTitleThinkTagRE.ReplaceAllString(title, "")
+	title = stripIndependentASCIIAtMentions(title)
 	title = cleanTaskTitleSource(title)
 	for {
 		next := strings.TrimSpace(title)
 		next = strings.Trim(next, "\"'“”‘’")
 		next = strings.TrimSpace(next)
-		next = strings.Trim(next, "，。,.；;:：")
+		next = strings.TrimRight(next, "，。,.；;:：")
 		next = strings.TrimSpace(next)
 		next = strings.Trim(next, "\"'“”‘’")
 		next = strings.TrimSpace(next)
@@ -238,9 +259,43 @@ func normalizeGeneratedThreadTitleWithLimit(title string, limit int) string {
 	if title == "" {
 		return ""
 	}
+	if maxWords > 0 {
+		words := strings.Fields(title)
+		if len(words) > maxWords {
+			title = strings.Join(words[:maxWords], " ")
+		}
+	}
 	runes := []rune(title)
-	if len(runes) > limit {
-		return string(runes[:limit])
+	if len(runes) > maxChars {
+		return string(runes[:maxChars])
 	}
 	return title
+}
+
+func stripIndependentASCIIAtMentions(text string) string {
+	runes := []rune(text)
+	cleaned := make([]rune, 0, len(runes))
+	for i := 0; i < len(runes); {
+		if runes[i] == '@' &&
+			(i == 0 || !isASCIIAtMentionWordRune(runes[i-1])) {
+			end := i + 1
+			for end < len(runes) && isASCIIResourceMarkerRune(runes[end]) {
+				end++
+			}
+			if end > i+1 {
+				i = end
+				continue
+			}
+		}
+		cleaned = append(cleaned, runes[i])
+		i++
+	}
+	return strings.Join(strings.Fields(string(cleaned)), " ")
+}
+
+func isASCIIAtMentionWordRune(r rune) bool {
+	return r >= 'a' && r <= 'z' ||
+		r >= 'A' && r <= 'Z' ||
+		r >= '0' && r <= '9' ||
+		r == '_' || r == '.' || r == '+' || r == '-'
 }

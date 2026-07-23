@@ -18,6 +18,7 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -70,15 +71,19 @@ func TestModelRunTitleGeneratorBuildsDeerFlowPromptAndCleansTitle(t *testing.T) 
 func TestBuildRunTitlePromptRemovesKnownResourceMarkers(t *testing.T) {
 	prompt := buildRunTitlePrompt(
 		RunTitleGenerationInput{
-			UserMessage:      "请创建一个技能 @skill-creator，并通知 @alice",
-			AssistantMessage: "已加载 @skill-creator，稍后通知 @alice",
+			Run: &RunSummary{
+				Config: `{"enable_skills":["web-search"]}`,
+			},
+			UserMessage:      "请创建技能 @skill-creator，使用 @web-search，并通知 @alice 或 user@example.com",
+			AssistantMessage: "已加载 @skill-creator 和 @web-search，稍后通知 @alice",
 		},
 		runTitleGenerationConfig{MaxWords: defaultRunTitleMaxWords},
 	)
 
 	require.NotContains(t, prompt, "@skill-creator")
-	require.Contains(t, prompt, "User: 请创建一个技能 ，并通知 @alice")
-	require.Contains(t, prompt, "Assistant: 已加载 ，稍后通知 @alice")
+	require.NotContains(t, prompt, "@web-search")
+	require.Contains(t, prompt, "@alice")
+	require.Contains(t, prompt, "user@example.com")
 	require.Contains(t, prompt, "Do not include tool names, skill names, or @mentions.")
 }
 
@@ -97,6 +102,21 @@ func TestModelRunTitleGeneratorCleansResourceMarkersFromGeneratedTitle(t *testin
 			name:    "returns empty title when only marker remains",
 			content: `"@skill-creator"。`,
 			want:    "",
+		},
+		{
+			name:    "removes every independent ascii mention",
+			content: "@unknown .NET C# F# @web-search a@b.co word@mention。",
+			want:    ".NET C# F# a@b.co word@mention",
+		},
+		{
+			name:    "returns empty title when only untrusted mention remains",
+			content: "@web-search。",
+			want:    "",
+		},
+		{
+			name:    "preserves leading dot and technical names",
+			content: ".NET、C# 与 F#。",
+			want:    ".NET、C# 与 F#",
 		},
 	}
 
@@ -120,4 +140,228 @@ func TestModelRunTitleGeneratorCleansResourceMarkersFromGeneratedTitle(t *testin
 			require.Equal(t, tt.want, title)
 		})
 	}
+}
+
+func TestModelRunTitleGeneratorAppliesDefaultPostLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "keeps exactly six words",
+			content: "one two three four five six",
+			want:    "one two three four five six",
+		},
+		{
+			name:    "truncates after six words",
+			content: "one two three four five six seven",
+			want:    "one two three four five six",
+		},
+		{
+			name:    "keeps exactly sixty characters",
+			content: strings.Repeat("字", defaultRunTitleMaxChars),
+			want:    strings.Repeat("字", defaultRunTitleMaxChars),
+		},
+		{
+			name:    "truncates after sixty characters",
+			content: strings.Repeat("字", defaultRunTitleMaxChars+1),
+			want:    strings.Repeat("字", defaultRunTitleMaxChars),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chatModel := &recordingChatModel{
+				resp: schema.AssistantMessage(tt.content, nil),
+			}
+			generator := NewModelRunTitleGenerator(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+			)
+
+			title, err := generator.GenerateTitle(
+				context.Background(),
+				RunTitleGenerationInput{Run: &RunSummary{}},
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, title)
+		})
+	}
+}
+
+func TestModelRunTitleGeneratorAppliesCustomPostLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		content string
+		want    string
+	}{
+		{
+			name:    "custom word limit",
+			config:  `{"title":{"max_words":3,"max_chars":20}}`,
+			content: "one two three four",
+			want:    "one two three",
+		},
+		{
+			name:    "custom character limit",
+			config:  `{"title":{"max_words":6,"max_chars":10}}`,
+			content: strings.Repeat("字", 11),
+			want:    strings.Repeat("字", 10),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chatModel := &recordingChatModel{
+				resp: schema.AssistantMessage(tt.content, nil),
+			}
+			generator := NewModelRunTitleGenerator(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+			)
+
+			title, err := generator.GenerateTitle(
+				context.Background(),
+				RunTitleGenerationInput{
+					Run: &RunSummary{Config: tt.config},
+				},
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, title)
+		})
+	}
+}
+
+func TestModelRunTitleGeneratorPreservesErrorContracts(t *testing.T) {
+	t.Run("nil generator", func(t *testing.T) {
+		var generator *ModelRunTitleGenerator
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.EqualError(t, err, "model run title generator is required")
+	})
+
+	t.Run("nil run", func(t *testing.T) {
+		generator := NewModelRunTitleGenerator(nil)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{},
+		)
+
+		require.Empty(t, title)
+		require.EqualError(t, err, "run is required")
+	})
+
+	t.Run("provider error", func(t *testing.T) {
+		providerErr := errors.New("provider failed")
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return nil, false, providerErr
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.ErrorIs(t, err, providerErr)
+	})
+
+	t.Run("provider not configured", func(t *testing.T) {
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return nil, false, nil
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.EqualError(t, err, "agent thread title model is not configured")
+	})
+
+	t.Run("nil configured model", func(t *testing.T) {
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return nil, true, nil
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.EqualError(t, err, "agent thread title model is not configured")
+	})
+
+	t.Run("model error", func(t *testing.T) {
+		modelErr := errors.New("model failed")
+		chatModel := &recordingChatModel{err: modelErr}
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.ErrorIs(t, err, modelErr)
+	})
+
+	t.Run("nil model response", func(t *testing.T) {
+		chatModel := &recordingChatModel{}
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.Empty(t, title)
+		require.EqualError(t, err, "agent thread title model returned empty response")
+	})
+
+	t.Run("empty model content triggers fallback without error", func(t *testing.T) {
+		chatModel := &recordingChatModel{
+			resp: schema.AssistantMessage("", nil),
+		}
+		generator := NewModelRunTitleGenerator(
+			func(context.Context, int64) (model.BaseChatModel, bool, error) {
+				return chatModel, true, nil
+			},
+		)
+
+		title, err := generator.GenerateTitle(
+			context.Background(),
+			RunTitleGenerationInput{Run: &RunSummary{}},
+		)
+
+		require.NoError(t, err)
+		require.Empty(t, title)
+	})
 }
