@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+/* eslint-disable @coze-arch/max-line-per-function -- Composer suggestion state and submission orchestration remain synchronized in one module. */
+
 /* eslint-disable max-lines -- P0 composer container, split in phase 2. */
 
 import {
@@ -26,12 +28,14 @@ import {
   type ChangeEvent,
   type Dispatch,
   type KeyboardEvent,
+  type ReactNode,
   type SetStateAction,
 } from 'react';
 
 import type { workbenchSkill } from '@coze-studio/api-schema';
 
 import { listSkills } from '../../skill/service';
+import { ChatComposer } from '../../../components/chat-composer';
 import { findSelectedWorkbenchModel } from './workbench-model-selector';
 import {
   WorkbenchComposerBody,
@@ -43,9 +47,6 @@ import {
   addKnowledgeSelection,
   addSkillSelection,
   AtMenu,
-  removeDatabaseSelection,
-  removeKnowledgeSelection,
-  removeSkillSelection,
   type WorkbenchAtDraft,
   type WorkbenchAtReference,
   type WorkbenchAtResourceType,
@@ -84,6 +85,11 @@ interface StoredWorkbenchExtensionUsage {
   resourceSelection: WorkbenchResourceSelection;
   skillsEnabled: boolean;
   mcpToolsEnabled: boolean;
+}
+
+export interface WorkbenchComposerCapabilities {
+  attachments: boolean;
+  attachmentDisabledReason?: string;
 }
 
 const getExtensionUsageStorageKey = (spaceId?: string) =>
@@ -246,6 +252,9 @@ export interface WorkbenchComposerProps {
   presentation?: WorkbenchComposerPresentation;
   spaceId?: string;
   taskId?: string;
+  resetKey?: string | number;
+  capabilities?: Partial<WorkbenchComposerCapabilities>;
+  footerEnd?: ReactNode;
   stopLoading?: boolean;
   stopMode?: boolean;
   modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
@@ -262,65 +271,120 @@ const useWorkbenchModelSelection = ({
   spaceId?: string;
   modelLoader?: (spaceId: string) => Promise<WorkbenchLLMModel[]>;
 }) => {
-  const [models, setModels] = useState<WorkbenchLLMModel[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [selectedModelType, setSelectedModelType] = useState<
-    number | undefined
-  >();
-  const selectedModel = findSelectedWorkbenchModel(models, selectedModelType);
+  const requestScope = spaceId && modelLoader ? spaceId : '';
+  const requestScopeRef = useRef(requestScope);
+  const requestGenerationRef = useRef(0);
+  const [modelState, setModelState] = useState<{
+    loading: boolean;
+    models: WorkbenchLLMModel[];
+    scope: string;
+    selectedModelType?: number;
+  }>({
+    loading: false,
+    models: [],
+    scope: '',
+  });
 
-  useEffect(() => {
+  if (requestScopeRef.current !== requestScope) {
+    requestScopeRef.current = requestScope;
+    requestGenerationRef.current += 1;
+  }
+
+  const isCurrentScope = modelState.scope === requestScope;
+  const models = isCurrentScope ? modelState.models : [];
+  const modelsLoading =
+    Boolean(requestScope) && (!isCurrentScope || modelState.loading);
+  const selectedModelType = isCurrentScope
+    ? modelState.selectedModelType
+    : undefined;
+  const selectedModel = findSelectedWorkbenchModel(models, selectedModelType);
+  const setSelectedModelType = useCallback(
+    (nextModelType: number) => {
+      setModelState(current =>
+        current.scope === requestScope
+          ? { ...current, selectedModelType: nextModelType }
+          : current,
+      );
+    },
+    [requestScope],
+  );
+
+  const reloadModels = useCallback(async () => {
     if (!spaceId || !modelLoader) {
-      setModels([]);
-      setSelectedModelType(undefined);
+      setModelState({
+        loading: false,
+        models: [],
+        scope: '',
+      });
       return;
     }
 
-    let canceled = false;
-    setModelsLoading(true);
+    const requestGeneration = ++requestGenerationRef.current;
+    const submittedScope = spaceId;
+    setModelState(current => ({
+      loading: true,
+      models: current.scope === submittedScope ? current.models : [],
+      scope: submittedScope,
+      selectedModelType:
+        current.scope === submittedScope
+          ? current.selectedModelType
+          : undefined,
+    }));
 
-    void modelLoader(spaceId)
-      .then(nextModels => {
-        if (canceled) {
-          return;
-        }
+    try {
+      const nextModels = await modelLoader(spaceId);
+      if (
+        requestGenerationRef.current !== requestGeneration ||
+        requestScopeRef.current !== submittedScope
+      ) {
+        return;
+      }
 
-        setModels(nextModels);
-        setSelectedModelType(prevModelType => {
-          if (
-            prevModelType &&
-            nextModels.some(
-              model => workbenchModelTypeToNumber(model) === prevModelType,
-            )
-          ) {
-            return prevModelType;
-          }
+      setModelState(current => {
+        const prevModelType = current.selectedModelType;
+        const selectedType =
+          prevModelType &&
+          nextModels.some(
+            model => workbenchModelTypeToNumber(model) === prevModelType,
+          )
+            ? prevModelType
+            : nextModels[0]
+              ? workbenchModelTypeToNumber(nextModels[0])
+              : undefined;
 
-          return nextModels[0]
-            ? workbenchModelTypeToNumber(nextModels[0])
-            : undefined;
-        });
-      })
-      .catch(() => {
-        if (!canceled) {
-          setModels([]);
-          setSelectedModelType(undefined);
-        }
-      })
-      .finally(() => {
-        if (!canceled) {
-          setModelsLoading(false);
-        }
+        return {
+          loading: false,
+          models: nextModels,
+          scope: submittedScope,
+          selectedModelType: selectedType,
+        };
       });
+    } catch {
+      if (
+        requestGenerationRef.current === requestGeneration &&
+        requestScopeRef.current === submittedScope
+      ) {
+        setModelState({
+          loading: false,
+          models: [],
+          scope: submittedScope,
+        });
+      }
+    }
+  }, [modelLoader, spaceId]);
+
+  useEffect(() => {
+    void reloadModels();
 
     return () => {
-      canceled = true;
+      requestGenerationRef.current += 1;
     };
-  }, [modelLoader, spaceId]);
+  }, [reloadModels]);
 
   return {
     models,
     modelsLoading,
+    reloadModels,
     selectedModel,
     selectedModelType,
     setSelectedModelType,
@@ -328,15 +392,21 @@ const useWorkbenchModelSelection = ({
 };
 
 const useSyncRuntimeSettingsWithResourceSelection = ({
+  enabled = true,
   resourceSelection,
   setRuntimeSettings,
 }: {
+  enabled?: boolean;
   resourceSelection: ReturnType<typeof createDefaultWorkbenchResourceSelection>;
   setRuntimeSettings: Dispatch<
     SetStateAction<ReturnType<typeof createDefaultWorkbenchRuntimeSettings>>
   >;
 }) => {
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     setRuntimeSettings(prevSettings => ({
       ...prevSettings,
       skills: {
@@ -357,6 +427,7 @@ const useSyncRuntimeSettingsWithResourceSelection = ({
       },
     }));
   }, [
+    enabled,
     resourceSelection.enable_mcp,
     resourceSelection.enable_skills,
     setRuntimeSettings,
@@ -364,18 +435,27 @@ const useSyncRuntimeSettingsWithResourceSelection = ({
 };
 
 const useWorkbenchSkillSuggestions = ({
-  loading,
+  disabled,
   onValueChange,
   spaceId,
   value,
 }: {
-  loading: boolean;
+  disabled: boolean;
   onValueChange: (value: string) => void;
   spaceId?: string;
   value: string;
 }) => {
   const [textareaFocused, setTextareaFocused] = useState(false);
-  const [skills, setSkills] = useState<Skill[]>([]);
+  const requestScope =
+    !disabled && spaceId && getLeadingSlashSkillQuery(value) !== null
+      ? spaceId
+      : '';
+  const requestScopeRef = useRef(requestScope);
+  const requestGenerationRef = useRef(0);
+  const [skillState, setSkillState] = useState<{
+    scope: string;
+    skills: Skill[];
+  }>({ scope: '', skills: [] });
   const [skillSuggestionIndex, setSkillSuggestionIndex] = useState(0);
   const [dismissedSkillSuggestionValue, setDismissedSkillSuggestionValue] =
     useState('');
@@ -383,7 +463,13 @@ const useWorkbenchSkillSuggestions = ({
     () => getLeadingSlashSkillQuery(value),
     [value],
   );
-  const slashSkillActive = slashSkillQuery !== null;
+  if (requestScopeRef.current !== requestScope) {
+    requestScopeRef.current = requestScope;
+    requestGenerationRef.current += 1;
+  }
+  const skillScopeReady =
+    Boolean(requestScope) && skillState.scope === requestScope;
+  const skills = skillScopeReady ? skillState.skills : [];
   const skillSuggestions = useMemo(
     () =>
       slashSkillQuery === null
@@ -392,41 +478,70 @@ const useWorkbenchSkillSuggestions = ({
     [skills, slashSkillQuery],
   );
   const showSkillSuggestions =
-    !loading &&
+    !disabled &&
+    skillScopeReady &&
     textareaFocused &&
     slashSkillQuery !== null &&
     skillSuggestions.length > 0 &&
     dismissedSkillSuggestionValue !== value;
 
   useEffect(() => {
-    if (!spaceId || !slashSkillActive) {
+    if (!requestScope) {
+      setSkillState({ scope: '', skills: [] });
       return;
     }
 
     let canceled = false;
+    const requestGeneration = ++requestGenerationRef.current;
+    const submittedScope = requestScope;
+    setSkillState({ scope: submittedScope, skills: [] });
 
-    void listSkills({ space_id: spaceId, enabled: true })
+    void listSkills({ space_id: submittedScope, enabled: true })
       .then(response => {
-        if (!canceled) {
-          setSkills(response.data?.skills ?? []);
+        if (
+          !canceled &&
+          requestGenerationRef.current === requestGeneration &&
+          requestScopeRef.current === submittedScope
+        ) {
+          setSkillState({
+            scope: submittedScope,
+            skills: response.data?.skills ?? [],
+          });
         }
       })
       .catch(() => {
-        if (!canceled) {
-          setSkills([]);
+        if (
+          !canceled &&
+          requestGenerationRef.current === requestGeneration &&
+          requestScopeRef.current === submittedScope
+        ) {
+          setSkillState({ scope: submittedScope, skills: [] });
         }
       });
 
     return () => {
       canceled = true;
     };
-  }, [slashSkillActive, spaceId]);
+  }, [requestScope]);
+
+  useEffect(() => {
+    setDismissedSkillSuggestionValue('');
+    setSkillSuggestionIndex(0);
+  }, [requestScope]);
 
   useEffect(() => {
     setSkillSuggestionIndex(0);
   }, [slashSkillQuery, skillSuggestions.length]);
 
   const handleSkillSuggestionApply = (skill: { name: string }) => {
+    if (
+      disabled ||
+      !skillScopeReady ||
+      requestScopeRef.current !== requestScope
+    ) {
+      return;
+    }
+
     const nextValue = `/${skill.name} `;
     onValueChange(nextValue);
     setDismissedSkillSuggestionValue(nextValue);
@@ -435,7 +550,7 @@ const useWorkbenchSkillSuggestions = ({
   const handleSkillSuggestionKeyDown = (
     event: KeyboardEvent<HTMLTextAreaElement>,
   ) => {
-    if (!showSkillSuggestions) {
+    if (disabled || !showSkillSuggestions) {
       return;
     }
 
@@ -586,17 +701,6 @@ const createWorkbenchComposerMessage = (
   return `${segmentMessage}${valueSeparator}${value}`;
 };
 
-const hasReferenceSegment = (
-  segments: WorkbenchAtSegment[],
-  reference: WorkbenchAtReference,
-) =>
-  segments.some(
-    segment =>
-      segment.type === 'reference' &&
-      segment.reference.resourceType === reference.resourceType &&
-      segment.reference.id === reference.id,
-  );
-
 const addReferenceSelection = (
   selection: WorkbenchResourceSelection,
   reference: WorkbenchAtReference,
@@ -616,26 +720,53 @@ const addReferenceSelection = (
   return selection;
 };
 
-const removeReferenceSelection = (
-  selection: WorkbenchResourceSelection,
-  reference: WorkbenchAtReference,
-) => {
-  if (reference.resourceType === '技能') {
-    return removeSkillSelection(selection, reference.id);
-  }
+const mergeResourceSelection = (
+  persistentSelection: WorkbenchResourceSelection,
+  messageSelection: WorkbenchResourceSelection,
+): WorkbenchResourceSelection => ({
+  enable_skills: Array.from(
+    new Set([
+      ...persistentSelection.enable_skills,
+      ...messageSelection.enable_skills,
+    ]),
+  ),
+  explicit_enable_skills: Array.from(
+    new Set([
+      ...persistentSelection.explicit_enable_skills,
+      ...messageSelection.explicit_enable_skills,
+    ]),
+  ),
+  enable_mcp: Array.from(
+    new Set([
+      ...persistentSelection.enable_mcp,
+      ...messageSelection.enable_mcp,
+    ]),
+  ),
+  enable_kbs: Array.from(
+    new Set([
+      ...persistentSelection.enable_kbs,
+      ...messageSelection.enable_kbs,
+    ]),
+  ),
+  enable_databases: Array.from(
+    new Set([
+      ...persistentSelection.enable_databases,
+      ...messageSelection.enable_databases,
+    ]),
+  ),
+});
 
-  if (reference.resourceType === '知识库') {
-    return removeKnowledgeSelection(selection, reference.id);
-  }
+const getMessageResourceSelection = (
+  segments: WorkbenchAtSegment[],
+): WorkbenchResourceSelection =>
+  segments.reduce(
+    (selection, segment) =>
+      segment.type === 'reference'
+        ? addReferenceSelection(selection, segment.reference)
+        : selection,
+    createDefaultWorkbenchResourceSelection(),
+  );
 
-  if (reference.resourceType === '数据库') {
-    return removeDatabaseSelection(selection, reference.id);
-  }
-
-  return selection;
-};
-
-// eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps overlay and submit orchestration together.
 export const WorkbenchComposer = ({
   value,
   mode,
@@ -645,6 +776,9 @@ export const WorkbenchComposer = ({
   presentation = 'default',
   spaceId,
   taskId,
+  resetKey,
+  capabilities,
+  footerEnd,
   stopLoading,
   stopMode,
   modelLoader,
@@ -662,16 +796,44 @@ export const WorkbenchComposer = ({
   const [files, setFiles] = useState<File[]>([]);
   const composerRef = useRef<HTMLElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const atMenuReturnFocusRef = useRef<'editor' | 'trigger'>('editor');
+  const previousResetKeyRef = useRef(resetKey);
+  const previousTaskIdRef = useRef(taskId);
   const [resourceSelection, setResourceSelection] = useState(
     () =>
       readStoredExtensionUsage(spaceId)?.resourceSelection ??
       createDefaultWorkbenchResourceSelection(),
   );
+  const resourceScope = spaceId || 'default';
+  const [resourceSelectionScope, setResourceSelectionScope] =
+    useState(resourceScope);
+  const resourceSelectionReady = resourceSelectionScope === resourceScope;
+  const emptyResourceSelection = useMemo(
+    () => createDefaultWorkbenchResourceSelection(),
+    [],
+  );
+  const scopedResourceSelection = resourceSelectionReady
+    ? resourceSelection
+    : emptyResourceSelection;
   const [runtimeSettings, setRuntimeSettings] = useState(() =>
     createRuntimeSettingsFromStoredUsage(readStoredExtensionUsage(spaceId)),
   );
   const composerMessage = createWorkbenchComposerMessage(atSegments, value);
-  const canSend = Boolean(composerMessage.trim()) && !loading;
+  const messageResourceSelection = useMemo(
+    () => getMessageResourceSelection(atSegments),
+    [atSegments],
+  );
+  const submitResourceSelection = useMemo(
+    () =>
+      mergeResourceSelection(scopedResourceSelection, messageResourceSelection),
+    [messageResourceSelection, scopedResourceSelection],
+  );
+  const attachmentsEnabled = capabilities?.attachments !== false;
+  const attachmentDisabledReason =
+    capabilities?.attachmentDisabledReason ?? '当前场景暂不支持附件';
+  const interactionDisabled = loading || Boolean(stopMode);
+  const canSend =
+    Boolean(composerMessage.trim()) && !loading && resourceSelectionReady;
   const overlayPlacement = variant === 'detail' ? 'top' : 'bottom';
   const atMenuOpen = activeOverlay === 'at';
   const extensionsOpen = activeOverlay === 'extensions';
@@ -680,6 +842,7 @@ export const WorkbenchComposer = ({
   const {
     models,
     modelsLoading,
+    reloadModels,
     selectedModel,
     selectedModelType,
     setSelectedModelType,
@@ -697,38 +860,96 @@ export const WorkbenchComposer = ({
     skillSuggestionIndex,
     skillSuggestions,
   } = useWorkbenchSkillSuggestions({
-    loading,
+    disabled: interactionDisabled,
     onValueChange,
     spaceId,
     value,
   });
 
   useSyncRuntimeSettingsWithResourceSelection({
-    resourceSelection,
+    enabled: resourceSelectionReady,
+    resourceSelection: scopedResourceSelection,
     setRuntimeSettings,
   });
 
   useEffect(() => {
     const storedUsage = readStoredExtensionUsage(spaceId);
+    setResourceSelectionScope(resourceScope);
     setResourceSelection(
       storedUsage?.resourceSelection ??
         createDefaultWorkbenchResourceSelection(),
     );
     setRuntimeSettings(createRuntimeSettingsFromStoredUsage(storedUsage));
-  }, [spaceId]);
+  }, [resourceScope, spaceId]);
 
   useEffect(() => {
+    if (!resourceSelectionReady) {
+      return;
+    }
+
     writeStoredExtensionUsage({
-      resourceSelection,
+      resourceSelection: scopedResourceSelection,
       runtimeSettings,
       spaceId,
     });
   }, [
-    resourceSelection,
+    resourceSelectionReady,
     runtimeSettings.mcp_tools.enabled,
     runtimeSettings.skills.enabled,
+    scopedResourceSelection,
     spaceId,
   ]);
+
+  useEffect(() => {
+    if (Object.is(previousResetKeyRef.current, resetKey)) {
+      return;
+    }
+
+    previousResetKeyRef.current = resetKey;
+    setActiveOverlay(null);
+    setAtDraft(null);
+    setAtMenuAnchorPosition(undefined);
+    setFiles([]);
+    setAtSegments([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    // resetKey is the explicit success boundary; current segments belong to
+    // the completed draft and must not become effect dependencies.
+  }, [resetKey]);
+
+  useEffect(() => {
+    if (Object.is(previousTaskIdRef.current, taskId)) {
+      return;
+    }
+
+    previousTaskIdRef.current = taskId;
+    setActiveOverlay(null);
+    setAtDraft(null);
+    setAtMenuAnchorPosition(undefined);
+    setFiles([]);
+    setAtSegments([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [taskId]);
+
+  useEffect(() => {
+    if (attachmentsEnabled) {
+      return;
+    }
+
+    setFiles([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [attachmentsEnabled]);
+
+  useEffect(() => {
+    if (interactionDisabled) {
+      setActiveOverlay(null);
+    }
+  }, [interactionDisabled]);
 
   const commitCurrentText = (text: string) => {
     const textSegment = createTextSegment(text);
@@ -738,19 +959,62 @@ export const WorkbenchComposer = ({
     }
   };
 
-  const startAtResourceSelection = (textBeforeAt = value) => {
+  const startAtResourceSelection = (
+    textBeforeAt = value,
+    returnFocus: 'editor' | 'trigger' = 'editor',
+  ) => {
+    if (interactionDisabled) {
+      return;
+    }
+
     commitCurrentText(textBeforeAt);
+    atMenuReturnFocusRef.current = returnFocus;
     onValueChange('');
     setAtMenuAnchorPosition(undefined);
     setAtDraft({ stage: 'resource-type', query: '' });
     setActiveOverlay('at');
   };
 
-  const closeAtResourceSelection = () => {
+  const closeAtResourceSelection = (
+    reason?: 'escape' | 'outside' | 'selection',
+  ) => {
     setAtMenuAnchorPosition(undefined);
     setAtDraft(null);
     setActiveOverlay(null);
+    queueMicrotask(() => {
+      if (reason === 'selection' || atMenuReturnFocusRef.current === 'editor') {
+        composerRef.current
+          ?.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="任务描述"]',
+          )
+          ?.focus();
+      } else {
+        composerRef.current
+          ?.querySelector<HTMLButtonElement>('button[aria-label="添加上下文"]')
+          ?.focus();
+      }
+    });
   };
+
+  useEffect(() => {
+    if (!atMenuOpen) {
+      return;
+    }
+
+    const handleOutsideMouseDown = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !composerRef.current?.contains(event.target)
+      ) {
+        closeAtResourceSelection('outside');
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideMouseDown);
+
+    return () =>
+      document.removeEventListener('mousedown', handleOutsideMouseDown);
+  }, [atMenuOpen]);
 
   const handleAtAnchorRectChange = useCallback(
     (anchorRect: DOMRect) => {
@@ -788,12 +1052,20 @@ export const WorkbenchComposer = ({
   );
 
   const handleAtDraftQueryChange = (query: string) => {
+    if (interactionDisabled) {
+      return;
+    }
+
     setAtDraft(prevDraft => (prevDraft ? { ...prevDraft, query } : prevDraft));
   };
 
   const handleAtResourceTypeSelect = (
     resourceType: WorkbenchAtResourceType,
   ) => {
+    if (interactionDisabled) {
+      return;
+    }
+
     setAtDraft({
       stage: 'resource-search',
       resourceType,
@@ -803,9 +1075,10 @@ export const WorkbenchComposer = ({
   };
 
   const handleAtReferenceSelect = (reference: WorkbenchAtReference) => {
-    setResourceSelection(prevSelection =>
-      addReferenceSelection(prevSelection, reference),
-    );
+    if (interactionDisabled) {
+      return;
+    }
+
     setAtSegments(prevSegments => [
       ...prevSegments,
       createReferenceSegment(reference),
@@ -814,21 +1087,13 @@ export const WorkbenchComposer = ({
   };
 
   const handleAtSegmentRemove = (segment: WorkbenchAtSegment) => {
-    if (segment.type !== 'reference') {
+    if (interactionDisabled || segment.type !== 'reference') {
       return;
     }
 
-    setAtSegments(prevSegments => {
-      const nextSegments = prevSegments.filter(item => item.id !== segment.id);
-
-      if (!hasReferenceSegment(nextSegments, segment.reference)) {
-        setResourceSelection(prevSelection =>
-          removeReferenceSelection(prevSelection, segment.reference),
-        );
-      }
-
-      return nextSegments;
-    });
+    setAtSegments(prevSegments =>
+      prevSegments.filter(item => item.id !== segment.id),
+    );
   };
 
   const handleLastAtSegmentRemove = () => {
@@ -842,12 +1107,6 @@ export const WorkbenchComposer = ({
       const nextSegments = prevSegments.slice(0, -1);
 
       if (lastSegment.type === 'reference') {
-        if (!hasReferenceSegment(nextSegments, lastSegment.reference)) {
-          setResourceSelection(prevSelection =>
-            removeReferenceSelection(prevSelection, lastSegment.reference),
-          );
-        }
-
         return nextSegments;
       }
 
@@ -857,7 +1116,12 @@ export const WorkbenchComposer = ({
     });
   };
 
-  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (interactionDisabled) {
+      event.preventDefault();
+      return;
+    }
+
     if (
       event.key === 'Backspace' &&
       !value &&
@@ -871,21 +1135,13 @@ export const WorkbenchComposer = ({
     }
 
     handleSkillSuggestionKeyDown(event);
-
-    if (
-      event.defaultPrevented ||
-      event.key !== 'Enter' ||
-      event.shiftKey ||
-      event.nativeEvent.isComposing
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    handleSubmit();
   };
 
   const handleValueChange = (nextValue: string) => {
+    if (interactionDisabled) {
+      return;
+    }
+
     if (nextValue.endsWith('@')) {
       startAtResourceSelection(nextValue.slice(0, -1));
 
@@ -898,12 +1154,12 @@ export const WorkbenchComposer = ({
   const handleSubmit = () => {
     createSubmitHandler({
       files,
-      loading,
+      loading: loading || !resourceSelectionReady,
       mode,
       models,
       onStop,
       onSubmit,
-      resourceSelection,
+      resourceSelection: submitResourceSelection,
       runtimeSettings,
       selectedModel,
       stopLoading,
@@ -914,10 +1170,19 @@ export const WorkbenchComposer = ({
   };
 
   const handleAttachClick = () => {
+    if (interactionDisabled || !attachmentsEnabled) {
+      return;
+    }
+
     fileInputRef.current?.click();
   };
 
   const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (interactionDisabled || !attachmentsEnabled) {
+      event.target.value = '';
+      return;
+    }
+
     const nextFiles = Array.from(event.target.files ?? []);
     if (nextFiles.length > 0) {
       setFiles(prevFiles => [...prevFiles, ...nextFiles].slice(0, 10));
@@ -926,25 +1191,41 @@ export const WorkbenchComposer = ({
   };
 
   const handleFileRemove = (targetFile: File) => {
+    if (interactionDisabled) {
+      return;
+    }
+
     setFiles(prevFiles => prevFiles.filter(file => file !== targetFile));
   };
 
   return (
-    <>
-      <section
-        ref={composerRef}
-        className="chat-workbench-composer"
-        data-variant={variant}
-        data-composer-style={presentation}
-        aria-label="任务输入"
-      >
-        {atMenuOpen ? (
+    <ChatComposer
+      rootRef={composerRef}
+      ariaLabel="任务输入"
+      className="chat-workbench-composer"
+      composerStyle={presentation}
+      error={error}
+      footerEnd={footerEnd}
+      onChange={handleValueChange}
+      onEditorKeyDown={handleEditorKeyDown}
+      onStop={onStop}
+      onSubmit={handleSubmit}
+      showDefaultAction={false}
+      stopping={stopLoading}
+      streaming={stopMode}
+      submitting={loading}
+      value={composerMessage}
+      variant={variant === 'detail' ? 'docked' : 'hero'}
+      overlay={
+        atMenuOpen ? (
           <AtMenu
             anchorPosition={atMenuAnchorPosition}
+            disabled={interactionDisabled}
             draft={atDraft ?? { stage: 'resource-type', query: '' }}
+            eventScopeRef={composerRef}
             placement={overlayPlacement}
             spaceId={spaceId}
-            value={resourceSelection}
+            value={submitResourceSelection}
             onClose={closeAtResourceSelection}
             onBackToResourceTypes={() =>
               setAtDraft({ stage: 'resource-type', query: '' })
@@ -952,10 +1233,13 @@ export const WorkbenchComposer = ({
             onReferenceSelect={handleAtReferenceSelect}
             onResourceTypeSelect={handleAtResourceTypeSelect}
           />
-        ) : null}
+        ) : null
+      }
+      renderEditor={editorProps => (
         <WorkbenchComposerBody
           atDraft={atDraft}
           atSegments={atSegments}
+          variant={variant}
           value={value}
           mode={mode}
           presentation={presentation}
@@ -963,10 +1247,14 @@ export const WorkbenchComposer = ({
           skillSuggestionPlacement={overlayPlacement}
           skillSuggestionIndex={skillSuggestionIndex}
           skillSuggestions={skillSuggestions}
-          onChange={handleValueChange}
+          onChange={editorProps.onChange}
+          disabled={editorProps.disabled}
+          readOnly={editorProps.readOnly}
+          onCompositionEnd={editorProps.onCompositionEnd}
+          onCompositionStart={editorProps.onCompositionStart}
           onSkillSuggestionApply={handleSkillSuggestionApply}
           onSkillSuggestionIndexChange={setSkillSuggestionIndex}
-          onSkillSuggestionKeyDown={handleComposerKeyDown}
+          onSkillSuggestionKeyDown={editorProps.onKeyDown}
           onAtAnchorRectChange={handleAtAnchorRectChange}
           onAtDraftCancel={closeAtResourceSelection}
           onAtDraftQueryChange={handleAtDraftQueryChange}
@@ -976,19 +1264,34 @@ export const WorkbenchComposer = ({
           onTextareaBlur={() => setTextareaFocused(false)}
           onTextareaFocus={() => setTextareaFocused(true)}
         />
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="chat-workbench-file-input"
-          aria-label="选择附件"
-          onChange={handleFileInputChange}
-        />
+      )}
+      auxiliary={
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            disabled={interactionDisabled || !attachmentsEnabled}
+            className="chat-workbench-file-input"
+            aria-label="选择附件"
+            title={attachmentsEnabled ? undefined : attachmentDisabledReason}
+            onChange={handleFileInputChange}
+          />
+          {!attachmentsEnabled ? (
+            <div className="chat-workbench-capability-note" role="note">
+              {attachmentDisabledReason}
+            </div>
+          ) : null}
+        </>
+      }
+      footerStart={
         <WorkbenchComposerToolbar
           atMenuOpen={atMenuOpen}
           canSend={canSend}
           extensionsOpen={extensionsOpen}
+          disabled={interactionDisabled}
+          attachmentsEnabled={attachmentsEnabled}
+          attachmentDisabledReason={attachmentDisabledReason}
           loading={loading}
           modelLoader={modelLoader}
           modelMenuOpen={modelMenuOpen}
@@ -998,7 +1301,7 @@ export const WorkbenchComposer = ({
           modeMenuOpen={modeMenuOpen}
           overlayPlacement={overlayPlacement}
           presentation={presentation}
-          resourceSelection={resourceSelection}
+          resourceSelection={scopedResourceSelection}
           runtimeSettings={runtimeSettings}
           selectedModelType={selectedModelType}
           stopLoading={stopLoading}
@@ -1006,29 +1309,33 @@ export const WorkbenchComposer = ({
           failoverCandidateCount={failoverCandidateCount}
           spaceId={spaceId}
           onAtMenuOpenChange={open =>
-            open ? startAtResourceSelection(value) : closeAtResourceSelection()
+            open
+              ? startAtResourceSelection(value, 'trigger')
+              : closeAtResourceSelection()
           }
           onAttachClick={handleAttachClick}
           onExtensionsOpenChange={open =>
             setActiveOverlay(open ? 'extensions' : null)
           }
-          onModelMenuOpenChange={open =>
-            setActiveOverlay(open ? 'model' : null)
-          }
+          onModelMenuOpenChange={open => {
+            if (open) {
+              void reloadModels();
+            }
+            setActiveOverlay(open ? 'model' : null);
+          }}
+          onReloadModels={reloadModels}
           onModeMenuOpenChange={open => setActiveOverlay(open ? 'mode' : null)}
           onModeChange={onModeChange}
-          onResourceSelectionChange={setResourceSelection}
+          onResourceSelectionChange={nextSelection => {
+            if (resourceSelectionReady) {
+              setResourceSelection(nextSelection);
+            }
+          }}
           onRuntimeSettingsChange={setRuntimeSettings}
           onSelectedModelTypeChange={setSelectedModelType}
           onSubmit={handleSubmit}
         />
-      </section>
-
-      {error ? (
-        <div className="chat-workbench-error" role="alert">
-          {error}
-        </div>
-      ) : null}
-    </>
+      }
+    />
   );
 };

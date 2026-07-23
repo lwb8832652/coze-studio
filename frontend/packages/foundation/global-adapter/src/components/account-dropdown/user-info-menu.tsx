@@ -15,6 +15,7 @@
  */
 
 import { useUserInfo, useUserLabel } from '@coze-arch/foundation-sdk';
+import { IconCozPeopleFill } from '@coze-arch/coze-design/icons';
 import {
   CozAvatar,
   Badge,
@@ -80,7 +81,13 @@ export const UserInfoMenu = () => {
                 src={userInfo.avatar_url}
                 className="w-[32px] h-[32px] rounded-full"
                 type="person"
-              />
+                style={{
+                  color: '#fff',
+                  backgroundColor: 'var(--newx-color-accent, #14804a)',
+                }}
+              >
+                <IconCozPeopleFill />
+              </CozAvatar>
             </Badge>
           }
           {

@@ -220,6 +220,9 @@ func (c *ModelConfig) toModel(ctx context.Context, q *model.ModelInstance) *Mode
 		}
 	}
 	conn, err := decryptConn(ctx, q.Connection)
+	if err == nil {
+		conn, err = c.hydrateManagedConnection(ctx, q.ID, conn)
+	}
 	if err != nil {
 		logs.CtxWarnf(ctx, "decrypt model connection failed, err: %v", err)
 	}

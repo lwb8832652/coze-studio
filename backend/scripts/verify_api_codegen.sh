@@ -103,12 +103,14 @@ handwritten_files=(
 # These api/model files are intentionally handwritten. Every other .go file
 # below api/model is generator-owned and participates in the clean manifest.
 handwritten_generated_excludes=(
+  api/router/register.go
   api/model/agent/langgraph/run.go
   api/model/agent/langgraph/thread.go
   api/model/workbench/diagnostic/diagnostic.go
   api/model/workbench/skill/skill_extension.go
   api/model/workbench/thread/thread.go
   api/model/workbench/tool/tool.go
+  api/model/workbench/tool/official_catalog.go
   api/model/workbench/tool/mcp_management_api_contract_test.go
   api/model/workbench/tool/mcp_management_contract_test.go
 )
@@ -173,6 +175,9 @@ discover_generated_files() {
 
     while IFS= read -r file; do
 	  [[ "${file}" == *_test.go ]] && continue
+      if is_handwritten_generated_exclude "${file}"; then
+        continue
+      fi
       case "${file}" in
         api/router/coze/api.go|api/router/coze/middleware.go)
           printf '%s\n' "${file}"
@@ -324,6 +329,43 @@ postprocess_generated_middleware() {
   mv "${temporary_file}" "${middleware_file}"
 }
 
+postprocess_generated_license_headers() {
+  local target_backend="$1"
+  local generated_paths="${temporary_root}/generated-license-paths.$RANDOM"
+  local file
+  local target_file
+  local temporary_file
+
+  discover_generated_files "${target_backend}" "${generated_paths}"
+  while IFS= read -r file; do
+    target_file="${target_backend}/${file}"
+    if head -n 5 "${target_file}" | grep -q 'Copyright.*coze-dev Authors'; then
+      continue
+    fi
+    temporary_file="${target_file}.license"
+    cat >"${temporary_file}" <<'HEADER'
+/*
+ * Copyright 2025 coze-dev Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+HEADER
+    cat "${target_file}" >>"${temporary_file}"
+    mv "${temporary_file}" "${target_file}"
+  done <"${generated_paths}"
+}
+
 run_clean_generation() {
   local target_workspace="$1"
   local target_backend="${target_workspace}/backend"
@@ -340,6 +382,7 @@ run_clean_generation() {
       "${hz_bin}" update -idl ../idl/api.thrift -enable_extends "${exclude_args[@]}"
   )
   postprocess_generated_middleware "${target_backend}"
+  postprocess_generated_license_headers "${target_backend}"
 }
 
 copy_discovered_generated_tree() {

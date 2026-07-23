@@ -384,6 +384,7 @@ func (b *ADKUsageBridge) record(ctx context.Context, key string, usage AgentToke
 	if b == nil || b.collector == nil {
 		return false
 	}
+	usage.IdempotencyKey = key
 
 	b.mu.Lock()
 	if _, exists := b.seen[key]; exists {

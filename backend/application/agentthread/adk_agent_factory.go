@@ -246,6 +246,7 @@ func (f *ApplicationADKAgentFactory) Build(
 	if err != nil {
 		return nil, err
 	}
+	chatModel = wrapBillingGuardChatModel(chatModel, run, cfg)
 	modelFailoverConfig, err := adkModelFailoverConfigFromRun(
 		run,
 		func(ctx context.Context, modelID int64) (model.BaseChatModel, bool, error) {
@@ -270,6 +271,7 @@ func (f *ApplicationADKAgentFactory) Build(
 			if candidateErr != nil {
 				return nil, false, candidateErr
 			}
+			candidateModel = wrapBillingGuardChatModel(candidateModel, run, candidateConfig)
 
 			return candidateModel, true, nil
 		},

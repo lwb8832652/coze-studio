@@ -15,7 +15,7 @@
  */
 
 import MockAdapter from 'axios-mock-adapter';
-import { AxiosError, isAxiosError } from 'axios';
+import { CanceledError } from 'axios';
 import { redirect } from '@coze-arch/web-context';
 
 import { emitAPIErrorEvent } from '../src/eventbus';
@@ -159,15 +159,24 @@ describe('axiosInstance', () => {
 
   it('should logger error when network error', async () => {
     mock.onGet('/users3').networkError();
-    try {
-      await expect(() => axiosInstance.get('/users3')).rejects.toThrow(Error);
-    } catch (error) {
-      expect(isAxiosError(error)).toBe(true);
-      expect(reportHttpError).toBeCalledWith(
-        ReportEventNames.NetworkError,
-        expect.any(AxiosError),
-      );
-    }
+    await expect(axiosInstance.get('/users3')).rejects.toThrow(Error);
+    expect(reportHttpError).toBeCalledWith(
+      ReportEventNames.NetworkError,
+      expect.objectContaining({ message: 'Network Error' }),
+    );
+  });
+
+  it('should reject axios cancellation without reporting a network error', async () => {
+    const canceledError = new CanceledError('request aborted');
+
+    await expect(
+      axiosInstance.request({
+        adapter: () => Promise.reject(canceledError),
+        method: 'GET',
+        url: '/usage-canceled',
+      }),
+    ).rejects.toBe(canceledError);
+    expect(reportHttpError).not.toHaveBeenCalled();
   });
 
   it('should handle unauthorized response', async () => {

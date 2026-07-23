@@ -18,12 +18,15 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -3253,6 +3256,268 @@ func TestThreadRepositoryCreateTokenUsageIsIdempotentByMetadataKey(t *testing.T)
 	require.Equal(t, int64(1), total)
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(1), rows[0].ID)
+
+	snapshot, err := repo.GetTokenUsageSnapshot(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 10,
+	}, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), snapshot.Aggregate.CallCount)
+}
+
+func TestThreadRepositoryCreateTokenUsageRejectsIdentityMismatchOnConflict(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate *entity.TokenUsage
+	}{
+		{
+			name: "thread",
+			candidate: &entity.TokenUsage{
+				ID: 1, ThreadID: 11, RunID: 20, SpaceID: 1,
+				Source: entity.TokenUsageSourceLeadAgent,
+			},
+		},
+		{
+			name: "run",
+			candidate: &entity.TokenUsage{
+				ID: 1, ThreadID: 10, RunID: 21, SpaceID: 1,
+				Source: entity.TokenUsageSourceLeadAgent,
+			},
+		},
+		{
+			name: "space",
+			candidate: &entity.TokenUsage{
+				ID: 1, ThreadID: 10, RunID: 20, SpaceID: 2,
+				Source: entity.TokenUsageSourceLeadAgent,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&tokenUsagePO{}))
+
+			repo := NewThreadRepository(db)
+			require.NoError(t, repo.CreateTokenUsage(context.Background(), &entity.TokenUsage{
+				ID: 1, ThreadID: 10, RunID: 20, SpaceID: 1,
+				Source: entity.TokenUsageSourceLeadAgent,
+			}))
+
+			err = repo.CreateTokenUsage(context.Background(), tt.candidate)
+			require.ErrorContains(t, err, "token usage identity conflict")
+		})
+	}
+}
+
+func TestThreadRepositoryTokenUsageSnapshotIsAtomicAndThreadScoped(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&tokenUsagePO{}))
+
+	repo := NewThreadRepository(db)
+	for _, usage := range []*entity.TokenUsage{
+		{
+			ID: 1, ThreadID: 10, RunID: 20, SpaceID: 1,
+			Source: entity.TokenUsageSourceLeadAgent, InputTokens: 12,
+			OutputTokens: 8, TotalTokens: 20, CreatedAt: 100,
+		},
+		{
+			ID: 2, ThreadID: 10, RunID: 21, SpaceID: 1,
+			Source: entity.TokenUsageSourceLeadAgent, InputTokens: 4,
+			OutputTokens: 6, TotalTokens: 10, CreatedAt: 200,
+		},
+		{
+			ID: 3, ThreadID: 11, RunID: 22, SpaceID: 2,
+			Source: entity.TokenUsageSourceLeadAgent, InputTokens: 99,
+			OutputTokens: 1, TotalTokens: 100, CreatedAt: 300,
+		},
+	} {
+		require.NoError(t, repo.CreateTokenUsage(context.Background(), usage))
+	}
+
+	snapshot, err := repo.GetTokenUsageSnapshot(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 50,
+	}, true)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), snapshot.Total)
+	require.Len(t, snapshot.Rows, 2)
+	require.Equal(t, int64(30), snapshot.Aggregate.TotalTokens)
+	require.Len(t, snapshot.RunAggregates, 2)
+	for _, usage := range snapshot.Rows {
+		require.Equal(t, int64(10), usage.ThreadID)
+		require.Equal(t, int64(1), usage.SpaceID)
+	}
+}
+
+func TestThreadRepositoryTokenUsageSnapshotFiltersSourceAcrossRowsAndAggregates(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&tokenUsagePO{}))
+
+	repo := NewThreadRepository(db)
+	for _, usage := range []*entity.TokenUsage{
+		{
+			ID: 1, ThreadID: 10, RunID: 20, SpaceID: 1,
+			Source: entity.TokenUsageSourceTool, InputTokens: 2,
+			OutputTokens: 3, TotalTokens: 5, CostMicros: 50, CreatedAt: 100,
+		},
+		{
+			ID: 2, ThreadID: 10, RunID: 20, SpaceID: 1,
+			Source: entity.TokenUsageSourceLeadAgent, InputTokens: 10,
+			OutputTokens: 10, TotalTokens: 20, CostMicros: 200, CreatedAt: 200,
+		},
+		{
+			ID: 3, ThreadID: 10, RunID: 21, SpaceID: 1,
+			Source: entity.TokenUsageSourceTool, InputTokens: 7,
+			OutputTokens: 4, TotalTokens: 11, CostMicros: 110, CreatedAt: 300,
+		},
+		{
+			ID: 4, ThreadID: 10, RunID: 21, SpaceID: 1,
+			Source: entity.TokenUsageSourceLeadAgent, InputTokens: 15,
+			OutputTokens: 15, TotalTokens: 30, CostMicros: 300, CreatedAt: 400,
+		},
+		{
+			ID: 5, ThreadID: 11, RunID: 20, SpaceID: 2,
+			Source: entity.TokenUsageSourceTool, InputTokens: 50,
+			OutputTokens: 50, TotalTokens: 100, CostMicros: 1000, CreatedAt: 500,
+		},
+	} {
+		require.NoError(t, repo.CreateTokenUsage(context.Background(), usage))
+	}
+
+	snapshot, err := repo.GetTokenUsageSnapshot(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		RunIDs:   []int64{20, 21},
+		Source:   entity.TokenUsageSourceTool,
+		Page:     1,
+		PageSize: 50,
+	}, true)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(2), snapshot.Total)
+	require.Len(t, snapshot.Rows, 2)
+	for _, usage := range snapshot.Rows {
+		require.Equal(t, int64(10), usage.ThreadID)
+		require.Equal(t, entity.TokenUsageSourceTool, usage.Source)
+	}
+	require.Equal(t, int64(9), snapshot.Aggregate.InputTokens)
+	require.Equal(t, int64(7), snapshot.Aggregate.OutputTokens)
+	require.Equal(t, int64(16), snapshot.Aggregate.TotalTokens)
+	require.Equal(t, int64(160), snapshot.Aggregate.CostMicros)
+	require.Equal(t, int64(2), snapshot.Aggregate.CallCount)
+	require.Equal(t, int64(16), snapshot.Aggregate.ToolTokens)
+	require.Zero(t, snapshot.Aggregate.LeadAgentTokens)
+	require.Len(t, snapshot.RunAggregates, 2)
+	require.Equal(t, int64(20), snapshot.RunAggregates[0].RunID)
+	require.Equal(t, int64(5), snapshot.RunAggregates[0].Aggregate.TotalTokens)
+	require.Equal(t, int64(1), snapshot.RunAggregates[0].Aggregate.CallCount)
+	require.Equal(t, int64(5), snapshot.RunAggregates[0].Aggregate.ToolTokens)
+	require.Equal(t, int64(21), snapshot.RunAggregates[1].RunID)
+	require.Equal(t, int64(11), snapshot.RunAggregates[1].Aggregate.TotalTokens)
+	require.Equal(t, int64(1), snapshot.RunAggregates[1].Aggregate.CallCount)
+	require.Equal(t, int64(11), snapshot.RunAggregates[1].Aggregate.ToolTokens)
+}
+
+func TestThreadRepositoryTokenUsageSnapshotRollsBackAfterReadFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&tokenUsagePO{}))
+	require.NoError(t, db.Create(&tokenUsagePO{
+		ID: 1, ThreadID: 10, RunID: 20, SpaceID: 1,
+		Source:      string(entity.TokenUsageSourceLeadAgent),
+		TotalTokens: 20,
+	}).Error)
+
+	expectedErr := errors.New("forced snapshot read failure")
+	queryCount := 0
+	const callbackName = "test:token_usage_snapshot_failure"
+	require.NoError(t, db.Callback().Query().Before("gorm:query").
+		Register(callbackName, func(tx *gorm.DB) {
+			if tx.Statement.Table != (tokenUsagePO{}).TableName() {
+				return
+			}
+			_, inTransaction := tx.Statement.ConnPool.(*sql.Tx)
+			require.True(t, inTransaction)
+			queryCount++
+			if queryCount == 2 {
+				tx.AddError(expectedErr)
+			}
+		}))
+
+	repo := NewThreadRepository(db)
+	snapshot, err := repo.GetTokenUsageSnapshot(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 50,
+	}, false)
+
+	require.ErrorIs(t, err, expectedErr)
+	require.Nil(t, snapshot)
+	require.Equal(t, 2, queryCount)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.Zero(t, sqlDB.Stats().InUse)
+}
+
+func TestThreadRepositoryTokenUsageSnapshotUsesReadOnlyRepeatableRead(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, sqlDB.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	require.NoError(t, err)
+
+	require.Equal(t, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	}, tokenUsageSnapshotTxOptions("mysql"))
+	require.Nil(t, tokenUsageSnapshotTxOptions("sqlite"))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `agent_token_usage`").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT \\* FROM `agent_token_usage`").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "thread_id", "run_id", "space_id", "source",
+			"input_tokens", "output_tokens", "total_tokens",
+			"cost_micros", "created_at",
+		}).AddRow(1, 10, 20, 1, "lead_agent", 12, 8, 20, 0, 100))
+	aggregateColumns := []string{
+		"input_tokens", "output_tokens", "total_tokens",
+		"cost_micros", "call_count", "lead_agent_tokens",
+		"subagent_tokens", "middleware_tokens", "tool_tokens",
+	}
+	mock.ExpectQuery("(?s)SELECT .*SUM\\(input_tokens\\).*FROM `agent_token_usage`").
+		WillReturnRows(sqlmock.NewRows(aggregateColumns).
+			AddRow(12, 8, 20, 0, 1, 20, 0, 0, 0))
+	mock.ExpectQuery("(?s)SELECT .*run_id,.*SUM\\(input_tokens\\).*FROM `agent_token_usage`").
+		WillReturnRows(sqlmock.NewRows(append([]string{"run_id"}, aggregateColumns...)).
+			AddRow(20, 12, 8, 20, 0, 1, 20, 0, 0, 0))
+	mock.ExpectCommit()
+
+	repo := NewThreadRepository(db)
+	snapshot, err := repo.GetTokenUsageSnapshot(context.Background(), ListTokenUsageRequest{
+		ThreadID: 10,
+		Page:     1,
+		PageSize: 50,
+	}, true)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), snapshot.Total)
+	require.Len(t, snapshot.Rows, 1)
+	require.Equal(t, int64(20), snapshot.Aggregate.TotalTokens)
+	require.Len(t, snapshot.RunAggregates, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestThreadRepositoryRejectsInvalidRunEventPayload(t *testing.T) {

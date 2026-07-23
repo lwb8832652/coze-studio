@@ -1887,39 +1887,18 @@ func (s *threadService) GetRunTokenUsage(ctx context.Context, req *GetRunTokenUs
 	if err != nil {
 		return nil, 0, nil, nil, err
 	}
-	rows, total, err := s.repo.ListTokenUsage(ctx, repository.ListTokenUsageRequest{
+	snapshot, err := s.repo.GetTokenUsageSnapshot(ctx, repository.ListTokenUsageRequest{
 		ThreadID: threadID,
 		RunID:    req.RunID,
 		RunIDs:   runIDs,
 		Source:   req.Source,
 		Page:     page,
 		PageSize: pageSize,
-	})
+	}, req.IncludeChildRuns)
 	if err != nil {
 		return nil, 0, nil, nil, err
 	}
-
-	aggregate, err := s.repo.AggregateTokenUsage(ctx, repository.AggregateTokenUsageRequest{
-		ThreadID: threadID,
-		RunID:    req.RunID,
-		RunIDs:   runIDs,
-	})
-	if err != nil {
-		return nil, 0, nil, nil, err
-	}
-
-	var runAggregates []*entity.RunTokenUsageAggregate
-	if req.IncludeChildRuns {
-		runAggregates, err = s.repo.AggregateTokenUsageByRun(ctx, repository.AggregateTokenUsageRequest{
-			ThreadID: threadID,
-			RunIDs:   runIDs,
-		})
-		if err != nil {
-			return nil, 0, nil, nil, err
-		}
-	}
-
-	return rows, total, aggregate, runAggregates, nil
+	return snapshot.Rows, snapshot.Total, snapshot.Aggregate, snapshot.RunAggregates, nil
 }
 
 func (s *threadService) tokenUsageRunScope(
@@ -1971,22 +1950,16 @@ func (s *threadService) GetThreadTokenUsage(ctx context.Context, req *GetThreadT
 	}
 
 	page, pageSize := normalizeTokenUsagePage(req.Page, req.PageSize)
-	rows, total, err := s.repo.ListTokenUsage(ctx, repository.ListTokenUsageRequest{
+	snapshot, err := s.repo.GetTokenUsageSnapshot(ctx, repository.ListTokenUsageRequest{
 		ThreadID: req.ThreadID,
 		Source:   req.Source,
 		Page:     page,
 		PageSize: pageSize,
-	})
+	}, false)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-
-	aggregate, err := s.repo.AggregateTokenUsage(ctx, repository.AggregateTokenUsageRequest{ThreadID: req.ThreadID})
-	if err != nil {
-		return nil, 0, nil, err
-	}
-
-	return rows, total, aggregate, nil
+	return snapshot.Rows, snapshot.Total, snapshot.Aggregate, nil
 }
 
 func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest) ([]*entity.Run, error) {

@@ -33,7 +33,10 @@ import (
 )
 
 const (
-	baseConfigKey = "basic_config"
+	baseConfigKey                 = "basic_config"
+	systemAdminBootstrapEmailsEnv = "COZE_SYSTEM_ADMIN_EMAILS"
+	defaultSiteName               = "NewX AI"
+	defaultSiteDescription        = "NewX AI 是面向个人与团队的智能工作空间，让任务、技能和协作沉淀为可复用的成果。"
 )
 
 type BaseConfig struct {
@@ -51,12 +54,18 @@ type BasicConfigurationPatch struct {
 	AllowRegistrationEmail  *string
 	PluginConfiguration     *config.PluginConfiguration
 	ServerHost              *string
+	SiteName                *string
+	SiteDescription         *string
+	SiteLogoURI             *string
+	FaviconURI              *string
 }
 
 func (p BasicConfigurationPatch) IsEmpty() bool {
 	return p.AdminEmails == nil && p.DisableUserRegistration == nil &&
 		p.AllowRegistrationEmail == nil && p.PluginConfiguration == nil &&
-		p.ServerHost == nil
+		p.ServerHost == nil && p.SiteName == nil &&
+		p.SiteDescription == nil && p.SiteLogoURI == nil &&
+		p.FaviconURI == nil
 }
 
 func NewBaseConfig(db *gorm.DB) *BaseConfig {
@@ -123,6 +132,18 @@ func (c *BaseConfig) SaveBaseConfig(ctx context.Context, patch BasicConfiguratio
 	if patch.ServerHost != nil {
 		toSave.ServerHost = *patch.ServerHost
 	}
+	if patch.SiteName != nil {
+		toSave.SiteName = cloneStringPointer(patch.SiteName)
+	}
+	if patch.SiteDescription != nil {
+		toSave.SiteDescription = cloneStringPointer(patch.SiteDescription)
+	}
+	if patch.SiteLogoURI != nil {
+		toSave.SiteLogoURI = cloneStringPointer(patch.SiteLogoURI)
+	}
+	if patch.FaviconURI != nil {
+		toSave.FaviconURI = cloneStringPointer(patch.FaviconURI)
+	}
 	return c.base.CompareAndSwap(ctx, consts.BaseConfigNameSpace, baseConfigKey, expectedRevision, toSave)
 }
 
@@ -139,6 +160,18 @@ func cloneConfiguration(value *config.BasicConfiguration) *config.BasicConfigura
 		sandbox := *value.SandboxConfig
 		cloned.SandboxConfig = &sandbox
 	}
+	cloned.SiteName = cloneStringPointer(value.SiteName)
+	cloned.SiteDescription = cloneStringPointer(value.SiteDescription)
+	cloned.SiteLogoURI = cloneStringPointer(value.SiteLogoURI)
+	cloned.FaviconURI = cloneStringPointer(value.FaviconURI)
+	return &cloned
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
 	return &cloned
 }
 
@@ -182,8 +215,10 @@ func getBasicConfigurationFromOldConfig() *config.BasicConfiguration {
 	}
 
 	const ServerHost = "SERVER_HOST"
+	siteName := defaultSiteName
+	siteDescription := defaultSiteDescription
 	return &config.BasicConfiguration{
-		AdminEmails:             "",
+		AdminEmails:             strings.TrimSpace(os.Getenv(systemAdminBootstrapEmailsEnv)),
 		DisableUserRegistration: disableUserRegistration,
 		AllowRegistrationEmail:  os.Getenv(consts.DisableUserRegistration),
 		PluginConfiguration: &config.PluginConfiguration{
@@ -191,9 +226,11 @@ func getBasicConfigurationFromOldConfig() *config.BasicConfiguration {
 			CozeAPIToken:          envkey.GetString("COZE_SAAS_API_KEY"),
 			CozeSaasAPIBaseURL:    envkey.GetStringD("COZE_SAAS_API_BASE_URL", "https://api.coze.cn"),
 		},
-		CodeRunnerType: codeRunnerType,
-		ServerHost:     os.Getenv(ServerHost),
-		SandboxConfig:  sandboxConfig,
+		CodeRunnerType:  codeRunnerType,
+		ServerHost:      os.Getenv(ServerHost),
+		SandboxConfig:   sandboxConfig,
+		SiteName:        &siteName,
+		SiteDescription: &siteDescription,
 	}
 }
 

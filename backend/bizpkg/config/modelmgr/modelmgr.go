@@ -18,6 +18,8 @@ package modelmgr
 
 import (
 	"context"
+	"errors"
+	"os"
 
 	"gorm.io/gorm"
 
@@ -46,9 +48,11 @@ CREATE TABLE IF NOT EXISTS `model_instance` (
 */
 
 type ModelConfig struct {
-	oss           storage.Storage
-	kv            *kvstore.KVStore[struct{}]
-	ModelMetaConf *ModelMetaConf
+	oss             storage.Storage
+	kv              *kvstore.KVStore[struct{}]
+	ModelMetaConf   *ModelMetaConf
+	db              *gorm.DB
+	credentialCodec ModelCredentialCodec
 }
 
 const (
@@ -65,10 +69,17 @@ func Init(ctx context.Context, db *gorm.DB, oss storage.Storage) (*ModelConfig, 
 		return nil, err
 	}
 
+	credentialCodec, err := LoadModelCredentialCodec(os.Getenv)
+	if err != nil && !errors.Is(err, ErrModelCredentialCodecMissing) {
+		return nil, err
+	}
+
 	c := &ModelConfig{
-		oss:           oss,
-		kv:            kvstore.New[struct{}](db),
-		ModelMetaConf: mMetaConf,
+		oss:             oss,
+		kv:              kvstore.New[struct{}](db),
+		ModelMetaConf:   mMetaConf,
+		db:              db,
+		credentialCodec: credentialCodec,
 	}
 
 	// logs.CtxDebugf(ctx, "init model config, oss: %v, kv: %v, model_meta_conf: %v", oss, c.kv, c.ModelMetaConf)

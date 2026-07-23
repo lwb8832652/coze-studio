@@ -22,7 +22,14 @@ import { useMemo, useEffect, useState } from 'react';
 
 import { useSpaceStore } from '@coze-foundation/space-store';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
-import { Input, Loading, Modal, Toast } from '@coze-arch/coze-design';
+import { IconCozPeopleFill } from '@coze-arch/coze-design/icons';
+import {
+  CozAvatar,
+  Input,
+  Loading,
+  Modal,
+  Toast,
+} from '@coze-arch/coze-design';
 import { SpaceType } from '@coze-arch/bot-api/developer_api';
 
 import { WorkspacePageTopBar } from '../../components/workspace-page-top-bar';
@@ -47,6 +54,20 @@ const ROLE_OWNER = 1;
 const ROLE_ADMIN = 2;
 const ROLE_MEMBER = 3;
 const MEMBER_PAGE_SIZE = 10;
+
+const WorkspaceMemberAvatar = ({ avatarUrl }: { avatarUrl?: string }) => (
+  <CozAvatar
+    className="coze-prototype-member-avatar"
+    src={avatarUrl}
+    type="person"
+    style={{
+      color: '#fff',
+      backgroundColor: 'var(--newx-color-accent, #14804a)',
+    }}
+  >
+    <IconCozPeopleFill />
+  </CozAvatar>
+);
 
 const getWorkspaceTypeText = (spaceType?: number | SpaceType) =>
   spaceType === SpaceType.Personal ? '个人空间' : '团队空间';
@@ -683,13 +704,7 @@ const WorkspacePage = () => {
                     className="coze-prototype-member-row"
                   >
                     <div className="coze-prototype-member-profile">
-                      <div className="coze-prototype-member-avatar">
-                        {member.avatar_url ? (
-                          <img src={member.avatar_url} alt="" />
-                        ) : (
-                          <span>{memberDisplayName(member).slice(0, 1)}</span>
-                        )}
-                      </div>
+                      <WorkspaceMemberAvatar avatarUrl={member.avatar_url} />
                       <div>
                         <strong>{memberDisplayName(member)}</strong>
                         <small>{member.email || '未绑定邮箱'}</small>
@@ -913,13 +928,7 @@ const WorkspacePage = () => {
                   onClick={() => selectUser(candidate)}
                 >
                   <span className="coze-prototype-add-member-checkbox" />
-                  <span className="coze-prototype-member-avatar">
-                    {candidate.avatar_url ? (
-                      <img src={candidate.avatar_url} alt="" />
-                    ) : (
-                      <span>{candidateDisplayName(candidate).slice(0, 1)}</span>
-                    )}
-                  </span>
+                  <WorkspaceMemberAvatar avatarUrl={candidate.avatar_url} />
                   <span className="coze-prototype-add-member-name">
                     {candidateDisplayName(candidate)}
                     <small>
@@ -942,13 +951,7 @@ const WorkspacePage = () => {
                 key={user.user_id}
                 className="coze-prototype-add-member-selected-row"
               >
-                <span className="coze-prototype-member-avatar">
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt="" />
-                  ) : (
-                    <span>{candidateDisplayName(user).slice(0, 1)}</span>
-                  )}
-                </span>
+                <WorkspaceMemberAvatar avatarUrl={user.avatar_url} />
                 <span className="coze-prototype-add-member-selected-name">
                   {candidateDisplayName(user)}
                 </span>

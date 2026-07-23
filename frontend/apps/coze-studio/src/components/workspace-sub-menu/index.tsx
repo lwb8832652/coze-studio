@@ -14,18 +14,12 @@
  * limitations under the License.
  */
 
-/* eslint-disable @coze-arch/max-line-per-function, max-lines-per-function -- Cohesive orchestrator. */
-/* eslint-disable max-lines -- Cohesive orchestrator. */
-
+/* eslint-disable @coze-arch/max-line-per-function -- Cohesive orchestrator. */
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { WorkspaceSubMenu as BaseWorkspaceSubMenu } from '@coze-foundation/space-ui-base';
 import { useSpaceStore } from '@coze-foundation/space-store';
-import {
-  AccountDropdown,
-  type AccountSettingsExtraTab,
-} from '@coze-foundation/global-adapter';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
 import {
   IconCozArrowDown,
@@ -41,7 +35,6 @@ import {
   IconCozKnowledgeFill,
   IconCozMore,
   IconCozPlus,
-  IconCozSetting,
   IconCozSideExpand,
   IconCozSkill,
   IconCozWorkspace,
@@ -51,23 +44,14 @@ import { Input, Modal, Toast, Typography } from '@coze-arch/coze-design';
 import { useRouteConfig } from '@coze-arch/bot-hooks';
 import { SpaceType, type BotSpace } from '@coze-arch/bot-api/developer_api';
 
-import {
-  MCP_TOOL_SETTINGS_TAB_ID,
-  MCPToolSettingsPanel,
-} from '../../pages/tools/mcp-settings-panel';
-import {
-  FEISHU_IM_SETTINGS_TAB_ID,
-  FeishuIMSettingsPanel,
-} from '../../pages/tools/feishu-im-settings-panel';
-import { getSystemAdminStatus } from '../../pages/system/service';
+import { WorkspaceMark } from '../workspace-mark';
+import { WorkspaceAccountDropdown } from '../workspace-account-dropdown';
 import { WorkspaceTaskList } from './workspace-task-list';
 import {
   ASSISTANT_BADGE,
   ASSISTANT_LABEL,
   SPACE_SUB_MODULE,
-  SYSTEM_MANAGEMENT_ENTRY,
   getVisibleWorkspaceMenuMeta,
-  shouldShowSystemManagementEntry,
   type WorkspaceMenuPolicySpace,
 } from './menu';
 
@@ -125,14 +109,6 @@ const readStoredSidebarCollapsed = () => {
     return false;
   }
 };
-
-const WorkspaceMark = () => (
-  <span className="coze-prototype-workspace-mark" aria-hidden="true">
-    <svg viewBox="0 0 24 24" className="h-[16px] w-[16px]" fill="currentColor">
-      <path d="M12 2 2 22h20L12 2zm0 6 6 12H6l6-12z" />
-    </svg>
-  </span>
-);
 
 const getSpaceDisplayName = (space?: BotSpace, fallbackName?: string) => {
   if (space?.space_type === SpaceType.Personal) {
@@ -349,13 +325,11 @@ const WorkspaceSwitcher = ({
             aria-haspopup="menu"
             aria-expanded={dropdownOpen}
             onClick={() => {
-              setDropdownOpen(open => {
-                const nextOpen = !open;
-                if (!nextOpen) {
-                  setSpaceSearchKeyword('');
-                }
-                return nextOpen;
-              });
+              const nextOpen = !dropdownOpen;
+              if (!nextOpen) {
+                setSpaceSearchKeyword('');
+              }
+              setDropdownOpen(nextOpen);
             }}
           >
             <WorkspaceMark />
@@ -491,14 +465,11 @@ const WorkspaceSwitcher = ({
 
 export const WorkspaceSubMenu = () => {
   const { subMenuKey } = useRouteConfig();
-  const navigate = useNavigate();
   const currentSpace = useSpaceStore(state => state.space);
   const userInfo = useUserInfo();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     readStoredSidebarCollapsed,
   );
-  const [isSystemAdmin, setIsSystemAdmin] = useState(false);
-  const hasUser = Boolean(userInfo);
   const userDisplayName = userInfo?.name || userInfo?.screen_name;
   const workspaceDisplayName = userDisplayName
     ? `${userDisplayName} 的工作空间`
@@ -515,67 +486,6 @@ export const WorkspaceSubMenu = () => {
       ) : undefined,
     title: () => item.label,
   }));
-  const accountSettingsTabs = useMemo<AccountSettingsExtraTab[]>(
-    () => [
-      {
-        id: MCP_TOOL_SETTINGS_TAB_ID,
-        tabName: 'MCP 配置',
-        content: () => <MCPToolSettingsPanel spaceId={currentSpace?.id} />,
-      },
-      {
-        id: FEISHU_IM_SETTINGS_TAB_ID,
-        tabName: 'IM 机器人',
-        content: () => <FeishuIMSettingsPanel spaceId={currentSpace?.id} />,
-      },
-    ],
-    [currentSpace?.id],
-  );
-  const accountExtraMenuItems = useMemo(
-    () =>
-      shouldShowSystemManagementEntry({
-        hasUser,
-        isSystemAdmin,
-      })
-        ? [
-            {
-              key: 'system-management',
-              prefixIcon: <IconCozSetting />,
-              title: SYSTEM_MANAGEMENT_ENTRY.label,
-              onClick: () => {
-                navigate(SYSTEM_MANAGEMENT_ENTRY.path);
-              },
-              dataTestId: 'layout_avatar_system-management',
-            },
-          ]
-        : [],
-    [hasUser, isSystemAdmin, navigate],
-  );
-  useEffect(() => {
-    let canceled = false;
-
-    if (!hasUser) {
-      setIsSystemAdmin(false);
-      return () => {
-        canceled = true;
-      };
-    }
-
-    void getSystemAdminStatus()
-      .then(status => {
-        if (!canceled) {
-          setIsSystemAdmin(status.is_admin);
-        }
-      })
-      .catch(() => {
-        if (!canceled) {
-          setIsSystemAdmin(false);
-        }
-      });
-
-    return () => {
-      canceled = true;
-    };
-  }, [hasUser]);
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsed(current => {
       const nextCollapsed = !current;
@@ -619,10 +529,7 @@ export const WorkspaceSubMenu = () => {
   const footerNode = userInfo ? (
     <div className="coze-prototype-sidebar-footer">
       <div className="flex min-w-0 items-center gap-[8px]">
-        <AccountDropdown
-          extraSettingsTabs={accountSettingsTabs}
-          extraMenuItems={accountExtraMenuItems}
-        />
+        <WorkspaceAccountDropdown />
         <Typography.Text
           ellipsis={{ showTooltip: true, rows: 1 }}
           className="min-w-0 flex-1 text-[13px] leading-[20px] font-[500]"

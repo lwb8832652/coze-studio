@@ -19,24 +19,29 @@ package agentthread
 import (
 	"context"
 	"fmt"
+	"strconv"
+
+	appbilling "github.com/coze-dev/coze-studio/backend/application/billing"
+	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
 )
 
 type AgentTokenUsage struct {
-	Source       TokenUsageSource
-	StepID       string
-	StepIndex    int32
-	StepName     string
-	ToolName     string
-	ModelName    string
-	Provider     string
-	InputTokens  int64
-	OutputTokens int64
-	TotalTokens  int64
-	CostMicros   int64
-	Currency     string
-	Estimated    bool
-	RawUsage     string
-	Metadata     string
+	Source         TokenUsageSource
+	IdempotencyKey string
+	StepID         string
+	StepIndex      int32
+	StepName       string
+	ToolName       string
+	ModelName      string
+	Provider       string
+	InputTokens    int64
+	OutputTokens   int64
+	TotalTokens    int64
+	CostMicros     int64
+	Currency       string
+	Estimated      bool
+	RawUsage       string
+	Metadata       string
 }
 
 type UsageCollector interface {
@@ -120,7 +125,64 @@ func (c *ThreadUsageCollector) Record(ctx context.Context, run *RunSummary, usag
 		recorded.OutputTokens,
 	)
 	c.emitTokenUsageSnapshot(ctx, run, recorded)
+	if err := recordBillableTokenUsage(ctx, run, recorded, usage.IdempotencyKey); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func recordBillableTokenUsage(
+	ctx context.Context,
+	run *RunSummary,
+	usage TokenUsageSummary,
+	idempotencyKey string,
+) error {
+	service := appbilling.DefaultService()
+	if service == nil {
+		return nil
+	}
+	enabled, err := service.SettlementEnabled(ctx)
+	if err != nil {
+		return fmt.Errorf("read billing settlement policy: %w", err)
+	}
+	if !enabled {
+		return nil
+	}
+	if run == nil || run.CreatorID <= 0 || usage.UsageID <= 0 || usage.ModelName == "" || usage.Provider == "" {
+		return fmt.Errorf("billable token usage identity is incomplete")
+	}
+
+	runID := strconv.FormatInt(run.RunID, 10)
+	sequence := usage.UsageID
+	subject := domainbilling.Subject{Type: domainbilling.SubjectTypeUser, ID: run.CreatorID}
+	tokens := domainbilling.TokenUsage{Input: usage.InputTokens, Output: usage.OutputTokens}
+	reservationBusinessNo, _, err := service.ReserveUsage(ctx, domainbilling.ReserveUsageInput{
+		Subject:               subject,
+		RunID:                 runID,
+		UsageSequence:         sequence,
+		Provider:              usage.Provider,
+		ModelID:               usage.ModelName,
+		ReservationBusinessNo: billingUsageReservationBusinessNo(run.RunID, idempotencyKey),
+		Usage:                 tokens,
+	})
+	if err != nil {
+		return fmt.Errorf("reserve usage credits: %w", err)
+	}
+	_, err = service.SettleUsage(ctx, domainbilling.SettleUsageInput{
+		Subject:               subject,
+		UserID:                run.CreatorID,
+		SpaceID:               run.SpaceID,
+		RunID:                 runID,
+		UsageSequence:         sequence,
+		Provider:              usage.Provider,
+		ModelID:               usage.ModelName,
+		ReservationBusinessNo: reservationBusinessNo,
+		Usage:                 tokens,
+	})
+	if err != nil {
+		return fmt.Errorf("settle usage credits: %w", err)
+	}
 	return nil
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/app"
 	appdevapp "github.com/coze-dev/coze-studio/backend/application/appdev"
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
+	appbilling "github.com/coze-dev/coze-studio/backend/application/billing"
 	"github.com/coze-dev/coze-studio/backend/application/connector"
 	"github.com/coze-dev/coze-studio/backend/application/conversation"
 	appimchannel "github.com/coze-dev/coze-studio/backend/application/imchannel"
@@ -406,6 +407,7 @@ func Init(ctx context.Context) (err error) {
 		runtimePolicy,
 	)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
+	appbilling.StartMaintenanceWorkerFromEnv(ctx, appbilling.DefaultService())
 	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentResumeRunExecutor)
 	agentthread.StartRunLeaseRecoveryWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartMemoryFlushWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
@@ -475,6 +477,7 @@ func initBasicServices(ctx context.Context, infra *appinfra.AppDependencies, e *
 	connectorSVC := connector.InitService(infra.OSS)
 	userSVC := user.InitService(ctx, infra.DB, infra.OSS, infra.IDGenSVC)
 	admin.InitService(userSVC.DomainSVC)
+	appbilling.InitService(infra.DB, infra.IDGenSVC)
 	if err := initSandboxControlPlaneForApplication(infra); err != nil {
 		return nil, err
 	}

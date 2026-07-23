@@ -168,7 +168,11 @@ export const TaskDeletedArtifactsSection = ({
       <div className="coze-prototype-deleted-artifacts-heading">
         已移除 {deletedTotal}
       </div>
-      {error ? <div className="coze-prototype-error">{error}</div> : null}
+      {error ? (
+        <div className="coze-prototype-error" role="alert">
+          {error}
+        </div>
+      ) : null}
       <List
         dataSource={sortedDeletedArtifacts}
         emptyContent={

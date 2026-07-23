@@ -24,6 +24,7 @@ import {
   taskThreadArtifactPayloadError,
   taskThreadArtifactServiceError,
 } from './task-artifact-safe-error';
+
 export {
   uploadTaskThreadFiles,
   type TaskThreadUploadedFile,
@@ -46,7 +47,7 @@ export const cancelTaskThreadRun = workbenchTask.CancelTaskThreadRun;
 export const retryTaskThreadSubagentRun =
   workbenchTask.RetryTaskThreadSubagentRun;
 export const listTaskThreadRunEvents = workbenchTask.ListTaskThreadRunEvents;
-export const getTaskThreadTokenUsage = workbenchTask.GetTaskThreadTokenUsage;
+export { getTaskThreadTokenUsage } from './task-usage-service';
 export const listTaskThreadArtifacts = workbenchTask.ListTaskThreadArtifacts;
 export const listTaskThreadMemories = workbenchTask.ListTaskThreadMemories;
 export const updateTaskThreadMemory = workbenchTask.UpdateTaskThreadMemory;

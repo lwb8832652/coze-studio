@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/consistent-type-imports, @typescript-eslint/require-await -- Test doubles mirror lazy package types and asynchronous SDK signatures. */
+
 import { useState, type ReactNode } from 'react';
 
 import { resolve as resolvePath } from 'node:path';
@@ -21,12 +23,13 @@ import { readFileSync } from 'node:fs';
 
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
-import { createRoot, type Root } from 'react-dom/client';
 import {
   workbench,
   workbenchSkill,
   workbenchTask,
 } from '@coze-studio/api-schema';
+
+import { createRoot, type Root } from './task-test-root-registry';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -97,9 +100,70 @@ vi.mock('react-router-dom', () => ({
   useParams: mockUseParams,
 }));
 
-vi.mock('@coze-arch/foundation-sdk', () => ({
-  useUserInfo: mockUseUserInfo,
+vi.mock('@coze-arch/bot-api', async importOriginal => {
+  const actual = await importOriginal<typeof import('@coze-arch/bot-api')>();
+  return {
+    ...actual,
+    PlaygroundApi: {
+      ...actual.PlaygroundApi,
+      GetNoticeList: vi.fn().mockResolvedValue({
+        code: 0,
+        msg: 'success',
+        data: { notice_list: [], next_cursor: '', has_more: false },
+      }),
+      GetNoticeUnreadCount: vi.fn().mockResolvedValue({
+        code: 0,
+        msg: 'success',
+        data: { unread_count: 0 },
+      }),
+      NoticeMarkRead: vi.fn().mockResolvedValue({ code: 0, msg: 'success' }),
+    },
+  };
+});
+
+vi.mock('@coze-arch/foundation-sdk', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@coze-arch/foundation-sdk')>();
+  return {
+    ...actual,
+    getIsLogined: () => true,
+    getIsSettled: () => true,
+    getUserAuthInfos: async () => undefined,
+    getUserInfo: mockUseUserInfo,
+    subscribeUserAuthInfos: () => () => undefined,
+    useIsLogined: () => true,
+    useIsSettled: () => true,
+    useUserAuthInfo: () => undefined,
+    useUserInfo: mockUseUserInfo,
+    useUserLabel: () => undefined,
+  };
+});
+
+vi.mock('@coze-foundation/global-adapter/account-settings', () => ({
+  useAccountSettings: () => ({
+    node: null,
+    open: vi.fn(),
+  }),
 }));
+
+vi.mock('../../../components/workspace-account-dropdown', () => {
+  const mockWorkspaceAccountDropdown = () => (
+    <button type="button" aria-label="账号菜单">
+      账号
+    </button>
+  );
+
+  return { WorkspaceAccountDropdown: mockWorkspaceAccountDropdown };
+});
+
+vi.mock('../../system/service', async importOriginal => {
+  const actual = await importOriginal<typeof SystemService>();
+
+  return {
+    ...actual,
+    getSystemAdminStatus: vi.fn().mockResolvedValue({ is_admin: false }),
+  };
+});
 
 vi.mock('../service', () => ({
   getTask: mockGetTask,
@@ -302,17 +366,24 @@ vi.mock('@coze-arch/coze-design', () => ({
     children,
     content,
     trigger,
+    visible,
   }: {
     children?: ReactNode;
     content?: ReactNode;
     trigger?: string;
+    visible?: boolean;
   }) => {
-    const [visible, setVisible] = useState(trigger !== 'click');
+    const [internalVisible, setInternalVisible] = useState(trigger !== 'click');
+    const isControlled = visible !== undefined;
 
     return (
-      <span onClick={() => setVisible(value => !value)}>
+      <span
+        onClick={
+          isControlled ? undefined : () => setInternalVisible(value => !value)
+        }
+      >
         {children}
-        {visible ? content : null}
+        {(isControlled ? visible : internalVisible) ? content : null}
       </span>
     );
   },
@@ -371,32 +442,58 @@ vi.mock('@coze-arch/coze-design', () => ({
   TextArea: ({
     'aria-label': ariaLabel,
     className,
+    disabled,
     onChange,
+    onCompositionEnd,
+    onCompositionStart,
+    onKeyDown,
     placeholder,
+    readOnly,
     value,
   }: {
     'aria-label'?: string;
     className?: string;
+    disabled?: boolean;
     onChange?: (value: string) => void;
+    onCompositionEnd?: React.CompositionEventHandler<HTMLTextAreaElement>;
+    onCompositionStart?: React.CompositionEventHandler<HTMLTextAreaElement>;
+    onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement>;
     placeholder?: string;
+    readOnly?: boolean;
     value?: string;
   }) => (
     <textarea
       aria-label={ariaLabel}
       className={className}
+      disabled={disabled}
       placeholder={placeholder}
+      readOnly={readOnly}
       value={value}
       onChange={event => onChange?.(event.target.value)}
+      onCompositionEnd={onCompositionEnd}
+      onCompositionStart={onCompositionStart}
+      onKeyDown={onKeyDown}
     />
   ),
 }));
 
 vi.mock('@coze-arch/coze-design/icons', () => ({
+  IconCozAt: () => <span />,
+  IconCozArrowUp: () => <span />,
+  IconCozArrowUpFill: () => <span />,
+  IconCozArrowBack: () => <span />,
+  IconCozArrowLeft: () => <span />,
   IconCozArrowDown: () => <span />,
+  IconCozArrowRight: () => <span />,
   IconCozAsynchronousTask: () => <span />,
   IconCozBell: () => <span />,
+  IconCozBot: () => <span />,
   IconCozCode: () => <span />,
+  IconCozCheckMark: () => <span />,
+  IconCozCheckMarkCircleFill: () => <span />,
   IconCozCross: () => <span />,
+  IconCozDatabase: () => <span />,
+  IconCozDiamondFill: () => <span />,
   IconCozCopy: () => <span />,
   IconCozDocument: () => <span />,
   IconCozDownload: () => <span />,
@@ -404,21 +501,34 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
   IconCozEye: () => <span />,
   IconCozImport: () => <span />,
   IconCozImage: () => <span />,
+  IconCozInfoCircle: () => <span />,
   IconCozLink: () => <span />,
+  IconCozListDisorder: () => <span />,
   IconCozLightbulb: () => <span>思考图标</span>,
+  IconCozLightbulbFill: () => <span>思考图标</span>,
+  IconCozLightningFill: () => <span />,
+  IconCozKnowledge: () => <span />,
   IconCozMagnifier: () => <span />,
   IconCozMicrophone: () => <span />,
+  IconCozLoading: () => <span />,
   IconCozPlus: () => <span />,
   IconCozPlugin: () => <span />,
   IconCozRefresh: () => <span />,
+  IconCozRocketFill: () => <span />,
   IconCozSendFill: () => <span />,
   IconCozSetting: () => <span />,
+  IconCozShare: () => <span />,
+  IconCozSkill: () => <span />,
+  IconCozStar: () => <span />,
+  IconCozStopCircle: () => <span />,
   IconCozTrashCan: () => <span />,
   IconCozThumbdown: () => <span />,
   IconCozThumbdownFill: () => <span />,
   IconCozThumbsup: () => <span />,
   IconCozThumbsupFill: () => <span />,
   IconCozUpload: () => <span />,
+  IconCozWarningCircleFill: () => <span />,
+  IconCozWorkflow: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
@@ -439,7 +549,12 @@ vi.mock('mermaid', () => ({
   },
 }));
 
+import {
+  loadTaskTokenUsageViewMode,
+  saveTaskTokenUsageViewMode,
+} from '../task-message-token-usage';
 import TaskDetailPage from '../detail';
+import type * as SystemService from '../../system/service';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -1147,14 +1262,37 @@ describe('TaskDetailPage', () => {
     expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
     expect(container.textContent).toContain('生成周报');
-    expect(container.textContent).toContain('NewX AI · Agent 已为你启动工作流');
+    expect(container.textContent).toContain('NewX AI · Agent');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
     expect(container.textContent).toContain('Agent 最终结果');
+    act(() => {
+      const summaryTrigger = container.querySelector(
+        '.coze-prototype-execution-summary-trigger',
+      );
+      if (summaryTrigger) {
+        Simulate.click(summaryTrigger);
+      }
+    });
     expect(container.textContent).toContain('理解任务意图');
     expect(container.textContent).toContain('解析用户输入并确定执行路径');
     expect(container.textContent).toContain('我会先拆解目标，再组织报告结构。');
     expect(container.textContent).not.toContain('已完成 ·');
+    expect(
+      container.querySelector('.coze-prototype-conversation-column'),
+    ).toBeTruthy();
+    expect(container.querySelector('.coze-prototype-user-turn')).toBeTruthy();
+    const turnTime = container.querySelector('.coze-prototype-turn-time');
+    expect(turnTime).toBeTruthy();
+    expect(
+      Number.isNaN(Date.parse(turnTime?.getAttribute('datetime') ?? '')),
+    ).toBe(false);
+    expect(
+      container.querySelector('.coze-prototype-assistant-turn-shell'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('.coze-prototype-task-topbar')?.textContent,
+    ).not.toContain('☆');
     expect(
       container.querySelector('.coze-prototype-reasoning-panel'),
     ).toBeTruthy();
@@ -1229,7 +1367,8 @@ describe('TaskDetailPage', () => {
     expect(titleGroup?.textContent).not.toContain('运行中');
     expect(actions?.textContent).toContain('导出');
     expect(actions?.textContent).toContain('详情');
-    expect(actions?.textContent).toContain('☆ 收藏');
+    expect(actions?.textContent).toContain('收藏');
+    expect(actions?.textContent).not.toContain('☆');
     expect(actions?.textContent).not.toContain('产物');
     expect(actions?.textContent).not.toContain('生成周报');
 
@@ -2131,11 +2270,7 @@ describe('TaskDetailPage', () => {
     expect(
       followUpComposer?.querySelector('.chat-workbench-extension-panel'),
     ).toBeNull();
-    expect(
-      followUpComposer
-        ?.querySelector('.chat-workbench-model-dialog-mask')
-        ?.getAttribute('data-open'),
-    ).toBe('true');
+    expect(modelButton?.getAttribute('data-open')).toBe('true');
     expect(
       followUpComposer
         ?.querySelector('.chat-workbench-model-menu')
@@ -2788,7 +2923,130 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('renders canonical thread token usage in task detail top bar', async () => {
+  it('keeps messages and composer available when usage fails, then retries usage only', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+    mockListTaskThreadMessages.mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            message_id: 'message-usage-user',
+            thread_id: 'thread-1',
+            run_id: 'run-usage',
+            role: 'user',
+            content: '请总结本周项目进展',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-usage-assistant',
+            thread_id: 'thread-1',
+            run_id: 'run-usage',
+            role: 'assistant',
+            content: '本周完成了 UI 改造方案。',
+            created_at: 1717000001000,
+          },
+        ],
+        total: 2,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockRejectedValueOnce(
+      new Error('raw usage endpoint failure'),
+    );
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('生成周报');
+    expect(container.textContent).toContain('请总结本周项目进展');
+    expect(container.querySelector('.coze-prototype-followup')).toBeTruthy();
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-testid="task-usage-trigger"]',
+    );
+    expect(trigger).toBeTruthy();
+
+    await act(async () => {
+      Simulate.click(trigger!);
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Token 用量明细加载失败，请重试',
+    );
+    expect(container.textContent).not.toContain('raw usage endpoint failure');
+
+    const coreRequestCounts = {
+      artifacts: mockListTaskThreadArtifacts.mock.calls.length,
+      events: mockListTaskThreadRunEvents.mock.calls.length,
+      messages: mockListTaskThreadMessages.mock.calls.length,
+      runs: mockListTaskThreadRuns.mock.calls.length,
+      thread: mockGetTaskThread.mock.calls.length,
+    };
+    mockGetTaskThreadTokenUsage.mockResolvedValueOnce({
+      data: {
+        usage: [],
+        total: 0,
+        aggregate: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          cost_micros: 0,
+          call_count: 0,
+          lead_agent_tokens: 0,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+    const retry = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button'),
+    ).find(button => button.textContent?.includes('重试'));
+
+    await act(async () => {
+      Simulate.click(retry!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledTimes(3);
+    expect(mockGetTaskThread).toHaveBeenCalledTimes(coreRequestCounts.thread);
+    expect(mockListTaskThreadMessages).toHaveBeenCalledTimes(
+      coreRequestCounts.messages,
+    );
+    expect(mockListTaskThreadRuns).toHaveBeenCalledTimes(
+      coreRequestCounts.runs,
+    );
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledTimes(
+      coreRequestCounts.events,
+    );
+    expect(mockListTaskThreadArtifacts).toHaveBeenCalledTimes(
+      coreRequestCounts.artifacts,
+    );
+    expect(container.textContent).not.toContain(
+      'Token 用量明细加载失败，请重试',
+    );
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('moves canonical thread token usage from the header and messages into the composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -2811,6 +3069,31 @@ describe('TaskDetailPage', () => {
         last_agent_message: '统计完成',
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-token-user',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            role: 'user',
+            content: '请统计模型用量',
+            created_at: 1_720_000_000,
+          },
+          {
+            message_id: 'message-token-assistant',
+            thread_id: 'thread-token-1',
+            run_id: 'run-token-1',
+            role: 'assistant',
+            content: '统计完成',
+            created_at: 1_720_000_001,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -2884,16 +3167,33 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith({
-      thread_id: 'thread-token-1',
-      page: 1,
-      page_size: 50,
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith(
+      {
+        thread_id: 'thread-token-1',
+        page: 1,
+        page_size: 50,
+      },
+      expect.objectContaining({
+        signal: expect.anything(),
+      }),
+    );
+    expect(
+      container.querySelector(
+        '.coze-prototype-task-topbar button.coze-prototype-token-usage',
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector('.coze-prototype-message-token-usage'),
+    ).toBeNull();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
     });
     const tokenUsage = container.querySelector(
-      'button.coze-prototype-token-usage',
+      '[data-testid="task-usage-trigger"]',
     );
     expect(tokenUsage).toBeTruthy();
-    expectTextFragments(tokenUsage?.textContent, ['Tokens', '1,801']);
+    expectTextFragments(tokenUsage?.textContent, ['用量', '1,801']);
     expect(tokenUsage?.getAttribute('title')).toBe(
       '输入 1,234 · 输出 567 · 总计 1,801',
     );
@@ -2909,64 +3209,351 @@ describe('TaskDetailPage', () => {
     );
     expectElementTextFragments(tokenUsagePopover, [
       'Token 用量',
+      '本次对话',
       '输入',
       '1,234',
       '输出',
       '567',
-      '总计',
+      '会话总量',
       '1,801',
-      '成本',
-      'USD 0.002500',
-      '显示方式',
-      '关闭',
-      '隐藏顶部和会话内',
-      '总览',
-      '只在顶部显示',
-      '每轮',
-      '为每轮 assistant 回复',
-      '调试',
-      '按步骤归类',
-      '顶部总量优先使用后端持久化的线程用量',
+      '查看用量明细',
     ]);
-    expect(container.textContent).not.toContain('Agent 1,500');
-    expect(container.textContent).not.toContain('Tool 301');
-    expect(container.textContent).not.toContain('openai / gpt-4.1');
+    expect(tokenUsagePopover?.textContent).not.toContain('成本');
+    expect(tokenUsagePopover?.textContent).not.toContain('USD 0.002500');
     expect(container.textContent).not.toContain('secret');
 
-    const debugModeButton = Array.from(
-      container.querySelectorAll('.coze-prototype-token-usage-mode-item'),
-    ).find(button => button.textContent?.includes('调试'));
-    expect(debugModeButton).toBeTruthy();
+    const detailButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button'),
+    ).find(button => button.textContent?.includes('查看用量明细'));
+    expect(detailButton).toBeTruthy();
 
     await act(async () => {
-      Simulate.click(debugModeButton as HTMLButtonElement);
+      Simulate.click(detailButton!);
       await Promise.resolve();
     });
 
-    await act(async () => {
-      Simulate.click(tokenUsage!);
-      await Promise.resolve();
-    });
-
-    const debugTokenUsagePopover = container.querySelector(
-      '[data-testid="task-token-usage-popover"]',
-    );
-    expectElementTextFragments(debugTokenUsagePopover, [
-      '调试摘要',
-      '调用',
-      '2',
-      'Lead agent',
-      '1,500',
-      'Tool',
-      '301',
-      '模型',
-      'openai / gpt-4.1',
+    const usageDrawer = container.querySelector('[role="dialog"]');
+    expectElementTextFragments(usageDrawer, [
+      '用量明细',
+      '每次 Agent 回复',
+      '输入',
+      '1,234',
+      '输出',
+      '567',
+      '合计',
+      '1,801',
     ]);
-    expect(debugTokenUsagePopover?.textContent).not.toContain('secret');
+    expect(usageDrawer?.textContent).not.toContain('run-token-1');
+    expect(
+      usageDrawer?.querySelector('[aria-label="可审计元数据"]'),
+    ).toBeNull();
+    expect(usageDrawer?.textContent).not.toContain('secret');
+    expect(usageDrawer?.textContent).not.toContain('raw_usage');
+    expect(usageDrawer?.textContent).not.toContain('metadata');
+    const assistantTurn = container.querySelector<HTMLElement>(
+      '.coze-prototype-assistant-turn',
+    );
+    const scrollIntoView = vi.fn();
+    if (assistantTurn) {
+      assistantTurn.scrollIntoView = scrollIntoView;
+    }
+    const locateReply = Array.from(
+      usageDrawer?.querySelectorAll<HTMLButtonElement>('button') ?? [],
+    ).find(button => button.textContent?.includes('定位回复'));
+    expect(assistantTurn).not.toBeNull();
+    expect(locateReply).toBeDefined();
+    await act(async () => {
+      locateReply?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'center',
+    });
+    expect(document.activeElement).toBe(assistantTurn);
 
     act(() => {
       root?.unmount();
     });
+    container.remove();
+  });
+
+  it('hides authoritative usage numbers in the real footer slot before the first assistant reply', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    saveTaskTokenUsageViewMode('summary');
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-token-no-reply',
+    });
+    mockGetTaskThread.mockResolvedValue({
+      data: {
+        thread_id: 'thread-token-no-reply',
+        legacy_task_id: '',
+        space_id: 'space-1',
+        creator_id: 'user-1',
+        title: '等待首次回复',
+        status: 'running',
+        source: 'agent',
+        progress: 10,
+        last_user_message: '开始执行',
+        last_agent_message: '',
+        created_at: 1717000000000,
+        updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-token-user-only',
+            thread_id: 'thread-token-no-reply',
+            run_id: 'run-token-no-reply',
+            role: 'user',
+            content: '开始执行',
+            created_at: 1_720_000_000,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-token-provisional',
+            thread_id: 'thread-token-no-reply',
+            run_id: 'run-token-no-reply',
+            source: 'lead_agent',
+            input_tokens: 80,
+            output_tokens: 0,
+            total_tokens: 80,
+            cost_micros: 0,
+            currency: '',
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+        aggregate: {
+          input_tokens: 80,
+          output_tokens: 0,
+          total_tokens: 80,
+          cost_micros: 0,
+          call_count: 1,
+          lead_agent_tokens: 80,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<TaskDetailPage />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalled();
+    const composer = container.querySelector('.coze-prototype-followup');
+    expect(
+      composer?.querySelector('[data-testid="task-usage-trigger"]'),
+    ).toBeNull();
+    expect(composer?.querySelector('[aria-label="用量显示设置"]')).toBeNull();
+    expect(composer?.textContent).not.toContain('80');
+
+    act(() => {
+      root?.unmount();
+    });
+    container.remove();
+  });
+
+  it('recovers an off usage preference through the real footer slot across remounts', async () => {
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+    saveTaskTokenUsageViewMode('per_turn');
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-mode-assistant',
+            thread_id: 'thread-1',
+            run_id: 'run-mode',
+            role: 'assistant',
+            content: '统计完成',
+            created_at: 1_720_000_001,
+          },
+        ],
+        total: 1,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockGetTaskThreadTokenUsage.mockResolvedValue({
+      data: {
+        usage: [
+          {
+            usage_id: 'usage-mode',
+            thread_id: 'thread-1',
+            run_id: 'run-mode',
+            input_tokens: 1234,
+            output_tokens: 567,
+            total_tokens: 1801,
+            cost_micros: 0,
+            currency: '',
+            call_count: 2,
+            lead_agent_tokens: 1500,
+            subagent_tokens: 0,
+            middleware_tokens: 0,
+            tool_tokens: 301,
+            model_attributions: ['openai / gpt-4.1'],
+            created_at: 1717000200000,
+          },
+        ],
+        total: 1,
+        aggregate: {
+          input_tokens: 1234,
+          output_tokens: 567,
+          total_tokens: 1801,
+          cost_micros: 0,
+          currency: '',
+          call_count: 2,
+          lead_agent_tokens: 1500,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 301,
+        },
+      },
+      code: 0,
+      msg: '',
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let root: Root | undefined;
+
+    const mountPage = async () => {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<TaskDetailPage />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    const unmountPage = async () => {
+      await act(async () => {
+        root?.unmount();
+        await Promise.resolve();
+      });
+      root = undefined;
+    };
+    const getComposer = () =>
+      container.querySelector('.coze-prototype-followup');
+    const findPreference = (label: string) =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>('[role="radio"]'),
+      ).find(element => element.textContent?.includes(label));
+
+    await mountPage();
+
+    const perTurnTrigger = getComposer()?.querySelector<HTMLButtonElement>(
+      '[data-testid="task-usage-trigger"]',
+    );
+    expect(perTurnTrigger).not.toBeNull();
+
+    await act(async () => {
+      perTurnTrigger?.click();
+      await Promise.resolve();
+    });
+    const detailAction = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button'),
+    ).find(button => button.textContent?.includes('查看用量明细'));
+    await act(async () => {
+      detailAction?.click();
+      await Promise.resolve();
+    });
+    const offPreference = findPreference('按需查看');
+    expect(offPreference).toBeDefined();
+    await act(async () => {
+      offPreference?.click();
+      await Promise.resolve();
+    });
+
+    expect(loadTaskTokenUsageViewMode()).toBe('off');
+    expect(
+      getComposer()?.querySelector('[data-testid="task-usage-trigger"]'),
+    ).toBeNull();
+    expect(
+      getComposer()?.querySelector('[aria-label="用量显示设置"]'),
+    ).not.toBeNull();
+
+    await unmountPage();
+    await mountPage();
+
+    const settingsTrigger = getComposer()?.querySelector<HTMLButtonElement>(
+      '[aria-label="用量显示设置"]',
+    );
+    expect(settingsTrigger).not.toBeNull();
+    expect(
+      getComposer()?.querySelector('[data-testid="task-usage-trigger"]'),
+    ).toBeNull();
+    expect(loadTaskTokenUsageViewMode()).toBe('off');
+
+    await act(async () => {
+      settingsTrigger?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('用量显示设置');
+    expect(container.textContent).not.toContain('会话总量');
+    expect(container.textContent).not.toContain('1,801');
+
+    const summaryPreference = findPreference('会话总览');
+    expect(summaryPreference).toBeDefined();
+    await act(async () => {
+      summaryPreference?.click();
+      await Promise.resolve();
+    });
+
+    expect(loadTaskTokenUsageViewMode()).toBe('summary');
+    expect(container.textContent).toContain('会话总量');
+    expect(container.textContent).not.toContain('每次 Agent 回复');
+    expect(container.textContent).not.toContain('当前回复');
+
+    await unmountPage();
+    await mountPage();
+
+    const summaryTrigger = getComposer()?.querySelector<HTMLButtonElement>(
+      '[data-testid="task-usage-trigger"]',
+    );
+    expect(summaryTrigger).not.toBeNull();
+    expect(summaryTrigger?.textContent).toContain('1,801');
+    expect(
+      getComposer()?.querySelector('[aria-label="用量显示设置"]'),
+    ).toBeNull();
+    expect(loadTaskTokenUsageViewMode()).toBe('summary');
+
+    await act(async () => {
+      summaryTrigger?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('会话总量');
+    expect(container.textContent).not.toContain('当前回复');
+
+    await unmountPage();
     container.remove();
   });
 
@@ -2993,6 +3580,23 @@ describe('TaskDetailPage', () => {
         last_agent_message: '统计完成',
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-token-mixed-assistant',
+            thread_id: 'thread-token-mixed-currency-1',
+            run_id: 'run-token-mixed-1',
+            role: 'assistant',
+            content: '统计完成',
+            created_at: 1_720_000_001,
+          },
+        ],
+        total: 1,
       },
       code: 0,
       msg: '',
@@ -3066,6 +3670,10 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const tokenUsageButton = container.querySelector(
       'button.coze-prototype-token-usage',
     );
@@ -3081,7 +3689,7 @@ describe('TaskDetailPage', () => {
     );
     expectElementTextFragments(tokenUsagePopover, [
       'Token 用量',
-      '总计',
+      '会话总量',
       '300',
     ]);
     expect(tokenUsagePopover?.textContent).not.toContain('成本');
@@ -3117,6 +3725,23 @@ describe('TaskDetailPage', () => {
         last_agent_message: '统计完成',
         created_at: 1717000000000,
         updated_at: 1717000300000,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      data: {
+        messages: [
+          {
+            message_id: 'message-token-paginated-assistant',
+            thread_id: 'thread-token-paginated-currency-1',
+            run_id: 'run-token-paginated-1',
+            role: 'assistant',
+            content: '统计完成',
+            created_at: 1_720_000_001,
+          },
+        ],
+        total: 1,
       },
       code: 0,
       msg: '',
@@ -3169,6 +3794,10 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const tokenUsageButton = container.querySelector(
       'button.coze-prototype-token-usage',
     );
@@ -3184,7 +3813,7 @@ describe('TaskDetailPage', () => {
     );
     expectElementTextFragments(tokenUsagePopover, [
       'Token 用量',
-      '总计',
+      '会话总量',
       '300',
     ]);
     expect(tokenUsagePopover?.textContent).not.toContain('成本');
@@ -3298,24 +3927,19 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const turnTokenUsage = container.querySelector(
-      '.coze-prototype-message-token-usage',
-    );
-    expectElementTextFragments(turnTokenUsage, [
-      'Tokens',
-      '输入',
-      '321',
-      '输出',
-      '123',
-      '总计',
-      '444',
-    ]);
+    expect(
+      container.querySelector('.coze-prototype-message-token-usage'),
+    ).toBeNull();
     expect(container.textContent).not.toContain('secret-provider');
     expect(container.textContent).not.toContain('secret prompt');
     expect(container.textContent).not.toContain('secret model step');
 
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const tokenUsageButton = container.querySelector(
-      'button.coze-prototype-token-usage',
+      '[data-testid="task-usage-trigger"]',
     );
     expect(tokenUsageButton).toBeTruthy();
 
@@ -3324,20 +3948,11 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    const summaryModeButton = Array.from(
-      container.querySelectorAll('.coze-prototype-token-usage-mode-item'),
-    ).find(button => button.textContent?.includes('总览'));
-    expect(summaryModeButton).toBeTruthy();
-
-    await act(async () => {
-      Simulate.click(summaryModeButton as HTMLButtonElement);
-      await Promise.resolve();
-    });
-
-    expect(
-      container.querySelector('.coze-prototype-message-token-usage'),
-    ).toBeNull();
-    expect(tokenUsageButton?.textContent).toContain('444');
+    const currentReply = container.querySelector(
+      '[data-testid="task-token-usage-popover"]',
+    );
+    expectElementTextFragments(currentReply, ['当前回复', '444']);
+    expect(currentReply?.textContent).not.toContain('secret-provider');
 
     act(() => {
       root?.unmount();
@@ -4667,6 +5282,16 @@ describe('TaskDetailPage', () => {
         container.querySelectorAll('.coze-prototype-execution-feed'),
       );
       expect(executionFeeds).toHaveLength(2);
+      act(() => {
+        executionFeeds.forEach(feed => {
+          const summaryTrigger = feed.querySelector(
+            '.coze-prototype-execution-summary-trigger',
+          );
+          if (summaryTrigger) {
+            Simulate.click(summaryTrigger);
+          }
+        });
+      });
       expect(executionFeeds[0].textContent).toContain(
         '创建 Java 学习路线 Markdown 文档',
       );
@@ -6472,6 +7097,14 @@ describe('TaskDetailPage', () => {
     expect(
       container.querySelector('.coze-prototype-execution-feed'),
     ).toBeTruthy();
+    act(() => {
+      const summaryTrigger = container.querySelector(
+        '.coze-prototype-execution-summary-trigger',
+      );
+      if (summaryTrigger) {
+        Simulate.click(summaryTrigger);
+      }
+    });
     expect(container.textContent).toContain('开始执行 generate_answer');
 
     act(() => {
@@ -6501,7 +7134,7 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('merges streaming token usage snapshots without rendering them as execution steps', async () => {
+  it('uses streaming token usage snapshots to invalidate REST usage without rendering execution steps', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -6540,8 +7173,17 @@ describe('TaskDetailPage', () => {
             metadata: '',
             created_at: 1717000100000,
           },
+          {
+            message_id: 'msg-token-stream-assistant-1',
+            thread_id: 'thread-token-stream-1',
+            run_id: 'run-token-stream-1',
+            role: 'assistant',
+            content: '正在生成答案',
+            metadata: '',
+            created_at: 1717000101000,
+          },
         ],
-        total: 1,
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -6566,7 +7208,7 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockGetTaskThreadTokenUsage.mockResolvedValue({
+    const emptyUsageResponse = {
       data: {
         usage: [],
         total: 0,
@@ -6584,7 +7226,48 @@ describe('TaskDetailPage', () => {
       },
       code: 0,
       msg: '',
-    });
+    };
+    const refreshedUsageResponse = {
+      data: {
+        usage: [
+          {
+            usage_id: '401',
+            thread_id: 'thread-token-stream-1',
+            run_id: 'run-token-stream-1',
+            source: 'lead_agent',
+            step_id: 'model-1',
+            step_name: 'generate_answer',
+            model_name: 'gpt-test',
+            provider: 'openai-compatible',
+            input_tokens: 12,
+            output_tokens: 8,
+            total_tokens: 20,
+            cost_micros: 123,
+            currency: 'USD',
+            estimated: false,
+            created_at: 1717000300000,
+          },
+        ],
+        total: 1,
+        aggregate: {
+          input_tokens: 12,
+          output_tokens: 8,
+          total_tokens: 20,
+          cost_micros: 123,
+          call_count: 1,
+          lead_agent_tokens: 20,
+          subagent_tokens: 0,
+          middleware_tokens: 0,
+          tool_tokens: 0,
+        },
+      },
+      code: 0,
+      msg: '',
+    };
+    mockGetTaskThreadTokenUsage
+      .mockResolvedValueOnce(emptyUsageResponse)
+      .mockResolvedValueOnce(emptyUsageResponse)
+      .mockResolvedValue(refreshedUsageResponse);
 
     await act(async () => {
       root = createRoot(container);
@@ -6592,12 +7275,15 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(
-      container.querySelector('button.coze-prototype-token-usage'),
-    ).toBeNull();
+    const emptyTokenUsage = container.querySelector(
+      'button.coze-prototype-token-usage',
+    );
+    expect(emptyTokenUsage).toBeTruthy();
+    expect(emptyTokenUsage?.textContent).not.toContain('20');
+    expect(emptyTokenUsage?.getAttribute('aria-label')).toBe('查看 Token 用量');
     expect(MockEventSource.instances).toHaveLength(1);
 
-    act(() => {
+    await act(async () => {
       MockEventSource.instances[0].emit(
         'run.event',
         JSON.stringify({
@@ -6622,22 +7308,39 @@ describe('TaskDetailPage', () => {
           created_at: 1717000300000,
         }),
       );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledTimes(4);
     const tokenUsage = container.querySelector(
       'button.coze-prototype-token-usage',
     );
     expect(tokenUsage).toBeTruthy();
-    expectTextFragments(tokenUsage?.textContent, ['Tokens', '20']);
+    expectTextFragments(tokenUsage?.textContent, ['用量', '20']);
     expect(tokenUsage?.getAttribute('title')).toBe(
       '输入 12 · 输出 8 · 总计 20',
     );
     const executionFeedText =
       container.querySelector('.coze-prototype-execution-feed')?.textContent ??
       '';
-    expect(executionFeedText).toContain('开始执行 generate_answer');
+    act(() => {
+      const summaryTrigger = container.querySelector(
+        '.coze-prototype-execution-summary-trigger',
+      );
+      if (summaryTrigger) {
+        Simulate.click(summaryTrigger);
+      }
+    });
+    const expandedExecutionFeedText =
+      container.querySelector('.coze-prototype-execution-feed')?.textContent ??
+      '';
     expect(executionFeedText).not.toContain('token_usage.snapshot');
-    expect(executionFeedText).not.toContain('Token 流式统计');
+    expect(expandedExecutionFeedText).toContain('开始执行 generate_answer');
+    expect(expandedExecutionFeedText).not.toContain('token_usage.snapshot');
+    expect(expandedExecutionFeedText).not.toContain('Token 流式统计');
 
     act(() => {
       root?.unmount();
@@ -6811,6 +7514,14 @@ describe('TaskDetailPage', () => {
     );
 
     expect(executionFeed).toBeTruthy();
+    act(() => {
+      const summaryTrigger = executionFeed?.querySelector(
+        '.coze-prototype-execution-summary-trigger',
+      );
+      if (summaryTrigger) {
+        Simulate.click(summaryTrigger);
+      }
+    });
     expect(executionFeed?.textContent).toContain('创建武汉3日游攻略文档');
     expect(executionFeed?.textContent).toContain('确认产物已经写入并可预览。');
     expect(executionFeed?.textContent).not.toContain('任务开始执行');
@@ -6931,11 +7642,52 @@ describe('TaskDetailPage', () => {
       executionFeed?.classList.contains('coze-prototype-chain-of-thought'),
     ).toBe(true);
     expect(chainContent).toBeTruthy();
-    expect(executionFeed?.textContent).toContain('查看其他 3 个步骤');
+    expect(executionFeed?.textContent).toContain('已完成 4 个步骤');
     expect(chainContent?.querySelectorAll('.coze-prototype-step')).toHaveLength(
-      1,
+      0,
     );
     expect(executionFeed?.textContent).not.toContain('更新 To-do 列表');
+    expect(executionFeed?.textContent).not.toContain(
+      '创建武汉3日游攻略 Markdown 文档',
+    );
+    expect(executionFeed?.textContent).not.toContain(
+      '/mnt/user-data/workspace/武汉3日游攻略.md',
+    );
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-step-more-chevron')
+        ?.getAttribute('data-open'),
+    ).toBe('false');
+    expect(executionFeed?.textContent).not.toContain(
+      '工具 write_file 调用完成',
+    );
+    expect(executionFeed?.textContent).not.toContain('已返回结果');
+
+    const moreButton = executionFeed?.querySelector(
+      '.coze-prototype-execution-summary-trigger',
+    );
+    expect(moreButton).toBeTruthy();
+    expect(moreButton?.getAttribute('aria-expanded')).toBe('false');
+
+    act(() => {
+      if (!moreButton) {
+        return;
+      }
+
+      Simulate.click(moreButton);
+    });
+
+    expect(executionFeed?.textContent).toContain('可用技能目录');
+    expect(moreButton?.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      executionFeed
+        ?.querySelector('.coze-prototype-chain-content')
+        ?.querySelectorAll('.coze-prototype-step'),
+    ).toHaveLength(4);
+    expect(executionFeed?.textContent).toContain('更新 To-do 列表');
+    expect(executionFeed?.textContent).toContain(
+      '搜索网页：“武汉三日游最佳路线”',
+    );
     expect(executionFeed?.textContent).toContain(
       '创建武汉3日游攻略 Markdown 文档',
     );
@@ -6954,40 +7706,7 @@ describe('TaskDetailPage', () => {
     ).toBeTruthy();
     expect(
       executionFeed?.querySelector('.coze-prototype-step-rail'),
-    ).toBeTruthy();
-    expect(
-      executionFeed
-        ?.querySelector('.coze-prototype-step-more-chevron')
-        ?.getAttribute('data-open'),
-    ).toBe('false');
-    expect(executionFeed?.textContent).not.toContain(
-      '工具 write_file 调用完成',
-    );
-    expect(executionFeed?.textContent).not.toContain('已返回结果');
-
-    const moreButton = executionFeed?.querySelector(
-      '.coze-prototype-step-more-button',
-    );
-    expect(moreButton).toBeTruthy();
-
-    act(() => {
-      if (!moreButton) {
-        return;
-      }
-
-      Simulate.click(moreButton);
-    });
-
-    expect(executionFeed?.textContent).toContain('隐藏步骤');
-    expect(
-      executionFeed
-        ?.querySelector('.coze-prototype-chain-content')
-        ?.querySelectorAll('.coze-prototype-step'),
-    ).toHaveLength(4);
-    expect(executionFeed?.textContent).toContain('更新 To-do 列表');
-    expect(executionFeed?.textContent).toContain(
-      '搜索网页：“武汉三日游最佳路线”',
-    );
+    ).toBeNull();
     expect(
       executionFeed?.querySelector('.coze-prototype-step-runtime'),
     ).toBeFalsy();
@@ -8050,6 +8769,14 @@ describe('TaskDetailPage', () => {
       page: 1,
       page_size: 100,
     });
+    act(() => {
+      const summaryTrigger = container.querySelector(
+        '.coze-prototype-execution-summary-trigger',
+      );
+      if (summaryTrigger) {
+        Simulate.click(summaryTrigger);
+      }
+    });
     expect(container.textContent).toContain('任务执行失败');
     expect(container.textContent).toContain('bounded failure');
 
@@ -8600,6 +9327,9 @@ describe('TaskDetailPage', () => {
       } as unknown as Event);
     });
     expect(container.textContent).toContain('customer-feedback.csv');
+    expect(
+      fileInput.closest('.chat-composer[data-variant="docked"]'),
+    ).not.toBeNull();
 
     const sendButton = container.querySelector(
       'button[aria-label="发送任务"]',

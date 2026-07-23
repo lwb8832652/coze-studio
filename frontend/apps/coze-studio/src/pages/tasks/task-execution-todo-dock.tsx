@@ -17,6 +17,10 @@
 import { useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
+import {
+  IconCozArrowDown,
+  IconCozListDisorder,
+} from '@coze-arch/coze-design/icons';
 
 import { projectTaskExecutionEvents } from './task-event-projection';
 import { isTaskTerminalStatus } from './helpers';
@@ -110,7 +114,7 @@ export const TaskExecutionTodoDock = ({
         onClick={() => setCollapsed(value => !value)}
       >
         <span className="coze-prototype-todo-dock-title">
-          <span aria-hidden="true">☷</span>
+          <IconCozListDisorder aria-hidden="true" />
           <span>To-dos</span>
         </span>
         <span
@@ -118,7 +122,7 @@ export const TaskExecutionTodoDock = ({
           data-collapsed={collapsed}
           aria-hidden="true"
         >
-          ^
+          <IconCozArrowDown />
         </span>
       </button>
       <div className="coze-prototype-todo-dock-body">

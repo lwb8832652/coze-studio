@@ -16,11 +16,7 @@
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
-import {
-  mapTaskThreadTokenUsageAggregate,
-  mapTaskThreadTokenUsageRowsByRunID,
-  type TaskDetailTokenUsage,
-} from './task-detail-token-usage';
+import type { TaskDetailTokenUsage } from './task-detail-token-usage';
 import {
   fetchTaskThreadSubagentRuns,
   getSubagentLifecycleByChildRunID,
@@ -31,7 +27,6 @@ import { mergeJournalTaskEvents } from './task-detail-journal-events';
 import {
   getTask,
   getTaskThread,
-  getTaskThreadTokenUsage,
   listTaskThreadRuns,
   listTaskThreadArtifacts,
   listTaskEvents,
@@ -273,7 +268,6 @@ const fetchTaskThreadDetail = async (
     messagesResponse,
     topLevelRunsResponse,
     runEventsResponse,
-    tokenUsageResponse,
     artifactsResponse,
   ] = await Promise.all([
     listTaskThreadMessages({
@@ -291,11 +285,6 @@ const fetchTaskThreadDetail = async (
       thread_id: threadID,
       page: 1,
       page_size: 100,
-    }),
-    getTaskThreadTokenUsage({
-      thread_id: threadID,
-      page: 1,
-      page_size: 50,
     }),
     listTaskThreadArtifacts({
       thread_id: threadID,
@@ -333,14 +322,6 @@ const fetchTaskThreadDetail = async (
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     suggestionModelName: suggestionModel.suggestionModelName,
     suggestionModelType: suggestionModel.suggestionModelType,
-    tokenUsage: mapTaskThreadTokenUsageAggregate(
-      tokenUsageResponse.data?.aggregate,
-      tokenUsageResponse.data?.usage,
-      tokenUsageResponse.data?.total,
-    ),
-    tokenUsageByRunID: mapTaskThreadTokenUsageRowsByRunID(
-      tokenUsageResponse.data?.usage,
-    ),
     subagentRuns,
   };
 };

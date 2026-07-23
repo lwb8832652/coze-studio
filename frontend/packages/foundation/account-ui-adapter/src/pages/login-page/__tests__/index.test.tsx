@@ -19,6 +19,10 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes } from 'react';
 import '@testing-library/jest-dom/vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
+import {
+  DEFAULT_SITE_CONFIG,
+  useCommonConfigStore,
+} from '@coze-foundation/global-store';
 
 const login = vi.hoisted(() => vi.fn());
 const register = vi.hoisted(() => vi.fn());
@@ -35,7 +39,7 @@ vi.mock('../service', () => ({
 
 vi.mock('@coze-studio/components/coze-brand', () => ({
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
-  CozeBrand: () => <div>Coze</div>,
+  CozeBrand: () => <div data-testid="fallback-brand">Coze</div>,
 }));
 
 vi.mock('@coze-arch/i18n', () => ({
@@ -112,6 +116,7 @@ describe('LoginPage', () => {
     login.mockReset();
     register.mockReset();
     setLang.mockReset();
+    useCommonConfigStore.getState().updateSiteConfig(DEFAULT_SITE_CONFIG);
   });
 
   it('switches between password login and email registration', () => {
@@ -180,5 +185,25 @@ describe('LoginPage', () => {
     expect(screen.getByRole('tab', { name: 'Password' })).toBeInTheDocument();
     expect(setLang).toHaveBeenCalledWith('en');
     expect(localStorage.getItem('i18next')).toBe('en');
+  });
+
+  it('renders the configured site name, description and logo', () => {
+    useCommonConfigStore.getState().updateSiteConfig({
+      siteName: 'Acme AI',
+      siteDescription: 'Acme intelligent workspace',
+      siteLogoUrl: 'https://assets.example.com/logo.png',
+      faviconUrl: '',
+      revision: 'revision-1',
+    });
+
+    render(<LoginPage />);
+
+    expect(screen.getByRole('img', { name: 'Acme AI' })).toHaveAttribute(
+      'src',
+      'https://assets.example.com/logo.png',
+    );
+    expect(screen.getByText('Acme intelligent workspace')).toBeInTheDocument();
+    expect(screen.getByText('Powered by Acme AI')).toBeInTheDocument();
+    expect(screen.queryByTestId('fallback-brand')).not.toBeInTheDocument();
   });
 });

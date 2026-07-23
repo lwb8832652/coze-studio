@@ -45,21 +45,65 @@ vi.mock('react-router-dom', () => ({
   useParams: mockUseParams,
 }));
 
+vi.mock('@coze-foundation/global-adapter', () => ({
+  refreshSiteConfig: vi.fn(),
+}));
+
 vi.mock('../service', () => ({
+  createAdminManagedModel: vi.fn(),
   createAdminModel: mockCreateAdminModel,
   createAdminUser: mockCreateAdminUser,
   deleteAdminModel: mockDeleteAdminModel,
   getAdminBasicConfig: mockGetAdminBasicConfig,
   getAdminKnowledgeConfig: mockGetAdminKnowledgeConfig,
+  getAdminManagedModelDetail: vi.fn(),
+  getAdminManagedModelGrants: vi.fn().mockResolvedValue({ grants: [] }),
   getAdminModelList: mockGetAdminModelList,
   getSystemAdminStatus: mockGetSystemAdminStatus,
   isAdminBasicConfigConflict: mockIsAdminBasicConfigConflict,
+  listAdminManagedModels: vi.fn().mockResolvedValue({
+    models: [
+      {
+        access_mode: 2,
+        capability_types: ['text', 'reasoning'],
+        creator_id: '9',
+        enabled: true,
+        id: '12',
+        model_class: 3,
+        model_identifier: 'deepseek-v4-pro',
+        name: 'DeepSeek V4 Pro',
+        provider_key: 'deepseek',
+        sort_order: 1,
+        updated_at_ms: 1784707200000,
+      },
+    ],
+    total: 1,
+  }),
+  listAdminModelProviders: vi.fn().mockResolvedValue({
+    providers: [
+      {
+        default_base_url: 'https://api.deepseek.com/v1',
+        model_class: 3,
+        name: { zh_cn: 'Deepseek 模型' },
+        protocol: 'openai-compatible',
+        provider_key: 'deepseek',
+        supports_custom_base_url: true,
+        supports_function_call: true,
+        supports_multimodal: false,
+      },
+    ],
+  }),
   listAdminUserSpaces: mockListAdminUserSpaces,
   listAdminWorkspaceMembers: mockListAdminWorkspaceMembers,
   listAdminUsers: mockListAdminUsers,
   listAdminWorkspaces: mockListAdminWorkspaces,
   resetAdminUserPassword: mockResetAdminUserPassword,
   saveAdminBasicConfig: mockSaveAdminBasicConfig,
+  saveAdminManagedModelGrants: vi.fn(),
+  sortAdminManagedModels: vi.fn(),
+  testAdminManagedModelEndpoint: vi.fn(),
+  updateAdminManagedModel: vi.fn(),
+  updateAdminManagedModelStatus: vi.fn(),
   updateAdminUser: mockUpdateAdminUser,
 }));
 
@@ -597,7 +641,7 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('系统配置');
     expect(
       container.querySelector<HTMLInputElement>(
-        'input[aria-label="系统服务地址"]',
+        'input[aria-label="站点访问地址"]',
       )?.value,
     ).toBe('http://localhost:8888');
     expect(container.textContent).toContain('已关闭');
@@ -613,16 +657,16 @@ describe('SystemManagementPage', () => {
 
     await renderPage();
 
-    const serverHostInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="系统服务地址"]',
+    const adminEmailsInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="系统管理员邮箱"]',
     );
     const saveButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="保存系统基础配置"]',
     );
 
     await act(async () => {
-      serverHostInput!.value = 'https://agent.example.test';
-      Simulate.change(serverHostInput!);
+      adminEmailsInput!.value = 'owner@example.test,ops@example.test';
+      Simulate.change(adminEmailsInput!);
     });
 
     await act(async () => {
@@ -633,7 +677,7 @@ describe('SystemManagementPage', () => {
 
     expect(mockSaveAdminBasicConfig).toHaveBeenCalledWith(
       {
-        server_host: 'https://agent.example.test',
+        admin_emails: 'owner@example.test,ops@example.test',
       },
       'rev-7',
     );
@@ -647,12 +691,12 @@ describe('SystemManagementPage', () => {
     });
     await renderPage();
 
-    const serverHostInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="系统服务地址"]',
+    const adminEmailsInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="系统管理员邮箱"]',
     )!;
     await act(async () => {
-      serverHostInput.value = 'https://agent.example.test';
-      Simulate.change(serverHostInput);
+      adminEmailsInput.value = 'owner@example.test,ops@example.test';
+      Simulate.change(adminEmailsInput);
     });
     await act(async () => {
       Simulate.click(
@@ -677,8 +721,8 @@ describe('SystemManagementPage', () => {
     await renderPage();
 
     expect(container.textContent).toContain('模型配置');
-    expect(container.textContent).toContain('OpenAI 模型');
-    expect(container.textContent).toContain('gpt-4o');
-    expect(container.textContent).toContain('新增模型配置');
+    expect(container.textContent).toContain('DeepSeek V4 Pro');
+    expect(container.textContent).toContain('deepseek-v4-pro');
+    expect(container.textContent).toContain('添加模型');
   });
 });

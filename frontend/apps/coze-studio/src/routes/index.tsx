@@ -64,6 +64,7 @@ import {
   WorkspacePage,
   PersonalCenterPage,
   SystemManagementPage,
+  BillingCenterPage,
   TaskDetailPage,
   TasksPage,
   TaskCenterPage,
@@ -527,6 +528,11 @@ export const router: ReturnType<typeof createBrowserRouter> =
             hasSider: false,
             requireAuth: true,
           }),
+        },
+        {
+          path: 'billing/:section',
+          Component: BillingCenterPage,
+          loader: () => ({ hasSider: false, requireAuth: true }),
         },
 
         // workflow routing

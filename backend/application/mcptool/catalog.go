@@ -229,6 +229,8 @@ func updateInMemoryMCPToolServer(
 	}
 	updated := cloneServer(stored)
 	if fieldMask&MCPToolServerMutationConnectionFields != 0 {
+		updated.CreatorID = server.CreatorID
+		updated.SourceType = normalizeCatalogMCPServerSourceType(server.SourceType)
 		updated.Name = server.Name
 		updated.Description = server.Description
 		updated.ServerType = server.ServerType

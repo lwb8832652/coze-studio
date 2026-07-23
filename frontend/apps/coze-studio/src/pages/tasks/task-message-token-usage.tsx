@@ -16,13 +16,19 @@
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
-import { formatTaskTokenCount } from './task-token-usage-indicator';
 import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
 } from './task-detail-loader';
 
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+
+export interface TaskUsageDetailItem {
+  canLocate: boolean;
+  createdAt?: number;
+  runID: string;
+  usage: TaskDetailTokenUsage;
+}
 
 const TOKEN_USAGE_VIEW_STORAGE_KEY = 'coze.task-detail.token-usage-view-mode';
 const DEFAULT_TOKEN_USAGE_VIEW_MODE: TaskTokenUsageViewMode = 'per_turn';
@@ -77,6 +83,103 @@ export const getLatestAssistantRunID = (messages: TaskThreadMessage[]) => {
   return '';
 };
 
+const normalizeTaskUsageRunID = (runID?: string) => {
+  const value = String(runID ?? '').trim();
+
+  return value && value !== '0' ? value : '';
+};
+
+export const getCurrentAssistantRunID = (
+  messages: TaskThreadMessage[],
+  latestTaskRunID?: string,
+) => {
+  const latestRunID = normalizeTaskUsageRunID(latestTaskRunID);
+  let latestUserIndex = -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user') {
+      latestUserIndex = index;
+      break;
+    }
+  }
+  if (latestUserIndex < 0) {
+    return '';
+  }
+
+  if (latestRunID) {
+    for (let index = messages.length - 1; index > latestUserIndex; index -= 1) {
+      const message = messages[index];
+      if (
+        message.role === 'assistant' &&
+        normalizeTaskUsageRunID(message.run_id) === latestRunID
+      ) {
+        return latestRunID;
+      }
+    }
+
+    return normalizeTaskUsageRunID(messages[latestUserIndex].run_id) ===
+      latestRunID
+      ? latestRunID
+      : '';
+  }
+
+  for (let index = messages.length - 1; index > latestUserIndex; index -= 1) {
+    const message = messages[index];
+    if (message.role === 'assistant') {
+      return normalizeTaskUsageRunID(message.run_id);
+    }
+  }
+
+  return '';
+};
+
+export const buildTaskUsageDetailItems = (
+  messages: TaskThreadMessage[],
+  tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>,
+): TaskUsageDetailItem[] => {
+  const detailItems: TaskUsageDetailItem[] = [];
+  const includedRunIDs = new Set<string>();
+
+  for (const message of messages) {
+    if (message.role !== 'assistant') {
+      continue;
+    }
+    const runID = normalizeTaskUsageRunID(message.run_id);
+    const usage = runID ? tokenUsageByRunID?.[runID] : undefined;
+    if (
+      !runID ||
+      !usage ||
+      usage.totalTokens <= 0 ||
+      includedRunIDs.has(runID)
+    ) {
+      continue;
+    }
+
+    includedRunIDs.add(runID);
+    detailItems.push({
+      canLocate: true,
+      createdAt:
+        Number.isFinite(message.created_at) && message.created_at > 0
+          ? message.created_at
+          : undefined,
+      runID,
+      usage,
+    });
+  }
+
+  for (const [runIDValue, usage] of Object.entries(tokenUsageByRunID ?? {})) {
+    const runID = normalizeTaskUsageRunID(runIDValue);
+    if (!runID || usage.totalTokens <= 0 || includedRunIDs.has(runID)) {
+      continue;
+    }
+
+    includedRunIDs.add(runID);
+    detailItems.push({ canLocate: false, runID, usage });
+  }
+
+  return detailItems;
+};
+
 export const TaskMessageTokenUsage = ({
   tokenUsage,
   viewMode,
@@ -84,18 +187,8 @@ export const TaskMessageTokenUsage = ({
   tokenUsage?: TaskDetailTokenUsage;
   viewMode: TaskTokenUsageViewMode;
 }) => {
-  if (viewMode !== 'per_turn' || !tokenUsage || tokenUsage.totalTokens <= 0) {
-    return null;
-  }
+  void tokenUsage;
+  void viewMode;
 
-  return (
-    <div className="coze-prototype-message-token-usage">
-      <span className="coze-prototype-message-token-label">Tokens</span>
-      <span>输入: {formatTaskTokenCount(tokenUsage.inputTokens)}</span>
-      <span>输出: {formatTaskTokenCount(tokenUsage.outputTokens)}</span>
-      <span className="coze-prototype-message-token-total">
-        总计: {formatTaskTokenCount(tokenUsage.totalTokens)}
-      </span>
-    </div>
-  );
+  return null;
 };

@@ -16,6 +16,7 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { IconCozInfoCircle } from '@coze-arch/coze-design/icons';
 import { SideSheet } from '@coze-arch/coze-design';
 
 import { TaskRuntimeDoctorSection } from './task-runtime-doctor-section';
@@ -43,15 +44,21 @@ export const TaskDetailInspector = ({
         className="coze-prototype-task-action"
         onClick={() => setVisible(true)}
       >
-        详情
+        <IconCozInfoCircle />
+        <span>详情</span>
       </button>
       <SideSheet
+        className="coze-prototype-task-inspector-drawer"
         size="large"
         title="任务详情"
         visible={visible}
         onCancel={() => setVisible(false)}
       >
         <div className="coze-prototype-detail-inspector">
+          <div className="coze-prototype-detail-inspector-intro">
+            <strong>运行与安全详情</strong>
+            <p>查看当前任务的产物、运行环境、安全审计与记忆记录。</p>
+          </div>
           {artifactAction}
           <TaskRuntimeDoctorSection spaceId={spaceId} />
           <TaskGuardrailAuditSection threadId={threadId} />

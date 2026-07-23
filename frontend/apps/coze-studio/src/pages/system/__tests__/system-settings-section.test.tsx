@@ -19,6 +19,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
+import {
+  DEFAULT_SITE_CONFIG,
+  useCommonConfigStore,
+} from '@coze-foundation/global-store';
+
+const uploadAdminSiteAsset = vi.hoisted(() => vi.fn());
+
+vi.mock('../service', () => ({
+  uploadAdminSiteAsset,
+}));
 
 import { SystemSettingsSection } from '../system-settings-section';
 
@@ -32,6 +42,8 @@ describe('SystemSettingsSection', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    uploadAdminSiteAsset.mockReset();
+    useCommonConfigStore.getState().updateSiteConfig(DEFAULT_SITE_CONFIG);
   });
 
   afterEach(() => {
@@ -66,7 +78,7 @@ describe('SystemSettingsSection', () => {
     });
 
     const serverHostInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="系统服务地址"]',
+      'input[aria-label="站点访问地址"]',
     );
     const adminEmailsInput = container.querySelector<HTMLInputElement>(
       'input[aria-label="系统管理员邮箱"]',
@@ -123,7 +135,7 @@ describe('SystemSettingsSection', () => {
 
     expect(container.textContent).toContain('正在加载系统基础配置');
     expect(
-      container.querySelector('input[aria-label="系统服务地址"]'),
+      container.querySelector('input[aria-label="站点访问地址"]'),
     ).toBeNull();
     expect(
       container.querySelector('button[aria-label="保存系统基础配置"]'),
@@ -145,7 +157,7 @@ describe('SystemSettingsSection', () => {
 
     expect(container.textContent).toContain('加载系统基础配置失败');
     expect(
-      container.querySelector('input[aria-label="系统服务地址"]'),
+      container.querySelector('input[aria-label="站点访问地址"]'),
     ).toBeNull();
     await act(async () => {
       Simulate.click(
@@ -157,7 +169,7 @@ describe('SystemSettingsSection', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('saves editable basic settings', async () => {
+  it('saves editable system settings', async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     act(() => {
       root.render(
@@ -175,9 +187,6 @@ describe('SystemSettingsSection', () => {
       );
     });
 
-    const serverHostInput = container.querySelector<HTMLInputElement>(
-      'input[aria-label="系统服务地址"]',
-    );
     const adminEmailsInput = container.querySelector<HTMLInputElement>(
       'input[aria-label="系统管理员邮箱"]',
     );
@@ -193,8 +202,6 @@ describe('SystemSettingsSection', () => {
     );
 
     await act(async () => {
-      serverHostInput!.value = ' https://agent.example.test ';
-      Simulate.change(serverHostInput!);
       adminEmailsInput!.value = ' admin@example.test,ops@example.test ';
       Simulate.change(adminEmailsInput!);
       allowRegistrationInput!.value = ' example.test ';
@@ -212,7 +219,6 @@ describe('SystemSettingsSection', () => {
       admin_emails: 'admin@example.test,ops@example.test',
       allow_registration_email: 'example.test',
       disable_user_registration: true,
-      server_host: 'https://agent.example.test',
     });
   });
 
@@ -240,7 +246,7 @@ describe('SystemSettingsSection', () => {
     expect(saveConfig).not.toHaveBeenCalled();
   });
 
-  it('submits only fields changed by the administrator', async () => {
+  it('submits only fields changed in the site configuration card', async () => {
     const saveConfig = vi.fn().mockResolvedValue(undefined);
     act(() => {
       root.render(
@@ -250,6 +256,8 @@ describe('SystemSettingsSection', () => {
             allow_registration_email: 'example.test',
             disable_user_registration: false,
             server_host: 'https://old.example.test',
+            site_name: 'Old Site',
+            site_description: 'Old description',
           }}
           knowledgeConfig={{}}
           onSaveBasicConfig={saveConfig}
@@ -258,16 +266,26 @@ describe('SystemSettingsSection', () => {
     });
 
     const serverHost = container.querySelector<HTMLInputElement>(
-      'input[aria-label="系统服务地址"]',
+      'input[aria-label="站点访问地址"]',
+    )!;
+    const siteName = container.querySelector<HTMLInputElement>(
+      'input[aria-label="站点名称"]',
+    )!;
+    const siteDescription = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="站点介绍"]',
     )!;
     await act(async () => {
       serverHost.value = 'https://new.example.test';
       Simulate.change(serverHost);
+      siteName.value = 'NewX AI';
+      Simulate.change(siteName);
+      siteDescription.value = 'NewX AI workspace';
+      Simulate.change(siteDescription);
     });
     await act(async () => {
       Simulate.click(
         container.querySelector<HTMLButtonElement>(
-          'button[aria-label="保存系统基础配置"]',
+          'button[aria-label="保存站点配置"]',
         )!,
       );
       await Promise.resolve();
@@ -275,6 +293,8 @@ describe('SystemSettingsSection', () => {
 
     expect(saveConfig).toHaveBeenCalledWith({
       server_host: 'https://new.example.test',
+      site_name: 'NewX AI',
+      site_description: 'NewX AI workspace',
     });
   });
 
@@ -304,5 +324,134 @@ describe('SystemSettingsSection', () => {
       );
     });
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('uploads a site logo, previews it and saves only the returned URI', async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    uploadAdminSiteAsset.mockResolvedValue({
+      uri: 'site-brand/logo/content-hash.png',
+      url: 'https://assets.example.com/logo.png',
+      width: 128,
+      height: 64,
+      mime_type: 'image/png',
+    });
+    act(() => {
+      root.render(
+        <SystemSettingsSection
+          basicConfig={{
+            server_host: 'http://localhost:8888',
+            site_name: 'NewX AI',
+          }}
+          knowledgeConfig={{}}
+          onSaveBasicConfig={saveConfig}
+        />,
+      );
+    });
+
+    const input = container.querySelector<HTMLInputElement>(
+      'input[aria-label="上传站点 Logo"]',
+    )!;
+    const file = new File(['logo'], 'logo.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [file],
+    });
+    await act(async () => {
+      Simulate.change(input);
+      await Promise.resolve();
+    });
+
+    expect(uploadAdminSiteAsset).toHaveBeenCalledWith('logo', file);
+    expect(
+      container.querySelector<HTMLImageElement>('img[alt="站点 Logo"]')?.src,
+    ).toBe('https://assets.example.com/logo.png');
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存站点配置"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+    expect(saveConfig).toHaveBeenCalledWith({
+      site_logo_uri: 'site-brand/logo/content-hash.png',
+    });
+  });
+
+  it('supports removing an existing site logo with an explicit empty URI', async () => {
+    const saveConfig = vi.fn().mockResolvedValue(undefined);
+    useCommonConfigStore.getState().updateSiteConfig({
+      ...DEFAULT_SITE_CONFIG,
+      siteLogoUrl: 'https://assets.example.com/logo.png',
+    });
+    act(() => {
+      root.render(
+        <SystemSettingsSection
+          basicConfig={{
+            server_host: 'http://localhost:8888',
+            site_name: 'NewX AI',
+            site_logo_uri: 'site-brand/logo/content-hash.png',
+          }}
+          knowledgeConfig={{}}
+          onSaveBasicConfig={saveConfig}
+        />,
+      );
+    });
+
+    await act(async () => {
+      Simulate.click(
+        Array.from(
+          container.querySelectorAll<HTMLButtonElement>('button'),
+        ).find(button => button.textContent === '移除')!,
+      );
+    });
+    expect(
+      container.querySelector<HTMLImageElement>('img[alt="站点 Logo"]'),
+    ).toBeNull();
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存站点配置"]',
+        )!,
+      );
+      await Promise.resolve();
+    });
+    expect(saveConfig).toHaveBeenCalledWith({ site_logo_uri: '' });
+  });
+
+  it('keeps invalid site text local and does not issue a save', async () => {
+    const saveConfig = vi.fn();
+    act(() => {
+      root.render(
+        <SystemSettingsSection
+          basicConfig={{
+            server_host: 'http://localhost:8888',
+            site_name: 'NewX AI',
+          }}
+          knowledgeConfig={{}}
+          onSaveBasicConfig={saveConfig}
+        />,
+      );
+    });
+
+    const siteName = container.querySelector<HTMLInputElement>(
+      'input[aria-label="站点名称"]',
+    )!;
+    await act(async () => {
+      siteName.value = '   ';
+      Simulate.change(siteName);
+    });
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存站点配置"]',
+        )!,
+      );
+    });
+
+    expect(container.textContent).toContain('站点名称不能为空');
+    expect(saveConfig).not.toHaveBeenCalled();
   });
 });

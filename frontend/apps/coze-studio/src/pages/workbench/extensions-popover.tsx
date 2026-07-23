@@ -22,14 +22,20 @@ import {
   type SetStateAction,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
 import { workbenchSkill, type workbenchTool } from '@coze-studio/api-schema';
 import {
   IconCozArrowDown,
+  IconCozCheckMark,
+  IconCozCode,
+  IconCozMagnifier,
   IconCozPlugin,
   IconCozSetting,
+  IconCozSkill,
+  IconCozWorkflow,
 } from '@coze-arch/coze-design/icons';
 import { Button, Input, Spin, Tabs } from '@coze-arch/coze-design';
 
@@ -53,6 +59,7 @@ interface MCPServerExtensionEntry {
 }
 
 interface ExtensionsPopoverProps {
+  disabled?: boolean;
   open?: boolean;
   placement?: WorkbenchComposerOverlayPlacement;
   renderMask?: boolean;
@@ -257,9 +264,13 @@ const SkillExtensionItem = ({
     <span className="chat-workbench-extension-icon">
       {skill.type === workbenchSkill.SkillType.Script ||
       skill.type === workbenchSkill.SkillType.Workflow ? (
-        <IconCozPlugin />
+        skill.type === workbenchSkill.SkillType.Script ? (
+          <IconCozCode />
+        ) : (
+          <IconCozWorkflow />
+        )
       ) : (
-        <IconCozSetting />
+        <IconCozSkill />
       )}
     </span>
     <span className="chat-workbench-extension-body">
@@ -278,7 +289,7 @@ const SkillExtensionItem = ({
       data-selected={selected}
       aria-hidden="true"
     >
-      {selected ? '✓' : ''}
+      {selected ? <IconCozCheckMark /> : null}
     </span>
   </button>
 );
@@ -320,7 +331,7 @@ const MCPToolExtensionItem = ({
       data-selected={selected}
       aria-hidden="true"
     >
-      {selected ? '✓' : ''}
+      {selected ? <IconCozCheckMark /> : null}
     </span>
   </button>
 );
@@ -437,7 +448,7 @@ const ExtensionPanel = ({
       className="chat-workbench-extension-search"
       aria-label={searchLabel}
       value={keyword}
-      prefix={<span aria-hidden="true">⌕</span>}
+      prefix={<IconCozMagnifier />}
       onChange={onKeywordChange}
       placeholder={searchLabel}
     />
@@ -457,6 +468,7 @@ const ExtensionPanel = ({
 
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps shared extension overlay state together.
 export const ExtensionsPopover = ({
+  disabled = false,
   open,
   placement = 'bottom',
   renderMask = true,
@@ -478,20 +490,45 @@ export const ExtensionsPopover = ({
   const [mcpLoading, setMCPLoading] = useState(false);
   const [mcpError, setMCPError] = useState('');
   const [keyword, setKeyword] = useState('');
+  const [skillsResultScope, setSkillsResultScope] = useState('');
+  const [mcpResultScope, setMCPResultScope] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  const skillGenerationRef = useRef(0);
+  const mcpGenerationRef = useRef(0);
+  const skillScopeRef = useRef('');
+  const mcpScopeRef = useRef('');
+  const requestedPanelOpen = open ?? internalOpen;
+  const panelOpen = !disabled && requestedPanelOpen;
+  const resourceScope = panelOpen && space_id ? space_id : '';
+
+  if (skillScopeRef.current !== resourceScope) {
+    skillScopeRef.current = resourceScope;
+    skillGenerationRef.current += 1;
+  }
+  if (mcpScopeRef.current !== resourceScope) {
+    mcpScopeRef.current = resourceScope;
+    mcpGenerationRef.current += 1;
+  }
+
+  const scopedSkills = skillsResultScope === resourceScope ? skills : [];
+  const scopedMCPTools = mcpResultScope === resourceScope ? mcpTools : [];
   const visibleSkills = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
 
     if (!normalizedKeyword) {
-      return skills;
+      return scopedSkills;
     }
 
-    return skills.filter(skill =>
+    return scopedSkills.filter(skill =>
       [skill.name, skill.description].some(text =>
         text.toLowerCase().includes(normalizedKeyword),
       ),
     );
-  }, [keyword, skills]);
-  const mcpServers = useMemo(() => getMCPServerEntries(mcpTools), [mcpTools]);
+  }, [keyword, scopedSkills]);
+  const mcpServers = useMemo(
+    () => getMCPServerEntries(scopedMCPTools),
+    [scopedMCPTools],
+  );
   const visibleMCPServers = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
 
@@ -506,8 +543,8 @@ export const ExtensionsPopover = ({
     );
   }, [keyword, mcpServers]);
   const availableSkillIds = useMemo(
-    () => skills.filter(skill => skill.enabled).map(skill => skill.id),
-    [skills],
+    () => scopedSkills.filter(skill => skill.enabled).map(skill => skill.id),
+    [scopedSkills],
   );
   const availableMCPServerIds = useMemo(
     () => mcpServers.map(server => server.id),
@@ -545,8 +582,19 @@ export const ExtensionsPopover = ({
   const selectedCount = selectedSkillIds.length + selectedMCPServerIds.length;
   const totalCount = availableSkillIds.length + availableMCPServerIds.length;
   const searchLabel = tab === 'skills' ? '搜索技能' : '搜索 MCP';
-  const panelOpen = open ?? internalOpen;
-  const setPanelOpen = onOpenChange ?? setInternalOpen;
+  const setPanelOpen = (nextOpen: boolean) => {
+    if (disabled) {
+      return;
+    }
+    (onOpenChange ?? setInternalOpen)(nextOpen);
+  };
+
+  useEffect(() => {
+    if (disabled) {
+      setInternalOpen(false);
+      setKeyword('');
+    }
+  }, [disabled]);
 
   useEffect(() => {
     if (!panelOpen || !space_id) {
@@ -554,17 +602,29 @@ export const ExtensionsPopover = ({
     }
 
     let canceled = false;
+    const requestGeneration = ++skillGenerationRef.current;
+    const requestScope = resourceScope;
+    setSkillsResultScope(requestScope);
+    setSkills([]);
     setSkillsLoading(true);
     setSkillsError('');
 
     void listSkills({ space_id, enabled: true })
       .then(response => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillGenerationRef.current === requestGeneration &&
+          skillScopeRef.current === requestScope
+        ) {
           setSkills(response.data?.skills ?? []);
         }
       })
       .catch(err => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillGenerationRef.current === requestGeneration &&
+          skillScopeRef.current === requestScope
+        ) {
           setSkills([]);
           setSkillsError(
             err instanceof Error ? err.message : '加载技能列表失败',
@@ -572,7 +632,11 @@ export const ExtensionsPopover = ({
         }
       })
       .finally(() => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillGenerationRef.current === requestGeneration &&
+          skillScopeRef.current === requestScope
+        ) {
           setSkillsLoading(false);
         }
       });
@@ -580,7 +644,7 @@ export const ExtensionsPopover = ({
     return () => {
       canceled = true;
     };
-  }, [panelOpen, space_id]);
+  }, [panelOpen, resourceScope, space_id]);
 
   useEffect(() => {
     if (!panelOpen || !space_id) {
@@ -588,17 +652,29 @@ export const ExtensionsPopover = ({
     }
 
     let canceled = false;
+    const requestGeneration = ++mcpGenerationRef.current;
+    const requestScope = resourceScope;
+    setMCPResultScope(requestScope);
+    setMCPTools([]);
     setMCPLoading(true);
     setMCPError('');
 
     void listMCPToolRegistryEntries({ space_id })
       .then(response => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          mcpGenerationRef.current === requestGeneration &&
+          mcpScopeRef.current === requestScope
+        ) {
           setMCPTools(response.data?.tools ?? []);
         }
       })
       .catch(err => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          mcpGenerationRef.current === requestGeneration &&
+          mcpScopeRef.current === requestScope
+        ) {
           setMCPTools([]);
           setMCPError(
             err instanceof Error ? err.message : '加载 MCP 工具列表失败',
@@ -606,7 +682,11 @@ export const ExtensionsPopover = ({
         }
       })
       .finally(() => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          mcpGenerationRef.current === requestGeneration &&
+          mcpScopeRef.current === requestScope
+        ) {
           setMCPLoading(false);
         }
       });
@@ -614,9 +694,50 @@ export const ExtensionsPopover = ({
     return () => {
       canceled = true;
     };
-  }, [panelOpen, space_id]);
+  }, [panelOpen, resourceScope, space_id]);
+
+  useEffect(() => {
+    if (!panelOpen) {
+      return;
+    }
+
+    const closeAndRestoreFocus = () => {
+      setPanelOpen(false);
+      queueMicrotask(() => {
+        rootRef.current
+          ?.querySelector<HTMLButtonElement>('button[aria-label="拓展"]')
+          ?.focus();
+      });
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAndRestoreFocus();
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rootRef.current?.contains(event.target)
+      ) {
+        closeAndRestoreFocus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleMouseDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [panelOpen]);
 
   const handleResourceToggle = (resourceId: string) => {
+    if (disabled) {
+      return;
+    }
+
     const { enabled, selection } =
       tab === 'skills'
         ? getNextResourceSelection({
@@ -654,13 +775,17 @@ export const ExtensionsPopover = ({
   };
 
   const handleConfigClick = () => {
-    if (space_id) {
+    if (!disabled && space_id) {
       navigate(`/space/${space_id}/${tab === 'skills' ? 'skill' : 'tools'}`);
     }
   };
 
   return (
-    <div className="chat-workbench-extensions" data-placement={placement}>
+    <div
+      ref={rootRef}
+      className="chat-workbench-extensions"
+      data-placement={placement}
+    >
       <Button
         size="small"
         theme={showSelectedCount ? 'outline' : 'borderless'}
@@ -670,6 +795,7 @@ export const ExtensionsPopover = ({
         }`}
         aria-label="拓展"
         aria-expanded={panelOpen}
+        disabled={disabled}
         icon={<IconCozArrowDown />}
         iconPosition="right"
         onClick={() => setPanelOpen(!panelOpen)}
@@ -692,10 +818,18 @@ export const ExtensionsPopover = ({
             placement={placement}
             tab={tab}
             keyword={keyword}
-            onKeywordChange={setKeyword}
+            onKeywordChange={nextKeyword => {
+              if (!disabled) {
+                setKeyword(nextKeyword);
+              }
+            }}
             onResourceToggle={handleResourceToggle}
             onConfigClick={handleConfigClick}
-            onTabChange={setTab}
+            onTabChange={nextTab => {
+              if (!disabled) {
+                setTab(nextTab);
+              }
+            }}
             searchLabel={searchLabel}
             selectedCount={selectedCount}
             totalCount={totalCount}

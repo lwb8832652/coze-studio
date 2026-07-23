@@ -147,11 +147,13 @@ const TaskSubagentTimeline = ({
 };
 
 export const TaskSubagentRunsSection = ({
+  actionsDisabled = false,
   onRetrySubagentRun,
   retryError,
   retryingRunId,
   subagentRuns,
 }: {
+  actionsDisabled?: boolean;
   onRetrySubagentRun?: (runId: string) => void | Promise<void>;
   retryError?: string;
   retryingRunId?: string;
@@ -213,7 +215,7 @@ export const TaskSubagentRunsSection = ({
                       size="small"
                       theme="borderless"
                       type="primary"
-                      disabled={retrying}
+                      disabled={actionsDisabled || retrying}
                       loading={retrying}
                       onClick={() => void onRetrySubagentRun?.(run.runId)}
                     >

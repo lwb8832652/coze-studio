@@ -24,7 +24,8 @@ import {
 
 import classNames from 'classnames';
 import { useUserInfo } from '@coze-foundation/account-adapter';
-import { Avatar, Badge, Dropdown } from '@coze-arch/coze-design';
+import { IconCozPeopleFill } from '@coze-arch/coze-design/icons';
+import { Badge, CozAvatar, Dropdown } from '@coze-arch/coze-design';
 
 import { reportNavClick } from '../global-layout/utils';
 import { type LayoutAccountMenuItem } from '../global-layout/types';
@@ -68,18 +69,16 @@ export const GlobalLayoutAccountDropdown: FC<
   if (!userInfo) {
     return null;
   }
-  const userDisplayName =
-    userInfo.name || userInfo.screen_name || userInfo.email || '用户';
-
   return (
     <>
       <Dropdown
-        trigger="custom"
+        trigger={disableVisibleChange ? 'custom' : 'click'}
+        clickToHide={!disableVisibleChange}
         position={'rightBottom'}
-        visible={visible}
-        onClickOutSide={() => {
+        visible={disableVisibleChange ? visible : undefined}
+        onVisibleChange={nextVisible => {
           if (!disableVisibleChange) {
-            onVisibleChange?.(false);
+            queueMicrotask(() => onVisibleChange?.(nextVisible));
           }
         }}
         render={
@@ -93,10 +92,11 @@ export const GlobalLayoutAccountDropdown: FC<
               ) : (
                 <Dropdown.Item
                   key={item.title}
-                  onClick={e => {
+                  onClick={() => {
                     reportNavClick(item.title);
-                    onVisibleChange?.(false);
-                    item.onClick();
+                    queueMicrotask(() => {
+                      item.onClick();
+                    });
                   }}
                   data-testid={item.dataTestId}
                 >
@@ -127,11 +127,6 @@ export const GlobalLayoutAccountDropdown: FC<
           aria-label="账号菜单"
           aria-haspopup="menu"
           aria-expanded={visible}
-          onClick={() => {
-            if (!disableVisibleChange) {
-              onVisibleChange?.(!visible);
-            }
-          }}
           data-testid="layout_avatar-menu-button"
         >
           <Badge
@@ -142,16 +137,17 @@ export const GlobalLayoutAccountDropdown: FC<
             }}
             count={userBadge}
           >
-            <Avatar
+            <CozAvatar
               src={userInfo.avatar_url}
               className={classNames('w-[32px] h-[32px] rounded-full')}
+              type="person"
               style={{
                 color: '#fff',
-                backgroundColor: 'var(--newx-color-accent)',
+                backgroundColor: 'var(--newx-color-accent, #14804a)',
               }}
             >
-              {userDisplayName}
-            </Avatar>
+              <IconCozPeopleFill />
+            </CozAvatar>
           </Badge>
           {userTips}
         </button>

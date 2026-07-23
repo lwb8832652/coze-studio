@@ -22,8 +22,16 @@ import { GlobalLayoutAccountDropdown } from '../index';
 
 vi.mock('@coze-foundation/account-adapter', () => ({
   useUserInfo: () => ({
-    avatar_url: 'https://example.com/avatar.png',
+    avatar_url: '',
+    name: '测试用户',
   }),
+}));
+
+vi.mock('@coze-arch/coze-design/icons', () => ({
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the component name.
+  IconCozPeopleFill: () => (
+    <span data-testid="default-person-avatar-icon">person-avatar-icon</span>
+  ),
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror component names. */
@@ -51,6 +59,19 @@ vi.mock('@coze-arch/coze-design', () => {
   return {
     Avatar: () => <span>avatar</span>,
     Badge: ({ children }: { children: ReactNode }) => <>{children}</>,
+    CozAvatar: ({
+      children,
+      src,
+      type,
+    }: {
+      children?: ReactNode;
+      src?: string;
+      type?: string;
+    }) => (
+      <span data-testid="account-person-avatar" data-src={src} data-type={type}>
+        {children}
+      </span>
+    ),
     Dropdown,
   };
 });
@@ -88,5 +109,14 @@ describe('GlobalLayoutAccountDropdown', () => {
     );
 
     expect(hasReactKeyWarning).toBe(false);
+  });
+
+  it('uses the shared person avatar when no custom avatar is configured', () => {
+    const markup = renderToStaticMarkup(<GlobalLayoutAccountDropdown />);
+
+    expect(markup).toContain('data-testid="account-person-avatar"');
+    expect(markup).toContain('data-type="person"');
+    expect(markup).toContain('person-avatar-icon');
+    expect(markup).not.toContain('>avatar<');
   });
 });

@@ -10,6 +10,7 @@
     "./passport": "./src/idl/passport/passport.ts",
     "./marketplace": "./src/idl/marketplace/public_api.ts",
     "./workbench": "./src/idl/workbench/workbench.ts",
+    "./workbench-model": "./src/idl/workbench/model.ts",
     "./workbench-skill": "./src/idl/workbench/skill.ts",
     "./workbench-task": "./src/idl/workbench/task.ts",
     "./workbench-tool": "./src/idl/workbench/tool.ts",
@@ -26,6 +27,9 @@
       ],
       "workbench": [
         "./src/idl/workbench/workbench.ts"
+      ],
+      "workbench-model": [
+        "./src/idl/workbench/model.ts"
       ],
       "workbench-skill": [
         "./src/idl/workbench/skill.ts"

@@ -20,6 +20,8 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
 
+import { refreshSiteConfig } from '@coze-foundation/global-adapter';
+
 import '../../components/workspace-prototype.less';
 import './newx-system-ui.less';
 import { WorkspaceManagementSection } from './workspace-management-section';
@@ -55,10 +57,14 @@ import {
   type AdminWorkspace,
   type AdminWorkspaceMember,
 } from './service';
+import { SandboxManagementSection } from './sandbox-management-section';
 import { OverviewSection } from './overview-section';
 import { ModelConfigSection } from './model-config-section';
-import { SYSTEM_SECTIONS } from './content';
-import { SandboxManagementSection } from './sandbox-management-section';
+import { SYSTEM_NAV_GROUPS, SYSTEM_SECTIONS } from './content';
+import {
+  BillingManagementSection,
+  type BillingSectionKey,
+} from './billing-management-section';
 
 const ADMIN_PAGE_SIZE = 20;
 
@@ -479,6 +485,14 @@ const SystemManagementPage = () => {
       setBasicConfigRevision(response.revision);
       setBasicConfigRefreshRequired(false);
       setBasicConfigMessage('系统基础配置已保存');
+      if (
+        'site_name' in updates ||
+        'site_description' in updates ||
+        'site_logo_uri' in updates ||
+        'favicon_uri' in updates
+      ) {
+        await refreshSiteConfig();
+      }
     } catch (error) {
       if (isAdminBasicConfigConflict(error)) {
         setBasicConfigRefreshRequired(true);
@@ -597,6 +611,13 @@ const SystemManagementPage = () => {
     if (activeSection === 'sandbox') {
       return <SandboxManagementSection />;
     }
+    if (activeSection.startsWith('billing-')) {
+      return (
+        <BillingManagementSection
+          section={activeSection as BillingSectionKey}
+        />
+      );
+    }
     return renderOverview();
   };
 
@@ -609,36 +630,60 @@ const SystemManagementPage = () => {
             <p>后台管理员控制台</p>
           </div>
           <nav className="coze-prototype-system-nav-list">
-            {SYSTEM_SECTIONS.filter(
-              item => item.key !== 'sandbox' || isSystemAdmin,
-            ).map(item => (
-              <button
-                key={item.key}
-                type="button"
-                className="coze-prototype-system-nav-item"
-                data-active={activeSection === item.key}
-                onClick={() => navigate(`/system/${item.key}`)}
-              >
-                <span>{item.title}</span>
-                <span>{item.description}</span>
-              </button>
-            ))}
+            {SYSTEM_NAV_GROUPS.map(group => {
+              const items = group.items.flatMap(key => {
+                const item = SYSTEM_SECTIONS.find(entry => entry.key === key);
+                return item && (item.key !== 'sandbox' || isSystemAdmin)
+                  ? [item]
+                  : [];
+              });
+              const buttons = items.map(item => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`coze-prototype-system-nav-item${group.label ? ' is-child' : ''}`}
+                  data-active={activeSection === item.key}
+                  onClick={() => navigate(`/system/${item.key}`)}
+                >
+                  <span>{item.title}</span>
+                </button>
+              ));
+              if (!buttons.length) {
+                return null;
+              }
+              return group.label ? (
+                <div
+                  className="coze-prototype-system-nav-group"
+                  key={group.key}
+                >
+                  <span>{group.label}</span>
+                  {buttons}
+                </div>
+              ) : (
+                buttons
+              );
+            })}
           </nav>
         </aside>
 
-        <section className="coze-prototype-system-content">
-          <header className="coze-prototype-system-hero">
-            <h1>
-              {!adminResolved || accessDenied ? '系统管理' : content.heading}
-            </h1>
-            <p>
-              {!adminResolved
-                ? '正在验证系统管理权限...'
-                : accessDenied
-                  ? '后台能力仅对系统管理员开放。'
-                  : content.summary}
-            </p>
-          </header>
+        <section
+          className="coze-prototype-system-content"
+          data-section={activeSection}
+        >
+          {activeSection !== 'models' || !adminResolved || accessDenied ? (
+            <header className="coze-prototype-system-hero">
+              <h1>
+                {!adminResolved || accessDenied ? '系统管理' : content.heading}
+              </h1>
+              <p>
+                {!adminResolved
+                  ? '正在验证系统管理权限...'
+                  : accessDenied
+                    ? '后台能力仅对系统管理员开放。'
+                    : content.summary}
+              </p>
+            </header>
+          ) : null}
 
           {!adminResolved || loading ? <p role="status">加载中...</p> : null}
           {errorMessage ? <p>{errorMessage}</p> : null}

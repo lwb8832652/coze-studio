@@ -54,9 +54,24 @@ svg:focus:not(:focus-visible) {
   -webkit-tap-highlight-color: rgb(0 0 0 / 0% / 0);
 }
 
-:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+:where(button, a, [tabindex]):focus-visible {
   outline: 2px solid var(--newx-color-focus);
   outline-offset: 2px;
+}
+
+// Form fields use a single border + halo focus treatment. Semi controls draw
+// that treatment on their wrapper, so the nested native field must stay flat.
+:where(input, textarea, select):focus-visible {
+  border-color: var(--newx-color-accent, #218c55) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
+}
+
+:where(.semi-input-wrapper, .semi-textarea-wrapper, .semi-select)
+  :where(input, textarea, select):focus-visible {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 // TODO: 底层库依赖了这个 class，暂时不移除

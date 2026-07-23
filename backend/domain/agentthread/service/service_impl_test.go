@@ -2995,6 +2995,9 @@ func (r *memoryRepo) AggregateTokenUsage(ctx context.Context, req repository.Agg
 		if len(req.RunIDs) == 0 && req.RunID > 0 && usage.RunID != req.RunID {
 			continue
 		}
+		if req.Source != "" && usage.Source != req.Source {
+			continue
+		}
 
 		aggregate.InputTokens += usage.InputTokens
 		aggregate.OutputTokens += usage.OutputTokens
@@ -3029,6 +3032,9 @@ func (r *memoryRepo) AggregateTokenUsageByRun(ctx context.Context, req repositor
 			continue
 		}
 		if len(req.RunIDs) == 0 && req.RunID > 0 && usage.RunID != req.RunID {
+			continue
+		}
+		if req.Source != "" && usage.Source != req.Source {
 			continue
 		}
 
@@ -3071,6 +3077,40 @@ func (r *memoryRepo) AggregateTokenUsageByRun(ctx context.Context, req repositor
 	}
 
 	return result, nil
+}
+
+func (r *memoryRepo) GetTokenUsageSnapshot(
+	ctx context.Context,
+	req repository.ListTokenUsageRequest,
+	includeRunAggregates bool,
+) (*repository.TokenUsageSnapshot, error) {
+	rows, total, err := r.ListTokenUsage(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	aggregateReq := repository.AggregateTokenUsageRequest{
+		ThreadID: req.ThreadID,
+		RunID:    req.RunID,
+		RunIDs:   req.RunIDs,
+		Source:   req.Source,
+	}
+	aggregate, err := r.AggregateTokenUsage(ctx, aggregateReq)
+	if err != nil {
+		return nil, err
+	}
+	var runAggregates []*entity.RunTokenUsageAggregate
+	if includeRunAggregates {
+		runAggregates, err = r.AggregateTokenUsageByRun(ctx, aggregateReq)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &repository.TokenUsageSnapshot{
+		Rows:          rows,
+		Total:         total,
+		Aggregate:     aggregate,
+		RunAggregates: runAggregates,
+	}, nil
 }
 
 func containsInt64(values []int64, target int64) bool {

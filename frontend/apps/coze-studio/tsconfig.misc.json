@@ -14,6 +14,7 @@
   "include": [
     "__tests__",
     "vitest.config.ts",
+    "vitest.setup.ts",
     "tailwind.config.ts",
     "rsbuild.config.ts",
     "scripts/**/*.ts"

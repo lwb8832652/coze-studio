@@ -91,12 +91,18 @@ export interface WorkbenchRuntimeSettings {
 
 export interface WorkbenchLLMModel {
   display_name?: string;
+  description?: string;
   model?: string;
   name?: string;
   model_name?: string;
   model_type?: number | string;
   model_class_name?: string;
   endpoint_name?: string;
+  model_brief_desc?: string;
+  workspace_can_manage?: boolean;
+  workspace_model_id?: string;
+  workspace_model_can_manage?: boolean;
+  workspace_model_description?: string;
 }
 
 export interface WorkbenchUploadedFile {

@@ -28,6 +28,7 @@ EXCLUDE_PATTERNS=(
   'apps/prompt-platform/src/services/auto-generate/**'
   'backend/api/model/playground/playground.go'
   # Generated Kitex model bundles are governed by IDL and codegen stale checks.
+  'backend/api/model/admin/config/config.go'
   'backend/api/model/app/bot_common/bot_common.go'
   'backend/api/model/app/developer_api/developer_api.go'
   'backend/api/model/data/database/table/table.go'

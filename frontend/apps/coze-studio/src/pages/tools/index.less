@@ -463,6 +463,8 @@
 }
 
 .mcp-management-form-intro {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 
   padding: 14px;
@@ -736,6 +738,30 @@ textarea.mcp-management-code-input {
   border-radius: 8px;
 }
 
+.mcp-management-official-tip {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+
+  min-height: 42px;
+  padding: 8px 12px;
+
+  font-size: 12px;
+  color: var(--mcp-muted);
+
+  background: var(--mcp-primary-soft);
+  border: 1px solid rgba(33, 140, 85, 12%);
+  border-radius: 10px;
+}
+
+.mcp-management-official-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 0 12px;
+}
+
 @media (min-width: 1440px) {
   .mcp-management-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -794,4 +820,87 @@ textarea.mcp-management-code-input {
   .mcp-management-source-tabs {
     align-self: flex-start;
   }
+}
+
+/* Nuwax ecosystem catalog entries share the existing official-service surface. */
+.mcp-management-official-icon {
+  isolation: isolate;
+  position: relative;
+  overflow: hidden;
+
+  .mcp-management-official-icon-fallback,
+  img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .mcp-management-official-icon-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--coz-fg-hglt, #238a51);
+  }
+
+  img {
+    z-index: 1;
+    object-fit: cover;
+    background: var(--coz-bg-max, #fff);
+  }
+}
+
+.mcp-management-card-title [data-source='adapter'] {
+  color: #9a6700;
+  background: #fff5d6;
+}
+
+.mcp-management-official-card {
+  .mcp-management-card-title > div {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    align-items: flex-start;
+  }
+
+  .mcp-management-card-title h2 {
+    overflow: hidden;
+    display: -webkit-box;
+    flex: 0 0 100%;
+    -webkit-box-orient: vertical;
+
+    min-height: 20px;
+
+    line-height: 20px;
+    white-space: normal;
+
+    -webkit-line-clamp: 2;
+  }
+}
+
+.mcp-management-card-status [data-health='adapter'] {
+  color: #856404;
+
+  i {
+    background: #d8a300;
+  }
+}
+
+.mcp-management-adapter-reason {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+
+  min-height: 36px;
+  margin: 0;
+
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--coz-fg-secondary, #6b7280);
+
+  -webkit-line-clamp: 2;
+}
+
+.mcp-management-official-tip > span {
+  flex: 1;
+  min-width: 0;
 }

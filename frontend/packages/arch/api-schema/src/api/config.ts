@@ -47,6 +47,7 @@ export function createAPI<
             ...(options?.headers ?? {}),
             'x-requested-with': 'XMLHttpRequest',
           },
+          signal: init.signal ?? undefined,
           // @ts-expect-error -- custom params
           __disableErrorToast: options?.__disableErrorToast,
         }),

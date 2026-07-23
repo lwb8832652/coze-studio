@@ -22,27 +22,19 @@ import { useParams } from 'react-router-dom';
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent,
-  type ReactNode,
 } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
-import {
-  IconCozArrowDown,
-  IconCozCode,
-  IconCozDocument,
-  IconCozEdit,
-  IconCozLightbulb,
-  IconCozMagnifier,
-  IconCozPlugin,
-} from '@coze-arch/coze-design/icons';
 
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
+import { TaskUsagePopover } from './task-usage-popover';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
 import {
   TaskRunActionBar,
@@ -53,10 +45,10 @@ import {
   TaskStreamingIndicator,
 } from './task-result-section';
 import {
-  getLatestAssistantRunID,
+  buildTaskUsageDetailItems,
+  getCurrentAssistantRunID,
   loadTaskTokenUsageViewMode,
   saveTaskTokenUsageViewMode,
-  TaskMessageTokenUsage,
 } from './task-message-token-usage';
 import { TaskMarkdownContent } from './task-markdown-content';
 import { TaskInlineReasoning } from './task-inline-reasoning';
@@ -67,11 +59,9 @@ import {
 } from './task-human-interaction';
 import { TaskFollowUpComposer } from './task-follow-up-composer';
 import { TaskExecutionTodoDock } from './task-execution-todo-dock';
-import { projectTaskExecutionEvents } from './task-event-projection';
 import {
   type LoadedTaskDetailSource,
   type TaskDetailSource,
-  type TaskDetailTokenUsage,
   type TaskDetailSubagentRun,
   type TaskTokenUsageViewMode,
 } from './task-detail-loader';
@@ -99,8 +89,13 @@ import {
   parseTaskResultPayload,
   isTaskTerminalStatus,
   canCancelTask,
-  type TaskEventDisplay,
 } from './helpers';
+import { TaskExecutionSummary } from './execution-summary';
+import {
+  TaskAssistantTurnShell,
+  TaskConversationColumn,
+  TaskUserTurn,
+} from './conversation-turn';
 
 type ChatTask = workbenchTask.ChatTask;
 type TaskEvent = workbenchTask.TaskEvent;
@@ -513,38 +508,10 @@ const canStopTaskRunFromComposer = ({
       canCancelTask(task.status),
   );
 
-const AssistantMark = () => (
-  <span className="coze-prototype-assistant-mark" aria-hidden="true">
-    <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="currentColor">
-      <path d="M12 2 2 22h20L12 2zm0 6 6 12H6l6-12z" />
-    </svg>
-  </span>
-);
-
-const TaskConversation = ({ task }: { task: ChatTask }) => {
-  const executionType = getTaskExecutionType(task.input);
-
-  return (
-    <>
-      <div className="flex justify-end">
-        <div className="coze-prototype-user-bubble">
-          {getTaskInputText(task.input) || task.title}
-        </div>
-      </div>
-
-      <div className="coze-prototype-assistant-line">
-        <AssistantMark />
-        <span>NewX AI · {executionType} 已为你启动工作流</span>
-      </div>
-    </>
-  );
-};
-
-const TaskAssistantLine = ({ task }: { task: ChatTask }) => (
-  <div className="coze-prototype-assistant-line">
-    <AssistantMark />
-    <span>NewX AI · {getTaskExecutionType(task.input)} 已为你启动工作流</span>
-  </div>
+const TaskConversation = ({ task }: { task: ChatTask }) => (
+  <TaskUserTurn createdAt={task.created_at}>
+    {getTaskInputText(task.input) || task.title}
+  </TaskUserTurn>
 );
 
 const TaskThreadAssistantMessage = ({
@@ -552,15 +519,11 @@ const TaskThreadAssistantMessage = ({
   isRunning = false,
   reasoning,
   streamingMessage,
-  tokenUsage,
-  tokenUsageViewMode,
 }: {
   message?: ThreadTranscriptMessage;
   isRunning?: boolean;
   reasoning?: string;
   streamingMessage?: string;
-  tokenUsage?: TaskDetailTokenUsage;
-  tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => {
   const messageResult = message
     ? parseTaskResultPayload(message.content)
@@ -568,7 +531,7 @@ const TaskThreadAssistantMessage = ({
   const answerMessage = messageResult?.message || streamingMessage;
   const inlineReasoning = reasoning || messageResult?.reasoning;
 
-  if (!answerMessage && !inlineReasoning && !tokenUsage && !isRunning) {
+  if (!answerMessage && !inlineReasoning && !isRunning) {
     return null;
   }
 
@@ -577,10 +540,6 @@ const TaskThreadAssistantMessage = ({
       <TaskInlineReasoning content={inlineReasoning} />
       {answerMessage ? <TaskMarkdownContent value={answerMessage} /> : null}
       {isRunning ? <TaskStreamingIndicator /> : null}
-      <TaskMessageTokenUsage
-        tokenUsage={tokenUsage}
-        viewMode={tokenUsageViewMode}
-      />
       {!isRunning && answerMessage ? (
         <TaskAssistantMessageActions copyText={answerMessage} />
       ) : null}
@@ -624,18 +583,16 @@ const TaskThreadConversation = ({
   events,
   latestTaskRunID,
   messages,
+  onAssistantMessageRef,
   task,
-  tokenUsageByRunID,
-  tokenUsageViewMode,
 }: {
   artifactActions: TaskArtifactActions;
   artifacts: TaskThreadArtifact[];
   events: TaskEvent[];
   latestTaskRunID: string;
   messages: TaskThreadMessage[];
+  onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
   task: ChatTask;
-  tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>;
-  tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => {
   const transcript = getThreadTranscriptMessages(messages);
   const artifactsByRunID = groupTaskArtifactsByRunID(artifacts);
@@ -676,12 +633,12 @@ const TaskThreadConversation = ({
   const renderedItems = transcript.map((message, index) => {
     if (message.role === 'user') {
       return (
-        <div key={message.message_id || `user-${index}`}>
-          <div className="flex justify-end">
-            <div className="coze-prototype-user-bubble">{message.content}</div>
-          </div>
-          <TaskAssistantLine task={task} />
-        </div>
+        <TaskUserTurn
+          key={message.message_id || `user-${index}`}
+          createdAt={message.created_at}
+        >
+          {message.content}
+        </TaskUserTurn>
       );
     }
 
@@ -703,9 +660,18 @@ const TaskThreadConversation = ({
       );
 
     return (
-      <div key={messageKey}>
+      <TaskAssistantTurnShell
+        key={messageKey}
+        ref={element => {
+          if (runID) {
+            onAssistantMessageRef?.(runID, element);
+          }
+        }}
+        createdAt={message.created_at}
+        subtitle={getTaskExecutionType(task.input)}
+      >
         {shouldRenderMessageEvents ? (
-          <TaskEventsSection events={messageRunEvents} task={task} />
+          <TaskExecutionSummary events={messageRunEvents} task={task} />
         ) : null}
         <TaskThreadArtifactCards
           artifactActions={artifactActions}
@@ -717,8 +683,6 @@ const TaskThreadConversation = ({
           isRunning={isRunningAssistantMessage(runID, index)}
           message={message}
           reasoning={getLatestAnswerEventReasoning(messageRunEvents)}
-          tokenUsage={tokenUsageByRunID?.[runID]}
-          tokenUsageViewMode={tokenUsageViewMode}
         />
         <TaskThreadArtifactCards
           artifactActions={artifactActions}
@@ -726,7 +690,7 @@ const TaskThreadConversation = ({
           latestPreviewableArtifactID={latestPreviewableArtifactID}
           task={task}
         />
-      </div>
+      </TaskAssistantTurnShell>
     );
   });
   const unmatchedArtifacts = artifacts.filter(
@@ -736,17 +700,20 @@ const TaskThreadConversation = ({
   return (
     <>
       {renderedItems}
-      {!latestEventsRendered && latestRunEvents.length ? (
-        <TaskEventsSection events={latestRunEvents} task={task} />
-      ) : null}
-      {!hasLatestAssistantMessage ? (
-        <TaskThreadAssistantMessage
-          isRunning={latestRunIsActive}
-          reasoning={getLatestAnswerEventReasoning(latestRunEvents)}
-          streamingMessage={getLatestAnswerEventMessage(latestRunEvents)}
-          tokenUsage={tokenUsageByRunID?.[latestRunID]}
-          tokenUsageViewMode={tokenUsageViewMode}
-        />
+      {!latestEventsRendered &&
+      (latestRunEvents.length || !hasLatestAssistantMessage) ? (
+        <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
+          {latestRunEvents.length ? (
+            <TaskExecutionSummary events={latestRunEvents} task={task} />
+          ) : null}
+          {!hasLatestAssistantMessage ? (
+            <TaskThreadAssistantMessage
+              isRunning={latestRunIsActive}
+              reasoning={getLatestAnswerEventReasoning(latestRunEvents)}
+              streamingMessage={getLatestAnswerEventMessage(latestRunEvents)}
+            />
+          ) : null}
+        </TaskAssistantTurnShell>
       ) : null}
       <TaskThreadArtifactCards
         artifactActions={artifactActions}
@@ -756,205 +723,6 @@ const TaskThreadConversation = ({
       />
     </>
   );
-};
-
-const TaskEventsSection = ({
-  events,
-  task,
-}: {
-  events: TaskEvent[];
-  task: ChatTask;
-}) => {
-  const [showAllSteps, setShowAllSteps] = useState(false);
-  const eventItems = projectTaskExecutionEvents(events);
-  if (!eventItems.length) {
-    return null;
-  }
-
-  const hasStructuredItems = eventItems.some(item => item.display.structured);
-  const visibleItems = hasStructuredItems
-    ? eventItems.filter(item => item.display.structured)
-    : eventItems;
-  const taskIsTerminal = isTaskTerminalStatus(task.status);
-  const displayItems = visibleItems.map(item => {
-    if (!taskIsTerminal || item.display.status !== 'running') {
-      return item;
-    }
-
-    return {
-      ...item,
-      display: {
-        ...item.display,
-        status: 'completed' as const,
-      },
-    };
-  });
-  const lastActionableIndex = displayItems.reduce(
-    (latestIndex, item, index) =>
-      item.display.kind === 'thought' ? latestIndex : index,
-    -1,
-  );
-  const collapsedStartIndex =
-    lastActionableIndex >= 0
-      ? lastActionableIndex
-      : Math.max(displayItems.length - 1, 0);
-  const hiddenStepCount = collapsedStartIndex;
-  const visibleDisplayItems =
-    hiddenStepCount > 0 && !showAllSteps
-      ? displayItems.slice(collapsedStartIndex)
-      : displayItems;
-  const isPathDetail = (detail?: string) =>
-    detail?.startsWith('/mnt/') || detail?.startsWith('write-file:');
-  const renderStepIcon = (display: TaskEventDisplay) => {
-    const { key, icon } = getTaskExecutionStepIcon(display);
-
-    return (
-      <span
-        className="coze-prototype-step-icon"
-        data-icon={key}
-        data-status={display.status}
-        aria-hidden="true"
-      >
-        {display.status === 'running' ? (
-          <span className="coze-prototype-step-running" />
-        ) : display.status === 'failed' ? (
-          <span className="coze-prototype-step-status-mark">!</span>
-        ) : (
-          icon
-        )}
-        <span className="coze-prototype-step-rail" aria-hidden="true" />
-      </span>
-    );
-  };
-
-  return (
-    <section
-      aria-label="执行流程"
-      className="coze-prototype-execution-feed coze-prototype-reasoning-panel coze-prototype-chain-of-thought"
-    >
-      <ol className="coze-prototype-execution-feed-list coze-prototype-chain-content">
-        {hiddenStepCount > 0 ? (
-          <li>
-            <button
-              type="button"
-              className="coze-prototype-step-more-button"
-              aria-expanded={showAllSteps}
-              onClick={() => setShowAllSteps(value => !value)}
-            >
-              <span
-                className="coze-prototype-step-more-chevron"
-                data-open={showAllSteps}
-                aria-hidden="true"
-              >
-                <IconCozArrowDown />
-              </span>
-              <span>
-                {showAllSteps
-                  ? '隐藏步骤'
-                  : `查看其他 ${hiddenStepCount} 个步骤`}
-              </span>
-            </button>
-          </li>
-        ) : null}
-        {visibleDisplayItems.map(({ event, display }) => (
-          <li
-            key={event.id}
-            className="coze-prototype-execution-feed-item coze-prototype-step"
-            data-kind={display.kind}
-            data-status={display.status}
-          >
-            {renderStepIcon(display)}
-            <span className="coze-prototype-step-content">
-              {display.kind === 'thought' && display.thought ? (
-                <span className="coze-prototype-step-thought">
-                  {display.thought}
-                </span>
-              ) : (
-                <>
-                  <span className="coze-prototype-step-title-row">
-                    <span className="coze-prototype-step-title">
-                      {display.title}
-                    </span>
-                    {display.runtime && display.runtime !== 'Agent' ? (
-                      <span className="coze-prototype-step-runtime">
-                        {display.runtime}
-                      </span>
-                    ) : null}
-                  </span>
-                  {display.detail ? (
-                    <span
-                      className="coze-prototype-step-detail"
-                      data-kind={isPathDetail(display.detail) ? 'path' : 'text'}
-                    >
-                      {display.detail}
-                    </span>
-                  ) : null}
-                  {display.thought ? (
-                    <span className="coze-prototype-step-thought">
-                      {display.thought}
-                    </span>
-                  ) : null}
-                </>
-              )}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-};
-
-const getTaskExecutionStepIcon = (
-  display: TaskEventDisplay,
-): { key: string; icon: ReactNode } => {
-  if (display.kind === 'thought') {
-    return {
-      key: 'thought',
-      icon: <IconCozLightbulb />,
-    };
-  }
-
-  const title = display.title.toLowerCase();
-  const detail = display.detail?.toLowerCase() ?? '';
-
-  if (title.includes('搜索网页') || title.includes('web_search')) {
-    return {
-      key: 'search',
-      icon: <IconCozMagnifier />,
-    };
-  }
-
-  if (title.includes('to-do') || title.includes('todo')) {
-    return {
-      key: 'todo',
-      icon: <IconCozDocument />,
-    };
-  }
-
-  if (
-    title.includes('文件') ||
-    title.includes('文档') ||
-    title.includes('file') ||
-    detail.startsWith('/mnt/') ||
-    detail.startsWith('write-file:')
-  ) {
-    return {
-      key: 'edit',
-      icon: <IconCozEdit />,
-    };
-  }
-
-  if (title.includes('命令') || title.includes('command')) {
-    return {
-      key: 'terminal',
-      icon: <IconCozCode />,
-    };
-  }
-
-  return {
-    key: 'tool',
-    icon: <IconCozPlugin />,
-  };
 };
 
 const TaskTranscript = ({
@@ -972,10 +740,10 @@ const TaskTranscript = ({
   taskDetailSource,
   taskRunActionError,
   taskRunActionLoading,
-  tokenUsageByRunID,
-  tokenUsageViewMode,
+  taskRunActionsDisabled,
   artifactActions,
   onHumanInteractionSubmit,
+  onAssistantMessageRef,
   onRetrySubagentRun,
   onRetryTaskRun,
 }: {
@@ -994,11 +762,11 @@ const TaskTranscript = ({
   taskDetailSource: LoadedTaskDetailSource;
   taskRunActionError?: string;
   taskRunActionLoading: TaskRunActionLoading;
-  tokenUsageByRunID?: Record<string, TaskDetailTokenUsage>;
-  tokenUsageViewMode: TaskTokenUsageViewMode;
+  taskRunActionsDisabled?: boolean;
   onHumanInteractionSubmit: (
     response: HumanInteractionResponse,
   ) => void | Promise<void>;
+  onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
   onRetrySubagentRun: (runId: string) => void | Promise<void>;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
 }) => (
@@ -1006,65 +774,70 @@ const TaskTranscript = ({
     className="coze-prototype-chat-transcript"
     data-testid="task-chat-transcript"
   >
-    <TaskRunActionBar
-      task={task}
-      latestRunID={latestTaskRunID}
-      loading={taskRunActionLoading}
-      error={taskRunActionError}
-      taskDetailSource={taskDetailSource}
-      onRetryTaskRun={onRetryTaskRun}
-    />
-    {taskDetailSource === 'thread' && messages.length ? (
-      <TaskThreadConversation
-        artifactActions={artifactActions}
-        artifacts={artifacts}
-        events={events}
-        latestTaskRunID={latestTaskRunID}
-        messages={messages}
+    <TaskConversationColumn>
+      <TaskRunActionBar
+        disabled={taskRunActionsDisabled}
         task={task}
-        tokenUsageByRunID={tokenUsageByRunID}
-        tokenUsageViewMode={tokenUsageViewMode}
+        latestRunID={latestTaskRunID}
+        loading={taskRunActionLoading}
+        error={taskRunActionError}
+        taskDetailSource={taskDetailSource}
+        onRetryTaskRun={onRetryTaskRun}
       />
-    ) : (
-      <>
-        <TaskConversation task={task} />
-        {events.length ||
-        parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
-          <TaskEventsSection events={events} task={task} />
-        ) : null}
-        <TaskResultSection
-          task={task}
+      {taskDetailSource === 'thread' && messages.length ? (
+        <TaskThreadConversation
+          artifactActions={artifactActions}
+          artifacts={artifacts}
           events={events}
-          tokenUsage={tokenUsageByRunID?.[getLatestAssistantRunID(messages)]}
-          tokenUsageViewMode={tokenUsageViewMode}
+          latestTaskRunID={latestTaskRunID}
+          messages={messages}
+          onAssistantMessageRef={onAssistantMessageRef}
+          task={task}
         />
-        {taskDetailSource === 'thread' ? (
-          <TaskArtifactMessageList
-            artifactActions={artifactActions}
-            artifacts={artifacts}
-            autoPreview={true}
-            renderFeedback={false}
-            renderReviewActions={false}
-            spaceId={task.space_id}
-            threadId={task.id}
-          />
-        ) : null}
-      </>
-    )}
-    <TaskSubagentRunsSection
-      subagentRuns={subagentRuns}
-      retryError={subagentRetryError}
-      retryingRunId={retryingSubagentRunId}
-      onRetrySubagentRun={onRetrySubagentRun}
-    />
-    {pendingHumanInteraction ? (
-      <TaskHumanInterruptCard
-        pending={pendingHumanInteraction}
-        loading={humanInteractionLoading}
-        error={humanInteractionError}
-        onSubmit={onHumanInteractionSubmit}
+      ) : (
+        <>
+          <TaskConversation task={task} />
+          <TaskAssistantTurnShell subtitle={getTaskExecutionType(task.input)}>
+            {events.length ||
+            parseTaskResultPayload(task.result).resultType === 'agent_trace' ? (
+              <TaskExecutionSummary events={events} task={task} />
+            ) : null}
+            <TaskResultSection
+              task={task}
+              events={events}
+              tokenUsage={undefined}
+              tokenUsageViewMode="off"
+            />
+            {taskDetailSource === 'thread' ? (
+              <TaskArtifactMessageList
+                artifactActions={artifactActions}
+                artifacts={artifacts}
+                autoPreview={true}
+                renderFeedback={false}
+                renderReviewActions={false}
+                spaceId={task.space_id}
+                threadId={task.id}
+              />
+            ) : null}
+          </TaskAssistantTurnShell>
+        </>
+      )}
+      <TaskSubagentRunsSection
+        actionsDisabled={taskRunActionsDisabled}
+        subagentRuns={subagentRuns}
+        retryError={subagentRetryError}
+        retryingRunId={retryingSubagentRunId}
+        onRetrySubagentRun={onRetrySubagentRun}
       />
-    ) : null}
+      {pendingHumanInteraction ? (
+        <TaskHumanInterruptCard
+          pending={pendingHumanInteraction}
+          loading={humanInteractionLoading}
+          error={humanInteractionError}
+          onSubmit={onHumanInteractionSubmit}
+        />
+      ) : null}
+    </TaskConversationColumn>
   </section>
 );
 
@@ -1088,12 +861,14 @@ const TaskDetailPage = () => {
   }, []);
   const {
     applyTaskDetail,
+    applyOptimisticFollowUp,
     artifacts,
+    captureTaskDetailRequestToken,
     error,
     events,
     latestTaskRunID,
+    loadedTaskDetailCurrent,
     loadedTaskDetailSource,
-    loadedThreadId,
     loading,
     messages,
     refreshArtifacts,
@@ -1104,6 +879,12 @@ const TaskDetailPage = () => {
     todos,
     tokenUsage,
     tokenUsageByRunID,
+    tokenUsageError,
+    tokenUsageIsPartial,
+    tokenUsageLoadedCount,
+    tokenUsageLoading,
+    tokenUsageTotalCount,
+    retryTokenUsage,
   } = useTaskDetailData({
     spaceID: space_id,
     taskDetailId,
@@ -1117,16 +898,65 @@ const TaskDetailPage = () => {
   const [followUpSuggestionsHidden, setFollowUpSuggestionsHidden] =
     useState(false);
   const generatedSuggestionMessageKeyRef = useRef('');
+  const assistantMessageRefs = useRef(new Map<string, HTMLElement>());
 
   useEffect(() => {
     saveTaskTokenUsageViewMode(tokenUsageViewMode);
   }, [tokenUsageViewMode]);
 
   const activeTaskDetailSource = loadedTaskDetailSource;
-  const activeTaskDetailId =
-    activeTaskDetailSource === 'thread'
-      ? loadedThreadId || taskDetailId
-      : taskDetailId;
+  const activeTaskDetailId = taskDetailId;
+  const registerAssistantMessageRef = useCallback(
+    (runID: string, element: HTMLElement | null) => {
+      const normalizedRunID = String(runID ?? '').trim();
+      if (!normalizedRunID) {
+        return;
+      }
+      if (element) {
+        assistantMessageRefs.current.set(normalizedRunID, element);
+      } else {
+        assistantMessageRefs.current.delete(normalizedRunID);
+      }
+    },
+    [],
+  );
+  const locateAssistantReply = useCallback((runID: string) => {
+    const target = assistantMessageRefs.current.get(String(runID ?? '').trim());
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'center',
+    });
+    target.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    assistantMessageRefs.current.clear();
+  }, [activeTaskDetailId]);
+  const currentAssistantRunID = getCurrentAssistantRunID(
+    messages,
+    latestTaskRunID,
+  );
+  const currentReplyTokenUsage = currentAssistantRunID
+    ? tokenUsageByRunID[currentAssistantRunID]
+    : undefined;
+  const getTokenUsageDetailItems = useCallback(
+    () => buildTaskUsageDetailItems(messages, tokenUsageByRunID),
+    [messages, tokenUsageByRunID],
+  );
+  const hasAssistantReply = useMemo(
+    () =>
+      messages.some(
+        message =>
+          String(message.role ?? '')
+            .trim()
+            .toLowerCase() === 'assistant' &&
+          Boolean(String(message.content ?? '').trim()),
+      ),
+    [messages],
+  );
   const pendingHumanInteraction = getPendingHumanInteraction(events);
   const memoryReadOnly = isTaskMemoryReadOnly({
     source: activeTaskDetailSource,
@@ -1137,6 +967,7 @@ const TaskDetailPage = () => {
     followUpError,
     followUpLoading,
     followUpMode,
+    followUpResetKey,
     followUpValue,
     handleFollowUpSubmit,
     handleHumanInteractionSubmit,
@@ -1151,8 +982,11 @@ const TaskDetailPage = () => {
     subagentRetryError,
     taskRunActionError,
     taskRunActionLoading,
+    taskRunActionsDisabled,
   } = useTaskDetailActions({
     applyTaskDetail,
+    applyOptimisticFollowUp,
+    captureTaskDetailRequestToken,
     artifacts,
     events,
     messages,
@@ -1179,7 +1013,9 @@ const TaskDetailPage = () => {
     onArtifactsChanged: refreshArtifacts,
     spaceId: space_id,
     threadId:
-      activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined,
+      loadedTaskDetailCurrent && activeTaskDetailSource === 'thread'
+        ? activeTaskDetailId
+        : undefined,
   });
   const artifactPanelOpen =
     activeTaskDetailSource === 'thread' &&
@@ -1320,14 +1156,11 @@ const TaskDetailPage = () => {
           memoryReadOnly={memoryReadOnly}
           messages={messages}
           onArtifactsChanged={refreshArtifacts}
-          onTokenUsageViewModeChange={setTokenUsageViewMode}
           spaceId={space_id}
           task={task}
           threadId={
             activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined
           }
-          tokenUsage={tokenUsage}
-          tokenUsageViewMode={tokenUsageViewMode}
         />
       ) : null}
       <section
@@ -1342,7 +1175,11 @@ const TaskDetailPage = () => {
             data-testid="task-detail-scroll"
           >
             {loading ? <TaskDetailLoadingSkeleton /> : null}
-            {error ? <div className="coze-prototype-error">{error}</div> : null}
+            {error ? (
+              <div className="coze-prototype-error" role="alert">
+                {error}
+              </div>
+            ) : null}
             {!loading && !error && !task ? (
               <div className="coze-prototype-empty">未找到任务</div>
             ) : null}
@@ -1363,9 +1200,9 @@ const TaskDetailPage = () => {
                 taskDetailSource={activeTaskDetailSource}
                 taskRunActionError={taskRunActionError}
                 taskRunActionLoading={taskRunActionLoading}
-                tokenUsageByRunID={tokenUsageByRunID}
-                tokenUsageViewMode={tokenUsageViewMode}
+                taskRunActionsDisabled={taskRunActionsDisabled}
                 onHumanInteractionSubmit={handleHumanInteractionSubmit}
+                onAssistantMessageRef={registerAssistantMessageRef}
                 onRetrySubagentRun={handleRetrySubagentRun}
                 onRetryTaskRun={handleRetryTaskRun}
               />
@@ -1373,12 +1210,13 @@ const TaskDetailPage = () => {
           </section>
           {task ? (
             <TaskFollowUpComposer
+              key={activeTaskDetailId}
               value={followUpValue}
               mode={followUpMode}
               loading={followUpLoading}
               error={followUpError}
               spaceId={space_id}
-              taskId={task?.id ?? activeTaskDetailId}
+              taskId={activeTaskDetailId}
               todoDock={
                 <TaskExecutionTodoDock
                   events={events}
@@ -1386,10 +1224,38 @@ const TaskDetailPage = () => {
                   todos={todos}
                 />
               }
+              footerEnd={
+                <TaskUsagePopover
+                  currentReplyUsage={currentReplyTokenUsage}
+                  currentReplyIncomplete={Boolean(
+                    currentAssistantRunID && tokenUsageIsPartial,
+                  )}
+                  detailItems={[]}
+                  detailItemsFactory={getTokenUsageDetailItems}
+                  error={tokenUsageError}
+                  hasAssistantReply={hasAssistantReply}
+                  isPartial={tokenUsageIsPartial}
+                  loadedCount={tokenUsageLoadedCount}
+                  loading={tokenUsageLoading}
+                  scopeKey={activeTaskDetailId ?? ''}
+                  tokenUsage={tokenUsage}
+                  totalCount={tokenUsageTotalCount}
+                  viewMode={tokenUsageViewMode}
+                  onRetry={retryTokenUsage}
+                  onLocateReply={locateAssistantReply}
+                  onViewModeChange={setTokenUsageViewMode}
+                />
+              }
               suggestions={followUpSuggestions}
+              resetKey={followUpResetKey}
+              capabilities={{
+                attachments: activeTaskDetailSource === 'thread',
+                attachmentDisabledReason:
+                  '旧版任务暂不支持附件续聊，请使用文字继续提问',
+              }}
               suggestionsHidden={followUpSuggestionsHidden}
               suggestionsLoading={followUpSuggestionsLoading}
-              stopLoading={taskRunActionLoading === 'cancel'}
+              stopLoading={taskRunActionsDisabled}
               stopMode={canStopLatestTaskRun}
               onDismissSuggestions={() => setFollowUpSuggestionsHidden(true)}
               onSuggestionClick={suggestion => {

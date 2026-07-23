@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+import {
+  ListWorkspaceModels,
+  WorkspaceModelScope,
+} from '@coze-studio/api-schema/workbench-model';
 import { workbench, workbenchTask } from '@coze-studio/api-schema';
 import {
   DeveloperApi,
@@ -102,13 +106,44 @@ export const getWorkbenchLLMModels = async (
     return [];
   }
 
-  const response = await DeveloperApi.GetTypeList({
-    space_id: spaceId,
-    model: true,
-    cur_model_ids: [],
-  });
+  const [response, workspaceResponse] = await Promise.all([
+    DeveloperApi.GetTypeList({
+      space_id: spaceId,
+      model: true,
+      cur_model_ids: [],
+    }),
+    ListWorkspaceModels({
+      space_id: spaceId,
+      scope: WorkspaceModelScope.Space,
+    }).catch(() => undefined),
+  ]);
+  const workspaceData =
+    workspaceResponse?.code === 0 ? workspaceResponse.data : undefined;
+  const workspaceModelsByIdentifier = new Map(
+    (workspaceData?.workspace_models ?? []).map(model => [
+      model.model_identifier.trim().toLowerCase(),
+      model,
+    ]),
+  );
 
-  return response?.data?.model_list ?? [];
+  return (response?.data?.model_list ?? []).map(model => {
+    const identifier = (model.model_name || model.name || '')
+      .trim()
+      .toLowerCase();
+    const workspaceModel = workspaceModelsByIdentifier.get(identifier);
+
+    return {
+      ...model,
+      description:
+        workspaceModel?.description || model.model_brief_desc || undefined,
+      workspace_can_manage: workspaceData?.can_manage ?? false,
+      workspace_model_id: workspaceModel?.id,
+      workspace_model_can_manage: Boolean(
+        workspaceData?.can_manage && workspaceModel?.can_manage,
+      ),
+      workspace_model_description: workspaceModel?.description,
+    };
+  });
 };
 
 export const listWorkbenchKnowledgeResources = async (

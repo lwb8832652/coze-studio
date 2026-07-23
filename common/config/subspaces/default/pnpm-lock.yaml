@@ -99,6 +99,9 @@ importers:
       '@coze-foundation/global-adapter':
         specifier: workspace:*
         version: link:../../packages/foundation/global-adapter
+      '@coze-foundation/global-store':
+        specifier: workspace:*
+        version: link:../../packages/foundation/global-store
       '@coze-foundation/layout':
         specifier: workspace:*
         version: link:../../packages/foundation/layout
@@ -15983,6 +15986,9 @@ importers:
       '@coze-foundation/account-ui-base':
         specifier: workspace:*
         version: link:../account-ui-base
+      '@coze-foundation/global-store':
+        specifier: workspace:*
+        version: link:../global-store
       '@coze-studio/api-schema':
         specifier: workspace:*
         version: link:../../arch/api-schema

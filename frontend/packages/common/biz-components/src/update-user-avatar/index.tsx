@@ -20,11 +20,12 @@ import classNames from 'classnames';
 import { useRafState } from 'ahooks';
 import { REPORT_EVENTS } from '@coze-arch/report-events';
 import { uploadAvatar } from '@coze-arch/foundation-sdk';
+import { IconCozPeopleFill } from '@coze-arch/coze-design/icons';
+import { CozAvatar } from '@coze-arch/coze-design';
 import { type UploadProps } from '@coze-arch/bot-semi/Upload';
 import { Upload } from '@coze-arch/bot-semi';
 import { IconEditOutlined } from '@coze-arch/bot-icons';
 import { CustomError } from '@coze-arch/bot-error';
-import { CozAvatar } from '@coze-arch/coze-design';
 
 import s from './index.module.less';
 
@@ -87,7 +88,19 @@ export const UpdateUserAvatar = forwardRef(
       }
     };
 
-    const avatarNode = <CozAvatar type="person" size="xxl" src={value} />;
+    const avatarNode = (
+      <CozAvatar
+        type="person"
+        size="xxl"
+        src={value}
+        style={{
+          color: '#fff',
+          backgroundColor: 'var(--newx-color-accent, #14804a)',
+        }}
+      >
+        <IconCozPeopleFill />
+      </CozAvatar>
+    );
 
     return isReadonly ? (
       <div className={s['avatar-wrap']}>{avatarNode}</div>

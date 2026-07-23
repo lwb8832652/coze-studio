@@ -183,6 +183,8 @@ func (c *MySQLCatalog) updateServerFields(
 	}
 	updates := map[string]any{"updated_at": po.UpdatedAt}
 	if fieldMask&MCPToolServerMutationConnectionFields != 0 {
+		updates["creator_id"] = po.CreatorID
+		updates["source_type"] = po.SourceType
 		updates["name"] = po.Name
 		updates["description"] = po.Description
 		updates["server_type"] = po.ServerType

@@ -115,7 +115,11 @@ const ConfirmationInterruptCard = ({
         value={comment}
         onChange={setComment}
       />
-      {error ? <div className="coze-prototype-error">{error}</div> : null}
+      {error ? (
+        <div className="coze-prototype-error" role="alert">
+          {error}
+        </div>
+      ) : null}
       <div className="coze-prototype-human-interrupt-actions">
         <Button
           type="danger"
@@ -199,7 +203,11 @@ const ClarificationInterruptCard = ({
           onChange={setAnswer}
         />
       ) : null}
-      {error ? <div className="coze-prototype-error">{error}</div> : null}
+      {error ? (
+        <div className="coze-prototype-error" role="alert">
+          {error}
+        </div>
+      ) : null}
       <div className="coze-prototype-human-interrupt-actions">
         <Button
           type="primary"

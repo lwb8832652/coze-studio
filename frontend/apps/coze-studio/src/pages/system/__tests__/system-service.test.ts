@@ -20,11 +20,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createAdminModel,
+  createAdminManagedModel,
   createAdminUser,
   deleteAdminModel,
   getAdminBasicConfig,
   getAdminKnowledgeConfig,
   getAdminModelList,
+  listAdminManagedModels,
+  listAdminModelProviders,
   getSystemAdminStatus,
   isAdminBasicConfigConflict,
   listAdminUserSpaces,
@@ -547,6 +550,7 @@ describe('system service', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/config/model/delete', {
       body: JSON.stringify({
         id: '12',
+        preview: false,
       }),
       credentials: 'include',
       headers: {
@@ -554,6 +558,78 @@ describe('system service', () => {
       },
       method: 'POST',
     });
+  });
+
+  it('queries and creates managed system models without echoing credentials', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: '12', name: 'DeepSeek V4 Pro' }],
+          total: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          providers: [{ provider_key: 'deepseek', model_class: 3 }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: '13' }),
+      });
+    globalThis.fetch = fetchMock as never;
+
+    await expect(
+      listAdminManagedModels({ enabled: true, capability_type: 'text' }),
+    ).resolves.toMatchObject({ total: 1 });
+    await expect(listAdminModelProviders()).resolves.toMatchObject({
+      providers: [{ provider_key: 'deepseek' }],
+    });
+    await expect(
+      createAdminManagedModel({
+        model_class: 3,
+        management: {
+          access_mode: 1,
+          capability_types: ['text'],
+          enabled: true,
+          endpoints: [
+            {
+              api_key: 'write-only-secret',
+              base_url: 'https://api.example.test/v1',
+              enabled: true,
+              sort_order: 0,
+              weight: 1,
+            },
+          ],
+          function_call_mode: 'native',
+          max_context_tokens: 128000,
+          max_output_tokens: 8192,
+          model_identifier: 'deepseek-v4-pro',
+          name: 'DeepSeek V4 Pro',
+          protocol: 'openai-compatible',
+          provider_key: 'deepseek',
+          reasoning_mode: 'enabled',
+          routing_strategy: 1,
+          usage_scenarios: ['chat'],
+        },
+      }),
+    ).resolves.toEqual({ id: '13' });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain(
+      '/api/admin/config/model/manage/list?',
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('capability_type=text');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('enabled=true');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      '/api/admin/config/model/providers',
+    );
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('/api/admin/config/model/create');
   });
 
   it('gets admin knowledge config', async () => {

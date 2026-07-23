@@ -355,6 +355,21 @@ func (u *UploadService) UploadFile(ctx context.Context, data []byte, objKey stri
 	}, nil
 }
 
+func (u *UploadService) GetObjectURL(ctx context.Context, objKey string) (string, error) {
+	if u == nil || u.oss == nil || strings.TrimSpace(objKey) == "" {
+		return "", errors.New("object URL input is invalid")
+	}
+	return u.oss.GetObjectUrl(ctx, objKey)
+}
+
+func (u *UploadService) HeadObject(ctx context.Context, objKey string) error {
+	if u == nil || u.oss == nil || strings.TrimSpace(objKey) == "" {
+		return errors.New("object metadata input is invalid")
+	}
+	_, err := u.oss.HeadObject(ctx, objKey)
+	return err
+}
+
 func (u *UploadService) GetShortcutIcons(ctx context.Context) ([]*playground.FileInfo, error) {
 	shortcutIcons := entity.GetDefaultShortcutIconURI()
 	fileList := make([]*playground.FileInfo, 0, len(shortcutIcons))

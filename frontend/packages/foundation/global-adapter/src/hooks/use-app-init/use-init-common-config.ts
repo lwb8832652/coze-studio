@@ -21,10 +21,18 @@ import { useEffect } from 'react';
 
 import { useCommonConfigStore } from '@coze-foundation/global-store';
 
+import { refreshSiteConfig } from '../../site-config';
+
 export const useInitCommonConfig = () => {
   const setInitialized = useCommonConfigStore(state => state.setInitialized);
 
   useEffect(() => {
-    setInitialized();
-  }, []);
+    const controller = new AbortController();
+    void refreshSiteConfig(controller.signal).finally(() => {
+      if (!controller.signal.aborted) {
+        setInitialized();
+      }
+    });
+    return () => controller.abort();
+  }, [setInitialized]);
 };

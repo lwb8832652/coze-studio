@@ -17,6 +17,7 @@
 import { useMemo, useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
+import { IconCozDocument } from '@coze-arch/coze-design/icons';
 import { Button, List, SideSheet } from '@coze-arch/coze-design';
 
 import { TaskDeletedArtifactsSection } from './task-deleted-artifacts-section';
@@ -29,17 +30,15 @@ import { useTaskArtifactActions } from './task-artifact-actions';
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type ArtifactPanelMode = 'active' | 'deleted';
 
-export const TaskArtifactsPanel = ({
-  artifacts,
-  onArtifactsChanged,
-  spaceId,
-  threadId,
-}: {
+interface TaskArtifactsPanelProps {
   artifacts: TaskThreadArtifact[];
   onArtifactsChanged?: () => void | Promise<void>;
   spaceId?: string;
   threadId?: string;
-}) => {
+}
+
+export const TaskArtifactsPanel = (props: TaskArtifactsPanelProps) => {
+  const { artifacts, onArtifactsChanged, spaceId, threadId } = props;
   const [visible, setVisible] = useState(false);
   const [panelMode, setPanelMode] = useState<ArtifactPanelMode>('active');
   const {
@@ -76,16 +75,37 @@ export const TaskArtifactsPanel = ({
         data-testid="task-artifacts-open"
         onClick={() => setVisible(true)}
       >
-        产物 {artifacts.length}
+        <IconCozDocument />
+        <span>产物</span>{' '}
+        <span className="coze-prototype-task-artifact-count">
+          {artifacts.length}
+        </span>
       </button>
       <SideSheet
+        className="coze-prototype-task-artifacts-drawer"
         title="任务产物"
         visible={visible}
         onCancel={() => setVisible(false)}
         width={520}
       >
         <div className="coze-prototype-artifacts-panel">
-          {error ? <div className="coze-prototype-error">{error}</div> : null}
+          <div className="coze-prototype-artifacts-panel-intro">
+            <span className="coze-prototype-artifacts-panel-intro-icon">
+              <IconCozDocument />
+            </span>
+            <div>
+              <strong>任务产物</strong>
+              <p>预览、下载或管理本次对话生成的文件。</p>
+            </div>
+            <span className="coze-prototype-artifacts-panel-total">
+              {artifacts.length}
+            </span>
+          </div>
+          {error ? (
+            <div className="coze-prototype-error" role="alert">
+              {error}
+            </div>
+          ) : null}
           {removedArtifact ? (
             <RemovedArtifactUndoNotice
               activeAction={activeAction}
@@ -93,8 +113,14 @@ export const TaskArtifactsPanel = ({
               onRestore={handleRestoreArtifact}
             />
           ) : null}
-          <div className="coze-prototype-artifact-mode-switch">
+          <div
+            className="coze-prototype-artifact-mode-switch"
+            role="tablist"
+            aria-label="产物列表范围"
+          >
             <Button
+              aria-selected={panelMode === 'active'}
+              role="tab"
               size="small"
               theme={panelMode === 'active' ? 'solid' : 'borderless'}
               type={panelMode === 'active' ? 'primary' : 'tertiary'}
@@ -103,6 +129,8 @@ export const TaskArtifactsPanel = ({
               当前
             </Button>
             <Button
+              aria-selected={panelMode === 'deleted'}
+              role="tab"
               size="small"
               theme={panelMode === 'deleted' ? 'solid' : 'borderless'}
               type={panelMode === 'deleted' ? 'primary' : 'tertiary'}

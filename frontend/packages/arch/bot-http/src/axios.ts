@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import axios, { type AxiosResponse, isAxiosError } from 'axios';
+import axios, { type AxiosResponse, isAxiosError, isCancel } from 'axios';
 import { redirect } from '@coze-arch/web-context';
 import { logger } from '@coze-arch/logger';
 
@@ -104,7 +104,11 @@ axiosInstance.interceptors.response.use(
     return res;
   },
   error => {
-    if (isAxiosError(error)) {
+    if (
+      isAxiosError(error) &&
+      !isCancel(error) &&
+      error.code !== 'ERR_CANCELED'
+    ) {
       reportHttpError(ReportEventNames.NetworkError, error);
       if (error.response?.status === HTTP_STATUS_COE_UNAUTHORIZED) {
         // 401 Identity Expired & No Identity

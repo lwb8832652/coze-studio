@@ -79,7 +79,33 @@ vi.mock('@coze-arch/bot-api/developer_api', () => ({
   },
 }));
 
+vi.mock('@coze-arch/coze-design/icons', () => ({
+  IconCozPeopleFill: () => (
+    <span data-testid="default-person-avatar-icon">person-avatar-icon</span>
+  ),
+}));
+
 vi.mock('@coze-arch/coze-design', () => ({
+  CozAvatar: ({
+    children,
+    className,
+    src,
+    type,
+  }: {
+    children?: ReactNode;
+    className?: string;
+    src?: string;
+    type?: string;
+  }) => (
+    <span
+      className={className}
+      data-testid="workspace-person-avatar"
+      data-src={src}
+      data-type={type}
+    >
+      {children}
+    </span>
+  ),
   Input: ({
     value,
     maxLength,
@@ -243,6 +269,21 @@ describe('WorkspacePage', () => {
     expect(container.textContent).toContain('Owner');
     expect(container.textContent).toContain('owner@example.test');
     expect(container.textContent).toContain('Member');
+  });
+
+  it('uses the shared person avatar for members without custom avatars', async () => {
+    await renderPage();
+
+    const avatars = Array.from(
+      container.querySelectorAll('[data-testid="workspace-person-avatar"]'),
+    );
+    expect(avatars).toHaveLength(2);
+    expect(
+      avatars.every(avatar => avatar.getAttribute('data-type') === 'person'),
+    ).toBe(true);
+    expect(
+      container.querySelectorAll('[data-testid="default-person-avatar-icon"]'),
+    ).toHaveLength(2);
   });
 
   it('filters members by keyword and role', async () => {

@@ -14,15 +14,42 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/consistent-type-imports, @typescript-eslint/require-await, @typescript-eslint/no-shadow -- Test doubles mirror browser and asynchronous SDK contracts. */
+
 import type { KeyboardEvent, ReactNode } from 'react';
 
-import { vi } from 'vitest';
+import { afterAll, afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot as createReactRoot, type Root } from 'react-dom/client';
 import { workbench } from '@coze-studio/api-schema';
 
+const originalActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const originalGetBoundingClientRect =
+  HTMLElement.prototype.getBoundingClientRect;
+const testRoots = new Set<Root>();
+
+const createRoot = (...args: Parameters<typeof createReactRoot>): Root => {
+  const reactRoot = createReactRoot(...args);
+  let mounted = true;
+  const trackedRoot: Root = {
+    render: children => {
+      reactRoot.render(children);
+    },
+    unmount: () => {
+      if (!mounted) {
+        return;
+      }
+      mounted = false;
+      testRoots.delete(trackedRoot);
+      reactRoot.unmount();
+    },
+  };
+  testRoots.add(trackedRoot);
+
+  return trackedRoot;
+};
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockUseLocation = vi.hoisted(() => vi.fn(() => ({ state: null })));
@@ -36,6 +63,7 @@ const mockListDatabaseResources = vi.hoisted(() => vi.fn());
 const mockListWorkflowResources = vi.hoisted(() => vi.fn());
 const mockListSkills = vi.hoisted(() => vi.fn());
 const mockListMCPToolRegistryEntries = vi.hoisted(() => vi.fn());
+const mockWorkspaceHeaderActionsRender = vi.hoisted(() => vi.fn());
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -44,12 +72,38 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
-vi.mock('@coze-arch/foundation-sdk', () => ({
-  useUserInfo: () => ({
-    name: '刘文波',
-    screen_name: 'wb',
-    email: '840582614@qq.com',
-    avatar_url: '',
+vi.mock('@coze-arch/foundation-sdk', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@coze-arch/foundation-sdk')>();
+  return {
+    ...actual,
+    getIsLogined: () => true,
+    getIsSettled: () => true,
+    getUserAuthInfos: async () => undefined,
+    getUserInfo: () => ({
+      name: '刘文波',
+      screen_name: 'wb',
+      email: '840582614@qq.com',
+      avatar_url: '',
+    }),
+    subscribeUserAuthInfos: () => () => undefined,
+    useIsLogined: () => true,
+    useIsSettled: () => true,
+    useUserAuthInfo: () => undefined,
+    useUserInfo: () => ({
+      name: '刘文波',
+      screen_name: 'wb',
+      email: '840582614@qq.com',
+      avatar_url: '',
+    }),
+    useUserLabel: () => undefined,
+  };
+});
+
+vi.mock('@coze-foundation/global-adapter/account-settings', () => ({
+  useAccountSettings: () => ({
+    node: null,
+    open: vi.fn(),
   }),
 }));
 
@@ -69,6 +123,13 @@ vi.mock('../../skill/service', () => ({
 
 vi.mock('../../tools/service', () => ({
   listMCPToolRegistryEntries: mockListMCPToolRegistryEntries,
+}));
+
+vi.mock('../../../components/workspace-header-actions', () => ({
+  WorkspaceHeaderActions: () => {
+    mockWorkspaceHeaderActionsRender();
+    return <div aria-label="工作区头部账号与通知操作" />;
+  },
 }));
 
 /* eslint-disable @typescript-eslint/naming-convention -- Mock exports mirror coze-design component names. */
@@ -175,29 +236,41 @@ vi.mock('@coze-arch/coze-design', () => ({
   TextArea: ({
     'aria-label': ariaLabel,
     className,
+    disabled,
     onBlur,
     onChange,
+    onCompositionEnd,
+    onCompositionStart,
     onFocus,
     onKeyDown,
     placeholder,
+    readOnly,
     value,
   }: {
     'aria-label'?: string;
     className?: string;
+    disabled?: boolean;
     onBlur?: () => void;
     onChange?: (value: string) => void;
+    onCompositionEnd?: React.CompositionEventHandler<HTMLTextAreaElement>;
+    onCompositionStart?: React.CompositionEventHandler<HTMLTextAreaElement>;
     onFocus?: () => void;
     onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
     placeholder?: string;
+    readOnly?: boolean;
     value?: string;
   }) => (
     <textarea
       aria-label={ariaLabel}
       className={className}
+      disabled={disabled}
       placeholder={placeholder}
+      readOnly={readOnly}
       value={value}
       onBlur={onBlur}
       onChange={event => onChange?.(event.target.value)}
+      onCompositionEnd={onCompositionEnd}
+      onCompositionStart={onCompositionStart}
       onFocus={onFocus}
       onKeyDown={onKeyDown}
     />
@@ -205,27 +278,42 @@ vi.mock('@coze-arch/coze-design', () => ({
 }));
 
 vi.mock('@coze-arch/coze-design/icons', () => ({
+  IconCozArrowUp: () => <span />,
+  IconCozArrowUpFill: () => <span />,
+  IconCozArrowBack: () => <span />,
   IconCozArrowDown: () => <span />,
+  IconCozArrowRight: () => <span />,
   IconCozAt: () => <span />,
   IconCozBell: () => <span />,
   IconCozBot: () => <span />,
   IconCozCode: () => <span />,
+  IconCozCheckMark: () => <span />,
+  IconCozCross: () => <span />,
+  IconCozDatabase: () => <span />,
+  IconCozDiamondFill: () => <span />,
   IconCozDocument: () => <span />,
   IconCozImage: () => <span />,
   IconCozLink: () => <span />,
   IconCozLightbulb: () => <span />,
+  IconCozLightbulbFill: () => <span />,
+  IconCozLightningFill: () => <span />,
+  IconCozKnowledge: () => <span />,
   IconCozPlus: () => <span />,
   IconCozPlugin: () => <span />,
   IconCozSearch: () => <span />,
+  IconCozMagnifier: () => <span />,
+  IconCozRocketFill: () => <span />,
   IconCozSendFill: () => <span />,
   IconCozSetting: () => <span />,
+  IconCozSkill: () => <span />,
   IconCozStar: () => <span />,
+  IconCozStopCircle: () => <span />,
   IconCozUpload: () => <span />,
   IconCozWorkflow: () => <span />,
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
-import WorkbenchPage, { mapModeToChatMode } from '../index';
+import WorkbenchPage, { mapModeToChatMode, WorkbenchTopbar } from '../index';
 import { WorkbenchComposer } from '../components/workbench-composer';
 import {
   createDefaultWorkbenchResourceSelection,
@@ -364,6 +452,22 @@ const installWorkbenchAtAnchorRectMock = ({
   };
 };
 
+afterEach(() => {
+  for (const root of [...testRoots]) {
+    act(() => {
+      root.unmount();
+    });
+  }
+  testRoots.clear();
+  document.body.replaceChildren();
+  HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+  vi.restoreAllMocks();
+});
+
+afterAll(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment;
+});
+
 describe('WorkbenchPage', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -374,6 +478,7 @@ describe('WorkbenchPage', () => {
     mockCreateTaskThreadRun.mockReset();
     mockUploadTaskThreadFiles.mockReset();
     mockGetTypeList.mockReset();
+    mockWorkspaceHeaderActionsRender.mockClear();
     mockListKnowledgeResources.mockReset();
     mockListKnowledgeResources.mockResolvedValue([
       {
@@ -496,14 +601,69 @@ describe('WorkbenchPage', () => {
     ]);
   });
 
+  it('navigates the assistant shortcut to the current workspace chats', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<WorkbenchTopbar />);
+    });
+
+    const assistantButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent === '去聊天专属助理');
+
+    act(() => {
+      assistantButton?.click();
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('/space/space-1/chats');
+    expect(mockWorkspaceHeaderActionsRender).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('disables the assistant shortcut without a workspace id', () => {
+    mockUseParams.mockReturnValue({ space_id: '' });
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<WorkbenchTopbar />);
+    });
+
+    const assistantButton = Array.from(
+      container.querySelectorAll('button'),
+    ).find(button => button.textContent === '去聊天专属助理');
+
+    expect(assistantButton?.disabled).toBe(true);
+
+    act(() => {
+      assistantButton?.click();
+    });
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it('renders the static chat workbench first screen', () => {
     const markup = renderToStaticMarkup(<WorkbenchPage />);
 
     expect(markup).toContain('欢迎回来，刘文波');
     expect(markup).toContain('NewX AI 专属助理已就绪，随时可以开始对话');
     expect(markup).toContain('去聊天专属助理');
-    expect(markup).toContain('aria-label="当前用户：刘文波"');
+    expect(markup).toContain('aria-label="工作区头部账号与通知操作"');
     expect(markup).toContain('aria-label="任务描述"');
+    expect(markup).toContain('data-variant="hero"');
     expect(markup).toContain('data-composer-style="deerflow"');
     expect(markup).toContain('placeholder="今天想做什么？"');
     expect(markup).toContain('chat-workbench-deerflow-mode-trigger');
@@ -538,6 +698,38 @@ describe('WorkbenchPage', () => {
     expect(markup).not.toContain('aria-pressed="false"');
   });
 
+  it('prefills the shared hero composer from a workbench template', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(<WorkbenchPage />);
+    });
+    act(() => {
+      (
+        container.querySelector(
+          'button[aria-label="年度工作总结报告(简洁版) 模板"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="任务描述"]',
+    ) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(
+      '帮我生成一份年度工作总结报告，要求结构清晰、简洁专业。',
+    );
+    expect(
+      textarea.closest('.chat-composer[data-variant="hero"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it('renders skill creation intent in the shared workbench home', () => {
     mockUseLocation.mockReturnValue({
       state: {
@@ -556,6 +748,7 @@ describe('WorkbenchPage', () => {
       '我想创建一个技能，请先询问我技能用途、使用场景和期望输出。',
     );
     expect(markup).toContain('placeholder="今天想做什么？"');
+    expect(markup).toContain('data-variant="hero"');
     expect(markup).toContain('公开模板 6268');
     expect(markup).not.toContain('✨ 创建你自己的 Agent SKill ✨');
     expect(markup).not.toContain(
@@ -783,7 +976,9 @@ describe('WorkbenchPage', () => {
     const referenceChip = container.querySelector(
       '.chat-workbench-at-resource-chip',
     );
-    expect(referenceChip?.textContent).toContain('✦');
+    expect(
+      referenceChip?.querySelector('.chat-workbench-at-resource-icon span'),
+    ).not.toBeNull();
     expect(referenceChip?.textContent).toContain('Research Skill');
     expect(referenceChip?.textContent).not.toContain('@');
     expect(referenceChip?.textContent).not.toContain('技能：');
@@ -1140,7 +1335,14 @@ describe('WorkbenchPage', () => {
     expect(skillName?.textContent).toBe(longSkillName);
     expect(skillName?.getAttribute('title')).toBe(longSkillName);
     expect(skillItem?.textContent).toContain('Deer');
-    expect(skillItem?.textContent).toContain('✓');
+    expect(
+      skillItem
+        ?.querySelector('.chat-workbench-extension-check')
+        ?.getAttribute('data-selected'),
+    ).toBe('true');
+    expect(
+      skillItem?.querySelector('.chat-workbench-extension-check span'),
+    ).not.toBeNull();
 
     act(() => {
       root?.unmount();

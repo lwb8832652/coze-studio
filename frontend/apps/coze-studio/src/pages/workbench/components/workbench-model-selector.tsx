@@ -14,11 +14,30 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+/* eslint-disable @coze-arch/max-line-per-function -- Model filtering, grouping and selection form one accessible selector workflow. */
 
-import { IconCozArrowDown } from '@coze-arch/coze-design/icons';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { workbenchModelTypeToNumber, type WorkbenchLLMModel } from './types';
+import { useAccountSettings } from '@coze-foundation/global-adapter/account-settings';
+import {
+  IconCozArrowDown,
+  IconCozCheckMark,
+  IconCozEdit,
+  IconCozMagnifier,
+  IconCozPlus,
+  IconCozTrashCan,
+} from '@coze-arch/coze-design/icons';
+
+import {
+  WORKSPACE_MODEL_SETTINGS_TAB_ID,
+  WorkspaceModelSettingsPanel,
+  type WorkspaceModelSettingsLaunchIntent,
+} from '../../tools/workspace-model-settings-panel';
+import {
+  workbenchModelTypeToNumber,
+  type WorkbenchComposerOverlayPlacement,
+  type WorkbenchLLMModel,
+} from './types';
 
 export const findSelectedWorkbenchModel = (
   models: WorkbenchLLMModel[],
@@ -143,6 +162,15 @@ const appendWorkbenchModelEndpointName = (
 const getWorkbenchModelIdentifier = (model?: WorkbenchLLMModel) =>
   model?.model_name || model?.name || model?.model || '';
 
+const getWorkbenchModelDescription = (model?: WorkbenchLLMModel) =>
+  trimModelText(
+    model?.workspace_model_description ||
+      model?.description ||
+      model?.model_brief_desc ||
+      model?.endpoint_name ||
+      getWorkbenchModelIdentifier(model),
+  );
+
 const getWorkbenchModelGroupName = (model: WorkbenchLLMModel) => {
   const groupName = trimModelText(model.model_class_name);
 
@@ -185,22 +213,54 @@ const groupModelsByClass = (models: WorkbenchLLMModel[]) => {
 };
 
 export const WorkbenchModelSelector = ({
+  disabled = false,
   loading,
   models,
   value,
   open,
+  placement,
+  spaceId,
   onOpenChange,
   onChange,
+  onModelsChanged,
 }: {
+  disabled?: boolean;
   loading: boolean;
   models: WorkbenchLLMModel[];
   value?: number;
   open: boolean;
+  placement: WorkbenchComposerOverlayPlacement;
+  spaceId: string;
   onOpenChange: (open: boolean) => void;
   onChange: (model: WorkbenchLLMModel) => void;
+  onModelsChanged: () => void | Promise<void>;
 }) => {
   const [keyword, setKeyword] = useState('');
+  const [settingsIntent, setSettingsIntent] =
+    useState<WorkspaceModelSettingsLaunchIntent>();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const settingsIntentSequence = useRef(0);
   const selectedModel = findSelectedWorkbenchModel(models, value);
+  const workspaceCanManage = models.some(model => model.workspace_can_manage);
+  const modelSettingsTabs = useMemo(
+    () => [
+      {
+        id: WORKSPACE_MODEL_SETTINGS_TAB_ID,
+        tabName: '模型管理',
+        content: () => (
+          <WorkspaceModelSettingsPanel
+            launchIntent={settingsIntent}
+            onModelsChanged={onModelsChanged}
+            spaceId={spaceId}
+          />
+        ),
+      },
+    ],
+    [onModelsChanged, settingsIntent, spaceId],
+  );
+  const { node: modelSettingsNode, open: openModelSettings } =
+    useAccountSettings(modelSettingsTabs);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const visibleModels = useMemo(() => {
     if (!normalizedKeyword) {
@@ -223,6 +283,23 @@ export const WorkbenchModelSelector = ({
   const label = loading
     ? '模型加载中'
     : getWorkbenchModelFallbackName(selectedModel);
+  const closeAndRestoreFocus = useCallback(() => {
+    onOpenChange(false);
+    queueMicrotask(() => triggerRef.current?.focus());
+  }, [onOpenChange]);
+  const launchModelSettings = useCallback(
+    (type: WorkspaceModelSettingsLaunchIntent['type'], modelId?: string) => {
+      settingsIntentSequence.current += 1;
+      setSettingsIntent({
+        key: settingsIntentSequence.current,
+        type,
+        modelId,
+      });
+      onOpenChange(false);
+      queueMicrotask(() => openModelSettings(WORKSPACE_MODEL_SETTINGS_TAB_ID));
+    },
+    [onOpenChange, openModelSettings],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -231,56 +308,74 @@ export const WorkbenchModelSelector = ({
   }, [open]);
 
   useEffect(() => {
-    if (!open) {
+    if (disabled && open) {
+      onOpenChange(false);
+    }
+  }, [disabled, onOpenChange, open]);
+
+  useEffect(() => {
+    if (disabled || !open) {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onOpenChange(false);
+        event.preventDefault();
+        closeAndRestoreFocus();
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rootRef.current?.contains(event.target)
+      ) {
+        closeAndRestoreFocus();
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleMouseDown);
 
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onOpenChange, open]);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [closeAndRestoreFocus, disabled, open]);
 
   return (
-    <div className="chat-workbench-model">
-      <button
-        type="button"
-        className="chat-workbench-model-trigger"
-        aria-label="选择模型"
-        aria-expanded={open}
-        disabled={loading || models.length === 0}
-        onClick={() => onOpenChange(!open)}
-      >
-        <span>{label}</span>
-        <IconCozArrowDown />
-      </button>
-
-      {open && models.length ? (
-        <div
-          className="chat-workbench-model-dialog-mask"
-          data-open="true"
-          onMouseDown={event => {
-            if (event.target === event.currentTarget) {
-              onOpenChange(false);
+    <>
+      <div ref={rootRef} className="chat-workbench-model">
+        <button
+          ref={triggerRef}
+          type="button"
+          className="chat-workbench-model-trigger"
+          aria-label="选择模型"
+          aria-expanded={open}
+          data-open={open}
+          disabled={disabled || loading || models.length === 0}
+          onClick={() => {
+            if (!disabled) {
+              onOpenChange(!open);
             }
           }}
         >
+          <span>{label}</span>
+          <IconCozArrowDown />
+        </button>
+
+        {open && !disabled && models.length ? (
           <div
             className="chat-workbench-model-menu"
+            data-placement={placement}
             role="dialog"
-            aria-modal="true"
             aria-label="选择模型"
           >
             <label className="chat-workbench-model-search">
-              <span aria-hidden="true">⌕</span>
+              <IconCozMagnifier />
               <input
                 aria-label="搜索模型"
                 autoFocus
+                disabled={disabled}
                 value={keyword}
                 placeholder="搜索模型..."
                 onChange={event => setKeyword(event.target.value)}
@@ -296,30 +391,64 @@ export const WorkbenchModelSelector = ({
                     const modelType = workbenchModelTypeToNumber(model);
                     const displayName = getWorkbenchModelFallbackName(model);
                     const identifier = getWorkbenchModelIdentifier(model);
+                    const description = getWorkbenchModelDescription(model);
+                    const workspaceModelID = model.workspace_model_id;
+                    const canManageModel = Boolean(
+                      workspaceModelID && model.workspace_model_can_manage,
+                    );
 
                     return (
-                      <button
+                      <div
                         key={`${modelType}-${identifier || 'model'}`}
-                        type="button"
-                        role="option"
-                        aria-selected={modelType === value}
                         className="chat-workbench-model-option"
                         data-active={modelType === value}
-                        onClick={() => {
-                          onChange(model);
-                          onOpenChange(false);
-                        }}
                       >
-                        <span className="chat-workbench-model-option-copy">
-                          <span>{displayName}</span>
-                          {identifier && identifier !== displayName ? (
-                            <span>{identifier}</span>
-                          ) : null}
-                        </span>
-                        <span className="chat-workbench-model-option-check">
-                          {modelType === value ? '✓' : ''}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={modelType === value}
+                          disabled={disabled}
+                          className="chat-workbench-model-option-main"
+                          onClick={() => {
+                            if (!disabled) {
+                              onChange(model);
+                              closeAndRestoreFocus();
+                            }
+                          }}
+                        >
+                          <span className="chat-workbench-model-option-copy">
+                            <span>{displayName}</span>
+                            {description && description !== displayName ? (
+                              <span>{description}</span>
+                            ) : null}
+                          </span>
+                          <span className="chat-workbench-model-option-check">
+                            {modelType === value ? <IconCozCheckMark /> : null}
+                          </span>
+                        </button>
+                        {canManageModel ? (
+                          <span className="chat-workbench-model-option-actions">
+                            <button
+                              type="button"
+                              aria-label={`编辑 ${displayName}`}
+                              onClick={() =>
+                                launchModelSettings('edit', workspaceModelID)
+                              }
+                            >
+                              <IconCozEdit />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`删除 ${displayName}`}
+                              onClick={() =>
+                                launchModelSettings('delete', workspaceModelID)
+                              }
+                            >
+                              <IconCozTrashCan />
+                            </button>
+                          </span>
+                        ) : null}
+                      </div>
                     );
                   })}
                 </div>
@@ -328,9 +457,21 @@ export const WorkbenchModelSelector = ({
                 <div className="chat-workbench-model-empty">暂无匹配模型</div>
               ) : null}
             </div>
+            {workspaceCanManage ? (
+              <div className="chat-workbench-model-footer">
+                <button
+                  type="button"
+                  onClick={() => launchModelSettings('create')}
+                >
+                  <IconCozPlus />
+                  <span>模型</span>
+                </button>
+              </div>
+            ) : null}
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+      {modelSettingsNode}
+    </>
   );
 };
