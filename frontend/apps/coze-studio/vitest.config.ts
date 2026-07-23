@@ -61,6 +61,13 @@ export default defineConfig(
     },
     test: {
       setupFiles: ['./vitest.setup.ts'],
+      environmentOptions: {
+        happyDOM: {
+          settings: {
+            disableIframePageLoading: true,
+          },
+        },
+      },
     },
   },
   {
