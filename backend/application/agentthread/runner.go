@@ -858,10 +858,16 @@ func (p *RunProcessor) generatedThreadTitle(
 	userMessage string,
 	result *RunExecutionResult,
 ) string {
-	if title := normalizeGeneratedThreadTitle(resultTitle(result)); title != "" {
-		return title
+	titleConfig, _ := runTitleGenerationConfigFromRun(run)
+	normalizeTitle := func(title string) string {
+		return normalizeGeneratedThreadTitleWithLimits(
+			title,
+			titleConfig.MaxWords,
+			titleConfig.MaxChars,
+		)
 	}
-	if title := extractQuotedGeneratedThreadTitle(userMessage); title != "" {
+
+	if title := normalizeTitle(resultTitle(result)); title != "" {
 		return title
 	}
 	if p != nil && p.titleGenerator != nil {
@@ -871,12 +877,23 @@ func (p *RunProcessor) generatedThreadTitle(
 			AssistantMessage: strings.TrimSpace(resultMessage(result)),
 		})
 		if err == nil {
-			if title := normalizeGeneratedThreadTitle(title); title != "" {
+			if title := normalizeTitle(title); title != "" {
 				return title
 			}
 		}
 	}
-	return fallbackGeneratedThreadTitle(userMessage)
+	if title := normalizeTitle(extractQuotedGeneratedThreadTitle(userMessage)); title != "" {
+		return title
+	}
+
+	var activatedResources map[string]struct{}
+	if run != nil {
+		activatedResources = taskTitleActivatedResources(run.Config)
+	}
+	return provisionalTaskThreadTitleWithActivatedResources(
+		userMessage,
+		activatedResources,
+	)
 }
 
 func generatedThreadTitle(userMessage, explicitTitle string) string {

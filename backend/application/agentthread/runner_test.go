@@ -417,6 +417,152 @@ func TestRunProcessorGeneratesThreadTitleWithTitleGenerator(t *testing.T) {
 	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
+func TestRunProcessorGeneratedThreadTitleUsesCleanFallbacksAndRunConfig(t *testing.T) {
+	const skillGuide = "我想创建一个技能，请先询问我技能用途、使用场景和期望输出。"
+
+	t.Run("generator error uses active skill fallback", func(t *testing.T) {
+		processor := &RunProcessor{
+			titleGenerator: &recordingRunTitleGenerator{err: errors.New("title model unavailable")},
+		}
+		run := &RunSummary{
+			Config: `{"enable_skills":["skill-creator"]}`,
+		}
+
+		title := processor.generatedThreadTitle(
+			context.Background(),
+			run,
+			skillGuide,
+			&RunExecutionResult{Message: "请补充技能信息"},
+		)
+
+		require.Equal(t, "创建技能", title)
+		require.NotContains(t, title, "@skill-creator")
+	})
+
+	t.Run("empty generator result uses clean fallback", func(t *testing.T) {
+		processor := &RunProcessor{
+			titleGenerator: &recordingRunTitleGenerator{},
+		}
+
+		title := processor.generatedThreadTitle(
+			context.Background(),
+			&RunSummary{Config: `{"enable_skills":["web-search"]}`},
+			"请帮我整理季度复盘。 @web-search",
+			&RunExecutionResult{Message: "已整理"},
+		)
+
+		require.Equal(t, "请帮我整理季度复盘", title)
+	})
+
+	t.Run("dirty custom generator title is normalized", func(t *testing.T) {
+		processor := &RunProcessor{
+			titleGenerator: &recordingRunTitleGenerator{title: "季度复盘 @web-search"},
+		}
+
+		title := processor.generatedThreadTitle(
+			context.Background(),
+			&RunSummary{},
+			"请帮我整理季度复盘",
+			&RunExecutionResult{Message: "已整理"},
+		)
+
+		require.Equal(t, "季度复盘", title)
+	})
+
+	t.Run("explicit executor title keeps priority and is normalized", func(t *testing.T) {
+		generator := &recordingRunTitleGenerator{title: "生成器标题"}
+		processor := &RunProcessor{titleGenerator: generator}
+
+		title := processor.generatedThreadTitle(
+			context.Background(),
+			&RunSummary{},
+			"请帮我整理季度复盘",
+			&RunExecutionResult{
+				Message: "已整理",
+				Title:   "执行器标题 @web-search",
+			},
+		)
+
+		require.Equal(t, "执行器标题", title)
+		require.Zero(t, generator.calls)
+	})
+}
+
+func TestRunProcessorGeneratedThreadTitleHonorsConfiguredMaxChars(t *testing.T) {
+	longTitle := "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十"
+	require.Len(t, []rune(longTitle), 70)
+	processor := &RunProcessor{
+		titleGenerator: &recordingRunTitleGenerator{title: longTitle},
+	}
+
+	title := processor.generatedThreadTitle(
+		context.Background(),
+		&RunSummary{Config: `{"title_generation":{"max_chars":80,"max_words":20}}`},
+		"请生成长标题",
+		&RunExecutionResult{Message: "已完成"},
+	)
+
+	require.Equal(t, longTitle, title)
+}
+
+func TestRunProcessorSkipsRedundantCleanFallbackTitleUpdate(t *testing.T) {
+	userMessage := "我想创建一个技能，请先询问我技能用途、使用场景和期望输出。 @skill-creator"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	require.Equal(t, "创建技能", initialTitle)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				Config:   `{"enable_skills":["skill-creator"]}`,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "请补充技能信息",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	eventSink := &recordingRunEventSink{}
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "请补充技能信息"}, nil
+		}),
+		RunProcessorOptions{
+			WorkerID:       "worker-a",
+			BatchSize:      1,
+			EventSink:      eventSink,
+			TitleGenerator: &recordingRunTitleGenerator{err: errors.New("title model unavailable")},
+		},
+	)
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.Nil(t, domainSVC.updateThreadTitleReq)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.JSONEq(t, `{"thread_title":""}`, domainSVC.finalizeRunSuccessReq.TitleEventPayload)
+	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+}
+
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
 	input, err := taskThreadRunInputFromMessage("能把预算表导出成 Excel 吗？")
 	require.NoError(t, err)
