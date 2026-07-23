@@ -66,3 +66,58 @@ func TestModelRunTitleGeneratorBuildsDeerFlowPromptAndCleansTitle(t *testing.T) 
 	require.NotNil(t, chatModel.options.MaxTokens)
 	require.LessOrEqual(t, *chatModel.options.MaxTokens, 96)
 }
+
+func TestBuildRunTitlePromptRemovesKnownResourceMarkers(t *testing.T) {
+	prompt := buildRunTitlePrompt(
+		RunTitleGenerationInput{
+			UserMessage:      "请创建一个技能 @skill-creator，并通知 @alice",
+			AssistantMessage: "已加载 @skill-creator，稍后通知 @alice",
+		},
+		runTitleGenerationConfig{MaxWords: defaultRunTitleMaxWords},
+	)
+
+	require.NotContains(t, prompt, "@skill-creator")
+	require.Contains(t, prompt, "User: 请创建一个技能 ，并通知 @alice")
+	require.Contains(t, prompt, "Assistant: 已加载 ，稍后通知 @alice")
+	require.Contains(t, prompt, "Do not include tool names, skill names, or @mentions.")
+}
+
+func TestModelRunTitleGeneratorCleansResourceMarkersFromGeneratedTitle(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "keeps meaningful title",
+			content: "创建 Agent 技能 @skill-creator",
+			want:    "创建 Agent 技能",
+		},
+		{
+			name:    "returns empty title when only marker remains",
+			content: `"@skill-creator"。`,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chatModel := &recordingChatModel{
+				resp: schema.AssistantMessage(tt.content, nil),
+			}
+			generator := NewModelRunTitleGenerator(
+				func(context.Context, int64) (model.BaseChatModel, bool, error) {
+					return chatModel, true, nil
+				},
+			)
+
+			title, err := generator.GenerateTitle(
+				context.Background(),
+				RunTitleGenerationInput{Run: &RunSummary{}},
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, title)
+		})
+	}
+}

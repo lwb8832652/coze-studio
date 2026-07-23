@@ -153,23 +153,44 @@ func buildRunTitlePrompt(
 	cfg runTitleGenerationConfig,
 ) string {
 	userMessage := truncateRunTitlePromptText(
-		strings.TrimSpace(input.UserMessage),
+		cleanRunTitlePromptText(input.UserMessage),
 		defaultRunTitlePromptChars,
 	)
 	assistantMessage := truncateRunTitlePromptText(
-		generatedThreadTitleThinkTagRE.ReplaceAllString(
-			strings.TrimSpace(input.AssistantMessage),
-			"",
+		cleanRunTitlePromptText(
+			generatedThreadTitleThinkTagRE.ReplaceAllString(
+				strings.TrimSpace(input.AssistantMessage),
+				"",
+			),
 		),
 		defaultRunTitlePromptChars,
 	)
 
 	return fmt.Sprintf(
-		"Generate a concise title (max %d words) for this conversation.\nUser: %s\nAssistant: %s\n\nReturn ONLY the title, no quotes, no explanation.",
+		"Generate a concise title (max %d words) for this conversation.\nDo not include tool names, skill names, or @mentions.\nUser: %s\nAssistant: %s\n\nReturn ONLY the title, no quotes, no explanation.",
 		cfg.MaxWords,
 		userMessage,
 		assistantMessage,
 	)
+}
+
+func cleanRunTitlePromptText(text string) string {
+	source := strings.TrimSpace(text)
+	cleaned := cleanTaskTitleSource(source)
+	if cleaned == "" {
+		return ""
+	}
+
+	runes := []rune(source)
+	if len(runes) == 0 {
+		return cleaned
+	}
+	trailing := runes[len(runes)-1]
+	if strings.ContainsRune("，。,.；;:：", trailing) &&
+		!strings.HasSuffix(cleaned, string(trailing)) {
+		return cleaned + string(trailing)
+	}
+	return cleaned
 }
 
 func truncateRunTitlePromptText(text string, limit int) string {
@@ -200,6 +221,7 @@ func normalizeGeneratedThreadTitleWithLimit(title string, limit int) string {
 	}
 	title = strings.TrimSpace(title)
 	title = generatedThreadTitleThinkTagRE.ReplaceAllString(title, "")
+	title = cleanTaskTitleSource(title)
 	for {
 		next := strings.TrimSpace(title)
 		next = strings.Trim(next, "\"'“”‘’")
