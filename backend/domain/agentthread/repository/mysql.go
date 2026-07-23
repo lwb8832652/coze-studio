@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -2190,9 +2191,71 @@ func (r *threadRepository) CreateTokenUsage(ctx context.Context, usage *entity.T
 		return err
 	}
 
-	return r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(po).Error
+	var stored *tokenUsagePO
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(po)
+		if created.Error != nil {
+			return created.Error
+		}
+		if created.RowsAffected == 0 {
+			existing, findErr := findExistingTokenUsage(tx, po)
+			if findErr != nil {
+				return findErr
+			}
+			if existing.ThreadID != po.ThreadID ||
+				existing.RunID != po.RunID ||
+				existing.SpaceID != po.SpaceID {
+				return fmt.Errorf(
+					"token usage identity conflict: existing thread/run/space does not match request",
+				)
+			}
+			stored = existing
+			return nil
+		}
+		stored = po
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if stored == nil {
+		return fmt.Errorf("token usage was not stored")
+	}
+	*usage = *stored.toEntity()
+	return nil
+}
+
+func findExistingTokenUsage(tx *gorm.DB, candidate *tokenUsagePO) (*tokenUsagePO, error) {
+	var existing tokenUsagePO
+	err := tx.Where("id = ?", candidate.ID).Take(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	var metadata struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if len(candidate.Metadata) == 0 || json.Unmarshal(candidate.Metadata, &metadata) != nil {
+		return nil, fmt.Errorf("token usage conflict could not be resolved")
+	}
+	idempotencyKey := strings.TrimSpace(metadata.IdempotencyKey)
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("token usage conflict could not be resolved")
+	}
+
+	query := tx.Where("run_id = ?", candidate.RunID)
+	if tx.Dialector.Name() == "sqlite" {
+		query = query.Where("json_extract(metadata, '$.idempotency_key') = ?", idempotencyKey)
+	} else {
+		query = query.Where("usage_key = ?", idempotencyKey)
+	}
+	if err := query.Take(&existing).Error; err != nil {
+		return nil, err
+	}
+	return &existing, nil
 }
 
 func (r *threadRepository) UpsertRuntimeFile(
@@ -3375,6 +3438,10 @@ func incrementPlanRevision(tx *gorm.DB, runID int64, updatedAt int64) error {
 }
 
 func (r *threadRepository) ListTokenUsage(ctx context.Context, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error) {
+	return listTokenUsage(r.db.WithContext(ctx), req)
+}
+
+func listTokenUsage(db *gorm.DB, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error) {
 	page := req.Page
 	if page <= 0 {
 		page = 1
@@ -3384,7 +3451,7 @@ func (r *threadRepository) ListTokenUsage(ctx context.Context, req ListTokenUsag
 		pageSize = 100
 	}
 
-	query := r.db.WithContext(ctx).Model(&tokenUsagePO{})
+	query := db.Model(&tokenUsagePO{})
 	if req.ThreadID > 0 {
 		query = query.Where("thread_id = ?", req.ThreadID)
 	}
@@ -3420,7 +3487,11 @@ func (r *threadRepository) ListTokenUsage(ctx context.Context, req ListTokenUsag
 }
 
 func (r *threadRepository) AggregateTokenUsage(ctx context.Context, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error) {
-	query := r.db.WithContext(ctx).Model(&tokenUsagePO{})
+	return aggregateTokenUsage(r.db.WithContext(ctx), req)
+}
+
+func aggregateTokenUsage(db *gorm.DB, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error) {
+	query := db.Model(&tokenUsagePO{})
 	if req.ThreadID > 0 {
 		query = query.Where("thread_id = ?", req.ThreadID)
 	}
@@ -3428,6 +3499,9 @@ func (r *threadRepository) AggregateTokenUsage(ctx context.Context, req Aggregat
 		query = query.Where("run_id IN ?", req.RunIDs)
 	} else if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
+	}
+	if req.Source != "" {
+		query = query.Where("source = ?", string(req.Source))
 	}
 
 	aggregate := &entity.TokenUsageAggregate{}
@@ -3468,7 +3542,11 @@ type runTokenUsageAggregatePO struct {
 }
 
 func (r *threadRepository) AggregateTokenUsageByRun(ctx context.Context, req AggregateTokenUsageRequest) ([]*entity.RunTokenUsageAggregate, error) {
-	query := r.db.WithContext(ctx).Model(&tokenUsagePO{})
+	return aggregateTokenUsageByRun(r.db.WithContext(ctx), req)
+}
+
+func aggregateTokenUsageByRun(db *gorm.DB, req AggregateTokenUsageRequest) ([]*entity.RunTokenUsageAggregate, error) {
+	query := db.Model(&tokenUsagePO{})
 	if req.ThreadID > 0 {
 		query = query.Where("thread_id = ?", req.ThreadID)
 	}
@@ -3476,6 +3554,9 @@ func (r *threadRepository) AggregateTokenUsageByRun(ctx context.Context, req Agg
 		query = query.Where("run_id IN ?", req.RunIDs)
 	} else if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
+	}
+	if req.Source != "" {
+		query = query.Where("source = ?", string(req.Source))
 	}
 
 	pos := make([]*runTokenUsageAggregatePO, 0)
@@ -3522,6 +3603,65 @@ func (r *threadRepository) AggregateTokenUsageByRun(ctx context.Context, req Agg
 	}
 
 	return aggregates, nil
+}
+
+func (r *threadRepository) GetTokenUsageSnapshot(
+	ctx context.Context,
+	req ListTokenUsageRequest,
+	includeRunAggregates bool,
+) (*TokenUsageSnapshot, error) {
+	snapshot := &TokenUsageSnapshot{}
+	readSnapshot := func(tx *gorm.DB) error {
+		rows, total, err := listTokenUsage(tx, req)
+		if err != nil {
+			return err
+		}
+		aggregateReq := AggregateTokenUsageRequest{
+			ThreadID: req.ThreadID,
+			RunID:    req.RunID,
+			RunIDs:   req.RunIDs,
+			Source:   req.Source,
+		}
+		aggregate, err := aggregateTokenUsage(tx, aggregateReq)
+		if err != nil {
+			return err
+		}
+		var runAggregates []*entity.RunTokenUsageAggregate
+		if includeRunAggregates {
+			runAggregates, err = aggregateTokenUsageByRun(tx, aggregateReq)
+			if err != nil {
+				return err
+			}
+		}
+		snapshot.Rows = rows
+		snapshot.Total = total
+		snapshot.Aggregate = aggregate
+		snapshot.RunAggregates = runAggregates
+		return nil
+	}
+
+	db := r.db.WithContext(ctx)
+	var err error
+	txOptions := tokenUsageSnapshotTxOptions(db.Dialector.Name())
+	if txOptions == nil {
+		err = db.Transaction(readSnapshot)
+	} else {
+		err = db.Transaction(readSnapshot, txOptions)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func tokenUsageSnapshotTxOptions(dialect string) *sql.TxOptions {
+	if dialect == "sqlite" {
+		return nil
+	}
+	return &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	}
 }
 
 func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest) ([]*entity.Run, error) {

@@ -20,11 +20,25 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
+  type RefObject,
+  type ReactNode,
 } from 'react';
 
 import { type workbenchSkill } from '@coze-studio/api-schema';
+import {
+  IconCozArrowBack,
+  IconCozArrowRight,
+  IconCozCheckMark,
+  IconCozCode,
+  IconCozDatabase,
+  IconCozKnowledge,
+  IconCozPlugin,
+  IconCozSkill,
+  IconCozWorkflow,
+} from '@coze-arch/coze-design/icons';
 
 import {
   listWorkbenchDatabaseResources,
@@ -38,12 +52,12 @@ import type { WorkbenchResourceSelection } from './types';
 export type WorkbenchComposerOverlayPlacement = 'top' | 'bottom';
 
 const AT_RESOURCES = [
-  { name: '技能', aliases: ['skill', 'skills'], icon: '✦' },
-  { name: '知识库', aliases: ['knowledge', 'kb'], icon: 'K' },
-  { name: '数据库', aliases: ['database', 'db'], icon: 'D' },
-  { name: '工作流', aliases: ['workflow', 'flow'], icon: 'W' },
-  { name: '插件', aliases: ['plugin'], icon: 'P' },
-  { name: '代码仓库', aliases: ['repo', 'repository'], icon: '</>' },
+  { name: '技能', aliases: ['skill', 'skills'], icon: <IconCozSkill /> },
+  { name: '知识库', aliases: ['knowledge', 'kb'], icon: <IconCozKnowledge /> },
+  { name: '数据库', aliases: ['database', 'db'], icon: <IconCozDatabase /> },
+  { name: '工作流', aliases: ['workflow', 'flow'], icon: <IconCozWorkflow /> },
+  { name: '插件', aliases: ['plugin'], icon: <IconCozPlugin /> },
+  { name: '代码仓库', aliases: ['repo', 'repository'], icon: <IconCozCode /> },
 ] as const;
 
 type Skill = workbenchSkill.Skill;
@@ -80,7 +94,10 @@ export type WorkbenchAtSegment =
 
 export const getWorkbenchAtResourceIcon = (
   resourceType: WorkbenchAtResourceType,
-) => AT_RESOURCES.find(item => item.name === resourceType)?.icon ?? 'R';
+): ReactNode =>
+  AT_RESOURCES.find(item => item.name === resourceType)?.icon ?? (
+    <IconCozPlugin />
+  );
 
 export const addSkillSelection = (
   selection: WorkbenchResourceSelection,
@@ -172,6 +189,7 @@ const matchesQuery = (
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps @ resource and skill branches together.
 export const AtMenu = ({
   anchorPosition,
+  disabled = false,
   draft,
   placement,
   spaceId,
@@ -180,16 +198,19 @@ export const AtMenu = ({
   onBackToResourceTypes,
   onReferenceSelect,
   onResourceTypeSelect,
+  eventScopeRef,
 }: {
   anchorPosition?: CSSProperties;
+  disabled?: boolean;
   draft: WorkbenchAtDraft;
   placement: WorkbenchComposerOverlayPlacement;
   spaceId?: string;
   value: WorkbenchResourceSelection;
-  onClose: () => void;
+  onClose: (reason?: 'escape' | 'outside' | 'selection') => void;
   onBackToResourceTypes: () => void;
   onReferenceSelect: (reference: WorkbenchAtReference) => void;
   onResourceTypeSelect: (resourceType: WorkbenchAtResourceType) => void;
+  eventScopeRef?: RefObject<HTMLElement | null>;
 }) => {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -198,10 +219,51 @@ export const AtMenu = ({
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [resourcesError, setResourcesError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [skillsResultScope, setSkillsResultScope] = useState('');
+  const [resourcesResultScope, setResourcesResultScope] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
+  const skillRequestGenerationRef = useRef(0);
+  const resourceRequestGenerationRef = useRef(0);
+  const skillRequestScopeRef = useRef('');
+  const resourceRequestScopeRef = useRef('');
   const view = draft.stage === 'resource-type' ? 'resources' : 'resources-data';
+  const skillScope =
+    !disabled &&
+    draft.stage === 'resource-search' &&
+    draft.resourceType === '技能' &&
+    spaceId
+      ? `${spaceId}:技能`
+      : '';
+  const resourceScope =
+    !disabled &&
+    draft.stage === 'resource-search' &&
+    draft.resourceType !== '技能' &&
+    draft.resourceType !== '插件' &&
+    draft.resourceType !== '代码仓库' &&
+    spaceId
+      ? `${spaceId}:${draft.resourceType}`
+      : '';
+
+  if (skillRequestScopeRef.current !== skillScope) {
+    skillRequestScopeRef.current = skillScope;
+    skillRequestGenerationRef.current += 1;
+  }
+  if (resourceRequestScopeRef.current !== resourceScope) {
+    resourceRequestScopeRef.current = resourceScope;
+    resourceRequestGenerationRef.current += 1;
+  }
+
+  const scopedSkills = skillsResultScope === skillScope ? skills : [];
+  const scopedResources =
+    resourcesResultScope === resourceScope ? resources : [];
+  const effectiveSkillsLoading =
+    Boolean(skillScope) && (skillsResultScope !== skillScope || skillsLoading);
+  const effectiveResourcesLoading =
+    Boolean(resourceScope) &&
+    (resourcesResultScope !== resourceScope || resourcesLoading);
   const enabledSkills = useMemo(
-    () => skills.filter(skill => skill.enabled),
-    [skills],
+    () => scopedSkills.filter(skill => skill.enabled),
+    [scopedSkills],
   );
   const filteredResources = useMemo(
     () =>
@@ -219,10 +281,10 @@ export const AtMenu = ({
   );
   const filteredReferenceResources = useMemo(
     () =>
-      resources.filter(resource =>
+      scopedResources.filter(resource =>
         matchesQuery([resource.name, resource.description], draft.query),
       ),
-    [draft.query, resources],
+    [draft.query, scopedResources],
   );
   const isSkillSearch =
     draft.stage === 'resource-search' && draft.resourceType === '技能';
@@ -245,32 +307,52 @@ export const AtMenu = ({
   const selectableItemCount =
     view === 'resources'
       ? filteredResources.length
-      : isSkillSearch && !skillsLoading && !skillsError
+      : isSkillSearch && !effectiveSkillsLoading && !skillsError
         ? filteredSkills.length
         : draft.stage === 'resource-search' &&
             !isReservedSearch &&
-            !resourcesLoading &&
+            !effectiveResourcesLoading &&
             !resourcesError
           ? filteredReferenceResources.length
           : 0;
+  const activeDescendant =
+    selectableItemCount < 1
+      ? undefined
+      : view === 'resources'
+        ? `workbench-at-resource-${activeIndex}`
+        : isSkillSearch
+          ? `workbench-at-skill-${activeIndex}`
+          : `workbench-at-reference-${activeIndex}`;
 
   useEffect(() => {
-    if (!isSkillSearch || !spaceId) {
+    if (disabled || !isSkillSearch || !spaceId) {
       return;
     }
 
     let canceled = false;
+    const requestGeneration = ++skillRequestGenerationRef.current;
+    const requestScope = skillScope;
+    setSkillsResultScope(requestScope);
+    setSkills([]);
     setSkillsLoading(true);
     setSkillsError('');
 
     void listSkills({ space_id: spaceId, enabled: true })
       .then(response => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillRequestGenerationRef.current === requestGeneration &&
+          skillRequestScopeRef.current === requestScope
+        ) {
           setSkills(response.data?.skills ?? []);
         }
       })
       .catch(err => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillRequestGenerationRef.current === requestGeneration &&
+          skillRequestScopeRef.current === requestScope
+        ) {
           setSkills([]);
           setSkillsError(
             err instanceof Error ? err.message : '加载技能列表失败',
@@ -278,7 +360,11 @@ export const AtMenu = ({
         }
       })
       .finally(() => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          skillRequestGenerationRef.current === requestGeneration &&
+          skillRequestScopeRef.current === requestScope
+        ) {
           setSkillsLoading(false);
         }
       });
@@ -286,10 +372,10 @@ export const AtMenu = ({
     return () => {
       canceled = true;
     };
-  }, [isSkillSearch, spaceId]);
+  }, [disabled, isSkillSearch, skillScope, spaceId]);
 
   useEffect(() => {
-    if (!searchableResourceType || !spaceId) {
+    if (disabled || !searchableResourceType || !spaceId) {
       setResources([]);
 
       return;
@@ -314,17 +400,29 @@ export const AtMenu = ({
     }
 
     let canceled = false;
+    const requestGeneration = ++resourceRequestGenerationRef.current;
+    const requestScope = resourceScope;
+    setResourcesResultScope(requestScope);
+    setResources([]);
     setResourcesLoading(true);
     setResourcesError('');
 
     void loadResources(spaceId)
       .then(nextResources => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          resourceRequestGenerationRef.current === requestGeneration &&
+          resourceRequestScopeRef.current === requestScope
+        ) {
           setResources(nextResources);
         }
       })
       .catch(err => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          resourceRequestGenerationRef.current === requestGeneration &&
+          resourceRequestScopeRef.current === requestScope
+        ) {
           setResources([]);
           setResourcesError(
             err instanceof Error
@@ -334,7 +432,11 @@ export const AtMenu = ({
         }
       })
       .finally(() => {
-        if (!canceled) {
+        if (
+          !canceled &&
+          resourceRequestGenerationRef.current === requestGeneration &&
+          resourceRequestScopeRef.current === requestScope
+        ) {
           setResourcesLoading(false);
         }
       });
@@ -342,7 +444,7 @@ export const AtMenu = ({
     return () => {
       canceled = true;
     };
-  }, [searchableResourceType, spaceId]);
+  }, [disabled, resourceScope, searchableResourceType, spaceId]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -350,26 +452,32 @@ export const AtMenu = ({
 
   const handleResourceClick = useCallback(
     (resource: WorkbenchAtResourceType) => {
+      if (disabled) {
+        return;
+      }
       onResourceTypeSelect(resource);
     },
-    [onResourceTypeSelect],
+    [disabled, onResourceTypeSelect],
   );
 
   const handleSkillClick = useCallback(
     (skill: Skill) => {
+      if (disabled) {
+        return;
+      }
       onReferenceSelect({
         id: skill.id,
         name: skill.name,
         resourceType: '技能',
       });
-      onClose();
+      onClose('selection');
     },
-    [onClose, onReferenceSelect],
+    [disabled, onClose, onReferenceSelect],
   );
 
   const handleReferenceClick = useCallback(
     (resource: WorkbenchReferenceResource) => {
-      if (draft.stage !== 'resource-search') {
+      if (disabled || draft.stage !== 'resource-search') {
         return;
       }
 
@@ -378,12 +486,15 @@ export const AtMenu = ({
         name: resource.name,
         resourceType: draft.resourceType,
       });
-      onClose();
+      onClose('selection');
     },
-    [draft, onClose, onReferenceSelect],
+    [disabled, draft, onClose, onReferenceSelect],
   );
 
   const handleActiveItemSelect = useCallback(() => {
+    if (disabled) {
+      return;
+    }
     if (view === 'resources') {
       const resource = filteredResources[activeIndex];
 
@@ -413,6 +524,7 @@ export const AtMenu = ({
     }
   }, [
     activeIndex,
+    disabled,
     draft.stage,
     filteredReferenceResources,
     filteredResources,
@@ -427,13 +539,13 @@ export const AtMenu = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) {
+      if (disabled || event.defaultPrevented) {
         return;
       }
 
       if (event.key === 'Escape' || event.key === 'Esc') {
         event.preventDefault();
-        onClose();
+        onClose('escape');
 
         return;
       }
@@ -463,16 +575,46 @@ export const AtMenu = ({
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    const eventTarget = eventScopeRef?.current ?? menuRef.current;
+    if (!eventTarget) {
+      return;
+    }
+    const handleScopedKeyDown = (event: KeyboardEvent) => {
+      const { target } = event;
+      if (
+        eventScopeRef &&
+        target instanceof Element &&
+        !menuRef.current?.contains(target) &&
+        !target.closest('textarea[aria-label="任务描述"]') &&
+        !target.closest('input[aria-label^="@"][aria-label$="搜索"]') &&
+        !target.closest('button[aria-label="添加上下文"]')
+      ) {
+        return;
+      }
+      handleKeyDown(event);
+    };
 
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleActiveItemSelect, onClose, selectableItemCount]);
+    eventTarget.addEventListener('keydown', handleScopedKeyDown);
+
+    return () =>
+      eventTarget.removeEventListener('keydown', handleScopedKeyDown);
+  }, [
+    disabled,
+    eventScopeRef,
+    handleActiveItemSelect,
+    onClose,
+    selectableItemCount,
+  ]);
 
   return (
     <div
+      ref={menuRef}
       className="chat-workbench-at-menu"
+      aria-activedescendant={activeDescendant}
+      aria-disabled={disabled || undefined}
       data-placement={placement}
       role="menu"
+      tabIndex={-1}
       aria-label={isSkillSearch ? '@ 选择技能' : '@ 选择资源类型'}
       style={menuStyle}
     >
@@ -481,9 +623,10 @@ export const AtMenu = ({
           <button
             type="button"
             className="chat-workbench-at-menu-back"
+            disabled={disabled}
             onClick={onBackToResourceTypes}
           >
-            ‹
+            <IconCozArrowBack />
           </button>
         ) : (
           <span>@</span>
@@ -502,44 +645,64 @@ export const AtMenu = ({
           )}
           {filteredResources.map((item, index) => (
             <button
+              id={`workbench-at-resource-${index}`}
               key={item.name}
               type="button"
               role="menuitem"
+              disabled={disabled}
               data-active={index === activeIndex}
               onClick={() => handleResourceClick(item.name)}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => {
+                if (!disabled) {
+                  setActiveIndex(index);
+                }
+              }}
             >
               <span className="chat-workbench-at-menu-icon">{item.icon}</span>
               <span>{item.name}</span>
-              <span aria-hidden="true">›</span>
+              <span aria-hidden="true">
+                <IconCozArrowRight />
+              </span>
             </button>
           ))}
         </div>
       ) : isSkillSearch ? (
         <div className="chat-workbench-at-menu-list">
-          {skillsLoading ? (
+          {effectiveSkillsLoading ? (
             <div className="chat-workbench-at-menu-state">加载技能中...</div>
           ) : null}
           {skillsError ? (
             <div className="chat-workbench-at-menu-state">{skillsError}</div>
           ) : null}
-          {!skillsLoading && !skillsError && filteredSkills.length === 0 ? (
+          {!effectiveSkillsLoading &&
+          !skillsError &&
+          filteredSkills.length === 0 ? (
             <div className="chat-workbench-at-menu-state">暂无匹配技能</div>
           ) : null}
           {filteredSkills.map((skill, index) => (
             <button
+              id={`workbench-at-skill-${index}`}
               key={skill.id}
               type="button"
               role="menuitemcheckbox"
+              disabled={disabled}
               aria-checked={value.enable_skills.includes(skill.id)}
               data-active={index === activeIndex}
               onClick={() => handleSkillClick(skill)}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => {
+                if (!disabled) {
+                  setActiveIndex(index);
+                }
+              }}
             >
-              <span className="chat-workbench-at-menu-icon">✦</span>
+              <span className="chat-workbench-at-menu-icon">
+                <IconCozSkill />
+              </span>
               <span className="chat-workbench-at-menu-name">{skill.name}</span>
               <span aria-hidden="true">
-                {value.enable_skills.includes(skill.id) ? '✓' : ''}
+                {value.enable_skills.includes(skill.id) ? (
+                  <IconCozCheckMark />
+                ) : null}
               </span>
             </button>
           ))}
@@ -552,7 +715,7 @@ export const AtMenu = ({
         </div>
       ) : (
         <div className="chat-workbench-at-menu-list">
-          {resourcesLoading ? (
+          {effectiveResourcesLoading ? (
             <div className="chat-workbench-at-menu-state">
               加载{draft.resourceType}中...
             </div>
@@ -560,7 +723,7 @@ export const AtMenu = ({
           {resourcesError ? (
             <div className="chat-workbench-at-menu-state">{resourcesError}</div>
           ) : null}
-          {!resourcesLoading &&
+          {!effectiveResourcesLoading &&
           !resourcesError &&
           filteredReferenceResources.length === 0 ? (
             <div className="chat-workbench-at-menu-state">
@@ -569,12 +732,18 @@ export const AtMenu = ({
           ) : null}
           {filteredReferenceResources.map((resource, index) => (
             <button
+              id={`workbench-at-reference-${index}`}
               key={resource.id}
               type="button"
               role="menuitem"
+              disabled={disabled}
               data-active={index === activeIndex}
               onClick={() => handleReferenceClick(resource)}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => {
+                if (!disabled) {
+                  setActiveIndex(index);
+                }
+              }}
             >
               <span className="chat-workbench-at-menu-icon">
                 {getWorkbenchAtResourceIcon(draft.resourceType)}
@@ -589,8 +758,8 @@ export const AtMenu = ({
       )}
 
       <div className="chat-workbench-at-menu-footer">
-        <span>↑↓ 移动光标</span>
-        <span>↵ 选择条目</span>
+        <span>方向键 移动光标</span>
+        <span>Enter 选择条目</span>
         <span>Esc 退出</span>
       </div>
     </div>

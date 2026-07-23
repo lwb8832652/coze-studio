@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { type ReactNode, useState } from 'react';
+import { type ReactNode } from 'react';
 
 import { GlobalLayoutAccountDropdown } from '@coze-foundation/layout';
 import { useLogout } from '@coze-foundation/account-ui-adapter';
@@ -51,7 +51,6 @@ export const AccountDropdown = ({
   extraSettingsTabs = [],
   extraMenuItems = [],
 }: AccountDropdownProps) => {
-  const [visible, setVisible] = useState(false);
   const userInfo = useUserInfo();
   const { node: logoutModal, open: openLogoutModal } = useLogout();
 
@@ -123,8 +122,6 @@ export const AccountDropdown = ({
           dataTestId: 'layout_avatar_logout-button',
         },
       ]}
-      visible={visible}
-      onVisibleChange={setVisible}
     >
       {logoutModal}
       {accountSettingsNode}

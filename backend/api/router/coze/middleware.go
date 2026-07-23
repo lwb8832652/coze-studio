@@ -86,7 +86,57 @@ func _deletemodelMw() []app.HandlerFunc {
 	return nil
 }
 
+func _getmodeldetailMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getmodelgrantsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _savemodelgrantsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _getmodellistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listmodelprovidersMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatemodelsortMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatemodelstatusMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _testmodelendpointMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatemodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _manageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listmodelsMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -1266,6 +1316,11 @@ func _debugapiMw() []app.HandlerFunc {
 	return nil
 }
 
+func _debugcodepluginMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _delpluginMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -1277,6 +1332,16 @@ func _deleteapiMw() []app.HandlerFunc {
 }
 
 func _getbotdefaultparamsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcodeplugindraftMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcodepluginversionMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -1381,6 +1446,11 @@ func _revokeauthtokenMw() []app.HandlerFunc {
 	return nil
 }
 
+func _savecodeplugindraftMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _unlockplugineditMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -1467,6 +1537,46 @@ func _workbenchMw() []app.HandlerFunc {
 }
 
 func _workbenchchatMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _modelsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listworkspacemodelsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deleteworkspacemodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _model_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getworkspacemodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _setworkspacemodelstatusMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _testworkspacemodelMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _upsertworkspacemodelMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -2352,26 +2462,6 @@ func _message0Mw() []app.HandlerFunc {
 }
 
 func _listchatmessageapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _debugcodepluginMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getcodeplugindraftMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getcodepluginversionMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _savecodeplugindraftMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }

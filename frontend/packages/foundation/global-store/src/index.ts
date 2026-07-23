@@ -15,4 +15,8 @@
  */
 
 // stores
-export { useCommonConfigStore } from './stores/common-config-store';
+export {
+  DEFAULT_SITE_CONFIG,
+  useCommonConfigStore,
+  type ISiteConfig,
+} from './stores/common-config-store';

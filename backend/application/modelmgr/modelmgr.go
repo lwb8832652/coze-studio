@@ -18,6 +18,9 @@ package modelmgr
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/app/developer_api"
@@ -41,7 +44,7 @@ const (
 	deprecatedModelTimeAfterDelete = 7 * 24 * time.Hour
 )
 
-func (m *ModelmgrApplicationService) GetModelList(ctx context.Context, _ *developer_api.GetTypeListRequest) (
+func (m *ModelmgrApplicationService) GetModelList(ctx context.Context, req *developer_api.GetTypeListRequest) (
 	resp *developer_api.GetTypeListResponse, err error,
 ) {
 
@@ -49,9 +52,23 @@ func (m *ModelmgrApplicationService) GetModelList(ctx context.Context, _ *develo
 	if err != nil {
 		return nil, err
 	}
+	spaceID := int64(0)
+	if req != nil && strings.TrimSpace(req.GetSpaceID()) != "" {
+		spaceID, err = strconv.ParseInt(strings.TrimSpace(req.GetSpaceID()), 10, 64)
+		if err != nil || spaceID <= 0 {
+			return nil, fmt.Errorf("invalid space_id")
+		}
+	}
+	availableModelIDs, err := config.ModelConf().AvailableModelIDs(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
 
 	filteredModels := make([]*modelmgr.Model, 0, len(mList))
 	for _, mm := range mList {
+		if _, ok := availableModelIDs[mm.ID]; !ok {
+			continue
+		}
 		if mm.Status == config.ModelStatus_StatusDeleted {
 			deleteAt := time.Unix(mm.DeleteAtMs/1000, 0)
 			if time.Since(deleteAt) > deprecatedModelTimeAfterDelete {

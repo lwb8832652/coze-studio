@@ -13,9 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable max-params, @coze-arch/max-line-per-function -- Task detail hooks coordinate one bounded task identity and its async projections. */
+
 /* eslint-disable max-lines -- Task detail orchestration remains grouped during DeerFlow parity stabilization. */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SetStateAction,
+} from 'react';
 
 import { workbenchTask } from '@coze-studio/api-schema';
 
@@ -24,19 +32,17 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from '../workbench/components/types';
+import { useTaskUsageData } from './task-usage-loader';
 import { useTaskThreadTitleSync } from './task-title-sync';
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
 import { useTaskRunActions } from './task-run-actions-hook';
 import type { PendingHumanInteraction } from './task-human-interaction';
 import {
+  createFollowUpIdempotencyKey,
   sendFollowUpMessage,
   type CanonicalThreadFollowUpResult,
 } from './task-follow-up';
-import {
-  mergeTaskTokenUsageSnapshot,
-  mergeTaskTokenUsageSnapshotByRunID,
-  type TaskTokenUsageSnapshot,
-} from './task-detail-token-usage';
+import type { TaskTokenUsageSnapshot } from './task-detail-token-usage';
 import {
   fetchTaskDetail,
   type LoadedTaskDetailSource,
@@ -54,6 +60,11 @@ type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
+const EMPTY_TASK_ARTIFACTS: TaskThreadArtifact[] = [];
+const EMPTY_TASK_EVENTS: TaskEvent[] = [];
+const EMPTY_TASK_MESSAGES: TaskThreadMessage[] = [];
+const EMPTY_TASK_SUBAGENT_RUNS: TaskDetailSubagentRun[] = [];
+const EMPTY_TASK_TODOS: TaskThreadTodo[] = [];
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
 const RUN_TERMINAL_STATUSES = new Set([
   'succeeded',
@@ -61,6 +72,34 @@ const RUN_TERMINAL_STATUSES = new Set([
   'canceled',
   'interrupted',
 ]);
+
+const isAbortError = (error: unknown) => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const abortCandidate = error as { code?: unknown; name?: unknown };
+
+  return (
+    abortCandidate.name === 'AbortError' || abortCandidate.code === 'ABORT_ERR'
+  );
+};
+
+const isAmbiguousFollowUpError = (error: unknown) => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as { message?: unknown; name?: unknown };
+  const message =
+    typeof candidate.message === 'string' ? candidate.message : '';
+
+  return (
+    candidate.name === 'TimeoutError' ||
+    candidate.name === 'NetworkError' ||
+    /timeout|timed out|network|fetch|超时|网络/i.test(message)
+  );
+};
 
 const getInitialLoadedSource = (
   source: TaskDetailSource,
@@ -106,8 +145,46 @@ const appendOptimisticMessage = (
   return [...messages, message];
 };
 
+interface TaskDetailCollectionSnapshot {
+  artifacts: TaskThreadArtifact[];
+  events: TaskEvent[];
+  messages: TaskThreadMessage[];
+}
+
+export type TaskDetailRequestToken = object;
+
+interface TaskDetailRequestSnapshot {
+  baseRevision: number;
+  collections: TaskDetailCollectionSnapshot;
+}
+
+const mergeCollectionWithLocalDelta = <T>(
+  baseline: T[],
+  current: T[],
+  incoming: T[],
+  getID: (item: T) => string,
+): T[] => {
+  const baselineByID = new Map(baseline.map(item => [getID(item), item]));
+  const currentByID = new Map(current.map(item => [getID(item), item]));
+  const resultByID = new Map(incoming.map(item => [getID(item), item]));
+
+  baselineByID.forEach((_item, id) => {
+    if (!currentByID.has(id)) {
+      resultByID.delete(id);
+    }
+  });
+  currentByID.forEach((item, id) => {
+    if (!baselineByID.has(id) || baselineByID.get(id) !== item) {
+      resultByID.set(id, item);
+    }
+  });
+
+  return Array.from(resultByID.values());
+};
+
 const useLoadTaskDetailEffect = ({
   applyTaskDetail,
+  captureTaskDetailRequestToken,
   setError,
   setLoadedTaskDetailSource,
   setLoadedThreadId,
@@ -116,7 +193,12 @@ const useLoadTaskDetailEffect = ({
   taskDetailId,
   taskDetailSource,
 }: {
-  applyTaskDetail: (detail: TaskDetail) => void;
+  applyTaskDetail: (
+    detail: TaskDetail,
+    taskDetailId?: string,
+    requestToken?: TaskDetailRequestToken,
+  ) => void;
+  captureTaskDetailRequestToken: () => TaskDetailRequestToken;
   setError: (value: string) => void;
   setLoadedTaskDetailSource: (value: LoadedTaskDetailSource) => void;
   setLoadedThreadId: (value: string) => void;
@@ -133,8 +215,9 @@ const useLoadTaskDetailEffect = ({
     const loadTaskDetail = async () => {
       setLoading(true);
       setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
-      setLoadedThreadId(taskDetailSource === 'thread' ? taskDetailId : '');
+      setLoadedThreadId('');
       setError('');
+      const requestToken = captureTaskDetailRequestToken();
       try {
         const detail = await fetchTaskDetail({
           id: taskDetailId,
@@ -142,7 +225,7 @@ const useLoadTaskDetailEffect = ({
           source: taskDetailSource,
         });
         if (!canceled) {
-          applyTaskDetail(detail);
+          applyTaskDetail(detail, taskDetailId, requestToken);
         }
       } catch (err) {
         if (!canceled) {
@@ -160,6 +243,7 @@ const useLoadTaskDetailEffect = ({
     };
   }, [
     applyTaskDetail,
+    captureTaskDetailRequestToken,
     setError,
     setLoadedTaskDetailSource,
     setLoadedThreadId,
@@ -172,13 +256,19 @@ const useLoadTaskDetailEffect = ({
 
 const usePollTaskDetailEffect = ({
   applyTaskDetail,
+  captureTaskDetailRequestToken,
   pollingVersion,
   setError,
   spaceID,
   taskDetailId,
   taskDetailSource,
 }: {
-  applyTaskDetail: (detail: TaskDetail) => void;
+  applyTaskDetail: (
+    detail: TaskDetail,
+    taskDetailId?: string,
+    requestToken?: TaskDetailRequestToken,
+  ) => void;
+  captureTaskDetailRequestToken: () => TaskDetailRequestToken;
   pollingVersion: number;
   setError: (value: string) => void;
   spaceID?: string;
@@ -194,6 +284,7 @@ const usePollTaskDetailEffect = ({
     const timer = setTimeout(() => {
       const refreshTaskDetail = async () => {
         setError('');
+        const requestToken = captureTaskDetailRequestToken();
         try {
           const detail = await fetchTaskDetail({
             id: taskDetailId,
@@ -201,7 +292,7 @@ const usePollTaskDetailEffect = ({
             source: taskDetailSource,
           });
           if (!canceled) {
-            applyTaskDetail(detail);
+            applyTaskDetail(detail, taskDetailId, requestToken);
           }
         } catch (err) {
           if (!canceled) {
@@ -218,77 +309,13 @@ const usePollTaskDetailEffect = ({
     };
   }, [
     applyTaskDetail,
+    captureTaskDetailRequestToken,
     pollingVersion,
     setError,
     spaceID,
     taskDetailId,
     taskDetailSource,
   ]);
-};
-
-const buildOptimisticFollowUpDetail = ({
-  artifacts,
-  events,
-  followUpResult,
-  messages,
-  payload,
-  subagentRuns,
-  task,
-  threadId,
-  todos,
-  tokenUsage,
-  tokenUsageByRunID,
-}: {
-  artifacts: TaskThreadArtifact[];
-  events: TaskEvent[];
-  followUpResult?: CanonicalThreadFollowUpResult;
-  messages: TaskThreadMessage[];
-  payload: WorkbenchComposerSubmitPayload;
-  subagentRuns: TaskDetailSubagentRun[];
-  task?: ChatTask;
-  threadId: string;
-  todos: TaskThreadTodo[];
-  tokenUsage?: TaskDetailTokenUsage;
-  tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
-}): TaskDetail | undefined => {
-  const runID = followUpResult?.run?.run_id;
-  if (!task || !runID) {
-    return undefined;
-  }
-
-  const appendedMessage = followUpResult.message;
-  const now = Date.now();
-  const optimisticUserMessage: TaskThreadMessage = {
-    message_id: appendedMessage?.message_id || `pending-${runID}`,
-    thread_id: threadId,
-    run_id: runID,
-    role: 'user',
-    content: appendedMessage?.content || payload.message,
-    metadata: appendedMessage?.metadata || '',
-    created_at: appendedMessage?.created_at || now,
-  };
-
-  return {
-    source: 'thread',
-    threadId,
-    task: {
-      ...task,
-      status: mapRunStatusToOptimisticTaskStatus(followUpResult.run?.status),
-      progress: Math.max(task.progress || 0, 1),
-      last_user_message: optimisticUserMessage.content,
-      last_agent_message: '',
-      updated_at: now,
-    },
-    events,
-    artifacts,
-    latestTaskRunID: runID,
-    latestTaskRunStatus: followUpResult.run?.status || 'running',
-    messages: appendOptimisticMessage(messages, optimisticUserMessage),
-    subagentRuns,
-    todos,
-    tokenUsage,
-    tokenUsageByRunID,
-  };
 };
 
 export const useTaskDetailData = ({
@@ -311,61 +338,290 @@ export const useTaskDetailData = ({
   const [suggestionModelName, setSuggestionModelName] = useState('');
   const [suggestionModelType, setSuggestionModelType] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<TaskDetailTokenUsage>();
-  const [tokenUsageByRunID, setTokenUsageByRunID] = useState<
-    Record<string, TaskDetailTokenUsage>
-  >({});
   const [loadedTaskDetailSource, setLoadedTaskDetailSource] =
     useState<LoadedTaskDetailSource>(getInitialLoadedSource(taskDetailSource));
+  const [loadedTaskDetailId, setLoadedTaskDetailId] = useState('');
   const [loadedThreadId, setLoadedThreadId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [errorTaskDetailId, setErrorTaskDetailId] = useState('');
   const [pollingVersion, setPollingVersion] = useState(0);
-  const seenTokenUsageSnapshotIDs = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const taskDetailGenerationRef = useRef(0);
+  if (scopedTaskDetailIdRef.current !== taskDetailId) {
+    scopedTaskDetailIdRef.current = taskDetailId;
+    taskDetailGenerationRef.current += 1;
+  }
+  const taskDetailGeneration = taskDetailGenerationRef.current;
+  const collectionStateRef = useRef<TaskDetailCollectionSnapshot>({
+    artifacts: [],
+    events: [],
+    messages: [],
+  });
+  const authoritativeCollectionRef = useRef<TaskDetailCollectionSnapshot>({
+    artifacts: [],
+    events: [],
+    messages: [],
+  });
+  const collectionRevisionRef = useRef(0);
+  const requestSnapshotsRef = useRef<
+    WeakMap<TaskDetailRequestToken, TaskDetailRequestSnapshot>
+  >(new WeakMap());
+  const isCurrentTaskScope = useCallback(
+    (submittedTaskDetailId: string | undefined, generation: number) =>
+      mountedRef.current &&
+      scopedTaskDetailIdRef.current === submittedTaskDetailId &&
+      taskDetailGenerationRef.current === generation,
+    [],
+  );
+  const setCurrentScopeError = useCallback(
+    (value: string) => {
+      setErrorTaskDetailId(taskDetailId ?? '');
+      setError(value);
+    },
+    [taskDetailId],
+  );
   const { handleThreadTitleUpdated, setCurrentTask } = useTaskThreadTitleSync({
     setTask,
     spaceID,
   });
+  const captureTaskDetailRequestToken = useCallback(() => {
+    const requestToken: TaskDetailRequestToken = {};
+    requestSnapshotsRef.current.set(requestToken, {
+      baseRevision: collectionRevisionRef.current,
+      collections: collectionStateRef.current,
+    });
+
+    return requestToken;
+  }, []);
   const applyTaskDetail = useCallback(
-    (detail: TaskDetail) => {
+    (
+      detail: TaskDetail,
+      appliedTaskDetailId?: string,
+      requestToken?: TaskDetailRequestToken,
+    ) => {
+      const detailIdentity =
+        appliedTaskDetailId ??
+        detail.threadId ??
+        detail.task?.id ??
+        scopedTaskDetailIdRef.current;
+      if (detailIdentity && scopedTaskDetailIdRef.current !== detailIdentity) {
+        return;
+      }
+      const incomingCollections: TaskDetailCollectionSnapshot = {
+        artifacts: detail.artifacts ?? [],
+        events: detail.events,
+        messages: detail.messages ?? [],
+      };
+      const requestSnapshot = requestToken
+        ? requestSnapshotsRef.current.get(requestToken)
+        : undefined;
+      if (requestToken) {
+        requestSnapshotsRef.current.delete(requestToken);
+      }
+      const baselineCollections =
+        requestSnapshot?.collections ?? authoritativeCollectionRef.current;
+      const hasConcurrentCollectionChanges = requestSnapshot
+        ? collectionRevisionRef.current !== requestSnapshot.baseRevision
+        : true;
+      const nextCollections = hasConcurrentCollectionChanges
+        ? {
+            artifacts: mergeCollectionWithLocalDelta(
+              baselineCollections.artifacts,
+              collectionStateRef.current.artifacts,
+              incomingCollections.artifacts,
+              artifact => artifact.artifact_id,
+            ),
+            events: mergeCollectionWithLocalDelta(
+              baselineCollections.events,
+              collectionStateRef.current.events,
+              incomingCollections.events,
+              event => event.id,
+            ),
+            messages: mergeCollectionWithLocalDelta(
+              baselineCollections.messages,
+              collectionStateRef.current.messages,
+              incomingCollections.messages,
+              message => message.message_id,
+            ),
+          }
+        : incomingCollections;
+      collectionStateRef.current = nextCollections;
+      authoritativeCollectionRef.current = nextCollections;
+      collectionRevisionRef.current += 1;
       setLoadedTaskDetailSource(detail.source);
+      setLoadedTaskDetailId(detailIdentity ?? '');
       setLoadedThreadId(detail.threadId ?? '');
       setCurrentTask(detail.task);
-      setEvents(detail.events);
-      setMessages(detail.messages ?? []);
+      setEvents(nextCollections.events);
+      setMessages(nextCollections.messages);
       setTodos(detail.todos ?? []);
-      setArtifacts(detail.artifacts ?? []);
+      setArtifacts(nextCollections.artifacts);
       setLatestTaskRunID(detail.latestTaskRunID ?? '');
       setSuggestionModelName(detail.suggestionModelName ?? '');
       setSuggestionModelType(detail.suggestionModelType ?? '');
       setSubagentRuns(detail.subagentRuns ?? []);
-      setTokenUsage(detail.tokenUsage);
-      setTokenUsageByRunID(detail.tokenUsageByRunID ?? {});
       if (shouldPollTaskDetail(detail)) {
         setPollingVersion(version => version + 1);
       }
     },
     [setCurrentTask],
   );
-  const handleTokenUsageSnapshot = useCallback(
-    (snapshot: TaskTokenUsageSnapshot) => {
-      const snapshotID =
-        snapshot.usageID || `${snapshot.runID}:${snapshot.createdAt}`;
-      if (seenTokenUsageSnapshotIDs.current.has(snapshotID)) {
+  const setScopedEvents = useCallback(
+    (nextEvents: SetStateAction<TaskEvent[]>) => {
+      if (isCurrentTaskScope(taskDetailId, taskDetailGeneration)) {
+        setEvents(currentEvents => {
+          const resolvedEvents =
+            typeof nextEvents === 'function'
+              ? nextEvents(currentEvents)
+              : nextEvents;
+          collectionStateRef.current = {
+            ...collectionStateRef.current,
+            events: resolvedEvents,
+          };
+          collectionRevisionRef.current += 1;
+          return resolvedEvents;
+        });
+      }
+    },
+    [isCurrentTaskScope, taskDetailGeneration, taskDetailId],
+  );
+  const handleScopedThreadTitleUpdated = useCallback(
+    (...args: Parameters<typeof handleThreadTitleUpdated>) => {
+      if (isCurrentTaskScope(taskDetailId, taskDetailGeneration)) {
+        handleThreadTitleUpdated(...args);
+      }
+    },
+    [
+      handleThreadTitleUpdated,
+      isCurrentTaskScope,
+      taskDetailGeneration,
+      taskDetailId,
+    ],
+  );
+  const scopedThreadTitleUpdatedRef = useRef(handleScopedThreadTitleUpdated);
+  scopedThreadTitleUpdatedRef.current = handleScopedThreadTitleUpdated;
+  const handleStableScopedThreadTitleUpdated = useCallback(
+    (...args: Parameters<typeof handleScopedThreadTitleUpdated>) => {
+      const [update] = args;
+      if (update.threadId !== scopedTaskDetailIdRef.current) {
         return;
       }
-      seenTokenUsageSnapshotIDs.current.add(snapshotID);
-      setTokenUsage(current => mergeTaskTokenUsageSnapshot(current, snapshot));
-      setTokenUsageByRunID(current =>
-        mergeTaskTokenUsageSnapshotByRunID(current, snapshot),
+      scopedThreadTitleUpdatedRef.current(...args);
+    },
+    [],
+  );
+  const applyOptimisticFollowUp = useCallback(
+    ({
+      followUpResult,
+      payload,
+      threadId,
+    }: {
+      followUpResult?: CanonicalThreadFollowUpResult;
+      payload: WorkbenchComposerSubmitPayload;
+      threadId: string;
+    }) => {
+      const runID = followUpResult?.run?.run_id;
+      if (
+        !runID ||
+        threadId !== scopedTaskDetailIdRef.current ||
+        !mountedRef.current
+      ) {
+        return;
+      }
+
+      const appendedMessage = followUpResult.message;
+      const now = Date.now();
+      const optimisticUserMessage: TaskThreadMessage = {
+        message_id: appendedMessage?.message_id || `pending-${runID}`,
+        thread_id: threadId,
+        run_id: runID,
+        role: 'user',
+        content: appendedMessage?.content || payload.message,
+        metadata: appendedMessage?.metadata || '',
+        created_at: appendedMessage?.created_at || now,
+      };
+
+      setTask(currentTask =>
+        currentTask
+          ? {
+              ...currentTask,
+              status: mapRunStatusToOptimisticTaskStatus(
+                followUpResult.run?.status,
+              ),
+              progress: Math.max(currentTask.progress || 0, 1),
+              last_user_message: optimisticUserMessage.content,
+              last_agent_message: '',
+              updated_at: now,
+            }
+          : currentTask,
       );
+      setMessages(currentMessages => {
+        const nextMessages = appendOptimisticMessage(
+          currentMessages,
+          optimisticUserMessage,
+        );
+        collectionStateRef.current = {
+          ...collectionStateRef.current,
+          messages: nextMessages,
+        };
+        collectionRevisionRef.current += 1;
+        return nextMessages;
+      });
+      setLatestTaskRunID(runID);
+    },
+    [],
+  );
+  const loadedTaskDetailCurrent =
+    Boolean(taskDetailId) &&
+    loadedTaskDetailId === taskDetailId &&
+    (taskDetailSource === 'auto' ||
+      loadedTaskDetailSource === getInitialLoadedSource(taskDetailSource));
+  const taskUsage = useTaskUsageData({
+    enabled:
+      loadedTaskDetailCurrent &&
+      loadedTaskDetailSource === 'thread' &&
+      Boolean(loadedThreadId),
+    refreshKey:
+      task && isTaskTerminalStatus(task.status) ? 'terminal' : 'active',
+    threadID: loadedThreadId,
+  });
+  const tokenUsageSnapshotHandlerRef = useRef(
+    taskUsage.handleTokenUsageSnapshot,
+  );
+  const tokenUsageStreamThreadIDRef = useRef('');
+  tokenUsageSnapshotHandlerRef.current = taskUsage.handleTokenUsageSnapshot;
+  tokenUsageStreamThreadIDRef.current =
+    loadedTaskDetailCurrent && loadedTaskDetailSource === 'thread'
+      ? loadedThreadId
+      : '';
+  const handleScopedTokenUsageSnapshot = useCallback(
+    (
+      snapshot: TaskTokenUsageSnapshot,
+      event: workbenchTask.TaskThreadRunEvent,
+    ) => {
+      const currentThreadID = tokenUsageStreamThreadIDRef.current;
+      if (
+        !currentThreadID ||
+        String(event.thread_id ?? '') !== currentThreadID
+      ) {
+        return;
+      }
+      tokenUsageSnapshotHandlerRef.current(snapshot);
     },
     [],
   );
   const refreshArtifacts = useCallback(async () => {
-    if (!loadedThreadId || loadedTaskDetailSource !== 'thread') {
+    if (
+      !loadedTaskDetailCurrent ||
+      !loadedThreadId ||
+      loadedTaskDetailSource !== 'thread'
+    ) {
       return;
     }
+    const submittedTaskDetailId = taskDetailId;
+    const requestGeneration = taskDetailGenerationRef.current;
 
     const response = await listTaskThreadArtifacts({
       thread_id: loadedThreadId,
@@ -373,12 +629,63 @@ export const useTaskDetailData = ({
       page: 1,
       page_size: 50,
     });
-    setArtifacts(response.data?.artifacts ?? []);
-  }, [loadedTaskDetailSource, loadedThreadId, spaceID]);
+    if (isCurrentTaskScope(submittedTaskDetailId, requestGeneration)) {
+      const nextArtifacts = response.data?.artifacts ?? [];
+      collectionStateRef.current = {
+        ...collectionStateRef.current,
+        artifacts: nextArtifacts,
+      };
+      collectionRevisionRef.current += 1;
+      setArtifacts(nextArtifacts);
+    }
+  }, [
+    isCurrentTaskScope,
+    loadedTaskDetailCurrent,
+    loadedTaskDetailSource,
+    loadedThreadId,
+    spaceID,
+    taskDetailId,
+  ]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      taskDetailGenerationRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    const emptyCollections: TaskDetailCollectionSnapshot = {
+      artifacts: [],
+      events: [],
+      messages: [],
+    };
+    collectionStateRef.current = emptyCollections;
+    authoritativeCollectionRef.current = emptyCollections;
+    collectionRevisionRef.current = 0;
+    requestSnapshotsRef.current = new WeakMap();
+    setTask(undefined);
+    setEvents([]);
+    setMessages([]);
+    setTodos([]);
+    setArtifacts([]);
+    setLatestTaskRunID('');
+    setSuggestionModelName('');
+    setSuggestionModelType('');
+    setSubagentRuns([]);
+    setLoadedTaskDetailId('');
+    setLoadedThreadId('');
+    setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
+    setErrorTaskDetailId(taskDetailId ?? '');
+    setError('');
+  }, [taskDetailId, taskDetailSource]);
 
   useLoadTaskDetailEffect({
     applyTaskDetail,
-    setError,
+    captureTaskDetailRequestToken,
+    setError: setCurrentScopeError,
     setLoadedTaskDetailSource,
     setLoadedThreadId,
     setLoading,
@@ -388,48 +695,77 @@ export const useTaskDetailData = ({
   });
   usePollTaskDetailEffect({
     applyTaskDetail,
+    captureTaskDetailRequestToken,
     pollingVersion,
-    setError,
+    setError: setCurrentScopeError,
     spaceID,
     taskDetailId,
     taskDetailSource,
   });
 
   useTaskThreadRunEventStream({
-    enabled: loadedTaskDetailSource === 'thread' && Boolean(loadedThreadId),
-    onTokenUsageSnapshot: handleTokenUsageSnapshot,
-    onThreadTitleUpdated: handleThreadTitleUpdated,
-    setEvents,
+    enabled:
+      loadedTaskDetailCurrent &&
+      loadedTaskDetailSource === 'thread' &&
+      Boolean(loadedThreadId),
+    onTokenUsageSnapshot: handleScopedTokenUsageSnapshot,
+    onThreadTitleUpdated: handleStableScopedThreadTitleUpdated,
+    setEvents: setScopedEvents,
     threadId: loadedThreadId,
   });
 
-  useEffect(() => {
-    seenTokenUsageSnapshotIDs.current.clear();
-  }, [loadedThreadId]);
-
   return {
     applyTaskDetail,
-    artifacts,
-    error,
-    events,
-    messages,
-    latestTaskRunID,
-    suggestionModelName,
-    suggestionModelType,
-    loadedTaskDetailSource,
-    loadedThreadId,
-    loading,
+    applyOptimisticFollowUp,
+    artifacts: loadedTaskDetailCurrent ? artifacts : EMPTY_TASK_ARTIFACTS,
+    captureTaskDetailRequestToken,
+    error: errorTaskDetailId === taskDetailId ? error : '',
+    events: loadedTaskDetailCurrent ? events : EMPTY_TASK_EVENTS,
+    messages: loadedTaskDetailCurrent ? messages : EMPTY_TASK_MESSAGES,
+    latestTaskRunID: loadedTaskDetailCurrent ? latestTaskRunID : '',
+    suggestionModelName: loadedTaskDetailCurrent ? suggestionModelName : '',
+    suggestionModelType: loadedTaskDetailCurrent ? suggestionModelType : '',
+    loadedTaskDetailSource: loadedTaskDetailCurrent
+      ? loadedTaskDetailSource
+      : getInitialLoadedSource(taskDetailSource),
+    loadedTaskDetailCurrent,
+    loadedThreadId: loadedTaskDetailCurrent ? loadedThreadId : '',
+    loading:
+      Boolean(taskDetailId) &&
+      (loading ||
+        (!loadedTaskDetailCurrent &&
+          !(errorTaskDetailId === taskDetailId && error))),
     refreshArtifacts,
-    subagentRuns,
-    task,
-    todos,
-    tokenUsage,
-    tokenUsageByRunID,
+    subagentRuns: loadedTaskDetailCurrent
+      ? subagentRuns
+      : EMPTY_TASK_SUBAGENT_RUNS,
+    task: loadedTaskDetailCurrent ? task : undefined,
+    todos: loadedTaskDetailCurrent ? todos : EMPTY_TASK_TODOS,
+    retryTokenUsage: taskUsage.retry,
+    tokenUsage: loadedTaskDetailCurrent ? taskUsage.tokenUsage : undefined,
+    tokenUsageByRunID: loadedTaskDetailCurrent
+      ? taskUsage.tokenUsageByRunID
+      : {},
+    tokenUsageError: loadedTaskDetailCurrent ? taskUsage.error : '',
+    tokenUsageIsPartial: loadedTaskDetailCurrent && taskUsage.isPartial,
+    tokenUsageLoadedCount: loadedTaskDetailCurrent ? taskUsage.loadedCount : 0,
+    tokenUsageLoading: loadedTaskDetailCurrent && taskUsage.loading,
+    tokenUsageTotalCount: loadedTaskDetailCurrent ? taskUsage.totalCount : 0,
   };
 };
 
 interface TaskDetailActionsOptions {
-  applyTaskDetail: (detail: TaskDetail) => void;
+  applyTaskDetail: (
+    detail: TaskDetail,
+    taskDetailId?: string,
+    requestToken?: TaskDetailRequestToken,
+  ) => void;
+  applyOptimisticFollowUp?: (input: {
+    followUpResult?: CanonicalThreadFollowUpResult;
+    payload: WorkbenchComposerSubmitPayload;
+    threadId: string;
+  }) => void;
+  captureTaskDetailRequestToken?: () => TaskDetailRequestToken;
   artifacts: TaskThreadArtifact[];
   events: TaskEvent[];
   messages: TaskThreadMessage[];
@@ -446,34 +782,96 @@ interface TaskDetailActionsOptions {
 
 export const useTaskDetailActions = ({
   applyTaskDetail,
-  artifacts,
-  events,
-  messages,
+  applyOptimisticFollowUp,
+  captureTaskDetailRequestToken,
   pendingHumanInteraction,
   spaceID,
-  subagentRuns,
   task,
   taskDetailId,
   taskDetailSource,
-  todos,
-  tokenUsage,
-  tokenUsageByRunID,
 }: TaskDetailActionsOptions) => {
   const [followUpValue, setFollowUpValue] = useState('');
   const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>(
     DEFAULT_WORKBENCH_MODE,
   );
   const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpResetKey, setFollowUpResetKey] = useState(0);
   const [followUpError, setFollowUpError] = useState('');
   const [humanInteractionLoading, setHumanInteractionLoading] = useState(false);
   const [humanInteractionError, setHumanInteractionError] = useState('');
+  const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const followUpRequestGenerationRef = useRef(0);
+  const humanInteractionRequestGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const followUpAttemptRef = useRef<{
+    fingerprint: string;
+    idempotencyKey: string;
+  }>();
+  const fileIdentityRef = useRef(new WeakMap<File, number>());
+  const nextFileIdentityRef = useRef(1);
+  if (scopedTaskDetailIdRef.current !== taskDetailId) {
+    scopedTaskDetailIdRef.current = taskDetailId;
+    followUpRequestGenerationRef.current += 1;
+    humanInteractionRequestGenerationRef.current += 1;
+  }
   const taskRunActions = useTaskRunActions({
     applyTaskDetail,
+    captureTaskDetailRequestToken,
     spaceID,
     task,
     taskDetailId,
     taskDetailSource,
   });
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      followUpRequestGenerationRef.current += 1;
+      humanInteractionRequestGenerationRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setFollowUpValue('');
+    setFollowUpMode(DEFAULT_WORKBENCH_MODE);
+    setFollowUpLoading(false);
+    setFollowUpResetKey(0);
+    setFollowUpError('');
+    setHumanInteractionLoading(false);
+    setHumanInteractionError('');
+    followUpAttemptRef.current = undefined;
+  }, [taskDetailId]);
+
+  const getFollowUpFingerprint = (payload: WorkbenchComposerSubmitPayload) =>
+    JSON.stringify({
+      message: payload.message,
+      mode: payload.mode,
+      modelType: payload.modelType,
+      modelName: payload.modelName,
+      taskId: payload.taskId,
+      enableSkills: [...(payload.enable_skills ?? [])].sort(),
+      enableMCP: [...(payload.enable_mcp ?? [])].sort(),
+      enableKnowledge: [...(payload.enable_kbs ?? [])].sort(),
+      enableDatabases: [...(payload.enable_databases ?? [])].sort(),
+      runtimeSettings: payload.runtimeSettings,
+      files: (payload.files ?? []).map(file => {
+        let identity = fileIdentityRef.current.get(file);
+        if (!identity) {
+          identity = nextFileIdentityRef.current++;
+          fileIdentityRef.current.set(file, identity);
+        }
+
+        return {
+          identity,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+        };
+      }),
+    });
 
   const handleFollowUpSubmit = async (
     payload: WorkbenchComposerSubmitPayload,
@@ -487,49 +885,83 @@ export const useTaskDetailActions = ({
     }
     const isCanonicalThreadDetail = taskDetailSource === 'thread';
     const activeTaskId = task?.id ?? taskDetailId;
+    const submittedTaskDetailId = taskDetailId;
+    const fingerprint = getFollowUpFingerprint(payload);
+    if (followUpAttemptRef.current?.fingerprint !== fingerprint) {
+      followUpAttemptRef.current = {
+        fingerprint,
+        idempotencyKey: createFollowUpIdempotencyKey(submittedTaskDetailId),
+      };
+    }
+    const { idempotencyKey } = followUpAttemptRef.current;
+    const requestGeneration = ++followUpRequestGenerationRef.current;
+    const isCurrentRequest = () =>
+      mountedRef.current &&
+      followUpRequestGenerationRef.current === requestGeneration &&
+      scopedTaskDetailIdRef.current === submittedTaskDetailId;
     setFollowUpLoading(true);
     setFollowUpError('');
+    let followUpResult: Awaited<ReturnType<typeof sendFollowUpMessage>>;
     try {
-      const followUpResult = await sendFollowUpMessage({
+      followUpResult = await sendFollowUpMessage({
         activeTaskId,
         isCanonicalThreadDetail,
         payload,
         spaceId: spaceID,
-        threadId: taskDetailId,
+        threadId: submittedTaskDetailId,
+        idempotencyKey,
       });
-      const optimisticDetail = isCanonicalThreadDetail
-        ? buildOptimisticFollowUpDetail({
-            artifacts,
-            events,
-            followUpResult,
-            messages,
-            payload,
-            subagentRuns,
-            task,
-            threadId: taskDetailId,
-            todos,
-            tokenUsage,
-            tokenUsageByRunID,
-          })
-        : undefined;
-
-      if (optimisticDetail) {
-        applyTaskDetail(optimisticDetail);
+    } catch (err) {
+      if (!isCurrentRequest()) {
+        return;
       }
+      setFollowUpError(
+        isAbortError(err)
+          ? '发送已取消'
+          : err instanceof Error
+            ? err.message
+            : '继续追问失败，请稍后重试',
+      );
+      if (isAbortError(err) || !isAmbiguousFollowUpError(err)) {
+        followUpAttemptRef.current = undefined;
+      }
+      setFollowUpLoading(false);
+      return;
+    }
 
-      setFollowUpValue('');
+    if (!isCurrentRequest()) {
+      return;
+    }
+
+    followUpAttemptRef.current = undefined;
+    if (isCanonicalThreadDetail) {
+      applyOptimisticFollowUp?.({
+        followUpResult,
+        payload,
+        threadId: submittedTaskDetailId,
+      });
+    }
+
+    setFollowUpValue('');
+    setFollowUpResetKey(resetKey => resetKey + 1);
+    const refreshRequestToken = captureTaskDetailRequestToken?.();
+    try {
       const detail = await fetchTaskDetail({
-        id: taskDetailId,
+        id: submittedTaskDetailId,
         spaceId: spaceID,
         source: taskDetailSource,
       });
-      applyTaskDetail(detail);
+      if (isCurrentRequest()) {
+        applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
+      }
     } catch (err) {
-      setFollowUpError(
-        err instanceof Error ? err.message : '继续追问失败，请稍后重试',
-      );
+      if (isCurrentRequest()) {
+        setFollowUpError('消息已发送但刷新失败，可重试刷新');
+      }
     } finally {
-      setFollowUpLoading(false);
+      if (isCurrentRequest()) {
+        setFollowUpLoading(false);
+      }
     }
   };
 
@@ -548,6 +980,12 @@ export const useTaskDetailActions = ({
       return;
     }
 
+    const submittedTaskDetailId = taskDetailId;
+    const requestGeneration = ++humanInteractionRequestGenerationRef.current;
+    const isCurrentRequest = () =>
+      mountedRef.current &&
+      humanInteractionRequestGenerationRef.current === requestGeneration &&
+      scopedTaskDetailIdRef.current === submittedTaskDetailId;
     setHumanInteractionLoading(true);
     setHumanInteractionError('');
     try {
@@ -557,18 +995,28 @@ export const useTaskDetailActions = ({
         interrupt_id: pendingHumanInteraction.interruptId,
         response,
       });
+      if (!isCurrentRequest()) {
+        return;
+      }
+      const refreshRequestToken = captureTaskDetailRequestToken?.();
       const detail = await fetchTaskDetail({
-        id: taskDetailId,
+        id: submittedTaskDetailId,
         spaceId: spaceID,
         source: taskDetailSource,
       });
-      applyTaskDetail(detail);
+      if (isCurrentRequest()) {
+        applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
+      }
     } catch (err) {
-      setHumanInteractionError(
-        err instanceof Error ? err.message : '提交失败，请稍后重试',
-      );
+      if (isCurrentRequest()) {
+        setHumanInteractionError(
+          err instanceof Error ? err.message : '提交失败，请稍后重试',
+        );
+      }
     } finally {
-      setHumanInteractionLoading(false);
+      if (isCurrentRequest()) {
+        setHumanInteractionLoading(false);
+      }
     }
   };
 
@@ -576,6 +1024,7 @@ export const useTaskDetailActions = ({
     followUpError,
     followUpLoading,
     followUpMode,
+    followUpResetKey,
     followUpValue,
     handleFollowUpSubmit,
     handleHumanInteractionSubmit,

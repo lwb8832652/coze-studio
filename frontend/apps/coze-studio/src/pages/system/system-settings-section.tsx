@@ -14,10 +14,15 @@
  * limitations under the License.
  */
 
+/* eslint-disable max-lines -- Site and runtime settings intentionally share the existing revisioned system form. */
+
 /* eslint-disable @coze-arch/max-line-per-function -- Cohesive orchestrator. */
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { useCommonConfigStore } from '@coze-foundation/global-store';
+
+import { uploadAdminSiteAsset } from './service';
 import type {
   AdminBasicConfig,
   AdminBasicConfigPatch,
@@ -49,7 +54,17 @@ export const SystemSettingsSection = ({
   onReloadBasicConfig,
   onSaveBasicConfig,
 }: SystemSettingsSectionProps) => {
+  const publicSiteConfig = useCommonConfigStore(state => state.siteConfig);
   const [serverHost, setServerHost] = useState('');
+  const [siteName, setSiteName] = useState('');
+  const [siteDescription, setSiteDescription] = useState('');
+  const [siteLogoURI, setSiteLogoURI] = useState('');
+  const [faviconURI, setFaviconURI] = useState('');
+  const [siteLogoPreview, setSiteLogoPreview] = useState('');
+  const [faviconPreview, setFaviconPreview] = useState('');
+  const [uploadingAsset, setUploadingAsset] = useState<'logo' | 'favicon' | ''>(
+    '',
+  );
   const [adminEmails, setAdminEmails] = useState('');
   const [allowRegistrationEmail, setAllowRegistrationEmail] = useState('');
   const [disableUserRegistration, setDisableUserRegistration] = useState(false);
@@ -60,10 +75,20 @@ export const SystemSettingsSection = ({
       return;
     }
     setServerHost(basicConfig.server_host || '');
+    setSiteName(basicConfig.site_name || 'NewX AI');
+    setSiteDescription(basicConfig.site_description || '');
+    setSiteLogoURI(basicConfig.site_logo_uri || '');
+    setFaviconURI(basicConfig.favicon_uri || '');
+    setSiteLogoPreview(
+      basicConfig.site_logo_uri ? publicSiteConfig.siteLogoUrl : '',
+    );
+    setFaviconPreview(
+      basicConfig.favicon_uri ? publicSiteConfig.faviconUrl : '',
+    );
     setAdminEmails(basicConfig.admin_emails || '');
     setAllowRegistrationEmail(basicConfig.allow_registration_email || '');
     setDisableUserRegistration(Boolean(basicConfig.disable_user_registration));
-  }, [basicConfig]);
+  }, [basicConfig, publicSiteConfig.faviconUrl, publicSiteConfig.siteLogoUrl]);
 
   const normalizedCurrent = useMemo(
     () => ({
@@ -73,12 +98,21 @@ export const SystemSettingsSection = ({
       ).trim(),
       disableUserRegistration: Boolean(basicConfig?.disable_user_registration),
       serverHost: (basicConfig?.server_host || '').trim(),
+      siteName: (basicConfig?.site_name || 'NewX AI').trim(),
+      siteDescription: (basicConfig?.site_description || '').trim(),
+      siteLogoURI: (basicConfig?.site_logo_uri || '').trim(),
+      faviconURI: (basicConfig?.favicon_uri || '').trim(),
     }),
     [basicConfig],
   );
 
-  const basicConfigDirty =
+  const siteConfigDirty =
     serverHost.trim() !== normalizedCurrent.serverHost ||
+    siteName.trim() !== normalizedCurrent.siteName ||
+    siteDescription.trim() !== normalizedCurrent.siteDescription ||
+    siteLogoURI.trim() !== normalizedCurrent.siteLogoURI ||
+    faviconURI.trim() !== normalizedCurrent.faviconURI;
+  const systemBasicConfigDirty =
     adminEmails.trim() !== normalizedCurrent.adminEmails ||
     allowRegistrationEmail.trim() !==
       normalizedCurrent.allowRegistrationEmail ||
@@ -95,9 +129,24 @@ export const SystemSettingsSection = ({
     [knowledgeConfig],
   );
 
-  const submitBasicConfig = async () => {
+  const submitBasicConfig = async (scope: 'site' | 'system') => {
     const normalizedServerHost = serverHost.trim();
+    const normalizedSiteName = siteName.trim();
+    const normalizedSiteDescription = siteDescription.trim();
+    if (scope === 'site' && !normalizedSiteName) {
+      setValidationMessage('站点名称不能为空');
+      return;
+    }
+    if (scope === 'site' && normalizedSiteName.length > 64) {
+      setValidationMessage('站点名称不能超过 64 个字符');
+      return;
+    }
+    if (scope === 'site' && normalizedSiteDescription.length > 240) {
+      setValidationMessage('站点介绍不能超过 240 个字符');
+      return;
+    }
     if (
+      scope === 'site' &&
       normalizedServerHost !== normalizedCurrent.serverHost &&
       !normalizedServerHost
     ) {
@@ -107,19 +156,37 @@ export const SystemSettingsSection = ({
 
     setValidationMessage('');
     const patch: AdminBasicConfigPatch = {};
-    if (normalizedServerHost !== normalizedCurrent.serverHost) {
-      patch.server_host = normalizedServerHost;
-    }
-    if (adminEmails.trim() !== normalizedCurrent.adminEmails) {
-      patch.admin_emails = adminEmails.trim();
-    }
-    if (
-      allowRegistrationEmail.trim() !== normalizedCurrent.allowRegistrationEmail
-    ) {
-      patch.allow_registration_email = allowRegistrationEmail.trim();
-    }
-    if (disableUserRegistration !== normalizedCurrent.disableUserRegistration) {
-      patch.disable_user_registration = disableUserRegistration;
+    if (scope === 'site') {
+      if (normalizedServerHost !== normalizedCurrent.serverHost) {
+        patch.server_host = normalizedServerHost;
+      }
+      if (normalizedSiteName !== normalizedCurrent.siteName) {
+        patch.site_name = normalizedSiteName;
+      }
+      if (normalizedSiteDescription !== normalizedCurrent.siteDescription) {
+        patch.site_description = normalizedSiteDescription;
+      }
+      if (siteLogoURI.trim() !== normalizedCurrent.siteLogoURI) {
+        patch.site_logo_uri = siteLogoURI.trim();
+      }
+      if (faviconURI.trim() !== normalizedCurrent.faviconURI) {
+        patch.favicon_uri = faviconURI.trim();
+      }
+    } else {
+      if (adminEmails.trim() !== normalizedCurrent.adminEmails) {
+        patch.admin_emails = adminEmails.trim();
+      }
+      if (
+        allowRegistrationEmail.trim() !==
+        normalizedCurrent.allowRegistrationEmail
+      ) {
+        patch.allow_registration_email = allowRegistrationEmail.trim();
+      }
+      if (
+        disableUserRegistration !== normalizedCurrent.disableUserRegistration
+      ) {
+        patch.disable_user_registration = disableUserRegistration;
+      }
     }
     if (Object.keys(patch).length === 0) {
       setValidationMessage('未检测到需要保存的变更');
@@ -130,6 +197,33 @@ export const SystemSettingsSection = ({
     } catch (error) {
       void error;
       // Parent component surfaces the request error as basicConfigMessage.
+    }
+  };
+
+  const uploadSiteAsset = async (kind: 'logo' | 'favicon', file?: File) => {
+    if (!file) {
+      return;
+    }
+    setValidationMessage('');
+    setUploadingAsset(kind);
+    try {
+      const asset = await uploadAdminSiteAsset(kind, file);
+      if (kind === 'logo') {
+        setSiteLogoURI(asset.uri);
+        setSiteLogoPreview(asset.url);
+      } else {
+        setFaviconURI(asset.uri);
+        setFaviconPreview(asset.url);
+      }
+    } catch (error) {
+      void error;
+      setValidationMessage(
+        kind === 'logo'
+          ? '站点 Logo 上传失败，请使用 32-2048px 的 PNG、JPEG 或 WebP 图片'
+          : '浏览器图标上传失败，请使用 16-512px 的正方形 PNG、JPEG 或 WebP 图片',
+      );
+    } finally {
+      setUploadingAsset('');
     }
   };
 
@@ -175,6 +269,152 @@ export const SystemSettingsSection = ({
 
   return (
     <section className="coze-prototype-workspace-settings-list">
+      <article className="coze-prototype-workspace-settings-row coze-prototype-site-settings-card">
+        <div className="w-full">
+          <div className="coze-prototype-site-settings-header">
+            <div>
+              <h2>站点配置</h2>
+              <p>
+                配置用户实际可见的产品名称、访问地址和品牌资源。保存后会同步到浏览器标题、登录注册页和工作区。
+              </p>
+            </div>
+            <span className="coze-prototype-site-settings-badge">全局生效</span>
+          </div>
+          {validationMessage ? (
+            <p className="mt-[8px] text-[12px] text-[#d53b3e]" role="alert">
+              {validationMessage}
+            </p>
+          ) : null}
+          <div className="coze-prototype-site-settings-field-grid">
+            <label className="coze-prototype-site-settings-field">
+              站点名称
+              <input
+                aria-label="站点名称"
+                className="h-[38px] rounded-[8px] border border-[#d8dde8] px-[11px] text-[13px] outline-none transition focus:border-[#24904b] focus:ring-2 focus:ring-[#24904b]/15"
+                maxLength={64}
+                placeholder="NewX AI"
+                value={siteName}
+                onChange={event => setSiteName(event.target.value)}
+              />
+            </label>
+            <label className="coze-prototype-site-settings-field">
+              站点访问地址
+              <input
+                aria-label="站点访问地址"
+                className="h-[38px] rounded-[8px] border border-[#d8dde8] px-[11px] text-[13px] outline-none transition focus:border-[#24904b] focus:ring-2 focus:ring-[#24904b]/15"
+                placeholder="http://localhost:8888"
+                value={serverHost}
+                onChange={event => setServerHost(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="coze-prototype-site-settings-field coze-prototype-site-settings-description">
+            站点介绍
+            <textarea
+              aria-label="站点介绍"
+              className="min-h-[86px] w-full resize-y rounded-[8px] border border-[#d8dde8] px-[11px] py-[9px] text-[13px] outline-none transition focus:border-[#24904b] focus:ring-2 focus:ring-[#24904b]/15"
+              maxLength={240}
+              placeholder="说明站点面向的用户和核心能力"
+              value={siteDescription}
+              onChange={event => setSiteDescription(event.target.value)}
+            />
+            <span className="self-end text-[11px] text-[#8b95a7]">
+              {siteDescription.length}/240
+            </span>
+          </label>
+          <div className="coze-prototype-site-settings-assets">
+            {[
+              {
+                kind: 'logo' as const,
+                title: '站点 Logo',
+                hint: 'PNG、JPEG 或 WebP，32-2048px，最大 2MB',
+                preview: siteLogoPreview,
+              },
+              {
+                kind: 'favicon' as const,
+                title: '浏览器地址栏图标',
+                hint: '正方形 PNG、JPEG 或 WebP，16-512px，最大 512KB',
+                preview: faviconPreview,
+              },
+            ].map(asset => (
+              <div
+                key={asset.kind}
+                className="coze-prototype-site-settings-asset"
+              >
+                <div className="coze-prototype-site-settings-asset-copy">
+                  <strong>{asset.title}</strong>
+                  <span>{asset.hint}</span>
+                </div>
+                <div className="coze-prototype-site-settings-asset-body">
+                  <div className="coze-prototype-site-settings-preview">
+                    {asset.preview ? (
+                      <img alt={asset.title} src={asset.preview} />
+                    ) : (
+                      <span>未配置</span>
+                    )}
+                  </div>
+                  <div className="coze-prototype-site-settings-asset-actions">
+                    <label className="coze-prototype-site-settings-upload">
+                      <input
+                        accept="image/png,image/jpeg,image/webp"
+                        aria-label={`上传${asset.title}`}
+                        className="hidden"
+                        disabled={Boolean(uploadingAsset)}
+                        type="file"
+                        onChange={event => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = '';
+                          void uploadSiteAsset(asset.kind, file);
+                        }}
+                      />
+                      {uploadingAsset === asset.kind
+                        ? '上传中...'
+                        : asset.preview
+                          ? '替换'
+                          : '上传'}
+                    </label>
+                    {asset.preview ? (
+                      <button
+                        className="coze-prototype-site-settings-remove"
+                        type="button"
+                        onClick={() => {
+                          if (asset.kind === 'logo') {
+                            setSiteLogoURI('');
+                            setSiteLogoPreview('');
+                          } else {
+                            setFaviconURI('');
+                            setFaviconPreview('');
+                          }
+                        }}
+                      >
+                        移除
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="coze-prototype-site-settings-footer">
+            <p>仅保存当前卡片的变更，品牌图片会安全存储并按需生成访问地址。</p>
+            <button
+              aria-label="保存站点配置"
+              className="coze-prototype-site-settings-save"
+              disabled={
+                basicConfigSaving ||
+                Boolean(uploadingAsset) ||
+                !onSaveBasicConfig ||
+                !siteConfigDirty
+              }
+              type="button"
+              onClick={() => void submitBasicConfig('site')}
+            >
+              {basicConfigSaving ? '保存中...' : '保存配置'}
+            </button>
+          </div>
+        </div>
+      </article>
+
       <article className="coze-prototype-workspace-settings-row">
         <div>
           <h2>配置总览</h2>
@@ -190,7 +430,6 @@ export const SystemSettingsSection = ({
               刷新配置
             </button>
           ) : null}
-          {validationMessage ? <p>{validationMessage}</p> : null}
           <div className="mt-[12px] grid gap-[10px] md:grid-cols-3">
             <div className="rounded-[12px] border border-[#e7ebf3] bg-[#f8fafc] px-[14px] py-[12px]">
               <p className="m-0 text-[12px] text-[#687385]">服务地址</p>
@@ -222,16 +461,6 @@ export const SystemSettingsSection = ({
             保存服务地址、注册策略和管理员白名单。仅提交本次变更字段，并使用版本号避免并发覆盖。
           </p>
           <div className="mt-[12px] grid gap-[10px] md:grid-cols-2">
-            <label className="flex flex-col gap-[6px] text-[13px] text-[#4d566a]">
-              服务地址
-              <input
-                aria-label="系统服务地址"
-                className="h-[34px] rounded-[8px] border border-[#d8dde8] px-[10px] text-[13px] outline-none"
-                placeholder="http://localhost:8888"
-                value={serverHost}
-                onChange={event => setServerHost(event.target.value)}
-              />
-            </label>
             <label className="flex flex-col gap-[6px] text-[13px] text-[#4d566a]">
               管理员邮箱
               <input
@@ -287,10 +516,10 @@ export const SystemSettingsSection = ({
             aria-label="保存系统基础配置"
             className="mt-[12px] h-[34px] rounded-[8px] bg-[#1d2333] px-[14px] text-[13px] text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={
-              basicConfigSaving || !onSaveBasicConfig || !basicConfigDirty
+              basicConfigSaving || !onSaveBasicConfig || !systemBasicConfigDirty
             }
             type="button"
-            onClick={() => void submitBasicConfig()}
+            onClick={() => void submitBasicConfig('system')}
           >
             {basicConfigSaving ? '保存中...' : '保存基础配置'}
           </button>

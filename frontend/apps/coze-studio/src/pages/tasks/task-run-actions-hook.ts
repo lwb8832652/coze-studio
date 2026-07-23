@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+/* eslint-disable @coze-arch/max-line-per-function -- Run actions keep shared confirmation and cancellation state in one hook. */
+
+import { useEffect, useRef, useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
@@ -69,12 +71,18 @@ const getTaskRetryMetadata = ({
 
 export const useTaskRunActions = ({
   applyTaskDetail,
+  captureTaskDetailRequestToken,
   spaceID,
   task,
   taskDetailId,
   taskDetailSource,
 }: {
-  applyTaskDetail: (detail: TaskDetail) => void;
+  applyTaskDetail: (
+    detail: TaskDetail,
+    taskDetailId?: string,
+    requestToken?: object,
+  ) => void;
+  captureTaskDetailRequestToken?: () => object;
   spaceID?: string;
   task?: ChatTask;
   taskDetailId?: string;
@@ -85,113 +93,280 @@ export const useTaskRunActions = ({
   const [taskRunActionError, setTaskRunActionError] = useState('');
   const [retryingSubagentRunId, setRetryingSubagentRunId] = useState('');
   const [subagentRetryError, setSubagentRetryError] = useState('');
+  const mountedRef = useRef(true);
+  const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const taskRequestGenerationRef = useRef(0);
+  const actionGenerationRef = useRef(0);
+  const operationGenerationRef = useRef({
+    cancel: 0,
+    retry: 0,
+    subagent: 0,
+  });
+  const activeOperationRef = useRef<'' | 'cancel' | 'retry' | 'subagent'>('');
+  const successfulMutationKeysRef = useRef(new Set<string>());
+  const [taskRunActionsDisabled, setTaskRunActionsDisabled] = useState(false);
+
+  if (scopedTaskDetailIdRef.current !== taskDetailId) {
+    scopedTaskDetailIdRef.current = taskDetailId;
+    taskRequestGenerationRef.current += 1;
+    actionGenerationRef.current += 1;
+    operationGenerationRef.current.cancel += 1;
+    operationGenerationRef.current.retry += 1;
+    operationGenerationRef.current.subagent += 1;
+    activeOperationRef.current = '';
+    successfulMutationKeysRef.current.clear();
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      taskRequestGenerationRef.current += 1;
+      actionGenerationRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    setTaskRunActionLoading('');
+    setTaskRunActionError('');
+    setRetryingSubagentRunId('');
+    setSubagentRetryError('');
+    setTaskRunActionsDisabled(false);
+    activeOperationRef.current = '';
+    successfulMutationKeysRef.current.clear();
+  }, [taskDetailId]);
+
+  const captureTaskRequest = (
+    submittedTaskDetailId: string,
+    operation: 'cancel' | 'retry' | 'subagent',
+  ) => ({
+    actionGeneration: ++actionGenerationRef.current,
+    generation: taskRequestGenerationRef.current,
+    operation,
+    operationGeneration: ++operationGenerationRef.current[operation],
+    taskDetailId: submittedTaskDetailId,
+  });
+  const isCurrentTaskRequest = ({
+    actionGeneration,
+    generation,
+    operation,
+    operationGeneration,
+    taskDetailId: submittedTaskDetailId,
+  }: {
+    actionGeneration: number;
+    generation: number;
+    operation: 'cancel' | 'retry' | 'subagent';
+    operationGeneration: number;
+    taskDetailId: string;
+  }) =>
+    mountedRef.current &&
+    actionGenerationRef.current === actionGeneration &&
+    taskRequestGenerationRef.current === generation &&
+    operationGenerationRef.current[operation] === operationGeneration &&
+    scopedTaskDetailIdRef.current === submittedTaskDetailId;
 
   const handleCancelTaskRun = async (runId: string) => {
-    if (!runId || taskRunActionLoading) {
+    if (!runId || activeOperationRef.current) {
       return;
     }
     if (!taskDetailId || taskDetailSource !== 'thread') {
       setTaskRunActionError('缺少任务运行上下文，请刷新后重试');
       return;
     }
+    const submittedTaskDetailId = taskDetailId;
+    const submittedTaskDetailSource = taskDetailSource;
+    const mutationKey = `cancel:${submittedTaskDetailId}:${runId}`;
+    const request = captureTaskRequest(submittedTaskDetailId, 'cancel');
 
+    activeOperationRef.current = 'cancel';
+    setTaskRunActionsDisabled(true);
     setTaskRunActionLoading('cancel');
     setTaskRunActionError('');
     try {
-      await cancelTaskThreadRun({
-        thread_id: taskDetailId,
-        run_id: runId,
-      });
-      const detail = await fetchTaskDetail({
-        id: taskDetailId,
-        spaceId: spaceID,
-        source: taskDetailSource,
-      });
-      applyTaskDetail(detail);
-    } catch (err) {
-      setTaskRunActionError(
-        err instanceof Error ? err.message : '取消任务失败，请稍后再试',
-      );
+      if (!successfulMutationKeysRef.current.has(mutationKey)) {
+        try {
+          await cancelTaskThreadRun({
+            thread_id: submittedTaskDetailId,
+            run_id: runId,
+          });
+        } catch (err) {
+          if (isCurrentTaskRequest(request)) {
+            setTaskRunActionError(
+              err instanceof Error ? err.message : '取消任务失败，请稍后再试',
+            );
+          }
+          return;
+        }
+        if (!isCurrentTaskRequest(request)) {
+          return;
+        }
+        successfulMutationKeysRef.current.add(mutationKey);
+      }
+
+      const refreshRequestToken = captureTaskDetailRequestToken?.();
+      try {
+        const detail = await fetchTaskDetail({
+          id: submittedTaskDetailId,
+          spaceId: spaceID,
+          source: submittedTaskDetailSource,
+        });
+        if (isCurrentTaskRequest(request)) {
+          applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
+        }
+      } catch {
+        if (isCurrentTaskRequest(request)) {
+          setTaskRunActionError('操作已成功但刷新失败，可重试刷新');
+        }
+      }
     } finally {
-      setTaskRunActionLoading('');
+      if (isCurrentTaskRequest(request)) {
+        activeOperationRef.current = '';
+        setTaskRunActionsDisabled(false);
+        setTaskRunActionLoading('');
+      }
     }
   };
 
   const handleRetryTaskRun = async (sourceRunId: string) => {
-    if (!sourceRunId || taskRunActionLoading) {
+    if (!sourceRunId || activeOperationRef.current) {
       return;
     }
     if (!taskDetailId || taskDetailSource !== 'thread' || !task) {
       setTaskRunActionError('缺少任务重试上下文，请刷新后重试');
       return;
     }
+    const submittedTaskDetailId = taskDetailId;
+    const submittedTaskDetailSource = taskDetailSource;
+    const mutationKey = `retry:${submittedTaskDetailId}:${sourceRunId}`;
+    const request = captureTaskRequest(submittedTaskDetailId, 'retry');
 
     const message = getTaskInputText(task.input) || task.title;
     const retryPayload = getTaskRetryPayload(message);
 
+    activeOperationRef.current = 'retry';
+    setTaskRunActionsDisabled(true);
     setTaskRunActionLoading('retry');
     setTaskRunActionError('');
     try {
-      await createTaskThreadRun({
-        thread_id: taskDetailId,
-        input: JSON.stringify({
-          messages: [
-            {
-              role: 'user',
-              content: message,
-            },
-          ],
-        }),
-        config: stringifyWorkbenchRunConfig(retryPayload),
-        metadata: getTaskRetryMetadata({
-          sourceRunId,
-          taskId: task.id,
-        }),
-        idempotency_key: `${taskDetailId}:${sourceRunId}:task_retry`,
-      });
-      const detail = await fetchTaskDetail({
-        id: taskDetailId,
-        spaceId: spaceID,
-        source: taskDetailSource,
-      });
-      applyTaskDetail(detail);
-    } catch (err) {
-      setTaskRunActionError(
-        err instanceof Error ? err.message : '重试任务失败，请稍后再试',
-      );
+      if (!successfulMutationKeysRef.current.has(mutationKey)) {
+        try {
+          await createTaskThreadRun({
+            thread_id: submittedTaskDetailId,
+            input: JSON.stringify({
+              messages: [
+                {
+                  role: 'user',
+                  content: message,
+                },
+              ],
+            }),
+            config: stringifyWorkbenchRunConfig(retryPayload),
+            metadata: getTaskRetryMetadata({
+              sourceRunId,
+              taskId: task.id,
+            }),
+            idempotency_key: `${submittedTaskDetailId}:${sourceRunId}:task_retry`,
+          });
+        } catch (err) {
+          if (isCurrentTaskRequest(request)) {
+            setTaskRunActionError(
+              err instanceof Error ? err.message : '重试任务失败，请稍后再试',
+            );
+          }
+          return;
+        }
+        if (!isCurrentTaskRequest(request)) {
+          return;
+        }
+        successfulMutationKeysRef.current.add(mutationKey);
+      }
+
+      const refreshRequestToken = captureTaskDetailRequestToken?.();
+      try {
+        const detail = await fetchTaskDetail({
+          id: submittedTaskDetailId,
+          spaceId: spaceID,
+          source: submittedTaskDetailSource,
+        });
+        if (isCurrentTaskRequest(request)) {
+          applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
+        }
+      } catch {
+        if (isCurrentTaskRequest(request)) {
+          setTaskRunActionError('操作已成功但刷新失败，可重试刷新');
+        }
+      }
     } finally {
-      setTaskRunActionLoading('');
+      if (isCurrentTaskRequest(request)) {
+        activeOperationRef.current = '';
+        setTaskRunActionsDisabled(false);
+        setTaskRunActionLoading('');
+      }
     }
   };
 
   const handleRetrySubagentRun = async (runId: string) => {
-    if (!runId || retryingSubagentRunId) {
+    if (!runId || activeOperationRef.current) {
       return;
     }
     if (!taskDetailId || taskDetailSource !== 'thread') {
       setSubagentRetryError('缺少任务恢复上下文，请刷新后重试');
       return;
     }
+    const submittedTaskDetailId = taskDetailId;
+    const submittedTaskDetailSource = taskDetailSource;
+    const mutationKey = `subagent:${submittedTaskDetailId}:${runId}`;
+    const request = captureTaskRequest(submittedTaskDetailId, 'subagent');
 
+    activeOperationRef.current = 'subagent';
+    setTaskRunActionsDisabled(true);
     setRetryingSubagentRunId(runId);
     setSubagentRetryError('');
     try {
-      await retryTaskThreadSubagentRun({
-        thread_id: taskDetailId,
-        run_id: runId,
-      });
-      const detail = await fetchTaskDetail({
-        id: taskDetailId,
-        spaceId: spaceID,
-        source: taskDetailSource,
-      });
-      applyTaskDetail(detail);
-    } catch (err) {
-      setSubagentRetryError(
-        err instanceof Error ? err.message : '重试子智能体失败，请稍后再试',
-      );
+      if (!successfulMutationKeysRef.current.has(mutationKey)) {
+        try {
+          await retryTaskThreadSubagentRun({
+            thread_id: submittedTaskDetailId,
+            run_id: runId,
+          });
+        } catch (err) {
+          if (isCurrentTaskRequest(request)) {
+            setSubagentRetryError(
+              err instanceof Error
+                ? err.message
+                : '重试子智能体失败，请稍后再试',
+            );
+          }
+          return;
+        }
+        if (!isCurrentTaskRequest(request)) {
+          return;
+        }
+        successfulMutationKeysRef.current.add(mutationKey);
+      }
+
+      const refreshRequestToken = captureTaskDetailRequestToken?.();
+      try {
+        const detail = await fetchTaskDetail({
+          id: submittedTaskDetailId,
+          spaceId: spaceID,
+          source: submittedTaskDetailSource,
+        });
+        if (isCurrentTaskRequest(request)) {
+          applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
+        }
+      } catch {
+        if (isCurrentTaskRequest(request)) {
+          setSubagentRetryError('操作已成功但刷新失败，可重试刷新');
+        }
+      }
     } finally {
-      setRetryingSubagentRunId('');
+      if (isCurrentTaskRequest(request)) {
+        activeOperationRef.current = '';
+        setTaskRunActionsDisabled(false);
+        setRetryingSubagentRunId('');
+      }
     }
   };
 
@@ -201,6 +376,7 @@ export const useTaskRunActions = ({
     handleRetrySubagentRun,
     retryingSubagentRunId,
     subagentRetryError,
+    taskRunActionsDisabled,
     taskRunActionError,
     taskRunActionLoading,
   };

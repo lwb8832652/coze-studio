@@ -17,9 +17,10 @@
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useState } from 'react';
 
+import { useCommonConfigStore } from '@coze-foundation/global-store';
+import { useUserInfo } from '@coze-arch/foundation-sdk';
 import {
   IconCozArrowDown,
-  IconCozBell,
   IconCozBot,
   IconCozCode,
   IconCozDocument,
@@ -28,8 +29,6 @@ import {
   IconCozUpload,
   IconCozWorkflow,
 } from '@coze-arch/coze-design/icons';
-import { useUserInfo } from '@coze-arch/foundation-sdk';
-import { Avatar } from '@coze-arch/coze-design';
 
 import './index.less';
 
@@ -38,6 +37,11 @@ import {
   buildTaskThreadDetailPath,
   buildTaskThreadListPath,
 } from '../chats/task-thread-routes';
+import { WorkspaceHeaderActions } from '../../components/workspace-header-actions';
+import {
+  isSkillCreationNavigationState,
+  SKILL_CREATION_HINT,
+} from './skill-creation-intent';
 import {
   createTaskThread,
   createTaskThreadRun,
@@ -52,10 +56,6 @@ import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
 } from './components/types';
-import {
-  isSkillCreationNavigationState,
-  SKILL_CREATION_HINT,
-} from './skill-creation-intent';
 
 export { mapModeToChatMode } from './components/types';
 
@@ -202,44 +202,37 @@ const TEMPLATE_CARDS = [
   },
 ];
 
-const formatTemplateStat = (value: number) =>
-  value.toLocaleString('en-US');
+const formatTemplateStat = (value: number) => value.toLocaleString('en-US');
 
-const getUserDisplayName = (
-  userInfo: ReturnType<typeof useUserInfo>,
-): string =>
+const getUserDisplayName = (userInfo: ReturnType<typeof useUserInfo>): string =>
   userInfo?.name || userInfo?.screen_name || userInfo?.email || '用户';
 
-const WorkbenchTopbar = () => {
-  const userInfo = useUserInfo();
-  const userDisplayName = getUserDisplayName(userInfo);
+export const WorkbenchTopbar = () => {
+  const navigate = useNavigate();
+  const { space_id } = useParams<{ space_id?: string }>();
+  const siteName = useCommonConfigStore(state => state.siteConfig.siteName);
+  const assistantChatPath = space_id
+    ? buildTaskThreadListPath(space_id)
+    : undefined;
 
   return (
     <header className="chat-workbench-topbar" aria-label="工作台状态">
       <div className="chat-workbench-assistant-status">
         <span className="chat-workbench-status-dot" />
-        <span>NewX AI 专属助理已就绪，随时可以开始对话</span>
-        <button type="button">去聊天专属助理</button>
-      </div>
-      <button
-        type="button"
-        className="chat-workbench-icon-button"
-        aria-label="通知"
-      >
-        <IconCozBell />
-      </button>
-      <span aria-label={`当前用户：${userDisplayName}`}>
-        <Avatar
-          src={userInfo?.avatar_url}
-          className="chat-workbench-avatar"
-          style={{
-            color: '#fff',
-            backgroundColor: 'var(--newx-color-accent)',
+        <span>{siteName} 专属助理已就绪，随时可以开始对话</span>
+        <button
+          type="button"
+          disabled={!assistantChatPath}
+          onClick={() => {
+            if (assistantChatPath) {
+              navigate(assistantChatPath);
+            }
           }}
         >
-          {userDisplayName}
-        </Avatar>
-      </span>
+          去聊天专属助理
+        </button>
+      </div>
+      <WorkspaceHeaderActions />
     </header>
   );
 };

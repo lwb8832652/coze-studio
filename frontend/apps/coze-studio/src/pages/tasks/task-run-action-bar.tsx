@@ -24,6 +24,7 @@ type ChatTask = workbenchTask.ChatTask;
 export type TaskRunActionLoading = '' | 'cancel' | 'retry';
 
 export const TaskRunActionBar = ({
+  disabled = false,
   error,
   latestRunID,
   loading,
@@ -31,6 +32,7 @@ export const TaskRunActionBar = ({
   taskDetailSource,
   onRetryTaskRun,
 }: {
+  disabled?: boolean;
   error?: string;
   latestRunID: string;
   loading: TaskRunActionLoading;
@@ -51,7 +53,7 @@ export const TaskRunActionBar = ({
         <button
           type="button"
           className="coze-prototype-primary-button"
-          disabled={Boolean(loading)}
+          disabled={disabled || Boolean(loading)}
           onClick={() => void onRetryTaskRun(latestRunID)}
         >
           {loading === 'retry' ? '重试中...' : '重试任务'}

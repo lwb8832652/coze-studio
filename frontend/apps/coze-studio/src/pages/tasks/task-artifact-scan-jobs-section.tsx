@@ -123,7 +123,9 @@ export const TaskArtifactScanJobsSection = ({
         </Button>
       </div>
       {scanJobsError ? (
-        <div className="coze-prototype-error">{scanJobsError}</div>
+        <div className="coze-prototype-error" role="alert">
+          {scanJobsError}
+        </div>
       ) : null}
       <List
         dataSource={sortedScanJobs}

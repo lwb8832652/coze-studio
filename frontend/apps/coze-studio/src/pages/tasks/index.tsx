@@ -455,7 +455,11 @@ const TasksPage = () => {
           onViewChange={setView}
         />
 
-        {error ? <div className="coze-prototype-error">{error}</div> : null}
+        {error ? (
+          <div className="coze-prototype-error" role="alert">
+            {error}
+          </div>
+        ) : null}
 
         <TaskList
           favoriteTaskIds={favoriteTaskIds}

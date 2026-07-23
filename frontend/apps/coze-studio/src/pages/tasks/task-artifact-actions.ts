@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+/* eslint-disable @coze-arch/max-line-per-function -- Artifact actions share cancellation, progress and safe-download orchestration. */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
@@ -109,12 +111,14 @@ const readTextArtifactPreview = async ({
 
 const runTaskArtifactAction = async ({
   artifact,
+  isCurrent,
   mode,
   spaceId,
   setInlinePreview,
   threadId,
 }: {
   artifact: TaskThreadArtifact;
+  isCurrent: () => boolean;
   mode: ArtifactActionMode;
   spaceId?: string;
   setInlinePreview: (preview: ArtifactInlinePreviewState | null) => void;
@@ -136,9 +140,14 @@ const runTaskArtifactAction = async ({
     mode === 'preview' ? artifactPreviewFamily(artifact) : null;
 
   if (previewFamily === 'text' && artifactInlinePreviewKind(artifact)) {
-    setInlinePreview(
-      await readTextArtifactPreview({ artifact, spaceId, threadId }),
-    );
+    const preview = await readTextArtifactPreview({
+      artifact,
+      spaceId,
+      threadId,
+    });
+    if (isCurrent()) {
+      setInlinePreview(preview);
+    }
     return;
   }
 
@@ -150,6 +159,9 @@ const runTaskArtifactAction = async ({
     ttl_seconds: 300,
   });
   const signedURL = response.data?.url?.trim();
+  if (!isCurrent()) {
+    return;
+  }
   if (!signedURL) {
     throw new Error('生成任务产物签名链接失败');
   }
@@ -184,165 +196,23 @@ const runTaskArtifactAction = async ({
   downloadSignedURL(signedURL, artifactFileName(artifact));
 };
 
-interface TaskArtifactActionContext {
+interface TaskArtifactActionState {
   activeAction: string;
-  onArtifactsChanged?: () => void | Promise<void>;
+  error: string;
+  inlinePreview: ArtifactInlinePreviewState | null;
   removedArtifact: RemovedArtifactNotice | null;
-  setActiveAction: (action: string) => void;
-  setError: (error: string) => void;
-  setInlinePreview: (
-    updater:
-      | ArtifactInlinePreviewState
-      | null
-      | ((
-          previous: ArtifactInlinePreviewState | null,
-        ) => ArtifactInlinePreviewState | null),
-  ) => void;
-  setRemovedArtifact: (notice: RemovedArtifactNotice | null) => void;
-  spaceId?: string;
-  threadId?: string;
+  scope: string;
 }
 
-const createArtifactActionHandler =
-  ({
-    activeAction,
-    setActiveAction,
-    setError,
-    setInlinePreview,
-    spaceId,
-    threadId,
-  }: TaskArtifactActionContext) =>
-  async (artifact: TaskThreadArtifact, mode: ArtifactActionMode) => {
-    if (activeAction || !threadId) {
-      return;
-    }
-    const actionKey = `${mode}:${artifact.artifact_id}`;
-    setActiveAction(actionKey);
-    setError('');
-    if (mode === 'preview') {
-      setInlinePreview(null);
-    }
-    try {
-      await runTaskArtifactAction({
-        artifact,
-        mode,
-        spaceId,
-        setInlinePreview,
-        threadId,
-      });
-    } catch (err) {
-      setError(artifactActionErrorMessage(mode, err));
-    } finally {
-      setActiveAction('');
-    }
-  };
-
-const createDeleteArtifactHandler =
-  ({
-    activeAction,
-    onArtifactsChanged,
-    setActiveAction,
-    setError,
-    setInlinePreview,
-    setRemovedArtifact,
-    spaceId,
-    threadId,
-  }: TaskArtifactActionContext) =>
-  async (artifact: TaskThreadArtifact) => {
-    if (activeAction || !threadId) {
-      return;
-    }
-    const name = artifactFileName(artifact);
-    setActiveAction(`delete:${artifact.artifact_id}`);
-    setError('');
-    try {
-      await deleteTaskThreadArtifact({
-        artifact_id: artifact.artifact_id,
-        space_id: spaceId,
-        thread_id: threadId,
-      });
-      setInlinePreview(previous =>
-        previous?.artifactId === artifact.artifact_id ? null : previous,
-      );
-      setRemovedArtifact({ artifactId: artifact.artifact_id, name });
-      await onArtifactsChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除任务产物失败');
-    } finally {
-      setActiveAction('');
-    }
-  };
-
-const createRestoreArtifactHandler =
-  ({
-    activeAction,
-    onArtifactsChanged,
-    removedArtifact,
-    setActiveAction,
-    setError,
-    setRemovedArtifact,
-    spaceId,
-    threadId,
-  }: TaskArtifactActionContext) =>
-  async () => {
-    if (activeAction || !threadId || !removedArtifact) {
-      return;
-    }
-    const actionKey = `restore:${removedArtifact.artifactId}`;
-    setActiveAction(actionKey);
-    setError('');
-    try {
-      await restoreTaskThreadArtifact({
-        artifact_id: removedArtifact.artifactId,
-        space_id: spaceId,
-        thread_id: threadId,
-      });
-      setRemovedArtifact(null);
-      await onArtifactsChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '恢复任务产物失败');
-    } finally {
-      setActiveAction('');
-    }
-  };
-
-const createReviewArtifactHandler =
-  ({
-    activeAction,
-    onArtifactsChanged,
-    setActiveAction,
-    setError,
-    setInlinePreview,
-    spaceId,
-    threadId,
-  }: TaskArtifactActionContext) =>
-  async (
-    artifact: TaskThreadArtifact,
-    decision: ArtifactScanReviewDecision,
-  ) => {
-    if (activeAction || !threadId) {
-      return;
-    }
-    const actionKey = `review:${decision}:${artifact.artifact_id}`;
-    setActiveAction(actionKey);
-    setError('');
-    try {
-      await reviewTaskThreadArtifactScan({
-        artifact_id: artifact.artifact_id,
-        decision,
-        space_id: spaceId,
-        thread_id: threadId,
-      });
-      setInlinePreview(previous =>
-        previous?.artifactId === artifact.artifact_id ? null : previous,
-      );
-      await onArtifactsChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '审核产物扫描状态失败');
-    } finally {
-      setActiveAction('');
-    }
-  };
+const createEmptyArtifactActionState = (
+  scope: string,
+): TaskArtifactActionState => ({
+  activeAction: '',
+  error: '',
+  inlinePreview: null,
+  removedArtifact: null,
+  scope,
+});
 
 export const useTaskArtifactActions = ({
   onArtifactsChanged,
@@ -353,37 +223,306 @@ export const useTaskArtifactActions = ({
   spaceId?: string;
   threadId?: string;
 }): TaskArtifactActions => {
-  const [activeAction, setActiveAction] = useState('');
-  const [error, setError] = useState('');
-  const [inlinePreview, setInlinePreview] =
-    useState<ArtifactInlinePreviewState | null>(null);
-  const [removedArtifact, setRemovedArtifact] =
-    useState<RemovedArtifactNotice | null>(null);
-  const context = {
-    activeAction,
+  const scope = `${spaceId ?? ''}:${threadId ?? ''}`;
+  const scopeRef = useRef(scope);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const activeOperationRef = useRef('');
+  const [state, setState] = useState<TaskArtifactActionState>(() =>
+    createEmptyArtifactActionState(scope),
+  );
+  if (scopeRef.current !== scope) {
+    scopeRef.current = scope;
+    generationRef.current += 1;
+    activeOperationRef.current = '';
+  }
+  const visibleState =
+    state.scope === scope ? state : createEmptyArtifactActionState(scope);
+  const isCurrentScope = useCallback(
+    (submittedScope: string, generation: number) =>
+      mountedRef.current &&
+      scopeRef.current === submittedScope &&
+      generationRef.current === generation,
+    [],
+  );
+  const updateCurrentState = useCallback(
+    (
+      submittedScope: string,
+      generation: number,
+      updater: (current: TaskArtifactActionState) => TaskArtifactActionState,
+    ) => {
+      if (!isCurrentScope(submittedScope, generation)) {
+        return;
+      }
+      setState(current =>
+        updater(
+          current.scope === submittedScope
+            ? current
+            : createEmptyArtifactActionState(submittedScope),
+        ),
+      );
+    },
+    [isCurrentScope],
+  );
+  const beginOperation = useCallback(
+    (actionKey: string, clearPreview = false) => {
+      if (!threadId || activeOperationRef.current) {
+        return;
+      }
+      const submittedScope = scope;
+      const generation = generationRef.current;
+      activeOperationRef.current = actionKey;
+      updateCurrentState(submittedScope, generation, current => ({
+        ...current,
+        activeAction: actionKey,
+        error: '',
+        inlinePreview: clearPreview ? null : current.inlinePreview,
+      }));
+
+      return { generation, submittedScope, submittedThreadId: threadId };
+    },
+    [scope, threadId, updateCurrentState],
+  );
+  const finishOperation = useCallback(
+    (submittedScope: string, generation: number) => {
+      if (!isCurrentScope(submittedScope, generation)) {
+        return;
+      }
+      activeOperationRef.current = '';
+      updateCurrentState(submittedScope, generation, current => ({
+        ...current,
+        activeAction: '',
+      }));
+    },
+    [isCurrentScope, updateCurrentState],
+  );
+
+  useEffect(() => {
+    const generation = generationRef.current;
+    if (scopeRef.current === scope) {
+      setState(createEmptyArtifactActionState(scope));
+      activeOperationRef.current = '';
+    }
+
+    return () => {
+      if (generationRef.current === generation) {
+        generationRef.current += 1;
+      }
+    };
+  }, [scope]);
+
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+      activeOperationRef.current = '';
+    },
+    [],
+  );
+
+  const handleArtifactAction = useCallback(
+    async (artifact: TaskThreadArtifact, mode: ArtifactActionMode) => {
+      const operation = beginOperation(
+        `${mode}:${artifact.artifact_id}`,
+        mode === 'preview',
+      );
+      if (!operation) {
+        return;
+      }
+      const { generation, submittedScope, submittedThreadId } = operation;
+      const isCurrent = () => isCurrentScope(submittedScope, generation);
+
+      try {
+        await runTaskArtifactAction({
+          artifact,
+          isCurrent,
+          mode,
+          spaceId,
+          setInlinePreview: preview =>
+            updateCurrentState(submittedScope, generation, current => ({
+              ...current,
+              inlinePreview: preview,
+            })),
+          threadId: submittedThreadId,
+        });
+      } catch (err) {
+        updateCurrentState(submittedScope, generation, current => ({
+          ...current,
+          error: artifactActionErrorMessage(mode, err),
+        }));
+      } finally {
+        finishOperation(submittedScope, generation);
+      }
+    },
+    [
+      beginOperation,
+      finishOperation,
+      isCurrentScope,
+      spaceId,
+      updateCurrentState,
+    ],
+  );
+
+  const handleDeleteArtifact = useCallback(
+    async (artifact: TaskThreadArtifact) => {
+      const operation = beginOperation(`delete:${artifact.artifact_id}`);
+      if (!operation) {
+        return;
+      }
+      const { generation, submittedScope, submittedThreadId } = operation;
+      const name = artifactFileName(artifact);
+
+      try {
+        await deleteTaskThreadArtifact({
+          artifact_id: artifact.artifact_id,
+          space_id: spaceId,
+          thread_id: submittedThreadId,
+        });
+        if (!isCurrentScope(submittedScope, generation)) {
+          return;
+        }
+        updateCurrentState(submittedScope, generation, current => ({
+          ...current,
+          inlinePreview:
+            current.inlinePreview?.artifactId === artifact.artifact_id
+              ? null
+              : current.inlinePreview,
+          removedArtifact: { artifactId: artifact.artifact_id, name },
+        }));
+        await onArtifactsChanged?.();
+      } catch (err) {
+        updateCurrentState(submittedScope, generation, current => ({
+          ...current,
+          error: err instanceof Error ? err.message : '删除任务产物失败',
+        }));
+      } finally {
+        finishOperation(submittedScope, generation);
+      }
+    },
+    [
+      beginOperation,
+      finishOperation,
+      isCurrentScope,
+      onArtifactsChanged,
+      spaceId,
+      updateCurrentState,
+    ],
+  );
+
+  const handleRestoreArtifact = useCallback(async () => {
+    const { removedArtifact } = visibleState;
+    if (!removedArtifact) {
+      return;
+    }
+    const operation = beginOperation(`restore:${removedArtifact.artifactId}`);
+    if (!operation) {
+      return;
+    }
+    const { generation, submittedScope, submittedThreadId } = operation;
+
+    try {
+      await restoreTaskThreadArtifact({
+        artifact_id: removedArtifact.artifactId,
+        space_id: spaceId,
+        thread_id: submittedThreadId,
+      });
+      if (!isCurrentScope(submittedScope, generation)) {
+        return;
+      }
+      updateCurrentState(submittedScope, generation, current => ({
+        ...current,
+        removedArtifact: null,
+      }));
+      await onArtifactsChanged?.();
+    } catch (err) {
+      updateCurrentState(submittedScope, generation, current => ({
+        ...current,
+        error: err instanceof Error ? err.message : '恢复任务产物失败',
+      }));
+    } finally {
+      finishOperation(submittedScope, generation);
+    }
+  }, [
+    beginOperation,
+    finishOperation,
+    isCurrentScope,
     onArtifactsChanged,
-    removedArtifact,
-    setActiveAction,
-    setError,
-    setInlinePreview,
-    setRemovedArtifact,
     spaceId,
-    threadId,
-  };
+    updateCurrentState,
+    visibleState.removedArtifact,
+  ]);
+
+  const handleReviewArtifact = useCallback(
+    async (
+      artifact: TaskThreadArtifact,
+      decision: ArtifactScanReviewDecision,
+    ) => {
+      const operation = beginOperation(
+        `review:${decision}:${artifact.artifact_id}`,
+      );
+      if (!operation) {
+        return;
+      }
+      const { generation, submittedScope, submittedThreadId } = operation;
+
+      try {
+        await reviewTaskThreadArtifactScan({
+          artifact_id: artifact.artifact_id,
+          decision,
+          space_id: spaceId,
+          thread_id: submittedThreadId,
+        });
+        if (!isCurrentScope(submittedScope, generation)) {
+          return;
+        }
+        updateCurrentState(submittedScope, generation, current => ({
+          ...current,
+          inlinePreview:
+            current.inlinePreview?.artifactId === artifact.artifact_id
+              ? null
+              : current.inlinePreview,
+        }));
+        await onArtifactsChanged?.();
+      } catch (err) {
+        updateCurrentState(submittedScope, generation, current => ({
+          ...current,
+          error: err instanceof Error ? err.message : '审核产物扫描状态失败',
+        }));
+      } finally {
+        finishOperation(submittedScope, generation);
+      }
+    },
+    [
+      beginOperation,
+      finishOperation,
+      isCurrentScope,
+      onArtifactsChanged,
+      spaceId,
+      updateCurrentState,
+    ],
+  );
 
   return {
-    activeAction,
-    clearInlinePreview: () => setInlinePreview(null),
+    activeAction: visibleState.activeAction,
+    clearInlinePreview: () =>
+      updateCurrentState(scope, generationRef.current, current => ({
+        ...current,
+        inlinePreview: null,
+      })),
     clearRemovedArtifact: artifactId =>
-      setRemovedArtifact(previous =>
-        !artifactId || previous?.artifactId === artifactId ? null : previous,
-      ),
-    error,
-    handleArtifactAction: createArtifactActionHandler(context),
-    handleDeleteArtifact: createDeleteArtifactHandler(context),
-    handleRestoreArtifact: createRestoreArtifactHandler(context),
-    handleReviewArtifact: createReviewArtifactHandler(context),
-    inlinePreview,
-    removedArtifact,
+      updateCurrentState(scope, generationRef.current, current => ({
+        ...current,
+        removedArtifact:
+          !artifactId || current.removedArtifact?.artifactId === artifactId
+            ? null
+            : current.removedArtifact,
+      })),
+    error: visibleState.error,
+    handleArtifactAction,
+    handleDeleteArtifact,
+    handleRestoreArtifact,
+    handleReviewArtifact,
+    inlinePreview: visibleState.inlinePreview,
+    removedArtifact: visibleState.removedArtifact,
   };
 };

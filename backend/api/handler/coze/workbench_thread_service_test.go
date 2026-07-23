@@ -2991,6 +2991,8 @@ func TestGetTaskThreadTokenUsageHandlerReturnsRowsAndAggregate(t *testing.T) {
 	require.Contains(t, body, `"call_count":2`)
 	require.Contains(t, body, `"lead_agent_tokens":20`)
 	require.Contains(t, body, `"tool_tokens":10`)
+	require.NotContains(t, body, "snapshot_revision")
+	require.NotContains(t, body, "usage_revision")
 	require.NotContains(t, body, "prompt_tokens")
 	require.NotContains(t, body, "completion_tokens")
 	require.NotContains(t, body, "provider_raw")

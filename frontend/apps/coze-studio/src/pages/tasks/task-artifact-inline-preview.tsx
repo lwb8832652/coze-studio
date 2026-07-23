@@ -20,6 +20,7 @@ import {
   IconCozCode,
   IconCozCopy,
   IconCozCross,
+  IconCozDocument,
   IconCozEye,
 } from '@coze-arch/coze-design/icons';
 import { Button, Table } from '@coze-arch/coze-design';
@@ -115,7 +116,17 @@ export const TaskArtifactInlinePreview = ({
     >
       <div className="coze-prototype-artifact-preview-header">
         <div className="coze-prototype-artifact-preview-heading">
-          <span className="coze-prototype-artifact-preview-title">{name}</span>
+          <span className="coze-prototype-artifact-preview-heading-icon">
+            <IconCozDocument />
+          </span>
+          <span className="coze-prototype-artifact-preview-heading-copy">
+            <span className="coze-prototype-artifact-preview-title">
+              {name}
+            </span>
+            <span className="coze-prototype-artifact-preview-type">
+              {contentType || '文件预览'}
+            </span>
+          </span>
         </div>
         {canSwitchView ? (
           <div
@@ -170,6 +181,7 @@ export const TaskArtifactInlinePreview = ({
         <div
           className="coze-prototype-artifact-preview-truncated"
           data-testid="task-artifact-inline-preview-truncated"
+          role="status"
         >
           内容较长，当前仅展示部分预览，下载文件可查看完整内容。
         </div>

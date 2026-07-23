@@ -25,3 +25,9 @@ export {
   type AccountSettingsExtraTab,
   useAccountSettings,
 } from './components/account-dropdown/account-settings';
+export {
+  applySiteConfigToDocument,
+  fetchSiteConfig,
+  normalizeSiteConfig,
+  refreshSiteConfig,
+} from './site-config';

@@ -17,18 +17,16 @@
 import { useNavigate } from 'react-router-dom';
 
 import { useSpaceStore } from '@coze-foundation/space-store';
-import { useUserInfo } from '@coze-arch/foundation-sdk';
-import { IconCozBell } from '@coze-arch/coze-design/icons';
-import { Avatar } from '@coze-arch/coze-design';
+import { useCommonConfigStore } from '@coze-foundation/global-store';
 
 import './workspace-prototype.less';
+
+import { WorkspaceHeaderActions } from './workspace-header-actions';
 
 export const WorkspacePageTopBar = () => {
   const navigate = useNavigate();
   const spaceId = useSpaceStore(state => state.space?.id ?? '');
-  const userInfo = useUserInfo();
-  const userDisplayName =
-    userInfo?.name || userInfo?.screen_name || userInfo?.email || '用户';
+  const siteName = useCommonConfigStore(state => state.siteConfig.siteName);
 
   return (
     <header className="newx-workspace-topbar flex h-[52px] shrink-0 items-center justify-end gap-[12px] px-[24px]">
@@ -40,7 +38,7 @@ export const WorkspacePageTopBar = () => {
           className="h-[6px] w-[6px] rounded-full"
           style={{ background: 'var(--newx-color-success)' }}
         />
-        <span>NewX AI 专属助理已就绪，随时可以开始对话</span>
+        <span>{siteName} 专属助理已就绪，随时可以开始对话</span>
       </div>
       <button
         type="button"
@@ -55,25 +53,7 @@ export const WorkspacePageTopBar = () => {
       >
         去聊天专属助理
       </button>
-      <button
-        type="button"
-        className="coze-prototype-icon-button"
-        aria-label="通知"
-      >
-        <IconCozBell className="text-[16px]" />
-      </button>
-      <span aria-label={`当前用户：${userDisplayName}`}>
-        <Avatar
-          src={userInfo?.avatar_url}
-          className="coze-prototype-avatar"
-          style={{
-            color: '#fff',
-            backgroundColor: 'var(--newx-color-accent)',
-          }}
-        >
-          {userDisplayName}
-        </Avatar>
-      </span>
+      <WorkspaceHeaderActions />
     </header>
   );
 };

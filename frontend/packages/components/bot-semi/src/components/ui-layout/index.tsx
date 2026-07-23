@@ -17,16 +17,21 @@
 /* eslint-disable @typescript-eslint/naming-convention */
 
 import { Helmet } from 'react-helmet';
-import React, { PropsWithChildren, useContext } from 'react';
+import React, { PropsWithChildren } from 'react';
 
 import classNames from 'classnames';
-import { type I18nContext, i18nContext } from '@coze-arch/i18n/i18n-provider';
 
 import UIHeader, { UIHeaderProps } from '../ui-header';
 import UIFooter, { UIFooterProps } from '../ui-footer';
 import UIContent from '../ui-content';
 
 import s from './index.module.less';
+
+export const UIDocumentTitle: React.FC<{ title: string }> = ({ title }) => (
+  <Helmet>
+    <title>{title}</title>
+  </Helmet>
+);
 
 export const UILayout: React.FC<
   PropsWithChildren<{
@@ -37,18 +42,12 @@ export const UILayout: React.FC<
   Header: React.FC<UIHeaderProps>;
   Content: typeof UIContent;
   Footer: React.FC<UIFooterProps>;
-} = ({ className, children, title }) => {
-  const { i18n } = useContext<I18nContext>(i18nContext);
-  const _title = title || i18n.t('platform_name');
-  return (
-    <div className={classNames(s['ui-layout'], className)}>
-      <Helmet>
-        <title>{_title}</title>
-      </Helmet>
-      {children}
-    </div>
-  );
-};
+} = ({ className, children, title }) => (
+  <div className={classNames(s['ui-layout'], className)}>
+    {title ? <UIDocumentTitle title={title} /> : null}
+    {children}
+  </div>
+);
 
 UILayout.Header = UIHeader;
 UILayout.Content = UIContent;

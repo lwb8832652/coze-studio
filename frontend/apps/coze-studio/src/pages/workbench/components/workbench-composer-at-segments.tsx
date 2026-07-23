@@ -18,9 +18,11 @@ import type { WorkbenchAtSegment } from './workbench-composer-at-menu';
 import { getWorkbenchAtResourceIcon } from './workbench-composer-at-menu';
 
 export const WorkbenchAtSegments = ({
+  disabled = false,
   segments,
   onSegmentRemove,
 }: {
+  disabled?: boolean;
   segments?: WorkbenchAtSegment[];
   onSegmentRemove?: (segment: WorkbenchAtSegment) => void;
 }) => (
@@ -35,6 +37,7 @@ export const WorkbenchAtSegments = ({
           key={segment.id}
           className="chat-workbench-at-resource-chip"
           type="button"
+          disabled={disabled}
           aria-label={`移除${segment.reference.resourceType}${segment.reference.name}`}
           onClick={() => onSegmentRemove?.(segment)}
         >

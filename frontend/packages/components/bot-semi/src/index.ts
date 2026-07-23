@@ -46,7 +46,7 @@ export type { UITableMetaProps } from './components/ui-table-meta';
 export { UISelect } from './components/ui-select';
 export { UIPagination } from './components/ui-pagination';
 export type { UIPaginationProps } from './components/ui-pagination';
-export { UILayout } from './components/ui-layout';
+export { UIDocumentTitle, UILayout } from './components/ui-layout';
 export { UITabBar } from './components/ui-tab-bar';
 export type { UITabBarProps } from './components/ui-tab-bar';
 export { UIIconButton } from './components/ui-icon-button';

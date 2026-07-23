@@ -4,14 +4,23 @@ include "../app/developer_api.thrift"
 namespace go admin.config
 
 
-struct GetModelListReq  {
-   255: optional base.Base Base
-}
+ struct GetModelListReq  {
+    1: optional string keyword
+    2: optional string provider_key
+    3: optional string capability_type
+    4: optional bool enabled
+    5: optional string access_mode
+    6: optional i32 page
+    7: optional i32 page_size
+    255: optional base.Base Base
+ }
 
-struct GetModelListResp {
-    1: list<ProviderModelList> provider_model_list
+ struct GetModelListResp {
+     1: list<ProviderModelList> provider_model_list
+     2: optional list<ModelManagementItem> models
+     3: optional i64 total
 
-    253: required i64 code
+     253: required i64 code
     254: required string msg
     255: required base.BaseResp BaseResp(api.none="true")
 }
@@ -70,11 +79,218 @@ enum ThinkingType {
 }
 
 
-enum ModelStatus {
+ enum ModelStatus {
     StatusDefault = 0  // Default state when not configured, equivalent to StatusInUse
     StatusInUse   = 1  // In the application, it can be used to create new
     StatusDeleted = 2 // It is offline, unusable, and cannot be created.
-}
+ }
+
+ enum ModelAccessMode {
+     ALL = 1
+     RESTRICTED = 2
+ }
+
+ enum ModelGrantSubjectType {
+     WORKSPACE = 1
+     USER = 2
+ }
+
+ enum ModelRoutingStrategy {
+     ROUND_ROBIN = 1
+     WEIGHTED_ROUND_ROBIN = 2
+ }
+
+ struct ModelProviderOption {
+     1: required string provider_key
+     2: required I18nText name
+     3: required developer_api.ModelClass model_class
+     4: required string protocol
+     5: required bool supports_custom_base_url
+     6: required bool supports_function_call
+     7: required bool supports_multimodal
+     8: optional string default_base_url
+ }
+
+ struct ListModelProvidersReq {
+     255: optional base.Base Base
+ }
+
+ struct ListModelProvidersResp {
+     1: required list<ModelProviderOption> providers
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct ModelEndpointInput {
+     1: optional i64 id (agw.js_conv="str", api.js_conv="true")
+     2: required string base_url
+     3: optional string api_key
+     4: optional bool clear_api_key
+     5: required i32 weight
+     6: required bool enabled
+     7: required i32 sort_order
+ }
+
+ struct ModelEndpointView {
+     1: required i64 id (agw.js_conv="str", api.js_conv="true")
+     2: required string base_url
+     3: required bool has_api_key
+     4: required i32 weight
+     5: required bool enabled
+     6: required i32 sort_order
+ }
+
+ struct ModelManagementInput {
+     1: required string provider_key
+     2: required string name
+     3: required string model_identifier
+     4: optional string description
+     5: required list<string> capability_types
+     6: required string reasoning_mode
+     7: required i64 max_context_tokens
+     8: required i64 max_output_tokens
+     9: required string function_call_mode
+     10: required bool enabled
+     11: required list<string> usage_scenarios
+     12: required string protocol
+     13: required ModelRoutingStrategy routing_strategy
+     14: required ModelAccessMode access_mode
+     15: required list<ModelEndpointInput> endpoints
+     16: optional bool enable_base64_url
+ }
+
+ struct ModelManagementItem {
+     1: required i64 id (agw.js_conv="str", api.js_conv="true")
+     2: required string provider_key
+     3: required developer_api.ModelClass model_class
+     4: required string name
+     5: required string model_identifier
+     6: optional string description
+     7: required list<string> capability_types
+     8: required bool enabled
+     9: required ModelAccessMode access_mode
+     10: required i64 creator_id (agw.js_conv="str", api.js_conv="true")
+     11: optional string creator_name
+     12: required i64 updated_at_ms
+     13: required i64 sort_order
+ }
+
+ struct ModelDetail {
+     1: required ModelManagementItem summary
+     2: required string reasoning_mode
+     3: required i64 max_context_tokens
+     4: required i64 max_output_tokens
+     5: required string function_call_mode
+     6: required list<string> usage_scenarios
+     7: required string protocol
+     8: required ModelRoutingStrategy routing_strategy
+     9: required list<ModelEndpointView> endpoints
+     10: required bool enable_base64_url
+ }
+
+ struct GetModelDetailReq {
+     1: required i64 id (agw.js_conv="str", api.js_conv="true")
+     255: optional base.Base Base
+ }
+
+ struct GetModelDetailResp {
+     1: required ModelDetail model
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct ModelGrantSubject {
+     1: required ModelGrantSubjectType subject_type
+     2: required i64 subject_id (agw.js_conv="str", api.js_conv="true")
+     3: optional string name
+     4: optional string description
+ }
+
+ struct GetModelGrantsReq {
+     1: required i64 model_id (agw.js_conv="str", api.js_conv="true")
+     255: optional base.Base Base
+ }
+
+ struct GetModelGrantsResp {
+     1: required ModelAccessMode access_mode
+     2: required list<ModelGrantSubject> grants
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct SaveModelGrantsReq {
+     1: required i64 model_id (agw.js_conv="str", api.js_conv="true")
+     2: required ModelAccessMode access_mode
+     3: required list<ModelGrantSubject> grants
+     255: optional base.Base Base
+ }
+
+ struct SaveModelGrantsResp {
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct TestModelEndpointReq {
+     1: optional i64 model_id (agw.js_conv="str", api.js_conv="true")
+     2: required ModelEndpointInput endpoint
+     3: required string provider_key
+     4: required string model_identifier
+     5: required string protocol
+     255: optional base.Base Base
+ }
+
+ struct TestModelEndpointResp {
+     1: required bool success
+     2: required i64 latency_ms
+     3: optional string error_code
+     4: optional string error_message
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct UpdateModelStatusReq {
+     1: required i64 id (agw.js_conv="str", api.js_conv="true")
+     2: required bool enabled
+     255: optional base.Base Base
+ }
+
+ struct UpdateModelStatusResp {
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct ModelSortItem {
+     1: required i64 id (agw.js_conv="str", api.js_conv="true")
+     2: required i64 sort_order
+ }
+
+ struct UpdateModelSortReq {
+     1: required list<ModelSortItem> items
+     255: optional base.Base Base
+ }
+
+ struct UpdateModelSortResp {
+     253: required i64 code
+     254: required string msg
+     255: required base.BaseResp BaseResp(api.none="true")
+ }
+
+ struct ModelDependencySample {
+     1: required string id
+     2: required string name
+ }
+
+ struct ModelDependencySummary {
+     1: required string dependency_type
+     2: required i64 count
+     3: required list<ModelDependencySample> samples
+ }
 
 struct Connection {
     1: BaseConnectionInfo base_conn_info
@@ -124,11 +340,12 @@ struct OllamaConnInfo {}
 
 struct ClaudeConnInfo {}
 
-struct CreateModelReq {
-    1: developer_api.ModelClass model_class
-    2: string model_name
-    3: Connection connection
-    4: bool enable_base64_url
+ struct CreateModelReq {
+     1: developer_api.ModelClass model_class
+     2: string model_name
+     3: Connection connection
+     4: bool enable_base64_url
+     5: optional ModelManagementInput management
 
 
     255: optional base.Base Base
@@ -142,21 +359,25 @@ struct CreateModelResp {
     255: required base.BaseResp BaseResp(api.none="true")
 }
 
-struct DeleteModelReq {
-    1: i64 id (agw.js_conv="str", api.js_conv="true")
-    255: optional base.Base Base
-}
+ struct DeleteModelReq {
+     1: i64 id (agw.js_conv="str", api.js_conv="true")
+     2: optional bool preview
+     255: optional base.Base Base
+ }
 
-struct DeleteModelResp {
-    253: required i64 code
+ struct DeleteModelResp {
+     1: optional list<ModelDependencySummary> dependencies
+     253: required i64 code
     254: required string msg
     255: required base.BaseResp BaseResp(api.none="true")
 }
 
-struct UpdateModelReq {
-    1: Model model
-    255: optional base.Base Base
-}
+ struct UpdateModelReq {
+     1: optional Model model
+     2: optional i64 id (agw.js_conv="str", api.js_conv="true")
+     3: optional ModelManagementInput management
+     255: optional base.Base Base
+ }
 
 struct UpdateModelResp {
     253: required i64 code
@@ -213,6 +434,10 @@ struct BasicConfiguration {
     5: CodeRunnerType code_runner_type
     6: optional SandboxConfig sandbox_config
     7: string server_host
+    8: optional string site_name
+    9: optional string site_description
+    10: optional string site_logo_uri
+    11: optional string favicon_uri
 }
 
 struct PluginConfiguration {
@@ -326,12 +551,21 @@ struct ParserConfig {
 
 
 
-service ConfigService {
+ service ConfigService {
     GetBasicConfigurationResp GetBasicConfiguration(1:GetBasicConfigurationReq req)(api.get='/api/admin/config/basic/get', api.category="admin")
     SaveBasicConfigurationResp SaveBasicConfiguration(1:SaveBasicConfigurationReq req)(api.post='/api/admin/config/basic/save', api.category="admin")
     GetKnowledgeConfigResp GetKnowledgeConfig(1:GetKnowledgeConfigReq req)(api.get='/api/admin/config/knowledge/get', api.category="admin")
     UpdateKnowledgeConfigResp UpdateKnowledgeConfig(1:UpdateKnowledgeConfigReq req)(api.post='/api/admin/config/knowledge/save', api.category="admin")
-    GetModelListResp GetModelList(1:GetModelListReq req)(api.get='/api/admin/config/model/list', api.category="admin")
-    CreateModelResp CreateModel(1:CreateModelReq req)(api.post='/api/admin/config/model/create', api.category="admin")
-    DeleteModelResp DeleteModel(1:DeleteModelReq req)(api.post='/api/admin/config/model/delete', api.category="admin")
-}
+     GetModelListResp GetModelList(1:GetModelListReq req)(api.get='/api/admin/config/model/list', api.category="admin")
+     ListModelProvidersResp ListModelProviders(1:ListModelProvidersReq req)(api.get='/api/admin/config/model/providers', api.category="admin")
+     GetModelListResp ListModels(1:GetModelListReq req)(api.get='/api/admin/config/model/manage/list', api.category="admin")
+     GetModelDetailResp GetModelDetail(1:GetModelDetailReq req)(api.get='/api/admin/config/model/detail', api.category="admin")
+     CreateModelResp CreateModel(1:CreateModelReq req)(api.post='/api/admin/config/model/create', api.category="admin")
+     UpdateModelResp UpdateModel(1:UpdateModelReq req)(api.post='/api/admin/config/model/update', api.category="admin")
+     TestModelEndpointResp TestModelEndpoint(1:TestModelEndpointReq req)(api.post='/api/admin/config/model/test', api.category="admin")
+     UpdateModelStatusResp UpdateModelStatus(1:UpdateModelStatusReq req)(api.post='/api/admin/config/model/status', api.category="admin")
+     UpdateModelSortResp UpdateModelSort(1:UpdateModelSortReq req)(api.post='/api/admin/config/model/sort', api.category="admin")
+     GetModelGrantsResp GetModelGrants(1:GetModelGrantsReq req)(api.get='/api/admin/config/model/grants', api.category="admin")
+     SaveModelGrantsResp SaveModelGrants(1:SaveModelGrantsReq req)(api.post='/api/admin/config/model/grants', api.category="admin")
+     DeleteModelResp DeleteModel(1:DeleteModelReq req)(api.post='/api/admin/config/model/delete', api.category="admin")
+ }

@@ -32,6 +32,7 @@
     "@coze-arch/i18n": "workspace:*",
     "@coze-foundation/account-adapter": "workspace:*",
     "@coze-foundation/account-ui-base": "workspace:*",
+    "@coze-foundation/global-store": "workspace:*",
     "@coze-studio/api-schema": "workspace:*",
     "@coze-studio/components": "workspace:*",
     "ahooks": "^3.7.8",

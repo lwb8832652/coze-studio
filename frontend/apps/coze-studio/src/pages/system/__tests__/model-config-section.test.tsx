@@ -14,332 +14,195 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/consistent-type-imports -- Test-only lazy package types avoid loading the production module graph. */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
+
+const serviceMocks = vi.hoisted(() => ({
+  createAdminManagedModel: vi.fn(),
+  deleteAdminModel: vi.fn(),
+  getAdminManagedModelDetail: vi.fn(),
+  getAdminManagedModelGrants: vi.fn(),
+  listAdminManagedModels: vi.fn(),
+  listAdminModelProviders: vi.fn(),
+  listAdminUsers: vi.fn(),
+  listAdminWorkspaces: vi.fn(),
+  saveAdminManagedModelGrants: vi.fn(),
+  sortAdminManagedModels: vi.fn(),
+  testAdminManagedModelEndpoint: vi.fn(),
+  updateAdminManagedModel: vi.fn(),
+  updateAdminManagedModelStatus: vi.fn(),
+}));
+
+vi.mock('../service', async importOriginal => ({
+  ...(await importOriginal<typeof import('../service')>()),
+  ...serviceMocks,
+}));
 
 import { ModelConfigSection } from '../model-config-section';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const managedModel = {
+  access_mode: 2,
+  capability_types: ['text', 'reasoning'],
+  creator_id: '9',
+  enabled: true,
+  id: '12',
+  model_class: 3,
+  model_identifier: 'deepseek-v4-pro',
+  name: 'DeepSeek V4 Pro',
+  provider_key: 'deepseek',
+  sort_order: 1,
+  updated_at_ms: 1784707200000,
+};
+
 describe('ModelConfigSection', () => {
   let container: HTMLDivElement;
   let root: Root;
-  const onCreateModel = vi.fn();
-  const onDeleteModel = vi.fn();
-  const onRefresh = vi.fn();
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    serviceMocks.listAdminManagedModels.mockResolvedValue({
+      models: [managedModel],
+      total: 1,
+    });
+    serviceMocks.listAdminModelProviders.mockResolvedValue({
+      providers: [
+        {
+          default_base_url: 'https://api.deepseek.com/v1',
+          model_class: 3,
+          name: { zh_cn: 'Deepseek 模型' },
+          protocol: 'openai-compatible',
+          provider_key: 'deepseek',
+          supports_custom_base_url: true,
+          supports_function_call: true,
+          supports_multimodal: false,
+        },
+      ],
+    });
+    serviceMocks.listAdminUsers.mockResolvedValue({ users: [], total: 0 });
+    serviceMocks.listAdminWorkspaces.mockResolvedValue({
+      workspaces: [],
+      total: 0,
+    });
+    serviceMocks.getAdminManagedModelGrants.mockResolvedValue({
+      access_mode: 2,
+      grants: [],
+    });
+    serviceMocks.getAdminManagedModelDetail.mockResolvedValue({
+      model: {
+        enable_base64_url: false,
+        endpoints: [
+          {
+            base_url: 'https://api.deepseek.com/v1',
+            enabled: true,
+            has_api_key: true,
+            id: '22',
+            sort_order: 0,
+            weight: 1,
+          },
+        ],
+        function_call_mode: 'native',
+        max_context_tokens: 128000,
+        max_output_tokens: 8192,
+        protocol: 'openai-compatible',
+        reasoning_mode: 'enabled',
+        routing_strategy: 1,
+        summary: managedModel,
+        usage_scenarios: ['chat', 'agent'],
+      },
+    });
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
+    act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
   });
 
-  it('renders provider groups and model detail rows', () => {
-    act(() => {
-      root.render(
-        <ModelConfigSection
-          modelProviders={[
-            {
-              provider: {
-                model_class: 1,
-                name: {
-                  zh_cn: 'OpenAI 模型',
-                },
-              },
-              model_list: [
-                {
-                  id: 12,
-                  display_info: {
-                    name: 'GPT 4o',
-                  },
-                  connection: {
-                    base_conn_info: {
-                      api_key: 'sk***test',
-                      base_url: 'https://api.openai.com/v1',
-                      model: 'gpt-4o',
-                    },
-                  },
-                  enable_base64_url: true,
-                },
-              ],
-            },
-          ]}
-          onCreateModel={onCreateModel}
-          onDeleteModel={onDeleteModel}
-        />,
-      );
+  const renderSection = async () => {
+    await act(async () => {
+      root.render(<ModelConfigSection />);
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
+  };
 
-    expect(container.textContent).toContain('模型配置');
-    expect(container.textContent).not.toMatch(/nuwax|一期|参考/i);
-    expect(container.textContent).toContain('OpenAI 模型');
-    expect(container.textContent).toContain('模型列表');
-    expect(container.textContent).toContain('供应商');
-    expect(container.textContent).toContain('密钥状态');
-    expect(container.textContent).toContain('1 个模型');
-    expect(container.textContent).toContain('GPT 4o');
-    expect(container.textContent).toContain('gpt-4o');
-    expect(container.textContent).toContain('密钥已配置');
-    expect(container.textContent).not.toContain('sk***test');
-    expect(container.textContent).toContain('Base64 URL');
+  it('renders the Nuwax-aligned model management table and filters', async () => {
+    await renderSection();
+
+    expect(container.textContent).toContain('添加模型');
+    expect(container.textContent).toContain('模型名称');
+    expect(container.textContent).toContain('模型标识');
+    expect(container.textContent).toContain('模型介绍');
+    expect(container.textContent).toContain('创建者');
+    expect(container.textContent).toContain('管控');
+    expect(container.textContent).toContain('DeepSeek V4 Pro');
+    expect(container.textContent).toContain('文本生成');
+    expect(container.textContent).toContain('深度思考');
+    expect(container.querySelector('input[aria-label="搜索模型"]')).toBeNull();
+    expect(
+      container.querySelector('select[aria-label="模型类型筛选"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('select[aria-label="模型状态筛选"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('select[aria-label="模型管控筛选"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelectorAll(
+        '.coze-prototype-system-model-filters > select',
+      ),
+    ).toHaveLength(3);
+    const dragButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="调整DeepSeek V4 Pro排序"]',
+    );
+    expect(dragButton).not.toBeNull();
+    expect(dragButton?.textContent).toBe('');
   });
 
-  it('submits new model config, clears the form, and deletes existing model config', async () => {
-    onCreateModel.mockResolvedValueOnce(undefined);
-
-    act(() => {
-      root.render(
-        <ModelConfigSection
-          modelProviders={[
-            {
-              provider: {
-                model_class: 1,
-                name: {
-                  zh_cn: 'OpenAI 模型',
-                },
-              },
-              model_list: [
-                {
-                  id: 12,
-                  display_info: {
-                    name: 'GPT 4o',
-                  },
-                },
-              ],
-            },
-          ]}
-          onCreateModel={onCreateModel}
-          onDeleteModel={onDeleteModel}
-        />,
-      );
-    });
-
-    const nameInput = container.querySelector(
-      'input[aria-label="模型展示名称"]',
-    ) as HTMLInputElement;
-    const modelInput = container.querySelector(
-      'input[aria-label="模型标识"]',
-    ) as HTMLInputElement;
-    const baseURLInput = container.querySelector(
-      'input[aria-label="模型 Base URL"]',
-    ) as HTMLInputElement;
-    const apiKeyInput = container.querySelector(
-      'input[aria-label="模型 API Key"]',
-    ) as HTMLInputElement;
-    const base64Input = container.querySelector(
-      'input[aria-label="启用 Base64 URL"]',
-    ) as HTMLInputElement;
-    const submitButton = container.querySelector(
-      'button[aria-label="新增模型配置"]',
+  it('opens edit dialog with a write-only credential field', async () => {
+    await renderSection();
+    const editButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '编辑',
     ) as HTMLButtonElement;
-    const deleteButton = container.querySelector(
-      'button[aria-label="删除模型-12"]',
-    ) as HTMLButtonElement;
-
-    act(() => {
-      Simulate.change(nameInput, {
-        target: {
-          value: 'GPT 4o',
-        },
-      } as unknown as Event);
-      Simulate.change(modelInput, {
-        target: {
-          value: 'gpt-4o',
-        },
-      } as unknown as Event);
-      Simulate.change(baseURLInput, {
-        target: {
-          value: 'https://api.openai.com/v1',
-        },
-      } as unknown as Event);
-      Simulate.change(apiKeyInput, {
-        target: {
-          value: 'sk-test',
-        },
-      } as unknown as Event);
-      Simulate.change(base64Input, {
-        target: {
-          checked: true,
-        },
-      } as unknown as Event);
-    });
 
     await act(async () => {
-      Simulate.click(submitButton);
-      await Promise.resolve();
+      Simulate.click(editButton);
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
 
-    act(() => {
-      Simulate.click(deleteButton);
-    });
-
-    expect(onCreateModel).toHaveBeenCalledWith({
-      model_class: 1,
-      model_name: 'GPT 4o',
-      enable_base64_url: true,
-      connection: {
-        base_conn_info: {
-          api_key: 'sk-test',
-          base_url: 'https://api.openai.com/v1',
-          model: 'gpt-4o',
-        },
-      },
-    });
-    expect(onDeleteModel).toHaveBeenCalledWith(12);
-    expect(nameInput.value).toBe('');
-    expect(modelInput.value).toBe('');
-    expect(baseURLInput.value).toBe('');
-    expect(apiKeyInput.value).toBe('');
-    expect(base64Input.checked).toBe(false);
+    expect(container.textContent).toContain('编辑模型');
+    expect(container.textContent).toContain('模型连通性测试');
+    const secretInput = container.querySelector(
+      'input[aria-label="Endpoint 1 API Key"]',
+    ) as HTMLInputElement;
+    expect(secretInput.type).toBe('password');
+    expect(secretInput.value).toBe('');
+    expect(secretInput.placeholder).toContain('留空则保持不变');
+    expect(container.textContent).not.toContain('system-secret');
   });
 
-  it('filters model cards by keyword and refreshes model providers', () => {
-    act(() => {
-      root.render(
-        <ModelConfigSection
-          modelProviders={[
-            {
-              provider: {
-                model_class: 1,
-                name: {
-                  zh_cn: 'OpenAI 模型',
-                },
-              },
-              model_list: [
-                {
-                  id: 12,
-                  display_info: {
-                    name: 'GPT 4o',
-                  },
-                  connection: {
-                    base_conn_info: {
-                      model: 'gpt-4o',
-                    },
-                  },
-                },
-              ],
-            },
-            {
-              provider: {
-                model_class: 20,
-                name: {
-                  zh_cn: 'Ollama',
-                },
-              },
-              model_list: [
-                {
-                  id: 20,
-                  display_info: {
-                    name: 'Local Llama',
-                  },
-                  connection: {
-                    base_conn_info: {
-                      model: 'llama3',
-                    },
-                  },
-                },
-              ],
-            },
-          ]}
-          onRefresh={onRefresh}
-        />,
-      );
-    });
-
-    expect(container.textContent).toContain('GPT 4o');
-    expect(container.textContent).toContain('Local Llama');
-
-    const keywordInput = container.querySelector(
-      'input[aria-label="搜索模型配置"]',
-    ) as HTMLInputElement;
-    const refreshButton = container.querySelector(
-      'button[aria-label="刷新模型配置"]',
+  it('opens the complete add model form', async () => {
+    await renderSection();
+    const addButton = Array.from(container.querySelectorAll('button')).find(
+      button => button.textContent === '添加模型',
     ) as HTMLButtonElement;
 
-    act(() => {
-      Simulate.change(keywordInput, {
-        target: {
-          value: 'local',
-        },
-      } as unknown as Event);
-    });
+    act(() => Simulate.click(addButton));
 
-    expect(container.textContent).not.toContain('GPT 4o');
-    expect(container.textContent).toContain('Local Llama');
-
-    act(() => {
-      Simulate.click(refreshButton);
-    });
-
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-  });
-
-  it('allows Ollama model config without api key', async () => {
-    act(() => {
-      root.render(
-        <ModelConfigSection
-          modelProviders={[
-            {
-              provider: {
-                model_class: 20,
-                name: {
-                  zh_cn: 'Ollama',
-                },
-              },
-              model_list: [],
-            },
-          ]}
-          onCreateModel={onCreateModel}
-        />,
-      );
-    });
-
-    const nameInput = container.querySelector(
-      'input[aria-label="模型展示名称"]',
-    ) as HTMLInputElement;
-    const modelInput = container.querySelector(
-      'input[aria-label="模型标识"]',
-    ) as HTMLInputElement;
-    const submitButton = container.querySelector(
-      'button[aria-label="新增模型配置"]',
-    ) as HTMLButtonElement;
-
-    act(() => {
-      Simulate.change(nameInput, {
-        target: {
-          value: 'Local Llama',
-        },
-      } as unknown as Event);
-      Simulate.change(modelInput, {
-        target: {
-          value: 'llama3',
-        },
-      } as unknown as Event);
-    });
-
-    await act(async () => {
-      Simulate.click(submitButton);
-      await Promise.resolve();
-    });
-
-    expect(onCreateModel).toHaveBeenCalledWith({
-      model_class: 20,
-      model_name: 'Local Llama',
-      enable_base64_url: false,
-      connection: {
-        base_conn_info: {
-          model: 'llama3',
-        },
-      },
-    });
+    expect(container.textContent).toContain('添加模型');
+    expect(container.textContent).toContain('基础信息');
+    expect(container.textContent).toContain('能力与范围');
+    expect(container.textContent).toContain('模型参数');
+    expect(container.textContent).toContain('Endpoint 配置');
+    expect(
+      container.querySelector('select[aria-label="供应商"]'),
+    ).not.toBeNull();
   });
 });

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/consistent-type-imports, @typescript-eslint/require-await -- Test doubles mirror external exports and asynchronous SDK signatures. */
+
 import {
   Children,
   cloneElement,
@@ -25,17 +27,41 @@ const mockTest = vi.hoisted(() => vi.fn());
 const mockDelete = vi.hoisted(() => vi.fn());
 const mockExport = vi.hoisted(() => vi.fn());
 const mockAudit = vi.hoisted(() => vi.fn());
+const mockListOfficialCatalog = vi.hoisted(() => vi.fn());
+const mockInstallOfficialCatalog = vi.hoisted(() => vi.fn());
 
-vi.mock('react-router-dom', () => ({ useParams: mockUseParams }));
-vi.mock('@coze-arch/foundation-sdk', () => ({
-  useUserInfo: () => ({ user_id_str: '7' }),
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => vi.fn(),
+  useParams: mockUseParams,
 }));
+vi.mock('../../../components/workspace-page-top-bar', () => ({
+  WorkspacePageTopBar: () => <header data-testid="workspace-page-top-bar" />,
+}));
+vi.mock('@coze-arch/foundation-sdk', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@coze-arch/foundation-sdk')>();
+  return {
+    ...actual,
+    getIsLogined: () => true,
+    getIsSettled: () => true,
+    getUserAuthInfos: async () => undefined,
+    getUserInfo: () => ({ user_id_str: '7' }),
+    subscribeUserAuthInfos: () => () => undefined,
+    useIsLogined: () => true,
+    useIsSettled: () => true,
+    useUserAuthInfo: () => undefined,
+    useUserInfo: () => ({ user_id_str: '7' }),
+    useUserLabel: () => undefined,
+  };
+});
 vi.mock('../service', () => ({
   deleteMCPToolServer: mockDelete,
   discoverMCPToolServer: mockDiscover,
   exportMCPToolServer: mockExport,
   getMCPToolServer: vi.fn(),
+  installMCPOfficialCatalog: mockInstallOfficialCatalog,
   listMCPToolAuditEvents: mockAudit,
+  listMCPOfficialCatalog: mockListOfficialCatalog,
   listMCPToolRegistryEntries: vi.fn(),
   listMCPToolServers: mockList,
   testMCPToolCall: mockTest,
@@ -206,8 +232,8 @@ vi.mock('@coze-arch/coze-design', () => {
   };
 });
 
-import ToolsPage from '../index';
 import { MCPToolSettingsPanel } from '../mcp-settings-panel';
+import ToolsPage from '../index';
 
 const customServer = {
   server_id: '100',
@@ -264,6 +290,44 @@ describe('ToolsPage', () => {
         total: 2,
         can_manage: true,
       },
+      code: 0,
+      msg: '',
+    });
+    mockListOfficialCatalog.mockReset();
+    mockListOfficialCatalog.mockResolvedValue({
+      data: {
+        entries: [
+          {
+            availability: 'installable',
+            availability_reason: '',
+            catalog_id: 'official-search',
+            credential_fields: [],
+            description: 'Official search MCP service',
+            icon_url: '',
+            install_status: 'installed',
+            installation: {
+              enabled: true,
+              health_checked_at: 1717000300000,
+              health_latency_ms: 30,
+              health_status: 'healthy',
+              server_id: officialServer.server_id,
+              updated_at: 1717000300000,
+            },
+            name: officialServer.name,
+            publisher: 'NewX 官方',
+            server_type: officialServer.server_type,
+            source: 'official',
+            tools: officialServer.tools,
+          },
+        ],
+        can_manage: true,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockInstallOfficialCatalog.mockReset();
+    mockInstallOfficialCatalog.mockResolvedValue({
+      data: {},
       code: 0,
       msg: '',
     });
@@ -429,12 +493,14 @@ describe('ToolsPage', () => {
     cleanup(container, root);
   });
 
-  it('keeps official servers read-only apart from enable and test actions', async () => {
+  it('keeps installed official catalog entries separate from custom actions', async () => {
     const { container, root } = await renderToolsPage();
     clickButton(container, '官方服务');
 
     expect(container.textContent).toContain('official-search');
-    expect(container.textContent).toContain('官方只读');
+    expect(container.textContent).toContain('NewX 官方');
+    expect(container.textContent).toContain('已安装');
+    expect(container.textContent).toContain('重新配置');
     expect(container.textContent).not.toContain('编辑配置');
     expect(container.textContent).not.toContain('服务导出');
     expect(

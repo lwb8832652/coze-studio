@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { type Dispatch, type SetStateAction, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
 
 import { IconCozSetting } from '@coze-arch/coze-design/icons';
 import { Input } from '@coze-arch/coze-design';
@@ -439,15 +439,23 @@ const WorkbenchRuntimeSettingsPanel = ({
 };
 
 export const WorkbenchRuntimeSettingsControl = ({
+  disabled = false,
   failoverCandidateCount = 0,
   settings,
   onChange,
 }: {
+  disabled?: boolean;
   failoverCandidateCount?: number;
   settings: WorkbenchRuntimeSettings;
   onChange: WorkbenchRuntimeSettingsChange;
 }) => {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
 
   return (
     <>
@@ -456,14 +464,19 @@ export const WorkbenchRuntimeSettingsControl = ({
         className="chat-workbench-runtime-trigger"
         aria-label="运行设置"
         aria-expanded={open}
-        onClick={() => setOpen(currentOpen => !currentOpen)}
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            setOpen(currentOpen => !currentOpen);
+          }
+        }}
       >
         <IconCozSetting />
         <span>运行设置</span>
       </button>
       <WorkbenchRuntimeSettingsPanel
         failoverCandidateCount={failoverCandidateCount}
-        open={open}
+        open={open && !disabled}
         settings={settings}
         onChange={onChange}
       />

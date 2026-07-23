@@ -1,0 +1,154 @@
+// Copyright (c) 2025 coze-dev Authors
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  DEFAULT_SITE_CONFIG,
+  type ISiteConfig,
+  useCommonConfigStore,
+} from '@coze-foundation/global-store';
+import { I18n } from '@coze-arch/i18n';
+
+export { DEFAULT_SITE_CONFIG };
+
+interface PublicSiteConfigResponse {
+  site_name?: unknown;
+  site_description?: unknown;
+  site_logo_url?: unknown;
+  favicon_url?: unknown;
+  revision?: unknown;
+}
+
+const SITE_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
+
+const readString = (value: unknown): string =>
+  typeof value === 'string' ? value.trim() : '';
+
+export const normalizeSiteConfig = (
+  value?: PublicSiteConfigResponse | null,
+): ISiteConfig => {
+  const siteName = readString(value?.site_name);
+  const siteDescription = readString(value?.site_description);
+  const siteLogoUrl = readString(value?.site_logo_url);
+  const faviconUrl = readString(value?.favicon_url);
+  const revision = readString(value?.revision);
+
+  if (!siteName) {
+    return DEFAULT_SITE_CONFIG;
+  }
+
+  return {
+    siteName,
+    siteDescription: siteDescription || DEFAULT_SITE_CONFIG.siteDescription,
+    siteLogoUrl,
+    faviconUrl,
+    revision,
+  };
+};
+
+const upsertManagedMeta = (
+  selector: string,
+  create: () => HTMLElement,
+): HTMLElement => {
+  const existing = document.head.querySelector<HTMLElement>(selector);
+  if (existing) {
+    return existing;
+  }
+  const element = create();
+  element.dataset.cozeSiteConfig = 'true';
+  document.head.appendChild(element);
+  return element;
+};
+
+export const applySiteConfigToDocument = (config: ISiteConfig): void => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const configuredLanguages = new Set(
+    ['zh-CN', 'en', I18n.language].filter(Boolean),
+  );
+  configuredLanguages.forEach(language => {
+    I18n.addResourceBundle(
+      language,
+      'translation',
+      { platform_name: config.siteName },
+      true,
+      true,
+    );
+  });
+
+  document.title = config.siteName;
+  const description = upsertManagedMeta(
+    'meta[name="description"][data-coze-site-config]',
+    () => {
+      const element = document.createElement('meta');
+      element.setAttribute('name', 'description');
+      return element;
+    },
+  );
+  description.setAttribute('content', config.siteDescription);
+
+  const existingIcon = document.head.querySelector<HTMLLinkElement>(
+    'link[rel="icon"][data-coze-site-config]',
+  );
+  if (!config.faviconUrl) {
+    existingIcon?.remove();
+    return;
+  }
+  const favicon =
+    existingIcon ??
+    (upsertManagedMeta('link[rel="icon"][data-coze-site-config]', () => {
+      const element = document.createElement('link');
+      element.setAttribute('rel', 'icon');
+      return element;
+    }) as HTMLLinkElement);
+  favicon.href = config.faviconUrl;
+};
+
+export const fetchSiteConfig = async (
+  signal?: AbortSignal,
+): Promise<ISiteConfig> => {
+  const requestController = new AbortController();
+  const abortFromCaller = () => requestController.abort(signal?.reason);
+  if (signal?.aborted) {
+    abortFromCaller();
+  } else {
+    signal?.addEventListener('abort', abortFromCaller, { once: true });
+  }
+  const timeout = setTimeout(
+    () => requestController.abort(),
+    SITE_CONFIG_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch('/api/site/config', {
+      credentials: 'include',
+      signal: requestController.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`site configuration request failed: ${response.status}`);
+    }
+    return normalizeSiteConfig(
+      (await response.json()) as PublicSiteConfigResponse,
+    );
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abortFromCaller);
+  }
+};
+
+export const refreshSiteConfig = async (
+  signal?: AbortSignal,
+): Promise<ISiteConfig> => {
+  let config = DEFAULT_SITE_CONFIG;
+  try {
+    config = await fetchSiteConfig(signal);
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+  }
+  useCommonConfigStore.getState().updateSiteConfig(config);
+  applySiteConfigToDocument(config);
+  return config;
+};

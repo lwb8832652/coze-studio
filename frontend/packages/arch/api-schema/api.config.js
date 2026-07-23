@@ -25,6 +25,7 @@ const config = [
       passport: './idl/passport/passport.thrift', // Entry service name and path
       explore: './idl/marketplace/public_api.thrift',
       workbench: './idl/workbench/workbench.thrift',
+      workbenchModel: './idl/workbench/model.thrift',
       workbenchSkill: './idl/workbench/skill.thrift',
       workbenchTask: './idl/workbench/task.thrift',
       pluginDevelop: './idl/plugin/plugin_develop.thrift',

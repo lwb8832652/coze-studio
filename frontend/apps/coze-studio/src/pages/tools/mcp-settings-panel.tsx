@@ -10,13 +10,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { workbenchTool } from '@coze-studio/api-schema';
 import { useUserInfo } from '@coze-arch/foundation-sdk';
+import { IconCozDatabase, IconCozPlugin } from '@coze-arch/coze-design/icons';
 import { Button, Input, Modal, Spin, Switch } from '@coze-arch/coze-design';
 
 import {
   deleteMCPToolServer,
   discoverMCPToolServer,
   exportMCPToolServer,
+  installMCPOfficialCatalog,
   listMCPToolAuditEvents,
+  listMCPOfficialCatalog,
   listMCPToolServers,
   testMCPToolCall,
   upsertMCPToolServer,
@@ -34,6 +37,7 @@ type MCPToolServer = workbenchTool.MCPToolServer;
 type MCPToolDefinition = workbenchTool.MCPToolDefinition;
 type MCPToolAuditEvent = workbenchTool.MCPToolAuditEvent;
 type MCPExport = workbenchTool.ExportMCPToolServerData;
+type MCPOfficialCatalogEntry = workbenchTool.MCPOfficialCatalogEntry;
 
 const JSON_INDENT = 2;
 
@@ -116,6 +120,9 @@ export const MCPToolSettingsPanel = ({
 }: MCPToolSettingsPanelProps) => {
   const userInfo = useUserInfo();
   const [servers, setServers] = useState<MCPToolServer[]>([]);
+  const [officialCatalog, setOfficialCatalog] = useState<
+    MCPOfficialCatalogEntry[]
+  >([]);
   const [canManage, setCanManage] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -126,6 +133,12 @@ export const MCPToolSettingsPanel = ({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [keyword, setKeyword] = useState('');
   const [formVisible, setFormVisible] = useState(false);
+  const [officialCandidate, setOfficialCandidate] =
+    useState<MCPOfficialCatalogEntry>();
+  const [officialCredentials, setOfficialCredentials] = useState<
+    Record<string, string>
+  >({});
+  const [officialFormError, setOfficialFormError] = useState('');
   const [editingServer, setEditingServer] = useState<MCPToolServer>();
   const [capabilityServer, setCapabilityServer] = useState<MCPToolServer>();
   const [testTool, setTestTool] = useState<MCPToolDefinition>();
@@ -147,10 +160,19 @@ export const MCPToolSettingsPanel = ({
     setLoading(true);
     setError('');
     try {
-      const response = await listMCPToolServers({ space_id: spaceId });
-      ensureSuccessfulWorkbenchResponse(response);
-      setServers(response.data?.servers ?? []);
-      setCanManage(response.data?.can_manage ?? false);
+      const [serversResponse, catalogResponse] = await Promise.all([
+        listMCPToolServers({ space_id: spaceId }),
+        listMCPOfficialCatalog({ space_id: spaceId }),
+      ]);
+      ensureSuccessfulWorkbenchResponse(serversResponse);
+      ensureSuccessfulWorkbenchResponse(catalogResponse);
+      setServers(serversResponse.data?.servers ?? []);
+      setOfficialCatalog(catalogResponse.data?.entries ?? []);
+      setCanManage(
+        Boolean(
+          serversResponse.data?.can_manage && catalogResponse.data?.can_manage,
+        ),
+      );
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : '加载 MCP 服务失败',
@@ -195,6 +217,17 @@ export const MCPToolSettingsPanel = ({
     statusFilter,
     userInfo?.user_id_str,
   ]);
+
+  const visibleOfficialCatalog = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    return officialCatalog.filter(
+      entry =>
+        !normalizedKeyword ||
+        entry.name.toLowerCase().includes(normalizedKeyword) ||
+        entry.description.toLowerCase().includes(normalizedKeyword) ||
+        (entry.publisher || '').toLowerCase().includes(normalizedKeyword),
+    );
+  }, [keyword, officialCatalog]);
 
   const runMutation = async (
     actionKey: string,
@@ -251,6 +284,41 @@ export const MCPToolSettingsPanel = ({
       setNotice(editingServer ? '服务配置已更新。' : 'MCP 服务已创建。');
       await loadServers();
     });
+
+  const openOfficialInstaller = (entry: MCPOfficialCatalogEntry) => {
+    if (entry.availability === 'adapter_required') {
+      return;
+    }
+    setOfficialCandidate(entry);
+    setOfficialCredentials({});
+    setOfficialFormError('');
+  };
+
+  const handleInstallOfficial = () => {
+    if (!officialCandidate || !spaceId) {
+      return;
+    }
+    const missingField = officialCandidate.credential_fields.find(
+      field => field.required && !officialCredentials[field.key]?.trim(),
+    );
+    if (missingField) {
+      setOfficialFormError(`请输入${missingField.label}`);
+      return;
+    }
+    void runMutation(`install-${officialCandidate.catalog_id}`, async () => {
+      const response = await installMCPOfficialCatalog({
+        catalog_id: officialCandidate.catalog_id,
+        space_id: spaceId,
+        credentials: officialCredentials,
+      });
+      ensureSuccessfulWorkbenchResponse(response);
+      setOfficialCandidate(undefined);
+      setOfficialCredentials({});
+      setOfficialFormError('');
+      setNotice('官方服务已保存，请确认配置后启用。');
+      await loadServers();
+    });
+  };
 
   const handleDiscover = (server: MCPToolServer) =>
     runMutation(`discover-${server.server_id}`, async () => {
@@ -474,6 +542,159 @@ export const MCPToolSettingsPanel = ({
     );
   };
 
+  const renderOfficialCard = (entry: MCPOfficialCatalogEntry) => {
+    const { installation } = entry;
+    const adapterRequired = entry.availability === 'adapter_required';
+    const installedServer = installation
+      ? servers.find(server => server.server_id === installation.server_id)
+      : undefined;
+    const installed = entry.install_status === 'installed';
+    const needsMigration = entry.install_status === 'needs_migration';
+    const updating = installedServer
+      ? busyAction === `toggle-${installedServer.server_id}`
+      : false;
+    return (
+      <article
+        className="mcp-management-card mcp-management-official-card"
+        key={entry.catalog_id}
+      >
+        <div className="mcp-management-card-top">
+          <div
+            className="mcp-management-service-icon mcp-management-official-icon"
+            aria-hidden
+          >
+            <span className="mcp-management-official-icon-fallback">
+              {entry.catalog_id === 'postgres' ? (
+                <IconCozDatabase />
+              ) : (
+                <IconCozPlugin />
+              )}
+            </span>
+            {entry.icon_url ? (
+              <img
+                src={entry.icon_url}
+                alt=""
+                referrerPolicy="no-referrer"
+                onError={event => {
+                  event.currentTarget.hidden = true;
+                }}
+              />
+            ) : null}
+          </div>
+          <div className="mcp-management-card-title">
+            <div>
+              <h2>{entry.name}</h2>
+              <span data-source="official">
+                {entry.publisher || '平台官方'}
+              </span>
+              {adapterRequired ? (
+                <span data-source="adapter">需要平台适配</span>
+              ) : null}
+            </div>
+            <p>{entry.description}</p>
+          </div>
+          {installedServer ? (
+            <Switch
+              size="small"
+              checked={installedServer.enabled}
+              loading={updating}
+              disabled={!canManage || Boolean(busyAction)}
+              aria-label={
+                (installedServer.enabled ? '关闭 ' : '开启 ') + entry.name
+              }
+              onChange={checked =>
+                void handleToggleEnabled(installedServer, checked)
+              }
+            />
+          ) : null}
+        </div>
+        <div className="mcp-management-card-meta">
+          <span>{entry.server_type}</span>
+          <span>
+            {entry.tools.length > 0
+              ? `${entry.tools.length} 个工具`
+              : adapterRequired
+                ? '平台适配中'
+                : '安装后发现能力'}
+          </span>
+          <span>
+            {adapterRequired
+              ? '暂不可安装'
+              : installed
+                ? '已安装'
+                : needsMigration
+                  ? '待迁移'
+                  : '可安装'}
+          </span>
+        </div>
+        <div className="mcp-management-card-status">
+          <span
+            data-health={
+              adapterRequired
+                ? 'adapter'
+                : installation?.enabled
+                  ? installation.health_status || 'unknown'
+                  : 'disabled'
+            }
+          >
+            <i />
+            {adapterRequired
+              ? '等待平台接入'
+              : installedServer
+                ? healthLabel(installedServer)
+                : '尚未启用'}
+          </span>
+          <time>
+            {adapterRequired
+              ? '目录信息已同步'
+              : installation?.updated_at
+                ? `更新于 ${formatTime(installation.updated_at)}`
+                : '工作空间级安装'}
+          </time>
+        </div>
+        {adapterRequired && entry.availability_reason ? (
+          <p
+            className="mcp-management-adapter-reason"
+            title={entry.availability_reason}
+          >
+            {entry.availability_reason}
+          </p>
+        ) : null}
+        <footer>
+          {installedServer ? (
+            <Button
+              size="small"
+              theme="outline"
+              onClick={() => handleOpenCapabilities(installedServer)}
+            >
+              查看能力
+            </Button>
+          ) : (
+            <span className="mcp-management-readonly">
+              {adapterRequired ? entry.publisher || '平台官方' : '凭据加密保存'}
+            </span>
+          )}
+          <Button
+            size="small"
+            theme={installed ? 'borderless' : 'solid'}
+            type={installed ? 'tertiary' : 'primary'}
+            disabled={adapterRequired || !canManage || Boolean(busyAction)}
+            title={adapterRequired ? entry.availability_reason : undefined}
+            onClick={() => openOfficialInstaller(entry)}
+          >
+            {adapterRequired
+              ? '需要平台适配'
+              : installed
+                ? '重新配置'
+                : needsMigration
+                  ? '迁移并配置'
+                  : '安装'}
+          </Button>
+        </footer>
+      </article>
+    );
+  };
+
   if (!spaceId) {
     return (
       <section className="mcp-management-panel mcp-management-panel-compact">
@@ -516,68 +737,90 @@ export const MCPToolSettingsPanel = ({
             </div>
             <Input
               aria-label="搜索 MCP 服务"
+              autoComplete="off"
+              name="mcp-service-search"
               value={keyword}
               showClear
               placeholder="搜索 MCP 服务"
               onChange={setKeyword}
             />
-            <Button
-              theme="solid"
-              type="primary"
-              disabled={!canManage}
-              onClick={() => {
-                setEditingServer(undefined);
-                setFormVisible(true);
-              }}
-            >
-              + 新建 MCP 服务
-            </Button>
-          </div>
-          <div className="mcp-management-filters">
-            <label>
-              <span>创建者</span>
-              <select
-                aria-label="创建者筛选"
-                value={creatorFilter}
-                onChange={event =>
-                  setCreatorFilter(event.target.value as CreatorFilter)
-                }
+            {sourceFilter === 'custom' ? (
+              <Button
+                theme="solid"
+                type="primary"
+                disabled={!canManage}
+                onClick={() => {
+                  setEditingServer(undefined);
+                  setFormVisible(true);
+                }}
               >
-                <option value="all">全部创建者</option>
-                <option value="me">我创建的</option>
-              </select>
-            </label>
-            <label>
-              <span>部署状态</span>
-              <select
-                aria-label="部署状态筛选"
-                value={statusFilter}
-                onChange={event =>
-                  setStatusFilter(event.target.value as StatusFilter)
-                }
-              >
-                <option value="all">全部状态</option>
-                <option value="enabled">已启用</option>
-                <option value="disabled">已停用</option>
-                <option value="healthy">运行正常</option>
-                <option value="unhealthy">连接异常</option>
-              </select>
-            </label>
-            <Button
-              size="small"
-              theme="borderless"
-              type="tertiary"
-              loading={loading}
-              onClick={() => void loadServers()}
-            >
-              刷新
-            </Button>
-            {!canManage ? (
-              <span className="mcp-management-permission-tip">
-                当前空间为只读权限
-              </span>
+                + 新建 MCP 服务
+              </Button>
             ) : null}
           </div>
+          {sourceFilter === 'custom' ? (
+            <div className="mcp-management-filters">
+              <label>
+                <span>创建者</span>
+                <select
+                  aria-label="创建者筛选"
+                  value={creatorFilter}
+                  onChange={event =>
+                    setCreatorFilter(event.target.value as CreatorFilter)
+                  }
+                >
+                  <option value="all">全部创建者</option>
+                  <option value="me">我创建的</option>
+                </select>
+              </label>
+              <label>
+                <span>部署状态</span>
+                <select
+                  aria-label="部署状态筛选"
+                  value={statusFilter}
+                  onChange={event =>
+                    setStatusFilter(event.target.value as StatusFilter)
+                  }
+                >
+                  <option value="all">全部状态</option>
+                  <option value="enabled">已启用</option>
+                  <option value="disabled">已停用</option>
+                  <option value="healthy">运行正常</option>
+                  <option value="unhealthy">连接异常</option>
+                </select>
+              </label>
+              <Button
+                size="small"
+                theme="borderless"
+                type="tertiary"
+                loading={loading}
+                onClick={() => void loadServers()}
+              >
+                刷新
+              </Button>
+              {!canManage ? (
+                <span className="mcp-management-permission-tip">
+                  当前空间为只读权限
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mcp-management-official-tip">
+              <span>
+                官方目录由平台维护，共收录 {officialCatalog.length} 个服务。
+                可安装条目的凭据仅在当前工作空间加密保存。
+              </span>
+              <Button
+                size="small"
+                theme="borderless"
+                type="tertiary"
+                loading={loading}
+                onClick={() => void loadServers()}
+              >
+                刷新
+              </Button>
+            </div>
+          )}
         </>
       ) : null}
 
@@ -605,7 +848,11 @@ export const MCPToolSettingsPanel = ({
         </div>
       ) : null}
 
-      {!loading && !error && visibleServers.length === 0 ? (
+      {!loading &&
+      !error &&
+      (sourceFilter === 'official'
+        ? visibleOfficialCatalog.length === 0
+        : visibleServers.length === 0) ? (
         <div className="mcp-management-empty">
           <span aria-hidden>M</span>
           <h2>{keyword ? '没有找到匹配的服务' : '暂无 MCP 服务'}</h2>
@@ -626,9 +873,17 @@ export const MCPToolSettingsPanel = ({
         </div>
       ) : null}
 
-      {!error && visibleServers.length > 0 ? (
+      {!error && sourceFilter === 'custom' && visibleServers.length > 0 ? (
         <div className="mcp-management-grid">
           {visibleServers.map(renderCard)}
+        </div>
+      ) : null}
+
+      {!error &&
+      sourceFilter === 'official' &&
+      visibleOfficialCatalog.length > 0 ? (
+        <div className="mcp-management-grid">
+          {visibleOfficialCatalog.map(renderOfficialCard)}
         </div>
       ) : null}
 
@@ -642,6 +897,64 @@ export const MCPToolSettingsPanel = ({
         }}
         onSubmit={handleSaveServer}
       />
+
+      <Modal
+        title={
+          officialCandidate?.install_status === 'installed'
+            ? `重新配置 ${officialCandidate?.name ?? ''}`
+            : `安装 ${officialCandidate?.name ?? ''}`
+        }
+        visible={Boolean(officialCandidate)}
+        okText="保存配置"
+        cancelText="取消"
+        confirmLoading={
+          busyAction === `install-${officialCandidate?.catalog_id ?? ''}`
+        }
+        onCancel={() => {
+          setOfficialCandidate(undefined);
+          setOfficialCredentials({});
+          setOfficialFormError('');
+        }}
+        onOk={handleInstallOfficial}
+      >
+        <div className="mcp-management-official-form">
+          <div className="mcp-management-form-intro">
+            <strong>接入信息仅对当前工作空间生效</strong>
+            <p>敏感凭据将加密保存，提交后不会再次回显。</p>
+          </div>
+          {officialFormError ? (
+            <div
+              className="mcp-management-alert mcp-management-alert-error"
+              role="alert"
+            >
+              {officialFormError}
+            </div>
+          ) : null}
+          {officialCandidate?.credential_fields.map(field => (
+            <label className="mcp-management-field" key={field.key}>
+              <span>
+                {field.label} {field.required ? <b>*</b> : null}
+              </span>
+              <Input
+                aria-label={field.label}
+                autoComplete={field.secret ? 'new-password' : 'off'}
+                mode={field.secret ? 'password' : undefined}
+                name={`official-mcp-${officialCandidate.catalog_id}-${field.key}`}
+                value={officialCredentials[field.key] ?? ''}
+                placeholder={field.placeholder}
+                onChange={value => {
+                  setOfficialFormError('');
+                  setOfficialCredentials(current => ({
+                    ...current,
+                    [field.key]: value,
+                  }));
+                }}
+              />
+              <small>{field.description}</small>
+            </label>
+          ))}
+        </div>
+      </Modal>
 
       <MCPCapabilitySheet
         auditError={auditError}

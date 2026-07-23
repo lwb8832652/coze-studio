@@ -58,7 +58,7 @@ const getThreadFollowUpRunMetadata = (
     mode: payload.mode,
   });
 
-const createFollowUpIdempotencyKey = (threadId: string) => {
+export const createFollowUpIdempotencyKey = (threadId: string) => {
   const requestId =
     globalThis.crypto?.randomUUID?.() ??
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -72,12 +72,14 @@ export const sendFollowUpMessage = async ({
   payload,
   spaceId,
   threadId,
+  idempotencyKey,
 }: {
   activeTaskId: string;
   isCanonicalThreadDetail: boolean;
   payload: WorkbenchComposerSubmitPayload;
   spaceId: string;
   threadId: string;
+  idempotencyKey?: string;
 }) => {
   if (isCanonicalThreadDetail) {
     const uploadResponse = await uploadTaskThreadFiles({
@@ -94,7 +96,7 @@ export const sendFollowUpMessage = async ({
       metadata: getThreadFollowUpRunMetadata(payload),
       message_content: payload.message,
       message_metadata: getThreadFollowUpMetadata(payload),
-      idempotency_key: createFollowUpIdempotencyKey(threadId),
+      idempotency_key: idempotencyKey ?? createFollowUpIdempotencyKey(threadId),
     });
 
     return {

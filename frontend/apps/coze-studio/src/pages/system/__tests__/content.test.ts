@@ -25,7 +25,15 @@ describe('system management content', () => {
       'users',
       'workspaces',
       'models',
+      'billing-pricing',
+      'billing-monitoring',
       'sandbox',
+      'billing-config',
+      'billing-plans',
+      'billing-packages',
+      'billing-accounts',
+      'billing-ledger',
+      'billing-orders',
       'settings',
     ]);
     expect(SYSTEM_SECTIONS.map(item => item.title)).toEqual([
@@ -33,7 +41,15 @@ describe('system management content', () => {
       '用户管理',
       '工作空间管理',
       '模型配置',
+      '模型定价',
+      '模型监控',
       '沙箱管理',
+      '积分基础配置',
+      '订阅套餐',
+      '积分包',
+      '用户积分',
+      '积分记录',
+      '订单管理',
       '系统配置',
     ]);
   });
@@ -42,7 +58,22 @@ describe('system management content', () => {
     for (const section of SYSTEM_SECTIONS) {
       expect(SECTION_CONTENT[section.key].heading).toBeTruthy();
       expect(SECTION_CONTENT[section.key].summary).toBeTruthy();
-      expect(SECTION_CONTENT[section.key].cards.length).toBeGreaterThan(0);
+      if (
+        [
+          'billing-pricing',
+          'billing-monitoring',
+          'billing-config',
+          'billing-plans',
+          'billing-packages',
+          'billing-accounts',
+          'billing-ledger',
+          'billing-orders',
+        ].includes(section.key)
+      ) {
+        expect(SECTION_CONTENT[section.key].cards).toHaveLength(0);
+      } else {
+        expect(SECTION_CONTENT[section.key].cards.length).toBeGreaterThan(0);
+      }
     }
   });
 

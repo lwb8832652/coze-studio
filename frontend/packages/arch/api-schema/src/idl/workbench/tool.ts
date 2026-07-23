@@ -81,6 +81,69 @@ export interface ListMCPToolServersRequest {
   space_id: string;
 }
 
+export type MCPOfficialInstallStatus =
+  | 'available'
+  | 'installed'
+  | 'needs_migration';
+
+export type MCPOfficialAvailability = 'installable' | 'adapter_required';
+
+export interface MCPOfficialCredentialField {
+  key: string;
+  label: string;
+  description: string;
+  placeholder: string;
+  required: boolean;
+  secret: boolean;
+}
+
+export interface MCPOfficialInstallation {
+  server_id: string;
+  enabled: boolean;
+  health_status: string;
+  health_checked_at: number;
+  health_latency_ms: number;
+  updated_at: number;
+}
+
+export interface MCPOfficialCatalogEntry {
+  catalog_id: string;
+  name: string;
+  description: string;
+  icon_url: string;
+  publisher: string;
+  source: string;
+  server_type: string;
+  tools: MCPToolDefinition[];
+  credential_fields: MCPOfficialCredentialField[];
+  availability: MCPOfficialAvailability;
+  availability_reason: string;
+  install_status: MCPOfficialInstallStatus;
+  installation?: MCPOfficialInstallation;
+}
+
+export interface ListMCPOfficialCatalogRequest {
+  space_id: string;
+}
+
+export interface InstallMCPOfficialCatalogRequest {
+  catalog_id: string;
+  space_id: string;
+  credentials: Record<string, string>;
+}
+
+export interface ListMCPOfficialCatalogData {
+  entries: MCPOfficialCatalogEntry[];
+  total: number;
+  can_manage: boolean;
+}
+
+export interface ListMCPOfficialCatalogResponse {
+  data?: ListMCPOfficialCatalogData;
+  code: number;
+  msg: string;
+}
+
 export interface ListMCPToolRegistryEntriesRequest {
   space_id: string;
 }
@@ -230,6 +293,39 @@ export const ListMCPToolServers = /*#__PURE__*/createAPI<
     query: ['space_id'],
   },
   resType: 'ListMCPToolServersResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const ListMCPOfficialCatalog = /*#__PURE__*/createAPI<
+  ListMCPOfficialCatalogRequest,
+  ListMCPOfficialCatalogResponse
+>({
+  url: '/api/workbench/mcp_tools/official_catalog',
+  method: 'GET',
+  name: 'ListMCPOfficialCatalog',
+  reqType: 'ListMCPOfficialCatalogRequest',
+  reqMapping: {
+    query: ['space_id'],
+  },
+  resType: 'ListMCPOfficialCatalogResponse',
+  schemaRoot: 'api://schemas/idl_workbench_tool',
+  service: 'workbenchTool',
+});
+
+export const InstallMCPOfficialCatalog = /*#__PURE__*/createAPI<
+  InstallMCPOfficialCatalogRequest,
+  MCPToolServerResponse
+>({
+  url: '/api/workbench/mcp_tools/official_catalog/:catalog_id/install',
+  method: 'POST',
+  name: 'InstallMCPOfficialCatalog',
+  reqType: 'InstallMCPOfficialCatalogRequest',
+  reqMapping: {
+    path: ['catalog_id'],
+    body: ['space_id', 'credentials'],
+  },
+  resType: 'MCPToolServerResponse',
   schemaRoot: 'api://schemas/idl_workbench_tool',
   service: 'workbenchTool',
 });

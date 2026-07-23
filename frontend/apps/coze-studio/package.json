@@ -35,6 +35,7 @@
     "@coze-foundation/foundation-sdk": "workspace:*",
     "@coze-foundation/global": "workspace:*",
     "@coze-foundation/global-adapter": "workspace:*",
+    "@coze-foundation/global-store": "workspace:*",
     "@coze-foundation/layout": "workspace:*",
     "@coze-foundation/space-store": "workspace:*",
     "@coze-foundation/space-ui-adapter": "workspace:*",

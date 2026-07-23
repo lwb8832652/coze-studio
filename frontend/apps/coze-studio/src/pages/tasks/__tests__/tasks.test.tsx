@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/naming-convention -- Test doubles preserve external PascalCase component exports. */
+
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -26,9 +28,43 @@ const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListTasks = vi.hoisted(() => vi.fn());
 const mockListTaskThreads = vi.hoisted(() => vi.fn());
 
+vi.hoisted(() => {
+  (
+    globalThis as typeof globalThis & {
+      IS_BOE?: boolean;
+      IS_DEV_MODE?: boolean;
+      IS_OVERSEA?: boolean;
+      REGION?: string;
+    }
+  ).IS_BOE = false;
+  (globalThis as typeof globalThis & { IS_DEV_MODE?: boolean }).IS_DEV_MODE =
+    false;
+  (globalThis as typeof globalThis & { IS_OVERSEA?: boolean }).IS_OVERSEA =
+    false;
+  (globalThis as typeof globalThis & { REGION?: string }).REGION = 'cn';
+});
+
+vi.mock('lottie-web', () => ({
+  destroy: vi.fn(),
+  loadAnimation: vi.fn(),
+  default: {
+    destroy: vi.fn(),
+    loadAnimation: vi.fn(),
+  },
+}));
+
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
   useParams: mockUseParams,
+}));
+
+vi.mock('../../../components/workspace-page-top-bar', () => ({
+  WorkspacePageTopBar: () => (
+    <div data-testid="workspace-page-top-bar">
+      <span>NewX AI 专属助理准备好</span>
+      <button type="button">去聊天专属助理</button>
+    </div>
+  ),
 }));
 
 vi.mock('../service', () => ({

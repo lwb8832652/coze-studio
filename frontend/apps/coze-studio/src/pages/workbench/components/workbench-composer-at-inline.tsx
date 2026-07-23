@@ -20,11 +20,13 @@ import type { WorkbenchAtDraft } from './workbench-composer-at-menu';
 
 export const WorkbenchAtInline = ({
   draft,
+  disabled = false,
   onAnchorRectChange,
   onDraftCancel,
   onDraftQueryChange,
 }: {
   draft?: WorkbenchAtDraft | null;
+  disabled?: boolean;
   onAnchorRectChange?: (rect: DOMRect) => void;
   onDraftCancel?: () => void;
   onDraftQueryChange?: (query: string) => void;
@@ -44,10 +46,10 @@ export const WorkbenchAtInline = ({
   }, [draftStage, draftResourceType, onAnchorRectChange]);
 
   useEffect(() => {
-    if (draftStage) {
+    if (draftStage && !disabled) {
       inputRef.current?.focus();
     }
-  }, [draftStage, draftResourceType]);
+  }, [disabled, draftStage, draftResourceType]);
 
   if (draft) {
     const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -75,9 +77,14 @@ export const WorkbenchAtInline = ({
           <input
             ref={inputRef}
             aria-label={ariaLabel}
+            disabled={disabled}
             value={draft.query}
             placeholder={placeholder}
-            onChange={event => onDraftQueryChange?.(event.target.value)}
+            onChange={event => {
+              if (!disabled) {
+                onDraftQueryChange?.(event.target.value);
+              }
+            }}
             onKeyDown={handleKeyDown}
           />
         </label>

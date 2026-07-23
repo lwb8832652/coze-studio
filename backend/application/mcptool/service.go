@@ -230,6 +230,10 @@ func (s *ApplicationService) upsertServer(
 				serverID,
 			)
 		}
+		if trusted != nil && strings.TrimSpace(got.Auth) == "" {
+			got = cloneServer(got)
+			got.Auth = `{}`
+		}
 		existing, err = s.canonicalizeServerCredentials(ctx, got)
 		if err != nil {
 			return nil, err
@@ -292,6 +296,8 @@ func (s *ApplicationService) upsertServer(
 		resources = cloneCatalogMCPResources(existing.Resources)
 		prompts = cloneCatalogMCPPrompts(existing.Prompts)
 		if trusted != nil {
+			creatorID = trusted.CreatorID
+			sourceType = normalizeCatalogMCPServerSourceType(trusted.SourceType)
 			tools = cloneToolDefinitions(trusted.Tools)
 			resources = cloneCatalogMCPResources(trusted.Resources)
 			prompts = cloneCatalogMCPPrompts(trusted.Prompts)

@@ -21,6 +21,15 @@ import {
   workbenchTask,
 } from '@coze-studio/api-schema';
 
+vi.mock('lottie-web', () => ({
+  destroy: vi.fn(),
+  loadAnimation: vi.fn(),
+  default: {
+    destroy: vi.fn(),
+    loadAnimation: vi.fn(),
+  },
+}));
+
 import {
   appendTaskThreadMessage,
   createTaskThreadRun,

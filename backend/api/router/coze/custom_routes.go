@@ -13,10 +13,12 @@ import (
 // RegisterCustomRoutes keeps hand-written HTTP contracts alongside generated
 // IDL routes. Existing generated routes are intentionally not duplicated.
 func RegisterCustomRoutes(r *server.Hertz) {
+	r.GET("/api/site/config", handler.GetPublicSiteConfig)
 	root := r.Group("/", rootMw()...)
 	api := root.Group("/api", _apiMw()...)
 
 	registerAdminCustomRoutes(api)
+	registerBillingCustomRoutes(api)
 	registerWorkbenchCustomRoutes(api)
 	registerWorkspaceCustomRoutes(api)
 	registerLangGraphCustomRoutes(api)
@@ -32,6 +34,24 @@ func registerAdminCustomRoutes(api *route.RouterGroup) {
 	admin.POST("/users/create", handler.CreateAdminUser)
 	admin.POST("/users/update", handler.UpdateAdminUser)
 	admin.POST("/users/password/reset", handler.ResetAdminUserPassword)
+	admin.POST("/config/site/assets", handler.UploadSiteAsset)
+
+	billing := admin.Group("/billing")
+	billing.GET("/overview", handler.GetAdminBillingOverview)
+	billing.GET("/config", handler.GetAdminBillingConfig)
+	billing.PUT("/config", handler.SaveAdminBillingConfig)
+	billing.GET("/plans", handler.ListAdminBillingPlans)
+	billing.POST("/plans", handler.CreateAdminBillingPlan)
+	billing.GET("/credit-packages", handler.ListAdminCreditPackages)
+	billing.POST("/credit-packages", handler.CreateAdminCreditPackage)
+	billing.GET("/accounts", handler.ListAdminBillingAccounts)
+	billing.GET("/ledger", handler.ListAdminCreditLedger)
+	billing.GET("/orders", handler.ListAdminBillingOrders)
+	billing.GET("/model-prices", handler.ListAdminModelPrices)
+	billing.POST("/model-prices", handler.CreateAdminModelPrice)
+	billing.GET("/usage-monitoring", handler.ListAdminBillingUsageMonitoring)
+	billing.POST("/adjustments", handler.AdjustAdminBillingCredits)
+	billing.POST("/maintenance/run", handler.RunAdminBillingMaintenance)
 
 	sandbox := handler.DefaultAdminSandboxRouteHandlers()
 	admin.GET("/sandboxes", sandbox.List)
@@ -51,6 +71,21 @@ func registerAdminCustomRoutes(api *route.RouterGroup) {
 	registerAdminSandboxTrailingSlashRoutes(admin)
 }
 
+func registerBillingCustomRoutes(api *route.RouterGroup) {
+	billing := api.Group("/billing")
+	billing.GET("/account", handler.GetBillingAccount)
+	billing.GET("/config", handler.GetPublicBillingConfig)
+	billing.GET("/subscription", handler.GetMySubscription)
+	billing.GET("/plans", handler.ListAvailableBillingPlans)
+	billing.GET("/credit-packages", handler.ListAvailableCreditPackages)
+	billing.GET("/ledger", handler.ListMyCreditLedger)
+	billing.GET("/usage", handler.ListMyModelUsage)
+	billing.GET("/orders", handler.ListMyBillingOrders)
+	billing.POST("/orders", handler.CreateMyBillingOrder)
+	billing.POST("/orders/:order_no/checkout", handler.CreateMyBillingCheckout)
+	billing.POST("/payment/callbacks/:gateway", handler.HandleBillingPaymentCallback)
+}
+
 func registerWorkbenchCustomRoutes(api *route.RouterGroup) {
 	workbench := api.Group("/workbench", _workbenchMw()...)
 
@@ -66,6 +101,8 @@ func registerWorkbenchCustomRoutes(api *route.RouterGroup) {
 	workbench.GET("/mcp_tools", handler.ListMCPToolServers)
 	workbench.POST("/mcp_tools", handler.UpsertMCPToolServer)
 	workbench.GET("/mcp_tools/registry_entries", handler.ListMCPToolRegistryEntries)
+	workbench.GET("/mcp_tools/official_catalog", handler.ListOfficialMCPToolCatalog)
+	workbench.POST("/mcp_tools/official_catalog/:catalog_id/install", handler.InstallOfficialMCPToolServer)
 	mcpServer := workbench.Group("/mcp_tools/:server_id")
 	mcpServer.GET("", handler.GetMCPToolServer)
 	mcpServer.DELETE("", handler.DeleteMCPToolServer)

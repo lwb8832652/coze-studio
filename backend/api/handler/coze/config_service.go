@@ -61,6 +61,10 @@ type basicConfigurationPatchPayload struct {
 	AllowRegistrationEmail  *string                     `json:"allow_registration_email"`
 	PluginConfiguration     *config.PluginConfiguration `json:"plugin_configuration"`
 	ServerHost              *string                     `json:"server_host"`
+	SiteName                *string                     `json:"site_name"`
+	SiteDescription         *string                     `json:"site_description"`
+	SiteLogoURI             *string                     `json:"site_logo_uri"`
+	FaviconURI              *string                     `json:"favicon_uri"`
 	CodeRunnerType          json.RawMessage             `json:"code_runner_type"`
 	SandboxConfig           json.RawMessage             `json:"sandbox_config"`
 }
@@ -111,6 +115,10 @@ func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend 
 			return
 		}
 	}
+	if err = validateSiteBrandPatch(patch); err != nil {
+		invalidParamRequestResponse(c, err.Error())
+		return
+	}
 
 	revision, err := backend.SaveBaseConfig(ctx, patch, strings.TrimSpace(*req.ExpectedRevision))
 	if err != nil {
@@ -137,7 +145,63 @@ func (p *basicConfigurationPatchPayload) toPatch() baseconfig.BasicConfiguration
 		value := strings.TrimSpace(*p.ServerHost)
 		patch.ServerHost = &value
 	}
+	if p.SiteName != nil {
+		value := strings.TrimSpace(*p.SiteName)
+		patch.SiteName = &value
+	}
+	if p.SiteDescription != nil {
+		value := strings.TrimSpace(*p.SiteDescription)
+		patch.SiteDescription = &value
+	}
+	if p.SiteLogoURI != nil {
+		value := strings.TrimSpace(*p.SiteLogoURI)
+		patch.SiteLogoURI = &value
+	}
+	if p.FaviconURI != nil {
+		value := strings.TrimSpace(*p.FaviconURI)
+		patch.FaviconURI = &value
+	}
 	return patch
+}
+
+func validateSiteBrandPatch(patch baseconfig.BasicConfigurationPatch) error {
+	if patch.SiteName != nil {
+		name := *patch.SiteName
+		if name == "" {
+			return errors.New("site_name is required")
+		}
+		if len([]rune(name)) > 64 || strings.IndexFunc(name, func(r rune) bool {
+			return r < 0x20 && r != '\t'
+		}) >= 0 {
+			return errors.New("site_name is invalid")
+		}
+	}
+	if patch.SiteDescription != nil {
+		description := *patch.SiteDescription
+		if len([]rune(description)) > 240 || strings.IndexFunc(description, func(r rune) bool {
+			return r < 0x20 && r != '\t' && r != '\n'
+		}) >= 0 {
+			return errors.New("site_description is invalid")
+		}
+	}
+	for field, value := range map[string]*string{
+		"site_logo_uri": patch.SiteLogoURI,
+		"favicon_uri":   patch.FaviconURI,
+	} {
+		if value == nil || *value == "" {
+			continue
+		}
+		expectedPrefix := "site-brand/logo/"
+		if field == "favicon_uri" {
+			expectedPrefix = "site-brand/favicon/"
+		}
+		if !strings.HasPrefix(*value, expectedPrefix) ||
+			strings.Contains(*value, "..") ||
+			strings.ContainsAny(*value, "\\\x00\r\n") {
+			return fmt.Errorf("%s is invalid", field)
+		}
+	}
+	return nil
 }
 
 func validateBasicConfigurationServerHost(host string) error {
@@ -306,6 +370,15 @@ func CreateModel(ctx context.Context, c *app.RequestContext) {
 		c.String(consts.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Management != nil {
+		id, err := bizConf.ModelConf().UpsertSystemModel(ctx, workbenchViewerIDFromCtx(ctx), nil, req.Management)
+		if err != nil {
+			modelManagementErrorResponse(ctx, c, err)
+			return
+		}
+		c.JSON(consts.StatusOK, &config.CreateModelResp{ID: id})
+		return
+	}
 
 	modelBuilder, err := modelbuilder.NewModelBuilder(req.ModelClass, &config.Model{
 		EnableBase64URL: req.EnableBase64URL,
@@ -315,8 +388,6 @@ func CreateModel(ctx context.Context, c *app.RequestContext) {
 		invalidParamRequestResponse(c, fmt.Sprintf("create model builder failed: %v", err))
 		return
 	}
-
-	logs.CtxDebugf(ctx, "create model req: %s, conn: %s", conv.DebugJsonToStr(req), conv.DebugJsonToStr(req.Connection.BaseConnInfo))
 
 	chatModel, err := modelBuilder.Build(ctx, &modelbuilder.LLMParams{EnableThinking: ptr.Of(false)})
 	if err != nil {
@@ -360,13 +431,229 @@ func DeleteModel(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	err = bizConf.ModelConf().DeleteModel(ctx, req.ID)
+	dependencies, err := bizConf.ModelConf().DeleteSystemModel(ctx, req.ID, req.GetPreview())
 	if err != nil {
-		internalServerErrorResponse(ctx, c, fmt.Errorf("delete model failed: %w", err))
+		modelManagementErrorResponse(ctx, c, err)
 		return
 	}
 
-	resp := new(config.DeleteModelResp)
+	resp := &config.DeleteModelResp{Dependencies: dependencies}
 
 	c.JSON(consts.StatusOK, resp)
+}
+
+// ListModelProviders .
+// @router /api/admin/config/model/providers [GET]
+func ListModelProviders(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.ListModelProvidersReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	providers, err := bizConf.ModelConf().ListSystemModelProviders(ctx)
+	if err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := &config.ListModelProvidersResp{Providers: providers}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// ListModels .
+// @router /api/admin/config/model/manage/list [GET]
+func ListModels(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.GetModelListReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	models, total, err := bizConf.ModelConf().ListSystemModels(ctx, &req)
+	if err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := &config.GetModelListResp{Models: models, Total: &total}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// GetModelDetail .
+// @router /api/admin/config/model/detail [GET]
+func GetModelDetail(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.GetModelDetailReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	model, err := bizConf.ModelConf().GetSystemModelDetail(ctx, req.ID)
+	if err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := &config.GetModelDetailResp{Model: model}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// UpdateModel .
+// @router /api/admin/config/model/update [POST]
+func UpdateModel(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.UpdateModelReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.Management == nil || !req.IsSetID() || req.GetID() <= 0 {
+		invalidParamRequestResponse(c, "id and management are required")
+		return
+	}
+	modelID := req.GetID()
+	if _, err := bizConf.ModelConf().UpsertSystemModel(ctx, workbenchViewerIDFromCtx(ctx), &modelID, req.Management); err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := new(config.UpdateModelResp)
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// TestModelEndpoint .
+// @router /api/admin/config/model/test [POST]
+func TestModelEndpoint(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.TestModelEndpointReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := bizConf.ModelConf().TestSystemModelEndpoint(ctx, &req)
+	if err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := &config.TestModelEndpointResp{
+		Success: result.Success, LatencyMs: result.LatencyMS,
+		ErrorCode: result.ErrorCode, ErrorMessage: result.ErrorMessage,
+	}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// UpdateModelStatus .
+// @router /api/admin/config/model/status [POST]
+func UpdateModelStatus(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.UpdateModelStatusReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := bizConf.ModelConf().SetSystemModelStatus(ctx, req.ID, req.Enabled); err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := new(config.UpdateModelStatusResp)
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// UpdateModelSort .
+// @router /api/admin/config/model/sort [POST]
+func UpdateModelSort(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.UpdateModelSortReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := bizConf.ModelConf().SortSystemModels(ctx, req.Items); err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := new(config.UpdateModelSortResp)
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// GetModelGrants .
+// @router /api/admin/config/model/grants [GET]
+func GetModelGrants(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.GetModelGrantsReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	accessMode, grants, err := bizConf.ModelConf().GetSystemModelGrants(ctx, req.ModelID)
+	if err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := &config.GetModelGrantsResp{AccessMode: accessMode, Grants: grants}
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+// SaveModelGrants .
+// @router /api/admin/config/model/grants [POST]
+func SaveModelGrants(ctx context.Context, c *app.RequestContext) {
+	var err error
+	var req config.SaveModelGrantsReq
+	err = c.BindAndValidate(&req)
+	if err != nil {
+		c.String(consts.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := bizConf.ModelConf().SaveSystemModelGrants(ctx, req.ModelID, req.AccessMode, req.Grants); err != nil {
+		modelManagementErrorResponse(ctx, c, err)
+		return
+	}
+	resp := new(config.SaveModelGrantsResp)
+
+	c.JSON(consts.StatusOK, resp)
+}
+
+func modelManagementErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
+	status := http.StatusInternalServerError
+	message := "模型管理请求失败"
+	switch {
+	case errors.Is(err, modelmgr.ErrSystemModelInvalid):
+		status = http.StatusBadRequest
+		message = "模型配置参数无效"
+	case errors.Is(err, modelmgr.ErrSystemModelNotFound):
+		status = http.StatusNotFound
+		message = "模型配置不存在"
+	case errors.Is(err, modelmgr.ErrSystemModelSchemaUnavailable), errors.Is(err, modelmgr.ErrSystemModelCredential):
+		status = http.StatusServiceUnavailable
+		message = "模型管理服务尚未就绪"
+	}
+	if status == http.StatusInternalServerError {
+		logs.CtxErrorf(ctx, "[SystemModelManagement] request failed: %v", err)
+	}
+	c.AbortWithStatusJSON(status, map[string]any{
+		"code": status,
+		"msg":  message,
+	})
 }

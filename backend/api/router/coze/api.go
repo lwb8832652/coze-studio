@@ -53,7 +53,19 @@ func Register(r *server.Hertz) {
 					_model := _config.Group("/model", _modelMw()...)
 					_model.POST("/create", append(_createmodelMw(), coze.CreateModel)...)
 					_model.POST("/delete", append(_deletemodelMw(), coze.DeleteModel)...)
+					_model.GET("/detail", append(_getmodeldetailMw(), coze.GetModelDetail)...)
+					_model.GET("/grants", append(_getmodelgrantsMw(), coze.GetModelGrants)...)
+					_model.POST("/grants", append(_savemodelgrantsMw(), coze.SaveModelGrants)...)
 					_model.GET("/list", append(_getmodellistMw(), coze.GetModelList)...)
+					_model.GET("/providers", append(_listmodelprovidersMw(), coze.ListModelProviders)...)
+					_model.POST("/sort", append(_updatemodelsortMw(), coze.UpdateModelSort)...)
+					_model.POST("/status", append(_updatemodelstatusMw(), coze.UpdateModelStatus)...)
+					_model.POST("/test", append(_testmodelendpointMw(), coze.TestModelEndpoint)...)
+					_model.POST("/update", append(_updatemodelMw(), coze.UpdateModel)...)
+					{
+						_manage := _model.Group("/manage", _manageMw()...)
+						_manage.GET("/list", append(_listmodelsMw(), coze.ListModels)...)
+					}
 				}
 			}
 		}
@@ -474,6 +486,14 @@ func Register(r *server.Hertz) {
 		{
 			_workbench := _api.Group("/workbench", _workbenchMw()...)
 			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)
+			_workbench.GET("/models", append(_listworkspacemodelsMw(), coze.ListWorkspaceModels)...)
+			_models := _workbench.Group("/models", _modelsMw()...)
+			_models.DELETE("/:model_id", append(_deleteworkspacemodelMw(), coze.DeleteWorkspaceModel)...)
+			_models.GET("/:model_id", append(_getworkspacemodelMw(), coze.GetWorkspaceModel)...)
+			_model_id := _models.Group("/:model_id", _model_idMw()...)
+			_model_id.POST("/status", append(_setworkspacemodelstatusMw(), coze.SetWorkspaceModelStatus)...)
+			_models.POST("/test", append(_testworkspacemodelMw(), coze.TestWorkspaceModel)...)
+			_workbench.POST("/models", append(_upsertworkspacemodelMw(), coze.UpsertWorkspaceModel)...)
 			_workbench.GET("/runtime_doctor", append(_getworkbenchruntimedoctorMw(), coze.GetWorkbenchRuntimeDoctor)...)
 			_workbench.GET("/scheduled_task_cron_presets", append(_listscheduledtaskcronpresetsMw(), coze.ListScheduledTaskCronPresets)...)
 			_workbench.GET("/scheduled_task_targets", append(_listscheduledtasktargetsMw(), coze.ListScheduledTaskTargets)...)

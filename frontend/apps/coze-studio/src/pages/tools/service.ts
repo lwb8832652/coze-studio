@@ -14,15 +14,28 @@
  * limitations under the License.
  */
 
-import { workbenchTool } from '@coze-studio/api-schema';
+import {
+  DeleteMCPToolServer,
+  DiscoverMCPToolServer,
+  ExportMCPToolServer,
+  GetMCPToolServer,
+  InstallMCPOfficialCatalog,
+  ListMCPOfficialCatalog,
+  ListMCPToolAuditEvents,
+  ListMCPToolRegistryEntries,
+  ListMCPToolServers,
+  TestMCPToolCall,
+  UpsertMCPToolServer,
+} from '@coze-studio/api-schema/workbench-tool';
 
-export const listMCPToolServers = workbenchTool.ListMCPToolServers;
-export const listMCPToolRegistryEntries =
-  workbenchTool.ListMCPToolRegistryEntries;
-export const upsertMCPToolServer = workbenchTool.UpsertMCPToolServer;
-export const getMCPToolServer = workbenchTool.GetMCPToolServer;
-export const deleteMCPToolServer = workbenchTool.DeleteMCPToolServer;
-export const testMCPToolCall = workbenchTool.TestMCPToolCall;
-export const discoverMCPToolServer = workbenchTool.DiscoverMCPToolServer;
-export const exportMCPToolServer = workbenchTool.ExportMCPToolServer;
-export const listMCPToolAuditEvents = workbenchTool.ListMCPToolAuditEvents;
+export const listMCPToolServers = ListMCPToolServers;
+export const listMCPOfficialCatalog = ListMCPOfficialCatalog;
+export const installMCPOfficialCatalog = InstallMCPOfficialCatalog;
+export const listMCPToolRegistryEntries = ListMCPToolRegistryEntries;
+export const upsertMCPToolServer = UpsertMCPToolServer;
+export const getMCPToolServer = GetMCPToolServer;
+export const deleteMCPToolServer = DeleteMCPToolServer;
+export const testMCPToolCall = TestMCPToolCall;
+export const discoverMCPToolServer = DiscoverMCPToolServer;
+export const exportMCPToolServer = ExportMCPToolServer;
+export const listMCPToolAuditEvents = ListMCPToolAuditEvents;

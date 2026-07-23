@@ -35,10 +35,6 @@
 }
 
 .semi-button:focus-visible,
-.semi-input-wrapper:focus-within,
-.semi-select:focus-within,
-.semi-cascader:focus-within,
-.semi-datepicker:focus-within,
 .semi-pagination-item:focus-visible {
   outline: 2px solid var(--newx-color-accent, #218c55);
   outline-offset: 2px;
@@ -62,12 +58,17 @@
   border-color: var(--newx-color-border-strong, #aebbb1);
 }
 
+.semi-input-wrapper.semi-input-wrapper-focus,
 .semi-input-wrapper:focus-within,
 .semi-textarea-wrapper:focus-within,
+.semi-select:focus-within,
 .semi-select-focus,
+.semi-cascader:focus-within,
 .semi-cascader-focus,
+.semi-datepicker:focus-within,
 .semi-datepicker-focus {
-  border-color: var(--newx-color-accent, #218c55);
+  border-color: var(--newx-color-accent, #218c55) !important;
+  outline: none;
   box-shadow: 0 0 0 3px rgba(33, 140, 85, 9%);
 }
 

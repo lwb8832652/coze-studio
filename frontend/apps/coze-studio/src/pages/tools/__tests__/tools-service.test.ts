@@ -10,7 +10,9 @@ import {
   discoverMCPToolServer,
   exportMCPToolServer,
   getMCPToolServer,
+  installMCPOfficialCatalog,
   listMCPToolAuditEvents,
+  listMCPOfficialCatalog,
   listMCPToolRegistryEntries,
   listMCPToolServers,
   testMCPToolCall,
@@ -21,6 +23,8 @@ describe('tools service', () => {
   it('exports the complete MCP management API surface', () => {
     [
       listMCPToolServers,
+      listMCPOfficialCatalog,
+      installMCPOfficialCatalog,
       listMCPToolRegistryEntries,
       upsertMCPToolServer,
       getMCPToolServer,

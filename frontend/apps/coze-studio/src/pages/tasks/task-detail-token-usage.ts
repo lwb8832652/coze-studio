@@ -241,6 +241,45 @@ export const mergeTaskTokenUsageSnapshotByRunID = (
   ),
 });
 
+export const mapTaskThreadTokenUsageRowToSnapshot = (
+  row: TaskThreadTokenUsage,
+): TaskTokenUsageSnapshot | undefined => {
+  const runID = toSafeString(row.run_id);
+  const totalTokens = toSafeNumber(row.total_tokens);
+  if (!runID || totalTokens <= 0) {
+    return undefined;
+  }
+
+  return {
+    usageID: toSafeString(row.usage_id),
+    runID,
+    source: toSafeString(row.source) || 'lead_agent',
+    stepID: toSafeString(row.step_id),
+    stepName: toSafeString(row.step_name),
+    modelName: toSafeString(row.model_name),
+    provider: toSafeString(row.provider),
+    inputTokens: toSafeNumber(row.input_tokens),
+    outputTokens: toSafeNumber(row.output_tokens),
+    totalTokens,
+    costMicros: toSafeNumber(row.cost_micros),
+    currency: toSafeString(row.currency, 16).toUpperCase(),
+    estimated: row.estimated === true,
+    createdAt: toSafeNumber(row.created_at),
+  };
+};
+
+export const mapTaskTokenUsageSnapshotsByRunID = (
+  snapshots: Iterable<TaskTokenUsageSnapshot>,
+): Record<string, TaskDetailTokenUsage> => {
+  let usageByRunID: Record<string, TaskDetailTokenUsage> = {};
+
+  for (const snapshot of snapshots) {
+    usageByRunID = mergeTaskTokenUsageSnapshotByRunID(usageByRunID, snapshot);
+  }
+
+  return usageByRunID;
+};
+
 const getModelAttribution = (row: TaskThreadTokenUsage): string => {
   const provider = getSafeTokenUsageAttributionPart(row.provider);
   const modelName = getSafeTokenUsageAttributionPart(row.model_name);
@@ -292,65 +331,6 @@ export const mapTaskThreadTokenUsageAggregate = (
     toolTokens: aggregate.tool_tokens,
     modelAttributions: getUniqueModelAttributions(rows),
   };
-};
-
-export const mapTaskThreadTokenUsageRowsByRunID = (
-  rows?: TaskThreadTokenUsage[],
-): Record<string, TaskDetailTokenUsage> => {
-  const usageByRunID: Record<string, TaskDetailTokenUsage> = {};
-  const currenciesByRunID: Record<string, string[]> = {};
-
-  for (const row of rows ?? []) {
-    const runID = row.run_id?.trim();
-
-    if (!runID || row.total_tokens <= 0) {
-      continue;
-    }
-
-    const aggregate = usageByRunID[runID] ?? emptyTaskDetailTokenUsage();
-    const currencies = currenciesByRunID[runID] ?? [];
-    aggregate.inputTokens += row.input_tokens;
-    aggregate.outputTokens += row.output_tokens;
-    aggregate.totalTokens += row.total_tokens;
-    aggregate.costMicros += row.cost_micros;
-    aggregate.callCount += 1;
-    if (row.currency.trim()) {
-      currencies.push(row.currency);
-    }
-    const modelAttribution = getModelAttribution(row);
-    if (
-      modelAttribution &&
-      !aggregate.modelAttributions.includes(modelAttribution)
-    ) {
-      aggregate.modelAttributions.push(modelAttribution);
-    }
-
-    switch (row.source) {
-      case 'lead_agent':
-        aggregate.leadAgentTokens += row.total_tokens;
-        break;
-      case 'subagent':
-        aggregate.subagentTokens += row.total_tokens;
-        break;
-      case 'middleware':
-        aggregate.middlewareTokens += row.total_tokens;
-        break;
-      case 'tool':
-        aggregate.toolTokens += row.total_tokens;
-        break;
-      default:
-        break;
-    }
-
-    usageByRunID[runID] = aggregate;
-    currenciesByRunID[runID] = currencies;
-  }
-
-  for (const [runID, aggregate] of Object.entries(usageByRunID)) {
-    aggregate.currency = getSingleCurrency(currenciesByRunID[runID]);
-  }
-
-  return usageByRunID;
 };
 
 export const formatTaskTokenCost = (

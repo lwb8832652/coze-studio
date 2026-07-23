@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { type FC, useEffect } from 'react';
 
 import { useUpdate } from 'ahooks';
+import { useCommonConfigStore } from '@coze-foundation/global-store';
 import { BrowserUpgradeWrap } from '@coze-foundation/browser-upgrade-banner';
 import { I18nProvider } from '@coze-arch/i18n/i18n-provider';
 import { I18n } from '@coze-arch/i18n';
@@ -29,13 +30,17 @@ import {
   enUS,
   zhCN,
 } from '@coze-arch/coze-design';
-import { LocaleProvider } from '@coze-arch/bot-semi';
+import { LocaleProvider, UIDocumentTitle } from '@coze-arch/bot-semi';
 
 import { GlobalLayoutComposed } from '@/components/global-layout-composed';
+
+import { applySiteConfigToDocument } from '../../site-config';
 
 export const GlobalLayout: FC = () => {
   const userInfo = useUserInfo();
   const update = useUpdate();
+  const location = useLocation();
+  const siteConfig = useCommonConfigStore(state => state.siteConfig);
   const currentLocale = userInfo?.locale ?? navigator.language ?? 'en-US';
 
   // For historical reasons, en-US needs to be converted to en.
@@ -50,6 +55,10 @@ export const GlobalLayout: FC = () => {
       update();
     }
   }, [userInfo, transformedCurrentLocale, update]);
+
+  useEffect(() => {
+    applySiteConfigToDocument(siteConfig);
+  }, [location.pathname, location.search, siteConfig]);
 
   return (
     <I18nProvider i18n={I18n}>
@@ -68,6 +77,7 @@ export const GlobalLayout: FC = () => {
           </ThemeProvider>
         </LocaleProvider>
       </CDLocaleProvider>
+      <UIDocumentTitle title={siteConfig.siteName} />
     </I18nProvider>
   );
 };

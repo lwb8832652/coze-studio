@@ -7,6 +7,7 @@
   "maintainers": [],
   "exports": {
     ".": "./src/index.tsx",
+    "./account-dropdown": "./src/components/account-dropdown/index.tsx",
     "./account-settings": "./src/components/account-dropdown/account-settings/index.tsx"
   },
   "main": "src/index.tsx",
@@ -14,6 +15,9 @@
     "*": {
       ".": [
         "./src/index.tsx"
+      ],
+      "account-dropdown": [
+        "./src/components/account-dropdown/index.tsx"
       ],
       "account-settings": [
         "./src/components/account-dropdown/account-settings/index.tsx"

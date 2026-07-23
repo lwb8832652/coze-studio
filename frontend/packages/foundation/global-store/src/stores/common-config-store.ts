@@ -30,14 +30,34 @@ interface ICommonConfig {
   oceanProjectSpaces?: Array<string>;
   douyinAvatarSpaces?: Array<string>;
 }
+
+export interface ISiteConfig {
+  siteName: string;
+  siteDescription: string;
+  siteLogoUrl: string;
+  faviconUrl: string;
+  revision: string;
+}
+
+export const DEFAULT_SITE_CONFIG: ISiteConfig = {
+  siteName: 'NewX AI',
+  siteDescription:
+    'NewX AI 是面向个人与团队的智能工作空间，让任务、技能和协作沉淀为可复用的成果。',
+  siteLogoUrl: '',
+  faviconUrl: '',
+  revision: '',
+};
+
 export interface ICommonConfigStoreState {
   initialized: boolean;
   commonConfigs: ICommonConfig;
+  siteConfig: ISiteConfig;
 }
 
 export interface ICommonConfigStoreAction {
   setInitialized: () => void;
   updateCommonConfigs: (commonConfigs: ICommonConfig) => void;
+  updateSiteConfig: (siteConfig: ISiteConfig) => void;
 }
 
 const DEFAULT_COMMON_CONFIG_STATE: ICommonConfigStoreState = {
@@ -48,6 +68,7 @@ const DEFAULT_COMMON_CONFIG_STATE: ICommonConfigStoreState = {
     oceanProjectSpaces: [],
     douyinAvatarSpaces: [],
   },
+  siteConfig: DEFAULT_SITE_CONFIG,
   initialized: false,
 };
 
@@ -58,6 +79,9 @@ export const useCommonConfigStore = create<
     ...DEFAULT_COMMON_CONFIG_STATE,
     updateCommonConfigs(commonConfigs: ICommonConfig) {
       set(state => ({ ...state, commonConfigs }));
+    },
+    updateSiteConfig(siteConfig: ISiteConfig) {
+      set({ siteConfig });
     },
     setInitialized: () => {
       set({

@@ -66,6 +66,38 @@ func ListMCPToolServers(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, resp)
 }
 
+// ListOfficialMCPToolCatalog returns the immutable, credential-free official catalog.
+// @router /api/workbench/mcp_tools/official_catalog [GET]
+func ListOfficialMCPToolCatalog(ctx context.Context, c *app.RequestContext) {
+	var req toolapi.ListMCPOfficialCatalogRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		workbenchMCPToolJSONError(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+	resp, err := appmcptool.SVC.ListOfficialCatalog(ctx, &req)
+	if err != nil {
+		workbenchMCPToolErrorResponse(ctx, c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, resp)
+}
+
+// InstallOfficialMCPToolServer installs or safely reconfigures one workspace instance.
+// @router /api/workbench/mcp_tools/official_catalog/:catalog_id/install [POST]
+func InstallOfficialMCPToolServer(ctx context.Context, c *app.RequestContext) {
+	var req toolapi.InstallMCPOfficialCatalogRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		workbenchMCPToolJSONError(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+	resp, err := appmcptool.SVC.InstallOfficialCatalogEntry(ctx, &req)
+	if err != nil {
+		workbenchMCPToolErrorResponse(ctx, c, err)
+		return
+	}
+	c.JSON(consts.StatusOK, resp)
+}
+
 // ListMCPToolRegistryEntries .
 // @router /api/workbench/mcp_tools/registry_entries [GET]
 func ListMCPToolRegistryEntries(ctx context.Context, c *app.RequestContext) {

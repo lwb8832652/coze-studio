@@ -109,6 +109,9 @@
       "path": "../../packages/foundation/global-adapter/tsconfig.build.json"
     },
     {
+      "path": "../../packages/foundation/global-store/tsconfig.build.json"
+    },
+    {
       "path": "../../packages/foundation/global/tsconfig.build.json"
     },
     {

@@ -39,6 +39,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/api/model/plugin_develop"
 	"github.com/coze-dev/coze-studio/backend/api/model/resource"
 	"github.com/coze-dev/coze-studio/backend/api/model/workbench/chat"
+	"github.com/coze-dev/coze-studio/backend/api/model/workbench/model"
 	"github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	"github.com/coze-dev/coze-studio/backend/api/model/workflow"
 )
@@ -589,6 +590,32 @@ func NewWorkbenchTaskServiceClient(c thrift.TClient) *WorkbenchTaskServiceClient
 	}
 }
 
+type WorkbenchModelService interface {
+	model.WorkbenchModelService
+}
+
+type WorkbenchModelServiceClient struct {
+	*model.WorkbenchModelServiceClient
+}
+
+func NewWorkbenchModelServiceClientFactory(t thrift.TTransport, f thrift.TProtocolFactory) *WorkbenchModelServiceClient {
+	return &WorkbenchModelServiceClient{
+		WorkbenchModelServiceClient: model.NewWorkbenchModelServiceClientFactory(t, f),
+	}
+}
+
+func NewWorkbenchModelServiceClientProtocol(t thrift.TTransport, iprot thrift.TProtocol, oprot thrift.TProtocol) *WorkbenchModelServiceClient {
+	return &WorkbenchModelServiceClient{
+		WorkbenchModelServiceClient: model.NewWorkbenchModelServiceClientProtocol(t, iprot, oprot),
+	}
+}
+
+func NewWorkbenchModelServiceClient(c thrift.TClient) *WorkbenchModelServiceClient {
+	return &WorkbenchModelServiceClient{
+		WorkbenchModelServiceClient: model.NewWorkbenchModelServiceClient(c),
+	}
+}
+
 type AppDevService interface {
 	appdev.AppDevService
 }
@@ -801,6 +828,15 @@ type WorkbenchTaskServiceProcessor struct {
 
 func NewWorkbenchTaskServiceProcessor(handler WorkbenchTaskService) *WorkbenchTaskServiceProcessor {
 	self := &WorkbenchTaskServiceProcessor{chat.NewWorkbenchTaskServiceProcessor(handler)}
+	return self
+}
+
+type WorkbenchModelServiceProcessor struct {
+	*model.WorkbenchModelServiceProcessor
+}
+
+func NewWorkbenchModelServiceProcessor(handler WorkbenchModelService) *WorkbenchModelServiceProcessor {
+	self := &WorkbenchModelServiceProcessor{model.NewWorkbenchModelServiceProcessor(handler)}
 	return self
 }
 

@@ -36,10 +36,46 @@ export const SYSTEM_SECTIONS = [
     description: '公共模型、供应商和接入密钥管理',
   },
   {
+    key: 'billing-pricing',
+    title: '模型定价',
+    description: '按模型版本配置 Token 计价',
+  },
+  {
+    key: 'billing-monitoring',
+    title: '模型监控',
+    description: '调用、Token 和积分消耗',
+  },
+  {
     key: 'sandbox',
     title: '沙箱管理',
     description: '运行 Provider、健康状态和默认范围',
   },
+  {
+    key: 'billing-config',
+    title: '积分基础配置',
+    description: '积分名称、结算和支付开关',
+  },
+  {
+    key: 'billing-plans',
+    title: '订阅套餐',
+    description: '周期、价格和套餐权益',
+  },
+  {
+    key: 'billing-packages',
+    title: '积分包',
+    description: '售价、额度和有效期',
+  },
+  {
+    key: 'billing-accounts',
+    title: '用户积分',
+    description: '余额、预占和账户状态',
+  },
+  {
+    key: 'billing-ledger',
+    title: '积分记录',
+    description: '不可变收入与消费流水',
+  },
+  { key: 'billing-orders', title: '订单管理', description: '支付和履约状态' },
   {
     key: 'settings',
     title: '系统配置',
@@ -48,6 +84,35 @@ export const SYSTEM_SECTIONS = [
 ] as const;
 
 export type SystemSectionKey = (typeof SYSTEM_SECTIONS)[number]['key'];
+
+interface SystemNavGroup {
+  key: string;
+  label?: string;
+  items: readonly SystemSectionKey[];
+}
+
+export const SYSTEM_NAV_GROUPS = [
+  { key: 'general', items: ['overview', 'users', 'workspaces'] },
+  {
+    key: 'models',
+    label: '模型管理',
+    items: ['models', 'billing-pricing', 'billing-monitoring'],
+  },
+  { key: 'runtime', items: ['sandbox'] },
+  {
+    key: 'billing',
+    label: '订阅与积分',
+    items: [
+      'billing-config',
+      'billing-plans',
+      'billing-packages',
+      'billing-accounts',
+      'billing-ledger',
+      'billing-orders',
+    ],
+  },
+  { key: 'system', items: ['settings'] },
+] as const satisfies readonly SystemNavGroup[];
 
 export const SECTION_CONTENT: Record<
   SystemSectionKey,
@@ -151,22 +216,22 @@ export const SECTION_CONTENT: Record<
   },
   models: {
     heading: '模型配置',
-    summary: '集中管理公共模型供应商、模型接入信息、密钥状态和删除保护。',
+    summary: '管理公共模型、能力范围、接入端点、运行状态和使用授权。',
     cards: [
       {
-        title: '供应商分组',
-        description: '按模型供应商展示已接入模型。',
-        value: '已接 API',
+        title: '模型目录',
+        description: '按供应商、类型、状态和管控范围查询。',
+        value: '可筛选',
       },
       {
-        title: '新增模型',
-        description: '配置模型标识、Base URL、API Key 和 Base64 URL。',
-        value: '可创建',
+        title: '接入与验证',
+        description: '配置多 Endpoint、加密密钥并执行连通性测试。',
+        value: '可维护',
       },
       {
-        title: '删除模型',
-        description: '删除前二次确认，避免误删公共模型。',
-        value: '可删除',
+        title: '授权管控',
+        description: '按工作空间和用户限制模型使用范围。',
+        value: '可授权',
       },
     ],
   },
@@ -191,5 +256,45 @@ export const SECTION_CONTENT: Record<
         value: '受版本保护',
       },
     ],
+  },
+  'billing-config': {
+    heading: '积分基础配置',
+    summary: '管理积分显示、运行时结算和支付能力。',
+    cards: [],
+  },
+  'billing-plans': {
+    heading: '订阅套餐',
+    summary: '管理订阅周期、价格、额度和权益版本。',
+    cards: [],
+  },
+  'billing-packages': {
+    heading: '积分包',
+    summary: '管理一次性积分包的售价、额度和有效期。',
+    cards: [],
+  },
+  'billing-pricing': {
+    heading: '模型定价',
+    summary: '按供应商和模型维护可追溯的 Token 计价版本。',
+    cards: [],
+  },
+  'billing-monitoring': {
+    heading: '模型监控',
+    summary: '查看模型调用量、Token 用量和积分消耗汇总。',
+    cards: [],
+  },
+  'billing-accounts': {
+    heading: '用户积分',
+    summary: '查看用户账单账户的可用和预占积分。',
+    cards: [],
+  },
+  'billing-ledger': {
+    heading: '积分记录',
+    summary: '查询可审计、不可变的积分收入与支出流水。',
+    cards: [],
+  },
+  'billing-orders': {
+    heading: '订单管理',
+    summary: '查看订单支付、履约和异常状态。',
+    cards: [],
   },
 };

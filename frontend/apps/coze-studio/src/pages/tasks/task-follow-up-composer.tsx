@@ -16,8 +16,13 @@
 
 import type { ReactNode } from 'react';
 
+import { IconCozCross } from '@coze-arch/coze-design/icons';
+
 import { getWorkbenchLLMModels } from '../workbench/service';
-import { WorkbenchComposer } from '../workbench/components/workbench-composer';
+import {
+  WorkbenchComposer,
+  type WorkbenchComposerCapabilities,
+} from '../workbench/components/workbench-composer';
 import {
   type WorkbenchComposerSubmitPayload,
   type WorkbenchMode,
@@ -30,6 +35,9 @@ export const TaskFollowUpComposer = ({
   error,
   spaceId,
   taskId,
+  resetKey,
+  capabilities,
+  footerEnd,
   todoDock,
   suggestions = [],
   suggestionsHidden = false,
@@ -49,6 +57,9 @@ export const TaskFollowUpComposer = ({
   error?: string;
   spaceId?: string;
   taskId?: string;
+  resetKey?: string | number;
+  capabilities?: Partial<WorkbenchComposerCapabilities>;
+  footerEnd?: ReactNode;
   todoDock?: ReactNode;
   suggestions?: string[];
   suggestionsHidden?: boolean;
@@ -64,6 +75,7 @@ export const TaskFollowUpComposer = ({
 }) => {
   const showSuggestions =
     !suggestionsHidden && (suggestionsLoading || suggestions.length > 0);
+  const interactionDisabled = loading || Boolean(stopMode);
 
   return (
     <section className="coze-prototype-followup">
@@ -82,7 +94,12 @@ export const TaskFollowUpComposer = ({
                     key={suggestion}
                     type="button"
                     className="coze-prototype-followup-suggestion"
-                    onClick={() => onSuggestionClick?.(suggestion)}
+                    disabled={interactionDisabled}
+                    onClick={() => {
+                      if (!interactionDisabled) {
+                        onSuggestionClick?.(suggestion);
+                      }
+                    }}
                   >
                     {suggestion}
                   </button>
@@ -91,9 +108,12 @@ export const TaskFollowUpComposer = ({
                   type="button"
                   aria-label="关闭推荐追问"
                   className="coze-prototype-followup-suggestion-close"
-                  onClick={onDismissSuggestions}
+                  disabled={interactionDisabled}
+                  onClick={
+                    interactionDisabled ? undefined : onDismissSuggestions
+                  }
                 >
-                  x
+                  <IconCozCross />
                 </button>
               </>
             )}
@@ -108,6 +128,9 @@ export const TaskFollowUpComposer = ({
           presentation="deerflow"
           spaceId={spaceId}
           taskId={taskId}
+          resetKey={resetKey}
+          capabilities={capabilities}
+          footerEnd={footerEnd}
           stopLoading={stopLoading}
           stopMode={stopMode}
           modelLoader={getWorkbenchLLMModels}

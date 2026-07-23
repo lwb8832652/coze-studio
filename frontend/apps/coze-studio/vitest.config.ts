@@ -14,9 +14,56 @@
  * limitations under the License.
  */
 
+import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+
+import type { Plugin } from 'vite';
 import { defineConfig } from '@coze-arch/vitest-config';
 
-export default defineConfig({
-  dirname: __dirname,
-  preset: 'web',
+const packagesRoot = resolve(__dirname, '../../packages');
+
+const packageSourceAliasPlugin = (): Plugin => ({
+  name: 'coze-package-source-alias',
+  enforce: 'pre',
+  resolveId(source, importer) {
+    if (!importer || !source.startsWith('@/')) {
+      return null;
+    }
+
+    let currentDir = dirname(importer.split('?')[0]);
+    while (currentDir.startsWith(packagesRoot)) {
+      if (existsSync(resolve(currentDir, 'package.json'))) {
+        return this.resolve(
+          resolve(currentDir, 'src', source.slice(2)),
+          importer,
+          { skipSelf: true },
+        );
+      }
+
+      const parentDir = dirname(currentDir);
+      if (parentDir === currentDir) {
+        break;
+      }
+      currentDir = parentDir;
+    }
+
+    return null;
+  },
 });
+
+export default defineConfig(
+  {
+    dirname: __dirname,
+    preset: 'web',
+    plugins: [packageSourceAliasPlugin()],
+    ssr: {
+      noExternal: ['@coze-arch/coze-design', '@douyinfe/semi-ui'],
+    },
+    test: {
+      setupFiles: ['./vitest.setup.ts'],
+    },
+  },
+  {
+    fixSemi: true,
+  },
+);

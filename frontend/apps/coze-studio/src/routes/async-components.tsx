@@ -73,6 +73,8 @@ export const PersonalCenterPage = lazy(() => import('../pages/profile'));
 // system management page
 export const SystemManagementPage = lazy(() => import('../pages/system'));
 
+export const BillingCenterPage = lazy(() => import('../pages/billing'));
+
 // tasks page
 export const TasksPage = lazy(() => import('../pages/tasks'));
 

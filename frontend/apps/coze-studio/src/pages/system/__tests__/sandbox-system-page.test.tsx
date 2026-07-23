@@ -17,6 +17,10 @@ vi.mock('react-router-dom', () => ({
   useParams: () => ({ section: 'sandbox' }),
 }));
 
+vi.mock('@coze-foundation/global-adapter', () => ({
+  refreshSiteConfig: vi.fn(),
+}));
+
 vi.mock('../sandbox-management-section', () => ({
   SandboxManagementSection: () => {
     sandboxRender();

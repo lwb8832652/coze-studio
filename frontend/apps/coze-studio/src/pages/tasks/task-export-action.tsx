@@ -291,7 +291,7 @@ export const TaskExportAction = ({
         className="coze-prototype-task-action"
       >
         <IconCozDownload className="text-[14px]" />
-        导出
+        <span>导出</span>
       </button>
     </Popover>
   );

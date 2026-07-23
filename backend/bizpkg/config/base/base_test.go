@@ -135,6 +135,70 @@ func TestSaveBaseConfigInitializesFromLegacyConfigAndPreservesIt(t *testing.T) {
 	}
 }
 
+func TestSaveBaseConfigInitializesBootstrapAdminWhenPersistingSiteBrand(t *testing.T) {
+	t.Setenv("COZE_SYSTEM_ADMIN_EMAILS", "admin@example.com")
+	store := &fakeBasicConfigurationStore{revision: kvstore.MissingRevision}
+	service := &BaseConfig{base: store}
+	siteName := "NewX AI"
+
+	if _, err := service.SaveBaseConfig(
+		context.Background(),
+		BasicConfigurationPatch{SiteName: &siteName},
+		kvstore.MissingRevision,
+	); err != nil {
+		t.Fatalf("SaveBaseConfig() error = %v", err)
+	}
+	if got := store.value.AdminEmails; got != "admin@example.com" {
+		t.Fatalf("AdminEmails = %q, want bootstrap administrator", got)
+	}
+}
+
+func TestSaveBaseConfigPatchesSiteBrandAndPreservesUnchangedFields(t *testing.T) {
+	oldName := "Old Site"
+	oldDescription := "Existing description"
+	oldLogoURI := "site-brand/logo/old.png"
+	oldFaviconURI := "site-brand/favicon/old.png"
+	store := &fakeBasicConfigurationStore{
+		value: &adminconfig.BasicConfiguration{
+			AdminEmails:     "admin@example.com",
+			SiteName:        &oldName,
+			SiteDescription: &oldDescription,
+			SiteLogoURI:     &oldLogoURI,
+			FaviconURI:      &oldFaviconURI,
+		},
+		revision: "rev-1",
+	}
+	service := &BaseConfig{base: store}
+	newName := "NewX AI"
+	removedLogoURI := ""
+
+	if _, err := service.SaveBaseConfig(
+		context.Background(),
+		BasicConfigurationPatch{
+			SiteName:    &newName,
+			SiteLogoURI: &removedLogoURI,
+		},
+		"rev-1",
+	); err != nil {
+		t.Fatalf("SaveBaseConfig() error = %v", err)
+	}
+	if got := store.value.GetSiteName(); got != newName {
+		t.Fatalf("SiteName = %q, want %q", got, newName)
+	}
+	if got := store.value.GetSiteDescription(); got != oldDescription {
+		t.Fatalf("SiteDescription = %q, want preserved value %q", got, oldDescription)
+	}
+	if got := store.value.GetSiteLogoURI(); got != "" {
+		t.Fatalf("SiteLogoURI = %q, want explicit removal", got)
+	}
+	if got := store.value.GetFaviconURI(); got != oldFaviconURI {
+		t.Fatalf("FaviconURI = %q, want preserved value %q", got, oldFaviconURI)
+	}
+	if got := store.value.AdminEmails; got != "admin@example.com" {
+		t.Fatalf("AdminEmails = %q, want preserved administrator", got)
+	}
+}
+
 func TestGetLegacySandboxConfigReturnsDetachedCopy(t *testing.T) {
 	store := &fakeBasicConfigurationStore{value: &adminconfig.BasicConfiguration{
 		SandboxConfig: &adminconfig.SandboxConfig{MemoryLimitMb: 64},

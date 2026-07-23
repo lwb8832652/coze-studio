@@ -102,6 +102,7 @@ type ThreadRepository interface {
 	ListTokenUsage(ctx context.Context, req ListTokenUsageRequest) ([]*entity.TokenUsage, int64, error)
 	AggregateTokenUsage(ctx context.Context, req AggregateTokenUsageRequest) (*entity.TokenUsageAggregate, error)
 	AggregateTokenUsageByRun(ctx context.Context, req AggregateTokenUsageRequest) ([]*entity.RunTokenUsageAggregate, error)
+	GetTokenUsageSnapshot(ctx context.Context, req ListTokenUsageRequest, includeRunAggregates bool) (*TokenUsageSnapshot, error)
 }
 
 type CreateThreadBundleRequest struct {
@@ -262,6 +263,14 @@ type AggregateTokenUsageRequest struct {
 	ThreadID int64
 	RunID    int64
 	RunIDs   []int64
+	Source   entity.TokenUsageSource
+}
+
+type TokenUsageSnapshot struct {
+	Rows          []*entity.TokenUsage
+	Total         int64
+	Aggregate     *entity.TokenUsageAggregate
+	RunAggregates []*entity.RunTokenUsageAggregate
 }
 
 type ClaimMemoryFlushJobsRequest struct {

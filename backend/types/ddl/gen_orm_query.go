@@ -221,6 +221,8 @@ var path2Table2Columns2Model = map[string]map[string]map[string]any{
 			"capability":   &developer_api.ModelAbility{},
 			"parameters":   []*developer_api.ModelParameter{},
 		},
+		"model_instance_endpoint": {},
+		"model_instance_grant":    {},
 	},
 }
 

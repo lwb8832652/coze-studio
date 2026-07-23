@@ -17,6 +17,7 @@
 import { type FC, type FormEvent, useEffect, useMemo, useState } from 'react';
 
 import { CozeBrand } from '@coze-studio/components/coze-brand';
+import { useCommonConfigStore } from '@coze-foundation/global-store';
 import { I18n } from '@coze-arch/i18n';
 import { IconCozEarth } from '@coze-arch/coze-design/icons';
 import { Button, Input } from '@coze-arch/coze-design';
@@ -92,6 +93,7 @@ const readInitialLocale = (): AuthLocale => {
 // modes preserves the user's input and validation state.
 // eslint-disable-next-line @coze-arch/max-line-per-function, complexity -- Both modes intentionally share one stateful form.
 export const LoginPage: FC = () => {
+  const siteConfig = useCommonConfigStore(state => state.siteConfig);
   const [mode, setMode] = useState<AuthMode>('login');
   const [locale, setLocale] = useState<AuthLocale>(readInitialLocale);
   const [email, setEmail] = useState('');
@@ -120,6 +122,10 @@ export const LoginPage: FC = () => {
   }, []);
 
   const copy = AUTH_COPY[locale];
+  const welcome =
+    locale === 'zh-CN'
+      ? `欢迎来到 ${siteConfig.siteName}`
+      : `Welcome to ${siteConfig.siteName}`;
   const emailValid = EMAIL_PATTERN.test(email.trim());
   const passwordValid = password.length >= MIN_PASSWORD_LENGTH;
   const confirmPasswordValid =
@@ -188,8 +194,16 @@ export const LoginPage: FC = () => {
 
   return (
     <main className="coze-auth-page">
-      <div className="coze-auth-brand" aria-label="Coze Studio">
-        <CozeBrand isOversea={false} />
+      <div className="coze-auth-brand" aria-label={siteConfig.siteName}>
+        {siteConfig.siteLogoUrl ? (
+          <img
+            alt={siteConfig.siteName}
+            className="max-h-[36px] max-w-[180px] object-contain"
+            src={siteConfig.siteLogoUrl}
+          />
+        ) : (
+          <CozeBrand isOversea={false} />
+        )}
       </div>
       <button
         type="button"
@@ -201,21 +215,19 @@ export const LoginPage: FC = () => {
         <span>{copy.language}</span>
       </button>
 
-      <section className="coze-auth-intro" aria-label={copy.brandName}>
+      <section className="coze-auth-intro" aria-label={siteConfig.siteName}>
         <div className="coze-auth-intro-content">
-          <p className="coze-auth-intro-name">{copy.brandName}</p>
+          <p className="coze-auth-intro-name">{siteConfig.siteName}</p>
           <h1>{copy.brandTitle}</h1>
-          <p className="coze-auth-intro-description">{copy.brandDescription}</p>
+          <p className="coze-auth-intro-description">
+            {siteConfig.siteDescription}
+          </p>
         </div>
       </section>
 
       <section className="coze-auth-content">
         <div className="coze-auth-panel">
-          <div
-            className="coze-auth-tabs"
-            role="tablist"
-            aria-label={copy.welcome}
-          >
+          <div className="coze-auth-tabs" role="tablist" aria-label={welcome}>
             <button
               type="button"
               role="tab"
@@ -239,7 +251,7 @@ export const LoginPage: FC = () => {
           </div>
 
           <form className="coze-auth-form" onSubmit={handleSubmit} noValidate>
-            <h2>{copy.welcome}</h2>
+            <h2>{welcome}</h2>
 
             <div className="coze-auth-field">
               <Input
@@ -341,7 +353,9 @@ export const LoginPage: FC = () => {
             ) : null}
           </form>
 
-          <footer className="coze-auth-footer">{copy.footer}</footer>
+          <footer className="coze-auth-footer">
+            Powered by {siteConfig.siteName}
+          </footer>
         </div>
       </section>
     </main>

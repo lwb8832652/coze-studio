@@ -14,14 +14,48 @@
  * limitations under the License.
  */
 
+/* eslint-disable @typescript-eslint/no-extraneous-class, @typescript-eslint/consistent-type-imports -- Test doubles mirror browser globals and external component contracts. */
+
 import type { ReactNode } from 'react';
 
-import { vi } from 'vitest';
+import { afterAll, afterEach, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot as createReactRoot, type Root } from 'react-dom/client';
 import { workbenchTask } from '@coze-studio/api-schema';
 
+const originalActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+const originalIntersectionObserver = globalThis.IntersectionObserver;
+const testRoots = new Set<Root>();
+const testListenerCleanups = new Set<() => void>();
+
+const createRoot = (...args: Parameters<typeof createReactRoot>): Root => {
+  const reactRoot = createReactRoot(...args);
+  let mounted = true;
+  const trackedRoot: Root = {
+    render: children => {
+      reactRoot.render(children);
+    },
+    unmount: () => {
+      if (!mounted) {
+        return;
+      }
+      mounted = false;
+      testRoots.delete(trackedRoot);
+      reactRoot.unmount();
+    },
+  };
+  testRoots.add(trackedRoot);
+
+  return trackedRoot;
+};
+
+const addTestWindowListener = (type: string, listener: EventListener) => {
+  window.addEventListener(type, listener);
+  testListenerCleanups.add(() => {
+    window.removeEventListener(type, listener);
+  });
+};
 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockListTaskThreads = vi.hoisted(() => vi.fn());
@@ -32,6 +66,11 @@ const mockSetSpace = vi.hoisted(() => vi.fn());
 const mockCreateSpace = vi.hoisted(() => vi.fn());
 const mockFetchSpaces = vi.hoisted(() => vi.fn());
 const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
+const mockUserState = vi.hoisted(() => ({
+  screenName: 'wb',
+  userId: 'user-1',
+}));
+let mockUserSequence = 0;
 const mockUseSpaceStore = vi.hoisted(() =>
   vi.fn((selector: (state: unknown) => unknown) =>
     selector({
@@ -146,6 +185,20 @@ vi.mock('@coze-foundation/global-adapter', () => ({
   },
 }));
 
+vi.mock('@coze-foundation/global-adapter/account-dropdown', () => ({
+  AccountDropdown: (props: {
+    extraSettingsTabs?: Array<{ id: string; tabName: string } | 'divider'>;
+    extraMenuItems?: Array<{
+      key: string;
+      title: string;
+      onClick: () => void;
+    }>;
+  }) => {
+    capturedAccountDropdownProps.current = props;
+    return <span data-testid="account-dropdown" />;
+  },
+}));
+
 vi.mock('@coze-foundation/account-ui-adapter', () => ({
   useLogout: () => ({
     node: <span data-testid="logout-modal" />,
@@ -163,10 +216,28 @@ vi.mock('@coze-arch/bot-hooks', () => ({
 }));
 
 vi.mock('@coze-arch/foundation-sdk', () => ({
-  useUserInfo: () => ({ name: '刘文波', screen_name: 'wb' }),
+  getIsLogined: () => true,
+  getIsSettled: () => true,
+  getUserAuthInfos: () => [],
+  getUserInfo: () => ({
+    name: '刘文波',
+    screen_name: mockUserState.screenName,
+    user_id_str: mockUserState.userId,
+  }),
+  subscribeUserAuthInfos: () => () => undefined,
+  useIsLogined: () => true,
+  useIsSettled: () => true,
+  useUserAuthInfo: () => null,
+  useUserLabel: () => null,
+  useUserInfo: () => ({
+    name: '刘文波',
+    screen_name: mockUserState.screenName,
+    user_id_str: mockUserState.userId,
+  }),
 }));
 
 vi.mock('@coze-arch/bot-api/developer_api', () => ({
+  default: class {},
   SpaceType: {
     Personal: 1,
     Team: 2,
@@ -182,6 +253,14 @@ vi.mock('../../../pages/tools/mcp-settings-panel', () => ({
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
   MCPToolSettingsPanel: ({ spaceId }: { spaceId?: string }) => (
     <span data-testid="mcp-settings-panel">{spaceId}</span>
+  ),
+}));
+
+vi.mock('../../../pages/tools/feishu-im-settings-panel', () => ({
+  FEISHU_IM_SETTINGS_TAB_ID: 'feishu-im',
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- Mock export mirrors the package component name.
+  FeishuIMSettingsPanel: ({ spaceId }: { spaceId?: string }) => (
+    <span data-testid="feishu-im-settings-panel">{spaceId}</span>
   ),
 }));
 
@@ -261,15 +340,22 @@ vi.mock('@coze-arch/coze-design', () => {
   };
 });
 
-vi.mock('@coze-arch/coze-design/icons', () => {
+vi.mock('@coze-arch/coze-design/icons', async importOriginal => {
+  const actual =
+    await importOriginal<typeof import('@coze-arch/coze-design/icons')>();
   const icon = ({ className }: { className?: string }) => (
     <span className={className} data-testid="coze-icon" />
   );
 
   return {
+    ...actual,
     ['IconCozArrowDown']: icon,
     ['IconCozAsynchronousTask']: icon,
     ['IconCozAsynchronousTaskFill']: icon,
+    ['IconCozBot']: icon,
+    ['IconCozBotFill']: icon,
+    ['IconCozClock']: icon,
+    ['IconCozClockFill']: icon,
     ['IconCozCode']: icon,
     ['IconCozCodeFill']: icon,
     ['IconCozExit']: icon,
@@ -280,6 +366,9 @@ vi.mock('@coze-arch/coze-design/icons', () => {
     ['IconCozSetting']: icon,
     ['IconCozSettingFill']: icon,
     ['IconCozSideExpand']: icon,
+    ['IconCozSkill']: icon,
+    ['IconCozWorkspace']: icon,
+    ['IconCozWorkspaceFill']: icon,
   };
 });
 
@@ -299,8 +388,41 @@ import {
 } from '../menu';
 import { WorkspaceSubMenu } from '../index';
 
+afterEach(() => {
+  for (const root of [...testRoots]) {
+    act(() => {
+      root.unmount();
+    });
+  }
+  testRoots.clear();
+  for (const removeListener of testListenerCleanups) {
+    removeListener();
+  }
+  testListenerCleanups.clear();
+  document.body.replaceChildren();
+  capturedAccountDropdownProps.current = undefined;
+  capturedWorkspaceSubMenuProps.current = undefined;
+  if (originalIntersectionObserver) {
+    Object.defineProperty(globalThis, 'IntersectionObserver', {
+      configurable: true,
+      writable: true,
+      value: originalIntersectionObserver,
+    });
+  } else {
+    Reflect.deleteProperty(globalThis, 'IntersectionObserver');
+  }
+  vi.restoreAllMocks();
+});
+
+afterAll(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment;
+});
+
 describe('NewX AI WorkspaceSubMenu', () => {
   beforeEach(() => {
+    mockUserSequence += 1;
+    mockUserState.screenName = `wb-${mockUserSequence}`;
+    mockUserState.userId = `user-${mockUserSequence}`;
     latestIntersectionCallback = undefined;
     mockGetSystemAdminStatus.mockResolvedValue({ is_admin: false });
     Object.defineProperty(globalThis, 'IntersectionObserver', {
@@ -547,8 +669,16 @@ describe('NewX AI WorkspaceSubMenu', () => {
     expect(container.textContent).not.toContain('功能菜单');
     expect(capturedAccountDropdownProps.current?.extraSettingsTabs).toEqual([
       expect.objectContaining({
+        id: 'workspace-models',
+        tabName: '模型管理',
+      }),
+      expect.objectContaining({
         id: 'mcp-tools',
         tabName: 'MCP 配置',
+      }),
+      expect.objectContaining({
+        id: 'feishu-im',
+        tabName: 'IM 机器人',
       }),
     ]);
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -564,7 +694,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     const handleCollapseEvent = (event: Event) => {
       collapseEvents.push(event as CustomEvent);
     };
-    window.addEventListener(
+    addTestWindowListener(
       'coze-workspace-submenu-collapse-change',
       handleCollapseEvent,
     );

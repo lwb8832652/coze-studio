@@ -320,7 +320,11 @@ export const TaskArtifactFeedback = ({
   inlinePreview: ReturnType<typeof useTaskArtifactActions>['inlinePreview'];
 }) => (
   <>
-    {error ? <div className="coze-prototype-error">{error}</div> : null}
+    {error ? (
+      <div className="coze-prototype-error" role="alert">
+        {error}
+      </div>
+    ) : null}
     {inlinePreview ? (
       <aside
         aria-label="任务产物预览"
