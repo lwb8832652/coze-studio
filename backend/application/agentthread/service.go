@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cloudwego/eino/adk"
 	"gorm.io/gorm"
@@ -268,18 +269,69 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}, nil
 }
 
+const (
+	explicitTaskTitleMaxRunes    = 80
+	provisionalTaskTitleMaxRunes = 32
+	defaultTaskThreadTitle       = "新建任务"
+)
+
 func taskThreadTitle(title, message string) string {
-	const maxTitleRunes = 80
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
-		trimmed = strings.TrimSpace(message)
+		return provisionalTaskThreadTitle(message)
 	}
+
 	runes := []rune(trimmed)
-	if len(runes) <= maxTitleRunes {
+	if len(runes) <= explicitTaskTitleMaxRunes {
 		return trimmed
 	}
 
-	return string(runes[:maxTitleRunes])
+	return string(runes[:explicitTaskTitleMaxRunes])
+}
+
+func provisionalTaskThreadTitle(message string) string {
+	source := cleanTaskTitleSource(message)
+	if source == "" {
+		return defaultTaskThreadTitle
+	}
+	if strings.Contains(source, "创建一个技能") || strings.Contains(source, "创建技能") {
+		return "创建技能"
+	}
+
+	runes := []rune(source)
+	if len(runes) <= provisionalTaskTitleMaxRunes {
+		return source
+	}
+
+	return string(runes[:provisionalTaskTitleMaxRunes-1]) + "…"
+}
+
+func cleanTaskTitleSource(source string) string {
+	runes := []rune(source)
+	cleaned := make([]rune, 0, len(runes))
+	for i := 0; i < len(runes); {
+		if runes[i] == '@' && (i == 0 || !isTaskTitleResourceMarkerRune(runes[i-1])) {
+			end := i + 1
+			for end < len(runes) && isTaskTitleResourceMarkerRune(runes[end]) {
+				end++
+			}
+			if end > i+1 && (end == len(runes) || !isTaskTitleResourceMarkerRune(runes[end])) {
+				i = end
+				continue
+			}
+		}
+		cleaned = append(cleaned, runes[i])
+		i++
+	}
+
+	trimmed := strings.TrimFunc(string(cleaned), func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r)
+	})
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+func isTaskTitleResourceMarkerRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-'
 }
 
 func taskThreadRunInputFromMessage(message string) (string, error) {

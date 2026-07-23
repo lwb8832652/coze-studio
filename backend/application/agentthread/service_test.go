@@ -34,6 +34,43 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
+func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
+	tests := []struct {
+		name    string
+		title   string
+		message string
+		want    string
+	}{
+		{
+			name:    "skill creation intent",
+			message: "我想创建一个技能，请先询问我技能用途、使用场景和期望输出。 @skill-creator",
+			want:    "创建技能",
+		},
+		{
+			name:    "long message",
+			message: "请根据这段很长的需求整理项目上线计划，包含排期、风险、负责人、验收标准以及回滚方案",
+			want:    "请根据这段很长的需求整理项目上线计划，包含排期、风险、负责人、…",
+		},
+		{
+			name:    "resource marker only",
+			message: "@skill-creator",
+			want:    "新建任务",
+		},
+		{
+			name:    "explicit title",
+			title:   "  @skill-creator 专项任务  ",
+			message: "我想创建一个技能",
+			want:    "@skill-creator 专项任务",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, taskThreadTitle(tt.title, tt.message))
+		})
+	}
+}
+
 func TestApplicationCreateThreadReturnsTaskSummary(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		created: &entity.Thread{
