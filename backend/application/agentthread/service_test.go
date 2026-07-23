@@ -47,6 +47,11 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			want:    "创建技能",
 		},
 		{
+			name:    "skill creation guide with ASCII period and marker",
+			message: "我想创建一个技能，请先询问我技能用途、使用场景和期望输出.  @skill-creator",
+			want:    "创建技能",
+		},
+		{
 			name:    "marker before adjacent Chinese text",
 			message: "介绍 @skill-creator的能力",
 			want:    "介绍 的能力",
@@ -107,6 +112,21 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			want:    ".NET 项目规划",
 		},
 		{
+			name:    "book title brackets are preserved",
+			message: "总结《活着》",
+			want:    "总结《活着》",
+		},
+		{
+			name:    "priority brackets are preserved",
+			message: "[P0] 修复登录",
+			want:    "[P0] 修复登录",
+		},
+		{
+			name:    "empty call parentheses are preserved",
+			message: "调用 foo()",
+			want:    "调用 foo()",
+		},
+		{
 			name:    "C sharp suffix is preserved",
 			message: "迁移到 C#",
 			want:    "迁移到 C#",
@@ -125,6 +145,26 @@ func TestTaskThreadTitleBuildsCleanProvisionalTitle(t *testing.T) {
 			name:    "control and bidirectional runes are filtered",
 			message: "\x00请\u202e分\u2066析\u2069\x1f",
 			want:    "请分析",
+		},
+		{
+			name:    "zero width non joiner is preserved",
+			message: "می\u200cخواهم",
+			want:    "می\u200cخواهم",
+		},
+		{
+			name:    "combining sequence is preserved",
+			message: "e\u0301",
+			want:    "e\u0301",
+		},
+		{
+			name:    "emoji variation sequence is preserved",
+			message: "✈️",
+			want:    "✈️",
+		},
+		{
+			name:    "isolated combining and variation runes",
+			message: "\u0301\ufe0f",
+			want:    "新建任务",
 		},
 		{
 			name:    "emoji joiner is preserved",
@@ -373,6 +413,70 @@ func TestApplicationCreateTaskThreadUsesActivatedSkillCreatorForProvisionalTitle
 	require.NotNil(t, resp)
 	require.NotNil(t, domainSVC.createThreadRunMessageReq)
 	require.Equal(t, "创建技能", domainSVC.createThreadRunMessageReq.Thread.Title)
+}
+
+func TestApplicationCreateTaskThreadPreservesNonTemplateTitlesWithActivatedSkillCreator(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "negated creation",
+			message: "不要创建技能，只解释流程",
+		},
+		{
+			name:    "skill comparison",
+			message: "比较创建技能和导入技能的区别",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			domainSVC := &recordingThreadService{
+				createdThreadRunMessage: &domainservice.CreateThreadRunMessageResult{
+					Thread: &entity.Thread{
+						ID: 10, SpaceID: 1, CreatorID: 2, Title: tt.message,
+						Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+					},
+					Run: &entity.Run{
+						ID: 20, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+						RunKind: entity.RunKindTask, Status: entity.RunStatusPending,
+					},
+					Message: &entity.Message{
+						ID: 30, ThreadID: 10, RunID: 20,
+						Role: entity.MessageRoleUser,
+					},
+				},
+			}
+			policy := RuntimePolicy{
+				DefaultMode:    RuntimeModeEinoADK,
+				EinoADKEnabled: true,
+			}
+			app := &ApplicationService{
+				ThreadSVC:     domainSVC,
+				RuntimePolicy: &policy,
+			}
+
+			_, err := app.CreateTaskThread(context.Background(), &CreateTaskThreadRequest{
+				SpaceID: 1,
+				UserID:  2,
+				Message: tt.message,
+				Config: `{
+					"runtime":"eino_adk",
+					"mode":"pro",
+					"enable_skills":["skill-creator"],
+					"skills":{
+						"enabled":true,
+						"allowed_skills":["skill-creator"]
+					}
+				}`,
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, domainSVC.createThreadRunMessageReq)
+			require.Equal(t, tt.message, domainSVC.createThreadRunMessageReq.Thread.Title)
+		})
+	}
 }
 
 func TestApplicationCreateTaskThreadCanonicalizesProductionRuntimeAndMode(t *testing.T) {

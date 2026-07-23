@@ -274,6 +274,7 @@ const (
 	provisionalTaskTitleMaxRunes = 32
 	defaultTaskThreadTitle       = "新建任务"
 	taskTitleSkillCreator        = "skill-creator"
+	taskTitleSkillCreatorGuide   = "我想创建一个技能，请先询问我技能用途、使用场景和期望输出"
 )
 
 func taskThreadTitle(title, message string) string {
@@ -320,7 +321,7 @@ func provisionalTaskThreadTitleWithActivatedResources(
 	}
 	_, skillCreatorActivated := activatedResources[taskTitleSkillCreator]
 	if (hasSkillCreatorMarker || skillCreatorActivated) &&
-		(strings.Contains(source, "创建一个技能") || strings.Contains(source, "创建技能")) {
+		source == taskTitleSkillCreatorGuide {
 		return "创建技能"
 	}
 
@@ -415,12 +416,23 @@ func sanitizedTaskTitleRunes(source string) []rune {
 			runes = append(runes, ' ')
 			continue
 		}
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) && r != '\u200d' {
+		if unicode.IsControl(r) || isDangerousTaskTitleBidiControl(r) {
 			continue
 		}
 		runes = append(runes, r)
 	}
 	return runes
+}
+
+func isDangerousTaskTitleBidiControl(r rune) bool {
+	switch r {
+	case '\u061c', '\u200e', '\u200f',
+		'\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+		'\u2066', '\u2067', '\u2068', '\u2069':
+		return true
+	default:
+		return false
+	}
 }
 
 func isTaskTitleResourceMarkerStart(runes []rune, index int) bool {
@@ -448,10 +460,7 @@ func isASCIIResourceMarkerRune(r rune) bool {
 func isTaskTitleLeadingNoise(r rune) bool {
 	switch r {
 	case '，', '。', ',', '；', ';', ':', '：',
-		'!', '！', '?', '？', '、',
-		'(', ')', '（', '）', '[', ']', '【', '】',
-		'{', '}', '<', '>', '《', '》',
-		'"', '\'', '“', '”', '‘', '’', '…':
+		'!', '！', '?', '？', '、', '…':
 		return true
 	default:
 		return unicode.IsSpace(r)
@@ -464,7 +473,7 @@ func isTaskTitleTrailingNoise(r rune) bool {
 
 func hasVisibleTaskTitleRune(source string) bool {
 	for _, r := range source {
-		if !unicode.IsSpace(r) && !unicode.Is(unicode.Cf, r) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsSymbol(r) {
 			return true
 		}
 	}
