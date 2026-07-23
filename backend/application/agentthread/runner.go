@@ -33,6 +33,7 @@ import (
 const defaultRunProcessorWorkerID = "agent-harness"
 const defaultRunProcessorBatchSize int32 = 10
 const defaultRunLeaseCleanupTimeout = 5 * time.Second
+const defaultRunTitleGenerationTimeout = 2 * time.Second
 
 const (
 	subagentRetryNotSupportedCode    = "subagent_retry_not_supported"
@@ -776,7 +777,7 @@ func (p *RunProcessor) prepareGeneratedThreadTitle(
 		return "", ""
 	}
 	currentTitle := strings.TrimSpace(thread.Title)
-	initialTitle := taskThreadTitle("", userMessage)
+	initialTitle := taskThreadTitleWithRunConfig("", userMessage, run.Config)
 	if currentTitle != "" && currentTitle != initialTitle {
 		return "", ""
 	}
@@ -871,11 +872,20 @@ func (p *RunProcessor) generatedThreadTitle(
 		return title
 	}
 	if p != nil && p.titleGenerator != nil {
-		title, err := p.titleGenerator.GenerateTitle(ctx, RunTitleGenerationInput{
+		titleCtx := ctx
+		if titleCtx == nil {
+			titleCtx = context.Background()
+		}
+		titleCtx, cancel := context.WithTimeout(
+			titleCtx,
+			defaultRunTitleGenerationTimeout,
+		)
+		title, err := p.titleGenerator.GenerateTitle(titleCtx, RunTitleGenerationInput{
 			Run:              run,
 			UserMessage:      userMessage,
 			AssistantMessage: strings.TrimSpace(resultMessage(result)),
 		})
+		cancel()
 		if err == nil {
 			if title := normalizeTitle(title); title != "" {
 				return title
@@ -890,9 +900,11 @@ func (p *RunProcessor) generatedThreadTitle(
 	if run != nil {
 		activatedResources = taskTitleActivatedResources(run.Config)
 	}
-	return provisionalTaskThreadTitleWithActivatedResources(
-		userMessage,
-		activatedResources,
+	return normalizeTitle(
+		provisionalTaskThreadTitleWithActivatedResources(
+			userMessage,
+			activatedResources,
+		),
 	)
 }
 
@@ -900,7 +912,9 @@ func generatedThreadTitle(userMessage, explicitTitle string) string {
 	if title := normalizeGeneratedThreadTitle(explicitTitle); title != "" {
 		return title
 	}
-	if title := extractQuotedGeneratedThreadTitle(userMessage); title != "" {
+	if title := normalizeGeneratedThreadTitle(
+		extractQuotedGeneratedThreadTitle(userMessage),
+	); title != "" {
 		return title
 	}
 	return fallbackGeneratedThreadTitle(userMessage)
@@ -936,8 +950,9 @@ func extractQuotedGeneratedThreadTitle(text string) string {
 		if end <= 0 {
 			continue
 		}
-		if title := normalizeGeneratedThreadTitle(remaining[:end]); title != "" {
-			return title
+		candidate := remaining[:end]
+		if strings.TrimSpace(candidate) != "" {
+			return candidate
 		}
 	}
 	return ""

@@ -503,6 +503,26 @@ func TestRunProcessorGeneratedThreadTitleHonorsConfiguredMaxChars(t *testing.T) 
 	)
 
 	require.Equal(t, longTitle, title)
+
+	quotedTitle := (&RunProcessor{}).generatedThreadTitle(
+		context.Background(),
+		&RunSummary{Config: `{"title_generation":{"max_chars":80,"max_words":20}}`},
+		"请生成《"+longTitle+"》",
+		&RunExecutionResult{Message: "已完成"},
+	)
+
+	require.Equal(t, longTitle, quotedTitle)
+}
+
+func TestRunProcessorGeneratedThreadTitleNormalizesDeterministicFallback(t *testing.T) {
+	title := (&RunProcessor{}).generatedThreadTitle(
+		context.Background(),
+		&RunSummary{Config: `{"title_generation":{"max_chars":80,"max_words":2}}`},
+		"alpha beta gamma delta",
+		&RunExecutionResult{Message: "done"},
+	)
+
+	require.Equal(t, "alpha beta", title)
 }
 
 func TestRunProcessorSkipsRedundantCleanFallbackTitleUpdate(t *testing.T) {
@@ -561,6 +581,175 @@ func TestRunProcessorSkipsRedundantCleanFallbackTitleUpdate(t *testing.T) {
 	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
 	require.JSONEq(t, `{"thread_title":""}`, domainSVC.finalizeRunSuccessReq.TitleEventPayload)
 	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
+}
+
+func TestRunProcessorRecognizesRunConfiguredProvisionalTitle(t *testing.T) {
+	const runConfig = `{"enable_skills":["web-search"]}`
+	userMessage := "请帮我整理季度复盘。 @web-search"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitleWithRunConfig("", userMessage, runConfig)
+	require.Equal(t, "请帮我整理季度复盘", initialTitle)
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				Config:   runConfig,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "季度复盘已整理",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "季度复盘已整理"}, nil
+		}),
+		RunProcessorOptions{
+			WorkerID:       "worker-a",
+			BatchSize:      1,
+			TitleGenerator: &recordingRunTitleGenerator{title: "季度复盘"},
+		},
+	)
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, domainSVC.updateThreadTitleReq)
+	require.Equal(t, "季度复盘", domainSVC.updateThreadTitleReq.Title)
+	require.Contains(t, domainSVC.finalizeRunSuccessReq.TitleEventPayload, `"thread_title":"季度复盘"`)
+}
+
+func TestRunProcessorKeepsManualTitleWithRunConfiguredResources(t *testing.T) {
+	const runConfig = `{"enable_skills":["web-search"]}`
+	userMessage := "请帮我整理季度复盘。 @web-search"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	generator := &recordingRunTitleGenerator{title: "季度复盘"}
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: "手动命名的季度任务",
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				Config:   runConfig,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "季度复盘已整理",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "季度复盘已整理"}, nil
+		}),
+		RunProcessorOptions{
+			WorkerID:       "worker-a",
+			BatchSize:      1,
+			TitleGenerator: generator,
+		},
+	)
+
+	err = processor.ProcessPendingRuns(context.Background())
+
+	require.NoError(t, err)
+	require.Zero(t, generator.calls)
+	require.Nil(t, domainSVC.updateThreadTitleReq)
+	require.JSONEq(t, `{"thread_title":""}`, domainSVC.finalizeRunSuccessReq.TitleEventPayload)
+}
+
+func TestRunProcessorTitleGeneratorTimeoutDoesNotBlockFinalization(t *testing.T) {
+	userMessage := "请帮我整理季度复盘"
+	input, err := taskThreadRunInputFromMessage(userMessage)
+	require.NoError(t, err)
+	initialTitle := taskThreadTitle("", userMessage)
+	generator := &blockingRunTitleGenerator{}
+	domainSVC := &recordingThreadService{
+		got: &entity.Thread{
+			ID:    10,
+			Title: initialTitle,
+		},
+		claimedRuns: []*entity.Run{
+			{
+				ID:       200,
+				ThreadID: 10,
+				Status:   entity.RunStatusRunning,
+				Input:    input,
+				WorkerID: "worker-a",
+			},
+		},
+		appended: &entity.Message{
+			ID:       300,
+			ThreadID: 10,
+			RunID:    200,
+			Role:     entity.MessageRoleAssistant,
+			Content:  "季度复盘已整理",
+		},
+		completedRun: &entity.Run{
+			ID:       200,
+			ThreadID: 10,
+			Status:   entity.RunStatusSucceeded,
+			WorkerID: "worker-a",
+		},
+	}
+	processor := NewRunProcessor(
+		&ApplicationService{ThreadSVC: domainSVC},
+		RunExecutorFunc(func(context.Context, *RunSummary) (*RunExecutionResult, error) {
+			return &RunExecutionResult{Message: "季度复盘已整理"}, nil
+		}),
+		RunProcessorOptions{
+			WorkerID:       "worker-a",
+			BatchSize:      1,
+			TitleGenerator: generator,
+		},
+	)
+	parentCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = processor.ProcessPendingRuns(parentCtx)
+
+	require.NoError(t, err)
+	require.ErrorIs(t, generator.ctxErr, context.DeadlineExceeded)
+	require.NoError(t, parentCtx.Err())
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.Nil(t, domainSVC.updateThreadTitleReq)
+	require.JSONEq(t, `{"thread_title":""}`, domainSVC.finalizeRunSuccessReq.TitleEventPayload)
 }
 
 func TestRunProcessorDoesNotOverrideExistingThreadTitleOnFollowUp(t *testing.T) {
@@ -1574,4 +1763,18 @@ func (g *recordingRunTitleGenerator) GenerateTitle(
 	g.input = input
 
 	return g.title, g.err
+}
+
+type blockingRunTitleGenerator struct {
+	ctxErr error
+}
+
+func (g *blockingRunTitleGenerator) GenerateTitle(
+	ctx context.Context,
+	_ RunTitleGenerationInput,
+) (string, error) {
+	<-ctx.Done()
+	g.ctxErr = ctx.Err()
+
+	return "", g.ctxErr
 }
