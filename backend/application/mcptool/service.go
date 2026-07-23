@@ -539,8 +539,22 @@ func (s *ApplicationService) ListMCPToolRegistryEntriesForRuntime(
 }
 
 func (s *ApplicationService) listMCPToolRegistryEntries(ctx context.Context, spaceID int64) ([]*toolapi.MCPToolRegistryEntry, error) {
+	type credentialSafeCatalog interface {
+		ListForManagement(
+			ctx context.Context,
+			spaceID int64,
+		) ([]*toolapi.MCPToolServer, error)
+	}
 
-	servers, err := s.components.Catalog.List(ctx, spaceID)
+	var (
+		servers []*toolapi.MCPToolServer
+		err     error
+	)
+	if catalog, ok := s.components.Catalog.(credentialSafeCatalog); ok {
+		servers, err = catalog.ListForManagement(ctx, spaceID)
+	} else {
+		servers, err = s.components.Catalog.List(ctx, spaceID)
+	}
 	if err != nil {
 		return nil, err
 	}

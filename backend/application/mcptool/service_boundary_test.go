@@ -19,12 +19,35 @@ type getTrackingCatalog struct {
 	getCalls int
 }
 
+type credentialSafeListCatalog struct {
+	Catalog
+	strictCalls int
+	safeCalls   int
+	safeServers []*toolapi.MCPToolServer
+}
+
 func (c *getTrackingCatalog) Get(
 	ctx context.Context,
 	serverID int64,
 ) (*toolapi.MCPToolServer, error) {
 	c.getCalls++
 	return c.Catalog.Get(ctx, serverID)
+}
+
+func (c *credentialSafeListCatalog) List(
+	ctx context.Context,
+	spaceID int64,
+) ([]*toolapi.MCPToolServer, error) {
+	c.strictCalls++
+	return nil, errors.New("mcp tool auth decode failed")
+}
+
+func (c *credentialSafeListCatalog) ListForManagement(
+	ctx context.Context,
+	spaceID int64,
+) ([]*toolapi.MCPToolServer, error) {
+	c.safeCalls++
+	return c.safeServers, nil
 }
 
 func TestApplicationServiceRuntimeRegistryWorksWithoutUserSession(t *testing.T) {
@@ -43,6 +66,72 @@ func TestApplicationServiceRuntimeRegistryWorksWithoutUserSession(t *testing.T) 
 	require.Equal(t, "mcp_41_search", entries[0].Name)
 	_, err = svc.ListMCPToolRegistryEntries(context.Background(), 10)
 	require.ErrorIs(t, err, ErrMCPUnauthenticated)
+}
+
+func TestApplicationServiceRegistryUsesCredentialSafeCatalogListing(t *testing.T) {
+	unreadable := managementServer(41, 10)
+	unreadable.Enabled = false
+	unreadable.HealthStatus = mcpToolHealthStatusUnhealthy
+	unreadable.HealthError = "credential_unavailable"
+	healthy := managementServer(42, 10)
+	catalog := &credentialSafeListCatalog{
+		Catalog:     NewInMemoryCatalog(),
+		safeServers: []*toolapi.MCPToolServer{unreadable, healthy},
+	}
+	svc := NewApplicationService(&Components{
+		Catalog:             catalog,
+		UserSpaceRoleReader: ownerRoleReader(10),
+	})
+
+	runtimeEntries, err := svc.ListMCPToolRegistryEntriesForRuntime(
+		context.Background(),
+		10,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, runtimeEntries)
+	for _, entry := range runtimeEntries {
+		require.Equal(t, int64(42), entry.ServerID)
+	}
+
+	userEntries, err := svc.ListMCPToolRegistryEntries(managementContext(7), 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, userEntries)
+	for _, entry := range userEntries {
+		require.Equal(t, int64(42), entry.ServerID)
+	}
+
+	require.Zero(t, catalog.strictCalls)
+	require.Equal(t, 2, catalog.safeCalls)
+}
+
+func TestRuntimeDefaultMCPInitializationUsesCredentialSafeListing(t *testing.T) {
+	raw := DefaultDeerFlowMCPConfigRaw()
+	config, err := parseDeerFlowExtensionsConfig(raw)
+	require.NoError(t, err)
+
+	safeServers := make([]*toolapi.MCPToolServer, 0, len(config.MCPServers))
+	serverID := int64(100)
+	for name := range config.MCPServers {
+		server := managementServer(serverID, 10)
+		server.Name = name
+		server.Enabled = false
+		safeServers = append(safeServers, server)
+		serverID++
+	}
+	catalog := &credentialSafeListCatalog{
+		Catalog:     NewInMemoryCatalog(),
+		safeServers: safeServers,
+	}
+	svc := NewApplicationService(&Components{
+		Catalog:                     catalog,
+		DefaultDeerFlowMCPConfigRaw: raw,
+	})
+
+	err = svc.ensureDefaultDeerFlowMCPServersForRuntime(context.Background(), 10)
+
+	require.NoError(t, err)
+	require.Zero(t, catalog.strictCalls)
+	require.Equal(t, 1, catalog.safeCalls)
 }
 
 func TestApplicationServiceAuthorizationChecksRequestedSpaceBeforeUpdateLookup(t *testing.T) {

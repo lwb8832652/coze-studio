@@ -33,6 +33,39 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
+func TestClassifyRunMainFlowErrorUsesSafeStableCategories(t *testing.T) {
+	require.Equal(t, "none", classifyRunMainFlowError(nil))
+	require.Equal(
+		t,
+		"mcp_auth_unavailable",
+		classifyRunMainFlowError(errors.New(
+			"resolve eino adk tool set: mcp tool auth decode failed: raw-secret",
+		)),
+	)
+	require.Equal(
+		t,
+		"toolset_resolution_failed",
+		classifyRunMainFlowError(errors.New(
+			"resolve eino adk tool set: provider unavailable",
+		)),
+	)
+	require.Equal(
+		t,
+		"executor_error",
+		classifyRunMainFlowError(errors.New("raw-secret provider response")),
+	)
+	require.Equal(t, "finalized_failure", classifyRunMainFlowOutcome(runProcessFailed, nil))
+	require.Equal(t, "none", classifyRunMainFlowOutcome(runProcessSucceeded, nil))
+	require.Equal(
+		t,
+		"mcp_auth_unavailable",
+		classifyRunMainFlowOutcome(
+			runProcessErrored,
+			errors.New("resolve eino adk tool set: mcp tool auth decode failed: raw-secret"),
+		),
+	)
+}
+
 func TestRunProcessorCompletesClaimedRunWithAssistantMessage(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{

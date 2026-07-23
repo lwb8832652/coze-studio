@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -197,6 +198,17 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 			err = heartbeatErr
 		}
 		heartbeat.Close()
+		if run != nil {
+			log.Printf(
+				"[agent-run-main] finish run_id=%d thread_id=%d space_id=%d worker_id=%s outcome=%s error_class=%s",
+				run.RunID,
+				run.ThreadID,
+				run.SpaceID,
+				p.workerID,
+				outcome,
+				classifyRunMainFlowOutcome(outcome, err),
+			)
+		}
 		switch outcome {
 		case runProcessInterrupted:
 			result.ProcessedRuns++
@@ -223,6 +235,41 @@ func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunPro
 	}
 
 	return result, batchErr
+}
+
+func classifyRunMainFlowError(err error) string {
+	if err == nil {
+		return "none"
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	}
+
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "mcp tool auth decode failed"):
+		return "mcp_auth_unavailable"
+	case strings.Contains(message, "resolve eino adk tool set"):
+		return "toolset_resolution_failed"
+	default:
+		return "executor_error"
+	}
+}
+
+func classifyRunMainFlowOutcome(
+	outcome runProcessOutcome,
+	err error,
+) string {
+	if err != nil {
+		return classifyRunMainFlowError(err)
+	}
+	if outcome == runProcessFailed {
+		return "finalized_failure"
+	}
+	return "none"
 }
 
 func releaseUnfinalizedRunLease(
@@ -267,6 +314,14 @@ func (p *RunProcessor) processRun(
 		return runProcessSkipped, nil
 	}
 
+	log.Printf(
+		"[agent-run-main] start run_id=%d thread_id=%d space_id=%d worker_id=%s execution_generation=%d",
+		run.RunID,
+		run.ThreadID,
+		run.SpaceID,
+		p.workerID,
+		run.ExecutionGeneration,
+	)
 	p.emitRunEvent(ctx, run, "run.started", map[string]any{
 		"status":    string(RunStatusRunning),
 		"worker_id": p.workerID,
@@ -373,6 +428,14 @@ func (p *RunProcessor) finalizeRunExecution(
 
 			return runProcessInterrupted, nil
 		}
+		log.Printf(
+			"[agent-run-main] execution_failed run_id=%d thread_id=%d space_id=%d worker_id=%s error_class=%s",
+			run.RunID,
+			run.ThreadID,
+			run.SpaceID,
+			p.workerID,
+			classifyRunMainFlowError(err),
+		)
 		return p.finalizeFailedRun(ctx, run, heartbeat, "executor_error", err.Error())
 	}
 	if cause := context.Cause(ctx); cause != nil {
