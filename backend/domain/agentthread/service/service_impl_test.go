@@ -27,9 +27,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestCreateThreadRequiresTitle(t *testing.T) {
@@ -1009,6 +1011,35 @@ func TestCompleteRunTransitionsRunningToSucceeded(t *testing.T) {
 	require.JSONEq(t, `{"status":"succeeded","worker_id":"worker-a"}`, repo.lastUpdateRunReq.Event.Payload)
 }
 
+func TestCompleteRunBindsOutboxIntentToDurableTerminalEvent(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-1",
+		ExecutionGeneration: 1,
+	}}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
+
+	_, err := svc.CompleteRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		LeaseOwner: "worker-a", LeaseToken: "lease-1", ExecutionGeneration: 1,
+		Now: 4_000,
+		OutboxIntent: &repository.NotificationOutboxIntent{Event: domainnotification.Event{
+			EventID:          "run-event:placeholder:completed",
+			EventType:        domainnotification.EventTaskCompleted,
+			AggregateType:    "agent_run",
+			AggregateID:      "run:1",
+			AggregateVersion: 1,
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.lastUpdateRunReq.OutboxIntent)
+	require.Equal(t, "run-event:2001:succeeded", repo.lastUpdateRunReq.OutboxIntent.Event.EventID)
+	require.Equal(t, int64(2001), repo.lastUpdateRunReq.OutboxIntent.Event.AggregateVersion)
+	require.Equal(t, domainnotification.EventTaskCompleted, repo.lastUpdateRunReq.OutboxIntent.Event.EventType)
+}
+
 func TestInterruptRunUsesPrePersistedEventWithoutAllocatingAnotherID(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.runs[10] = []*entity.Run{{
@@ -1029,6 +1060,90 @@ func TestInterruptRunUsesPrePersistedEventWithoutAllocatingAnotherID(t *testing.
 	require.True(t, repo.lastUpdateRunReq.EventAlreadyPersisted)
 	require.Nil(t, repo.lastUpdateRunReq.Event)
 	require.Empty(t, repo.runEvents[1])
+}
+
+func TestInterruptRunPassesPrePersistedAwaitingInputPayloadForOutboxAppend(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a",
+	}}
+	svc := NewService(&Components{
+		Repo:  repo,
+		IDGen: failingIDGen{err: errors.New("id generator must not be called")},
+	})
+	var appended []domainnotification.Event
+	payload := `{"status":"interrupted","awaiting_input":{"schema":"coze.agentthread.awaiting_input.v1","interaction_event_id":"interrupt-event-1","interaction_id":"hi_1","kind":"clarification"}}`
+
+	run, err := svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		EventAlreadyPersisted: true,
+		EventPayload:          payload,
+		OutboxIntent: &repository.NotificationOutboxIntent{
+			Event: domainnotification.Event{
+				EventID:          "interaction-event:interrupt-event-1:task.awaiting_input",
+				EventType:        domainnotification.EventTaskAwaitingInput,
+				AggregateType:    "agent_run_interaction",
+				AggregateID:      "interaction:interrupt-event-1",
+				AggregateVersion: 1,
+			},
+			Append: func(_ context.Context, _ *gorm.DB, event domainnotification.Event) error {
+				appended = append(appended, event)
+				return nil
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, run.Status)
+	require.Equal(t, payload, repo.lastUpdateRunReq.EventPayload)
+	require.True(t, repo.lastUpdateRunReq.EventAlreadyPersisted)
+	require.NotNil(t, repo.lastUpdateRunReq.OutboxIntent)
+	require.Len(t, appended, 1)
+	require.Equal(t, domainnotification.EventTaskAwaitingInput, appended[0].EventType)
+	err = svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		EventAlreadyPersisted: true,
+		EventPayload:          payload,
+		OutboxIntent:          repo.lastUpdateRunReq.OutboxIntent,
+	})
+	require.Error(t, err)
+	require.Len(t, appended, 1)
+}
+
+func TestInterruptRunDoesNotAppendGenericPrePersistedInterruptOutbox(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.runs[10] = []*entity.Run{{
+		ID: 1, ThreadID: 10, Status: entity.RunStatusRunning, WorkerID: "worker-a",
+	}}
+	svc := NewService(&Components{
+		Repo:  repo,
+		IDGen: failingIDGen{err: errors.New("id generator must not be called")},
+	})
+	var appendCalls int
+
+	run, err := svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
+		EventAlreadyPersisted: true,
+		EventPayload:          `{"status":"interrupted","interrupt_count":1}`,
+		OutboxIntent: &repository.NotificationOutboxIntent{
+			Event: domainnotification.Event{
+				EventID:          "interaction-event:interrupt-event-1:task.awaiting_input",
+				EventType:        domainnotification.EventTaskAwaitingInput,
+				AggregateType:    "agent_run_interaction",
+				AggregateID:      "interaction:interrupt-event-1",
+				AggregateVersion: 1,
+			},
+			Append: func(context.Context, *gorm.DB, domainnotification.Event) error {
+				appendCalls++
+				return nil
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, run.Status)
+	require.Zero(t, appendCalls)
+	require.Equal(t, `{"status":"interrupted","interrupt_count":1}`, repo.lastUpdateRunReq.EventPayload)
 }
 
 func TestFailRunStoresError(t *testing.T) {
@@ -3463,6 +3578,16 @@ func (r *memoryRepo) UpdateRunStatus(ctx context.Context, req repository.UpdateR
 			}
 			if req.Event != nil && !req.EventAlreadyPersisted {
 				r.runEvents[run.ID] = append(r.runEvents[run.ID], cloneRunEvent(req.Event))
+			}
+			if req.EventAlreadyPersisted &&
+				req.To == entity.RunStatusInterrupted &&
+				req.OutboxIntent != nil &&
+				req.OutboxIntent.Event.EventType == domainnotification.EventTaskAwaitingInput {
+				if _, ok := entity.RunAwaitingInputInteractionRefFromEventPayload(req.EventPayload); ok {
+					if err := req.OutboxIntent.Append(ctx, nil, req.OutboxIntent.Event); err != nil {
+						return err
+					}
+				}
 			}
 
 			return nil

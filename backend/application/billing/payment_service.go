@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -38,22 +37,35 @@ func (s *Service) CreateCheckout(ctx context.Context, input CreateCheckoutInput)
 	if err != nil {
 		return nil, err
 	}
-	if order.Status != domainbilling.OrderStatusPending || order.PaymentStatus != domainbilling.PaymentStatusPending {
-		return nil, domainbilling.ErrReservationNotActive
-	}
 	if order.TotalMicros == 0 {
-		digest := sha256.Sum256([]byte("free:" + order.OrderNo))
-		paid, paymentErr := s.commerce.RecordPaymentSucceeded(ctx, domainbilling.PaymentSucceededInput{
-			OrderNo: order.OrderNo, Gateway: "internal_free", ProviderTransactionID: "free:" + order.OrderNo,
-			EventDigest: hex.EncodeToString(digest[:]), AmountMicros: 0, Currency: order.Currency,
-		})
-		if paymentErr != nil {
-			return nil, paymentErr
+		paid := order
+		var paymentErr error
+		switch {
+		case order.Status == domainbilling.OrderStatusPending && order.PaymentStatus == domainbilling.PaymentStatusPending:
+			digest := sha256.Sum256([]byte("free:" + order.OrderNo))
+			paid, paymentErr = s.commerce.RecordPaymentSucceeded(ctx, domainbilling.PaymentSucceededInput{
+				OrderNo: order.OrderNo, Gateway: "internal_free", ProviderTransactionID: "free:" + order.OrderNo,
+				ProviderEventID: "free:" + order.OrderNo,
+				EventDigest: hex.EncodeToString(digest[:]), AmountMicros: 0, Currency: order.Currency,
+			})
+			if paymentErr != nil {
+				return nil, paymentErr
+			}
+		case order.PaymentStatus == domainbilling.PaymentStatusSucceeded &&
+			order.FulfillmentStatus == domainbilling.FulfillmentStatusPending:
+		case order.PaymentStatus == domainbilling.PaymentStatusSucceeded &&
+			order.FulfillmentStatus == domainbilling.FulfillmentStatusSucceeded:
+			return &CreatePaymentResponse{Gateway: "internal_free", ProviderTransactionID: "free:" + order.OrderNo}, nil
+		default:
+			return nil, domainbilling.ErrReservationNotActive
 		}
 		if _, paymentErr = s.commerce.FulfillOrder(ctx, paid.OrderNo); paymentErr != nil {
 			return nil, paymentErr
 		}
 		return &CreatePaymentResponse{Gateway: "internal_free", ProviderTransactionID: "free:" + order.OrderNo}, nil
+	}
+	if order.Status != domainbilling.OrderStatusPending || order.PaymentStatus != domainbilling.PaymentStatusPending {
+		return nil, domainbilling.ErrReservationNotActive
 	}
 	config, err := s.admin.GetConfig(ctx)
 	if err != nil {
@@ -86,6 +98,9 @@ func (s *Service) HandlePaymentCallback(
 	body []byte,
 ) (*domainbilling.Order, error) {
 	if s == nil || s.gateway == nil || strings.TrimSpace(gatewayName) == "" || len(body) == 0 {
+		if s != nil && s.gateway != nil {
+			return nil, ErrPaymentCallbackInvalid
+		}
 		return nil, ErrPaymentGatewayUnavailable
 	}
 	config, err := s.admin.GetConfig(ctx)
@@ -99,11 +114,15 @@ func (s *Service) HandlePaymentCallback(
 	if err != nil {
 		return nil, err
 	}
+	if event == nil || !strings.EqualFold(strings.TrimSpace(event.Status), string(domainbilling.PaymentStatusSucceeded)) {
+		return nil, ErrPaymentCallbackInvalid
+	}
 	if !strings.EqualFold(strings.TrimSpace(gatewayName), event.Gateway) {
-		return nil, errors.New("billing: payment gateway mismatch")
+		return nil, ErrPaymentCallbackInvalid
 	}
 	paid, err := s.commerce.RecordPaymentSucceeded(ctx, domainbilling.PaymentSucceededInput{
 		OrderNo: event.OrderNo, Gateway: event.Gateway, ProviderTransactionID: event.ProviderTransactionID,
+		ProviderEventID: event.ProviderEventID,
 		EventDigest: event.EventDigest, AmountMicros: event.AmountMicros, Currency: event.Currency,
 	})
 	if err != nil {

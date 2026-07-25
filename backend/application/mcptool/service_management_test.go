@@ -21,6 +21,7 @@ import (
 
 type managementRoleReader struct {
 	spaces []*userentity.Space
+	members []*userentity.SpaceMember
 	err    error
 }
 
@@ -29,6 +30,43 @@ func (r *managementRoleReader) GetUserSpaceList(
 	_ int64,
 ) ([]*userentity.Space, error) {
 	return r.spaces, r.err
+}
+
+func (r *managementRoleReader) GetSpaceMembers(
+	_ context.Context,
+	_ int64,
+) ([]*userentity.SpaceMember, error) {
+	if len(r.members) > 0 {
+		return r.members, r.err
+	}
+	members := make([]*userentity.SpaceMember, 0, len(r.spaces))
+	for _, space := range r.spaces {
+		if space == nil {
+			continue
+		}
+		members = append(members, &userentity.SpaceMember{
+			UserID:   7,
+			RoleType: space.RoleType,
+		})
+	}
+	return members, r.err
+}
+
+func (r *managementRoleReader) ListSpaceMemberRoles(
+	_ context.Context,
+	_ int64,
+) ([]SpaceMemberRole, error) {
+	roles := make([]SpaceMemberRole, 0, len(r.spaces))
+	for _, space := range r.spaces {
+		if space == nil {
+			continue
+		}
+		roles = append(roles, SpaceMemberRole{
+			UserID:   7,
+			RoleType: space.RoleType,
+		})
+	}
+	return roles, r.err
 }
 
 type managementRuntimeExecutor struct {

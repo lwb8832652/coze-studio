@@ -11,6 +11,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	workflowentity "github.com/coze-dev/coze-studio/backend/domain/workflow/entity"
 	workflowvo "github.com/coze-dev/coze-studio/backend/domain/workflow/entity/vo"
 )
@@ -27,6 +28,7 @@ func TestInitServiceBuildsProductionDependencies(t *testing.T) {
 		UserSpaceReader:   membershipAuthorizer(true),
 		AgentThreadClient: &agentThreadClientStub{},
 		WorkflowDomain:    workflowDomain,
+		NotificationOutbox: notificationOutboxStub{},
 		RootContext:       context.Background(),
 	})
 
@@ -50,4 +52,10 @@ func (g *applicationIDGen) GenMultiIDs(_ context.Context, count int) ([]int64, e
 	ids := make([]int64, count)
 	for i := range ids { g.next++; ids[i] = g.next }
 	return ids, nil
+}
+
+type notificationOutboxStub struct{}
+
+func (notificationOutboxStub) AppendInTransaction(context.Context, *gorm.DB, domainnotification.Event) error {
+	return nil
 }

@@ -29,4 +29,8 @@ type Repository interface {
 	FindReservationByReserveBusinessNoForUpdate(ctx context.Context, businessNo string) (*Reservation, error)
 	CreateReservation(ctx context.Context, reservation *Reservation) error
 	UpdateReservation(ctx context.Context, reservation *Reservation, expectedVersion int64) error
+
+	// ApplyCreditThreshold persists the active episode and appends any low
+	// credit event in this repository's current ledger transaction.
+	ApplyCreditThreshold(ctx context.Context, evaluation CreditThresholdEvaluation) error
 }

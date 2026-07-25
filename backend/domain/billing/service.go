@@ -48,13 +48,22 @@ func (s *Service) Grant(ctx context.Context, input GrantInput) (*GrantResult, er
 		if txErr != nil {
 			return txErr
 		}
-		if txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+		settledBalanceBefore, txErr := settledCreditBalanceMicros(account)
+		if txErr != nil {
+			return txErr
+		}
+		if _, txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
 			return txErr
 		}
 		existing, txErr := repository.FindLedgerByBusinessNo(ctx, businessNo)
 		if txErr == nil {
 			if existing.AccountID != account.ID || existing.Direction != LedgerDirectionCredit || existing.AmountMicros != input.AmountMicros {
 				return ErrIdempotencyConflict
+			}
+			if txErr = applyCreditThresholdAfterSettledBalanceChange(
+				ctx, repository, account, settledBalanceBefore, 0, now,
+			); txErr != nil {
+				return txErr
 			}
 			result = &GrantResult{Balance: balanceFromAccount(account), Entry: existing}
 			return nil
@@ -105,6 +114,11 @@ func (s *Service) Grant(ctx context.Context, input GrantInput) (*GrantResult, er
 		if txErr = repository.CreateLedger(ctx, entry); txErr != nil {
 			return txErr
 		}
+		if txErr = applyCreditThresholdAfterSettledBalanceChange(
+			ctx, repository, account, settledBalanceBefore, entry.ActorUserID, now,
+		); txErr != nil {
+			return txErr
+		}
 		result = &GrantResult{Balance: balanceFromAccount(account), Batch: batch, Entry: entry}
 		return nil
 	})
@@ -134,13 +148,25 @@ func (s *Service) Reserve(ctx context.Context, input ReserveInput) (*Reservation
 		if txErr != nil {
 			return txErr
 		}
-		if txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+		settledBalanceBefore, txErr := settledCreditBalanceMicros(account)
+		if txErr != nil {
+			return txErr
+		}
+		expiredMicros, txErr := s.expireBatches(ctx, repository, account, now)
+		if txErr != nil {
 			return txErr
 		}
 		existing, txErr := repository.FindReservationByReserveBusinessNoForUpdate(ctx, businessNo)
 		if txErr == nil {
 			if existing.AccountID != account.ID || existing.ReservedMicros != input.AmountMicros {
 				return ErrIdempotencyConflict
+			}
+			if expiredMicros > 0 {
+				if txErr = applyCreditThresholdAfterSettledBalanceChange(
+					ctx, repository, account, settledBalanceBefore, 0, now,
+				); txErr != nil {
+					return txErr
+				}
 			}
 			result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: existing}
 			return nil
@@ -205,6 +231,13 @@ func (s *Service) Reserve(ctx context.Context, input ReserveInput) (*Reservation
 		if txErr = repository.CreateReservation(ctx, reservation); txErr != nil {
 			return txErr
 		}
+		if expiredMicros > 0 {
+			if txErr = applyCreditThresholdAfterSettledBalanceChange(
+				ctx, repository, account, settledBalanceBefore, 0, now,
+			); txErr != nil {
+				return txErr
+			}
+		}
 		result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: reservation}
 		return nil
 	})
@@ -236,7 +269,11 @@ func (s *Service) Settle(ctx context.Context, input SettleInput) (*ReservationRe
 		if txErr != nil {
 			return txErr
 		}
-		if txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+		settledBalanceBefore, txErr := settledCreditBalanceMicros(account)
+		if txErr != nil {
+			return txErr
+		}
+		if _, txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
 			return txErr
 		}
 		if reservation.Status == ReservationStatusSettled {
@@ -246,6 +283,11 @@ func (s *Service) Settle(ctx context.Context, input SettleInput) (*ReservationRe
 			entry, findErr := repository.FindLedgerByBusinessNo(ctx, businessNo)
 			if findErr != nil && !errors.Is(findErr, ErrNotFound) {
 				return findErr
+			}
+			if txErr = applyCreditThresholdAfterSettledBalanceChange(
+				ctx, repository, account, settledBalanceBefore, 0, now,
+			); txErr != nil {
+				return txErr
 			}
 			result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: reservation, Entry: entry}
 			return nil
@@ -341,6 +383,11 @@ func (s *Service) Settle(ctx context.Context, input SettleInput) (*ReservationRe
 				return txErr
 			}
 		}
+		if txErr = applyCreditThresholdAfterSettledBalanceChange(
+			ctx, repository, account, settledBalanceBefore, input.ActorUserID, now,
+		); txErr != nil {
+			return txErr
+		}
 		result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: reservation, Entry: entry}
 		return nil
 	})
@@ -367,12 +414,24 @@ func (s *Service) Release(ctx context.Context, input ReleaseInput) (*Reservation
 		if txErr != nil {
 			return txErr
 		}
-		if txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+		settledBalanceBefore, txErr := settledCreditBalanceMicros(account)
+		if txErr != nil {
+			return txErr
+		}
+		expiredBatchMicros, txErr := s.expireBatches(ctx, repository, account, now)
+		if txErr != nil {
 			return txErr
 		}
 		if reservation.Status == ReservationStatusReleased || reservation.Status == ReservationStatusExpired {
 			if reservation.ReleaseBusinessNo != businessNo {
 				return ErrIdempotencyConflict
+			}
+			if expiredBatchMicros > 0 {
+				if txErr = applyCreditThresholdAfterSettledBalanceChange(
+					ctx, repository, account, settledBalanceBefore, 0, now,
+				); txErr != nil {
+					return txErr
+				}
 			}
 			result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: reservation}
 			return nil
@@ -442,6 +501,13 @@ func (s *Service) Release(ctx context.Context, input ReleaseInput) (*Reservation
 				return txErr
 			}
 		}
+		if expiredBatchMicros > 0 || expiredRefund > 0 {
+			if txErr = applyCreditThresholdAfterSettledBalanceChange(
+				ctx, repository, account, settledBalanceBefore, 0, now,
+			); txErr != nil {
+				return txErr
+			}
+		}
 		result = &ReservationResult{Balance: balanceFromAccount(account), Reservation: reservation}
 		return nil
 	})
@@ -459,7 +525,16 @@ func (s *Service) GetBalance(ctx context.Context, subject Subject) (*Balance, er
 		if txErr != nil {
 			return txErr
 		}
-		if txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+		settledBalanceBefore, txErr := settledCreditBalanceMicros(account)
+		if txErr != nil {
+			return txErr
+		}
+		if _, txErr = s.expireBatches(ctx, repository, account, now); txErr != nil {
+			return txErr
+		}
+		if txErr = applyCreditThresholdAfterSettledBalanceChange(
+			ctx, repository, account, settledBalanceBefore, 0, now,
+		); txErr != nil {
 			return txErr
 		}
 		balance := balanceFromAccount(account)
@@ -469,30 +544,40 @@ func (s *Service) GetBalance(ctx context.Context, subject Subject) (*Balance, er
 	return result, err
 }
 
-func (s *Service) expireBatches(ctx context.Context, repository Repository, account *Account, now time.Time) error {
+func (s *Service) expireBatches(
+	ctx context.Context,
+	repository Repository,
+	account *Account,
+	now time.Time,
+) (int64, error) {
 	batches, err := repository.ListExpiredBatchesForUpdate(ctx, account.ID, now)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	expiredMicros := int64(0)
 	for _, batch := range batches {
 		amount := batch.RemainingMicros
 		if amount <= 0 {
 			continue
 		}
 		if account.AvailableMicros < amount {
-			return ErrVersionConflict
+			return 0, ErrVersionConflict
+		}
+		expiredMicros, err = checkedAdd(expiredMicros, amount)
+		if err != nil {
+			return 0, err
 		}
 		expectedBatchVersion := batch.Version
 		batch.RemainingMicros = 0
 		batch.UpdatedAt = now
 		if err = repository.UpdateBatch(ctx, batch, expectedBatchVersion); err != nil {
-			return err
+			return 0, err
 		}
 		expectedAccountVersion := account.Version
 		account.AvailableMicros -= amount
 		account.UpdatedAt = now
 		if err = repository.UpdateAccount(ctx, account, expectedAccountVersion); err != nil {
-			return err
+			return 0, err
 		}
 		batchID := batch.ID
 		entry := &LedgerEntry{
@@ -508,10 +593,10 @@ func (s *Service) expireBatches(ctx context.Context, repository Repository, acco
 			CreatedAt:            now,
 		}
 		if err = repository.CreateLedger(ctx, entry); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return expiredMicros, nil
 }
 
 func checkedAdd(base, delta int64) (int64, error) {

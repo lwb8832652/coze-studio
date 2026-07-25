@@ -6,6 +6,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -273,8 +274,24 @@ func TestMaintenanceExpiresDueSubscription(t *testing.T) {
 	_, db := newCommerceTestService(t)
 	repository := NewMaintenanceRepository(db, &sequenceIDGenerator{next: 3000})
 	now := time.Now().UTC()
+	account := maintenanceRepositoryTestAccountPO{
+		ID:          5001,
+		SubjectType: string(domainbilling.SubjectTypeUser),
+		SubjectID:   5002,
+	}
+	order := maintenanceRepositoryTestOrderPO{
+		ID:        5003,
+		UserID:    account.SubjectID,
+		AccountID: account.ID,
+	}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
 	row := subscriptionPO{
-		ID: 50, AccountID: 1, PlanID: 10, PlanVersionID: 11, SourceOrderID: 12,
+		ID: 50, AccountID: account.ID, PlanID: 10, PlanVersionID: 11, SourceOrderID: order.ID,
 		Status: string(domainbilling.SubscriptionStatusActive), CurrentPeriodStart: now.AddDate(0, -1, 0),
 		CurrentPeriodEnd: now.Add(-time.Minute), Version: 1, CreatedAt: now, UpdatedAt: now,
 	}
@@ -297,13 +314,37 @@ func TestMaintenanceExpiresDueSubscription(t *testing.T) {
 	}
 }
 
+func TestBillingRepositoryFixturesIncludeCreditThresholdPersistence(t *testing.T) {
+	t.Run("ledger", func(t *testing.T) {
+		_, db := newTestService(t)
+		if !db.Migrator().HasTable(&creditThresholdConfigPO{}) ||
+			!db.Migrator().HasTable(&creditThresholdEpisodePO{}) {
+			t.Fatal("ledger fixture is missing credit threshold persistence")
+		}
+	})
+	t.Run("commerce", func(t *testing.T) {
+		_, db := newCommerceTestService(t)
+		if !db.Migrator().HasTable(&creditThresholdConfigPO{}) ||
+			!db.Migrator().HasTable(&creditThresholdEpisodePO{}) {
+			t.Fatal("commerce fixture is missing credit threshold persistence")
+		}
+	})
+}
+
 func newTestService(t *testing.T) (*domainbilling.Service, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err = db.AutoMigrate(&accountPO{}, &batchPO{}, &ledgerPO{}, &reservationPO{}); err != nil {
+	if err = db.AutoMigrate(
+		&accountPO{},
+		&batchPO{},
+		&ledgerPO{},
+		&reservationPO{},
+		&creditThresholdConfigPO{},
+		&creditThresholdEpisodePO{},
+	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
 	repository := NewMySQLRepository(db, &sequenceIDGenerator{next: 100})
@@ -312,17 +353,23 @@ func newTestService(t *testing.T) (*domainbilling.Service, *gorm.DB) {
 
 func newCommerceTestService(t *testing.T) (*domainbilling.Service, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	databasePath := filepath.Join(t.TempDir(), "billing.db")
+	db, err := gorm.Open(
+		sqlite.Open("file:"+databasePath+"?_busy_timeout=5000&_journal_mode=WAL&_txlock=immediate"),
+		&gorm.Config{},
+	)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err = db.AutoMigrate(
 		&accountPO{}, &batchPO{}, &ledgerPO{}, &reservationPO{},
+		&creditThresholdConfigPO{}, &creditThresholdEpisodePO{},
 		&planPO{}, &planVersionPO{}, &creditPackagePO{}, &orderPO{}, &orderItemPO{},
 		&paymentPO{}, &subscriptionPO{},
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
+	migrateBillingNotificationOutboxForTest(t, db)
 	if err = db.Exec("ALTER TABLE subscription_plans ADD COLUMN deleted_at datetime").Error; err != nil {
 		t.Fatalf("add subscription plan soft-delete column: %v", err)
 	}

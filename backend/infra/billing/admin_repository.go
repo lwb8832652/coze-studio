@@ -7,10 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
@@ -119,6 +122,27 @@ type UsageMonitorView struct {
 	LastUsedAt       time.Time `json:"last_used_at"`
 }
 
+type CreditThresholdConfigView struct {
+	SubjectType          domainbilling.SubjectType `json:"subject_type"`
+	SubjectID            int64                     `json:"subject_id,string"`
+	SourceSubjectID      int64                     `json:"source_subject_id,string"`
+	Inherited            bool                      `json:"inherited"`
+	Enabled              bool                      `json:"enabled"`
+	ThresholdMicros      int64                     `json:"threshold_micros"`
+	RecoveryMarginMicros int64                     `json:"recovery_margin_micros"`
+	Version              int64                     `json:"version"`
+	SourceVersion        int64                     `json:"source_version"`
+	UpdatedAt            time.Time                 `json:"updated_at"`
+}
+
+type SaveCreditThresholdConfigInput struct {
+	Subject              domainbilling.Subject `json:"-"`
+	Enabled              bool                  `json:"enabled"`
+	ThresholdMicros      int64                 `json:"threshold_micros"`
+	RecoveryMarginMicros int64                 `json:"recovery_margin_micros"`
+	ExpectedVersion      int64                 `json:"expected_version"`
+}
+
 func (r *AdminRepository) Overview(ctx context.Context) (*AdminOverview, error) {
 	result := &AdminOverview{}
 	queries := []struct {
@@ -168,6 +192,203 @@ func (r *AdminRepository) SaveConfig(ctx context.Context, config BillingConfig, 
 		return nil, domainbilling.ErrVersionConflict
 	}
 	return r.GetConfig(ctx)
+}
+
+func (r *AdminRepository) GetCreditThresholdConfig(
+	ctx context.Context,
+	subject domainbilling.Subject,
+) (*CreditThresholdConfigView, error) {
+	if r == nil || r.db == nil || validateAdminCreditThresholdSubject(subject) != nil {
+		return nil, domainbilling.ErrInvalidInput
+	}
+	var row creditThresholdConfigPO
+	err := r.db.WithContext(ctx).
+		Where("subject_type = ? AND subject_id = ?", string(subject.Type), subject.ID).
+		Take(&row).Error
+	inherited := false
+	if errors.Is(err, gorm.ErrRecordNotFound) && subject.ID > 0 {
+		err = r.db.WithContext(ctx).
+			Where("subject_type = ? AND subject_id = 0", string(subject.Type)).
+			Take(&row).Error
+		inherited = err == nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domainbilling.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return creditThresholdConfigView(subject, row, inherited), nil
+}
+
+func (r *AdminRepository) SaveCreditThresholdConfig(
+	ctx context.Context,
+	input SaveCreditThresholdConfigInput,
+	actorUserID int64,
+) (*CreditThresholdConfigView, error) {
+	config := domainbilling.CreditThresholdConfig{
+		Enabled:              input.Enabled,
+		ThresholdMicros:      input.ThresholdMicros,
+		RecoveryMarginMicros: input.RecoveryMarginMicros,
+	}
+	if r == nil || r.db == nil ||
+		actorUserID <= 0 ||
+		input.ExpectedVersion < 0 ||
+		validateAdminCreditThresholdSubject(input.Subject) != nil ||
+		config.Validate() != nil {
+		return nil, domainbilling.ErrInvalidInput
+	}
+	now := time.Now().UTC()
+	var view *CreditThresholdConfigView
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.ExpectedVersion == 0 {
+			row := creditThresholdConfigPO{
+				SubjectType:          string(input.Subject.Type),
+				SubjectID:            input.Subject.ID,
+				Enabled:              config.Enabled,
+				ThresholdMicros:      config.ThresholdMicros,
+				RecoveryMarginMicros: config.RecoveryMarginMicros,
+				Version:              domainbilling.InitialVersion,
+				UpdatedBy:            actorUserID,
+				CreatedAt:            now,
+				UpdatedAt:            now,
+			}
+			if createErr := createInitialCreditThresholdConfigCAS(tx, &row); createErr != nil {
+				return createErr
+			}
+			view = creditThresholdConfigView(input.Subject, row, false)
+			return nil
+		}
+
+		var row creditThresholdConfigPO
+		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"subject_type = ? AND subject_id = ?",
+				string(input.Subject.Type),
+				input.Subject.ID,
+			).
+			Take(&row).Error
+		switch {
+		case errors.Is(findErr, gorm.ErrRecordNotFound):
+			return domainbilling.ErrVersionConflict
+		case findErr != nil:
+			return findErr
+		}
+		if row.Version != input.ExpectedVersion {
+			return domainbilling.ErrVersionConflict
+		}
+		nextVersion := row.Version + 1
+		result := tx.Model(&creditThresholdConfigPO{}).
+			Where(
+				"subject_type = ? AND subject_id = ? AND version = ?",
+				row.SubjectType,
+				row.SubjectID,
+				row.Version,
+			).
+			Updates(map[string]any{
+				"enabled":                config.Enabled,
+				"threshold_micros":       config.ThresholdMicros,
+				"recovery_margin_micros": config.RecoveryMarginMicros,
+				"version":                nextVersion,
+				"updated_by":             actorUserID,
+				"updated_at":             now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return domainbilling.ErrVersionConflict
+		}
+		row.Enabled = config.Enabled
+		row.ThresholdMicros = config.ThresholdMicros
+		row.RecoveryMarginMicros = config.RecoveryMarginMicros
+		row.Version = nextVersion
+		row.UpdatedBy = actorUserID
+		row.UpdatedAt = now
+		view = creditThresholdConfigView(input.Subject, row, false)
+		return nil
+	})
+	if err != nil {
+		return nil, normalizeCreditThresholdConfigWriteError(err)
+	}
+	return view, nil
+}
+
+func createInitialCreditThresholdConfigCAS(
+	tx *gorm.DB,
+	row *creditThresholdConfigPO,
+) error {
+	if tx == nil || row == nil {
+		return domainbilling.ErrInvalidInput
+	}
+	var result *gorm.DB
+	if strings.EqualFold(strings.TrimSpace(tx.Dialector.Name()), "mysql") {
+		result = tx.Create(row)
+	} else {
+		result = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(row)
+	}
+	if result.Error != nil {
+		return normalizeCreditThresholdConfigWriteError(result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return domainbilling.ErrVersionConflict
+	}
+	return nil
+}
+
+func normalizeCreditThresholdConfigWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var mysqlError *mysqldriver.MySQLError
+	if errors.As(err, &mysqlError) {
+		switch mysqlError.Number {
+		case 1062, 1205, 1213:
+			return fmt.Errorf(
+				"%w: credit threshold configuration changed concurrently",
+				domainbilling.ErrVersionConflict,
+			)
+		}
+	}
+	return err
+}
+
+func validateAdminCreditThresholdSubject(subject domainbilling.Subject) error {
+	if subject.ID < 0 {
+		return domainbilling.ErrInvalidInput
+	}
+	switch subject.Type {
+	case domainbilling.SubjectTypeUser, domainbilling.SubjectTypeWorkspace:
+	default:
+		return domainbilling.ErrInvalidInput
+	}
+	if subject.ID == 0 {
+		return nil
+	}
+	return subject.Validate()
+}
+
+func creditThresholdConfigView(
+	requestedSubject domainbilling.Subject,
+	row creditThresholdConfigPO,
+	inherited bool,
+) *CreditThresholdConfigView {
+	targetVersion := row.Version
+	if inherited {
+		targetVersion = 0
+	}
+	return &CreditThresholdConfigView{
+		SubjectType:          requestedSubject.Type,
+		SubjectID:            requestedSubject.ID,
+		SourceSubjectID:      row.SubjectID,
+		Inherited:            inherited,
+		Enabled:              row.Enabled,
+		ThresholdMicros:      row.ThresholdMicros,
+		RecoveryMarginMicros: row.RecoveryMarginMicros,
+		Version:              targetVersion,
+		SourceVersion:        row.Version,
+		UpdatedAt:            row.UpdatedAt,
+	}
 }
 
 func (r *AdminRepository) ListPlans(ctx context.Context) ([]AdminPlanView, error) {

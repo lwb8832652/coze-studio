@@ -21,6 +21,7 @@ import (
 
 	"gorm.io/gorm"
 
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/domain/user/internal/dal"
 	"github.com/coze-dev/coze-studio/backend/domain/user/internal/dal/model"
 )
@@ -56,8 +57,13 @@ type SpaceRepository interface {
 	DeleteSpace(ctx context.Context, spaceID int64) error
 	GetSpaceByIDs(ctx context.Context, spaceIDs []int64) ([]*model.Space, error)
 	AddSpaceUser(ctx context.Context, spaceUser *model.SpaceUser) error
+	AddSpaceUserWithNotification(ctx context.Context, actorID int64, spaceUser *model.SpaceUser, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
+	AddSpaceUsersWithNotification(ctx context.Context, actorID int64, spaceUsers []*model.SpaceUser, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
 	UpdateSpaceUserRole(ctx context.Context, spaceID int64, userID int64, roleType int32) error
+	UpdateSpaceUserRoleWithNotification(ctx context.Context, actorID int64, spaceID int64, userID int64, roleType int32, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
 	RemoveSpaceUser(ctx context.Context, spaceID int64, userID int64) error
+	RemoveSpaceUserWithNotification(ctx context.Context, actorID int64, spaceID int64, userID int64, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
+	TransferSpaceWithNotification(ctx context.Context, actorID int64, spaceID int64, targetUserID int64, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
 	HasSpaceUser(ctx context.Context, spaceID int64, userID int64) (bool, error)
 	GetSpaceList(ctx context.Context, userID int64) ([]*model.SpaceUser, error)
 	GetSpaceUsersBySpaceID(ctx context.Context, spaceID int64) ([]*model.SpaceUser, error)

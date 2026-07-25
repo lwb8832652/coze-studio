@@ -14,8 +14,46 @@
  * limitations under the License.
  */
 
-import { NoticeRankType, type Notice } from '@coze-arch/bot-api/playground_api';
-import { PlaygroundApi } from '@coze-arch/bot-api';
+import {
+  GetNoticeList as getNoticeListGenerated,
+  GetNoticeUnreadCount as getNoticeUnreadCountGenerated,
+  NoticeCategory,
+  NoticeMarkRead as noticeMarkReadGenerated,
+  NoticeRankType,
+  NoticeReadMode,
+  NoticeRoute,
+  NoticeSeverity,
+  type Notice,
+  type NoticeMarkReadRequest,
+} from '@coze-studio/api-schema/playground';
+
+export {
+  NoticeCategory as NotificationCategory,
+  NoticeReadMode as NotificationReadMode,
+  NoticeRoute as NotificationRoute,
+  NoticeSeverity as NotificationSeverity,
+};
+
+export enum NotificationErrorCode {
+  InvalidCursor = 'NOTIFICATION_INVALID_CURSOR',
+  InvalidReadMode = 'NOTIFICATION_INVALID_READ_MODE',
+  InvalidPageSize = 'NOTIFICATION_INVALID_PAGE_SIZE',
+  InvalidRequest = 'NOTIFICATION_INVALID_REQUEST',
+  InvalidNotificationID = 'NOTIFICATION_INVALID_NOTIFICATION_ID',
+  Forbidden = 'NOTIFICATION_FORBIDDEN',
+  Internal = 'NOTIFICATION_INTERNAL',
+}
+
+export class NotificationServiceError extends Error {
+  constructor(
+    public readonly code: NotificationErrorCode,
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'NotificationServiceError';
+  }
+}
 
 export type Notification = Notice;
 
@@ -23,116 +61,146 @@ export interface NotificationPage {
   hasMore: boolean;
   nextCursor: string;
   notifications: Notification[];
+  snapshotCutoff: string;
 }
 
-const HTTP_NOT_FOUND = 404;
-let notificationApiUnavailable = false;
+const notificationRequestOptions = {
+  __disableErrorToast: true,
+};
 
-const isMissingNotificationApi = (error: unknown) =>
-  (
-    error as
-      | {
-          response?: {
-            status?: number;
-          };
-        }
-      | undefined
-  )?.response?.status === HTTP_NOT_FOUND;
+const notificationErrorCodes = new Set<string>(
+  Object.values(NotificationErrorCode),
+);
 
-const emptyNotificationPage = (): NotificationPage => ({
-  notifications: [],
-  nextCursor: '',
-  hasMore: false,
-});
+const isNotificationErrorCode = (
+  value: unknown,
+): value is NotificationErrorCode =>
+  typeof value === 'string' && notificationErrorCodes.has(value);
+
+const normalizeNotificationError = (cause: unknown): never => {
+  if (cause instanceof NotificationServiceError) {
+    throw cause;
+  }
+  const response = (
+    cause as {
+      response?: {
+        data?: {
+          code?: unknown;
+          error_code?: unknown;
+          msg?: unknown;
+        };
+        status?: number;
+      };
+    }
+  )?.response;
+  const errorCode = response?.data?.error_code;
+  const code = isNotificationErrorCode(errorCode)
+    ? errorCode
+    : response?.data?.code;
+  if (isNotificationErrorCode(code)) {
+    throw new NotificationServiceError(
+      code,
+      typeof response?.data?.msg === 'string'
+        ? response.data.msg
+        : '通知服务请求失败',
+      response?.status,
+    );
+  }
+  if (cause instanceof Error) {
+    throw cause;
+  }
+  throw new Error('通知服务请求失败');
+};
 
 const assertSuccessfulResponse = (response: {
   code?: number | string;
+  error_code?: unknown;
   msg?: string;
 }) => {
   if (response.code !== undefined && Number(response.code) !== 0) {
+    const code = isNotificationErrorCode(response.error_code)
+      ? response.error_code
+      : response.code;
+    if (isNotificationErrorCode(code)) {
+      throw new NotificationServiceError(
+        code,
+        response.msg || '通知服务请求失败',
+      );
+    }
     throw new Error(response.msg || '通知服务请求失败');
   }
 };
 
-export const getNotificationUnreadCount = async () => {
-  if (notificationApiUnavailable) {
-    return 0;
-  }
+const postNotificationMarkRead = async (body: NoticeMarkReadRequest) => {
   try {
-    const response = await PlaygroundApi.GetNoticeUnreadCount({});
+    const response = await noticeMarkReadGenerated(
+      body,
+      notificationRequestOptions,
+    );
+    assertSuccessfulResponse(response);
+  } catch (cause) {
+    normalizeNotificationError(cause);
+  }
+};
+
+export const getNotificationUnreadCount = async () => {
+  try {
+    const response = await getNoticeUnreadCountGenerated(
+      {},
+      notificationRequestOptions,
+    );
     assertSuccessfulResponse(response);
     return Math.max(0, Number(response.data?.unread_count ?? 0));
-  } catch (error) {
-    if (isMissingNotificationApi(error)) {
-      notificationApiUnavailable = true;
-      return 0;
-    }
-    throw error;
+  } catch (cause) {
+    normalizeNotificationError(cause);
   }
 };
 
 export const listNotifications = async (
   cursor = '0',
 ): Promise<NotificationPage> => {
-  if (notificationApiUnavailable) {
-    return emptyNotificationPage();
-  }
   try {
-    const response = await PlaygroundApi.GetNoticeList({
-      cursor,
-      count: 20,
-      notice_rank_type: NoticeRankType.All,
-    });
+    const response = await getNoticeListGenerated(
+      {
+        cursor,
+        count: 20,
+        notice_rank_type: NoticeRankType.All,
+      },
+      notificationRequestOptions,
+    );
     assertSuccessfulResponse(response);
+    const data = response.data as typeof response.data & {
+      notice_list?: Notification[];
+      snapshot_cutoff?: string;
+    };
 
     return {
-      notifications: response.data?.notice_list ?? [],
-      nextCursor: response.data?.next_cursor ?? '',
-      hasMore: Boolean(response.data?.has_more),
+      notifications: data?.notice_list ?? [],
+      nextCursor: data?.next_cursor ?? '',
+      hasMore: Boolean(data?.has_more),
+      snapshotCutoff: data?.snapshot_cutoff ?? '0',
     };
-  } catch (error) {
-    if (isMissingNotificationApi(error)) {
-      notificationApiUnavailable = true;
-      return emptyNotificationPage();
-    }
-    throw error;
+  } catch (cause) {
+    normalizeNotificationError(cause);
   }
 };
 
 export const markNotificationsRead = async (noticeIds: string[]) => {
-  if (noticeIds.length === 0 || notificationApiUnavailable) {
+  if (noticeIds.length === 0) {
     return;
   }
-  try {
-    const response = await PlaygroundApi.NoticeMarkRead({
-      notice_ids: noticeIds,
-      mark_all: false,
-    });
-    assertSuccessfulResponse(response);
-  } catch (error) {
-    if (isMissingNotificationApi(error)) {
-      notificationApiUnavailable = true;
-      return;
-    }
-    throw error;
-  }
+  await postNotificationMarkRead({
+    notice_ids: noticeIds,
+    read_mode: NoticeReadMode.NoticeIDs,
+  });
 };
 
-export const markAllNotificationsRead = async () => {
-  if (notificationApiUnavailable) {
-    return;
+export const markAllNotificationsRead = async (snapshotCutoff: string) => {
+  if (!/^[1-9]\d*$/.test(snapshotCutoff)) {
+    throw new Error('缺少通知快照，无法执行全部已读');
   }
-  try {
-    const response = await PlaygroundApi.NoticeMarkRead({
-      notice_ids: [],
-      mark_all: true,
-    });
-    assertSuccessfulResponse(response);
-  } catch (error) {
-    if (isMissingNotificationApi(error)) {
-      notificationApiUnavailable = true;
-      return;
-    }
-    throw error;
-  }
+  await postNotificationMarkRead({
+    read_mode: NoticeReadMode.Snapshot,
+    snapshot_cutoff: snapshotCutoff,
+  });
 };

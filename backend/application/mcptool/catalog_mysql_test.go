@@ -28,6 +28,7 @@ import (
 	"gorm.io/gorm"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestMySQLCatalogPersistsMCPServers(t *testing.T) {
@@ -329,4 +330,310 @@ func TestMySQLCatalogUpdatesMCPServerHealth(t *testing.T) {
 	require.Equal(t, int64(40), got.HealthCheckedAt)
 	require.Equal(t, int64(11), got.HealthLatencyMs)
 	require.Empty(t, got.HealthError)
+}
+
+func TestMySQLCatalogUpdateHealthOpensIncidentAfterThreeFailuresAndRecoversOnce(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	catalog := NewMySQLCatalog(db)
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	outbox := &recordingMCPHealthOutbox{}
+	intent := &MCPToolHealthNotificationIntent{
+		ResolveRecipients: func(context.Context, MCPToolHealthNotificationServer) ([]int64, error) {
+			return []int64{44, 7, 44}, nil
+		},
+		AppendOutbox: outbox.AppendInTransaction,
+	}
+
+	for index := int64(0); index < 2; index++ {
+		require.NoError(t, catalog.UpdateHealthWithNotification(
+			context.Background(),
+			100,
+			20,
+			MCPToolHealthSnapshot{
+				Status:    mcpToolHealthStatusUnhealthy,
+				CheckedAt: 30 + index,
+				LatencyMs: 10 + index,
+				Error:     "transport_failed",
+			},
+			intent,
+		))
+	}
+	var po mcpToolServerPO
+	require.NoError(t, db.Where("server_id = ?", 100).Take(&po).Error)
+	require.Equal(t, 2, po.HealthConsecutiveFailures)
+	require.Empty(t, po.HealthIncidentID)
+	require.Empty(t, outbox.events)
+
+	require.NoError(t, catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusUnhealthy,
+			CheckedAt: 32,
+			LatencyMs: 12,
+			Error:     "transport_failed",
+		},
+		intent,
+	))
+	require.NoError(t, db.Where("server_id = ?", 100).Take(&po).Error)
+	require.Equal(t, 3, po.HealthConsecutiveFailures)
+	require.Equal(t, int64(32), po.HealthIncidentOpenedAt)
+	require.NotEmpty(t, po.HealthIncidentID)
+	require.Len(t, outbox.events, 1)
+	require.Equal(t, domainnotification.EventMCPConnectionDegraded, outbox.events[0].EventType)
+	require.Equal(t, []int64{7, 44}, outbox.events[0].Payload.ExplicitRecipientIDs)
+
+	require.NoError(t, catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusUnhealthy,
+			CheckedAt: 33,
+			LatencyMs: 13,
+			Error:     "transport_failed",
+		},
+		intent,
+	))
+	require.Len(t, outbox.events, 1)
+
+	require.NoError(t, catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusHealthy,
+			CheckedAt: 34,
+			LatencyMs: 3,
+		},
+		intent,
+	))
+	require.NoError(t, db.Where("server_id = ?", 100).Take(&po).Error)
+	require.Equal(t, 0, po.HealthConsecutiveFailures)
+	require.Empty(t, po.HealthIncidentID)
+	require.Zero(t, po.HealthIncidentOpenedAt)
+	require.Equal(t, int64(34), po.HealthLastRecoveredAt)
+	require.Len(t, outbox.events, 2)
+	require.Equal(t, domainnotification.EventMCPConnectionRecovered, outbox.events[1].EventType)
+
+	require.NoError(t, catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusHealthy,
+			CheckedAt: 34,
+			LatencyMs: 3,
+		},
+		intent,
+	))
+	require.Len(t, outbox.events, 2)
+}
+
+func TestMySQLCatalogUpdateHealthIgnoresDisabledServerEpisodesAndNotifications(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	catalog := NewMySQLCatalog(db)
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "disabled-health-mcp",
+		ServerType: "stdio",
+		Enabled:    false,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	outbox := &recordingMCPHealthOutbox{}
+	intent := &MCPToolHealthNotificationIntent{
+		ResolveRecipients: func(context.Context, MCPToolHealthNotificationServer) ([]int64, error) {
+			return []int64{7}, nil
+		},
+		AppendOutbox: outbox.AppendInTransaction,
+	}
+
+	require.NoError(t, catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		99,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusUnhealthy,
+			CheckedAt: 30,
+			LatencyMs: 10,
+			Error:     "transport_failed",
+		},
+		intent,
+	))
+
+	got, err := catalog.Get(context.Background(), 100)
+	require.NoError(t, err)
+	require.Equal(t, mcpToolHealthStatusUnknown, got.HealthStatus)
+	require.Zero(t, got.HealthCheckedAt)
+	require.Empty(t, outbox.events)
+}
+
+func TestMySQLCatalogUpdateHealthRollsBackIncidentWhenNotificationUnavailable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	catalog := NewMySQLCatalog(db)
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	for checkedAt := int64(30); checkedAt < 32; checkedAt++ {
+		require.NoError(t, catalog.UpdateHealthWithNotification(
+			context.Background(),
+			100,
+			20,
+			MCPToolHealthSnapshot{
+				Status:    mcpToolHealthStatusUnhealthy,
+				CheckedAt: checkedAt,
+				Error:     "transport_failed",
+			},
+			nil,
+		))
+	}
+
+	err = catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusUnhealthy,
+			CheckedAt: 32,
+			Error:     "transport_failed",
+		},
+		nil,
+	)
+
+	require.Error(t, err)
+	var po mcpToolServerPO
+	require.NoError(t, db.Where("server_id = ?", 100).Take(&po).Error)
+	require.Equal(t, 2, po.HealthConsecutiveFailures)
+	require.Empty(t, po.HealthIncidentID)
+	require.Zero(t, po.HealthIncidentOpenedAt)
+	require.Equal(t, int64(31), po.HealthCheckedAt)
+}
+
+func TestMySQLCatalogUpdateHealthRollsBackIncidentWhenOutboxAppendFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	catalog := NewMySQLCatalog(db)
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	outbox := &recordingMCPHealthOutbox{err: errors.New("append failed")}
+	intent := &MCPToolHealthNotificationIntent{
+		ResolveRecipients: func(context.Context, MCPToolHealthNotificationServer) ([]int64, error) {
+			return []int64{7}, nil
+		},
+		AppendOutbox: outbox.AppendInTransaction,
+	}
+	for checkedAt := int64(30); checkedAt < 32; checkedAt++ {
+		require.NoError(t, catalog.UpdateHealthWithNotification(
+			context.Background(),
+			100,
+			20,
+			MCPToolHealthSnapshot{
+				Status:    mcpToolHealthStatusUnhealthy,
+				CheckedAt: checkedAt,
+				Error:     "transport_failed",
+			},
+			intent,
+		))
+	}
+
+	err = catalog.UpdateHealthWithNotification(
+		context.Background(),
+		100,
+		20,
+		MCPToolHealthSnapshot{
+			Status:    mcpToolHealthStatusUnhealthy,
+			CheckedAt: 32,
+			Error:     "transport_failed",
+		},
+		intent,
+	)
+
+	require.Error(t, err)
+	var po mcpToolServerPO
+	require.NoError(t, db.Where("server_id = ?", 100).Take(&po).Error)
+	require.Equal(t, 2, po.HealthConsecutiveFailures)
+	require.Empty(t, po.HealthIncidentID)
+	require.Zero(t, po.HealthIncidentOpenedAt)
+	require.Equal(t, int64(31), po.HealthCheckedAt)
+	require.Empty(t, outbox.events)
+}
+
+type recordingMCPHealthOutbox struct {
+	events []domainnotification.Event
+	err    error
+}
+
+func (r *recordingMCPHealthOutbox) AppendInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	event domainnotification.Event,
+) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.events = append(r.events, event)
+	return nil
 }

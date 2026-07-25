@@ -17,6 +17,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,4 +49,57 @@ func TestEnsureRunTransitionReturnsClientError(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, IsClientError(err))
 	assert.Contains(t, err.Error(), "cannot transition")
+}
+
+func TestAwaitingInputInteractionReferenceRequiresExplicitBoundedEventID(t *testing.T) {
+	ref := entity.RunAwaitingInputInteractionRef{
+		Schema:             entity.RunAwaitingInputInteractionRefSchema,
+		InteractionEventID: "interrupt-event-1",
+		InteractionID:      "hi_1",
+		Kind:               "clarification",
+	}
+
+	require.NoError(t, ref.Validate())
+	require.Error(t, entity.RunAwaitingInputInteractionRef{
+		Schema:        entity.RunAwaitingInputInteractionRefSchema,
+		InteractionID: "hi_1",
+		Kind:          "clarification",
+	}.Validate())
+	require.NoError(t, entity.RunAwaitingInputInteractionRef{
+		Schema:             entity.RunAwaitingInputInteractionRefSchema,
+		InteractionEventID: strings.Repeat("a", 90),
+	}.Validate())
+	require.Error(t, entity.RunAwaitingInputInteractionRef{
+		Schema:             entity.RunAwaitingInputInteractionRefSchema,
+		InteractionEventID: strings.Repeat("a", 91),
+	}.Validate())
+	require.Error(t, entity.RunAwaitingInputInteractionRef{
+		Schema:             entity.RunAwaitingInputInteractionRefSchema,
+		InteractionEventID: "interrupt event 1",
+	}.Validate())
+}
+
+func TestAwaitingInputInteractionReferenceParsesOnlyExactPayload(t *testing.T) {
+	ref, ok := entity.RunAwaitingInputInteractionRefFromEventPayload(`{
+		"status":"interrupted",
+		"awaiting_input":{
+			"schema":"coze.agentthread.awaiting_input.v1",
+			"interaction_event_id":"interrupt-event-1",
+			"interaction_id":"hi_1",
+			"kind":"clarification"
+		}
+	}`)
+
+	require.True(t, ok)
+	require.Equal(t, "interrupt-event-1", ref.InteractionEventID)
+	require.Equal(t, "hi_1", ref.InteractionID)
+
+	_, ok = entity.RunAwaitingInputInteractionRefFromEventPayload(`{"status":"interrupted"}`)
+	require.False(t, ok)
+
+	_, ok = entity.RunAwaitingInputInteractionRefFromEventPayload(`{
+		"status":"interrupted",
+		"awaiting_input":{"interaction_event_id":"interrupt-event-1"}
+	}`)
+	require.False(t, ok)
 }

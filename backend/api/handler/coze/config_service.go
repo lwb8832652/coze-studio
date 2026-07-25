@@ -37,6 +37,8 @@ import (
 	bizConf "github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	baseconfig "github.com/coze-dev/coze-studio/backend/bizpkg/config/base"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config/modelmgr"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
 	"github.com/coze-dev/coze-studio/backend/infra/embedding/impl"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
@@ -108,6 +110,18 @@ func saveBasicConfiguration(ctx context.Context, c *app.RequestContext, backend 
 	if patch.IsEmpty() {
 		invalidParamRequestResponse(c, "configuration patch is empty")
 		return
+	}
+	if patch.AdminEmails != nil {
+		canonical, canonicalErr :=
+			domainsystemadmin.CanonicalizeRequiredEmailCSV(
+				*patch.AdminEmails,
+				domainnotification.MaxExplicitRecipients,
+			)
+		if canonicalErr != nil {
+			basicConfigurationError(ctx, c, canonicalErr)
+			return
+		}
+		patch.AdminEmails = &canonical
 	}
 	if patch.ServerHost != nil {
 		if err = validateBasicConfigurationServerHost(*patch.ServerHost); err != nil {
@@ -239,6 +253,9 @@ func basicConfigurationError(ctx context.Context, c *app.RequestContext, err err
 }
 
 func basicConfigurationErrorContract(err error) (int, string, string) {
+	if errors.Is(err, domainsystemadmin.ErrInvalidEmailProjection) {
+		return http.StatusBadRequest, "ADMIN_EMAILS_INVALID", "administrator email configuration is invalid"
+	}
 	if errors.Is(err, kvstore.ErrVersionConflict) {
 		return http.StatusConflict, "BASE_CONFIG_VERSION_CONFLICT", "base configuration revision is stale"
 	}

@@ -30,6 +30,7 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/application/admin"
 	"github.com/coze-dev/coze-studio/backend/application/agentthread"
+	appannouncement "github.com/coze-dev/coze-studio/backend/application/announcement"
 	"github.com/coze-dev/coze-studio/backend/application/app"
 	appdevapp "github.com/coze-dev/coze-studio/backend/application/appdev"
 	"github.com/coze-dev/coze-studio/backend/application/base/appinfra"
@@ -41,9 +42,11 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/mcptool"
 	"github.com/coze-dev/coze-studio/backend/application/memory"
 	"github.com/coze-dev/coze-studio/backend/application/modelmgr"
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	"github.com/coze-dev/coze-studio/backend/application/openauth"
 	"github.com/coze-dev/coze-studio/backend/application/plugin"
 	"github.com/coze-dev/coze-studio/backend/application/prompt"
+	appsandbox "github.com/coze-dev/coze-studio/backend/application/sandbox"
 	"github.com/coze-dev/coze-studio/backend/application/scheduledtask"
 	"github.com/coze-dev/coze-studio/backend/application/search"
 	"github.com/coze-dev/coze-studio/backend/application/shortcutcmd"
@@ -55,6 +58,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/user"
 	"github.com/coze-dev/coze-studio/backend/application/workbench"
 	"github.com/coze-dev/coze-studio/backend/application/workflow"
+	bizconfig "github.com/coze-dev/coze-studio/backend/bizpkg/config"
 	crossagent "github.com/coze-dev/coze-studio/backend/crossdomain/agent"
 	singleagentImpl "github.com/coze-dev/coze-studio/backend/crossdomain/agent/impl"
 	crossagentrun "github.com/coze-dev/coze-studio/backend/crossdomain/agentrun"
@@ -94,6 +98,8 @@ import (
 	progressBarImpl "github.com/coze-dev/coze-studio/backend/infra/document/progressbar/impl/progressbar"
 	"github.com/coze-dev/coze-studio/backend/infra/eventbus"
 	implEventbus "github.com/coze-dev/coze-studio/backend/infra/eventbus/impl"
+	infranotification "github.com/coze-dev/coze-studio/backend/infra/notification"
+	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	"github.com/coze-dev/coze-studio/backend/infra/sqlparser"
 	sqlparserImpl "github.com/coze-dev/coze-studio/backend/infra/sqlparser/impl/sqlparser"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
@@ -135,6 +141,9 @@ type primaryServices struct {
 	taskSVC              *task.ApplicationService
 	scheduledTaskSVC     *scheduledtask.ApplicationService
 	scheduledTaskWorker  *scheduledtask.Worker
+	notificationRuntime  *appnotification.Runtime
+	announcementWorker   *appannouncement.Worker
+	sandboxHealthMonitor *appsandbox.HealthMonitor
 	workbenchSVC         *workbench.ApplicationService
 	appSVC               *app.APPApplicationService
 }
@@ -407,7 +416,6 @@ func Init(ctx context.Context) (err error) {
 		runtimePolicy,
 	)
 	agentthread.StartRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentRunExecutor)
-	appbilling.StartMaintenanceWorkerFromEnv(ctx, appbilling.DefaultService())
 	agentthread.StartResumeRunWorkerFromEnv(ctx, primaryServices.agentThreadSVC, agentResumeRunExecutor)
 	agentthread.StartRunLeaseRecoveryWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
 	agentthread.StartMemoryFlushWorkerFromEnv(ctx, primaryServices.agentThreadSVC)
@@ -455,7 +463,62 @@ func Init(ctx context.Context) (err error) {
 		KnowledgeSVC: crossknowledge.DefaultSVC(),
 		AgentRunSVC:  complexServices.conversationSVC.AgentRunDomainSVC,
 	})
+	if primaryServices.notificationRuntime == nil {
+		return fmt.Errorf("Init - notification runtime is unavailable")
+	}
+	billingMaintenanceWorker := appbilling.NewMaintenanceWorkerFromEnv(
+		appbilling.DefaultService(),
+	)
+	producers := make([]applicationShutdownHook, 0, 3)
+	if primaryServices.announcementWorker != nil {
+		producers = append(producers, primaryServices.announcementWorker)
+	}
+	if billingMaintenanceWorker != nil {
+		producers = append(producers, billingMaintenanceWorker)
+	}
+	if primaryServices.sandboxHealthMonitor != nil {
+		producers = append(producers, primaryServices.sandboxHealthMonitor)
+	}
+	if err := registerNotificationLifecycleHooks(
+		applicationShutdowns,
+		primaryServices.notificationRuntime,
+		producers...,
+	); err != nil {
+		return fmt.Errorf("Init - register notification lifecycle shutdown: %w", err)
+	}
+	primaryServices.notificationRuntime.Start(ctx)
+	if primaryServices.announcementWorker != nil {
+		primaryServices.announcementWorker.Start(ctx)
+	}
+	if billingMaintenanceWorker != nil {
+		billingMaintenanceWorker.Start(ctx)
+	}
+	if primaryServices.sandboxHealthMonitor != nil {
+		primaryServices.sandboxHealthMonitor.Start(ctx)
+	}
 
+	return nil
+}
+
+func registerNotificationLifecycleHooks(
+	registry *applicationShutdownRegistry,
+	consumer applicationShutdownHook,
+	producers ...applicationShutdownHook,
+) error {
+	if registry == nil || consumer == nil {
+		return errApplicationShutdownFailed
+	}
+	if _, err := registry.Register(consumer); err != nil {
+		return err
+	}
+	for _, producer := range producers {
+		if producer == nil {
+			continue
+		}
+		if _, err := registry.Register(producer); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -582,15 +645,6 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		ObjectStorage:   basicServices.infra.OSS,
 		UserSpaceReader: basicServices.userSVC.DomainSVC,
 	})
-	if _, _, err := appimchannel.InitService(&appimchannel.Components{
-		DB:           basicServices.infra.DB,
-		IDGen:        basicServices.infra.IDGenSVC,
-		Roles:        basicServices.userSVC.DomainSVC,
-		AgentThreads: agentThreadSVC,
-		RootContext:  ctx,
-	}); err != nil {
-		return nil, fmt.Errorf("init Feishu IM channel service: %w", err)
-	}
 	mcpCatalogOptions, err := mcpCatalogOptionsFromEnv(mcpManagementEnabled)
 	if err != nil {
 		return nil, err
@@ -601,6 +655,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		AuditRepository:             mcptool.NewMySQLManagementAuditRepository(basicServices.infra.DB),
 		IDGen:                       basicServices.infra.IDGenSVC,
 		UserSpaceRoleReader:         basicServices.userSVC.DomainSVC,
+		SpaceMemberRoleReader:      mcptool.NewMySQLSpaceMemberRoleReader(basicServices.infra.DB),
 		DefaultDeerFlowMCPConfigRaw: mcptool.DefaultDeerFlowMCPConfigRaw(),
 	})
 	skillSVC := skill.InitService(&skill.ServiceComponents{
@@ -614,6 +669,57 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		DB:    basicServices.infra.DB,
 		IDGen: basicServices.infra.IDGenSVC,
 	})
+	notificationRuntime, err := appnotification.NewRuntime(
+		basicServices.infra.DB,
+		basicServices.infra.IDGenSVC,
+		appnotification.PolicyRecipientResolver{
+			SystemAdmins: infranotification.NewMySQLSystemAdminRecipientSource(
+				basicServices.infra.DB,
+				bizconfig.SystemAdminEmails(),
+			),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("init notification runtime: %w", err)
+	}
+	notificationOutbox := notificationRuntime.Service()
+	if notificationOutbox == nil || !notificationOutbox.IsConfigured() {
+		return nil, fmt.Errorf("init notification runtime: service is unavailable")
+	}
+	announcementSVC := appannouncement.InitService(
+		basicServices.infra.DB,
+		basicServices.infra.IDGenSVC,
+	)
+	if announcementSVC == nil || !announcementSVC.IsConfigured() {
+		return nil, fmt.Errorf("init announcement service: service is unavailable")
+	}
+	announcementWorker := appannouncement.NewWorker(
+		announcementSVC,
+		appannouncement.DefaultWorkerOptions(),
+	)
+	var sandboxHealthMonitor *appsandbox.HealthMonitor
+	if SandboxSVC != nil {
+		sandboxHealthMonitor, err = newSandboxHealthMonitor(
+			SandboxSVC,
+			infrasandbox.NewMySQLHealthMonitorRepository(
+				basicServices.infra.DB,
+				notificationOutbox,
+			),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("init sandbox health monitor: %w", err)
+		}
+	}
+	if _, _, err := appimchannel.InitService(&appimchannel.Components{
+		DB:           basicServices.infra.DB,
+		IDGen:        basicServices.infra.IDGenSVC,
+		Roles:        basicServices.userSVC.DomainSVC,
+		AgentThreads: agentThreadSVC,
+		RootContext:  ctx,
+		RuntimeStableFailureThreshold: appimchannel.RuntimeStableFailureThresholdFromEnv(os.Getenv),
+	}); err != nil {
+		return nil, fmt.Errorf("init Feishu IM channel service: %w", err)
+	}
 	scheduledTaskSVC, scheduledTaskWorker, err := scheduledtask.InitService(&scheduledtask.ServiceComponents{
 		DB:                basicServices.infra.DB,
 		IDGen:             basicServices.infra.IDGenSVC,
@@ -621,6 +727,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		UserProfileReader: basicServices.userSVC.DomainSVC,
 		AgentThreadClient: agentThreadSVC,
 		WorkflowDomain:    workflowDomainSVC.DomainSVC,
+		NotificationOutbox: notificationOutbox,
 		RootContext:       ctx,
 	})
 	if err != nil {
@@ -647,9 +754,26 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		taskSVC:             taskSVC,
 		scheduledTaskSVC:    scheduledTaskSVC,
 		scheduledTaskWorker: scheduledTaskWorker,
+		notificationRuntime: notificationRuntime,
+		announcementWorker:  announcementWorker,
+		sandboxHealthMonitor: sandboxHealthMonitor,
 		workbenchSVC:        workbenchSVC,
 		infra:               basicServices.infra,
 	}, nil
+}
+
+func newSandboxHealthMonitor(
+	service *appsandbox.Service,
+	repository *infrasandbox.MySQLHealthMonitorRepository,
+) (*appsandbox.HealthMonitor, error) {
+	if service == nil {
+		return nil, nil
+	}
+	return appsandbox.NewHealthMonitor(
+		service,
+		repository,
+		appsandbox.DefaultHealthMonitorOptions(),
+	)
 }
 
 // initComplexServices init complex services that depends on primary services.

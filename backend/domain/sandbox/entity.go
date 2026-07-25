@@ -16,7 +16,11 @@
 
 package sandbox
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 type Scope string
 
@@ -202,4 +206,200 @@ type HealthSnapshot struct {
 	Message       string
 	LatencyMillis int64
 	CheckedAt     time.Time
+}
+
+const DefaultHealthIncidentFailureThreshold = 3
+
+type HealthIncidentStatus string
+
+const (
+	HealthIncidentStatusNone       HealthIncidentStatus = "none"
+	HealthIncidentStatusObserving  HealthIncidentStatus = "observing"
+	HealthIncidentStatusOpen       HealthIncidentStatus = "open"
+	HealthIncidentStatusRecovered  HealthIncidentStatus = "recovered"
+	HealthIncidentStatusDisabled   HealthIncidentStatus = "disabled"
+)
+
+type HealthIncidentNotification string
+
+const (
+	HealthIncidentNotificationNone       HealthIncidentNotification = ""
+	HealthIncidentNotificationUnhealthy  HealthIncidentNotification = "unhealthy"
+	HealthIncidentNotificationRecovered  HealthIncidentNotification = "recovered"
+)
+
+// ProviderHealthEpisode is the durable state for one provider's latest health
+// episode. IncidentSequence is monotonic and makes incident and notification
+// identities stable across retries, restarts, and worker instances.
+type ProviderHealthEpisode struct {
+	ProviderID             int64
+	ConsecutiveFailures    int
+	FailureStartedAt       time.Time
+	IncidentSequence       uint64
+	IncidentID             string
+	IncidentStatus         HealthIncidentStatus
+	IncidentOpenedAt       time.Time
+	IncidentNotifiedAt     time.Time
+	IncidentClosedAt       time.Time
+	RecoveryNotifiedAt     time.Time
+	LastRecoveredAt        time.Time
+	LastCheckedAt          time.Time
+	NextCheckAt            time.Time
+	LeaseOwner             string
+	LeaseToken             string
+	LeaseExpiresAt         time.Time
+	Version                uint64
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+type HealthIncidentObservation struct {
+	ProviderID       int64
+	ProviderStatus   ProviderStatus
+	HealthStatus     HealthStatus
+	CheckedAt        time.Time
+	FailureThreshold int
+}
+
+type HealthIncidentTransition struct {
+	State            ProviderHealthEpisode
+	Applied          bool
+	Notification     HealthIncidentNotification
+	IncidentID       string
+	IncidentSequence uint64
+	OccurredAt       time.Time
+}
+
+func ApplyProviderHealthObservation(
+	prior ProviderHealthEpisode,
+	observation HealthIncidentObservation,
+) HealthIncidentTransition {
+	next := normalizeProviderHealthEpisode(prior)
+	transition := HealthIncidentTransition{State: next}
+	checkedAt := observation.CheckedAt.UTC().Truncate(time.Millisecond)
+	if observation.ProviderID <= 0 ||
+		observation.FailureThreshold <= 0 ||
+		checkedAt.IsZero() ||
+		(!next.LastCheckedAt.IsZero() && !checkedAt.After(next.LastCheckedAt)) {
+		return transition
+	}
+	switch observation.ProviderStatus {
+	case ProviderStatusDisabled:
+		next.ProviderID = observation.ProviderID
+		next.LastCheckedAt = checkedAt
+		next.ConsecutiveFailures = 0
+		next.FailureStartedAt = time.Time{}
+		next.IncidentStatus = HealthIncidentStatusDisabled
+		if next.IncidentClosedAt.IsZero() {
+			next.IncidentClosedAt = checkedAt
+		}
+		transition.State = next
+		transition.Applied = true
+		return transition
+	case ProviderStatusEnabled:
+	default:
+		return transition
+	}
+	switch observation.HealthStatus {
+	case HealthStatusHealthy, HealthStatusDegraded, HealthStatusUnhealthy:
+	default:
+		return transition
+	}
+
+	next.ProviderID = observation.ProviderID
+	next.LastCheckedAt = checkedAt
+	transition.Applied = true
+
+	switch observation.HealthStatus {
+	case HealthStatusUnhealthy:
+		if next.IncidentStatus != HealthIncidentStatusOpen {
+			if next.IncidentStatus != HealthIncidentStatusObserving {
+				next.ConsecutiveFailures = 0
+				next.FailureStartedAt = checkedAt
+				clearProviderHealthIncident(&next)
+				next.IncidentStatus = HealthIncidentStatusObserving
+			}
+			if next.ConsecutiveFailures < observation.FailureThreshold {
+				next.ConsecutiveFailures++
+			}
+			if next.ConsecutiveFailures >= observation.FailureThreshold {
+				next.IncidentSequence++
+				next.IncidentID = StableProviderHealthIncidentID(
+					observation.ProviderID,
+					next.IncidentSequence,
+				)
+				next.IncidentStatus = HealthIncidentStatusOpen
+				next.IncidentOpenedAt = checkedAt
+				next.IncidentNotifiedAt = checkedAt
+				transition.Notification = HealthIncidentNotificationUnhealthy
+				transition.IncidentID = next.IncidentID
+				transition.IncidentSequence = next.IncidentSequence
+				transition.OccurredAt = checkedAt
+			}
+		} else if next.ConsecutiveFailures < observation.FailureThreshold {
+			next.ConsecutiveFailures = observation.FailureThreshold
+		}
+	case HealthStatusHealthy:
+		next.ConsecutiveFailures = 0
+		next.FailureStartedAt = time.Time{}
+		if next.IncidentStatus == HealthIncidentStatusOpen &&
+			strings.TrimSpace(next.IncidentID) != "" {
+			next.IncidentStatus = HealthIncidentStatusRecovered
+			next.IncidentClosedAt = checkedAt
+			next.RecoveryNotifiedAt = checkedAt
+			next.LastRecoveredAt = checkedAt
+			transition.Notification = HealthIncidentNotificationRecovered
+			transition.IncidentID = next.IncidentID
+			transition.IncidentSequence = next.IncidentSequence
+			transition.OccurredAt = checkedAt
+		} else if next.IncidentStatus == HealthIncidentStatusObserving ||
+			next.IncidentStatus == HealthIncidentStatusDisabled {
+			clearProviderHealthIncident(&next)
+			next.IncidentStatus = HealthIncidentStatusNone
+		}
+	case HealthStatusDegraded:
+		if next.IncidentStatus == HealthIncidentStatusObserving {
+			next.ConsecutiveFailures = 0
+			next.FailureStartedAt = time.Time{}
+			clearProviderHealthIncident(&next)
+			next.IncidentStatus = HealthIncidentStatusNone
+		}
+	}
+
+	transition.State = next
+	return transition
+}
+
+func StableProviderHealthIncidentID(providerID int64, sequence uint64) string {
+	if providerID <= 0 {
+		providerID = 1
+	}
+	if sequence == 0 {
+		sequence = 1
+	}
+	return fmt.Sprintf("sandbox-incident-%d-%d", providerID, sequence)
+}
+
+func normalizeProviderHealthEpisode(state ProviderHealthEpisode) ProviderHealthEpisode {
+	state.IncidentID = strings.TrimSpace(state.IncidentID)
+	state.LeaseOwner = strings.TrimSpace(state.LeaseOwner)
+	state.LeaseToken = strings.TrimSpace(state.LeaseToken)
+	if state.ConsecutiveFailures < 0 {
+		state.ConsecutiveFailures = 0
+	}
+	if state.IncidentStatus == "" {
+		state.IncidentStatus = HealthIncidentStatusNone
+	}
+	return state
+}
+
+func clearProviderHealthIncident(state *ProviderHealthEpisode) {
+	if state == nil {
+		return
+	}
+	state.IncidentID = ""
+	state.IncidentOpenedAt = time.Time{}
+	state.IncidentNotifiedAt = time.Time{}
+	state.IncidentClosedAt = time.Time{}
+	state.RecoveryNotifiedAt = time.Time{}
 }

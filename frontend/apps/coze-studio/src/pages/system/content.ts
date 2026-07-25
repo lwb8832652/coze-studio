@@ -31,6 +31,11 @@ export const SYSTEM_SECTIONS = [
     description: '团队空间、个人空间和成员规模',
   },
   {
+    key: 'announcements',
+    title: '公告通知',
+    description: '创建、计划发布和审计管理员公告',
+  },
+  {
     key: 'models',
     title: '模型配置',
     description: '公共模型、供应商和接入密钥管理',
@@ -111,7 +116,7 @@ export const SYSTEM_NAV_GROUPS = [
       'billing-orders',
     ],
   },
-  { key: 'system', items: ['settings'] },
+  { key: 'system', items: ['announcements', 'settings'] },
 ] as const satisfies readonly SystemNavGroup[];
 
 export const SECTION_CONTENT: Record<
@@ -191,6 +196,12 @@ export const SECTION_CONTENT: Record<
         value: '受控',
       },
     ],
+  },
+  announcements: {
+    heading: '管理员公告通知',
+    summary:
+      '创建纯文本系统公告，按全体用户、工作空间或指定用户发布，并跟踪受众快照、通知投影和审计历史。',
+    cards: [],
   },
   settings: {
     heading: '系统配置',

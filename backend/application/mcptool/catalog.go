@@ -440,6 +440,9 @@ func (c *InMemoryCatalog) UpdateHealth(
 	if server == nil {
 		return ErrNotFound
 	}
+	if !server.Enabled {
+		return nil
+	}
 	if expectedUpdatedAt > 0 && server.UpdatedAt != expectedUpdatedAt {
 		return ErrMCPConflict
 	}

@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"os"
 
 	"gorm.io/gorm"
 
@@ -51,9 +52,10 @@ const (
 )
 
 type Config struct {
-	base      *base.BaseConfig
-	knowledge *knowledge.KnowledgeConfig
-	model     *modelmgr.ModelConfig
+	base              *base.BaseConfig
+	systemAdminEmails *base.SystemAdminEmailProjection
+	knowledge         *knowledge.KnowledgeConfig
+	model             *modelmgr.ModelConfig
 }
 
 var shardConfig *Config
@@ -63,6 +65,10 @@ func Init(ctx context.Context, db *gorm.DB, oss storage.Storage) error {
 		base:      base.NewBaseConfig(db),
 		knowledge: knowledge.NewKnowledgeConfig(db),
 	}
+	shardConfig.systemAdminEmails = base.NewSystemAdminEmailProjection(
+		shardConfig.base,
+		os.Getenv("COZE_SYSTEM_ADMIN_EMAILS"),
+	)
 
 	m, err := modelmgr.Init(ctx, db, oss)
 	if err != nil {
@@ -76,6 +82,13 @@ func Init(ctx context.Context, db *gorm.DB, oss storage.Storage) error {
 
 func Base() *base.BaseConfig {
 	return shardConfig.base
+}
+
+func SystemAdminEmails() *base.SystemAdminEmailProjection {
+	if shardConfig == nil {
+		return nil
+	}
+	return shardConfig.systemAdminEmails
 }
 
 func Knowledge() *knowledge.KnowledgeConfig {

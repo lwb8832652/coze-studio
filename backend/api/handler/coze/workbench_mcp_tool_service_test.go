@@ -454,6 +454,10 @@ func (*mcpToolHandlerRoleReader) GetUserSpaceList(context.Context, int64) ([]*us
 	return []*userentity.Space{{ID: 1, RoleType: 1}}, nil
 }
 
+func (*mcpToolHandlerRoleReader) GetSpaceMembers(context.Context, int64) ([]*userentity.SpaceMember, error) {
+	return []*userentity.SpaceMember{{UserID: 7, RoleType: 1}}, nil
+}
+
 type mcpToolHandlerRuntimeExecutor struct{}
 
 func (*mcpToolHandlerRuntimeExecutor) ExecuteMCPTool(

@@ -46,10 +46,12 @@ type Repository interface {
 	AdvanceClaim(ctx context.Context, taskID int64, owner string, nextExecutionAt int64, completed bool) error
 	ReleaseClaim(ctx context.Context, taskID int64, owner string) error
 	CreateExecution(ctx context.Context, execution *entity.Execution) error
+	GetExecutionByTrigger(ctx context.Context, taskID int64, idempotencyKey string) (*entity.Execution, error)
 	GetExecution(ctx context.Context, executionID int64) (*entity.Execution, error)
 	MarkExecutionRunning(ctx context.Context, executionID, startedAt int64) error
-	FinishExecution(ctx context.Context, executionID int64, result ExecutionResult) error
+	SetWorkflowExecutionID(ctx context.Context, executionID, workflowExecutionID int64) error
+	FinalizeExecution(ctx context.Context, executionID int64, result ExecutionResult) error
+	MarkExecutionRecoverable(ctx context.Context, taskID, executionID int64, retryAt int64, result ExecutionResult) error
 	ListExecutions(ctx context.Context, spaceID, taskID int64, page, pageSize int32) ([]*entity.Execution, int64, error)
-	RecordTaskExecution(ctx context.Context, taskID, latestExecutionAt int64) error
 	SetConversationID(ctx context.Context, taskID, conversationID int64) error
 }

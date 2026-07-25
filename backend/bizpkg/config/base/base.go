@@ -25,6 +25,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/api/model/admin/config"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
 	"github.com/coze-dev/coze-studio/backend/pkg/envkey"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	"github.com/coze-dev/coze-studio/backend/pkg/lang/conv"
@@ -99,6 +101,16 @@ func (c *BaseConfig) GetBaseConfigWithRevision(ctx context.Context) (*config.Bas
 func (c *BaseConfig) SaveBaseConfig(ctx context.Context, patch BasicConfigurationPatch, expectedRevision string) (string, error) {
 	if c == nil || c.base == nil || ctx == nil || expectedRevision == "" || patch.IsEmpty() {
 		return "", errors.New("basic configuration save input is invalid")
+	}
+	if patch.AdminEmails != nil {
+		canonical, err := domainsystemadmin.CanonicalizeRequiredEmailCSV(
+			*patch.AdminEmails,
+			domainnotification.MaxExplicitRecipients,
+		)
+		if err != nil {
+			return "", err
+		}
+		patch.AdminEmails = &canonical
 	}
 	current, currentRevision, err := c.base.GetVersioned(ctx, consts.BaseConfigNameSpace, baseConfigKey)
 	if err != nil {

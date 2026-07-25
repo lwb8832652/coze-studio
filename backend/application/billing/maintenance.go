@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	infrabilling "github.com/coze-dev/coze-studio/backend/infra/billing"
 )
 
@@ -31,11 +32,13 @@ type CreditAdjustmentResult struct {
 }
 
 type MaintenanceResult struct {
-	ReleasedReservations int64                              `json:"released_reservations"`
-	ExpiredSubscriptions int64                              `json:"expired_subscriptions"`
-	ClosedOrders         int64                              `json:"closed_orders"`
-	Reconciliation       *infrabilling.ReconciliationResult `json:"reconciliation,omitempty"`
-	Errors               []string                           `json:"errors"`
+	ReleasedReservations   int64                                      `json:"released_reservations"`
+	ExpiringSubscriptions  int64                                      `json:"expiring_subscriptions"`
+	ExpiredSubscriptions   int64                                      `json:"expired_subscriptions"`
+	ClosedOrders           int64                                      `json:"closed_orders"`
+	NotificationProjection domainbilling.MaintenanceProjectionResult `json:"notification_projection"`
+	Reconciliation         *infrabilling.ReconciliationResult         `json:"reconciliation,omitempty"`
+	Errors                 []string                                   `json:"errors"`
 }
 
 func (s *Service) AdjustCredits(ctx context.Context, input CreditAdjustmentInput) (*CreditAdjustmentResult, error) {
@@ -52,8 +55,11 @@ func (s *Service) AdjustCredits(ctx context.Context, input CreditAdjustmentInput
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		ledger := domainbilling.NewService(infrabilling.NewMySQLRepository(tx, s.idGenerator))
 		admin := infrabilling.NewAdminRepository(tx, s.idGenerator)
+		notifications := infrabilling.NewMaintenanceRepository(tx, s.idGenerator)
 		var txErr error
-		result, txErr = adjustCreditsInTransaction(ctx, ledger, admin, input, string(metadata))
+		result, txErr = adjustCreditsInTransaction(
+			ctx, ledger, admin, notifications, input, string(metadata),
+		)
 		return txErr
 	})
 	if err != nil {
@@ -66,10 +72,13 @@ func adjustCreditsInTransaction(
 	ctx context.Context,
 	ledger *domainbilling.Service,
 	admin *infrabilling.AdminRepository,
+	notifications *infrabilling.MaintenanceRepository,
 	input CreditAdjustmentInput,
 	metadata string,
 ) (*CreditAdjustmentResult, error) {
 	var balance domainbilling.Balance
+	var notificationActorUserID int64
+	var notificationOccurredAt time.Time
 	action := "credit"
 	ledgerBusinessNo := "admin-credit:" + input.BusinessNo
 	if input.AmountMicros > 0 {
@@ -81,7 +90,12 @@ func adjustCreditsInTransaction(
 		if grantErr != nil {
 			return nil, grantErr
 		}
+		if grant.Entry == nil {
+			return nil, domainbilling.ErrVersionConflict
+		}
 		balance = grant.Balance
+		notificationActorUserID = grant.Entry.ActorUserID
+		notificationOccurredAt = grant.Entry.CreatedAt
 	} else {
 		action = "debit"
 		amount := -input.AmountMicros
@@ -100,7 +114,12 @@ func adjustCreditsInTransaction(
 		if settleErr != nil {
 			return nil, settleErr
 		}
+		if settled.Entry == nil {
+			return nil, domainbilling.ErrVersionConflict
+		}
 		balance = settled.Balance
+		notificationActorUserID = settled.Entry.ActorUserID
+		notificationOccurredAt = settled.Entry.CreatedAt
 		ledgerBusinessNo = "admin-debit:" + input.BusinessNo
 	}
 	auditSummary, err := json.Marshal(map[string]any{
@@ -113,15 +132,41 @@ func adjustCreditsInTransaction(
 	if err = admin.CreateAuditLog(ctx, balance.AccountID, input.ActorUserID, "credit_"+action, ledgerBusinessNo, string(auditSummary)); err != nil {
 		return nil, err
 	}
+	if notifications == nil {
+		return nil, domainnotification.ErrStorage
+	}
+	if err = notifications.AppendCreditAdjustmentNotification(
+		ctx,
+		balance.AccountID,
+		ledgerBusinessNo,
+		notificationActorUserID,
+		notificationOccurredAt,
+	); err != nil {
+		return nil, err
+	}
 	return &CreditAdjustmentResult{Balance: balance, Action: action}, nil
 }
 
 func (s *Service) RunMaintenance(ctx context.Context) (*MaintenanceResult, error) {
+	return s.runMaintenanceAt(ctx, time.Now().UTC(), configuredSubscriptionExpiringWindow())
+}
+
+func (s *Service) runMaintenanceAt(
+	ctx context.Context,
+	now time.Time,
+	expiringWindow time.Duration,
+) (*MaintenanceResult, error) {
 	result := &MaintenanceResult{Errors: make([]string, 0)}
 	if s == nil || s.maintenance == nil {
 		return result, fmt.Errorf("billing maintenance repository is unavailable")
 	}
-	now := time.Now().UTC()
+	if now.IsZero() {
+		return result, domainbilling.ErrInvalidInput
+	}
+	now = now.UTC()
+	if expiringWindow <= 0 {
+		expiringWindow = defaultSubscriptionExpiringWindow
+	}
 	var failures []error
 
 	reservations, err := s.maintenance.ListExpiredReservations(ctx, now, 500)
@@ -141,25 +186,14 @@ func (s *Service) RunMaintenance(ctx context.Context) (*MaintenanceResult, error
 		}
 	}
 
-	subscriptions, err := s.maintenance.ListDueSubscriptions(ctx, now, 500)
-	if err != nil {
-		failures = append(failures, fmt.Errorf("list due subscriptions: %w", err))
-	} else {
-		for _, subscription := range subscriptions {
-			if expireErr := s.maintenance.ExpireSubscription(ctx, subscription); expireErr != nil && !errors.Is(expireErr, domainbilling.ErrVersionConflict) {
-				failures = append(failures, fmt.Errorf("expire subscription %d: %w", subscription.ID, expireErr))
-				continue
-			}
-			result.ExpiredSubscriptions++
-		}
-	}
-
-	closed, closeErr := s.maintenance.CloseExpiredOrders(ctx, now)
-	if closeErr != nil {
-		failures = append(failures, fmt.Errorf("close expired orders: %w", closeErr))
-	} else {
-		result.ClosedOrders = closed
-	}
+	projection, projectionFailures := runMaintenanceNotificationProjection(
+		ctx, s.maintenance, now, expiringWindow,
+	)
+	result.NotificationProjection = projection
+	result.ExpiringSubscriptions = projection.ExpiringSubscriptions
+	result.ExpiredSubscriptions = projection.ExpiredSubscriptions
+	result.ClosedOrders = projection.ClosedOrders
+	failures = append(failures, projectionFailures...)
 	var afterAccountID int64
 	for {
 		accounts, listErr := s.maintenance.ListAccountSubjectsAfter(ctx, afterAccountID, 500)
@@ -184,8 +218,6 @@ func (s *Service) RunMaintenance(ctx context.Context) (*MaintenanceResult, error
 	if err != nil {
 		failures = append(failures, fmt.Errorf("reconcile accounts: %w", err))
 	}
-	for _, failure := range failures {
-		result.Errors = append(result.Errors, failure.Error())
-	}
+	result.Errors = boundedMaintenanceFailureSummaries(failures)
 	return result, errors.Join(failures...)
 }

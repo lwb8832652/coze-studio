@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/coze-dev/coze-studio/backend/domain/scheduledtask/entity"
+	"github.com/coze-dev/coze-studio/backend/domain/scheduledtask/repository"
 )
 
 func TestAgentTaskExecutorCreatesAndReusesConversation(t *testing.T) {
@@ -66,14 +67,39 @@ func TestWorkflowTaskExecutorRunsPublishedWorkflowToTerminal(t *testing.T) {
 		executionID: 50,
 		status: RunTerminalStatus{Status: entity.ExecutionStatusSucceeded},
 	}
-	executor := &WorkflowTaskExecutor{Runner: runner}
+	repo := &workflowExecutionRepository{}
+	executor := &WorkflowTaskExecutor{Runner: runner, Repository: repo}
 	task := &entity.Task{ID: 10, SpaceID: 1, CreatorID: 7, TargetID: 300, Payload: `{"city":"武汉"}`}
 
-	result, err := executor.Execute(context.Background(), task, &entity.Execution{ID: 20})
+	execution := &entity.Execution{ID: 20}
+	result, err := executor.Execute(context.Background(), task, execution)
 
 	require.NoError(t, err)
 	require.Equal(t, int64(50), result.WorkflowExecutionID)
+	require.Equal(t, int64(50), execution.WorkflowExecutionID)
+	require.Equal(t, int64(50), repo.workflowExecutionID)
+	require.Equal(t, 1, repo.setCount)
+	require.Equal(t, 1, runner.startCount)
 	require.Equal(t, "武汉", runner.inputs["city"])
+}
+
+func TestWorkflowTaskExecutorReusesPersistedWorkflowExecutionWithoutRestart(t *testing.T) {
+	t.Parallel()
+	runner := &recordingWorkflowRunner{
+		executionID: 99,
+		status: RunTerminalStatus{Status: entity.ExecutionStatusSucceeded},
+	}
+	repo := &workflowExecutionRepository{}
+	executor := &WorkflowTaskExecutor{Runner: runner, Repository: repo}
+	task := &entity.Task{ID: 10, SpaceID: 1, CreatorID: 7, TargetID: 300, Payload: `{"city":"武汉"}`}
+
+	result, err := executor.Execute(context.Background(), task, &entity.Execution{ID: 20, WorkflowExecutionID: 50})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(50), result.WorkflowExecutionID)
+	require.Zero(t, runner.startCount)
+	require.Zero(t, repo.setCount)
+	require.Equal(t, int64(50), runner.waitExecutionID)
 }
 
 type recordingAgentRunner struct {
@@ -111,13 +137,29 @@ type recordingWorkflowRunner struct {
 	executionID int64
 	inputs      map[string]any
 	status      RunTerminalStatus
+	startCount  int
+	waitExecutionID int64
 }
 
 func (r *recordingWorkflowRunner) Start(_ context.Context, _ int64, _ int64, _ int64, inputs map[string]any) (int64, error) {
+	r.startCount++
 	r.inputs = inputs
 	return r.executionID, nil
 }
 
-func (r *recordingWorkflowRunner) WaitTerminal(context.Context, int64, int64) (RunTerminalStatus, error) {
+func (r *recordingWorkflowRunner) WaitTerminal(_ context.Context, _ int64, executionID int64) (RunTerminalStatus, error) {
+	r.waitExecutionID = executionID
 	return r.status, nil
+}
+
+type workflowExecutionRepository struct {
+	repository.Repository
+	workflowExecutionID int64
+	setCount            int
+}
+
+func (r *workflowExecutionRepository) SetWorkflowExecutionID(_ context.Context, _ int64, workflowExecutionID int64) error {
+	r.workflowExecutionID = workflowExecutionID
+	r.setCount++
+	return nil
 }

@@ -35,11 +35,12 @@ func registerAdminCustomRoutes(api *route.RouterGroup) {
 	admin.POST("/users/update", handler.UpdateAdminUser)
 	admin.POST("/users/password/reset", handler.ResetAdminUserPassword)
 	admin.POST("/config/site/assets", handler.UploadSiteAsset)
-
 	billing := admin.Group("/billing")
 	billing.GET("/overview", handler.GetAdminBillingOverview)
 	billing.GET("/config", handler.GetAdminBillingConfig)
 	billing.PUT("/config", handler.SaveAdminBillingConfig)
+	billing.GET("/credit-thresholds", handler.GetAdminBillingCreditThreshold)
+	billing.PUT("/credit-thresholds", handler.SaveAdminBillingCreditThreshold)
 	billing.GET("/plans", handler.ListAdminBillingPlans)
 	billing.POST("/plans", handler.CreateAdminBillingPlan)
 	billing.GET("/credit-packages", handler.ListAdminCreditPackages)

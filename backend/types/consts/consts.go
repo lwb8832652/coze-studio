@@ -78,6 +78,7 @@ const (
 	APIConnectorID    = int64(1024)
 
 	SessionDataKeyInCtx = "session_data_key_in_ctx"
+	SystemAdminKeyInCtx = "system_admin_key_in_ctx"
 	OpenapiAuthKeyInCtx = "openapi_auth_key_in_ctx"
 
 	CodeRunnerType           = "CODE_RUNNER_TYPE"

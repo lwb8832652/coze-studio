@@ -14,6 +14,7 @@ import (
 type stubUserSpaceRoleReader struct {
 	userID int64
 	spaces []*userentity.Space
+	members []*userentity.SpaceMember
 	err    error
 }
 
@@ -23,6 +24,13 @@ func (s *stubUserSpaceRoleReader) GetUserSpaceList(
 ) ([]*userentity.Space, error) {
 	s.userID = userID
 	return s.spaces, s.err
+}
+
+func (s *stubUserSpaceRoleReader) GetSpaceMembers(
+	_ context.Context,
+	_ int64,
+) ([]*userentity.SpaceMember, error) {
+	return s.members, s.err
 }
 
 func TestSpaceAuthorizerRequiresAuthenticatedUser(t *testing.T) {

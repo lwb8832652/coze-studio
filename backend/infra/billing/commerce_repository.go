@@ -6,18 +6,28 @@ package billing
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	infranotification "github.com/coze-dev/coze-studio/backend/infra/notification"
 )
 
 func (r *MySQLRepository) RunCommerceTransaction(ctx context.Context, fn func(domainbilling.CommerceRepository) error) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(&MySQLRepository{db: tx, idGen: r.idGen})
 	})
+}
+
+func (r *MySQLRepository) AppendBillingNotificationOutbox(ctx context.Context, event domainnotification.Event) error {
+	if r == nil || r.db == nil || r.idGen == nil {
+		return domainnotification.ErrStorage
+	}
+	return infranotification.NewMySQLRepository(r.db, r.idGen).AppendInTransaction(ctx, r.db, event)
 }
 
 func (r *MySQLRepository) GetPublishedPlanVersion(ctx context.Context, planID int64, now time.Time) (*domainbilling.SubscriptionPlan, *domainbilling.PlanVersion, error) {
@@ -119,7 +129,19 @@ func (r *MySQLRepository) CreatePaymentTransaction(ctx context.Context, transact
 		return err
 	}
 	transaction.ID = id
-	return r.db.WithContext(ctx).Create(paymentPOFromDomain(transaction)).Error
+	candidate := paymentPOFromDomain(transaction)
+	if err = r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(candidate).Error; err != nil {
+		return err
+	}
+	existing, err := r.findPaymentTransactionIdentity(ctx, candidate.EventDigest, candidate.Gateway, candidate.ProviderTransactionID)
+	if err != nil {
+		return err
+	}
+	if !samePaymentTransactionIdentity(existing, candidate) {
+		return domainbilling.ErrIdempotencyConflict
+	}
+	transaction.ID = existing.ID
+	return nil
 }
 
 func (r *MySQLRepository) FindPaymentByEventDigest(ctx context.Context, digest string) (*domainbilling.PaymentTransaction, error) {
@@ -132,6 +154,26 @@ func (r *MySQLRepository) FindPaymentByEventDigest(ctx context.Context, digest s
 		return nil, err
 	}
 	return po.toDomain(), nil
+}
+
+func (r *MySQLRepository) FindPaymentByGatewayTransaction(ctx context.Context, gateway string, providerTransactionID string) (*domainbilling.PaymentTransaction, error) {
+	var po paymentPO
+	err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("gateway = ? AND provider_transaction_id = ?", gateway, providerTransactionID).
+		First(&po).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domainbilling.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return po.toDomain(), nil
+}
+
+func (r *MySQLRepository) GrantCredits(ctx context.Context, input domainbilling.GrantInput) (*domainbilling.GrantResult, error) {
+	ledger := domainbilling.NewService(r)
+	return ledger.Grant(ctx, input)
 }
 
 func (r *MySQLRepository) UpsertSubscriptionForOrder(ctx context.Context, subscription *domainbilling.UserSubscription) error {
@@ -296,6 +338,36 @@ func paymentPOFromDomain(p *domainbilling.PaymentTransaction) *paymentPO {
 }
 func (p paymentPO) toDomain() *domainbilling.PaymentTransaction {
 	return &domainbilling.PaymentTransaction{ID: p.ID, OrderID: p.OrderID, Gateway: p.Gateway, ProviderTransactionID: p.ProviderTransactionID, Status: domainbilling.PaymentStatus(p.Status), AmountMicros: p.AmountMicros, Currency: p.Currency, EventDigest: p.EventDigest, FailureCode: p.FailureCode, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+}
+
+func (r *MySQLRepository) findPaymentTransactionIdentity(ctx context.Context, eventDigest string, gateway string, providerTransactionID string) (*paymentPO, error) {
+	var po paymentPO
+	query := r.db.WithContext(ctx)
+	if strings.EqualFold(strings.TrimSpace(r.db.Dialector.Name()), "mysql") {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.
+		Where("event_digest = ? OR (gateway = ? AND provider_transaction_id = ?)", eventDigest, gateway, providerTransactionID).
+		Order("id ASC").
+		First(&po).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domainbilling.ErrIdempotencyConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &po, nil
+}
+
+func samePaymentTransactionIdentity(existing *paymentPO, candidate *paymentPO) bool {
+	return existing != nil &&
+		candidate != nil &&
+		existing.OrderID == candidate.OrderID &&
+		strings.EqualFold(existing.Gateway, candidate.Gateway) &&
+		strings.TrimSpace(existing.ProviderTransactionID) == strings.TrimSpace(candidate.ProviderTransactionID) &&
+		existing.Status == candidate.Status &&
+		existing.AmountMicros == candidate.AmountMicros &&
+		strings.EqualFold(existing.Currency, candidate.Currency)
 }
 
 type subscriptionPO struct {

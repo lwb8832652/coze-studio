@@ -3582,6 +3582,12 @@ table "space" {
     unsigned = true
     comment  = "Creator ID"
   }
+  column "space_type" {
+    null    = false
+    type    = tinyint
+    default = 0
+    comment = "Space Type: 0.unknown 1.personal 2.team"
+  }
   column "created_at" {
     null     = false
     type     = bigint

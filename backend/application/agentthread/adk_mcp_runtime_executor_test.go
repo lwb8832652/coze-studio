@@ -18,14 +18,20 @@ package agentthread
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestADKMCPRuntimeExecutorValidatesAndInvokesTransport(t *testing.T) {
@@ -77,6 +83,181 @@ func TestADKMCPRuntimeExecutorValidatesAndInvokesTransport(t *testing.T) {
 		require.NotContains(t, event.Payload, "raw-secret")
 		require.NotContains(t, event.Payload, "docs-mcp")
 	}
+}
+
+func TestADKMCPRuntimeExecutorIgnoresHealthReporterErrors(t *testing.T) {
+	health := &recordingADKMCPRuntimeHealthReporter{
+		err: fmt.Errorf("health reporter unavailable"),
+	}
+	events := &recordingRunEventSink{}
+	executor := NewADKMCPRuntimeExecutor(
+		&recordingADKMCPRuntimeServerResolver{
+			server: &toolapi.MCPToolServer{
+				ServerID:   100,
+				SpaceID:    30,
+				Enabled:    true,
+				UpdatedAt:  55,
+				ServerType: "stdio",
+				Tools: []*toolapi.MCPToolDefinition{
+					{Name: "search-docs", Description: "Search docs."},
+				},
+			},
+		},
+		&recordingADKMCPRuntimeTransport{result: "bounded output"},
+		WithADKMCPRuntimeExecutorEventSink(events),
+		WithADKMCPRuntimeExecutorHealthReporter(health),
+	)
+
+	result, err := executor.InvokeADKMCPRuntimeTool(
+		context.Background(),
+		ADKMCPRuntimeToolCall{
+			Run:       &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+			Name:      "mcp_100_search_docs",
+			ServerID:  100,
+			ToolName:  "search-docs",
+			Arguments: `{"query":"docs"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "bounded output", result)
+	require.Equal(t, []string{"mcp.tool.started", "mcp.tool.completed"}, events.eventTypes())
+	require.Len(t, health.reports, 1)
+	require.True(t, health.reports[0].Success)
+	require.Equal(t, int64(100), health.reports[0].ServerID)
+	require.Equal(t, int64(55), health.reports[0].ExpectedUpdatedAt)
+}
+
+func TestADKMCPRuntimeExecutorIgnoresRealHealthProducerAppendFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	createADKMCPRuntimeHealthTables(t, db)
+	catalog := appmcptool.NewMySQLCatalog(db)
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    30,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "docs-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search-docs", Description: "Search docs."},
+		},
+		HealthStatus:    "unhealthy",
+		HealthCheckedAt: 90,
+		HealthError:     "transport_failed",
+		CreatedAt:       10,
+		UpdatedAt:       55,
+	}))
+	require.NoError(t, db.Table("mcp_tool_servers").
+		Where("server_id = ?", 100).
+		Updates(map[string]any{
+			"health_consecutive_failures": 3,
+			"health_incident_id":          "mcp-incident-100-90",
+			"health_incident_opened_at":   90,
+		}).Error)
+	previousNotificationService := appnotification.SVC
+	notificationRepo := &failingADKMCPNotificationRepository{err: errors.New("append failed")}
+	appnotification.SetDefaultService(appnotification.NewService(notificationRepo))
+	t.Cleanup(func() {
+		appnotification.SetDefaultService(previousNotificationService)
+	})
+	mcpService := appmcptool.NewApplicationService(&appmcptool.Components{
+		Catalog: catalog,
+		SpaceMemberRoleReader: &adkMCPRuntimeSpaceMemberRoleReader{
+			roles: []appmcptool.SpaceMemberRole{{UserID: 7, RoleType: 1}},
+		},
+	})
+	healthReporter := ADKMCPRuntimeHealthReporterFunc(
+		func(ctx context.Context, report ADKMCPRuntimeHealthReport) error {
+			return mcpService.RecordRuntimeHealth(ctx, appmcptool.MCPRuntimeHealthReport{
+				ServerID:          report.ServerID,
+				ExpectedUpdatedAt: report.ExpectedUpdatedAt,
+				Success:           report.Success,
+				ErrorCode:         report.ErrorCode,
+				LatencyMs:         report.LatencyMs,
+			})
+		},
+	)
+	events := &recordingRunEventSink{}
+	executor := NewADKMCPRuntimeExecutor(
+		&recordingADKMCPRuntimeServerResolver{
+			server: &toolapi.MCPToolServer{
+				ServerID:   100,
+				SpaceID:    30,
+				Enabled:    true,
+				UpdatedAt:  55,
+				ServerType: "stdio",
+				Tools: []*toolapi.MCPToolDefinition{
+					{Name: "search-docs", Description: "Search docs."},
+				},
+			},
+		},
+		&recordingADKMCPRuntimeTransport{result: "bounded output"},
+		WithADKMCPRuntimeExecutorEventSink(events),
+		WithADKMCPRuntimeExecutorHealthReporter(healthReporter),
+	)
+
+	result, err := executor.InvokeADKMCPRuntimeTool(
+		context.Background(),
+		ADKMCPRuntimeToolCall{
+			Run:       &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+			Name:      "mcp_100_search_docs",
+			ServerID:  100,
+			ToolName:  "search-docs",
+			Arguments: `{"query":"docs"}`,
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "bounded output", result)
+	require.Equal(t, []string{"mcp.tool.started", "mcp.tool.completed"}, events.eventTypes())
+	require.Equal(t, 1, notificationRepo.appendCalls)
+	var incidentID string
+	require.NoError(t, db.Table("mcp_tool_servers").
+		Where("server_id = ?", 100).
+		Select("health_incident_id").
+		Scan(&incidentID).Error)
+	require.Equal(t, "mcp-incident-100-90", incidentID)
+}
+
+func TestADKMCPRuntimeExecutorDoesNotReportHealthForDisabledServer(t *testing.T) {
+	transport := &recordingADKMCPRuntimeTransport{result: "should-not-run"}
+	health := &recordingADKMCPRuntimeHealthReporter{
+		err: errors.New("health reporter unavailable"),
+	}
+	executor := NewADKMCPRuntimeExecutor(
+		&recordingADKMCPRuntimeServerResolver{
+			server: &toolapi.MCPToolServer{
+				ServerID: 100,
+				SpaceID:  30,
+				Enabled:  false,
+				Tools:    []*toolapi.MCPToolDefinition{{Name: "search-docs"}},
+			},
+		},
+		transport,
+		WithADKMCPRuntimeExecutorHealthReporter(health),
+	)
+
+	result, err := executor.InvokeADKMCPRuntimeTool(
+		context.Background(),
+		ADKMCPRuntimeToolCall{
+			Run:       &RunSummary{RunID: 20, ThreadID: 10, SpaceID: 30},
+			Name:      "mcp_100_search_docs",
+			ServerID:  100,
+			ToolName:  "search-docs",
+			Arguments: `{"query":"docs"}`,
+		},
+	)
+
+	require.Error(t, err)
+	require.Empty(t, result)
+	require.Contains(t, err.Error(), "server disabled")
+	require.Zero(t, transport.calls)
+	require.Empty(t, health.reports)
 }
 
 func TestADKMCPRuntimeExecutorRejectsUnsafeCallsBeforeTransport(t *testing.T) {
@@ -687,6 +868,102 @@ func (r *recordingADKMCPRuntimeHealthReporter) ReportADKMCPRuntimeHealth(
 ) error {
 	r.reports = append(r.reports, report)
 	return r.err
+}
+
+func createADKMCPRuntimeHealthTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`
+		CREATE TABLE mcp_tool_servers (
+			server_id INTEGER PRIMARY KEY,
+			space_id INTEGER NOT NULL,
+			creator_id INTEGER NOT NULL DEFAULT 0,
+			source_type TEXT NOT NULL DEFAULT 'custom',
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			server_type TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			config TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			tools TEXT NOT NULL,
+			resources TEXT,
+			prompts TEXT,
+			health_status TEXT NOT NULL DEFAULT 'unknown',
+			health_checked_at INTEGER NOT NULL DEFAULT 0,
+			health_latency_ms INTEGER NOT NULL DEFAULT 0,
+			health_error TEXT NOT NULL DEFAULT '',
+			health_consecutive_failures INTEGER NOT NULL DEFAULT 0,
+			health_incident_id TEXT NOT NULL DEFAULT '',
+			health_incident_opened_at INTEGER NOT NULL DEFAULT 0,
+			health_last_recovered_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			deleted_at INTEGER NOT NULL DEFAULT 0
+		)
+	`).Error)
+}
+
+type adkMCPRuntimeSpaceMemberRoleReader struct {
+	roles []appmcptool.SpaceMemberRole
+}
+
+func (r *adkMCPRuntimeSpaceMemberRoleReader) ListSpaceMemberRoles(
+	ctx context.Context,
+	spaceID int64,
+) ([]appmcptool.SpaceMemberRole, error) {
+	return append([]appmcptool.SpaceMemberRole(nil), r.roles...), nil
+}
+
+type failingADKMCPNotificationRepository struct {
+	err         error
+	appendCalls int
+}
+
+func (r *failingADKMCPNotificationRepository) Append(
+	ctx context.Context,
+	event domainnotification.Event,
+) error {
+	return r.err
+}
+
+func (r *failingADKMCPNotificationRepository) AppendInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	event domainnotification.Event,
+) error {
+	r.appendCalls++
+	return r.err
+}
+
+func (r *failingADKMCPNotificationRepository) ListForUser(
+	ctx context.Context,
+	filter domainnotification.ListFilter,
+) (domainnotification.ListPage, error) {
+	return domainnotification.ListPage{}, r.err
+}
+
+func (r *failingADKMCPNotificationRepository) CountUnread(
+	ctx context.Context,
+	userID int64,
+) (int64, error) {
+	return 0, r.err
+}
+
+func (r *failingADKMCPNotificationRepository) MarkRead(
+	ctx context.Context,
+	userID int64,
+	notificationIDs []int64,
+	readAt int64,
+) (int64, error) {
+	return 0, r.err
+}
+
+func (r *failingADKMCPNotificationRepository) MarkAllRead(
+	ctx context.Context,
+	userID int64,
+	cutoff int64,
+	readAt int64,
+) (int64, error) {
+	return 0, r.err
 }
 
 type recordingADKMCPRuntimeOutputOffloader struct {

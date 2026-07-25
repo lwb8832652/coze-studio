@@ -97,6 +97,74 @@ func SaveAdminBillingConfig(ctx context.Context, c *app.RequestContext) {
 	billingOK(c, data)
 }
 
+type adminCreditThresholdRequest struct {
+	SubjectType          string `json:"subject_type"`
+	SubjectID            *int64 `json:"subject_id,string"`
+	Enabled              *bool  `json:"enabled"`
+	ThresholdMicros      int64  `json:"threshold_micros"`
+	RecoveryMarginMicros int64  `json:"recovery_margin_micros"`
+	ExpectedVersion      *int64 `json:"expected_version"`
+}
+
+func GetAdminBillingCreditThreshold(ctx context.Context, c *app.RequestContext) {
+	service := billingService(c)
+	if service == nil {
+		return
+	}
+	subjectID, err := strconv.ParseInt(c.Query("subject_id"), 10, 64)
+	if err != nil {
+		billingError(c, domainbilling.ErrInvalidInput)
+		return
+	}
+	data, err := service.AdminRepository().GetCreditThresholdConfig(
+		ctx,
+		domainbilling.Subject{
+			Type: domainbilling.SubjectType(c.Query("subject_type")),
+			ID:   subjectID,
+		},
+	)
+	if err != nil {
+		billingError(c, err)
+		return
+	}
+	billingOK(c, data)
+}
+
+func SaveAdminBillingCreditThreshold(ctx context.Context, c *app.RequestContext) {
+	service := billingService(c)
+	if service == nil {
+		return
+	}
+	var request adminCreditThresholdRequest
+	if err := c.BindAndValidate(&request); err != nil {
+		billingError(c, domainbilling.ErrInvalidInput)
+		return
+	}
+	if request.SubjectID == nil || request.Enabled == nil || request.ExpectedVersion == nil {
+		billingError(c, domainbilling.ErrInvalidInput)
+		return
+	}
+	data, err := service.AdminRepository().SaveCreditThresholdConfig(
+		ctx,
+		infrabilling.SaveCreditThresholdConfigInput{
+			Subject: domainbilling.Subject{
+				Type: domainbilling.SubjectType(request.SubjectType),
+				ID:   *request.SubjectID,
+			},
+			Enabled:              *request.Enabled,
+			ThresholdMicros:      request.ThresholdMicros,
+			RecoveryMarginMicros: request.RecoveryMarginMicros,
+			ExpectedVersion:      *request.ExpectedVersion,
+		},
+		billingActorID(ctx),
+	)
+	if err != nil {
+		billingError(c, err)
+		return
+	}
+	billingOK(c, data)
+}
+
 func ListAdminBillingPlans(ctx context.Context, c *app.RequestContext) {
 	service := billingService(c)
 	if service == nil {

@@ -412,6 +412,9 @@ func (p *RunProcessor) finalizeRunExecution(
 			if len(interrupted.Interrupts) > 0 {
 				interruptPayload["interrupt_count"] = len(interrupted.Interrupts)
 			}
+			if ref, ok := awaitingInputInteractionRefFromInterrupts(interrupted.Interrupts); ok {
+				interruptPayload[entity.RunAwaitingInputInteractionRefPayloadKey] = ref
+			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
 				RunID:                 run.RunID,
 				From:                  RunStatusRunning,
@@ -723,6 +726,31 @@ func updateRunStatusResponseRun(resp *UpdateRunStatusResponse) *RunSummary {
 	}
 
 	return resp.Run
+}
+
+func awaitingInputInteractionRefFromInterrupts(
+	interrupts []ADKInterruptItem,
+) (entity.RunAwaitingInputInteractionRef, bool) {
+	for _, item := range interrupts {
+		if !item.IsRootCause {
+			continue
+		}
+		prompt, ok := humanInteractionPromptFromInfo(item.Info)
+		if !ok || prompt == nil {
+			continue
+		}
+		ref := entity.RunAwaitingInputInteractionRef{
+			Schema:             entity.RunAwaitingInputInteractionRefSchema,
+			InteractionEventID: item.ID,
+			InteractionID:      prompt.InteractionID,
+			Kind:               string(prompt.Kind),
+		}.Normalized()
+		if err := ref.Validate(); err != nil {
+			continue
+		}
+		return ref, true
+	}
+	return entity.RunAwaitingInputInteractionRef{}, false
 }
 
 func resultMessage(result *RunExecutionResult) string {

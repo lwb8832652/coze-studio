@@ -16,16 +16,22 @@
 
 import { useNavigate } from 'react-router-dom';
 
+import { ReadStatus } from '@coze-studio/api-schema/playground';
+import { useSpaceStore } from '@coze-foundation/space-store';
 import {
   IconCozBell,
   IconCozBot,
   IconCozRefresh,
 } from '@coze-arch/coze-design/icons';
 import { Badge, Popover, Toast } from '@coze-arch/coze-design';
-import { ReadStatus } from '@coze-arch/bot-api/playground_api';
 
 import { useNotifications } from './use-notifications';
-import { type Notification } from './service';
+import {
+  type Notification,
+  NotificationCategory,
+  NotificationRoute,
+  NotificationSeverity,
+} from './service';
 
 import './index.less';
 
@@ -45,20 +51,72 @@ const formatNotificationTime = (value?: string) => {
   }).format(new Date(timestamp));
 };
 
-const getSafeNotificationTarget = (jumpLink?: string) => {
-  if (!jumpLink) {
+const safeRouteValue = (value?: string) => {
+  const normalized = value?.trim() ?? '';
+  if (!normalized || !/^[A-Za-z0-9][A-Za-z0-9._:@-]*$/.test(normalized)) {
     return '';
   }
-  const normalized = jumpLink.startsWith('/') ? jumpLink : '';
-  return /^\/space\/[^/]+\/(?:tasks\/[^/?#]+|task-center|workspace)(?:[?#].*)?$/.test(
-    normalized,
-  )
-    ? normalized
-    : '';
+  return normalized;
+};
+
+const isSpaceScopedRoute = (route?: NotificationRoute) =>
+  route === NotificationRoute.TaskThread ||
+  route === NotificationRoute.ScheduledTaskCenter ||
+  route === NotificationRoute.AppDev ||
+  route === NotificationRoute.Skill ||
+  route === NotificationRoute.Workspace;
+
+export const getNotificationTarget = (
+  notification: Partial<Notification>,
+  activeSpaceID?: string,
+) => {
+  const routeSpaceID = safeRouteValue(notification.route_space_id);
+  const activeSpace = safeRouteValue(activeSpaceID);
+  if (
+    isSpaceScopedRoute(notification.route) &&
+    (!routeSpaceID || routeSpaceID !== activeSpace)
+  ) {
+    return '';
+  }
+  const spaceID = encodeURIComponent(routeSpaceID);
+  const targetID = encodeURIComponent(
+    safeRouteValue(notification.route_target_id),
+  );
+  switch (notification.route) {
+    case NotificationRoute.TaskThread:
+      return spaceID && targetID ? `/space/${spaceID}/tasks/${targetID}` : '';
+    case NotificationRoute.ScheduledTaskCenter:
+      return spaceID ? `/space/${spaceID}/task-center` : '';
+    case NotificationRoute.AppDev:
+      return spaceID && targetID ? `/space/${spaceID}/app-dev/${targetID}` : '';
+    case NotificationRoute.Skill:
+      return spaceID ? `/space/${spaceID}/skill` : '';
+    case NotificationRoute.Workspace:
+      return spaceID ? `/space/${spaceID}/workspace` : '';
+    case NotificationRoute.Billing:
+      return '/billing/subscriptions';
+    case NotificationRoute.SystemAnnouncements:
+      return '/system/announcements';
+    default:
+      return '';
+  }
 };
 
 const getNotificationTitle = (notification: Notification) =>
   notification.sender?.sender_name || '系统通知';
+
+const getSeverityName = (severity?: NotificationSeverity) => {
+  switch (severity) {
+    case NotificationSeverity.Success:
+      return 'success';
+    case NotificationSeverity.Warning:
+      return 'warning';
+    case NotificationSeverity.Error:
+      return 'error';
+    default:
+      return 'info';
+  }
+};
 
 type NotificationState = ReturnType<typeof useNotifications>;
 
@@ -80,7 +138,7 @@ const NotificationPanel = ({
       <button
         type="button"
         className="notification-center__read-all"
-        disabled={unreadCount === 0}
+        disabled={unreadCount === 0 || !state.canMarkAllRead}
         onClick={() => {
           void state.markAllRead().catch(error => {
             Toast.error({
@@ -95,6 +153,19 @@ const NotificationPanel = ({
         全部已读
       </button>
     </header>
+    {state.unreadError ? (
+      <div className="notification-center__polling-error" role="status">
+        <span>{state.unreadError}</span>
+        <button
+          type="button"
+          onClick={() => {
+            void state.refreshUnreadCount();
+          }}
+        >
+          重新同步
+        </button>
+      </div>
+    ) : null}
     <div className="notification-center__list" aria-live="polite">
       {state.loading ? (
         <div className="notification-center__state">正在加载通知...</div>
@@ -122,6 +193,10 @@ const NotificationPanel = ({
                 type="button"
                 className="notification-center__item"
                 data-unread={unread}
+                data-category={
+                  notification.category ?? NotificationCategory.Task
+                }
+                data-severity={getSeverityName(notification.severity)}
                 data-notification-id={notification.id}
                 onClick={() => onNotificationClick(notification)}
               >
@@ -149,14 +224,28 @@ const NotificationPanel = ({
             );
           })}
           {state.hasMore ? (
-            <button
-              type="button"
-              className="notification-center__load-more"
-              disabled={state.loadingMore}
-              onClick={() => void state.loadMore()}
-            >
-              {state.loadingMore ? '正在加载...' : '加载更多'}
-            </button>
+            <>
+              {state.paginationError ? (
+                <div className="notification-center__pagination-error">
+                  <span>{state.paginationError}</span>
+                  <button
+                    type="button"
+                    disabled={state.loadingMore}
+                    onClick={() => void state.retryLoadMore()}
+                  >
+                    重试
+                  </button>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="notification-center__load-more"
+                disabled={state.loadingMore}
+                onClick={() => void state.loadMore()}
+              >
+                {state.loadingMore ? '正在加载...' : '加载更多'}
+              </button>
+            </>
           ) : null}
         </>
       )}
@@ -175,32 +264,68 @@ export const NotificationBell = ({
 }) => {
   const navigate = useNavigate();
   const state = useNotifications();
+  const activeSpaceID = useSpaceStore(store => store.space.id);
+  const setSpace = useSpaceStore(store => store.setSpace);
+  const fetchSpaces = useSpaceStore(store => store.fetchSpaces);
   const unreadCount = unreadCountOverride ?? state.unreadCount;
   const displayUnreadCount =
     unreadCount > MAX_VISIBLE_UNREAD_COUNT ? '99+' : unreadCount;
   const ariaLabel = unreadCount > 0 ? `通知，${unreadCount} 条未读` : '通知';
 
-  const handleNotificationClick = async (notification: Notification) => {
-    try {
-      await state.markRead(notification);
-    } catch (error) {
+  const markReadBestEffort = (notification: Notification) => {
+    void state.markRead(notification).catch(error => {
       Toast.error({
         content:
           error instanceof Error
             ? '标记通知已读失败，请稍后重试'
             : '通知服务暂不可用',
       });
+    });
+  };
+
+  const handleNotificationClick = async (notification: Notification) => {
+    markReadBestEffort(notification);
+    const routeSpaceID = safeRouteValue(notification.route_space_id);
+    const navigationSpaceID = routeSpaceID;
+    const hasTarget =
+      notification.route !== undefined &&
+      notification.route !== NotificationRoute.None;
+    if (!hasTarget) {
       return;
     }
 
-    if (!notification.jump_link) {
-      return;
-    }
-    const target = getSafeNotificationTarget(notification.jump_link);
+    const target = getNotificationTarget(
+      notification,
+      routeSpaceID || activeSpaceID,
+    );
     if (!target) {
       Toast.error({ content: '该通知的目标已失效' });
       return;
     }
+
+    if (isSpaceScopedRoute(notification.route)) {
+      let accessibleSpaces: Array<{ id?: string }> = [];
+      try {
+        const spaceInfo = await fetchSpaces(true);
+        accessibleSpaces = spaceInfo?.bot_space_list ?? [];
+      } catch {
+        Toast.error({ content: '无法验证目标工作空间权限，请稍后重试' });
+        return;
+      }
+      if (!accessibleSpaces.some(space => space.id === navigationSpaceID)) {
+        Toast.error({ content: '你已不在该通知对应的工作空间' });
+        return;
+      }
+      if (navigationSpaceID !== safeRouteValue(activeSpaceID)) {
+        try {
+          setSpace(navigationSpaceID);
+        } catch {
+          Toast.error({ content: '切换目标工作空间失败，请稍后重试' });
+          return;
+        }
+      }
+    }
+
     state.setOpen(false);
     navigate(target);
   };
