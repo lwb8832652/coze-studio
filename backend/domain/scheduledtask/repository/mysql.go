@@ -448,7 +448,7 @@ func (po *scheduledTaskPO) toEntity() *entity.Task {
 func updateTaskLatestExecutionStatus(db *gorm.DB, taskID, executionID int64, status entity.ExecutionStatus) error {
 	result := db.Model(&scheduledTaskPO{}).
 		Where("id = ? AND deleted_at = 0 AND NOT EXISTS (SELECT 1 FROM scheduled_task_executions AS newer WHERE newer.task_id = scheduled_tasks.id AND newer.id > ?)", taskID, executionID).
-		Update("latest_execution_status", string(status))
+		UpdateColumn("latest_execution_status", string(status))
 	if result.Error != nil || result.RowsAffected > 0 {
 		return result.Error
 	}

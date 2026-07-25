@@ -145,6 +145,9 @@ func TestRepositoryOlderExecutionCannotOverwriteLatestStatus(t *testing.T) {
 	task := taskFixture(10, 100, "concurrent-report")
 	task.UpdatedAt = 5000
 	require.NoError(t, repo.CreateTask(ctx, task))
+	created, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(5000), created.UpdatedAt)
 	first := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "manual", Status: entity.ExecutionStatusQueued, IdempotencyKey: "manual:first"}
 	second := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "manual", Status: entity.ExecutionStatusQueued, IdempotencyKey: "manual:second"}
 	require.NoError(t, repo.CreateExecution(ctx, first))
@@ -154,6 +157,7 @@ func TestRepositoryOlderExecutionCannotOverwriteLatestStatus(t *testing.T) {
 	latest, err := repo.GetTask(ctx, 10, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, entity.ExecutionStatusQueued, latest.LatestExecutionStatus)
+	require.Equal(t, int64(5000), latest.UpdatedAt)
 
 	require.NoError(t, repo.FinalizeExecution(ctx, first.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}))
 	latest, err = repo.GetTask(ctx, 10, task.ID)
