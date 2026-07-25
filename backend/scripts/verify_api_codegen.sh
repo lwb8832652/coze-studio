@@ -72,6 +72,7 @@ thriftgo_version="$("${thriftgo_bin}" --version 2>&1)"
 
 handler_excludes=(
   api/handler/coze/agent_run_service.go
+  api/handler/coze/announcement_service.go
   api/handler/coze/app_dev_service.go
   api/handler/coze/bot_open_api_service.go
   api/handler/coze/config_service.go

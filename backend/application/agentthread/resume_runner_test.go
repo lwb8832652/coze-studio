@@ -24,9 +24,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestResumeRunProcessorCompletesClaimedResumeRunWithAssistantMessage(t *testing.T) {
@@ -526,6 +528,8 @@ func TestRuntimeModeFromCheckpointIgnoresUnrelatedLegacyMetadataRuntime(t *testi
 }
 
 func TestResumeRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
 	domainSVC := &recordingThreadService{
 		claimedQueuedResumeRuns: []*entity.Run{{
 			ID:       200,
@@ -596,7 +600,97 @@ func TestResumeRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
 	}, eventSink.eventTypes())
 	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"status":"interrupted"`)
 	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"checkpoint_key":"checkpoint-1"`)
+	require.NotContains(t, domainSVC.interruptRunReq.EventPayload, `"awaiting_input"`)
+	require.Nil(t, domainSVC.interruptRunReq.OutboxIntent)
 	require.False(t, domainSVC.interruptRunReq.EventAlreadyPersisted)
+}
+
+func TestResumeRunProcessorAttachesAwaitingInputOutboxForExactHumanInteractionInterrupt(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, WorkerID: "resume-worker-a",
+		LeaseOwner: "resume-worker-a", LeaseToken: "lease-200",
+		LeaseExpiresAt: 60_000, ExecutionGeneration: 4,
+		Command: `{"resume":{"checkpoint_id":"503"}}`,
+	}
+	domainSVC := &recordingThreadService{
+		claimedQueuedResumeRuns: []*entity.Run{domainRun},
+		gotRunsByID:             map[int64]*entity.Run{200: domainRun},
+		got:                     &entity.Thread{ID: 10, Title: "继续补充需求"},
+		checkpoint: &entity.Checkpoint{
+			ID:              503,
+			ThreadID:        10,
+			RunID:           199,
+			CheckpointNS:    "eino.adk",
+			RuntimeType:     "eino_adk",
+			RuntimeKey:      "checkpoint-1",
+			EnvelopeVersion: 1,
+			ChannelValues: mustADKCheckpointEnvelopeJSON(t, ADKCheckpointEnvelope{
+				EnvelopeVersion: 1,
+				Runtime:         string(RuntimeModeEinoADK),
+				RuntimeVersion:  "0.9.9",
+				RuntimeKey:      "checkpoint-1",
+				MessageType:     "schema.Message",
+				Checkpoint:      []byte{1},
+			}),
+			ChannelVersions: `{}`,
+			PendingSends:    `[]`,
+			Metadata:        `{"runtime":"eino_adk"}`,
+		},
+		interruptedRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			WorkerID: "resume-worker-a",
+		},
+	}
+	processor := NewResumeRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, ResumeRunProcessorOptions{
+		WorkerID:  "resume-worker-a",
+		BatchSize: 1,
+		Executor: ResumeRunExecutorFunc(func(
+			context.Context,
+			*RunSummary,
+			*HarnessResumeInput,
+		) (*RunExecutionResult, error) {
+			return nil, &RunInterruptedError{
+				CheckpointKey: "checkpoint-1",
+				Interrupts: []ADKInterruptItem{{
+					ID:      "resume-interrupt-event-1",
+					Address: "agent:lead;tool:request_human_clarification",
+					Info: HumanInteractionPrompt{
+						Schema:        humanInteractionSchema,
+						InteractionID: "hi_resume_1",
+						Kind:          HumanInteractionKindClarification,
+						Title:         "需要补充信息",
+						Question:      "继续前需要确认范围吗？",
+						Required:      true,
+						AllowFreeText: true,
+						RiskLevel:     HumanInteractionRiskNone,
+						ToolName:      adkClarificationToolName,
+					},
+					IsRootCause: true,
+				}},
+			}
+		}),
+	})
+
+	result, err := processor.ProcessQueuedResumeRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.NotNil(t, domainSVC.interruptRunReq)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"awaiting_input"`)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"interaction_event_id":"resume-interrupt-event-1"`)
+	require.NotContains(t, domainSVC.interruptRunReq.EventPayload, "继续前需要确认范围")
+	require.NotNil(t, domainSVC.interruptRunReq.OutboxIntent)
+	event := domainSVC.interruptRunReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskAwaitingInput, event.EventType)
+	require.Equal(t, "interaction-event:resume-interrupt-event-1:task.awaiting_input", event.EventID)
+	require.Equal(t, "interaction:resume-interrupt-event-1", event.AggregateID)
+	require.Equal(t, int64(1), event.AggregateVersion)
+	require.Equal(t, "thread:10", event.Payload.TargetID)
+	require.Equal(t, domainnotification.StatusReasonActionRequired, event.Payload.StatusReasonCode)
+	require.NoError(t, domainnotification.DefaultTemplateRegistry().ValidateAppendable(event))
 }
 
 func TestResumeRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {

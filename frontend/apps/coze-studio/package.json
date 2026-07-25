@@ -75,6 +75,7 @@
     "@rsbuild/core": "~1.1.0",
     "@rsdoctor/rspack-plugin": "1.0.0-rc.0",
     "@rspack/core": ">=0.7",
+    "@testing-library/react": "^14.1.2",
     "@types/node": "18.18.9",
     "@types/react": "18.2.37",
     "@types/react-dom": "18.2.15",

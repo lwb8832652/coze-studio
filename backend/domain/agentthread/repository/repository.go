@@ -21,6 +21,8 @@ import (
 	"errors"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	"gorm.io/gorm"
 )
 
 var (
@@ -273,6 +275,11 @@ type TokenUsageSnapshot struct {
 	RunAggregates []*entity.RunTokenUsageAggregate
 }
 
+type NotificationOutboxIntent struct {
+	Event  domainnotification.Event
+	Append func(context.Context, *gorm.DB, domainnotification.Event) error
+}
+
 type ClaimMemoryFlushJobsRequest struct {
 	WorkerID       string
 	Limit          int32
@@ -352,6 +359,7 @@ type ReconcileExpiredRunLeaseRequest struct {
 	ErrorCode           string
 	ErrorMessage        string
 	Event               *entity.RunEvent
+	OutboxIntent        *NotificationOutboxIntent
 }
 
 type RequestRunCancellationRequest struct {
@@ -360,6 +368,7 @@ type RequestRunCancellationRequest struct {
 	ErrorCode    string
 	ErrorMessage string
 	Event        *entity.RunEvent
+	OutboxIntent *NotificationOutboxIntent
 }
 
 type RequestRunCancellationResult struct {
@@ -381,6 +390,7 @@ type FinalizeRunSuccessRequest struct {
 	TerminalCheckpointOnTitleConflict *entity.Checkpoint
 	ExpectedThreadTitle               string
 	ThreadTitle                       string
+	OutboxIntent                      *NotificationOutboxIntent
 }
 
 type FinalizeRunSuccessResult struct {
@@ -403,6 +413,8 @@ type UpdateRunStatusRequest struct {
 	Now                   int64
 	ErrorCode             string
 	ErrorMessage          string
+	EventPayload          string
 	Event                 *entity.RunEvent
 	EventAlreadyPersisted bool
+	OutboxIntent          *NotificationOutboxIntent
 }

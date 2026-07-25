@@ -5,6 +5,8 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/domain/scheduledtask/entity"
 )
 
@@ -114,7 +117,7 @@ func TestRepositoryExecutionIdempotencyAndHistory(t *testing.T) {
 	runningTask, err := repo.GetTask(ctx, 10, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, entity.ExecutionStatusRunning, runningTask.LatestExecutionStatus)
-	require.NoError(t, repo.FinishExecution(ctx, execution.ID, ExecutionResult{
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{
 		Status:     entity.ExecutionStatusSucceeded,
 		ThreadID:   21,
 		RunID:      22,
@@ -123,6 +126,8 @@ func TestRepositoryExecutionIdempotencyAndHistory(t *testing.T) {
 	finishedTask, err := repo.GetTask(ctx, 10, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, entity.ExecutionStatusSucceeded, finishedTask.LatestExecutionStatus)
+	require.Equal(t, int64(1), finishedTask.ExecutionCount)
+	require.Equal(t, int64(1500), finishedTask.LatestExecutionAt)
 
 	history, total, err := repo.ListExecutions(ctx, 10, task.ID, 1, 20)
 	require.NoError(t, err)
@@ -138,6 +143,7 @@ func TestRepositoryOlderExecutionCannotOverwriteLatestStatus(t *testing.T) {
 	repo := newTestRepository(t)
 	ctx := context.Background()
 	task := taskFixture(10, 100, "concurrent-report")
+	task.UpdatedAt = 5000
 	require.NoError(t, repo.CreateTask(ctx, task))
 	first := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "manual", Status: entity.ExecutionStatusQueued, IdempotencyKey: "manual:first"}
 	second := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "manual", Status: entity.ExecutionStatusQueued, IdempotencyKey: "manual:second"}
@@ -149,10 +155,191 @@ func TestRepositoryOlderExecutionCannotOverwriteLatestStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, entity.ExecutionStatusQueued, latest.LatestExecutionStatus)
 
-	require.NoError(t, repo.FinishExecution(ctx, first.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}))
+	require.NoError(t, repo.FinalizeExecution(ctx, first.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}))
 	latest, err = repo.GetTask(ctx, 10, task.ID)
 	require.NoError(t, err)
 	require.Equal(t, entity.ExecutionStatusQueued, latest.LatestExecutionStatus)
+	require.Zero(t, latest.LatestExecutionAt)
+	require.Equal(t, int64(1), latest.ExecutionCount)
+	require.Equal(t, int64(5000), latest.UpdatedAt)
+}
+
+func TestRepositoryFinalizeExecutionAppendsOwnerNotificationAtomically(t *testing.T) {
+	t.Parallel()
+	outbox := &recordingNotificationOutbox{}
+	repo := newTestRepositoryWithNotification(t, outbox)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "notify-owner")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "notify-owner"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+	require.NoError(t, repo.MarkExecutionRunning(ctx, execution.ID, 1200))
+
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, ThreadID: 21, RunID: 22, FinishedAt: 1500}))
+
+	got, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), got.ExecutionCount)
+	require.Equal(t, int64(1500), got.LatestExecutionAt)
+	require.Equal(t, entity.ExecutionStatusSucceeded, got.LatestExecutionStatus)
+	require.Len(t, outbox.events, 1)
+	event := outbox.events[0]
+	require.Equal(t, "scheduled_execution:"+idString(execution.ID)+":succeeded", event.EventID)
+	require.Equal(t, domainnotification.EventScheduledExecutionSucceeded, event.EventType)
+	require.Equal(t, "scheduled_task_execution", event.AggregateType)
+	require.Equal(t, idString(execution.ID), event.AggregateID)
+	require.Equal(t, int64(100), event.ActorID)
+	require.Equal(t, int64(10), event.SpaceID)
+	require.Equal(t, domainnotification.RecipientActor, event.RecipientPolicy)
+	require.Equal(t, idString(task.ID), event.Payload.TargetID)
+}
+
+func TestRepositoryFinalizeExecutionDuplicateCallbackDoesNotReappendOrRecount(t *testing.T) {
+	t.Parallel()
+	outbox := &recordingNotificationOutbox{}
+	repo := newTestRepositoryWithNotification(t, outbox)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "duplicate")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "duplicate"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusFailed, FinishedAt: 1500}))
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusFailed, FinishedAt: 1600}))
+
+	got, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), got.ExecutionCount)
+	require.Equal(t, int64(1500), got.LatestExecutionAt)
+	require.Len(t, outbox.events, 1)
+	require.Equal(t, domainnotification.EventScheduledExecutionFailed, outbox.events[0].EventType)
+}
+
+func TestRepositoryFinalizeExecutionCASMissTreatsSameTerminalAsIdempotent(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepository(t)
+	mysqlRepo := repo.(*mysqlRepository)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "cas-miss")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "cas-miss"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+	require.NoError(t, mysqlRepo.db.WithContext(ctx).Model(&scheduledTaskExecutionPO{}).Where("id = ?", execution.ID).Update("status", string(entity.ExecutionStatusFailed)).Error)
+
+	require.NoError(t, finalizeExecutionCASMiss(mysqlRepo.db.WithContext(ctx), execution.ID, entity.ExecutionStatusFailed))
+	require.ErrorIs(t, finalizeExecutionCASMiss(mysqlRepo.db.WithContext(ctx), execution.ID, entity.ExecutionStatusSucceeded), ErrStateConflict)
+}
+
+func TestRepositoryFinalizeExecutionRejectsConflictingTerminalReplay(t *testing.T) {
+	t.Parallel()
+	outbox := &recordingNotificationOutbox{}
+	repo := newTestRepositoryWithNotification(t, outbox)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "conflict")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "conflict"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}))
+	require.ErrorIs(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusFailed, FinishedAt: 1600}), ErrStateConflict)
+
+	got, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), got.ExecutionCount)
+	require.Equal(t, entity.ExecutionStatusSucceeded, got.LatestExecutionStatus)
+	require.Len(t, outbox.events, 1)
+}
+
+func TestRepositoryFinalizeExecutionRollsBackWhenNotificationAppendFails(t *testing.T) {
+	t.Parallel()
+	outbox := &recordingNotificationOutbox{err: errors.New("outbox unavailable")}
+	repo := newTestRepositoryWithNotification(t, outbox)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "rollback")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "rollback"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+	require.NoError(t, repo.MarkExecutionRunning(ctx, execution.ID, 1200))
+	require.NoError(t, repo.SetWorkflowExecutionID(ctx, execution.ID, 50))
+
+	require.Error(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}))
+
+	gotExecution, err := repo.GetExecution(ctx, execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.ExecutionStatusRunning, gotExecution.Status)
+	require.Equal(t, int64(50), gotExecution.WorkflowExecutionID)
+	gotTask, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), gotTask.ExecutionCount)
+	require.Equal(t, entity.ExecutionStatusRunning, gotTask.LatestExecutionStatus)
+	require.Len(t, outbox.events, 1)
+}
+
+func TestRepositoryFinalizeExecutionFailsWithoutNotificationOutboxForNotifiableStatus(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepositoryWithoutNotification(t)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "missing-outbox")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "missing-outbox"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+
+	require.ErrorIs(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, FinishedAt: 1500}), domainnotification.ErrStorage)
+
+	gotExecution, err := repo.GetExecution(ctx, execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.ExecutionStatusQueued, gotExecution.Status)
+	gotTask, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Zero(t, gotTask.ExecutionCount)
+}
+
+func TestRepositoryFinalizeExecutionUsesScheduledEventForAgentThreadTerminalResult(t *testing.T) {
+	t.Parallel()
+	outbox := &recordingNotificationOutbox{}
+	repo := newTestRepositoryWithNotification(t, outbox)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "agent-thread-suppressed")
+	require.NoError(t, repo.CreateTask(ctx, task))
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", Status: entity.ExecutionStatusQueued, IdempotencyKey: "agent-thread-suppressed"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+
+	require.NoError(t, repo.FinalizeExecution(ctx, execution.ID, ExecutionResult{Status: entity.ExecutionStatusSucceeded, ThreadID: 21, RunID: 22, FinishedAt: 1500}))
+
+	require.Len(t, outbox.events, 1)
+	require.Equal(t, domainnotification.EventScheduledExecutionSucceeded, outbox.events[0].EventType)
+	require.Equal(t, "scheduled_task_execution", outbox.events[0].AggregateType)
+	require.NotEqual(t, domainnotification.EventTaskCompleted, outbox.events[0].EventType)
+}
+
+func TestRepositoryMarkExecutionRecoverableRestoresAdvancedTaskForRetry(t *testing.T) {
+	t.Parallel()
+	repo := newTestRepository(t)
+	ctx := context.Background()
+	task := taskFixture(10, 100, "recover")
+	task.Schedule = entity.Schedule{Type: entity.ScheduleTypeOnce, Timezone: "UTC", RunOnceAt: 1000}
+	task.MaxExecutions = 1
+	task.NextExecutionAt = 1000
+	require.NoError(t, repo.CreateTask(ctx, task))
+	claimed, err := repo.ClaimDueTasks(ctx, 1000, "worker-a", 2000, 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: 10, TriggerType: "schedule", ScheduledAt: 1000, Status: entity.ExecutionStatusQueued, IdempotencyKey: "recover"}
+	require.NoError(t, repo.CreateExecution(ctx, execution))
+	require.NoError(t, repo.MarkExecutionRunning(ctx, execution.ID, 1200))
+	require.NoError(t, repo.AdvanceClaim(ctx, task.ID, "worker-a", 0, true))
+
+	require.NoError(t, repo.MarkExecutionRecoverable(ctx, task.ID, execution.ID, 1000, ExecutionResult{WorkflowExecutionID: 50}))
+
+	gotExecution, err := repo.GetExecution(ctx, execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.ExecutionStatusQueued, gotExecution.Status)
+	require.Equal(t, int64(50), gotExecution.WorkflowExecutionID)
+	gotTask, err := repo.GetTask(ctx, 10, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.StatusEnabled, gotTask.Status)
+	require.Equal(t, int64(1000), gotTask.NextExecutionAt)
+	require.Empty(t, gotTask.LeaseOwner)
 }
 
 func TestRepositoryAdvancesClaimOnlyForLeaseOwner(t *testing.T) {
@@ -176,11 +363,19 @@ func TestRepositoryAdvancesClaimOnlyForLeaseOwner(t *testing.T) {
 }
 
 func newTestRepository(t *testing.T) Repository {
+	return newTestRepositoryWithNotification(t, &recordingNotificationOutbox{})
+}
+
+func newTestRepositoryWithoutNotification(t *testing.T) Repository {
+	return newTestRepositoryWithNotification(t, nil)
+}
+
+func newTestRepositoryWithNotification(t *testing.T, appender NotificationOutboxAppender) Repository {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&scheduledTaskPO{}, &scheduledTaskExecutionPO{}))
-	return NewMySQLRepository(db, &sequenceIDGen{})
+	return NewMySQLRepository(db, &sequenceIDGen{}, WithNotificationOutboxAppender(appender))
 }
 
 func taskFixture(spaceID, creatorID int64, name string) *entity.Task {
@@ -214,4 +409,18 @@ func (g *sequenceIDGen) GenMultiIDs(_ context.Context, count int) ([]int64, erro
 		ids[i] = g.next.Add(1)
 	}
 	return ids, nil
+}
+
+type recordingNotificationOutbox struct {
+	events []domainnotification.Event
+	err    error
+}
+
+func (r *recordingNotificationOutbox) AppendInTransaction(_ context.Context, _ *gorm.DB, event domainnotification.Event) error {
+	r.events = append(r.events, event)
+	return r.err
+}
+
+func idString(id int64) string {
+	return strconv.FormatInt(id, 10)
 }

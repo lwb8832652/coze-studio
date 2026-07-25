@@ -37,6 +37,17 @@ func Register(r *server.Hertz) {
 		_api := root.Group("/api", _apiMw()...)
 		{
 			_admin := _api.Group("/admin", _adminMw()...)
+			_admin.GET("/announcements", append(_listadminannouncementsMw(), coze.ListAdminAnnouncements)...)
+			_announcements := _admin.Group("/announcements", _announcementsMw()...)
+			_announcements.GET("/:id", append(_getadminannouncementMw(), coze.GetAdminAnnouncement)...)
+			_id := _announcements.Group("/:id", _idMw()...)
+			_id.GET("/audit-events", append(_listadminannouncementauditeventsMw(), coze.ListAdminAnnouncementAuditEvents)...)
+			_id.POST("/cancel", append(_canceladminannouncementMw(), coze.CancelAdminAnnouncement)...)
+			_id.POST("/publish", append(_publishadminannouncementMw(), coze.PublishAdminAnnouncement)...)
+			_id.POST("/schedule", append(_scheduleadminannouncementMw(), coze.ScheduleAdminAnnouncement)...)
+			_announcements.PUT("/:id", append(_updateadminannouncementMw(), coze.UpdateAdminAnnouncement)...)
+			_announcements.POST("/replay", append(_replayadminannouncementsMw(), coze.ReplayAdminAnnouncements)...)
+			_admin.POST("/announcements", append(_createadminannouncementMw(), coze.CreateAdminAnnouncement)...)
 			{
 				_config := _admin.Group("/config", _configMw()...)
 				{
@@ -398,6 +409,12 @@ func Register(r *server.Hertz) {
 				_draftbot0 := _playground_api.Group("/draftbot", _draftbot0Mw()...)
 				_draftbot0.POST("/get_draft_bot_info", append(_getdraftbotinfoagwMw(), coze.GetDraftBotInfoAgw)...)
 				_draftbot0.POST("/update_draft_bot_info", append(_updatedraftbotinfoagwMw(), coze.UpdateDraftBotInfoAgw)...)
+			}
+			{
+				_notice := _playground_api.Group("/notice", _noticeMw()...)
+				_notice.POST("/get_list", append(_getnoticelistMw(), coze.GetNoticeList)...)
+				_notice.POST("/get_unread_count", append(_getnoticeunreadcountMw(), coze.GetNoticeUnreadCount)...)
+				_notice.POST("/mark_read", append(_noticemarkreadMw(), coze.NoticeMarkRead)...)
 			}
 			{
 				_operate := _playground_api.Group("/operate", _operateMw()...)

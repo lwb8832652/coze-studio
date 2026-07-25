@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-const ChannelTypeFeishu = "feishu"
+const (
+	ChannelTypeFeishu = "feishu"
+
+	DefaultRuntimeStableFailureThreshold = 3
+	EventMaxAttempts                     = 3
+)
 
 type ReplyMode string
 
@@ -42,6 +47,7 @@ const (
 	EventStatusProcessing EventStatus = "processing"
 	EventStatusSucceeded  EventStatus = "succeeded"
 	EventStatusFailed     EventStatus = "failed"
+	EventStatusDeadLetter EventStatus = "dead_lettered"
 )
 
 var (
@@ -74,6 +80,11 @@ type Config struct {
 	GroupPolicy           GroupPolicy
 	RuntimeStatus         RuntimeStatus
 	RuntimeError          string
+	RuntimeConsecutiveFailures int32
+	RuntimeIncidentID          string
+	RuntimeIncidentNotifiedAt  *time.Time
+	RuntimeRecoveryNotifiedAt  *time.Time
+	RuntimeLastRecoveredAt     *time.Time
 	BotOpenID             string
 	BotName               string
 	LastConnectedAt       *time.Time
@@ -137,6 +148,7 @@ type Event struct {
 type RuntimeState struct {
 	Status          RuntimeStatus
 	Error           string
+	IncidentID      string
 	BotOpenID       string
 	BotName         string
 	ConnectedAt     *time.Time

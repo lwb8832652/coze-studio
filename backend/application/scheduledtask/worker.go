@@ -84,11 +84,20 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 
 func (w *Worker) processClaim(ctx context.Context, task *entity.Task, owner string, now time.Time) error {
 	scheduledAt := task.NextExecutionAt
-	execution := &entity.Execution{TaskID: task.ID, SpaceID: task.SpaceID, TriggerType: "schedule", ScheduledAt: scheduledAt, Status: entity.ExecutionStatusQueued, IdempotencyKey: "schedule:" + strconv.FormatInt(scheduledAt, 10), CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}
+	idempotencyKey := "schedule:" + strconv.FormatInt(scheduledAt, 10)
+	execution := &entity.Execution{TaskID: task.ID, SpaceID: task.SpaceID, TriggerType: "schedule", ScheduledAt: scheduledAt, Status: entity.ExecutionStatusQueued, IdempotencyKey: idempotencyKey, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}
 	err := w.Repository.CreateExecution(ctx, execution)
 	if err != nil && !errors.Is(err, repository.ErrExecutionAlreadyExists) {
 		_ = w.Repository.ReleaseClaim(ctx, task.ID, owner)
 		return err
+	}
+	duplicateExecution := errors.Is(err, repository.ErrExecutionAlreadyExists)
+	if duplicateExecution {
+		execution, err = w.Repository.GetExecutionByTrigger(ctx, task.ID, idempotencyKey)
+		if err != nil {
+			_ = w.Repository.ReleaseClaim(ctx, task.ID, owner)
+			return err
+		}
 	}
 
 	completed := task.Schedule.Type == entity.ScheduleTypeOnce || (task.MaxExecutions > 0 && task.ExecutionCount+1 >= task.MaxExecutions)
@@ -103,7 +112,7 @@ func (w *Worker) processClaim(ctx context.Context, task *entity.Task, owner stri
 	if err := w.Repository.AdvanceClaim(ctx, task.ID, owner, nextExecutionAt, completed); err != nil {
 		return err
 	}
-	if errors.Is(err, repository.ErrExecutionAlreadyExists) {
+	if duplicateExecution && execution.Status != entity.ExecutionStatusQueued {
 		return nil
 	}
 	if execution.ID == 0 {
@@ -111,8 +120,13 @@ func (w *Worker) processClaim(ctx context.Context, task *entity.Task, owner stri
 	}
 	if err := w.Dispatcher.Dispatch(ctx, task, execution); err != nil {
 		finishedAt := w.now().UnixMilli()
-		_ = w.Repository.FinishExecution(ctx, execution.ID, repository.ExecutionResult{Status: entity.ExecutionStatusFailed, ErrorCode: "dispatch_failed", ErrorMessage: "任务执行失败，请稍后重试", FinishedAt: finishedAt})
-		_ = w.Repository.RecordTaskExecution(ctx, task.ID, finishedAt)
+		if finalizeErr := w.Repository.FinalizeExecution(ctx, execution.ID, repository.ExecutionResult{Status: entity.ExecutionStatusFailed, ErrorCode: "dispatch_failed", ErrorMessage: "任务执行失败，请稍后重试", FinishedAt: finishedAt}); finalizeErr != nil {
+			if recoverErr := w.Repository.MarkExecutionRecoverable(ctx, task.ID, execution.ID, scheduledAt, repository.ExecutionResult{}); recoverErr != nil {
+				logs.CtxErrorf(ctx, "[scheduled-task] mark execution recoverable failed task_id=%d execution_id=%d err=%v", task.ID, execution.ID, recoverErr)
+				return fmt.Errorf("dispatch: %w; finalize: %v; recover: %v", err, finalizeErr, recoverErr)
+			}
+			return fmt.Errorf("dispatch: %w; finalize: %v", err, finalizeErr)
+		}
 		return err
 	}
 	return nil

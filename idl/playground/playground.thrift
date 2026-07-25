@@ -450,9 +450,307 @@ struct GetFileUrlsResponse {
     255: base.BaseResp BaseResp
 }
 
+enum NoticeRankType {
+    All = 0
+    Unread = 1
+}
 
+enum NoticeSenderType {
+    Bot = 1
+}
+
+enum ReadStatus {
+    Unread = 1
+    Read = 2
+}
+
+enum NoticeSeverity {
+    Info = 1
+    Success = 2
+    Warning = 3
+    Error = 4
+}
+
+enum NoticeCategory {
+    Task = 1
+    ScheduledTask = 2
+    AppDev = 3
+    MCP = 4
+    Resource = 5
+    Workspace = 6
+    IM = 7
+    Billing = 8
+    System = 9
+}
+
+enum NoticeRoute {
+    None = 0
+    TaskThread = 1
+    ScheduledTaskCenter = 2
+    AppDev = 3
+    Skill = 4
+    Workspace = 5
+    Billing = 6
+    SystemAnnouncements = 7
+}
+
+enum AdminAnnouncementRouteType {
+    None = 0
+    WorkspaceHome = 1
+    SystemAnnouncements = 2
+}
+
+struct AdminAnnouncementRoute {
+    1: required AdminAnnouncementRouteType type
+    2: optional string space_id
+}
+
+struct AdminAnnouncementAudience {
+    1: required string type
+    2: optional list<string> target_ids
+}
+
+struct AdminAnnouncement {
+    1: required string id
+    2: required string title
+    3: required string body
+    4: required string severity
+    5: required AdminAnnouncementRoute route
+    6: required AdminAnnouncementAudience audience
+    7: required string status
+    8: required string projection_status
+    9: optional string scheduled_at
+    10: optional string publish_requested_at
+    11: optional string snapshot_at
+    12: optional string published_at
+    13: optional string cancelled_at
+    14: required string created_by
+    15: required string updated_by
+    16: required i64 recipient_count
+    17: required i64 projected_count
+    18: optional string last_error_code
+    19: required i64 version
+    20: required string created_at
+    21: required string updated_at
+}
+
+struct AdminAnnouncementAuditEvent {
+    1: required string id
+    2: required string announcement_id
+    3: required string actor_id
+    4: required string action
+    5: optional string from_status
+    6: optional string to_status
+    7: required string projection_status
+    8: required string result
+    9: optional string error_code
+    10: required i64 recipient_count
+    11: required i64 projected_count
+    12: required string created_at
+}
+
+struct AdminAnnouncementData {
+    1: required AdminAnnouncement announcement
+    2: optional bool replayed
+}
+
+struct AdminAnnouncementListData {
+    1: required list<AdminAnnouncement> announcements
+    2: required i64 total
+}
+
+struct AdminAnnouncementPublicationData {
+    1: required AdminAnnouncement announcement
+    2: required bool deferred
+    3: optional string error_code
+    4: optional bool replayed
+}
+
+struct AdminAnnouncementReplayData {
+    1: required i64 processed
+    2: required i64 completed
+    3: required i64 failed
+    4: required i64 deferred
+    5: optional map<string, i64> error_codes
+}
+
+struct AdminAnnouncementAuditListData {
+    1: required list<AdminAnnouncementAuditEvent> audit_events
+    2: required i64 total
+}
+
+struct AdminAnnouncementResponse {
+    1: required i64 code
+    2: required string msg
+    3: optional string error_code
+    4: optional AdminAnnouncementData data
+}
+
+struct AdminAnnouncementListResponse {
+    1: required i64 code
+    2: required string msg
+    3: optional string error_code
+    4: optional AdminAnnouncementListData data
+}
+
+struct AdminAnnouncementPublicationResponse {
+    1: required i64 code
+    2: required string msg
+    3: optional string error_code
+    4: optional AdminAnnouncementPublicationData data
+}
+
+struct AdminAnnouncementReplayResponse {
+    1: required i64 code
+    2: required string msg
+    3: optional string error_code
+    4: optional AdminAnnouncementReplayData data
+}
+
+struct AdminAnnouncementAuditListResponse {
+    1: required i64 code
+    2: required string msg
+    3: optional string error_code
+    4: optional AdminAnnouncementAuditListData data
+}
+
+struct CreateAdminAnnouncementRequest {
+    1: required string title (api.body = "title")
+    2: required string body (api.body = "body")
+    3: required string severity (api.body = "severity")
+    4: required AdminAnnouncementRoute route (api.body = "route")
+    5: required AdminAnnouncementAudience audience (api.body = "audience")
+    6: required string idempotency_key (api.body = "idempotency_key")
+}
+
+struct ListAdminAnnouncementsRequest {
+    1: optional string status (api.query = "status")
+    2: optional i64 offset (api.query = "offset")
+    3: optional i64 limit (api.query = "limit")
+}
+
+struct GetAdminAnnouncementRequest {
+    1: required string id (api.path = "id")
+}
+
+struct UpdateAdminAnnouncementRequest {
+    1: required string id (api.path = "id")
+    2: required i64 expected_version (api.body = "expected_version")
+    3: required string title (api.body = "title")
+    4: required string body (api.body = "body")
+    5: required string severity (api.body = "severity")
+    6: required AdminAnnouncementRoute route (api.body = "route")
+    7: required AdminAnnouncementAudience audience (api.body = "audience")
+}
+
+struct ScheduleAdminAnnouncementRequest {
+    1: required string id (api.path = "id")
+    2: required i64 expected_version (api.body = "expected_version")
+    3: required string scheduled_at (api.body = "scheduled_at")
+}
+
+struct PublishAdminAnnouncementRequest {
+    1: required string id (api.path = "id")
+    2: required i64 expected_version (api.body = "expected_version")
+    3: required string idempotency_key (api.body = "idempotency_key")
+}
+
+struct CancelAdminAnnouncementRequest {
+    1: required string id (api.path = "id")
+    2: required i64 expected_version (api.body = "expected_version")
+}
+
+struct ReplayAdminAnnouncementsRequest {
+    1: optional string announcement_id (api.body = "announcement_id")
+}
+
+struct ListAdminAnnouncementAuditEventsRequest {
+    1: required string id (api.path = "id")
+    2: optional i64 offset (api.query = "offset")
+    3: optional i64 limit (api.query = "limit")
+}
+
+enum NoticeReadMode {
+    NoticeIDs = 1
+    Snapshot = 2
+}
+
+struct NoticeSender {
+    1: optional NoticeSenderType sender_type
+    2: optional string sender_id
+    3: optional string sender_name
+    4: optional string sender_icon_url
+}
+
+struct Notice {
+    1: optional string id
+    2: optional string content
+    3: optional string jump_link // Deprecated compatibility field; clients construct paths from route.
+    4: optional ReadStatus read_status
+    5: optional NoticeSender sender
+    6: optional string create_time
+    7: optional NoticeSeverity severity
+    8: optional NoticeCategory category
+    9: optional NoticeRoute route
+    10: optional string route_space_id
+    11: optional string route_target_id
+}
+
+struct NoticeMarkReadRequest {
+    1: optional list<string> notice_ids // Required only for NoticeIDs mode.
+    2: required NoticeReadMode read_mode
+    3: optional string snapshot_cutoff // Required only for Snapshot mode.
+}
+
+struct NoticeMarkReadResponse {
+    252: optional string error_code
+    253: required i64 code
+    254: required string msg
+}
+
+struct GetNoticeListData {
+    1: optional list<Notice> notice_list
+    2: optional string next_cursor
+    3: optional bool has_more
+    4: required string snapshot_cutoff
+}
+
+struct GetNoticeListRequest {
+    1: required string cursor
+    2: optional i32 count
+    3: optional NoticeRankType notice_rank_type
+}
+
+struct GetNoticeListResponse {
+    1: optional GetNoticeListData data
+    252: optional string error_code
+    253: required i64 code
+    254: required string msg
+}
+
+struct GetNoticeUnreadCountRequest {}
+
+struct GetNoticeUnreadCountData {
+    1: optional i32 unread_count
+}
+
+struct GetNoticeUnreadCountResponse {
+    1: optional GetNoticeUnreadCountData data
+    252: optional string error_code
+    253: required i64 code
+    254: required string msg
+}
 
 service PlaygroundService {
+    AdminAnnouncementResponse CreateAdminAnnouncement(1: CreateAdminAnnouncementRequest request) (api.post = "/api/admin/announcements", api.category = "admin")
+    AdminAnnouncementListResponse ListAdminAnnouncements(1: ListAdminAnnouncementsRequest request) (api.get = "/api/admin/announcements", api.category = "admin")
+    AdminAnnouncementReplayResponse ReplayAdminAnnouncements(1: ReplayAdminAnnouncementsRequest request) (api.post = "/api/admin/announcements/replay", api.category = "admin")
+    AdminAnnouncementResponse GetAdminAnnouncement(1: GetAdminAnnouncementRequest request) (api.get = "/api/admin/announcements/:id", api.category = "admin")
+    AdminAnnouncementResponse UpdateAdminAnnouncement(1: UpdateAdminAnnouncementRequest request) (api.put = "/api/admin/announcements/:id", api.category = "admin")
+    AdminAnnouncementResponse ScheduleAdminAnnouncement(1: ScheduleAdminAnnouncementRequest request) (api.post = "/api/admin/announcements/:id/schedule", api.category = "admin")
+    AdminAnnouncementPublicationResponse PublishAdminAnnouncement(1: PublishAdminAnnouncementRequest request) (api.post = "/api/admin/announcements/:id/publish", api.category = "admin")
+    AdminAnnouncementResponse CancelAdminAnnouncement(1: CancelAdminAnnouncementRequest request) (api.post = "/api/admin/announcements/:id/cancel", api.category = "admin")
+    AdminAnnouncementAuditListResponse ListAdminAnnouncementAuditEvents(1: ListAdminAnnouncementAuditEventsRequest request) (api.get = "/api/admin/announcements/:id/audit-events", api.category = "admin")
     UpdateDraftBotInfoAgwResponse UpdateDraftBotInfoAgw(1:UpdateDraftBotInfoAgwRequest request)(api.post='/api/playground_api/draftbot/update_draft_bot_info', api.category="draftbot",agw.preserve_base="true")
     GetDraftBotInfoAgwResponse GetDraftBotInfoAgw(1:GetDraftBotInfoAgwRequest request)(api.post='/api/playground_api/draftbot/get_draft_bot_info', api.category="draftbot",agw.preserve_base="true")
     GetImagexShortUrlResponse GetImagexShortUrl (1:GetImagexShortUrlRequest request)(api.post='/api/playground_api/get_imagex_url', api.category="file",agw.preserve_base="true")
@@ -465,6 +763,9 @@ service PlaygroundService {
    // Create shortcut instructions
     shortcut_command.CreateUpdateShortcutCommandResponse CreateUpdateShortcutCommand(1: shortcut_command.CreateUpdateShortcutCommandRequest req)(api.post='/api/playground_api/create_update_shortcut_command', api.category="playground_api", agw.preserve_base="true")
     GetFileUrlsResponse GetFileUrls(1: GetFileUrlsRequest req)(api.post='/api/playground_api/get_file_list', api.category="playground_api", agw.preserve_base="true")
+    NoticeMarkReadResponse NoticeMarkRead(1: NoticeMarkReadRequest req)(api.post='/api/playground_api/notice/mark_read', api.category="notice", agw.preserve_base="true")
+    GetNoticeListResponse GetNoticeList(1: GetNoticeListRequest req)(api.post='/api/playground_api/notice/get_list', api.category="notice", agw.preserve_base="true")
+    GetNoticeUnreadCountResponse GetNoticeUnreadCount(1: GetNoticeUnreadCountRequest req)(api.post='/api/playground_api/notice/get_unread_count', api.category="notice", agw.preserve_base="true")
 
 
     // prompt resource

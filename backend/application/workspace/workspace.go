@@ -20,11 +20,15 @@ import (
 	"context"
 	"strings"
 
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	appuser "github.com/coze-dev/coze-studio/backend/application/user"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	userservice "github.com/coze-dev/coze-studio/backend/domain/user/service"
 	"github.com/coze-dev/coze-studio/backend/pkg/errorx"
 	"github.com/coze-dev/coze-studio/backend/types/errno"
+
+	"gorm.io/gorm"
 )
 
 type UserDomain interface {
@@ -37,6 +41,13 @@ type UserDomain interface {
 	AddSpaceMembers(ctx context.Context, members []*userservice.AddSpaceMemberRequest) error
 	UpdateSpaceMemberRole(ctx context.Context, spaceID int64, userID int64, roleType int32) error
 	RemoveSpaceMember(ctx context.Context, spaceID int64, userID int64) error
+}
+
+type notificationUserDomain interface {
+	AddSpaceMembersWithNotification(ctx context.Context, actorID int64, members []*userservice.AddSpaceMemberRequest, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
+	UpdateSpaceMemberRoleWithNotification(ctx context.Context, actorID int64, spaceID int64, userID int64, roleType int32, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
+	RemoveSpaceMemberWithNotification(ctx context.Context, actorID int64, spaceID int64, userID int64, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
+	TransferSpaceWithNotification(ctx context.Context, actorID int64, spaceID int64, targetUserID int64, appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error) error
 }
 
 type ApplicationService struct {
@@ -449,7 +460,11 @@ func (s *ApplicationService) AddWorkspaceMembers(
 	}
 
 	if len(toAdd) > 0 {
-		if err := domain.AddSpaceMembers(ctx, toAdd); err != nil {
+		notifier, err := requireNotificationUserDomain(domain)
+		if err != nil {
+			return nil, err
+		}
+		if err := notifier.AddSpaceMembersWithNotification(ctx, req.CurrentUserID, toAdd, workspaceNotificationOutbox()); err != nil {
 			return nil, err
 		}
 	}
@@ -486,7 +501,11 @@ func (s *ApplicationService) UpdateWorkspaceMemberRole(
 		return nil, errorx.New(errno.ErrUserPermissionCode, errorx.KV("msg", "workspace owner role cannot be changed"))
 	}
 
-	if err := domain.UpdateSpaceMemberRole(ctx, req.SpaceID, req.UserID, req.RoleType); err != nil {
+	notifier, err := requireNotificationUserDomain(domain)
+	if err != nil {
+		return nil, err
+	}
+	if err := notifier.UpdateSpaceMemberRoleWithNotification(ctx, req.CurrentUserID, req.SpaceID, req.UserID, req.RoleType, workspaceNotificationOutbox()); err != nil {
 		return nil, err
 	}
 
@@ -522,7 +541,11 @@ func (s *ApplicationService) RemoveWorkspaceMember(
 		return nil, errorx.New(errno.ErrUserPermissionCode, errorx.KV("msg", "workspace owner cannot be removed"))
 	}
 
-	if err := domain.RemoveSpaceMember(ctx, req.SpaceID, req.UserID); err != nil {
+	notifier, err := requireNotificationUserDomain(domain)
+	if err != nil {
+		return nil, err
+	}
+	if err := notifier.RemoveSpaceMemberWithNotification(ctx, req.CurrentUserID, req.SpaceID, req.UserID, workspaceNotificationOutbox()); err != nil {
 		return nil, err
 	}
 
@@ -557,7 +580,11 @@ func (s *ApplicationService) TransferWorkspace(
 		return successMutationResponse(), nil
 	}
 
-	if err := domain.TransferSpace(ctx, req.SpaceID, req.TargetUserID); err != nil {
+	notifier, err := requireNotificationUserDomain(domain)
+	if err != nil {
+		return nil, err
+	}
+	if err := notifier.TransferSpaceWithNotification(ctx, req.CurrentUserID, req.SpaceID, req.TargetUserID, workspaceNotificationOutbox()); err != nil {
 		return nil, err
 	}
 
@@ -692,9 +719,24 @@ func canAssignRole(roleType int32) bool {
 	return roleType == workspaceRoleAdmin || roleType == workspaceRoleMember
 }
 
+func requireNotificationUserDomain(domain UserDomain) (notificationUserDomain, error) {
+	notifier, ok := domain.(notificationUserDomain)
+	if !ok {
+		return nil, errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "workspace notification mutation service is unavailable"))
+	}
+	return notifier, nil
+}
+
 func successMutationResponse() *WorkspaceMutationResponse {
 	return &WorkspaceMutationResponse{
 		Code: 0,
 		Msg:  "success",
 	}
+}
+
+func workspaceNotificationOutbox() func(context.Context, *gorm.DB, domainnotification.Event) error {
+	if appnotification.SVC == nil || !appnotification.SVC.IsConfigured() {
+		return nil
+	}
+	return appnotification.SVC.AppendInTransaction
 }

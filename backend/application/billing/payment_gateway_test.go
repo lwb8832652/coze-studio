@@ -6,6 +6,7 @@ package billing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,11 +40,15 @@ func TestSignedHTTPPaymentGatewayRejectsInvalidOrNonSucceededCallback(t *testing
 		"x-billing-signature": signPaymentPayload(gateway.signingSecret, body),
 	}, body); err == nil {
 		t.Fatal("VerifyCallback() accepted a failed payment event")
+	} else if !errors.Is(err, ErrPaymentCallbackInvalid) {
+		t.Fatalf("VerifyCallback() failed payment error = %v, want invalid callback", err)
 	}
 	if _, err := gateway.VerifyCallback(context.Background(), map[string]string{
 		"x-billing-signature": "invalid",
 	}, body); err == nil {
 		t.Fatal("VerifyCallback() accepted an invalid signature")
+	} else if !errors.Is(err, ErrPaymentCallbackInvalid) {
+		t.Fatalf("VerifyCallback() invalid signature error = %v, want invalid callback", err)
 	}
 }
 

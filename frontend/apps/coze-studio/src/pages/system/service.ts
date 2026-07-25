@@ -16,6 +16,20 @@
 
 /* eslint-disable @typescript-eslint/naming-convention, max-lines -- System administration DTOs intentionally preserve server wire names. */
 
+import {
+  AdminAnnouncementRouteType,
+  CancelAdminAnnouncement as cancelAdminAnnouncementGenerated,
+  CreateAdminAnnouncement as createAdminAnnouncementGenerated,
+  ListAdminAnnouncementAuditEvents as listAdminAnnouncementAuditEventsGenerated,
+  ListAdminAnnouncements as listAdminAnnouncementsGenerated,
+  PublishAdminAnnouncement as publishAdminAnnouncementGenerated,
+  ReplayAdminAnnouncements as replayAdminAnnouncementsGenerated,
+  ScheduleAdminAnnouncement as scheduleAdminAnnouncementGenerated,
+  UpdateAdminAnnouncement as updateAdminAnnouncementGenerated,
+} from '@coze-studio/api-schema/playground';
+
+export { AdminAnnouncementRouteType };
+
 export interface SystemAdminStatus {
   is_admin: boolean;
 }
@@ -90,6 +104,83 @@ export interface AdminUserSpace {
   role_type?: number;
   total_member_num?: number;
   created_at?: number;
+}
+
+export type AdminAnnouncementStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'published'
+  | 'cancelled';
+
+export type AdminAnnouncementProjectionStatus =
+  | 'idle'
+  | 'snapshotting'
+  | 'projecting'
+  | 'failed'
+  | 'completed';
+
+export type AdminAnnouncementAudienceType = 'all' | 'users' | 'workspaces';
+export type AdminAnnouncementSeverity =
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'error';
+
+export interface AdminAnnouncementAudience {
+  type: AdminAnnouncementAudienceType;
+  target_ids: string[];
+}
+
+export interface AdminAnnouncementRoute {
+  type: AdminAnnouncementRouteType;
+  space_id?: string;
+}
+
+export interface AdminAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  severity: AdminAnnouncementSeverity;
+  route: AdminAnnouncementRoute;
+  audience: AdminAnnouncementAudience;
+  status: AdminAnnouncementStatus;
+  projection_status: AdminAnnouncementProjectionStatus;
+  scheduled_at?: string;
+  publish_requested_at?: string;
+  snapshot_at?: string;
+  published_at?: string;
+  cancelled_at?: string;
+  created_by: string;
+  updated_by: string;
+  recipient_count: number;
+  projected_count: number;
+  last_error_code?: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminAnnouncementDraftPayload {
+  title: string;
+  body: string;
+  severity: AdminAnnouncementSeverity;
+  route: AdminAnnouncementRoute;
+  audience: AdminAnnouncementAudience;
+}
+
+export interface AdminAnnouncementAuditEvent {
+  id: string;
+  announcement_id: string;
+  actor_id: string;
+  action: string;
+  from_status?: string;
+  to_status?: string;
+  projection_status: AdminAnnouncementProjectionStatus;
+  result: string;
+  error_code?: string;
+  recipient_count: number;
+  projected_count: number;
+  created_at: string;
 }
 
 export interface AdminBasicConfig {
@@ -276,10 +367,14 @@ const billingRequest = async <T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> => {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const response = await fetch(`/api/admin/billing${path}`, {
     credentials: 'include',
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers,
   });
   if (!response.ok) {
     return throwAdminAPIError(response);
@@ -557,12 +652,12 @@ export const getSystemAdminStatus = async (): Promise<SystemAdminStatus> => {
 };
 
 const postJSON = async <T>(url: string, body: unknown): Promise<T> => {
+  const headers = new Headers();
+  headers.set('content-type', 'application/json');
   const response = await fetch(url, {
     body: JSON.stringify(body),
     credentials: 'include',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers,
     method: 'POST',
   });
 
@@ -625,6 +720,153 @@ export const listAdminWorkspaceMembers = (params: { space_id: string }) =>
 
 export const listAdminUserSpaces = (params: { user_id: string }) =>
   postJSON<{ spaces: AdminUserSpace[] }>('/api/admin/users/spaces', params);
+
+interface AdminAnnouncementEnvelope<T> {
+  code: number;
+  data?: T;
+  error_code?: string;
+  msg: string;
+}
+
+const unwrapAdminAnnouncementResponse = async <T>(
+  request: Promise<unknown>,
+): Promise<T & { error_code?: string }> => {
+  const payload = (await request) as AdminAnnouncementEnvelope<T>;
+  if (payload.code !== 0) {
+    throw new AdminAPIError(
+      400,
+      payload.msg || 'announcement request failed',
+      payload.error_code,
+    );
+  }
+  if (payload.data === undefined) {
+    throw new AdminAPIError(
+      500,
+      'announcement response is incomplete',
+      'ANNOUNCEMENT_INTERNAL',
+    );
+  }
+  return Object.assign(
+    {},
+    payload.data,
+    payload.error_code ? { error_code: payload.error_code } : {},
+  );
+};
+
+export const listAdminAnnouncements = (
+  params: {
+    limit?: number;
+    offset?: number;
+    status?: AdminAnnouncementStatus;
+  } = {},
+) =>
+  unwrapAdminAnnouncementResponse<{
+    announcements: AdminAnnouncement[];
+    total: number;
+  }>(
+    listAdminAnnouncementsGenerated({
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0,
+      status: params.status,
+    }),
+  );
+
+export const createAdminAnnouncement = (
+  draft: AdminAnnouncementDraftPayload,
+  idempotencyKey: string,
+) =>
+  unwrapAdminAnnouncementResponse<{
+    announcement: AdminAnnouncement;
+    replayed: boolean;
+  }>(
+    createAdminAnnouncementGenerated({
+      ...draft,
+      idempotency_key: idempotencyKey,
+    }),
+  );
+
+export const updateAdminAnnouncement = (
+  announcementID: string,
+  expectedVersion: number,
+  draft: AdminAnnouncementDraftPayload,
+) =>
+  unwrapAdminAnnouncementResponse<{ announcement: AdminAnnouncement }>(
+    updateAdminAnnouncementGenerated({
+      ...draft,
+      expected_version: expectedVersion,
+      id: announcementID,
+    }),
+  );
+
+export const scheduleAdminAnnouncement = (
+  announcementID: string,
+  expectedVersion: number,
+  scheduledAt: string,
+) =>
+  unwrapAdminAnnouncementResponse<{ announcement: AdminAnnouncement }>(
+    scheduleAdminAnnouncementGenerated({
+      expected_version: expectedVersion,
+      id: announcementID,
+      scheduled_at: scheduledAt,
+    }),
+  );
+
+export const publishAdminAnnouncement = (
+  announcementID: string,
+  expectedVersion: number,
+  idempotencyKey: string,
+) =>
+  unwrapAdminAnnouncementResponse<{
+    announcement: AdminAnnouncement;
+    deferred: boolean;
+    error_code?: string;
+    replayed: boolean;
+  }>(
+    publishAdminAnnouncementGenerated({
+      expected_version: expectedVersion,
+      id: announcementID,
+      idempotency_key: idempotencyKey,
+    }),
+  );
+
+export const cancelAdminAnnouncement = (
+  announcementID: string,
+  expectedVersion: number,
+) =>
+  unwrapAdminAnnouncementResponse<{ announcement: AdminAnnouncement }>(
+    cancelAdminAnnouncementGenerated({
+      expected_version: expectedVersion,
+      id: announcementID,
+    }),
+  );
+
+export const replayAdminAnnouncements = (announcementID?: string) =>
+  unwrapAdminAnnouncementResponse<{
+    processed: number;
+    completed: number;
+    failed: number;
+    deferred: number;
+    error_codes?: Record<string, number>;
+  }>(
+    replayAdminAnnouncementsGenerated({
+      announcement_id: announcementID || '',
+    }),
+  );
+
+export const listAdminAnnouncementAuditEvents = (
+  announcementID: string,
+  limit = 50,
+) =>
+  unwrapAdminAnnouncementResponse<{
+    audit_events: AdminAnnouncementAuditEvent[];
+    total: number;
+  }>(
+    listAdminAnnouncementAuditEventsGenerated({
+      id: announcementID,
+      limit,
+      offset: 0,
+    }),
+  );
 
 export const getAdminBasicConfig =
   async (): Promise<AdminBasicConfigResponse> => {

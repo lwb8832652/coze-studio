@@ -29,6 +29,8 @@ import (
 	"gorm.io/gorm/clause"
 
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	domainmcptool "github.com/coze-dev/coze-studio/backend/domain/mcptool"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 const mcpLegacyAuthMaxCASAttempts = 3
@@ -58,9 +60,18 @@ type mcpToolServerPO struct {
 	HealthCheckedAt int64          `gorm:"column:health_checked_at"`
 	HealthLatencyMs int64          `gorm:"column:health_latency_ms"`
 	HealthError     string         `gorm:"column:health_error;size:512"`
+	HealthConsecutiveFailures int    `gorm:"column:health_consecutive_failures"`
+	HealthIncidentID          string `gorm:"column:health_incident_id;size:128"`
+	HealthIncidentOpenedAt    int64  `gorm:"column:health_incident_opened_at"`
+	HealthLastRecoveredAt     int64  `gorm:"column:health_last_recovered_at"`
 	CreatedAt       int64          `gorm:"column:created_at"`
 	UpdatedAt       int64          `gorm:"column:updated_at;index:idx_mcp_tool_servers_space_updated,priority:2;index:idx_mcp_tool_servers_creator_updated,priority:2;index:idx_mcp_tool_servers_space_source_updated,priority:3"`
 	DeletedAt       int64          `gorm:"column:deleted_at;index:idx_mcp_tool_servers_space_enabled,priority:3;uniqueIndex:uk_mcp_tool_servers_space_name_deleted,priority:3"`
+}
+
+type MCPToolHealthNotificationIntent struct {
+	ResolveRecipients func(context.Context, MCPToolHealthNotificationServer) ([]int64, error)
+	AppendOutbox      func(context.Context, *gorm.DB, domainnotification.Event) error
 }
 
 type mcpResourcePO struct {
@@ -529,49 +540,200 @@ func (c *MySQLCatalog) UpdateHealth(
 	expectedUpdatedAt int64,
 	health MCPToolHealthSnapshot,
 ) error {
+	return c.updateHealth(ctx, serverID, expectedUpdatedAt, health, nil)
+}
+
+func (c *MySQLCatalog) UpdateHealthWithNotification(
+	ctx context.Context,
+	serverID int64,
+	expectedUpdatedAt int64,
+	health MCPToolHealthSnapshot,
+	intent *MCPToolHealthNotificationIntent,
+) error {
+	return c.updateHealth(ctx, serverID, expectedUpdatedAt, health, intent)
+}
+
+func (c *MySQLCatalog) updateHealth(
+	ctx context.Context,
+	serverID int64,
+	expectedUpdatedAt int64,
+	health MCPToolHealthSnapshot,
+	intent *MCPToolHealthNotificationIntent,
+) error {
 	if c == nil || c.db == nil {
 		return errors.New("mcp tool catalog db is required")
 	}
 
-	query := c.db.WithContext(ctx).
-		Model(&mcpToolServerPO{}).
-		Where("server_id = ? AND deleted_at = 0", serverID)
-	if expectedUpdatedAt > 0 {
-		query = query.Where("updated_at = ?", expectedUpdatedAt)
+	return c.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current mcpToolServerPO
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("server_id = ? AND deleted_at = 0", serverID).
+			Take(&current).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if !current.Enabled {
+			return nil
+		}
+		if expectedUpdatedAt > 0 && current.UpdatedAt != expectedUpdatedAt {
+			return ErrMCPConflict
+		}
+		if current.HealthCheckedAt >= health.CheckedAt {
+			return nil
+		}
+
+		latencyMs := health.LatencyMs
+		if latencyMs < 0 {
+			latencyMs = 0
+		}
+		status := normalizeMCPToolHealthStatus(health.Status)
+		transition := domainmcptool.ApplyHealthEpisodeCheck(
+			domainmcptool.HealthEpisodeState{
+				ConsecutiveFailures: current.HealthConsecutiveFailures,
+				ActiveIncidentID:    current.HealthIncidentID,
+				IncidentOpenedAt:    current.HealthIncidentOpenedAt,
+				LastRecoveredAt:     current.HealthLastRecoveredAt,
+			},
+			domainmcptool.HealthEpisodeCheck{
+				ServerID:       current.ServerID,
+				PreviousStatus: current.HealthStatus,
+				Status:         status,
+				CheckedAt:      health.CheckedAt,
+			},
+		)
+
+		db := tx.Model(&mcpToolServerPO{}).
+			Where("server_id = ? AND deleted_at = 0", serverID).
+			UpdateColumns(map[string]any{
+				"health_status":               status,
+				"health_checked_at":           health.CheckedAt,
+				"health_latency_ms":           latencyMs,
+				"health_error":                boundedMCPToolHealthError(health.Error),
+				"health_consecutive_failures": transition.State.ConsecutiveFailures,
+				"health_incident_id":          transition.State.ActiveIncidentID,
+				"health_incident_opened_at":   transition.State.IncidentOpenedAt,
+				"health_last_recovered_at":    transition.State.LastRecoveredAt,
+			})
+		if db.Error != nil {
+			return db.Error
+		}
+		if db.RowsAffected != 1 {
+			return ErrMCPConflict
+		}
+
+		return appendMCPToolHealthNotificationOutbox(
+			ctx,
+			tx,
+			&current,
+			transition,
+			intent,
+		)
+	})
+}
+
+func appendMCPToolHealthNotificationOutbox(
+	ctx context.Context,
+	tx *gorm.DB,
+	server *mcpToolServerPO,
+	transition domainmcptool.HealthEpisodeTransition,
+	intent *MCPToolHealthNotificationIntent,
+) error {
+	if intent == nil ||
+		intent.AppendOutbox == nil ||
+		intent.ResolveRecipients == nil {
+		if transition.Notification == domainmcptool.HealthEpisodeNotificationNone {
+			return nil
+		}
+		return fmt.Errorf("%w: mcp health notification producer unavailable", domainnotification.ErrStorage)
 	}
-	db := query.
-		Where("health_checked_at < ?", health.CheckedAt).
-		UpdateColumns(map[string]any{
-			"health_status":     normalizeMCPToolHealthStatus(health.Status),
-			"health_checked_at": health.CheckedAt,
-			"health_latency_ms": health.LatencyMs,
-			"health_error":      boundedMCPToolHealthError(health.Error),
-		})
-	if db.Error != nil {
-		return db.Error
-	}
-	if db.RowsAffected == 1 {
+	if transition.Notification == domainmcptool.HealthEpisodeNotificationNone ||
+		server == nil {
 		return nil
 	}
-
-	var current mcpToolServerPO
-	err := c.db.WithContext(ctx).
-		Where("server_id = ? AND deleted_at = 0", serverID).
-		Take(&current).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ErrNotFound
+	summary := MCPToolHealthNotificationServer{
+		ServerID:   server.ServerID,
+		SpaceID:    server.SpaceID,
+		CreatorID:  server.CreatorID,
+		SourceType: normalizeCatalogMCPServerSourceType(toolapi.MCPServerSourceType(server.SourceType)),
+		Name:       server.Name,
 	}
+	recipients, err := intent.ResolveRecipients(ctx, summary)
 	if err != nil {
 		return err
 	}
-	if expectedUpdatedAt > 0 && current.UpdatedAt != expectedUpdatedAt {
-		return ErrMCPConflict
+	if len(recipients) == 0 {
+		return fmt.Errorf("%w: mcp health notification recipients unavailable", domainnotification.ErrRecipientResolution)
 	}
-	if current.HealthCheckedAt >= health.CheckedAt {
-		return nil
+	recipients, err = domainnotification.NormalizeRecipientIDs(recipients)
+	if err != nil {
+		return err
 	}
+	event, err := mcpToolHealthNotificationEvent(summary, transition, recipients)
+	if err != nil || event == nil {
+		return err
+	}
+	return intent.AppendOutbox(ctx, tx, *event)
+}
 
-	return ErrMCPConflict
+func mcpToolHealthNotificationEvent(
+	server MCPToolHealthNotificationServer,
+	transition domainmcptool.HealthEpisodeTransition,
+	recipients []int64,
+) (*domainnotification.Event, error) {
+	if len(recipients) == 0 {
+		return nil, nil
+	}
+	occurredAt := transition.CheckedAt
+	if occurredAt <= 0 {
+		occurredAt = time.Now().UnixMilli()
+	}
+	eventType := domainnotification.EventMCPConnectionDegraded
+	reason := domainnotification.StatusReasonConnectionFailed
+	suffix := "degraded"
+	aggregateVersion := transition.IncidentOpenedAt
+	if transition.Notification == domainmcptool.HealthEpisodeNotificationRecovered {
+		eventType = domainnotification.EventMCPConnectionRecovered
+		reason = domainnotification.StatusReasonNone
+		suffix = "recovered"
+		aggregateVersion = occurredAt
+	}
+	if aggregateVersion <= 0 {
+		aggregateVersion = occurredAt
+	}
+	event := domainnotification.Event{
+		EventID:          fmt.Sprintf("mcp-health:%d:%s:%s", server.ServerID, transition.IncidentID, suffix),
+		EventType:        eventType,
+		AggregateType:    "mcp_tool_server",
+		AggregateID:      fmt.Sprintf("%d", server.ServerID),
+		AggregateVersion: aggregateVersion,
+		OccurredAt:       time.UnixMilli(occurredAt),
+		SpaceID:          server.SpaceID,
+		RecipientPolicy:  domainnotification.RecipientExplicitInternalUsers,
+		PayloadSchema:    domainnotification.CurrentPayloadSchema,
+		Payload: domainnotification.EventPayload{
+			ResourceDisplayName:  mcpToolHealthNotificationResourceName(server),
+			StatusReasonCode:     reason,
+			TargetID:             fmt.Sprintf("mcp-server:%d", server.ServerID),
+			ExplicitRecipientIDs: recipients,
+		},
+	}
+	canonical, err := domainnotification.CanonicalizeEvent(event)
+	if err != nil {
+		return nil, err
+	}
+	return &canonical, nil
+}
+
+func mcpToolHealthNotificationResourceName(
+	server MCPToolHealthNotificationServer,
+) string {
+	if server.ServerID <= 0 {
+		return "MCP server"
+	}
+	return fmt.Sprintf("MCP server %d", server.ServerID)
 }
 
 func (c *MySQLCatalog) serverToPO(

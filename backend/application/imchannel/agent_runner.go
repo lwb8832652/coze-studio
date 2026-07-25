@@ -186,13 +186,26 @@ func (r *AgentRunner) waitRun(ctx context.Context, runID int64) error {
 		case agentthread.RunStatusSucceeded:
 			return nil
 		case agentthread.RunStatusFailed, agentthread.RunStatusInterrupted, agentthread.RunStatusCanceled:
-			return fmt.Errorf("%w: %s", domain.ErrAgentExecutionFailed, boundedMessage(response.Run.ErrorMessage, 256))
+			return fmt.Errorf("%w: %s", domain.ErrAgentExecutionFailed, stableRunFailureCode(response.Run.Status))
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(interval):
 		}
+	}
+}
+
+func stableRunFailureCode(status agentthread.RunStatus) string {
+	switch status {
+	case agentthread.RunStatusFailed:
+		return "run_failed"
+	case agentthread.RunStatusInterrupted:
+		return "run_interrupted"
+	case agentthread.RunStatusCanceled:
+		return "run_canceled"
+	default:
+		return "run_unavailable"
 	}
 }
 
@@ -259,10 +272,10 @@ func runtimeMetadata(config *domain.Config, payload domain.InboundPayload) strin
 		"source": "feishu_im",
 		"feishu": map[string]string{
 			"config_id":  strconv.FormatInt(config.ID, 10),
-			"chat_id":    payload.ChatID,
-			"chat_type":  payload.ChatType,
-			"user_id":    payload.UserID,
-			"message_id": payload.MessageID,
+			"chat_id":    boundedMessage(payload.ChatID, 128),
+			"chat_type":  boundedMessage(payload.ChatType, 32),
+			"user_id":    boundedMessage(payload.UserID, 128),
+			"message_id": boundedMessage(payload.MessageID, 128),
 		},
 	})
 	if err != nil {

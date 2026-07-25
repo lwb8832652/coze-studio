@@ -1,4 +1,4 @@
-h1:W6VAhF5DT1tW9tWgXCnr0HGgKm1Z7cly8x61DDgHWtk=
+h1:9KqvdlnCi7CJUHyp4PUVRSVCsDVWHEznTXRsVDidJr8=
 20250703095335_initial.sql h1:/joaeUTMhXqAEc0KwsSve5+bYM0qPOp+9OizJtsRc+U=
 20250703115304_update.sql h1:cbYo6Q6Lh96hB4hu5KW2Nn/Mr0VDpg7a1WPgpIb1SOc=
 20250704040445_update.sql h1:QWmoPY//oQ+GFZwET9w/oAWa8mM0KVaD5G8Yiu9bMqY=
@@ -69,3 +69,11 @@ h1:W6VAhF5DT1tW9tWgXCnr0HGgKm1Z7cly8x61DDgHWtk=
 20260723000200_subscription_orders.sql h1:QmRfB9ls01MRBZHiTaejJvH/t+hOsHWfh5pIqUGDgWE=
 20260723000300_model_usage_billing.sql h1:0QxQA2a/gKuzsrH8derVsUkYHW3AiG2Ditz0LfGSGYw=
 20260723000400_billing_config.sql h1:G5ODC4rNaEo2oSIbm2onIByBvOt+dfTfWz8eOHDbh34=
+20260724000100_reliable_notifications.sql h1:ULE2qK7lRuJyNQxuQ22G8USBcR324orHDfDJPkbZT10=
+20260724000200_space_type_marker.sql h1:u2lqWtq3XviRv1bdPkv2kCIUVIY/+GFVZZnY3GryTV4=
+20260724000300_mcp_health_episodes.sql h1:xxK3j0sJt7q6MwEAls/KP2G7IY9TqKWjqw66nJdrRbE=
+20260724000400_feishu_im_runtime_incidents.sql h1:yqzVbsy8geMWC4EQI8Zd9p0JzBoIaUZKTqQu/pJNGeA=
+20260724000500_billing_maintenance_indexes.sql h1:JkFLv72NldoOuNnKaQ1BC3T+gQSPvc7cUrwEARgP4uU=
+20260725000100_billing_credit_thresholds.sql h1:ioHzLURsEMKtE9VobSckxE3OsRNq/vdTUBZdiNIDIJU=
+20260725000200_sandbox_health_incidents.sql h1:XLC8rEXjM82GtBVn1busDMOvzFRPx0zHmxSz9nFfv/c=
+20260725000300_admin_announcements.sql h1:eR8iKPK8FWSD5HPB04kU5B06fnpvvX2l/8bOcVuBN8Y=

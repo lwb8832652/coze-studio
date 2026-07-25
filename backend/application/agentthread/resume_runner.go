@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 )
 
@@ -286,6 +287,9 @@ func (p *ResumeRunProcessor) processResumeRun(
 			}
 			if len(interrupted.Interrupts) > 0 {
 				interruptPayload["interrupt_count"] = len(interrupted.Interrupts)
+			}
+			if ref, ok := awaitingInputInteractionRefFromInterrupts(interrupted.Interrupts); ok {
+				interruptPayload[entity.RunAwaitingInputInteractionRefPayloadKey] = ref
 			}
 			transitionResp, transitionErr := p.app.InterruptRun(ctx, &UpdateRunStatusRequest{
 				RunID:                 run.RunID,

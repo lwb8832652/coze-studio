@@ -59,6 +59,47 @@ func TestSandboxWiringAllowsManagementBeforeRuntimeRouting(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestSandboxHealthMonitorIsNotCreatedWhenProductionControlPlaneIsDisabled(
+	t *testing.T,
+) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "false")
+	t.Setenv("SANDBOX_RUNTIME_ROUTING_ENABLED", "false")
+	clearSandboxControlPlane()
+	t.Cleanup(clearSandboxControlPlane)
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	monitor, err := newSandboxHealthMonitor(
+		SandboxSVC,
+		infrasandbox.NewMySQLHealthMonitorRepository(&gorm.DB{}, nil),
+	)
+	require.NoError(t, err)
+	require.Nil(t, SandboxSVC)
+	require.Nil(t, SandboxRouter)
+	require.Nil(t, monitor)
+}
+
+func TestSandboxHealthMonitorRunsWithControlPlaneBeforeRuntimeRouting(
+	t *testing.T,
+) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
+	t.Setenv("SANDBOX_RUNTIME_ROUTING_ENABLED", "false")
+	clearSandboxControlPlane()
+	t.Cleanup(clearSandboxControlPlane)
+	installSandboxWiringTestConstructors(t, &sandboxWiringCapture{})
+
+	require.NoError(t, initSandboxControlPlane(sandboxWiringReadyDependencies(nil)))
+	monitor, err := newSandboxHealthMonitor(
+		SandboxSVC,
+		infrasandbox.NewMySQLHealthMonitorRepository(&gorm.DB{}, nil),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, SandboxSVC)
+	require.Nil(t, SandboxRouter)
+	require.NotNil(t, monitor)
+}
+
 func TestSandboxWiringRejectsInvalidRuntimeRoutingFlag(t *testing.T) {
 	t.Setenv("SANDBOX_CONTROL_PLANE_ENABLED", "true")
 	t.Setenv("SANDBOX_RUNTIME_ROUTING_ENABLED", "invalid")

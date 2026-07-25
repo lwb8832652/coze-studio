@@ -16,7 +16,6 @@ import (
 
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
-	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	typeconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
@@ -72,6 +71,8 @@ func TestAdminAuthMiddlewareUsesOnlyCanonicalExplicitAdminEmails(t *testing.T) {
 	}{
 		{name: "registration whitelist is not admin", configured: "", email: "registration@example.test", wantStatus: http.StatusForbidden, wantSymbolic: "ADMIN_PERMISSION_DENIED"},
 		{name: "invalid admin list fails closed", configured: "admin@example.test,bad address <", email: "admin@example.test", wantStatus: http.StatusForbidden, wantSymbolic: "ADMIN_PERMISSION_DENIED"},
+		{name: "trailing comma fails closed", configured: "admin@example.test,", email: "admin@example.test", wantStatus: http.StatusForbidden, wantSymbolic: "ADMIN_PERMISSION_DENIED"},
+		{name: "empty item fails closed", configured: "admin@example.test,,other@example.test", email: "admin@example.test", wantStatus: http.StatusForbidden, wantSymbolic: "ADMIN_PERMISSION_DENIED"},
 		{name: "explicit admin is trimmed lowercased and deduplicated", configured: " ADMIN@EXAMPLE.TEST , admin@example.test ", email: "admin@example.test", wantStatus: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -83,30 +84,6 @@ func TestAdminAuthMiddlewareUsesOnlyCanonicalExplicitAdminEmails(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestResolveAdminAuthEmailConfigBootstrapsOnlyBeforePersistence(t *testing.T) {
-	getenv := func(key string) string {
-		require.Equal(t, systemAdminBootstrapEmailsEnv, key)
-		return "bootstrap@example.test"
-	}
-
-	require.Equal(
-		t,
-		"bootstrap@example.test",
-		resolveAdminAuthEmailConfig("", kvstore.MissingRevision, getenv),
-	)
-	require.Equal(
-		t,
-		"database@example.test",
-		resolveAdminAuthEmailConfig("database@example.test", kvstore.MissingRevision, getenv),
-	)
-	require.Empty(t, resolveAdminAuthEmailConfig("", "persisted-revision", getenv))
-	require.Equal(
-		t,
-		"database@example.test",
-		resolveAdminAuthEmailConfig("database@example.test", "persisted-revision", getenv),
-	)
 }
 
 func TestSessionAndAdminAuthMiddlewareProductionOrder(t *testing.T) {

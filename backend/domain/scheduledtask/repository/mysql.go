@@ -7,23 +7,45 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/domain/scheduledtask/entity"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 )
 
 type mysqlRepository struct {
-	db    *gorm.DB
-	idGen idgen.IDGenerator
+	db                 *gorm.DB
+	idGen              idgen.IDGenerator
+	notificationOutbox NotificationOutboxAppender
 }
 
-func NewMySQLRepository(db *gorm.DB, idGen idgen.IDGenerator) Repository {
-	return &mysqlRepository{db: db, idGen: idGen}
+type NotificationOutboxAppender interface {
+	AppendInTransaction(context.Context, *gorm.DB, domainnotification.Event) error
+}
+
+type MySQLOption func(*mysqlRepository)
+
+func WithNotificationOutboxAppender(appender NotificationOutboxAppender) MySQLOption {
+	return func(r *mysqlRepository) {
+		r.notificationOutbox = appender
+	}
+}
+
+func NewMySQLRepository(db *gorm.DB, idGen idgen.IDGenerator, options ...MySQLOption) Repository {
+	repo := &mysqlRepository{db: db, idGen: idGen}
+	for _, option := range options {
+		if option != nil {
+			option(repo)
+		}
+	}
+	return repo
 }
 
 type scheduledTaskPO struct {
@@ -260,6 +282,14 @@ func (r *mysqlRepository) GetExecution(ctx context.Context, executionID int64) (
 	return po.toEntity(), nil
 }
 
+func (r *mysqlRepository) GetExecutionByTrigger(ctx context.Context, taskID int64, idempotencyKey string) (*entity.Execution, error) {
+	var po scheduledTaskExecutionPO
+	if err := r.db.WithContext(ctx).Where("task_id = ? AND idempotency_key = ?", taskID, strings.TrimSpace(idempotencyKey)).First(&po).Error; err != nil {
+		return nil, err
+	}
+	return po.toEntity(), nil
+}
+
 func (r *mysqlRepository) MarkExecutionRunning(ctx context.Context, executionID, startedAt int64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var execution scheduledTaskExecutionPO
@@ -276,20 +306,109 @@ func (r *mysqlRepository) MarkExecutionRunning(ctx context.Context, executionID,
 	})
 }
 
-func (r *mysqlRepository) FinishExecution(ctx context.Context, executionID int64, result ExecutionResult) error {
+func (r *mysqlRepository) SetWorkflowExecutionID(ctx context.Context, executionID, workflowExecutionID int64) error {
+	if workflowExecutionID <= 0 {
+		return fmt.Errorf("%w: workflow execution id is required", ErrStateConflict)
+	}
+	now := time.Now().UnixMilli()
+	result := r.db.WithContext(ctx).Model(&scheduledTaskExecutionPO{}).
+		Where("id = ? AND workflow_execution_id = 0 AND status IN ?", executionID, []string{string(entity.ExecutionStatusQueued), string(entity.ExecutionStatusRunning)}).
+		Updates(map[string]any{"workflow_execution_id": workflowExecutionID, "updated_at": now})
+	if result.Error != nil || result.RowsAffected > 0 {
+		return result.Error
+	}
+	var execution scheduledTaskExecutionPO
+	if err := r.db.WithContext(ctx).Select("workflow_execution_id").Where("id = ?", executionID).First(&execution).Error; err != nil {
+		return err
+	}
+	if execution.WorkflowExecutionID == workflowExecutionID {
+		return nil
+	}
+	return fmt.Errorf("%w: workflow execution id already differs", ErrStateConflict)
+}
+
+func (r *mysqlRepository) FinalizeExecution(ctx context.Context, executionID int64, result ExecutionResult) error {
+	if !isTerminalExecutionStatus(result.Status) {
+		return fmt.Errorf("%w: scheduled task execution status is not terminal", ErrStateConflict)
+	}
+	if result.FinishedAt == 0 {
+		result.FinishedAt = time.Now().UnixMilli()
+	}
 	updates := map[string]any{"status": string(result.Status), "thread_id": result.ThreadID, "run_id": result.RunID, "workflow_execution_id": result.WorkflowExecutionID, "error_code": result.ErrorCode, "error_message": result.ErrorMessage, "finished_at": result.FinishedAt, "updated_at": result.FinishedAt}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var execution scheduledTaskExecutionPO
-		if err := tx.Select("task_id").Where("id = ?", executionID).First(&execution).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("task_id", "status").Where("id = ?", executionID).First(&execution).Error; err != nil {
+			return err
+		}
+		if isTerminalExecutionStatus(entity.ExecutionStatus(execution.Status)) {
+			if execution.Status == string(result.Status) {
+				return nil
+			}
+			return fmt.Errorf("%w: scheduled task execution has different terminal status", ErrStateConflict)
+		}
+		if execution.Status != string(entity.ExecutionStatusQueued) && execution.Status != string(entity.ExecutionStatusRunning) {
+			return fmt.Errorf("%w: scheduled task execution cannot be finalized from current status", ErrStateConflict)
+		}
+		var task scheduledTaskPO
+		if err := tx.Select("id", "space_id", "creator_id").Where("id = ? AND deleted_at = 0", execution.TaskID).First(&task).Error; err != nil {
 			return err
 		}
 		db := tx.Model(&scheduledTaskExecutionPO{}).
 			Where("id = ? AND status IN ?", executionID, []string{string(entity.ExecutionStatusQueued), string(entity.ExecutionStatusRunning)}).
 			Updates(updates)
-		if err := requireUpdated(db, "scheduled task execution is terminal"); err != nil {
+		if db.Error != nil {
+			return db.Error
+		}
+		if db.RowsAffected == 0 {
+			return finalizeExecutionCASMiss(tx, executionID, result.Status)
+		}
+		if err := updateTaskTerminalExecution(tx, execution.TaskID, executionID, result.Status, result.FinishedAt); err != nil {
 			return err
 		}
-		return updateTaskLatestExecutionStatus(tx, execution.TaskID, executionID, result.Status)
+		event, err := r.notificationEventForTerminalExecution(task, executionID, result)
+		if err != nil {
+			return err
+		}
+		if event == nil {
+			return nil
+		}
+		return r.notificationOutbox.AppendInTransaction(ctx, tx, *event)
+	})
+}
+
+func (r *mysqlRepository) MarkExecutionRecoverable(ctx context.Context, taskID, executionID int64, retryAt int64, result ExecutionResult) error {
+	now := time.Now().UnixMilli()
+	if retryAt <= 0 {
+		retryAt = now
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var execution scheduledTaskExecutionPO
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("status").Where("id = ? AND task_id = ?", executionID, taskID).First(&execution).Error; err != nil {
+			return err
+		}
+		if isTerminalExecutionStatus(entity.ExecutionStatus(execution.Status)) {
+			return nil
+		}
+		executionUpdates := map[string]any{"status": string(entity.ExecutionStatusQueued), "updated_at": now}
+		if result.WorkflowExecutionID > 0 {
+			executionUpdates["workflow_execution_id"] = gorm.Expr("COALESCE(NULLIF(workflow_execution_id, 0), ?)", result.WorkflowExecutionID)
+		}
+		executionResult := tx.Model(&scheduledTaskExecutionPO{}).
+			Where("id = ? AND task_id = ? AND status IN ?", executionID, taskID, []string{string(entity.ExecutionStatusQueued), string(entity.ExecutionStatusRunning)}).
+			Updates(executionUpdates)
+		if err := requireUpdated(executionResult, "scheduled task execution cannot be marked recoverable"); err != nil {
+			return err
+		}
+		taskResult := tx.Model(&scheduledTaskPO{}).
+			Where("id = ? AND deleted_at = 0 AND status IN ?", taskID, []string{string(entity.StatusEnabled), string(entity.StatusCompleted)}).
+			Updates(map[string]any{
+				"status":           string(entity.StatusEnabled),
+				"next_execution_at": retryAt,
+				"lease_owner":      "",
+				"lease_expires_at": 0,
+				"updated_at":       gorm.Expr("CASE WHEN updated_at > ? THEN updated_at ELSE ? END", now, now),
+			})
+		return requireUpdated(taskResult, "scheduled task cannot be restored for execution retry")
 	})
 }
 
@@ -309,12 +428,6 @@ func (r *mysqlRepository) ListExecutions(ctx context.Context, spaceID, taskID in
 		items = append(items, po.toEntity())
 	}
 	return items, total, nil
-}
-
-func (r *mysqlRepository) RecordTaskExecution(ctx context.Context, taskID, latestExecutionAt int64) error {
-	result := r.db.WithContext(ctx).Model(&scheduledTaskPO{}).Where("id = ? AND deleted_at = 0", taskID).
-		Updates(map[string]any{"execution_count": gorm.Expr("execution_count + 1"), "latest_execution_at": latestExecutionAt})
-	return requireUpdated(result, "scheduled task not found")
 }
 
 func (r *mysqlRepository) SetConversationID(ctx context.Context, taskID, conversationID int64) error {
@@ -347,6 +460,69 @@ func updateTaskLatestExecutionStatus(db *gorm.DB, taskID, executionID int64, sta
 		return fmt.Errorf("scheduled task not found")
 	}
 	return nil
+}
+
+func updateTaskTerminalExecution(db *gorm.DB, taskID, executionID int64, status entity.ExecutionStatus, finishedAt int64) error {
+	newerExecutionMissing := "NOT EXISTS (SELECT 1 FROM scheduled_task_executions AS newer WHERE newer.task_id = scheduled_tasks.id AND newer.id > ?)"
+	result := db.Model(&scheduledTaskPO{}).
+		Where("id = ? AND deleted_at = 0", taskID).
+		Updates(map[string]any{
+			"execution_count":         gorm.Expr("execution_count + 1"),
+			"latest_execution_at":     gorm.Expr("CASE WHEN "+newerExecutionMissing+" THEN ? ELSE latest_execution_at END", executionID, finishedAt),
+			"latest_execution_status": gorm.Expr("CASE WHEN "+newerExecutionMissing+" THEN ? ELSE latest_execution_status END", executionID, string(status)),
+			"updated_at":              gorm.Expr("CASE WHEN "+newerExecutionMissing+" THEN CASE WHEN updated_at > ? THEN updated_at ELSE ? END ELSE updated_at END", executionID, finishedAt, finishedAt),
+		})
+	return requireUpdated(result, "scheduled task not found")
+}
+
+func finalizeExecutionCASMiss(db *gorm.DB, executionID int64, status entity.ExecutionStatus) error {
+	var execution scheduledTaskExecutionPO
+	if err := db.Select("status").Where("id = ?", executionID).First(&execution).Error; err != nil {
+		return err
+	}
+	if execution.Status == string(status) && isTerminalExecutionStatus(entity.ExecutionStatus(execution.Status)) {
+		return nil
+	}
+	return fmt.Errorf("%w: scheduled task execution is terminal", ErrStateConflict)
+}
+
+func (r *mysqlRepository) notificationEventForTerminalExecution(task scheduledTaskPO, executionID int64, result ExecutionResult) (*domainnotification.Event, error) {
+	eventType := domainnotification.EventType("")
+	switch result.Status {
+	case entity.ExecutionStatusSucceeded:
+		eventType = domainnotification.EventScheduledExecutionSucceeded
+	case entity.ExecutionStatusFailed:
+		eventType = domainnotification.EventScheduledExecutionFailed
+	default:
+		return nil, nil
+	}
+	if r == nil || r.notificationOutbox == nil {
+		return nil, domainnotification.ErrStorage
+	}
+	return &domainnotification.Event{
+		EventID:          fmt.Sprintf("scheduled_execution:%d:%s", executionID, result.Status),
+		EventType:        eventType,
+		AggregateType:    "scheduled_task_execution",
+		AggregateID:      strconv.FormatInt(executionID, 10),
+		AggregateVersion: 1,
+		OccurredAt:       time.UnixMilli(result.FinishedAt),
+		ActorID:          task.CreatorID,
+		SpaceID:          task.SpaceID,
+		RecipientPolicy:  domainnotification.RecipientActor,
+		PayloadSchema:    domainnotification.CurrentPayloadSchema,
+		Payload: domainnotification.EventPayload{
+			TargetID: strconv.FormatInt(task.ID, 10),
+		},
+	}, nil
+}
+
+func isTerminalExecutionStatus(status entity.ExecutionStatus) bool {
+	switch status {
+	case entity.ExecutionStatusSucceeded, entity.ExecutionStatusFailed, entity.ExecutionStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }
 
 func executionToPO(execution *entity.Execution) *scheduledTaskExecutionPO {

@@ -14,6 +14,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/base/ctxutil"
 	appbilling "github.com/coze-dev/coze-studio/backend/application/billing"
 	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func currentBillingUserID(ctx context.Context) (int64, error) {
@@ -187,8 +188,27 @@ func HandleBillingPaymentCallback(ctx context.Context, c *app.RequestContext) {
 	c.Request.Header.VisitAll(func(key, value []byte) { headers[strings.ToLower(string(key))] = string(value) })
 	data, err := service.HandlePaymentCallback(ctx, c.Param("gateway"), headers, c.Request.Body())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, map[string]any{"code": 400, "msg": "invalid payment callback"})
+		status, message := billingPaymentCallbackErrorResponse(err)
+		c.JSON(status, map[string]any{"code": status, "msg": message})
 		return
 	}
 	billingOK(c, data)
+}
+
+func billingPaymentCallbackErrorResponse(err error) (int, string) {
+	switch {
+	case errors.Is(err, appbilling.ErrPaymentCallbackInvalid),
+		errors.Is(err, domainbilling.ErrInvalidInput),
+		errors.Is(err, domainbilling.ErrNotFound):
+		return http.StatusBadRequest, "invalid payment callback"
+	case errors.Is(err, domainbilling.ErrIdempotencyConflict),
+		errors.Is(err, domainbilling.ErrVersionConflict),
+		errors.Is(err, domainbilling.ErrReservationNotActive):
+		return http.StatusConflict, "payment callback state conflict"
+	case errors.Is(err, appbilling.ErrPaymentGatewayUnavailable),
+		errors.Is(err, domainnotification.ErrStorage):
+		return http.StatusServiceUnavailable, "payment callback retry later"
+	default:
+		return http.StatusServiceUnavailable, "payment callback retry later"
+	}
 }

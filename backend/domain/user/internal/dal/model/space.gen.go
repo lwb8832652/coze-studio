@@ -34,6 +34,7 @@ type Space struct {
 	Description    string         `gorm:"column:description;not null;comment:Space Description" json:"description"`                                    // Space Description
 	IconURI        string         `gorm:"column:icon_uri;not null;comment:Icon URI" json:"icon_uri"`                                                   // Icon URI
 	CreatorID      int64          `gorm:"column:creator_id;not null;comment:Creator ID" json:"creator_id"`                                             // Creator ID
+	SpaceType      int32          `gorm:"column:space_type;not null;default:0;comment:Space Type: 0.unknown 1.personal 2.team" json:"space_type"`       // Space Type: 0.unknown 1.personal 2.team
 	AllowDevelop   bool           `gorm:"column:allow_develop;not null;default:true;comment:Allow member developer features" json:"allow_develop"`     // Allow member developer features
 	ReceivePublish bool           `gorm:"column:receive_publish;not null;default:false;comment:Receive external space publish" json:"receive_publish"` // Receive external space publish
 	CreatedAt      int64          `gorm:"column:created_at;not null;autoCreateTime:milli;comment:Creation Time (Milliseconds)" json:"created_at"`      // Creation Time (Milliseconds)

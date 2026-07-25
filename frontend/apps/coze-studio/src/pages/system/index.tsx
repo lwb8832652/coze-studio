@@ -65,6 +65,7 @@ import {
   BillingManagementSection,
   type BillingSectionKey,
 } from './billing-management-section';
+import { AnnouncementsSection } from './announcements';
 
 const ADMIN_PAGE_SIZE = 20;
 
@@ -610,6 +611,9 @@ const SystemManagementPage = () => {
     }
     if (activeSection === 'sandbox') {
       return <SandboxManagementSection />;
+    }
+    if (activeSection === 'announcements') {
+      return <AnnouncementsSection />;
     }
     if (activeSection.startsWith('billing-')) {
       return (

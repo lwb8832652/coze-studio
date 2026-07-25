@@ -22,7 +22,10 @@ import (
 	domainbilling "github.com/coze-dev/coze-studio/backend/domain/billing"
 )
 
-var ErrPaymentGatewayUnavailable = errors.New("billing: payment gateway unavailable")
+var (
+	ErrPaymentGatewayUnavailable = errors.New("billing: payment gateway unavailable")
+	ErrPaymentCallbackInvalid    = errors.New("billing: invalid payment callback")
+)
 
 type CreatePaymentRequest struct {
 	OrderNo      string `json:"order_no"`
@@ -40,6 +43,7 @@ type VerifiedPaymentEvent struct {
 	OrderNo               string `json:"order_no"`
 	Gateway               string `json:"gateway"`
 	ProviderTransactionID string `json:"provider_transaction_id"`
+	ProviderEventID       string `json:"provider_event_id,omitempty"`
 	EventDigest           string `json:"event_digest"`
 	Currency              string `json:"currency"`
 	AmountMicros          int64  `json:"amount_micros"`
@@ -111,20 +115,23 @@ func (g *SignedHTTPPaymentGateway) CreatePayment(ctx context.Context, request Cr
 }
 
 func (g *SignedHTTPPaymentGateway) VerifyCallback(_ context.Context, headers map[string]string, body []byte) (*VerifiedPaymentEvent, error) {
-	if g == nil || len(body) == 0 || len(body) > 1<<20 {
+	if g == nil {
 		return nil, ErrPaymentGatewayUnavailable
+	}
+	if len(body) == 0 || len(body) > 1<<20 {
+		return nil, fmt.Errorf("%w: payment callback body is invalid", ErrPaymentCallbackInvalid)
 	}
 	provided := strings.TrimSpace(headers["x-billing-signature"])
 	expected := signPaymentPayload(g.signingSecret, body)
 	if provided == "" || !hmac.Equal([]byte(strings.ToLower(provided)), []byte(expected)) {
-		return nil, fmt.Errorf("billing: invalid payment callback signature")
+		return nil, fmt.Errorf("%w: signature mismatch", ErrPaymentCallbackInvalid)
 	}
 	var event VerifiedPaymentEvent
 	if err := json.Unmarshal(body, &event); err != nil {
-		return nil, fmt.Errorf("billing: invalid payment callback")
+		return nil, fmt.Errorf("%w: malformed payment callback payload", ErrPaymentCallbackInvalid)
 	}
 	if strings.TrimSpace(event.OrderNo) == "" || strings.TrimSpace(event.ProviderTransactionID) == "" || event.AmountMicros < 0 || strings.TrimSpace(event.Currency) == "" || !strings.EqualFold(event.Status, string(domainbilling.PaymentStatusSucceeded)) {
-		return nil, fmt.Errorf("billing: incomplete payment callback")
+		return nil, fmt.Errorf("%w: payment callback fields are invalid", ErrPaymentCallbackInvalid)
 	}
 	event.Gateway = g.name
 	digest := sha256.Sum256(body)

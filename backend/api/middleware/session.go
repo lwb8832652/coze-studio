@@ -20,37 +20,28 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/mail"
-	"os"
-	"strings"
 
 	"github.com/cloudwego/hertz/pkg/app"
 
 	"github.com/coze-dev/coze-studio/backend/api/internal/httputil"
 	"github.com/coze-dev/coze-studio/backend/application/user"
 	"github.com/coze-dev/coze-studio/backend/bizpkg/config"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
 	"github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
-	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
-const systemAdminBootstrapEmailsEnv = "COZE_SYSTEM_ADMIN_EMAILS"
-
 var loadAdminAuthEmailConfig = func(ctx context.Context) (string, error) {
-	baseConf, revision, err := config.Base().GetBaseConfigWithRevision(ctx)
-	if err != nil {
-		return "", err
+	projection := config.SystemAdminEmails()
+	if projection == nil {
+		return "", errors.New(
+			"system administrator email projection unavailable",
+		)
 	}
-	return resolveAdminAuthEmailConfig(baseConf.AdminEmails, revision, os.Getenv), nil
-}
-
-func resolveAdminAuthEmailConfig(configured, revision string, getenv func(string) string) string {
-	if configured != "" || revision != kvstore.MissingRevision || getenv == nil {
-		return configured
-	}
-	return getenv(systemAdminBootstrapEmailsEnv)
+	return projection.CanonicalEmailCSV(ctx)
 }
 
 var loadAdminAuthEmails = func(ctx context.Context) (string, error) {
@@ -123,29 +114,11 @@ func SessionAuthMWWithValidator(validator func(context.Context, string) (*entity
 }
 
 func canonicalAdminAuthEmails(raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", true
-	}
-	seen := make(map[string]struct{})
-	canonical := make([]string, 0, strings.Count(raw, ",")+1)
-	for _, item := range strings.Split(raw, ",") {
-		candidate := strings.TrimSpace(item)
-		address, err := mail.ParseAddress(candidate)
-		if err != nil || address == nil || address.Name != "" || !strings.EqualFold(candidate, address.Address) {
-			return "", false
-		}
-		email := strings.ToLower(strings.TrimSpace(address.Address))
-		if email == "" {
-			return "", false
-		}
-		if _, exists := seen[email]; exists {
-			continue
-		}
-		seen[email] = struct{}{}
-		canonical = append(canonical, email)
-	}
-	return strings.Join(canonical, ","), true
+	canonical, err := domainsystemadmin.CanonicalizeRequiredEmailCSV(
+		raw,
+		domainnotification.MaxExplicitRecipients,
+	)
+	return canonical, err == nil
 }
 
 func authenticationRequired(ctx *app.RequestContext) {
@@ -186,6 +159,7 @@ func AdminAuthMWWithEmailLoader(loader func(context.Context) (string, error)) ap
 		}
 
 		if user.IsSystemAdminEmail(session.UserEmail, adminEmails) {
+			ctxcache.Store(c, consts.SystemAdminKeyInCtx, true)
 			ctx.Next(c)
 			return
 		}

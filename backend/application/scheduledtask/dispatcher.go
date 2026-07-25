@@ -47,7 +47,11 @@ func (d *ExecutionDispatcher) Dispatch(_ context.Context, task *entity.Task, exe
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				logs.CtxErrorf(ctx, "[scheduled-task] execution panic task_id=%d execution_id=%d panic=%v stack=%s", task.ID, execution.ID, recovered, debug.Stack())
-				_ = d.finishFailure(ctx, task.ID, execution.ID, "execution_panic")
+				if err := d.finishFailure(ctx, execution.ID, "execution_panic"); err != nil {
+					if recoverErr := d.markExecutionRecoverable(ctx, task, execution, repository.ExecutionResult{}); recoverErr != nil {
+						logs.CtxErrorf(ctx, "[scheduled-task] mark execution recoverable failed task_id=%d execution_id=%d err=%v", task.ID, execution.ID, recoverErr)
+					}
+				}
 			}
 		}()
 		if err := d.RunExecution(ctx, task, execution); err != nil {
@@ -65,12 +69,22 @@ func (d *ExecutionDispatcher) RunExecution(ctx context.Context, task *entity.Tas
 	executor := d.Executors[task.TargetType]
 	if executor == nil {
 		err := fmt.Errorf("executor for target type %q is unavailable", task.TargetType)
-		_ = d.finishFailure(ctx, task.ID, execution.ID, "execution_failed")
+		if finishErr := d.finishFailure(ctx, execution.ID, "execution_failed"); finishErr != nil {
+			if recoverErr := d.markExecutionRecoverable(ctx, task, execution, repository.ExecutionResult{}); recoverErr != nil {
+				logs.CtxErrorf(ctx, "[scheduled-task] mark execution recoverable failed task_id=%d execution_id=%d err=%v", task.ID, execution.ID, recoverErr)
+				return fmt.Errorf("%w; finalize: %v; recover: %v", err, finishErr, recoverErr)
+			}
+			return fmt.Errorf("%w; finalize: %v", err, finishErr)
+		}
 		return err
 	}
 	result, err := executor.Execute(ctx, task, execution)
 	if err != nil {
-		if finishErr := d.finishFailure(ctx, task.ID, execution.ID, "execution_failed"); finishErr != nil {
+		if finishErr := d.finishFailureResult(ctx, execution.ID, result, "execution_failed"); finishErr != nil {
+			if recoverErr := d.markExecutionRecoverable(ctx, task, execution, result); recoverErr != nil {
+				logs.CtxErrorf(ctx, "[scheduled-task] mark execution recoverable failed task_id=%d execution_id=%d err=%v", task.ID, execution.ID, recoverErr)
+				return fmt.Errorf("execute: %w; record failure: %v; recover: %v", err, finishErr, recoverErr)
+			}
 			return fmt.Errorf("execute: %w; record failure: %v", err, finishErr)
 		}
 		return err
@@ -81,21 +95,41 @@ func (d *ExecutionDispatcher) RunExecution(ctx context.Context, task *entity.Tas
 	if result.FinishedAt == 0 {
 		result.FinishedAt = d.now().UnixMilli()
 	}
-	if err := d.Repository.FinishExecution(ctx, execution.ID, result); err != nil {
-		return err
-	}
-	if err := d.Repository.RecordTaskExecution(ctx, task.ID, result.FinishedAt); err != nil {
+	if err := d.Repository.FinalizeExecution(ctx, execution.ID, result); err != nil {
+		if recoverErr := d.markExecutionRecoverable(ctx, task, execution, result); recoverErr != nil {
+			logs.CtxErrorf(ctx, "[scheduled-task] mark execution recoverable failed task_id=%d execution_id=%d err=%v", task.ID, execution.ID, recoverErr)
+			return fmt.Errorf("finalize: %w; recover: %v", err, recoverErr)
+		}
 		return err
 	}
 	return nil
 }
 
-func (d *ExecutionDispatcher) finishFailure(ctx context.Context, taskID, executionID int64, errorCode string) error {
+func (d *ExecutionDispatcher) finishFailure(ctx context.Context, executionID int64, errorCode string) error {
+	return d.finishFailureResult(ctx, executionID, repository.ExecutionResult{}, errorCode)
+}
+
+func (d *ExecutionDispatcher) finishFailureResult(ctx context.Context, executionID int64, result repository.ExecutionResult, errorCode string) error {
 	finishedAt := d.now().UnixMilli()
-	if err := d.Repository.FinishExecution(ctx, executionID, repository.ExecutionResult{Status: entity.ExecutionStatusFailed, ErrorCode: errorCode, ErrorMessage: "任务执行失败，请稍后重试", FinishedAt: finishedAt}); err != nil {
-		return err
+	result.Status = entity.ExecutionStatusFailed
+	if result.ErrorCode == "" {
+		result.ErrorCode = errorCode
 	}
-	return d.Repository.RecordTaskExecution(ctx, taskID, finishedAt)
+	result.ErrorMessage = "任务执行失败，请稍后重试"
+	if result.FinishedAt == 0 {
+		result.FinishedAt = finishedAt
+	}
+	return d.Repository.FinalizeExecution(ctx, executionID, result)
+}
+
+func (d *ExecutionDispatcher) markExecutionRecoverable(ctx context.Context, task *entity.Task, execution *entity.Execution, result repository.ExecutionResult) error {
+	if task == nil || execution == nil || execution.TriggerType != "schedule" {
+		return nil
+	}
+	if result.WorkflowExecutionID == 0 {
+		result.WorkflowExecutionID = execution.WorkflowExecutionID
+	}
+	return d.Repository.MarkExecutionRecoverable(ctx, task.ID, execution.ID, execution.ScheduledAt, result)
 }
 
 func (d *ExecutionDispatcher) now() time.Time {

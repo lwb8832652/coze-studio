@@ -7,14 +7,20 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	"github.com/coze-dev/coze-studio/backend/application/scheduledtask"
 	domain "github.com/coze-dev/coze-studio/backend/domain/imchannel"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 	infraimchannel "github.com/coze-dev/coze-studio/backend/infra/imchannel"
 )
+
+const RuntimeStableFailureThresholdEnv = "IM_CHANNEL_RUNTIME_STABLE_FAILURE_THRESHOLD"
 
 type Components struct {
 	DB           *gorm.DB
@@ -22,6 +28,7 @@ type Components struct {
 	Roles        UserSpaceRoleReader
 	AgentThreads AgentThreadClient
 	RootContext  context.Context
+	RuntimeStableFailureThreshold int
 }
 
 type scheduledAgentCatalog struct {
@@ -51,7 +58,10 @@ func InitService(components *Components) (*Service, *RuntimeManager, error) {
 	if rootContext == nil {
 		rootContext = context.Background()
 	}
-	repository := infraimchannel.NewMySQLRepository(components.DB)
+	repository := infraimchannel.NewMySQLRepository(
+		components.DB,
+		infraimchannel.WithNotificationOutboxAppender(imChannelNotificationOutbox{}),
+	)
 	codec, err := LoadCredentialCodec(os.Getenv)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load Feishu IM credential codec: %w", err)
@@ -77,6 +87,7 @@ func InitService(components *Components) (*Service, *RuntimeManager, error) {
 		codec,
 		OfficialChannelFactory{},
 		runner,
+		WithRuntimeStableFailureThreshold(runtimeStableFailureThresholdForComponents(components)),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -85,4 +96,36 @@ func InitService(components *Components) (*Service, *RuntimeManager, error) {
 	SVC = service
 	runtimeManager.Start(rootContext)
 	return service, runtimeManager, nil
+}
+
+func RuntimeStableFailureThresholdFromEnv(getenv func(string) string) int {
+	if getenv == nil {
+		return domain.DefaultRuntimeStableFailureThreshold
+	}
+	raw := strings.TrimSpace(getenv(RuntimeStableFailureThresholdEnv))
+	if raw == "" {
+		return domain.DefaultRuntimeStableFailureThreshold
+	}
+	threshold, err := strconv.Atoi(raw)
+	if err != nil || threshold <= 0 {
+		return domain.DefaultRuntimeStableFailureThreshold
+	}
+	return threshold
+}
+
+func runtimeStableFailureThresholdForComponents(components *Components) int {
+	if components != nil && components.RuntimeStableFailureThreshold > 0 {
+		return components.RuntimeStableFailureThreshold
+	}
+	return domain.DefaultRuntimeStableFailureThreshold
+}
+
+type imChannelNotificationOutbox struct{}
+
+func (imChannelNotificationOutbox) AppendInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	event domainnotification.Event,
+) error {
+	return appnotification.SVC.AppendInTransaction(ctx, tx, event)
 }

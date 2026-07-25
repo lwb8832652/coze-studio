@@ -50,47 +50,9 @@ func (s *Service) HealthCheck(ctx context.Context, actor Actor, request HealthCh
 		return nil, err
 	}
 
-	startedAt := s.now().UTC()
-	result, probeErr := func() (result infrasandbox.HealthResult, probeErr error) {
-		adapter, buildErr := s.factory.Build(ctx, cloneControlPlaneProvider(provider))
-		if adapter != nil {
-			defer func() {
-				if closeErr := adapter.CloseContext(ctx); closeErr != nil && probeErr == nil {
-					probeErr = domainsandbox.ErrProviderUnhealthy
-				}
-			}()
-		}
-		if buildErr != nil {
-			return infrasandbox.HealthResult{}, buildErr
-		}
-		if adapter == nil {
-			return infrasandbox.HealthResult{}, domainsandbox.ErrProviderUnhealthy
-		}
-		return adapter.Health(ctx)
-	}()
-	checkedAt := s.now().UTC()
-	latencyMillis := checkedAt.Sub(startedAt).Milliseconds()
-	if latencyMillis < 0 {
-		latencyMillis = 0
-	}
-	if latencyMillis > maxHealthLatencyMillis {
-		latencyMillis = maxHealthLatencyMillis
-	}
-
-	snapshot, probeSucceeded := boundedHealthSnapshot(result, probeErr, provider.Scopes, checkedAt, latencyMillis)
-	if s.metrics != nil {
-		resultCode := sandboxMetricsResultCode(probeErr)
-		if probeErr == nil && !probeSucceeded {
-			resultCode = string(snapshot.ReasonCode)
-		}
-		s.metrics.RecordProviderHealth(ctx, ProviderHealthMetricsObservation{
-			ProviderType: provider.Type,
-			Status:       snapshot.Status,
-			Outcome:      sandboxMetricsOutcome(probeErr),
-			ResultCode:   resultCode,
-			Elapsed:      checkedAt.Sub(startedAt),
-		})
-	}
+	probe := s.probeProviderHealth(ctx, provider)
+	snapshot := probe.Snapshot
+	probeSucceeded := probe.Succeeded
 	var persisted *domainsandbox.Provider
 	err = s.unitOfWork.WithinTransaction(ctx, func(txCtx context.Context, repositories domainsandbox.TransactionRepositories) error {
 		current, getErr := repositories.Providers.GetProvider(txCtx, request.ProviderID)
@@ -127,6 +89,64 @@ func (s *Service) HealthCheck(ctx context.Context, actor Actor, request HealthCh
 		return nil, stableControlPlaneError(err)
 	}
 	return s.projectControlPlaneProvider(persisted)
+}
+
+type providerHealthProbeResult struct {
+	Snapshot  domainsandbox.HealthSnapshot
+	Succeeded bool
+}
+
+func (s *Service) probeProviderHealth(
+	ctx context.Context,
+	provider *domainsandbox.Provider,
+) providerHealthProbeResult {
+	startedAt := s.now().UTC()
+	result, probeErr := func() (result infrasandbox.HealthResult, probeErr error) {
+		adapter, buildErr := s.factory.Build(ctx, cloneControlPlaneProvider(provider))
+		if adapter != nil {
+			defer func() {
+				if closeErr := adapter.CloseContext(ctx); closeErr != nil && probeErr == nil {
+					probeErr = domainsandbox.ErrProviderUnhealthy
+				}
+			}()
+		}
+		if buildErr != nil {
+			return infrasandbox.HealthResult{}, buildErr
+		}
+		if adapter == nil {
+			return infrasandbox.HealthResult{}, domainsandbox.ErrProviderUnhealthy
+		}
+		return adapter.Health(ctx)
+	}()
+	checkedAt := s.now().UTC()
+	latencyMillis := checkedAt.Sub(startedAt).Milliseconds()
+	if latencyMillis < 0 {
+		latencyMillis = 0
+	}
+	if latencyMillis > maxHealthLatencyMillis {
+		latencyMillis = maxHealthLatencyMillis
+	}
+	snapshot, succeeded := boundedHealthSnapshot(
+		result,
+		probeErr,
+		provider.Scopes,
+		checkedAt,
+		latencyMillis,
+	)
+	if s.metrics != nil {
+		resultCode := sandboxMetricsResultCode(probeErr)
+		if probeErr == nil && !succeeded {
+			resultCode = string(snapshot.ReasonCode)
+		}
+		s.metrics.RecordProviderHealth(ctx, ProviderHealthMetricsObservation{
+			ProviderType: provider.Type,
+			Status:       snapshot.Status,
+			Outcome:      sandboxMetricsOutcome(probeErr),
+			ResultCode:   resultCode,
+			Elapsed:      checkedAt.Sub(startedAt),
+		})
+	}
+	return providerHealthProbeResult{Snapshot: snapshot, Succeeded: succeeded}
 }
 
 func boundedHealthLatencyBucket(latencyMillis int64) string {

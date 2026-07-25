@@ -19,6 +19,7 @@ package sandbox
 import (
 	"context"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -239,4 +240,72 @@ type ProviderCreateUnitOfWork interface {
 		ctx context.Context,
 		callback func(context.Context, TransactionRepositories) error,
 	) error
+}
+
+const MaxHealthMonitorBatchSize = 100
+
+type HealthMonitorClaimRequest struct {
+	WorkerID string
+	Now      time.Time
+	Lease    time.Duration
+	Limit    int
+}
+
+type HealthMonitorClaim struct {
+	Provider       *Provider
+	LeaseOwner     string
+	LeaseToken     string
+	ClaimedAt      time.Time
+	LeaseExpiresAt time.Time
+}
+
+type CompleteHealthMonitorCheckInput struct {
+	Claim            HealthMonitorClaim
+	Health           HealthSnapshot
+	CheckedAt        time.Time
+	NextCheckAt      time.Time
+	FailureThreshold int
+}
+
+type HealthMonitorCheckCompletion struct {
+	Applied      bool
+	Episode      ProviderHealthEpisode
+	Notification HealthIncidentNotification
+}
+
+type HealthNotificationProjectionRequest struct {
+	WorkerID string
+	Now      time.Time
+	Lease    time.Duration
+	Limit    int
+}
+
+type HealthNotificationProjectionResult struct {
+	Claimed   int
+	Projected int
+}
+
+// HealthMonitorRepository owns cross-process claim leases and atomically
+// persists provider health, episode transitions, and durable notification
+// projections. Projection appends outbox rows and marks projections complete in
+// a later transaction. A stale provider version may release its claim but must
+// still return ErrVersionConflict explicitly.
+type HealthMonitorRepository interface {
+	ReconcileDisabledHealthEpisodes(
+		ctx context.Context,
+		now time.Time,
+		limit int,
+	) (int64, error)
+	ClaimHealthChecks(
+		ctx context.Context,
+		request HealthMonitorClaimRequest,
+	) ([]HealthMonitorClaim, error)
+	CompleteHealthCheck(
+		ctx context.Context,
+		input CompleteHealthMonitorCheckInput,
+	) (HealthMonitorCheckCompletion, error)
+	ProjectPendingHealthNotifications(
+		ctx context.Context,
+		request HealthNotificationProjectionRequest,
+	) (HealthNotificationProjectionResult, error)
 }

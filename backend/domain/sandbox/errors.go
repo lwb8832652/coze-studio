@@ -52,6 +52,8 @@ var (
 	ErrConfigurationInvalid  = newCodedError(ErrCodeConfigurationInvalid, "sandbox configuration is invalid")
 	ErrLocalDebugUnavailable = newCodedError(ErrCodeLocalDebugUnavailable, "local debug sandbox is unavailable")
 	ErrUnavailable           = newCodedError(ErrCodeUnavailable, "sandbox is unavailable")
+	ErrHealthMonitorDBClock  = newCodedError(ErrCodeUnavailable, "sandbox health monitor database clock is unavailable")
+	ErrHealthMonitorOutbox   = newCodedError(ErrCodeUnavailable, "sandbox health notification projection is unavailable")
 )
 
 type codedError struct {
@@ -95,7 +97,9 @@ func ErrorCodeOf(err error) string {
 		ErrScopeUnsupported,
 		ErrConfigurationInvalid,
 		ErrLocalDebugUnavailable,
-		ErrUnavailable:
+		ErrUnavailable,
+		ErrHealthMonitorDBClock,
+		ErrHealthMonitorOutbox:
 		return coded.code
 	default:
 		return ""

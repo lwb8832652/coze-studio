@@ -32,9 +32,11 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"gorm.io/gorm"
 
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
@@ -3909,6 +3911,7 @@ func (s *ApplicationService) FinalizeRunSuccess(
 		ThreadTitle:                       req.ThreadTitle,
 		TerminalCheckpoint:                terminalCheckpoint,
 		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
+		OutboxIntent:                      s.agentRunTerminalOutboxIntent(ctx, req.RunID, domainentity.RunStatusSucceeded, req.Now),
 	})
 	if err != nil {
 		return nil, err
@@ -3930,7 +3933,7 @@ func (s *ApplicationService) CompleteRun(ctx context.Context, req *UpdateRunStat
 		return nil, err
 	}
 
-	return s.updateRunStatus(ctx, req, s.ThreadSVC.CompleteRun)
+	return s.updateRunStatus(ctx, req, domainentity.RunStatusSucceeded, s.ThreadSVC.CompleteRun)
 }
 
 func (s *ApplicationService) InterruptRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
@@ -3938,7 +3941,7 @@ func (s *ApplicationService) InterruptRun(ctx context.Context, req *UpdateRunSta
 		return nil, err
 	}
 
-	return s.updateRunStatus(ctx, req, s.ThreadSVC.InterruptRun)
+	return s.updateRunStatus(ctx, req, domainentity.RunStatusInterrupted, s.ThreadSVC.InterruptRun)
 }
 
 func (s *ApplicationService) FailRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
@@ -3946,7 +3949,7 @@ func (s *ApplicationService) FailRun(ctx context.Context, req *UpdateRunStatusRe
 		return nil, err
 	}
 
-	return s.updateRunStatus(ctx, req, s.ThreadSVC.FailRun)
+	return s.updateRunStatus(ctx, req, domainentity.RunStatusFailed, s.ThreadSVC.FailRun)
 }
 
 func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatusRequest) (*UpdateRunStatusResponse, error) {
@@ -3962,11 +3965,16 @@ func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatus
 		return nil, err
 	}
 
+	cancelOutboxIntent := (*domainrepo.NotificationOutboxIntent)(nil)
+	if shouldNotifyRunCancellation(req.ErrorCode) {
+		cancelOutboxIntent = s.agentRunTerminalOutboxIntent(ctx, req.RunID, domainentity.RunStatusCanceled, req.Now)
+	}
 	result, err := s.requestRunCancellation(ctx, &domainservice.RequestRunCancellationRequest{
 		RunID:        req.RunID,
 		Now:          req.Now,
 		ErrorCode:    req.ErrorCode,
 		ErrorMessage: req.ErrorMessage,
+		OutboxIntent: cancelOutboxIntent,
 	})
 	if err != nil {
 		return nil, err
@@ -4039,6 +4047,9 @@ func (s *ApplicationService) requestRunCancellation(
 	if req == nil {
 		return nil, fmt.Errorf("request run cancellation request is required")
 	}
+	if req.OutboxIntent == nil && shouldNotifyRunCancellation(req.ErrorCode) {
+		req.OutboxIntent = s.agentRunTerminalOutboxIntent(ctx, req.RunID, domainentity.RunStatusCanceled, req.Now)
+	}
 
 	return s.ThreadSVC.RequestRunCancellation(ctx, req)
 }
@@ -4068,6 +4079,7 @@ func (s *ApplicationService) cancelActiveADKRun(
 func (s *ApplicationService) updateRunStatus(
 	ctx context.Context,
 	req *UpdateRunStatusRequest,
+	to domainentity.RunStatus,
 	update func(context.Context, *domainservice.UpdateRunStatusRequest) (*domainentity.Run, error),
 ) (*UpdateRunStatusResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
@@ -4085,6 +4097,11 @@ func (s *ApplicationService) updateRunStatus(
 		return nil, err
 	}
 
+	outboxIntent := s.agentRunTerminalOutboxIntent(ctx, req.RunID, to, req.Now)
+	if to == domainentity.RunStatusInterrupted {
+		outboxIntent = s.agentRunAwaitingInputOutboxIntent(ctx, req.RunID, req.EventPayload, req.Now)
+	}
+
 	run, err := update(ctx, &domainservice.UpdateRunStatusRequest{
 		RunID:                 req.RunID,
 		From:                  domainentity.RunStatus(req.From),
@@ -4098,6 +4115,7 @@ func (s *ApplicationService) updateRunStatus(
 		ErrorMessage:          req.ErrorMessage,
 		EventPayload:          req.EventPayload,
 		EventAlreadyPersisted: req.EventAlreadyPersisted,
+		OutboxIntent:          outboxIntent,
 	})
 	if err != nil {
 		return nil, err
@@ -4107,6 +4125,195 @@ func (s *ApplicationService) updateRunStatus(
 	}
 
 	return &UpdateRunStatusResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+func (s *ApplicationService) agentRunTerminalOutboxIntent(
+	ctx context.Context,
+	runID int64,
+	status domainentity.RunStatus,
+	now int64,
+) *domainrepo.NotificationOutboxIntent {
+	if s == nil || s.ThreadSVC == nil || !appnotification.SVC.IsConfigured() {
+		return nil
+	}
+	eventType, transition := agentRunNotificationEventType(status)
+	if eventType == "" || runID <= 0 {
+		return nil
+	}
+	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: runID})
+	if err != nil || run == nil || run.ParentRunID > 0 ||
+		run.RunKind == domainentity.RunKindSubagent ||
+		run.CreatorID <= 0 || run.SpaceID <= 0 || run.ThreadID <= 0 ||
+		agentRunHasScheduledTaskOrigin(run.Metadata) {
+		return nil
+	}
+	thread, _ := s.ThreadSVC.GetThread(ctx, run.ThreadID)
+	title := ""
+	if thread != nil {
+		title = thread.Title
+	}
+	if title == "" {
+		title = fmt.Sprintf("任务 %d", run.ThreadID)
+	}
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	eventVersion := run.UpdatedAt
+	if eventVersion <= 0 {
+		eventVersion = run.ID
+	}
+	return &domainrepo.NotificationOutboxIntent{
+		Event: domainnotification.Event{
+			EventID:          fmt.Sprintf("run-event:%d:%s", eventVersion, transition),
+			EventType:        eventType,
+			AggregateType:    "agent_run",
+			AggregateID:      fmt.Sprintf("run:%d", run.ID),
+			AggregateVersion: eventVersion,
+			OccurredAt:       time.UnixMilli(now),
+			ActorID:          run.CreatorID,
+			SpaceID:          run.SpaceID,
+			RecipientPolicy:  domainnotification.RecipientActor,
+			PayloadSchema:    domainnotification.CurrentPayloadSchema,
+			Payload: domainnotification.EventPayload{
+				ResourceDisplayName: safeAgentRunNotificationDisplayName(title),
+				TargetID:            fmt.Sprintf("thread:%d", run.ThreadID),
+			},
+		},
+		Append: appnotification.SVC.AppendInTransaction,
+	}
+}
+
+func (s *ApplicationService) agentRunAwaitingInputOutboxIntent(
+	ctx context.Context,
+	runID int64,
+	eventPayload string,
+	now int64,
+) *domainrepo.NotificationOutboxIntent {
+	if s == nil || s.ThreadSVC == nil || !appnotification.SVC.IsConfigured() {
+		return nil
+	}
+	ref, ok := domainentity.RunAwaitingInputInteractionRefFromEventPayload(eventPayload)
+	if !ok || runID <= 0 {
+		return nil
+	}
+	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: runID})
+	if err != nil || run == nil || run.ParentRunID > 0 ||
+		run.RunKind == domainentity.RunKindSubagent ||
+		run.CreatorID <= 0 || run.SpaceID <= 0 || run.ThreadID <= 0 ||
+		agentRunHasScheduledTaskOrigin(run.Metadata) {
+		return nil
+	}
+	thread, _ := s.ThreadSVC.GetThread(ctx, run.ThreadID)
+	title := ""
+	if thread != nil {
+		title = thread.Title
+	}
+	if title == "" {
+		title = fmt.Sprintf("任务 %d", run.ThreadID)
+	}
+	if now <= 0 {
+		now = time.Now().UnixMilli()
+	}
+	return &domainrepo.NotificationOutboxIntent{
+		Event: domainnotification.Event{
+			EventID:          fmt.Sprintf("interaction-event:%s:%s", ref.InteractionEventID, domainnotification.EventTaskAwaitingInput),
+			EventType:        domainnotification.EventTaskAwaitingInput,
+			AggregateType:    "agent_run_interaction",
+			AggregateID:      fmt.Sprintf("interaction:%s", ref.InteractionEventID),
+			AggregateVersion: 1,
+			OccurredAt:       time.UnixMilli(now),
+			ActorID:          run.CreatorID,
+			SpaceID:          run.SpaceID,
+			RecipientPolicy:  domainnotification.RecipientActor,
+			PayloadSchema:    domainnotification.CurrentPayloadSchema,
+			Payload: domainnotification.EventPayload{
+				ResourceDisplayName: safeAgentRunNotificationDisplayName(title),
+				StatusReasonCode:    domainnotification.StatusReasonActionRequired,
+				TargetID:            fmt.Sprintf("thread:%d", run.ThreadID),
+			},
+		},
+		Append: appnotification.SVC.AppendInTransaction,
+	}
+}
+
+func agentRunNotificationEventType(status domainentity.RunStatus) (domainnotification.EventType, string) {
+	switch status {
+	case domainentity.RunStatusSucceeded:
+		return domainnotification.EventTaskCompleted, "completed"
+	case domainentity.RunStatusFailed:
+		return domainnotification.EventTaskFailed, "failed"
+	case domainentity.RunStatusCanceled:
+		return domainnotification.EventTaskCancelled, "cancelled"
+	default:
+		return "", ""
+	}
+}
+
+func agentRunHasScheduledTaskOrigin(metadata string) bool {
+	raw := strings.TrimSpace(metadata)
+	if raw == "" {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(payload["source"])), "scheduled_task") {
+		return true
+	}
+	if strings.TrimSpace(fmt.Sprint(payload["scheduled_task_id"])) != "" ||
+		strings.TrimSpace(fmt.Sprint(payload["scheduled_task_execution_id"])) != "" {
+		return true
+	}
+	return false
+}
+
+func shouldNotifyRunCancellation(errorCode string) bool {
+	code := strings.TrimSpace(errorCode)
+	return code == "" || code == "run_canceled"
+}
+
+func safeAgentRunNotificationDisplayName(value string) string {
+	displayName := truncateNotificationDisplayName(value)
+	if displayName == "" {
+		return ""
+	}
+	if agentRunNotificationDisplayNameIsSafe(displayName) {
+		return displayName
+	}
+	if agentRunNotificationDisplayNameIsSafe("任务") {
+		return "任务"
+	}
+	return ""
+}
+
+func agentRunNotificationDisplayNameIsSafe(displayName string) bool {
+	event := domainnotification.Event{
+		EventID:          "agent-run-display-name-safety-check",
+		EventType:        domainnotification.EventTaskCompleted,
+		AggregateType:    "agent_run",
+		AggregateID:      "run:1",
+		AggregateVersion: 1,
+		OccurredAt:       time.UnixMilli(1),
+		ActorID:          1,
+		SpaceID:          1,
+		RecipientPolicy:  domainnotification.RecipientActor,
+		PayloadSchema:    domainnotification.CurrentPayloadSchema,
+		Payload: domainnotification.EventPayload{
+			ResourceDisplayName: displayName,
+			TargetID:            "thread:1",
+		},
+	}
+	return event.Validate() == nil
+}
+
+func truncateNotificationDisplayName(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= domainnotification.MaxDisplayNameRunes {
+		return value
+	}
+	return string(runes[:domainnotification.MaxDisplayNameRunes])
 }
 
 func (s *ApplicationService) requireThreadSVC() error {

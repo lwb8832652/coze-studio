@@ -6,6 +6,7 @@ package imchannel
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/coze-dev/coze-studio/backend/application/agentthread"
@@ -82,5 +83,40 @@ func TestAgentRunnerFollowUpProvidesValidRunInput(t *testing.T) {
 	}
 	if !json.Valid([]byte(client.createRunRequest.Input)) {
 		t.Fatalf("follow-up run input is not valid JSON: %q", client.createRunRequest.Input)
+	}
+}
+
+func TestRuntimeMetadataOmitsMessageContentAndProviderSecrets(t *testing.T) {
+	metadata := runtimeMetadata(
+		&domain.Config{ID: 1},
+		domain.InboundPayload{
+			ChatID:         strings.Repeat("chat", 80),
+			ChatType:       "p2p",
+			UserID:         "user-1",
+			MessageID:      "message-1",
+			Content:        "app_secret=super-secret raw provider payload",
+			RawContentType: "post",
+		},
+	)
+
+	for _, forbidden := range []string{"super-secret", "app_secret", "provider payload", "raw_content_type", "post"} {
+		if strings.Contains(metadata, forbidden) {
+			t.Fatalf("runtime metadata leaked %q: %s", forbidden, metadata)
+		}
+	}
+	var decoded struct {
+		Source string `json:"source"`
+		Feishu struct {
+			ChatID string `json:"chat_id"`
+		} `json:"feishu"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &decoded); err != nil {
+		t.Fatalf("runtime metadata is not JSON: %v", err)
+	}
+	if decoded.Source != "feishu_im" {
+		t.Fatalf("unexpected source: %s", decoded.Source)
+	}
+	if len(decoded.Feishu.ChatID) > 128 {
+		t.Fatalf("chat_id was not bounded: %d", len(decoded.Feishu.ChatID))
 	}
 }

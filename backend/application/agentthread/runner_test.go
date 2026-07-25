@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,9 +29,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainrepo "github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestClassifyRunMainFlowErrorUsesSafeStableCategories(t *testing.T) {
@@ -1257,6 +1260,242 @@ func TestRunProcessorMarksRunFailedWhenExecutorErrors(t *testing.T) {
 	require.NotContains(t, domainSVC.failRunReq.EventPayload, "model failed")
 }
 
+func TestRunProcessorAttachesTerminalOutboxIntentForSuccessfulRun(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "生成周报"},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.SucceededRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq.OutboxIntent)
+	event := domainSVC.finalizeRunSuccessReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskCompleted, event.EventType)
+	require.Equal(t, int64(2), event.ActorID)
+	require.Equal(t, int64(1), event.SpaceID)
+	require.Equal(t, "thread:10", event.Payload.TargetID)
+	require.Equal(t, "生成周报", event.Payload.ResourceDisplayName)
+}
+
+func TestRunProcessorDowngradesUnsafeTerminalNotificationTitle(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "prompt api_key 排查"},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return &RunExecutionResult{Message: "ok"}, nil
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.SucceededRuns)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq)
+	require.NotNil(t, domainSVC.finalizeRunSuccessReq.OutboxIntent)
+	event := domainSVC.finalizeRunSuccessReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskCompleted, event.EventType)
+	require.Equal(t, "任务", event.Payload.ResourceDisplayName)
+	require.NoError(t, domainnotification.DefaultTemplateRegistry().ValidateAppendable(event))
+}
+
+func TestRunProcessorAttachesTerminalOutboxIntentForFinalFailure(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "生成周报"},
+		failedRun:   &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusFailed},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, fmt.Errorf("model failed")
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.FailedRuns)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.NotNil(t, domainSVC.failRunReq.OutboxIntent)
+	event := domainSVC.failRunReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskFailed, event.EventType)
+	require.Equal(t, int64(2), event.ActorID)
+	require.Equal(t, int64(1), event.SpaceID)
+	require.Equal(t, "thread:10", event.Payload.TargetID)
+	require.Equal(t, "生成周报", event.Payload.ResourceDisplayName)
+}
+
+func TestRunProcessorSuppressesTerminalOutboxIntentForScheduledTaskOrigin(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		Metadata: `{"source":"scheduled_task","scheduled_task_id":"10"}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "生成周报"},
+		failedRun:   &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusFailed},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, fmt.Errorf("model failed")
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.FailedRuns)
+	require.NotNil(t, domainSVC.failRunReq)
+	require.Nil(t, domainSVC.failRunReq.OutboxIntent)
+}
+
+func TestRunProcessorAttachesAwaitingInputOutboxForExactHumanInteractionInterrupt(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "补充需求"},
+		interruptedRun: &entity.Run{
+			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+		},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunInterruptedError{
+			CheckpointKey: "coze-run-200",
+			Interrupts: []ADKInterruptItem{{
+				ID:      "interrupt-event-1",
+				Address: "agent:lead;tool:request_human_clarification",
+				Info: HumanInteractionPrompt{
+					Schema:        humanInteractionSchema,
+					InteractionID: "hi_1",
+					Kind:          HumanInteractionKindClarification,
+					Title:         "需要补充信息",
+					Question:      "要分析哪个城市？",
+					Required:      true,
+					AllowFreeText: true,
+					RiskLevel:     HumanInteractionRiskNone,
+					ToolName:      adkClarificationToolName,
+				},
+				IsRootCause: true,
+			}},
+		}
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.InterruptedRuns)
+	require.NotNil(t, domainSVC.interruptRunReq)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"awaiting_input"`)
+	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"interaction_event_id":"interrupt-event-1"`)
+	require.NotContains(t, domainSVC.interruptRunReq.EventPayload, "要分析哪个城市")
+	require.NotNil(t, domainSVC.interruptRunReq.OutboxIntent)
+	event := domainSVC.interruptRunReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskAwaitingInput, event.EventType)
+	require.Equal(t, "interaction-event:interrupt-event-1:task.awaiting_input", event.EventID)
+	require.Equal(t, "agent_run_interaction", event.AggregateType)
+	require.Equal(t, "interaction:interrupt-event-1", event.AggregateID)
+	require.Equal(t, int64(1), event.AggregateVersion)
+	require.Equal(t, int64(2), event.ActorID)
+	require.Equal(t, int64(1), event.SpaceID)
+	require.Equal(t, domainnotification.StatusReasonActionRequired, event.Payload.StatusReasonCode)
+	require.Equal(t, "thread:10", event.Payload.TargetID)
+	require.Equal(t, "补充需求", event.Payload.ResourceDisplayName)
+	require.NoError(t, domainnotification.DefaultTemplateRegistry().ValidateAppendable(event))
+	replayed := event
+	replayed.OccurredAt = time.UnixMilli(9_999)
+	require.Equal(t, event.IdempotencyKey(), replayed.IdempotencyKey())
+	otherInteraction := event
+	otherInteraction.AggregateID = "interaction:interrupt-event-2"
+	require.NotEqual(t, event.IdempotencyKey(), otherInteraction.IdempotencyKey())
+}
+
+func TestAwaitingInputOutboxAcceptsMaximumLegalInteractionEventID(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	interactionEventID := strings.Repeat("a", 90)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning,
+	}
+	domainSVC := &recordingThreadService{
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "最长交互 ID"},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+	payload := encodeRunEventPayload(context.Background(), map[string]any{
+		"status": string(RunStatusInterrupted),
+		entity.RunAwaitingInputInteractionRefPayloadKey: entity.RunAwaitingInputInteractionRef{
+			Schema:             entity.RunAwaitingInputInteractionRefSchema,
+			InteractionEventID: interactionEventID,
+			InteractionID:      "hi_max",
+			Kind:               "clarification",
+		},
+	})
+
+	intent := app.agentRunAwaitingInputOutboxIntent(context.Background(), 200, payload, 2_000)
+
+	require.NotNil(t, intent)
+	require.Len(t, []rune(intent.Event.EventID), 128)
+	require.NoError(t, domainnotification.DefaultTemplateRegistry().ValidateAppendable(intent.Event))
+}
+
 func TestRunProcessorFailsSubagentRetryCommandBeforeExecutorSupport(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{
@@ -1482,6 +1721,8 @@ func TestRunProcessorMapsUnsupportedSubagentRetryExecutorToFixedFailure(t *testi
 }
 
 func TestRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{{
 			ID:       200,
@@ -1526,6 +1767,8 @@ func TestRunProcessorMarksADKInterruptWithoutFailingRun(t *testing.T) {
 	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"status":"interrupted"`)
 	require.Contains(t, domainSVC.interruptRunReq.EventPayload, `"checkpoint_key":"coze-run-200"`)
+	require.NotContains(t, domainSVC.interruptRunReq.EventPayload, `"awaiting_input"`)
+	require.Nil(t, domainSVC.interruptRunReq.OutboxIntent)
 	require.False(t, domainSVC.interruptRunReq.EventAlreadyPersisted)
 }
 
@@ -1560,6 +1803,43 @@ func TestRunProcessorDoesNotFailCanceledADKRun(t *testing.T) {
 	require.Equal(t, []string{"run.started"}, eventSink.eventTypes())
 }
 
+func TestRunProcessorAttachesTerminalOutboxIntentForExplicitCancellation(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainRun := &entity.Run{
+		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
+		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
+		ExecutionGeneration: 3, UpdatedAt: 1_000,
+	}
+	domainSVC := &recordingThreadService{
+		claimedRuns: []*entity.Run{domainRun},
+		gotRunsByID: map[int64]*entity.Run{200: domainRun},
+		got:         &entity.Thread{ID: 10, Title: "生成周报"},
+		canceledRun: &entity.Run{ID: 200, ThreadID: 10, Status: entity.RunStatusCanceled},
+	}
+	processor := NewRunProcessor(&ApplicationService{ThreadSVC: domainSVC}, RunExecutorFunc(func(
+		context.Context,
+		*RunSummary,
+	) (*RunExecutionResult, error) {
+		return nil, &RunCanceledError{}
+	}), RunProcessorOptions{WorkerID: "worker-a", BatchSize: 1})
+
+	result, err := processor.ProcessPendingRunsWithResult(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.CanceledRuns)
+	require.NotNil(t, domainSVC.requestRunCancellationReq)
+	require.NotNil(t, domainSVC.requestRunCancellationReq.OutboxIntent)
+	event := domainSVC.requestRunCancellationReq.OutboxIntent.Event
+	require.Equal(t, domainnotification.EventTaskCancelled, event.EventType)
+	require.NotEqual(t, domainnotification.EventTaskAwaitingInput, event.EventType)
+	require.Equal(t, int64(2), event.ActorID)
+	require.Equal(t, int64(1), event.SpaceID)
+	require.Equal(t, "thread:10", event.Payload.TargetID)
+	require.Equal(t, "生成周报", event.Payload.ResourceDisplayName)
+}
+
 func TestRunProcessorPreservesDurableMultitaskInterruptionAfterExecutorCancel(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{{
@@ -1589,6 +1869,8 @@ func TestRunProcessorPreservesDurableMultitaskInterruptionAfterExecutorCancel(t 
 }
 
 func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
 	domainSVC := &recordingThreadService{
 		claimedRuns: []*entity.Run{{
 			ID: 200, ThreadID: 10, Status: entity.RunStatusRunning,
@@ -1596,9 +1878,10 @@ func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback(t *testing.
 			ExecutionGeneration: 3, Config: `{"runtime":"eino_adk"}`,
 		}},
 		gotRun: &entity.Run{
-			ID: 200, ThreadID: 10, Status: entity.RunStatusInterrupted,
+			ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2, Status: entity.RunStatusInterrupted,
 			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
 		},
+		got: &entity.Thread{ID: 10, Title: "被新任务回滚"},
 		failedRun: &entity.Run{
 			ID: 200, ThreadID: 10, Status: entity.RunStatusFailed,
 			ExecutionGeneration: 4, ErrorCode: "multitask_rollback",
@@ -1625,6 +1908,36 @@ func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback(t *testing.
 	require.Equal(t, entity.RunStatusInterrupted, domainSVC.failRunReq.From)
 	require.Equal(t, "multitask_rollback", domainSVC.failRunReq.ErrorCode)
 	require.Equal(t, "run rolled back by a newer thread run", domainSVC.failRunReq.ErrorMessage)
+	require.NotNil(t, domainSVC.failRunReq.OutboxIntent)
+	require.NotEqual(t, domainnotification.EventTaskAwaitingInput, domainSVC.failRunReq.OutboxIntent.Event.EventType)
+}
+
+func TestApplicationServiceDoesNotPublishAwaitingInputForLeaseRecoveryInterruptedStatus(t *testing.T) {
+	appnotification.SetDefaultService(appnotification.NewService(&recordingNotificationRepository{}))
+	defer appnotification.SetDefaultService(nil)
+	domainSVC := &recordingThreadService{
+		reconciledRunLease: &entity.Run{
+			ID: 201, ThreadID: 10, Status: entity.RunStatusInterrupted,
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ReconcileExpiredRunLease(context.Background(), &ReconcileExpiredRunLeaseRequest{
+		RunID:               201,
+		LeaseOwner:          "worker-a",
+		LeaseToken:          "lease-201",
+		ExecutionGeneration: 2,
+		ToStatus:            RunStatusInterrupted,
+		Now:                 2_000,
+		ErrorCode:           "lease_expired",
+		ErrorMessage:        "run lease expired",
+		EventPayload:        `{"status":"interrupted","error_code":"lease_expired"}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, domainSVC.reconcileExpiredRunLeaseReq)
+	require.Nil(t, domainSVC.reconcileExpiredRunLeaseReq.OutboxIntent)
 }
 
 func TestRunProcessorFinalizesLegacyMultitaskRollbackWithoutEinoCheckpoint(t *testing.T) {
@@ -1739,6 +2052,32 @@ func (s *recordingRunEventSink) eventTypes() []string {
 	}
 
 	return eventTypes
+}
+
+type recordingNotificationRepository struct{}
+
+func (recordingNotificationRepository) Append(context.Context, domainnotification.Event) error {
+	return nil
+}
+
+func (recordingNotificationRepository) AppendInTransaction(context.Context, *gorm.DB, domainnotification.Event) error {
+	return nil
+}
+
+func (recordingNotificationRepository) ListForUser(context.Context, domainnotification.ListFilter) (domainnotification.ListPage, error) {
+	return domainnotification.ListPage{}, nil
+}
+
+func (recordingNotificationRepository) CountUnread(context.Context, int64) (int64, error) {
+	return 0, nil
+}
+
+func (recordingNotificationRepository) MarkRead(context.Context, int64, []int64, int64) (int64, error) {
+	return 0, nil
+}
+
+func (recordingNotificationRepository) MarkAllRead(context.Context, int64, int64, int64) (int64, error) {
+	return 0, nil
 }
 
 type recordingSubagentRetryRunExecutor struct {

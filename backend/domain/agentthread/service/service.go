@@ -438,6 +438,7 @@ type ReconcileExpiredRunLeaseRequest struct {
 	ErrorCode           string
 	ErrorMessage        string
 	EventPayload        string
+	OutboxIntent        *repository.NotificationOutboxIntent
 }
 
 type RequestRunCancellationRequest struct {
@@ -445,6 +446,7 @@ type RequestRunCancellationRequest struct {
 	Now          int64
 	ErrorCode    string
 	ErrorMessage string
+	OutboxIntent *repository.NotificationOutboxIntent
 }
 
 type RequestRunCancellationResult struct {
@@ -468,6 +470,7 @@ type FinalizeRunSuccessRequest struct {
 	ThreadTitle                       string
 	TerminalCheckpoint                *CreateCheckpointRequest
 	TerminalCheckpointOnTitleConflict *CreateCheckpointRequest
+	OutboxIntent                      *repository.NotificationOutboxIntent
 }
 
 type FinalizeRunSuccessResult struct {
@@ -492,6 +495,7 @@ type UpdateRunStatusRequest struct {
 	ErrorMessage          string
 	EventPayload          string
 	EventAlreadyPersisted bool
+	OutboxIntent          *repository.NotificationOutboxIntent
 }
 
 type ListMessagesRequest struct {

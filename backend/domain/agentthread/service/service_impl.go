@@ -26,6 +26,7 @@ import (
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/repository"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 )
 
@@ -2163,6 +2164,14 @@ func (s *threadService) ReconcileExpiredRunLease(
 		return nil, err
 	}
 
+	event := &entity.RunEvent{
+		ID:        eventID,
+		ThreadID:  current.ThreadID,
+		RunID:     current.ID,
+		EventType: eventType,
+		Payload:   eventPayload,
+		CreatedAt: now,
+	}
 	return s.repo.ReconcileExpiredRunLease(ctx, repository.ReconcileExpiredRunLeaseRequest{
 		RunID:               req.RunID,
 		LeaseOwner:          owner,
@@ -2172,14 +2181,8 @@ func (s *threadService) ReconcileExpiredRunLease(
 		Now:                 now,
 		ErrorCode:           strings.TrimSpace(req.ErrorCode),
 		ErrorMessage:        strings.TrimSpace(req.ErrorMessage),
-		Event: &entity.RunEvent{
-			ID:        eventID,
-			ThreadID:  current.ThreadID,
-			RunID:     current.ID,
-			EventType: eventType,
-			Payload:   eventPayload,
-			CreatedAt: now,
-		},
+		Event:               event,
+		OutboxIntent:        bindTerminalOutboxIntent(req.OutboxIntent, event, req.ToStatus),
 	})
 }
 
@@ -2231,19 +2234,22 @@ func (s *threadService) RequestRunCancellation(
 		return nil, fmt.Errorf("marshal run cancellation event: %w", err)
 	}
 
+	event := &entity.RunEvent{
+		ID:        eventID,
+		ThreadID:  current.ThreadID,
+		RunID:     current.ID,
+		EventType: "run.canceled",
+		Payload:   string(payload),
+		CreatedAt: now,
+	}
+
 	result, err := s.repo.RequestRunCancellation(ctx, repository.RequestRunCancellationRequest{
 		RunID:        req.RunID,
 		Now:          now,
 		ErrorCode:    errorCode,
 		ErrorMessage: errorMessage,
-		Event: &entity.RunEvent{
-			ID:        eventID,
-			ThreadID:  current.ThreadID,
-			RunID:     current.ID,
-			EventType: "run.canceled",
-			Payload:   string(payload),
-			CreatedAt: now,
-		},
+		Event:        event,
+		OutboxIntent: bindTerminalOutboxIntent(req.OutboxIntent, event, entity.RunStatusCanceled),
 	})
 	if err != nil {
 		return nil, err
@@ -2398,6 +2404,7 @@ func (s *threadService) FinalizeRunSuccess(
 		TerminalCheckpointOnTitleConflict: terminalCheckpointOnTitleConflict,
 		ExpectedThreadTitle:               expectedTitle,
 		ThreadTitle:                       threadTitle,
+		OutboxIntent:                      bindTerminalOutboxIntent(req.OutboxIntent, completionEvent, entity.RunStatusSucceeded),
 	})
 	if err != nil {
 		return nil, err
@@ -2436,6 +2443,7 @@ func (s *threadService) CancelRun(ctx context.Context, req *UpdateRunStatusReque
 		Now:          req.Now,
 		ErrorCode:    req.ErrorCode,
 		ErrorMessage: req.ErrorMessage,
+		OutboxIntent: req.OutboxIntent,
 	})
 	if err != nil {
 		return nil, err
@@ -2509,13 +2517,32 @@ func (s *threadService) transitionRun(
 		Now:                   req.Now,
 		ErrorCode:             strings.TrimSpace(req.ErrorCode),
 		ErrorMessage:          strings.TrimSpace(req.ErrorMessage),
+		EventPayload:          req.EventPayload,
 		Event:                 terminalEvent,
 		EventAlreadyPersisted: req.EventAlreadyPersisted,
+		OutboxIntent:          bindTerminalOutboxIntent(req.OutboxIntent, terminalEvent, to),
 	}); err != nil {
 		return nil, err
 	}
 
 	return s.repo.GetRun(ctx, req.RunID)
+}
+
+func bindTerminalOutboxIntent(
+	intent *repository.NotificationOutboxIntent,
+	event *entity.RunEvent,
+	status entity.RunStatus,
+) *repository.NotificationOutboxIntent {
+	if intent != nil && intent.Event.EventType == domainnotification.EventTaskAwaitingInput {
+		return intent
+	}
+	if intent == nil || event == nil || event.ID <= 0 {
+		return intent
+	}
+	bound := *intent
+	bound.Event.EventID = fmt.Sprintf("run-event:%d:%s", event.ID, status)
+	bound.Event.AggregateVersion = event.ID
+	return &bound
 }
 
 func serviceTerminalRunEventType(status entity.RunStatus) (string, error) {
@@ -2553,8 +2580,17 @@ func terminalRunEventPayload(
 			"checkpoint_id",
 			"checkpoint_ns",
 			"resume_from",
+			entity.RunAwaitingInputInteractionRefPayloadKey,
 		} {
 			if value, ok := providedFields[key]; ok {
+				if key == entity.RunAwaitingInputInteractionRefPayloadKey {
+					ref, err := entity.RunAwaitingInputInteractionRefFromAny(value)
+					if err != nil {
+						return "", InvalidArgumentErrorf("awaiting-input interaction reference is invalid")
+					}
+					payload[key] = ref
+					continue
+				}
 				payload[key] = value
 			}
 		}

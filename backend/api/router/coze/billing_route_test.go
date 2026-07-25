@@ -4,12 +4,16 @@
 package coze
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
+
+	"github.com/coze-dev/coze-studio/backend/api/middleware"
 )
 
 func TestRegisterIncludesAdminBillingRoutes(t *testing.T) {
@@ -35,6 +39,8 @@ func TestRegisterIncludesAdminBillingRoutes(t *testing.T) {
 		{http.MethodPost, "/api/admin/billing/model-prices"},
 		{http.MethodGet, "/api/admin/billing/usage-monitoring"},
 		{http.MethodPost, "/api/admin/billing/adjustments"},
+		{http.MethodGet, "/api/admin/billing/credit-thresholds"},
+		{http.MethodPut, "/api/admin/billing/credit-thresholds"},
 		{http.MethodPost, "/api/admin/billing/maintenance/run"},
 	}
 
@@ -42,6 +48,67 @@ func TestRegisterIncludesAdminBillingRoutes(t *testing.T) {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			response := ut.PerformRequest(h.Engine, route.method, route.path, nil)
 			require.NotEqual(t, http.StatusNotFound, response.Code)
+		})
+	}
+}
+
+func TestAdminBillingCreditThresholdRoutesRequireSystemAdmin(t *testing.T) {
+	previousFactory := adminAuthMiddlewareFactory
+	adminAuthMiddlewareFactory = func() app.HandlerFunc {
+		return middleware.AdminAuthMWWithEmailLoader(func(context.Context) (string, error) {
+			return "admin@example.test", nil
+		})
+	}
+	t.Cleanup(func() { adminAuthMiddlewareFactory = previousFactory })
+
+	h := server.Default(server.WithStreamBody(true))
+	installAdminProviderExecutionTestSessionMiddleware(h)
+	Register(h)
+	RegisterCustomRoutes(h)
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{
+			method: http.MethodGet,
+			path:   "/api/admin/billing/credit-thresholds?subject_type=user&subject_id=42",
+		},
+		{
+			method: http.MethodPut,
+			path:   "/api/admin/billing/credit-thresholds",
+			body:   `{"subject_type":"user","subject_id":"42","enabled":false,"expected_version":1}`,
+		},
+	}
+	for _, request := range requests {
+		t.Run(request.method, func(t *testing.T) {
+			unauthenticated := performAdminSandboxRouteRequestWithServer(
+				h,
+				"",
+				request.method,
+				request.path,
+				request.body,
+			)
+			require.Equal(t, http.StatusUnauthorized, unauthenticated.Code)
+
+			member := performAdminSandboxRouteRequestWithServer(
+				h,
+				"member@example.test",
+				request.method,
+				request.path,
+				request.body,
+			)
+			require.Equal(t, http.StatusForbidden, member.Code)
+
+			admin := performAdminSandboxRouteRequestWithServer(
+				h,
+				"admin@example.test",
+				request.method,
+				request.path,
+				request.body,
+			)
+			require.NotEqual(t, http.StatusUnauthorized, admin.Code)
+			require.NotEqual(t, http.StatusForbidden, admin.Code)
 		})
 	}
 }

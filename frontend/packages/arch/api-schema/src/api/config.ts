@@ -26,8 +26,17 @@ export function createAPI<
 >(meta: IMeta, cancelable?: B) {
   return apiFactory<T, K, O, B>(meta, cancelable, false, {
     config: {
-      clientFactory: _meta => async (uri, init, options) =>
-        axiosInstance.request({
+      clientFactory: _meta => async (uri, init, options) => {
+        const headers = new Headers(init.headers);
+        new Headers(options?.headers).forEach((value, key) => {
+          headers.set(key, value);
+        });
+        headers.set('x-requested-with', 'XMLHttpRequest');
+        const requestHeaders: Record<string, string> = {};
+        headers.forEach((value, key) => {
+          requestHeaders[key] = value;
+        });
+        return axiosInstance.request({
           url: uri,
           method: init.method ?? 'GET',
           data: ['POST', 'PUT', 'PATCH'].includes(
@@ -42,15 +51,12 @@ export function createAPI<
           )
             ? init.body
             : undefined,
-          headers: {
-            ...init.headers,
-            ...(options?.headers ?? {}),
-            'x-requested-with': 'XMLHttpRequest',
-          },
+          headers: requestHeaders,
           signal: init.signal ?? undefined,
           // @ts-expect-error -- custom params
           __disableErrorToast: options?.__disableErrorToast,
-        }),
+        });
+      },
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);

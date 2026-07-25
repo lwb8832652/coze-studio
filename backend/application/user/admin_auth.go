@@ -16,20 +16,15 @@
 
 package user
 
-import "strings"
+import (
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
+)
 
 func IsSystemAdminEmail(email string, adminEmails string) bool {
-	normalizedEmail := strings.TrimSpace(email)
-	normalizedAdminEmails := strings.TrimSpace(adminEmails)
-	if normalizedEmail == "" || normalizedAdminEmails == "" {
-		return false
-	}
-
-	for _, adminEmail := range strings.Split(normalizedAdminEmails, ",") {
-		if strings.EqualFold(normalizedEmail, strings.TrimSpace(adminEmail)) {
-			return true
-		}
-	}
-
-	return false
+	return domainsystemadmin.ContainsEmail(
+		email,
+		adminEmails,
+		domainnotification.MaxExplicitRecipients,
+	)
 }

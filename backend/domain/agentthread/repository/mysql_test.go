@@ -31,6 +31,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 func TestThreadRepositoryCreateAndGet(t *testing.T) {
@@ -5089,6 +5090,85 @@ func TestThreadRepositoryInterruptedTransitionRequiresClaimedDurableEvent(t *tes
 	require.Equal(t, "run.interrupted", events[0].EventType)
 }
 
+func TestThreadRepositoryPrePersistedAwaitingInputInterruptAppendsOutbox(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	run.StartedAt = 150
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 11, ThreadID: 10, RunID: 1, EventType: "run.interrupted",
+		Payload: `{"status":"interrupted"}`, CreatedAt: 200,
+	}))
+
+	var appended []domainnotification.Event
+	payload := `{"status":"interrupted","awaiting_input":{"schema":"coze.agentthread.awaiting_input.v1","interaction_event_id":"interrupt-event-1","interaction_id":"hi_1","kind":"clarification"}}`
+	req := UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusInterrupted,
+		WorkerID: "worker-a", EventAlreadyPersisted: true,
+		EventPayload: payload,
+		OutboxIntent: repositoryTestOutboxIntent(
+			"interaction-event:interrupt-event-1:task.awaiting_input",
+			domainnotification.EventTaskAwaitingInput,
+			1,
+			func(_ context.Context, _ *gorm.DB, event domainnotification.Event) error {
+				appended = append(appended, event)
+				return nil
+			},
+		),
+	}
+
+	require.NoError(t, repo.UpdateRunStatus(context.Background(), req))
+	require.Len(t, appended, 1)
+	require.Equal(t, domainnotification.EventTaskAwaitingInput, appended[0].EventType)
+	persisted, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusInterrupted, persisted.Status)
+
+	err = repo.UpdateRunStatus(context.Background(), req)
+	require.Error(t, err)
+	require.Len(t, appended, 1)
+}
+
+func TestThreadRepositoryPrePersistedGenericInterruptDoesNotAppendOutbox(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	run.StartedAt = 150
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 11, ThreadID: 10, RunID: 1, EventType: "run.interrupted",
+		Payload: `{"status":"interrupted"}`, CreatedAt: 200,
+	}))
+
+	var appendCalls int
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusInterrupted,
+		WorkerID: "worker-a", EventAlreadyPersisted: true,
+		EventPayload: `{"status":"interrupted","interrupt_count":1}`,
+		OutboxIntent: repositoryTestOutboxIntent(
+			"interaction-event:interrupt-event-1:task.awaiting_input",
+			domainnotification.EventTaskAwaitingInput,
+			1,
+			func(context.Context, *gorm.DB, domainnotification.Event) error {
+				appendCalls++
+				return nil
+			},
+		),
+	})
+
+	require.NoError(t, err)
+	require.Zero(t, appendCalls)
+}
+
 func TestThreadRepositoryUpdateRunStatusRollsBackWhenTerminalEventWriteFails(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -5115,6 +5195,86 @@ func TestThreadRepositoryUpdateRunStatusRollsBackWhenTerminalEventWriteFails(t *
 	require.Equal(t, entity.RunStatusRunning, persisted.Status)
 	require.Empty(t, persisted.ErrorCode)
 	require.Zero(t, persisted.EndedAt)
+}
+
+func TestThreadRepositoryUpdateRunStatusRollsBackWhenOutboxAppendFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	run.WorkerID = "worker-a"
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+
+	appendErr := errors.New("outbox unavailable")
+	var appendCalls int
+	err = repo.UpdateRunStatus(context.Background(), UpdateRunStatusRequest{
+		RunID: 1, From: entity.RunStatusRunning, To: entity.RunStatusFailed,
+		WorkerID: "worker-a", ErrorCode: "model_error",
+		Event: &entity.RunEvent{
+			ID: 10, ThreadID: 10, RunID: 1, EventType: "run.failed", Payload: `{}`,
+		},
+		OutboxIntent: repositoryTestOutboxIntent(
+			"run-event:10:failed",
+			domainnotification.EventTaskFailed,
+			10,
+			func(context.Context, *gorm.DB, domainnotification.Event) error {
+				appendCalls++
+				return appendErr
+			},
+		),
+	})
+
+	require.ErrorIs(t, err, appendErr)
+	require.Equal(t, 1, appendCalls)
+	persisted, err := repo.GetRun(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, entity.RunStatusRunning, persisted.Status)
+	require.Empty(t, persisted.ErrorCode)
+	var eventCount int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&eventCount).Error)
+	require.Zero(t, eventCount)
+}
+
+func TestThreadRepositoryRequestRunCancellationAppendsOutboxOnlyOnceOnReplay(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&runPO{}, &runEventPO{}))
+	repo := NewThreadRepository(db)
+	run := newRepositoryTestRun(1, 10, entity.RunStatusRunning, 100)
+	require.NoError(t, repo.CreateRun(context.Background(), run))
+
+	var appended []domainnotification.Event
+	req := RequestRunCancellationRequest{
+		RunID:        1,
+		Now:          200,
+		ErrorCode:    "run_canceled",
+		ErrorMessage: "run canceled by request",
+		Event: &entity.RunEvent{
+			ID: 10, ThreadID: 10, RunID: 1, EventType: "run.canceled", Payload: `{"status":"canceled"}`,
+		},
+		OutboxIntent: repositoryTestOutboxIntent(
+			"run-event:10:canceled",
+			domainnotification.EventTaskCancelled,
+			10,
+			func(_ context.Context, _ *gorm.DB, event domainnotification.Event) error {
+				appended = append(appended, event)
+				return nil
+			},
+		),
+	}
+	first, err := repo.RequestRunCancellation(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, first.Changed)
+	second, err := repo.RequestRunCancellation(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, second.Changed)
+
+	require.Len(t, appended, 1)
+	require.Equal(t, "run-event:10:canceled", appended[0].EventID)
+	var eventCount int64
+	require.NoError(t, db.Model(&runEventPO{}).Count(&eventCount).Error)
+	require.Equal(t, int64(1), eventCount)
 }
 
 func TestThreadRepositoryUpdateRunStatusUsesExpectedStatus(t *testing.T) {
@@ -5173,5 +5333,30 @@ func newRepositoryTestRun(id, threadID int64, status entity.RunStatus, createdAt
 		Durability:        "async",
 		CreatedAt:         createdAt,
 		UpdatedAt:         createdAt,
+	}
+}
+
+func repositoryTestOutboxIntent(
+	eventID string,
+	eventType domainnotification.EventType,
+	version int64,
+	appendFn func(context.Context, *gorm.DB, domainnotification.Event) error,
+) *NotificationOutboxIntent {
+	return &NotificationOutboxIntent{
+		Event: domainnotification.Event{
+			EventID:          eventID,
+			EventType:        eventType,
+			AggregateType:    "agent_run",
+			AggregateID:      "run:1",
+			AggregateVersion: version,
+			SpaceID:          1,
+			ActorID:          2,
+			RecipientPolicy:  domainnotification.RecipientActor,
+			PayloadSchema:    domainnotification.CurrentPayloadSchema,
+			Payload: domainnotification.EventPayload{
+				TargetID: "thread:10",
+			},
+		},
+		Append: appendFn,
 	}
 }

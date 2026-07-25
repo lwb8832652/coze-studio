@@ -23,11 +23,14 @@ type Repository interface {
 	RenewRuntimeLease(ctx context.Context, configID int64, owner string, expiresAt time.Time) (bool, error)
 	ReleaseRuntimeLease(ctx context.Context, configID int64, owner string) error
 	UpdateRuntimeState(ctx context.Context, configID int64, state RuntimeState) error
+	RecordRuntimeFailure(ctx context.Context, configID int64, state RuntimeState, stableFailureThreshold int) error
+	RecordRuntimeRecovery(ctx context.Context, configID int64, state RuntimeState) error
 
 	InsertEvent(ctx context.Context, event *Event) (bool, error)
 	ClaimEvents(ctx context.Context, configID int64, owner string, now, leaseUntil time.Time, limit int) ([]*Event, error)
 	CompleteEvent(ctx context.Context, eventID int64, completedAt time.Time) error
 	FailEvent(ctx context.Context, eventID int64, message string, nextRetryAt time.Time) error
+	DeadLetterEvent(ctx context.Context, config *Config, event *Event, message string, deadLetteredAt time.Time) (bool, error)
 	CleanupEvents(ctx context.Context, completedBefore time.Time) error
 
 	GetSession(ctx context.Context, configID int64, chatID string) (*Session, error)

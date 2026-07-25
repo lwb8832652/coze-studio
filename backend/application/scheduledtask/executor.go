@@ -89,23 +89,35 @@ type WorkflowRunner interface {
 	WaitTerminal(context.Context, int64, int64) (RunTerminalStatus, error)
 }
 
-type WorkflowTaskExecutor struct { Runner WorkflowRunner }
+type WorkflowTaskExecutor struct {
+	Runner     WorkflowRunner
+	Repository repository.Repository
+}
 
-func (e *WorkflowTaskExecutor) Execute(ctx context.Context, task *entity.Task, _ *entity.Execution) (repository.ExecutionResult, error) {
-	if e == nil || e.Runner == nil {
+func (e *WorkflowTaskExecutor) Execute(ctx context.Context, task *entity.Task, execution *entity.Execution) (repository.ExecutionResult, error) {
+	if e == nil || e.Runner == nil || e.Repository == nil || execution == nil {
 		return repository.ExecutionResult{}, fmt.Errorf("workflow scheduled task executor is unavailable")
 	}
 	inputs := make(map[string]any)
 	if err := json.Unmarshal([]byte(task.Payload), &inputs); err != nil {
 		return repository.ExecutionResult{}, fmt.Errorf("decode workflow task payload: %w", err)
 	}
-	executionID, err := e.Runner.Start(ctx, task.SpaceID, task.CreatorID, task.TargetID, inputs)
-	if err != nil {
-		return repository.ExecutionResult{}, err
+	workflowExecutionID := int64(0)
+	workflowExecutionID = execution.WorkflowExecutionID
+	if workflowExecutionID == 0 {
+		var err error
+		workflowExecutionID, err = e.Runner.Start(ctx, task.SpaceID, task.CreatorID, task.TargetID, inputs)
+		if err != nil {
+			return repository.ExecutionResult{}, err
+		}
+		execution.WorkflowExecutionID = workflowExecutionID
+		if err := e.Repository.SetWorkflowExecutionID(ctx, execution.ID, workflowExecutionID); err != nil {
+			return repository.ExecutionResult{WorkflowExecutionID: workflowExecutionID}, err
+		}
 	}
-	terminal, err := e.Runner.WaitTerminal(ctx, task.TargetID, executionID)
+	terminal, err := e.Runner.WaitTerminal(ctx, task.TargetID, workflowExecutionID)
 	result := terminalResult(terminal)
-	result.WorkflowExecutionID = executionID
+	result.WorkflowExecutionID = workflowExecutionID
 	if err != nil {
 		return result, err
 	}

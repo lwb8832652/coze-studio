@@ -30,6 +30,8 @@ import (
 
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/infra/idgen"
 )
 
@@ -68,6 +70,23 @@ type MCPRuntimeHealthReport struct {
 	CheckedAt         int64
 }
 
+type MCPToolHealthNotificationServer struct {
+	ServerID   int64
+	SpaceID    int64
+	CreatorID  int64
+	SourceType toolapi.MCPServerSourceType
+	Name       string
+}
+
+type SpaceMemberRole struct {
+	UserID   int64
+	RoleType int32
+}
+
+type SpaceMemberRoleReader interface {
+	ListSpaceMemberRoles(ctx context.Context, spaceID int64) ([]SpaceMemberRole, error)
+}
+
 type Components struct {
 	// Enabled is always set by the application composition root. A nil value is
 	// retained only for backwards-compatible in-process construction.
@@ -75,6 +94,7 @@ type Components struct {
 	Catalog                     Catalog
 	IDGen                       idgen.IDGenerator
 	UserSpaceRoleReader         UserSpaceRoleReader
+	SpaceMemberRoleReader      SpaceMemberRoleReader
 	RuntimeExecutor             RuntimeExecutor
 	CapabilityDiscoverer        CapabilityDiscoverer
 	AuditRepository             ManagementAuditRepository
@@ -108,6 +128,16 @@ type Catalog interface {
 
 type managementCatalog interface {
 	ListForManagement(ctx context.Context, spaceID int64) ([]*toolapi.MCPToolServer, error)
+}
+
+type mcpHealthNotificationCatalog interface {
+	UpdateHealthWithNotification(
+		ctx context.Context,
+		serverID int64,
+		expectedUpdatedAt int64,
+		health MCPToolHealthSnapshot,
+		intent *MCPToolHealthNotificationIntent,
+	) error
 }
 
 func listMCPToolServersForManagement(
@@ -614,12 +644,106 @@ func (s *ApplicationService) RecordRuntimeHealth(
 		health.Error = normalizeMCPRuntimeHealthErrorCode(report.ErrorCode)
 	}
 
-	return s.components.Catalog.UpdateHealth(
+	return s.updateMCPToolHealth(
 		ctx,
 		report.ServerID,
 		report.ExpectedUpdatedAt,
 		health,
 	)
+}
+
+func (s *ApplicationService) updateMCPToolHealth(
+	ctx context.Context,
+	serverID int64,
+	expectedUpdatedAt int64,
+	health MCPToolHealthSnapshot,
+) error {
+	if s == nil || s.components == nil || s.components.Catalog == nil {
+		return fmt.Errorf("mcp tool catalog is required")
+	}
+	if s != nil && s.components != nil {
+		if catalog, ok := s.components.Catalog.(mcpHealthNotificationCatalog); ok {
+			return catalog.UpdateHealthWithNotification(
+				ctx,
+				serverID,
+				expectedUpdatedAt,
+				health,
+				s.mcpToolHealthNotificationIntent(),
+			)
+		}
+	}
+	return s.components.Catalog.UpdateHealth(
+		ctx,
+		serverID,
+		expectedUpdatedAt,
+		health,
+	)
+}
+
+func (s *ApplicationService) mcpToolHealthNotificationIntent() *MCPToolHealthNotificationIntent {
+	if appnotification.SVC == nil || !appnotification.SVC.IsConfigured() {
+		return nil
+	}
+	return &MCPToolHealthNotificationIntent{
+		AppendOutbox:      appnotification.SVC.AppendInTransaction,
+		ResolveRecipients: s.resolveMCPToolHealthNotificationRecipients,
+	}
+}
+
+func (s *ApplicationService) resolveMCPToolHealthNotificationRecipients(
+	ctx context.Context,
+	server MCPToolHealthNotificationServer,
+) ([]int64, error) {
+	ids := make([]int64, 0, 4)
+	if !isOfficialMCPSourceType(server.SourceType) && server.CreatorID > 0 {
+		ids = append(ids, server.CreatorID)
+	}
+	if s == nil || s.components == nil || s.components.SpaceMemberRoleReader == nil {
+		return nil, ErrMCPAuthorizationUnavailable
+	}
+	if server.SpaceID > 0 {
+		admins, err := resolveMCPWorkspaceOwnerAdminUserIDs(
+			ctx,
+			s.components.SpaceMemberRoleReader,
+			server.SpaceID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, admins...)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return domainnotification.NormalizeRecipientIDs(ids)
+}
+
+func resolveMCPWorkspaceOwnerAdminUserIDs(
+	ctx context.Context,
+	reader SpaceMemberRoleReader,
+	spaceID int64,
+) ([]int64, error) {
+	if reader == nil || spaceID <= 0 {
+		return nil, nil
+	}
+	members, err := reader.ListSpaceMemberRoles(ctx, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(members))
+	for _, member := range members {
+		if member.UserID <= 0 {
+			continue
+		}
+		if member.RoleType != spaceRoleOwner && member.RoleType != spaceRoleAdmin {
+			continue
+		}
+		ids = append(ids, member.UserID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return domainnotification.NormalizeRecipientIDs(ids)
 }
 
 func (s *ApplicationService) GetServer(ctx context.Context, req *toolapi.GetMCPToolServerRequest) (*toolapi.MCPToolServerResponse, error) {
@@ -781,7 +905,7 @@ func (s *ApplicationService) TestCall(ctx context.Context, req *toolapi.TestMCPT
 		if errors.Is(runtimeErr, ErrRuntimeInvalidResult) || errors.Is(runtimeErr, ErrRuntimeOutputTooLarge) {
 			return nil, ErrRuntimeCallFailed
 		}
-		_ = s.components.Catalog.UpdateHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
+		_ = s.updateMCPToolHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
 			Status:    mcpToolHealthStatusUnhealthy,
 			CheckedAt: checkedAt,
 			LatencyMs: time.Since(startedAt).Milliseconds(),
@@ -798,7 +922,7 @@ func (s *ApplicationService) TestCall(ctx context.Context, req *toolapi.TestMCPT
 			Status: ManagementAuditStatusFailed, LatencyMs: latencyMs,
 			ErrorCode: ManagementAuditErrorRuntimeFailed, CompletedAt: checkedAt,
 		})
-		_ = s.components.Catalog.UpdateHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
+		_ = s.updateMCPToolHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
 			Status:    mcpToolHealthStatusUnhealthy,
 			CheckedAt: checkedAt,
 			LatencyMs: latencyMs,
@@ -809,7 +933,7 @@ func (s *ApplicationService) TestCall(ctx context.Context, req *toolapi.TestMCPT
 	_ = s.completeManagementAudit(ctx, auditEvent, ManagementAuditCompletion{
 		Status: ManagementAuditStatusSuccess, LatencyMs: latencyMs, CompletedAt: checkedAt,
 	})
-	_ = s.components.Catalog.UpdateHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
+	_ = s.updateMCPToolHealth(ctx, req.ServerID, server.UpdatedAt, MCPToolHealthSnapshot{
 		Status:    mcpToolHealthStatusHealthy,
 		CheckedAt: checkedAt,
 		LatencyMs: latencyMs,

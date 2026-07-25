@@ -121,6 +121,7 @@ type RuntimeManager struct {
 	factory    ChannelFactory
 	runner     *AgentRunner
 	owner      string
+	stableFailureThreshold int
 	wake       chan struct{}
 
 	mu         sync.Mutex
@@ -135,22 +136,43 @@ func NewRuntimeManager(
 	codec CredentialCodec,
 	factory ChannelFactory,
 	runner *AgentRunner,
+	options ...RuntimeManagerOption,
 ) (*RuntimeManager, error) {
 	if repository == nil || idGenerator == nil || factory == nil || runner == nil {
 		return nil, domain.ErrRuntimeUnavailable
 	}
-	return &RuntimeManager{
+	manager := &RuntimeManager{
 		repository: repository,
 		idGen:      idGenerator,
 		codec:      codec,
 		factory:    factory,
 		runner:     runner,
 		owner:      runtimeOwner(),
+		stableFailureThreshold: domain.DefaultRuntimeStableFailureThreshold,
 		wake:       make(chan struct{}, 1),
 		active:     make(map[int64]*activeChannel),
 		processing: make(map[int64]bool),
 		retryAfter: make(map[int64]time.Time),
-	}, nil
+	}
+	for _, option := range options {
+		if option != nil {
+			option(manager)
+		}
+	}
+	if manager.stableFailureThreshold <= 0 {
+		manager.stableFailureThreshold = domain.DefaultRuntimeStableFailureThreshold
+	}
+	return manager, nil
+}
+
+type RuntimeManagerOption func(*RuntimeManager)
+
+func WithRuntimeStableFailureThreshold(threshold int) RuntimeManagerOption {
+	return func(manager *RuntimeManager) {
+		if manager != nil && threshold > 0 {
+			manager.stableFailureThreshold = threshold
+		}
+	}
 }
 
 func (m *RuntimeManager) Start(ctx context.Context) {
@@ -291,7 +313,7 @@ func (m *RuntimeManager) startConfig(root context.Context, config *domain.Config
 			state.BotOpenID = identity.OpenID
 			state.BotName = identity.Name
 		}
-		_ = m.repository.UpdateRuntimeState(channelCtx, config.ID, state)
+		m.recordRuntimeRecovery(channelCtx, config.ID, state)
 	})
 	feishuChannel.OnReconnecting(func() {
 		_ = m.repository.UpdateRuntimeState(channelCtx, config.ID, domain.RuntimeState{
@@ -300,7 +322,7 @@ func (m *RuntimeManager) startConfig(root context.Context, config *domain.Config
 	})
 	feishuChannel.OnReconnected(func() {
 		now := time.Now()
-		_ = m.repository.UpdateRuntimeState(channelCtx, config.ID, domain.RuntimeState{
+		m.recordRuntimeRecovery(channelCtx, config.ID, domain.RuntimeState{
 			Status:      domain.RuntimeStatusConnected,
 			ConnectedAt: &now,
 		})
@@ -313,10 +335,7 @@ func (m *RuntimeManager) startConfig(root context.Context, config *domain.Config
 		}
 	})
 	feishuChannel.OnError(func(channelErr error) {
-		_ = m.repository.UpdateRuntimeState(channelCtx, config.ID, domain.RuntimeState{
-			Status: domain.RuntimeStatusError,
-			Error:  safeRuntimeError(channelErr),
-		})
+		m.recordRuntimeFailure(channelCtx, config.ID, channelErr)
 	})
 	feishuChannel.OnMessage(func(messageCtx context.Context, message *channeltypes.NormalizedMessage) error {
 		return m.persistInbound(messageCtx, config, message)
@@ -328,10 +347,7 @@ func (m *RuntimeManager) startConfig(root context.Context, config *domain.Config
 		_ = m.repository.ReleaseRuntimeLease(context.Background(), config.ID, m.owner)
 		if channelCtx.Err() == nil {
 			m.setBackoff(config.ID, time.Now().Add(30*time.Second))
-			_ = m.repository.UpdateRuntimeState(context.Background(), config.ID, domain.RuntimeState{
-				Status: domain.RuntimeStatusError,
-				Error:  safeRuntimeError(startErr),
-			})
+			m.recordRuntimeFailure(context.Background(), config.ID, startErr)
 		}
 	}()
 }
@@ -436,6 +452,18 @@ func (m *RuntimeManager) processPending(ctx context.Context, active *activeChann
 				return
 			}
 			for _, event := range events {
+				if event.Status == domain.EventStatusFailed &&
+					event.AttemptCount >= domain.EventMaxAttempts {
+					if err := m.deadLetterEvent(ctx, active, event, errors.New(event.LastError)); err != nil {
+						_ = m.repository.FailEvent(
+							ctx,
+							event.ID,
+							safeRuntimeError(err),
+							time.Now().Add(30*time.Second),
+						)
+					}
+					continue
+				}
 				m.processEvent(ctx, active, event)
 			}
 		}
@@ -471,14 +499,43 @@ func (m *RuntimeManager) failEvent(
 	event *domain.Event,
 	eventErr error,
 ) {
+	message := safeRuntimeError(eventErr)
 	delay := time.Duration(1<<minInt(int(event.AttemptCount), 5)) * 5 * time.Second
+	if event.AttemptCount+1 >= domain.EventMaxAttempts {
+		if err := m.deadLetterEvent(ctx, active, event, eventErr); err != nil {
+			_ = m.repository.FailEvent(
+				ctx,
+				event.ID,
+				message,
+				time.Now().Add(delay),
+			)
+		}
+		return
+	}
 	_ = m.repository.FailEvent(
 		ctx,
 		event.ID,
-		safeRuntimeError(eventErr),
+		message,
 		time.Now().Add(delay),
 	)
-	if event.AttemptCount >= 3 && active != nil && active.channel != nil {
+}
+
+func (m *RuntimeManager) deadLetterEvent(
+	ctx context.Context,
+	active *activeChannel,
+	event *domain.Event,
+	eventErr error,
+) error {
+	if active == nil || active.config == nil || event == nil {
+		return domain.ErrInvalidInput
+	}
+	message := safeRuntimeError(eventErr)
+	deadLettered, err := m.repository.DeadLetterEvent(ctx, active.config, event, message, time.Now())
+	if err != nil {
+		logs.CtxWarnf(ctx, "dead-letter Feishu IM event failed: %s", safeRuntimeError(err))
+		return err
+	}
+	if deadLettered && active.channel != nil {
 		var payload domain.InboundPayload
 		if json.Unmarshal([]byte(event.PayloadJSON), &payload) == nil {
 			_, _ = active.channel.Send(ctx, &channeltypes.SendInput{
@@ -488,6 +545,7 @@ func (m *RuntimeManager) failEvent(
 			})
 		}
 	}
+	return nil
 }
 
 func sendAnswer(
@@ -531,11 +589,50 @@ func sendAnswer(
 
 func (m *RuntimeManager) recordStartFailure(ctx context.Context, configID int64, err error) {
 	m.setBackoff(configID, time.Now().Add(30*time.Second))
-	_ = m.repository.UpdateRuntimeState(ctx, configID, domain.RuntimeState{
+	m.recordRuntimeFailure(ctx, configID, err)
+	_ = m.repository.ReleaseRuntimeLease(ctx, configID, m.owner)
+}
+
+func (m *RuntimeManager) recordRuntimeFailure(ctx context.Context, configID int64, err error) {
+	if m == nil || m.repository == nil {
+		return
+	}
+	recordErr := m.repository.RecordRuntimeFailure(ctx, configID, domain.RuntimeState{
 		Status: domain.RuntimeStatusError,
 		Error:  safeRuntimeError(err),
-	})
-	_ = m.repository.ReleaseRuntimeLease(ctx, configID, m.owner)
+		IncidentID: m.newRuntimeIncidentID(ctx, configID),
+	}, m.runtimeStableFailureThreshold())
+	if recordErr != nil {
+		logs.CtxWarnf(ctx, "record Feishu IM runtime failure failed: %s", safeRuntimeError(recordErr))
+	}
+}
+
+func (m *RuntimeManager) recordRuntimeRecovery(ctx context.Context, configID int64, state domain.RuntimeState) {
+	if m == nil || m.repository == nil {
+		return
+	}
+	if state.Status == "" {
+		state.Status = domain.RuntimeStatusConnected
+	}
+	if err := m.repository.RecordRuntimeRecovery(ctx, configID, state); err != nil {
+		logs.CtxWarnf(ctx, "record Feishu IM runtime recovery failed: %s", safeRuntimeError(err))
+	}
+}
+
+func (m *RuntimeManager) newRuntimeIncidentID(ctx context.Context, configID int64) string {
+	if m != nil && m.idGen != nil {
+		if id, err := m.idGen.GenID(ctx); err == nil && id > 0 {
+			return fmt.Sprintf("feishu-im:%d:%d", configID, id)
+		}
+	}
+	return fmt.Sprintf("feishu-im:%d:%d", configID, time.Now().UnixNano())
+}
+
+func (m *RuntimeManager) runtimeStableFailureThreshold() int {
+	if m != nil && m.stableFailureThreshold > 0 {
+		return m.stableFailureThreshold
+	}
+	return domain.DefaultRuntimeStableFailureThreshold
 }
 
 func (m *RuntimeManager) activeSnapshot() map[int64]*activeChannel {
@@ -611,12 +708,46 @@ func runtimeOwner() string {
 
 func safeRuntimeError(err error) string {
 	if err == nil {
-		return "飞书长连接已断开"
+		return "connection_failed"
 	}
 	if errors.Is(err, context.Canceled) {
-		return "飞书长连接已停止"
+		return "runtime_stopped"
 	}
-	return boundedMessage(err.Error(), 300)
+	switch {
+	case errors.Is(err, domain.ErrCredentialCodecMissing),
+		errors.Is(err, domain.ErrInvalidInput),
+		errors.Is(err, domain.ErrConnectionTestFailed):
+		return "configuration_invalid"
+	case errors.Is(err, domain.ErrAgentUnavailable),
+		errors.Is(err, domain.ErrAgentExecutionFailed),
+		errors.Is(err, domain.ErrAgentResponseUnavailable):
+		return "agent_execution_failed"
+	case errors.Is(err, domain.ErrRuntimeUnavailable):
+		return "runtime_unavailable"
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return "connection_failed"
+	}
+	if isStableRuntimeErrorCode(message) {
+		return message
+	}
+	return "provider_unavailable"
+}
+
+func isStableRuntimeErrorCode(value string) bool {
+	switch value {
+	case "connection_failed",
+		"runtime_stopped",
+		"configuration_invalid",
+		"agent_execution_failed",
+		"runtime_unavailable",
+		"provider_unavailable",
+		"retry_exhausted":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitReply(value string, size int) (string, string) {

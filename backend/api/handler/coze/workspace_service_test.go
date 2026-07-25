@@ -25,8 +25,10 @@ import (
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	appworkspace "github.com/coze-dev/coze-studio/backend/application/workspace"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	userservice "github.com/coze-dev/coze-studio/backend/domain/user/service"
 )
@@ -151,7 +153,15 @@ func (d *workspaceHandlerUserDomain) AddSpaceMembers(_ context.Context, members 
 	return nil
 }
 
+func (d *workspaceHandlerUserDomain) AddSpaceMembersWithNotification(_ context.Context, _ int64, members []*userservice.AddSpaceMemberRequest, _ func(context.Context, *gorm.DB, domainnotification.Event) error) error {
+	return d.AddSpaceMembers(context.Background(), members)
+}
+
 func (d *workspaceHandlerUserDomain) UpdateSpaceMemberRole(context.Context, int64, int64, int32) error {
+	return nil
+}
+
+func (d *workspaceHandlerUserDomain) UpdateSpaceMemberRoleWithNotification(context.Context, int64, int64, int64, int32, func(context.Context, *gorm.DB, domainnotification.Event) error) error {
 	return nil
 }
 
@@ -159,7 +169,15 @@ func (d *workspaceHandlerUserDomain) RemoveSpaceMember(context.Context, int64, i
 	return nil
 }
 
+func (d *workspaceHandlerUserDomain) RemoveSpaceMemberWithNotification(context.Context, int64, int64, int64, func(context.Context, *gorm.DB, domainnotification.Event) error) error {
+	return nil
+}
+
 func (d *workspaceHandlerUserDomain) TransferSpace(context.Context, int64, int64) error {
+	return nil
+}
+
+func (d *workspaceHandlerUserDomain) TransferSpaceWithNotification(context.Context, int64, int64, int64, func(context.Context, *gorm.DB, domainnotification.Event) error) error {
 	return nil
 }
 

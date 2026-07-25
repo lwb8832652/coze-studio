@@ -26,14 +26,15 @@ type ServiceComponents struct {
 	UserProfileReader UserProfileReader
 	AgentThreadClient AgentThreadClient
 	WorkflowDomain    WorkflowService
+	NotificationOutbox repository.NotificationOutboxAppender
 	RootContext       context.Context
 }
 
 func InitService(c *ServiceComponents) (*ApplicationService, *Worker, error) {
-	if c == nil || c.DB == nil || c.IDGen == nil || c.UserSpaceReader == nil || c.AgentThreadClient == nil || c.WorkflowDomain == nil {
+	if c == nil || c.DB == nil || c.IDGen == nil || c.UserSpaceReader == nil || c.AgentThreadClient == nil || c.WorkflowDomain == nil || c.NotificationOutbox == nil {
 		return nil, nil, fmt.Errorf("scheduled task service dependencies are incomplete")
 	}
-	repo := repository.NewMySQLRepository(c.DB, c.IDGen)
+	repo := repository.NewMySQLRepository(c.DB, c.IDGen, repository.WithNotificationOutboxAppender(c.NotificationOutbox))
 	targets := &CozeTargetCatalog{
 		AgentTargets:    &MySQLAgentTargetReader{DB: c.DB},
 		WorkflowTargets: &DomainWorkflowTargetReader{Domain: c.WorkflowDomain},
@@ -46,7 +47,8 @@ func InitService(c *ServiceComponents) (*ApplicationService, *Worker, error) {
 				Repository: repo,
 			},
 			entity.TargetTypeWorkflow: &WorkflowTaskExecutor{
-				Runner: &DomainWorkflowRunner{Domain: c.WorkflowDomain},
+				Runner:     &DomainWorkflowRunner{Domain: c.WorkflowDomain},
+				Repository: repo,
 			},
 		},
 		RootContext: c.RootContext,

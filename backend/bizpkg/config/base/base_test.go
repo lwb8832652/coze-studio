@@ -19,9 +19,13 @@ package base
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	adminconfig "github.com/coze-dev/coze-studio/backend/api/model/admin/config"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	domainsystemadmin "github.com/coze-dev/coze-studio/backend/domain/systemadmin"
 	"github.com/coze-dev/coze-studio/backend/pkg/kvstore"
 )
 
@@ -114,6 +118,85 @@ func TestSaveBaseConfigReadFailureDoesNotWrite(t *testing.T) {
 	}
 	if store.casCalls != 0 {
 		t.Fatalf("CompareAndSwap() calls = %d, want 0", store.casCalls)
+	}
+}
+
+func TestSaveBaseConfigCanonicalizesAdminEmailsBeforeCAS(t *testing.T) {
+	store := &fakeBasicConfigurationStore{
+		value: &adminconfig.BasicConfiguration{
+			AdminEmails: "existing-admin@example.test",
+		},
+		revision: "rev-1",
+	}
+	service := &BaseConfig{base: store}
+	value := " ADMIN@example.test ,admin@example.test,other@example.test "
+
+	revision, err := service.SaveBaseConfig(
+		context.Background(),
+		BasicConfigurationPatch{AdminEmails: &value},
+		"rev-1",
+	)
+	if err != nil {
+		t.Fatalf("SaveBaseConfig() error = %v", err)
+	}
+	if revision != "rev-next" || store.revision != "rev-next" {
+		t.Fatalf("saved revision = %q, store revision = %q", revision, store.revision)
+	}
+	if got := store.value.AdminEmails; got != "admin@example.test,other@example.test" {
+		t.Fatalf("canonical AdminEmails = %q", got)
+	}
+}
+
+func TestSaveBaseConfigRejectsInvalidAdminEmailsWithoutChangingAuthentication(t *testing.T) {
+	tooMany := make([]string, domainnotification.MaxExplicitRecipients+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("admin-%d@example.test", index)
+	}
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "empty", value: ""},
+		{name: "empty item", value: "admin@example.test,,other@example.test"},
+		{name: "trailing comma", value: "admin@example.test,"},
+		{name: "invalid address", value: "admin@example.test,bad address <"},
+		{name: "over limit", value: strings.Join(tooMany, ",")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeBasicConfigurationStore{
+				value: &adminconfig.BasicConfiguration{
+					AdminEmails: "existing-admin@example.test",
+				},
+				revision: "rev-1",
+			}
+			service := &BaseConfig{base: store}
+
+			_, err := service.SaveBaseConfig(
+				context.Background(),
+				BasicConfigurationPatch{AdminEmails: &test.value},
+				"rev-1",
+			)
+			if !errors.Is(err, domainsystemadmin.ErrInvalidEmailProjection) {
+				t.Fatalf("SaveBaseConfig() error = %v", err)
+			}
+			if store.casCalls != 0 ||
+				store.revision != "rev-1" ||
+				store.value.AdminEmails != "existing-admin@example.test" {
+				t.Fatalf(
+					"rejected write changed storage: calls=%d revision=%q config=%#v",
+					store.casCalls,
+					store.revision,
+					store.value,
+				)
+			}
+			if !domainsystemadmin.ContainsEmail(
+				"existing-admin@example.test",
+				store.value.AdminEmails,
+				domainnotification.MaxExplicitRecipients,
+			) {
+				t.Fatal("original persisted administrator no longer authenticates")
+			}
+		})
 	}
 }
 

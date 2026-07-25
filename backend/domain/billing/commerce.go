@@ -94,4 +94,4 @@ type OrderSnapshot struct {
 }
 
 type CreateOrderInput struct { UserID int64; Subject Subject; Type OrderType; TargetID int64; OrderNo string }
-type PaymentSucceededInput struct { OrderNo, Gateway, ProviderTransactionID, EventDigest, Currency string; AmountMicros int64 }
+type PaymentSucceededInput struct { OrderNo, Gateway, ProviderTransactionID, ProviderEventID, EventDigest, Currency string; AmountMicros int64 }

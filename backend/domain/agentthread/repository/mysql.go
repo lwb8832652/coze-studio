@@ -33,6 +33,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 )
 
 const (
@@ -3938,6 +3939,9 @@ func (r *threadRepository) ReconcileExpiredRunLease(
 		if err := tx.Create(eventPO).Error; err != nil {
 			return err
 		}
+		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
+			return err
+		}
 		reconciled = current.toEntity()
 		return nil
 	})
@@ -4013,6 +4017,9 @@ func (r *threadRepository) RequestRunCancellation(
 			return fmt.Errorf("%w: run %d cancellation lost execution fence", ErrRunLeaseLost, req.RunID)
 		}
 		if err := tx.Create(eventPO).Error; err != nil {
+			return err
+		}
+		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
 			return err
 		}
 
@@ -4208,6 +4215,9 @@ func (r *threadRepository) FinalizeRunSuccess(
 			}
 			result.TerminalCheckpoint = selectedTerminalCheckpoint
 		}
+		if err := appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent); err != nil {
+			return err
+		}
 
 		result.Run = completed.toEntity()
 		result.Message = &message
@@ -4313,6 +4323,9 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 				if eventCount == 0 {
 					return fmt.Errorf("run %d has no durable interrupted event", req.RunID)
 				}
+				if shouldAppendPrePersistedAwaitingInputOutbox(req) {
+					return appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent)
+				}
 			}
 			return nil
 		}
@@ -4323,8 +4336,36 @@ func (r *threadRepository) UpdateRunStatus(ctx context.Context, req UpdateRunSta
 		if terminalEvent.ThreadID != current.ThreadID {
 			return fmt.Errorf("terminal run event does not belong to run thread")
 		}
-		return tx.Create(terminalEventPO).Error
+		if err := tx.Create(terminalEventPO).Error; err != nil {
+			return err
+		}
+		return appendNotificationOutboxIntent(ctx, tx, req.OutboxIntent)
 	})
+}
+
+func appendNotificationOutboxIntent(
+	ctx context.Context,
+	tx *gorm.DB,
+	intent *NotificationOutboxIntent,
+) error {
+	if intent == nil {
+		return nil
+	}
+	if intent.Append == nil {
+		return fmt.Errorf("%w: append callback is required", domainnotification.ErrStorage)
+	}
+	return intent.Append(ctx, tx, intent.Event)
+}
+
+func shouldAppendPrePersistedAwaitingInputOutbox(req UpdateRunStatusRequest) bool {
+	if !req.EventAlreadyPersisted ||
+		req.To != entity.RunStatusInterrupted ||
+		req.OutboxIntent == nil ||
+		req.OutboxIntent.Event.EventType != domainnotification.EventTaskAwaitingInput {
+		return false
+	}
+	_, ok := entity.RunAwaitingInputInteractionRefFromEventPayload(req.EventPayload)
+	return ok
 }
 
 func normalizeTerminalRunEvent(

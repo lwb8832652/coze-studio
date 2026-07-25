@@ -21,9 +21,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	skillapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/skill"
 	toolapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/tool"
+	appnotification "github.com/coze-dev/coze-studio/backend/application/notification"
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
+	userentity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 )
 
 func TestApplicationServiceUpsertsListsGetsAndTestsMCPServer(t *testing.T) {
@@ -183,6 +188,158 @@ func TestApplicationServiceRecordsRuntimeHealth(t *testing.T) {
 	require.Equal(t, "runtime_failed", got.Data.HealthError)
 	require.NotContains(t, got.Data.HealthError, "/mnt/coze/mcp")
 	require.NotContains(t, got.Data.HealthError, "stdio-secret-token")
+}
+
+func TestApplicationServiceRecordRuntimeHealthSkipsDisabledAndTransientNotifications(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	repository := installRecordingMCPNotificationService(t)
+	roleReader := &recordingMCPHealthRoleReader{
+		spaces: []*userentity.Space{{ID: 1, RoleType: spaceRoleOwner}},
+		members: []SpaceMemberRole{
+			{UserID: 8, RoleType: spaceRoleOwner},
+			{UserID: 9, RoleType: spaceRoleAdmin},
+			{UserID: 10, RoleType: 3},
+		},
+	}
+	catalog := NewMySQLCatalog(db)
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:             catalog,
+		UserSpaceRoleReader: roleReader,
+		SpaceMemberRoleReader: roleReader,
+	})
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "disabled-health-mcp",
+		ServerType: "stdio",
+		Enabled:    false,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   101,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "transient-health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+
+	require.NoError(t, svc.RecordRuntimeHealth(managementContext(7), MCPRuntimeHealthReport{
+		ServerID:  100,
+		Success:   false,
+		ErrorCode: "transport_failed",
+		CheckedAt: 30,
+	}))
+	require.Empty(t, repository.events)
+	require.Empty(t, roleReader.memberSpaceIDs)
+
+	for index := int64(0); index < 2; index++ {
+		require.NoError(t, svc.RecordRuntimeHealth(managementContext(7), MCPRuntimeHealthReport{
+			ServerID:  101,
+			Success:   false,
+			ErrorCode: "transport_failed",
+			CheckedAt: 40 + index,
+		}))
+	}
+	require.Empty(t, repository.events)
+	require.Empty(t, roleReader.memberSpaceIDs)
+}
+
+func TestApplicationServiceRecordRuntimeHealthResolvesMCPIncidentRecipientsBySource(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&mcpToolServerPO{}))
+
+	repository := installRecordingMCPNotificationService(t)
+	roleReader := &recordingMCPHealthRoleReader{
+		spaces: []*userentity.Space{{ID: 1, RoleType: spaceRoleOwner}},
+		members: []SpaceMemberRole{
+			{UserID: 8, RoleType: spaceRoleOwner},
+			{UserID: 9, RoleType: spaceRoleAdmin},
+			{UserID: 10, RoleType: 3},
+		},
+	}
+	catalog := NewMySQLCatalog(db)
+	svc := newAuthorizedLegacyApplicationService(&Components{
+		Catalog:             catalog,
+		UserSpaceRoleReader: roleReader,
+		SpaceMemberRoleReader: roleReader,
+	})
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   100,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceTypeCustom,
+		Name:       "custom-health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+	require.NoError(t, catalog.Upsert(context.Background(), &toolapi.MCPToolServer{
+		ServerID:   101,
+		SpaceID:    1,
+		CreatorID:  7,
+		SourceType: toolapi.MCPServerSourceType("official"),
+		Name:       "official-health-mcp",
+		ServerType: "stdio",
+		Enabled:    true,
+		Config:     `{}`,
+		Auth:       `{}`,
+		Tools: []*toolapi.MCPToolDefinition{
+			{Name: "search", Description: "Search.", InputSchema: `{"type":"object"}`},
+		},
+		CreatedAt: 10,
+		UpdatedAt: 20,
+	}))
+
+	for index := int64(0); index < 3; index++ {
+		require.NoError(t, svc.RecordRuntimeHealth(managementContext(7), MCPRuntimeHealthReport{
+			ServerID:  100,
+			Success:   false,
+			ErrorCode: "transport_failed",
+			CheckedAt: 50 + index,
+		}))
+	}
+	require.Len(t, repository.events, 1)
+	require.Equal(t, domainnotification.EventMCPConnectionDegraded, repository.events[0].EventType)
+	require.Equal(t, []int64{7, 8, 9}, repository.events[0].Payload.ExplicitRecipientIDs)
+
+	for index := int64(0); index < 3; index++ {
+		require.NoError(t, svc.RecordRuntimeHealth(managementContext(7), MCPRuntimeHealthReport{
+			ServerID:  101,
+			Success:   false,
+			ErrorCode: "transport_failed",
+			CheckedAt: 60 + index,
+		}))
+	}
+	require.Len(t, repository.events, 2)
+	require.Equal(t, domainnotification.EventMCPConnectionDegraded, repository.events[1].EventType)
+	require.Equal(t, []int64{8, 9}, repository.events[1].Payload.ExplicitRecipientIDs)
 }
 
 func TestApplicationServiceListsSkillToolCandidatesFromEnabledMCPServers(t *testing.T) {
@@ -768,12 +925,101 @@ func TestApplicationServiceResolvesRuntimeServerWithRawConfigAndAuth(t *testing.
 	require.NotContains(t, response.Data.Auth, "raw-secret")
 }
 
+func installRecordingMCPNotificationService(t *testing.T) *recordingMCPNotificationRepository {
+	previous := appnotification.SVC
+	repository := &recordingMCPNotificationRepository{}
+	appnotification.SetDefaultService(appnotification.NewService(repository))
+	t.Cleanup(func() {
+		appnotification.SetDefaultService(previous)
+	})
+	return repository
+}
+
+type recordingMCPNotificationRepository struct {
+	events []domainnotification.Event
+}
+
+func (r *recordingMCPNotificationRepository) Append(
+	ctx context.Context,
+	event domainnotification.Event,
+) error {
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *recordingMCPNotificationRepository) AppendInTransaction(
+	ctx context.Context,
+	tx *gorm.DB,
+	event domainnotification.Event,
+) error {
+	r.events = append(r.events, event)
+	return nil
+}
+
+func (r *recordingMCPNotificationRepository) ListForUser(
+	ctx context.Context,
+	filter domainnotification.ListFilter,
+) (domainnotification.ListPage, error) {
+	return domainnotification.ListPage{}, nil
+}
+
+func (r *recordingMCPNotificationRepository) CountUnread(
+	ctx context.Context,
+	userID int64,
+) (int64, error) {
+	return 0, nil
+}
+
+func (r *recordingMCPNotificationRepository) MarkRead(
+	ctx context.Context,
+	userID int64,
+	notificationIDs []int64,
+	readAt int64,
+) (int64, error) {
+	return 0, nil
+}
+
+func (r *recordingMCPNotificationRepository) MarkAllRead(
+	ctx context.Context,
+	userID int64,
+	cutoff int64,
+	readAt int64,
+) (int64, error) {
+	return 0, nil
+}
+
+type recordingMCPHealthRoleReader struct {
+	spaces         []*userentity.Space
+	members        []SpaceMemberRole
+	userIDs        []int64
+	memberSpaceIDs []int64
+}
+
+func (r *recordingMCPHealthRoleReader) GetUserSpaceList(
+	ctx context.Context,
+	userID int64,
+) ([]*userentity.Space, error) {
+	r.userIDs = append(r.userIDs, userID)
+	return append([]*userentity.Space(nil), r.spaces...), nil
+}
+
+func (r *recordingMCPHealthRoleReader) ListSpaceMemberRoles(
+	ctx context.Context,
+	spaceID int64,
+) ([]SpaceMemberRole, error) {
+	r.memberSpaceIDs = append(r.memberSpaceIDs, spaceID)
+	return append([]SpaceMemberRole(nil), r.members...), nil
+}
+
 func newAuthorizedLegacyApplicationService(c *Components) *ApplicationService {
 	if c == nil {
 		c = &Components{}
 	}
 	if c.UserSpaceRoleReader == nil {
 		c.UserSpaceRoleReader = ownerRoleReader(1)
+	}
+	if c.SpaceMemberRoleReader == nil {
+		c.SpaceMemberRoleReader = ownerRoleReader(1)
 	}
 	if c.CapabilityDiscoverer == nil {
 		c.CapabilityDiscoverer = &managementDiscoverer{result: &DiscoveredCapabilities{}}

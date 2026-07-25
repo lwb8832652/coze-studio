@@ -16,6 +16,13 @@
 
 package entity
 
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
 type ThreadStatus string
 
 const (
@@ -45,6 +52,123 @@ const (
 	RunStatusFailed      RunStatus = "failed"
 	RunStatusCanceled    RunStatus = "canceled"
 )
+
+const (
+	RunAwaitingInputInteractionRefSchema     = "coze.agentthread.awaiting_input.v1"
+	RunAwaitingInputInteractionRefPayloadKey = "awaiting_input"
+	maxRunAwaitingInputInteractionIDRunes    = 90
+	maxRunAwaitingInputKindRunes             = 32
+)
+
+type RunAwaitingInputInteractionRef struct {
+	Schema             string `json:"schema"`
+	InteractionEventID string `json:"interaction_event_id"`
+	InteractionID      string `json:"interaction_id,omitempty"`
+	Kind               string `json:"kind,omitempty"`
+}
+
+func (r RunAwaitingInputInteractionRef) Normalized() RunAwaitingInputInteractionRef {
+	return RunAwaitingInputInteractionRef{
+		Schema:             strings.TrimSpace(r.Schema),
+		InteractionEventID: strings.TrimSpace(r.InteractionEventID),
+		InteractionID:      strings.TrimSpace(r.InteractionID),
+		Kind:               strings.TrimSpace(r.Kind),
+	}
+}
+
+func (r RunAwaitingInputInteractionRef) Validate() error {
+	normalized := r.Normalized()
+	if normalized.Schema != RunAwaitingInputInteractionRefSchema {
+		return fmt.Errorf("awaiting-input interaction reference schema is invalid")
+	}
+	if !validRunAwaitingInputIdentifier(
+		normalized.InteractionEventID,
+		maxRunAwaitingInputInteractionIDRunes,
+	) {
+		return fmt.Errorf("awaiting-input interaction event id is invalid")
+	}
+	if normalized.InteractionID != "" &&
+		!validRunAwaitingInputIdentifier(
+			normalized.InteractionID,
+			maxRunAwaitingInputInteractionIDRunes,
+		) {
+		return fmt.Errorf("awaiting-input interaction id is invalid")
+	}
+	if normalized.Kind != "" &&
+		!validRunAwaitingInputIdentifier(normalized.Kind, maxRunAwaitingInputKindRunes) {
+		return fmt.Errorf("awaiting-input interaction kind is invalid")
+	}
+	return nil
+}
+
+func RunAwaitingInputInteractionRefFromAny(
+	value any,
+) (RunAwaitingInputInteractionRef, error) {
+	switch typed := value.(type) {
+	case RunAwaitingInputInteractionRef:
+		normalized := typed.Normalized()
+		return normalized, normalized.Validate()
+	case *RunAwaitingInputInteractionRef:
+		if typed == nil {
+			return RunAwaitingInputInteractionRef{}, fmt.Errorf("awaiting-input interaction reference is required")
+		}
+		normalized := typed.Normalized()
+		return normalized, normalized.Validate()
+	default:
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return RunAwaitingInputInteractionRef{}, err
+		}
+		var ref RunAwaitingInputInteractionRef
+		if err := json.Unmarshal(raw, &ref); err != nil {
+			return RunAwaitingInputInteractionRef{}, err
+		}
+		normalized := ref.Normalized()
+		return normalized, normalized.Validate()
+	}
+}
+
+func RunAwaitingInputInteractionRefFromEventPayload(
+	payload string,
+) (RunAwaitingInputInteractionRef, bool) {
+	raw := strings.TrimSpace(payload)
+	if raw == "" {
+		return RunAwaitingInputInteractionRef{}, false
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
+		return RunAwaitingInputInteractionRef{}, false
+	}
+	value, exists := fields[RunAwaitingInputInteractionRefPayloadKey]
+	if !exists {
+		return RunAwaitingInputInteractionRef{}, false
+	}
+	ref, err := RunAwaitingInputInteractionRefFromAny(value)
+	if err != nil {
+		return RunAwaitingInputInteractionRef{}, false
+	}
+	return ref, true
+}
+
+func validRunAwaitingInputIdentifier(value string, maxRunes int) bool {
+	if value == "" || maxRunes <= 0 || utf8.RuneCountInString(value) > maxRunes {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' ||
+			r >= 'A' && r <= 'Z' ||
+			r >= '0' && r <= '9' ||
+			r == '.' ||
+			r == '_' ||
+			r == ':' ||
+			r == '@' ||
+			r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 type RunKind string
 

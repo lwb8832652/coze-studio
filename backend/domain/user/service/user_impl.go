@@ -31,7 +31,9 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
+	"gorm.io/gorm"
 
+	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	uploadEntity "github.com/coze-dev/coze-studio/backend/domain/upload/entity"
 	userEntity "github.com/coze-dev/coze-studio/backend/domain/user/entity"
 	"github.com/coze-dev/coze-studio/backend/domain/user/internal/dal/model"
@@ -307,6 +309,7 @@ func (u *userImpl) Create(ctx context.Context, req *CreateUserRequest) (user *us
 			IconURI:        uploadEntity.EnterpriseIconURI,
 			OwnerID:        userID,
 			CreatorID:      userID,
+			SpaceType:      int32(userEntity.SpaceTypePersonal),
 			AllowDevelop:   true,
 			ReceivePublish: false,
 			CreatedAt:      now,
@@ -396,6 +399,7 @@ func (u *userImpl) CreateSpace(ctx context.Context, req *CreateSpaceRequest) (*u
 		IconURI:        iconURI,
 		OwnerID:        req.UserID,
 		CreatorID:      req.UserID,
+		SpaceType:      int32(spaceType),
 		AllowDevelop:   true,
 		ReceivePublish: false,
 		CreatedAt:      now,
@@ -466,6 +470,28 @@ func (u *userImpl) UpdateSpace(ctx context.Context, req *UpdateSpaceRequest) err
 }
 
 func (u *userImpl) AddSpaceMembers(ctx context.Context, members []*AddSpaceMemberRequest) error {
+	return u.addSpaceMembers(ctx, 0, members, nil, false)
+}
+
+func (u *userImpl) AddSpaceMembersWithNotification(
+	ctx context.Context,
+	actorID int64,
+	members []*AddSpaceMemberRequest,
+	appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error,
+) error {
+	if actorID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid actor id"))
+	}
+	return u.addSpaceMembers(ctx, actorID, members, appendOutbox, true)
+}
+
+func (u *userImpl) addSpaceMembers(
+	ctx context.Context,
+	actorID int64,
+	members []*AddSpaceMemberRequest,
+	appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error,
+	withNotification bool,
+) error {
 	if len(members) == 0 {
 		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "members cannot be empty"))
 	}
@@ -508,20 +534,32 @@ func (u *userImpl) AddSpaceMembers(ctx context.Context, members []*AddSpaceMembe
 	})
 
 	now := time.Now().UnixMilli()
+	newSpaceUsers := make([]*model.SpaceUser, 0, len(members))
 	for _, member := range members {
 		if existingByUserID[member.UserID] {
 			continue
 		}
-		if err := u.SpaceRepo.AddSpaceUser(ctx, &model.SpaceUser{
+		spaceUser := &model.SpaceUser{
 			SpaceID:   spaceID,
 			UserID:    member.UserID,
 			RoleType:  member.RoleType,
 			CreatedAt: now,
 			UpdatedAt: now,
-		}); err != nil {
+		}
+		newSpaceUsers = append(newSpaceUsers, spaceUser)
+		existingByUserID[member.UserID] = true
+	}
+
+	if len(newSpaceUsers) == 0 {
+		return nil
+	}
+	if withNotification {
+		return u.SpaceRepo.AddSpaceUsersWithNotification(ctx, actorID, newSpaceUsers, appendOutbox)
+	}
+	for _, spaceUser := range newSpaceUsers {
+		if err := u.SpaceRepo.AddSpaceUser(ctx, spaceUser); err != nil {
 			return err
 		}
-		existingByUserID[member.UserID] = true
 	}
 
 	return nil
@@ -538,12 +576,50 @@ func (u *userImpl) UpdateSpaceMemberRole(ctx context.Context, spaceID int64, use
 	return u.SpaceRepo.UpdateSpaceUserRole(ctx, spaceID, userID, roleType)
 }
 
+func (u *userImpl) UpdateSpaceMemberRoleWithNotification(
+	ctx context.Context,
+	actorID int64,
+	spaceID int64,
+	userID int64,
+	roleType int32,
+	appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error,
+) error {
+	if actorID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid actor id"))
+	}
+	if spaceID <= 0 || userID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
+	}
+	if roleType != 2 && roleType != 3 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid role type"))
+	}
+
+	return u.SpaceRepo.UpdateSpaceUserRoleWithNotification(ctx, actorID, spaceID, userID, roleType, appendOutbox)
+}
+
 func (u *userImpl) RemoveSpaceMember(ctx context.Context, spaceID int64, userID int64) error {
 	if spaceID <= 0 || userID <= 0 {
 		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
 	}
 
 	return u.SpaceRepo.RemoveSpaceUser(ctx, spaceID, userID)
+}
+
+func (u *userImpl) RemoveSpaceMemberWithNotification(
+	ctx context.Context,
+	actorID int64,
+	spaceID int64,
+	userID int64,
+	appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error,
+) error {
+	if actorID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid actor id"))
+	}
+	if spaceID <= 0 || userID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid member"))
+	}
+
+	return u.SpaceRepo.RemoveSpaceUserWithNotification(ctx, actorID, spaceID, userID, appendOutbox)
 }
 
 func (u *userImpl) IsSpaceMember(ctx context.Context, spaceID int64, userID int64) (bool, error) {
@@ -595,6 +671,23 @@ func (u *userImpl) TransferSpace(ctx context.Context, spaceID int64, targetUserI
 		}
 	}
 	return u.SpaceRepo.UpdateSpaceUserRole(ctx, spaceID, targetUserID, 1)
+}
+
+func (u *userImpl) TransferSpaceWithNotification(
+	ctx context.Context,
+	actorID int64,
+	spaceID int64,
+	targetUserID int64,
+	appendOutbox func(context.Context, *gorm.DB, domainnotification.Event) error,
+) error {
+	if actorID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid actor id"))
+	}
+	if spaceID <= 0 || targetUserID <= 0 {
+		return errorx.New(errno.ErrUserInvalidParamCode, errorx.KV("msg", "invalid transfer request"))
+	}
+
+	return u.SpaceRepo.TransferSpaceWithNotification(ctx, actorID, spaceID, targetUserID, appendOutbox)
 }
 
 func (u *userImpl) DeleteSpace(ctx context.Context, spaceID int64) error {
@@ -883,7 +976,7 @@ func spacePo2Do(space *model.Space, iconUrl string) *userEntity.Space {
 		Name:           space.Name,
 		Description:    space.Description,
 		IconURL:        iconUrl,
-		SpaceType:      inferSpaceType(space),
+		SpaceType:      spaceTypePo2Do(space),
 		OwnerID:        space.OwnerID,
 		CreatorID:      space.CreatorID,
 		AllowDevelop:   space.AllowDevelop,
@@ -893,17 +986,18 @@ func spacePo2Do(space *model.Space, iconUrl string) *userEntity.Space {
 	}
 }
 
-func inferSpaceType(space *model.Space) userEntity.SpaceType {
+func spaceTypePo2Do(space *model.Space) userEntity.SpaceType {
 	if space == nil {
 		return userEntity.SpaceTypeTeam
 	}
-	if space.Name == defaultPersonalSpaceName && space.Description == defaultPersonalSpaceDescription {
+	switch userEntity.SpaceType(space.SpaceType) {
+	case userEntity.SpaceTypePersonal:
 		return userEntity.SpaceTypePersonal
+	case userEntity.SpaceTypeTeam:
+		return userEntity.SpaceTypeTeam
+	default:
+		return userEntity.SpaceTypeTeam
 	}
-	if space.Name == "Personal" && space.Description == "Personal Space" {
-		return userEntity.SpaceTypePersonal
-	}
-	return userEntity.SpaceTypeTeam
 }
 
 // Argon2id parameter
