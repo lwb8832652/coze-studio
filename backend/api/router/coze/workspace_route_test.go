@@ -30,6 +30,14 @@ func TestRegisterIncludesWorkspaceRoutes(t *testing.T) {
 	Register(h)
 	RegisterCustomRoutes(h)
 
+	saveResp := ut.PerformRequest(
+		h.Engine,
+		http.MethodPost,
+		"/api/playground_api/space/save",
+		nil,
+	)
+	require.NotEqual(t, http.StatusNotFound, saveResp.Code)
+
 	detailResp := ut.PerformRequest(
 		h.Engine,
 		http.MethodGet,

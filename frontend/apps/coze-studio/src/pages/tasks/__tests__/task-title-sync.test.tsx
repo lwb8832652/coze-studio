@@ -19,7 +19,7 @@ import { useState } from 'react';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import type { workbenchTask } from '@coze-studio/api-schema';
+import { workbenchTask } from '@coze-studio/api-schema';
 
 import { useTaskThreadTitleSync } from '../task-title-sync';
 import {
@@ -97,6 +97,68 @@ describe('task title synchronization', () => {
         thread: {
           thread_id: 'thread-1',
           title: '中小企业智能协作平台发布计划',
+          updated_at: 1717000100000,
+        },
+      },
+    ]);
+
+    window.removeEventListener(
+      WORKSPACE_TASK_THREAD_UPSERT_EVENT,
+      handleUpsert,
+    );
+  });
+
+  it('patches the workspace task list when canonical polling changes status', () => {
+    const emittedDetails: WorkspaceTaskThreadUpsertDetail[] = [];
+    let controls: TitleSyncControls | undefined;
+    const handleUpsert = (event: Event) => {
+      emittedDetails.push(
+        (event as CustomEvent<WorkspaceTaskThreadUpsertDetail>).detail,
+      );
+    };
+    const Harness = () => {
+      const [, setTask] = useState<ChatTask>();
+      controls = useTaskThreadTitleSync({
+        setTask,
+        spaceID: 'space-1',
+      });
+      return null;
+    };
+
+    window.addEventListener(WORKSPACE_TASK_THREAD_UPSERT_EVENT, handleUpsert);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(<Harness />);
+    });
+    act(() => {
+      controls?.setCurrentTask({
+        id: 'thread-1',
+        space_id: 'space-1',
+        title: '通知终态验收',
+        status: workbenchTask.TaskStatus.Created,
+        updated_at: 1717000000000,
+      } as ChatTask);
+    });
+    act(() => {
+      controls?.setCurrentTask({
+        id: 'thread-1',
+        space_id: 'space-1',
+        title: '通知终态验收',
+        status: workbenchTask.TaskStatus.Succeeded,
+        updated_at: 1717000100000,
+      } as ChatTask);
+    });
+
+    expect(emittedDetails).toEqual([
+      {
+        mode: 'patch',
+        space_id: 'space-1',
+        thread: {
+          thread_id: 'thread-1',
+          status: workbenchTask.TaskStatus.Succeeded,
           updated_at: 1717000100000,
         },
       },

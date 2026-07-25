@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import {
   afterAll,
@@ -135,12 +135,24 @@ vi.mock('@coze-arch/coze-design', () => {
     content?: ReactNode;
     onVisibleChange?: (visible: boolean) => void;
     visible?: boolean;
-  }) => (
-    <>
-      <span onClick={() => onVisibleChange?.(!visible)}>{children}</span>
-      {visible ? <div role="dialog">{content}</div> : null}
-    </>
-  );
+  }) => {
+    const [, setRevision] = useState(0);
+    return (
+      <>
+        <span
+          onClick={() => {
+            setRevision(current => {
+              onVisibleChange?.(!visible);
+              return current + 1;
+            });
+          }}
+        >
+          {children}
+        </span>
+        {visible ? <div role="dialog">{content}</div> : null}
+      </>
+    );
+  };
 
   return {
     Badge: MockBadge,
@@ -308,6 +320,33 @@ describe('NotificationBell', () => {
     expect(container.querySelector('[aria-label="通知中心"]')).toBeNull();
   });
 
+  it('defers popover visibility callbacks outside the popover state update', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const container = await renderBell();
+      const trigger = container.querySelector(
+        'button[aria-label="通知，2 条未读"]',
+      ) as HTMLButtonElement | null;
+
+      await act(async () => {
+        trigger?.click();
+        await flush();
+      });
+
+      expect(
+        consoleError.mock.calls
+          .flat()
+          .map(value => String(value))
+          .join(' '),
+      ).not.toContain('scheduled from inside an update function');
+      expect(container.querySelector('[aria-label="通知中心"]')).toBeTruthy();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('supports retry after the notification list fails', async () => {
     mockGetNoticeList
       .mockRejectedValueOnce(new Error('network error'))
@@ -379,6 +418,16 @@ describe('NotificationBell', () => {
         '202',
       ),
     ).toBe('/space/202/tasks/thread-100');
+    expect(
+      getNotificationTarget(
+        {
+          route: NotificationRoute.TaskThread,
+          route_space_id: '202',
+          route_target_id: 'thread:7666445789865967616',
+        },
+        '202',
+      ),
+    ).toBe('/space/202/tasks/7666445789865967616');
     expect(
       getNotificationTarget(
         {

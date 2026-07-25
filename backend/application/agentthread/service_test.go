@@ -4217,6 +4217,30 @@ func TestApplicationFinalizeRunSuccessMapsFenceAndResult(t *testing.T) {
 	require.True(t, resp.TitleUpdated)
 }
 
+func TestAgentRunHasScheduledTaskOrigin(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		want     bool
+	}{
+		{name: "empty", metadata: "", want: false},
+		{name: "empty object", metadata: `{}`, want: false},
+		{name: "manual source", metadata: `{"source":"manual"}`, want: false},
+		{name: "null scheduled identifiers", metadata: `{"scheduled_task_id":null,"scheduled_task_execution_id":null}`, want: false},
+		{name: "blank scheduled identifiers", metadata: `{"scheduled_task_id":" ","scheduled_task_execution_id":""}`, want: false},
+		{name: "malformed metadata", metadata: `{`, want: false},
+		{name: "scheduled source", metadata: `{"source":"scheduled_task"}`, want: true},
+		{name: "scheduled task id", metadata: `{"scheduled_task_id":123}`, want: true},
+		{name: "scheduled execution id", metadata: `{"scheduled_task_execution_id":"execution-1"}`, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, agentRunHasScheduledTaskOrigin(tt.metadata))
+		})
+	}
+}
+
 func TestApplicationAppendRunEventMapsDomainEvent(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		appendedRunEvent: &entity.RunEvent{

@@ -21,6 +21,7 @@ func RegisterCustomRoutes(r *server.Hertz) {
 	registerBillingCustomRoutes(api)
 	registerWorkbenchCustomRoutes(api)
 	registerWorkspaceCustomRoutes(api)
+	registerSpaceCompatibilityRoutes(api)
 	registerLangGraphCustomRoutes(api)
 }
 
@@ -136,6 +137,12 @@ func registerWorkspaceCustomRoutes(api *route.RouterGroup) {
 	workspace.POST("/member/remove", handler.RemoveWorkspaceMember)
 	workspace.POST("/transfer", handler.TransferWorkspace)
 	workspace.POST("/delete", handler.DeleteWorkspace)
+}
+
+func registerSpaceCompatibilityRoutes(api *route.RouterGroup) {
+	playgroundAPI := api.Group("/playground_api", _playground_apiMw()...)
+	space := playgroundAPI.Group("/space", _spaceMw()...)
+	space.POST("/save", handler.SaveSpaceV2)
 }
 
 func registerLangGraphCustomRoutes(api *route.RouterGroup) {

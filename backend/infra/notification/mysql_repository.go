@@ -18,6 +18,7 @@ import (
 	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
+	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -138,6 +139,11 @@ func runNotificationTransaction(
 }
 
 func isRetryableNotificationTransactionError(err error) bool {
+	var sqliteError sqlite3.Error
+	if errors.As(err, &sqliteError) {
+		return sqliteError.Code == sqlite3.ErrBusy ||
+			sqliteError.Code == sqlite3.ErrLocked
+	}
 	var mysqlError *mysqldriver.MySQLError
 	if !errors.As(err, &mysqlError) {
 		return false

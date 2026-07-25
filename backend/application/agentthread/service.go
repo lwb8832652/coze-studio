@@ -38,6 +38,7 @@ import (
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 	domainnotification "github.com/coze-dev/coze-studio/backend/domain/notification"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
 var SVC = new(ApplicationService)
@@ -4133,18 +4134,45 @@ func (s *ApplicationService) agentRunTerminalOutboxIntent(
 	status domainentity.RunStatus,
 	now int64,
 ) *domainrepo.NotificationOutboxIntent {
-	if s == nil || s.ThreadSVC == nil || !appnotification.SVC.IsConfigured() {
+	if s == nil || s.ThreadSVC == nil {
+		logs.CtxWarnf(ctx, "[agent-run-notification] skip terminal event: thread service unavailable, run_id=%d status=%s", runID, status)
+		return nil
+	}
+	if appnotification.SVC == nil || !appnotification.SVC.IsConfigured() {
+		logs.CtxWarnf(ctx, "[agent-run-notification] skip terminal event: notification service unavailable, run_id=%d status=%s", runID, status)
 		return nil
 	}
 	eventType, transition := agentRunNotificationEventType(status)
 	if eventType == "" || runID <= 0 {
+		logs.CtxWarnf(ctx, "[agent-run-notification] skip terminal event: unsupported transition, run_id=%d status=%s", runID, status)
 		return nil
 	}
 	run, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: runID})
-	if err != nil || run == nil || run.ParentRunID > 0 ||
-		run.RunKind == domainentity.RunKindSubagent ||
-		run.CreatorID <= 0 || run.SpaceID <= 0 || run.ThreadID <= 0 ||
-		agentRunHasScheduledTaskOrigin(run.Metadata) {
+	if err != nil {
+		logs.CtxWarnf(ctx, "[agent-run-notification] skip terminal event: load run failed, run_id=%d status=%s err=%v", runID, status, err)
+		return nil
+	}
+	if run == nil {
+		logs.CtxWarnf(ctx, "[agent-run-notification] skip terminal event: run not found, run_id=%d status=%s", runID, status)
+		return nil
+	}
+	if run.ParentRunID > 0 || run.RunKind == domainentity.RunKindSubagent ||
+		run.CreatorID <= 0 || run.SpaceID <= 0 || run.ThreadID <= 0 {
+		logs.CtxWarnf(
+			ctx,
+			"[agent-run-notification] skip terminal event: run is not an eligible root task, run_id=%d thread_id=%d space_id=%d creator_id=%d parent_run_id=%d run_kind=%s status=%s",
+			run.ID,
+			run.ThreadID,
+			run.SpaceID,
+			run.CreatorID,
+			run.ParentRunID,
+			run.RunKind,
+			status,
+		)
+		return nil
+	}
+	if agentRunHasScheduledTaskOrigin(run.Metadata) {
+		logs.CtxInfof(ctx, "[agent-run-notification] skip terminal event: scheduled task owns notification, run_id=%d thread_id=%d status=%s", run.ID, run.ThreadID, status)
 		return nil
 	}
 	thread, _ := s.ThreadSVC.GetThread(ctx, run.ThreadID)
@@ -4162,6 +4190,15 @@ func (s *ApplicationService) agentRunTerminalOutboxIntent(
 	if eventVersion <= 0 {
 		eventVersion = run.ID
 	}
+	logs.CtxInfof(
+		ctx,
+		"[agent-run-notification] enqueue terminal event, run_id=%d thread_id=%d space_id=%d recipient_id=%d event_type=%s",
+		run.ID,
+		run.ThreadID,
+		run.SpaceID,
+		run.CreatorID,
+		eventType,
+	)
 	return &domainrepo.NotificationOutboxIntent{
 		Event: domainnotification.Event{
 			EventID:          fmt.Sprintf("run-event:%d:%s", eventVersion, transition),
@@ -4258,14 +4295,26 @@ func agentRunHasScheduledTaskOrigin(metadata string) bool {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(payload["source"])), "scheduled_task") {
+	source, _ := payload["source"].(string)
+	if strings.EqualFold(strings.TrimSpace(source), "scheduled_task") {
 		return true
 	}
-	if strings.TrimSpace(fmt.Sprint(payload["scheduled_task_id"])) != "" ||
-		strings.TrimSpace(fmt.Sprint(payload["scheduled_task_execution_id"])) != "" {
-		return true
+	hasIdentifier := func(key string) bool {
+		value, ok := payload[key]
+		if !ok || value == nil {
+			return false
+		}
+		switch typed := value.(type) {
+		case string:
+			return strings.TrimSpace(typed) != ""
+		case float64:
+			return typed > 0
+		default:
+			return false
+		}
 	}
-	return false
+	return hasIdentifier("scheduled_task_id") ||
+		hasIdentifier("scheduled_task_execution_id")
 }
 
 func shouldNotifyRunCancellation(errorCode string) bool {
@@ -4288,6 +4337,23 @@ func safeAgentRunNotificationDisplayName(value string) string {
 }
 
 func agentRunNotificationDisplayNameIsSafe(displayName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(displayName))
+	for _, marker := range []string{
+		"api_key",
+		"access_token",
+		"refresh_token",
+		"client_secret",
+		"app_secret",
+		"private_key",
+		"authorization",
+		"password",
+		"credential",
+		"cookie",
+	} {
+		if strings.Contains(normalized, marker) {
+			return false
+		}
+	}
 	event := domainnotification.Event{
 		EventID:          "agent-run-display-name-safety-check",
 		EventType:        domainnotification.EventTaskCompleted,
@@ -4304,7 +4370,8 @@ func agentRunNotificationDisplayNameIsSafe(displayName string) bool {
 			TargetID:            "thread:1",
 		},
 	}
-	return event.Validate() == nil
+	return domainnotification.DefaultTemplateRegistry().ValidateAppendable(event) ==
+		nil
 }
 
 func truncateNotificationDisplayName(value string) string {

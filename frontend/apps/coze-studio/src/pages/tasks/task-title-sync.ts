@@ -43,21 +43,36 @@ const buildThreadTitleUpdatedTask = ({
   };
 };
 
-const emitThreadTitlePatch = ({
+const emitThreadSummaryPatch = ({
+  previousTask,
   spaceID,
   task,
 }: {
+  previousTask: ChatTask;
   spaceID?: string;
   task: ChatTask;
 }) => {
+  const nextTitle = task.title?.trim();
+  const titleChanged =
+    Boolean(nextTitle) && previousTask.title?.trim() !== nextTitle;
+  const statusChanged = previousTask.status !== task.status;
+  const thread: Partial<workbenchTask.TaskThread> &
+    Pick<workbenchTask.TaskThread, 'thread_id'> = {
+    thread_id: task.id,
+    updated_at: task.updated_at,
+  };
+
+  if (titleChanged) {
+    thread.title = nextTitle;
+  }
+  if (statusChanged) {
+    thread.status = task.status;
+  }
+
   emitWorkspaceTaskThreadUpsert({
     mode: 'patch',
     space_id: task.space_id || spaceID || '',
-    thread: {
-      thread_id: task.id,
-      title: task.title,
-      updated_at: task.updated_at,
-    },
+    thread,
   });
 };
 
@@ -76,21 +91,21 @@ export const useTaskThreadTitleSync = ({
       setTask(nextTask);
 
       const nextTitle = nextTask?.title?.trim();
+      const titleChanged =
+        Boolean(nextTitle) && previousTask?.title?.trim() !== nextTitle;
+      const statusChanged = previousTask?.status !== nextTask?.status;
       if (
         !nextTask ||
-        !nextTitle ||
         previousTask?.id !== nextTask.id ||
-        previousTask.title?.trim() === nextTitle
+        (!titleChanged && !statusChanged)
       ) {
         return;
       }
 
-      emitThreadTitlePatch({
+      emitThreadSummaryPatch({
+        previousTask,
         spaceID,
-        task: {
-          ...nextTask,
-          title: nextTitle,
-        },
+        task: nextTitle ? { ...nextTask, title: nextTitle } : nextTask,
       });
     },
     [setTask, spaceID],

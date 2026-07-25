@@ -1266,6 +1266,7 @@ func TestRunProcessorAttachesTerminalOutboxIntentForSuccessfulRun(t *testing.T) 
 	domainRun := &entity.Run{
 		ID: 200, ThreadID: 10, SpaceID: 1, CreatorID: 2,
 		Status: entity.RunStatusRunning, Input: `{"messages":[]}`,
+		Metadata: `{}`,
 		WorkerID: "worker-a", LeaseOwner: "worker-a", LeaseToken: "lease-200",
 		ExecutionGeneration: 3, UpdatedAt: 1_000,
 	}

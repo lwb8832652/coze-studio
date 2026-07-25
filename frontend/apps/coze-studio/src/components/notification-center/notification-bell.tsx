@@ -15,6 +15,7 @@
  */
 
 import { useNavigate } from 'react-router-dom';
+import { useCallback, useRef } from 'react';
 
 import { ReadStatus } from '@coze-studio/api-schema/playground';
 import { useSpaceStore } from '@coze-foundation/space-store';
@@ -79,9 +80,13 @@ export const getNotificationTarget = (
     return '';
   }
   const spaceID = encodeURIComponent(routeSpaceID);
-  const targetID = encodeURIComponent(
-    safeRouteValue(notification.route_target_id),
-  );
+  const routeTargetID = safeRouteValue(notification.route_target_id);
+  const normalizedTargetID =
+    notification.route === NotificationRoute.TaskThread &&
+    routeTargetID.startsWith('thread:')
+      ? routeTargetID.slice('thread:'.length)
+      : routeTargetID;
+  const targetID = encodeURIComponent(safeRouteValue(normalizedTargetID));
   switch (notification.route) {
     case NotificationRoute.TaskThread:
       return spaceID && targetID ? `/space/${spaceID}/tasks/${targetID}` : '';
@@ -271,6 +276,19 @@ export const NotificationBell = ({
   const displayUnreadCount =
     unreadCount > MAX_VISIBLE_UNREAD_COUNT ? '99+' : unreadCount;
   const ariaLabel = unreadCount > 0 ? `通知，${unreadCount} 条未读` : '通知';
+  const visibilityChangeSequenceRef = useRef(0);
+
+  const handlePopoverVisibleChange = useCallback(
+    (nextOpen: boolean) => {
+      const sequence = ++visibilityChangeSequenceRef.current;
+      queueMicrotask(() => {
+        if (visibilityChangeSequenceRef.current === sequence) {
+          state.setOpen(nextOpen);
+        }
+      });
+    },
+    [state.setOpen],
+  );
 
   const markReadBestEffort = (notification: Notification) => {
     void state.markRead(notification).catch(error => {
@@ -365,7 +383,7 @@ export const NotificationBell = ({
       position="bottomRight"
       trigger="custom"
       visible={state.open}
-      onVisibleChange={state.setOpen}
+      onVisibleChange={handlePopoverVisibleChange}
       showArrow={false}
     >
       {unreadCount > 0 ? (
