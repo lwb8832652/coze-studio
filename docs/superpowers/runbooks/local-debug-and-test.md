@@ -131,7 +131,7 @@ atlas migrate validate --dir file://docker/atlas/migrations
 
 不要手工编辑 `docker/atlas/migrations/atlas.sum`。
 
-## 分支与转测试
+## 分支与集成
 
 - `dev` 是本地与远程集成分支，需求在独立 `codex/` 分支实施。
 - 合入本地 `dev` 前后分别执行一次审计，并在两个阶段各获得用户明确确认。

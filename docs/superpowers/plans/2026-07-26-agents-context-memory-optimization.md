@@ -668,7 +668,8 @@ Expected: 第一条命令有匹配；第二条命令退出码 `1`。
 -- Password: `123456`
 -
 @@
- ## 分支与转测试
+-## 分支与转测试
++## 分支与集成
 
 -- 日常开发分支为 `codex/coze-nuwax-management-mainline`。
 -- 不默认合并、推送或切换到 `dev`。
@@ -845,7 +846,7 @@ git commit -m "docs: verify durable context tooling"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 
-- [ ] **Step 1：运行旧规则残留扫描**
+- [x] **Step 1：运行旧规则残留扫描**
 
 Run:
 
@@ -855,7 +856,7 @@ rg -n -i '当前一期|当前集成目标|admin@nuwax.com|coze-nuwax-management-
 
 Expected: 无输出，退出码 `1`。
 
-- [ ] **Step 2：运行结构与格式检查**
+- [x] **Step 2：运行结构与格式检查**
 
 Run:
 
@@ -867,7 +868,7 @@ rg -n '^(<<<<<<<|=======|>>>>>>>)' AGENTS.md docs/superpowers/context docs/super
 
 Expected: 行数检查和 diff check 退出码 `0`；冲突标记扫描无输出、退出码 `1`。
 
-- [ ] **Step 3：复核提交范围**
+- [x] **Step 3：复核提交范围**
 
 Run:
 
@@ -881,7 +882,7 @@ git status --short
 Expected: 仅包含本需求设计、计划、四份目标文档和 `.gitignore`；用户已有无关
 未跟踪文件保持原样且未进入提交。
 
-- [ ] **Step 4：提交完成状态**
+- [x] **Step 4：提交完成状态**
 
 ```bash
 git add docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
