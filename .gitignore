@@ -66,3 +66,6 @@ values-dev.yaml
 crash.log
 opencoze
 opencoze.pid
+
+# Local Graphify cache
+/graphify-out/

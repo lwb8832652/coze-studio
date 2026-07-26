@@ -640,7 +640,7 @@ git commit -m "docs: add strict dev integration audit"
 - Modify: `.gitignore:64-68`
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 
-- [ ] **Step 1：验证旧默认项和缓存未忽略**
+- [x] **Step 1：验证旧默认项和缓存未忽略**
 
 Run:
 
@@ -651,7 +651,7 @@ git check-ignore graphify-out/.graphify_detect.json
 
 Expected: 第一条命令有匹配；第二条命令退出码 `1`。
 
-- [ ] **Step 2：收敛调试手册**
+- [x] **Step 2：收敛调试手册**
 
 使用 `apply_patch`：
 
@@ -681,7 +681,7 @@ Expected: 第一条命令有匹配；第二条命令退出码 `1`。
 +- 目标分支被其他 worktree 占用时，报告占用路径，不强制 checkout。
 ```
 
-- [ ] **Step 3：增加本地图谱忽略规则**
+- [x] **Step 3：增加本地图谱忽略规则**
 
 在 `.gitignore` 末尾添加：
 
@@ -691,7 +691,7 @@ Expected: 第一条命令有匹配；第二条命令退出码 `1`。
 /graphify-out/
 ```
 
-- [ ] **Step 4：验证旧入口消失且缓存被忽略**
+- [x] **Step 4：验证旧入口消失且缓存被忽略**
 
 Run:
 
@@ -710,7 +710,7 @@ git diff --check -- .gitignore docs/superpowers/runbooks/local-debug-and-test.md
 
 Expected: Graphify 缓存路径命中 `.gitignore`；diff check 退出码 `0`。
 
-- [ ] **Step 5：提交调试与忽略规则**
+- [x] **Step 5：提交调试与忽略规则**
 
 ```bash
 git add .gitignore docs/superpowers/runbooks/local-debug-and-test.md docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
