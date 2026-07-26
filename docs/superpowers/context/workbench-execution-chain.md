@@ -1,7 +1,7 @@
 # Workbench 当前执行链与框架事实
 
-更新时间：2026-07-26  
-状态：当前生产实现  
+更新时间：2026-07-26
+状态：当前生产实现
 机器合同：`docs/superpowers/context/workbench-execution-graph.json`
 
 ## 结论
@@ -27,7 +27,9 @@ React UI
 ```
 
 这不是两套新旧 Workbench。`ChatTask` 已退役；`legacy` 仅用于读取和恢复历史无
-runtime 标记记录。新 Run 在持久化前规范化为 `runtime=eino_adk`。
+runtime 标记记录。`normalizeNewDeerFlowRunConfig` 是新 Run 策略节点：它拒绝
+`legacy`，在持久化前规范化为 `runtime=eino_adk`，随后才由
+`RuntimeSelector` 执行。
 
 ## 权威规则
 
@@ -36,10 +38,20 @@ runtime 标记记录。新 Run 在持久化前规范化为 `runtime=eino_adk`。
 - `calls`、`delegates_to`、`persists_via` 等边必须有源码中的直接证据。
 - `precedes` 只表示同一已验证流程中的时序，不等同于函数调用。
 - Graphify 派生边只补充检索上下文，不能覆盖合同中的显式关系。
+- `workbench_execution_v1` profile 由调用者默认强制启用，用完整结构摘要固定
+  authority rule、scope、节点属性、边、链、8 类查询、排除语义及其源码证据；
+  不得通过删改 profile/authority path、query/chain/exclusion、关键节点属性或
+  禁词来自我关闭校验。
+- 派生物分为两张同基底图：`query-graph.json` 把每个业务问题建成检索意图节点
+  并连接所需事实，`graph.json` 只保留 AST、合同有向边和 `anchored_in` 源码桥。
+  完整问题在检索图命中业务节点后，显式边、执行顺序和源码桥必须回到无 overlay
+  的执行图独立核验，不能让 `retrieves` 捷径充当执行链证据。
 - codebase-memory/CodeGraph 用于实时查调用方和影响范围；最终判断仍回到源码、
   IDL 与测试。
 - 本上下文只保存 bounded metadata，不保存 prompt、completion、tool arguments、
   tool results、credentials、object URI、checkpoint bytes 或原始审计载荷。
+- 每项排除事实必须引用当前源码、测试、manifest 或独立当前上下文；否定边界不能
+  只由 JSON 合同自证。
 
 ## 入口链
 
@@ -54,7 +66,12 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
 
 - `frontend/apps/coze-studio/src/pages/workbench/index.tsx`：`handleSend`
 - `frontend/apps/coze-studio/src/pages/workbench/service.ts`：`createTaskThread`
+- `frontend/packages/arch/api-schema/src/idl/workbench/task.ts`：生成客户端
+  `CreateTaskThread` / `CreateTaskThreadRun`
 - `idl/workbench/task.thrift`：`WorkbenchTaskService.CreateTaskThread`
+- `backend/api/model/workbench/task/task.go`：生成模型 `CreateTaskThreadRequest`
+- `backend/api/router/coze/api.go`：生成 Hertz `task_threads` / `runs` 路由
+- `backend/api/router/coze/custom_routes.go`：`run_events/stream` SSE 路由
 - `backend/api/handler/coze/workbench_thread_service.go`：`CreateTaskThread`
 - `backend/application/agentthread/service.go`：`CreateTaskThread`
 - `backend/domain/agentthread/service/service_impl.go`：`CreateThreadRunMessage`
@@ -87,18 +104,22 @@ Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThrea
 
 ### 其它入口
 
-- LangGraph-compatible API：
-  `backend/api/handler/coze/langgraph_run_service.go` 的 `CreateLangGraphRun` 最终调用
-  `agentthread.ApplicationService.CreateRun`。
+- LangGraph-compatible API：有 Thread 的 `CreateLangGraphRun` 调用
+  `ApplicationService.CreateRun`；stateless `/api/runs` 先经
+  `createLangGraphStatelessBackingThread` 调用 `ApplicationService.CreateThread`，
+  再创建 Run。两者都是 API 兼容入口，不是 LangGraph 执行器。
 - Scheduled Task：
-  `backend/application/scheduledtask/coze_adapters.go` 的
-  `CozeAgentRunner.StartNew/StartInThread` 调用 `CreateTaskThread/CreateRun`。
+  `AgentTaskExecutor.Execute` 根据 `KeepConversation` 和 `ConversationID` 分支；
+  `StartNew` 调用 `CreateTaskThread`，`StartInThread` 复用专属会话并调用
+  `CreateRun`。
 - 飞书消息：
   `backend/application/imchannel/runtime.go` 的 `processEvent` 调用
-  `AgentRunner.Execute`，再由 `agent_runner.go` 的 `startRun` 调用
-  `CreateTaskThread/CreateRun`。
+  `AgentRunner.Execute`；`startRun` 在无有效 session 时调用 `CreateTaskThread`，
+  已有 `session.ThreadID` 时调用 `CreateRun`。
 
 这些入口只生产 Run，不拥有 Run 状态机，也不是独立执行器。
+`query.integration_ingress` 独立验收 LangGraph、Scheduled 和飞书的新建/复用
+Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 
 ## 持久化与异步执行
 
@@ -265,7 +286,7 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 ## 明确边界
 
 - LangGraph：只有兼容 HTTP/API 语义，不导入或运行 LangGraph SDK。
-- DeerFlow：只有 mode、config、prompt/behavior parity 语义，由当前 Go/Eino 实现；
+- DeerFlow：只有 mode、config、指令与行为兼容语义，由当前 Go/Eino 实现；
   不存在 DeerFlow runtime。
 - legacy executor：只处理历史无 runtime 标记记录和显式迁移测试；新 Run 拒绝
   `legacy`。
@@ -279,7 +300,7 @@ Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式
 修改下列任一事实时，必须同步更新本文和 JSON 合同，并重建/校验图谱：
 
 - Workbench/TaskDetail 入口或上传顺序；
-- Thrift route、HTTP handler、公开投影；
+- Thrift route、生成 client/model、Hertz route、HTTP handler、公开投影；
 - application/domain/repository 调用边界；
 - Run admission、claim、lease、worker、runtime selector；
 - Eino Runner、Agent、middleware、tool、MCP、checkpoint 或 event mapping；

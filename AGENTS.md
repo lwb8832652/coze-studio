@@ -55,10 +55,21 @@
 ### Graphify
 
 - 只用于精选长期上下文、架构决策、关键 runbook 和活跃设计的关系查询。
-- `graphify-out/graph.json` 存在时优先查询，不重复全量构建。
-- 长期上下文变化后才做增量更新；普通局部修复不制造图谱噪声。
+- Workbench 派生目录存在时优先查询，不重复全量构建：业务意图检索使用
+  `graphify-out/query-graph.json`，执行路径和边方向审计使用
+  `graphify-out/graph.json`。该稳定目录是指向已完整校验版本的原子指针，不要
+  绕过指针直接读取 `workbench-execution-graphify-versions/`；上一有效版本由
+  `workbench-execution-graphify-previous` 指向，仅用于本地故障回滚。
+- 非 Workbench 的普通局部修复不制造图谱噪声；命中 Workbench 合同
+  `monitored_paths` 的新增、修改、重命名或删除必须同步两份权威文件并重建。
 - 不默认对整个 monorepo 建图，不提交 `graphify-out/` 产物。
 - 图谱缺失、过期或不可用时直接读取源文档，并记录缺失的图谱验证。
+- 图谱发布只能使用 `docs/superpowers/context` 下的受管目录；不得把
+  `--derived-root` 指向业务目录、仓库外目录或没有受管标记的现有目录。
+- Workbench 完整问题必须在 `query-graph.json` 命中 `query_overlay` 所需节点；
+  所需有向业务边和执行路径必须在无 overlay 的 `graph.json` 独立核验，并能经
+  `anchored_in` 到达真实 AST 文件节点。每个 current 合同节点都必须具备该桥；
+  同名文本、`retrieves` 检索边或无方向连通路径不能作为执行证据。
 
 涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，先读
 `docs/superpowers/context/workbench-execution-chain.md`，再按

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "profile": "workbench_execution_v1",
   "authority": {
     "contract": "docs/superpowers/context/workbench-execution-graph.json",
     "document": "docs/superpowers/context/workbench-execution-chain.md",
@@ -11,13 +12,23 @@
     "monitored_paths": [
       "frontend/apps/coze-studio/src/pages/workbench/**",
       "frontend/apps/coze-studio/src/pages/tasks/**",
+      "frontend/apps/coze-studio/package.json",
+      "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+      "docs/superpowers/context/workbench-chat.md",
       "idl/workbench/task.thrift",
-      "backend/api/handler/coze/workbench_thread_service.go",
-      "backend/api/handler/coze/langgraph_run_service.go",
+      "backend/api/router/coze/api.go",
+      "backend/api/router/coze/custom_routes.go",
+      "backend/api/handler/coze/workbench_thread_service*.go",
+      "backend/api/handler/coze/langgraph_run_service*.go",
+      "backend/api/model/workbench/task/task.go",
+      "backend/application/application.go",
       "backend/application/agentthread/**",
       "backend/domain/agentthread/**",
       "backend/application/scheduledtask/**",
-      "backend/application/imchannel/**"
+      "backend/domain/scheduledtask/**",
+      "backend/application/imchannel/**",
+      "backend/go.mod",
+      "docker/docker-compose.yml"
     ],
     "canonical_runtime": "eino_adk",
     "queue_backend": "mysql",
@@ -75,6 +86,11 @@
           "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
           "symbol": "createTaskThread",
           "locator": "export const createTaskThread = workbenchTask.CreateTaskThread;"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThread",
+          "locator": "export const CreateTaskThread ="
         }
       ],
       "evidence": [
@@ -115,6 +131,11 @@
           "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
           "symbol": "createTaskThreadRun",
           "locator": "export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThreadRun",
+          "locator": "export const CreateTaskThreadRun ="
         }
       ],
       "evidence": [
@@ -155,6 +176,16 @@
           "path": "idl/workbench/task.thrift",
           "symbol": "WorkbenchTaskService",
           "locator": "service WorkbenchTaskService {"
+        },
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "symbol": "CreateTaskThreadRequest",
+          "locator": "type CreateTaskThreadRequest struct {"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThread",
+          "locator": "export const CreateTaskThread ="
         }
       ],
       "evidence": [
@@ -175,6 +206,11 @@
           "path": "backend/api/handler/coze/workbench_thread_service.go",
           "symbol": "CreateTaskThread",
           "locator": "func CreateTaskThread(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/api.go",
+          "symbol": "RegisterWorkBenchRoutes",
+          "locator": "_workbench.POST(\"/task_threads\","
         }
       ],
       "evidence": [
@@ -195,6 +231,11 @@
           "path": "backend/api/handler/coze/workbench_thread_service.go",
           "symbol": "CreateTaskThreadRun",
           "locator": "func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/api.go",
+          "symbol": "RegisterWorkBenchRoutes",
+          "locator": "_thread_id.POST(\"/runs\","
         }
       ],
       "evidence": [
@@ -215,6 +256,11 @@
           "path": "backend/api/handler/coze/workbench_thread_service.go",
           "symbol": "StreamTaskThreadRunEvents",
           "locator": "func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/custom_routes.go",
+          "symbol": "registerWorkBenchCustomRoutes",
+          "locator": "thread.GET(\"/run_events/stream\", handler.StreamTaskThreadRunEvents)"
         }
       ],
       "evidence": [
@@ -313,6 +359,68 @@
       ]
     },
     {
+      "id": "compat.langgraph.stateless_run",
+      "label": "LangGraph stateless createLangGraphStatelessRun",
+      "layer": "compatibility_api",
+      "kind": "function",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "symbol": "createLangGraphStatelessRun",
+          "locator": "func createLangGraphStatelessRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "compat.langgraph.stateless_backing_thread",
+      "label": "LangGraph stateless backing thread",
+      "layer": "compatibility_api",
+      "kind": "function",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "symbol": "createLangGraphStatelessBackingThread",
+          "locator": "func createLangGraphStatelessBackingThread("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "integration.scheduled.execute",
+      "label": "Scheduled AgentTaskExecutor.Execute",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "symbol": "(*AgentTaskExecutor).Execute",
+          "locator": "func (e *AgentTaskExecutor) Execute(ctx context.Context, task *entity.Task, execution *entity.Execution)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
+        }
+      ]
+    },
+    {
       "id": "integration.scheduled.start_new",
       "label": "Scheduled task CozeAgentRunner.StartNew",
       "layer": "integration_ingress",
@@ -329,6 +437,26 @@
         {
           "path": "backend/application/scheduledtask/coze_adapters_test.go",
           "locator": "func TestCozeAgentRunnerMapsScheduledTaskIntoAgentThread"
+        }
+      ]
+    },
+    {
+      "id": "integration.scheduled.start_in_thread",
+      "label": "Scheduled task CozeAgentRunner.StartInThread",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "symbol": "(*CozeAgentRunner).StartInThread",
+          "locator": "func (r *CozeAgentRunner) StartInThread("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
         }
       ]
     },
@@ -389,6 +517,26 @@
         {
           "path": "backend/application/imchannel/agent_runner_test.go",
           "locator": "func TestAgentRunnerFollowUpProvidesValidRunInput"
+        }
+      ]
+    },
+    {
+      "id": "application.create_thread",
+      "label": "ApplicationService.CreateThread",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).CreateThread",
+          "locator": "func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThreadRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateThreadReturnsTaskSummary"
         }
       ]
     },
@@ -962,6 +1110,26 @@
       ]
     },
     {
+      "id": "runtime.new_run_policy",
+      "label": "normalizeNewDeerFlowRunConfig new-run policy",
+      "layer": "runtime_selection",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "symbol": "normalizeNewDeerFlowRunConfig",
+          "locator": "func normalizeNewDeerFlowRunConfig("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "func TestNormalizeNewDeerFlowRunConfigRejectsLegacyRuntime"
+        }
+      ]
+    },
+    {
       "id": "runtime.selector.execute",
       "label": "RuntimeSelector.Execute",
       "layer": "runtime_selection",
@@ -1003,7 +1171,7 @@
     },
     {
       "id": "runtime.adk_executor.resume",
-      "label": "ADKExecutor.Resume",
+      "label": "Workbench ADKExecutor.Resume",
       "layer": "agent_runtime",
       "kind": "function",
       "production_status": "current",
@@ -1143,7 +1311,7 @@
     },
     {
       "id": "runtime.checkpoint_store",
-      "label": "ADKCheckpointStore",
+      "label": "Workbench ADK Checkpoint Store",
       "layer": "runtime_state",
       "kind": "capability",
       "production_status": "current",
@@ -2388,6 +2556,62 @@
       ]
     },
     {
+      "id": "edge.langgraph_stateless_calls_backing_thread",
+      "from": "compat.langgraph.stateless_run",
+      "to": "compat.langgraph.stateless_backing_thread",
+      "relation": "calls",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "thread, err := createLangGraphStatelessBackingThread(ctx, req.Metadata)"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_backing_calls_create_thread",
+      "from": "compat.langgraph.stateless_backing_thread",
+      "to": "application.create_thread",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "return appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_stateless_thread_precedes_run",
+      "from": "application.create_thread",
+      "to": "application.create_run",
+      "relation": "precedes",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "return appagentthread.SVC.CreateRun(ctx, createReq)"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_execute_routes_new",
+      "from": "integration.scheduled.execute",
+      "to": "integration.scheduled.start_new",
+      "relation": "routes_to",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "locator": "ref, err = e.Runner.StartNew(ctx, request)"
+        }
+      ]
+    },
+    {
       "id": "edge.scheduled_calls_create_thread",
       "from": "integration.scheduled.start_new",
       "to": "application.create_task_thread",
@@ -2398,6 +2622,34 @@
         {
           "path": "backend/application/scheduledtask/coze_adapters.go",
           "locator": "resp, err := r.Client.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_execute_routes_existing",
+      "from": "integration.scheduled.execute",
+      "to": "integration.scheduled.start_in_thread",
+      "relation": "routes_to",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "locator": "ref, err = e.Runner.StartInThread(ctx, task.ConversationID, request)"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_existing_calls_create_run",
+      "from": "integration.scheduled.start_in_thread",
+      "to": "application.create_run",
+      "relation": "calls",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "locator": "resp, err := r.Client.CreateRun(ctx, &appagentthread.CreateRunRequest{"
         }
       ]
     },
@@ -2425,7 +2677,7 @@
       "evidence": [
         {
           "path": "backend/application/imchannel/agent_runner.go",
-          "locator": "runID, threadID, err := r.startRun(ctx, config, session, eventKey, prompt, payload)"
+          "locator": "r.startRun("
         }
       ]
     },
@@ -2440,6 +2692,20 @@
         {
           "path": "backend/application/imchannel/agent_runner.go",
           "locator": "response, err := r.client.CreateTaskThread(ctx, &agentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_start_calls_create_run",
+      "from": "integration.feishu.start_run",
+      "to": "application.create_run",
+      "relation": "calls",
+      "chain_ids": ["entry.feishu_message"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "locator": "response, err := r.client.CreateRun(ctx, &agentthread.CreateRunRequest{"
         }
       ]
     },
@@ -3080,7 +3346,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_ark",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3094,7 +3360,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_claude",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3108,7 +3374,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_deepseek",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3122,7 +3388,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_gemini",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3136,7 +3402,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_openai",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3150,7 +3416,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.eino_ext_model_qwen",
       "relation": "configures",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3192,7 +3458,7 @@
       "from": "runtime.adk_agent_factory.build",
       "to": "framework.mcp_go",
       "relation": "adapts_to",
-      "chain_ids": ["framework.canonical_stack"],
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3232,7 +3498,7 @@
     {
       "id": "edge.cron_configures_scheduled",
       "from": "framework.robfig_cron",
-      "to": "integration.scheduled.start_new",
+      "to": "integration.scheduled.execute",
       "relation": "configures",
       "chain_ids": ["framework.canonical_stack"],
       "confidence": "extracted",
@@ -3566,16 +3832,30 @@
       ]
     },
     {
-      "id": "edge.app_run_precedes_selector",
+      "id": "edge.app_run_calls_new_run_policy",
       "from": "application.create_run",
-      "to": "runtime.selector.execute",
-      "relation": "precedes",
+      "to": "runtime.new_run_policy",
+      "relation": "delegates_to",
       "chain_ids": ["boundary.runtime_compatibility"],
       "confidence": "extracted",
       "evidence": [
         {
           "path": "backend/application/agentthread/service.go",
           "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)"
+        }
+      ]
+    },
+    {
+      "id": "edge.new_run_policy_precedes_selector",
+      "from": "runtime.new_run_policy",
+      "to": "runtime.selector.execute",
+      "relation": "precedes",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "locator": "config.Runtime = RuntimeModeEinoADK"
         }
       ]
     },
@@ -3595,9 +3875,9 @@
     },
     {
       "id": "edge.legacy_is_historical_only",
-      "from": "historical.legacy_runtime",
-      "to": "runtime.selector.execute",
-      "relation": "adapts_to",
+      "from": "runtime.selector.execute",
+      "to": "historical.legacy_runtime",
+      "relation": "routes_to",
       "chain_ids": ["boundary.runtime_compatibility"],
       "confidence": "extracted",
       "evidence": [
@@ -3609,8 +3889,8 @@
     },
     {
       "id": "edge.legacy_excluded_from_new_runs",
-      "from": "historical.legacy_runtime",
-      "to": "runtime.adk_executor.execute",
+      "from": "runtime.new_run_policy",
+      "to": "historical.legacy_runtime",
       "relation": "excludes",
       "chain_ids": ["boundary.runtime_compatibility"],
       "confidence": "extracted",
@@ -3752,21 +4032,54 @@
       ]
     },
     {
-      "id": "entry.scheduled_task",
-      "name": "Scheduled task ingress",
-      "entry": "integration.scheduled.start_new",
-      "terminal": "application.create_task_thread",
+      "id": "entry.langgraph_stateless",
+      "name": "LangGraph stateless backing thread and Run creation",
+      "entry": "compat.langgraph.stateless_run",
+      "terminal": "application.create_run",
       "ordered_node_ids": [
-        "integration.scheduled.start_new",
-        "application.create_task_thread"
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "application.create_thread",
+        "application.create_run"
       ],
-      "ordered_edge_ids": ["edge.scheduled_calls_create_thread"],
+      "ordered_edge_ids": [
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run"
+      ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
-          "path": "backend/application/scheduledtask/coze_adapters_test.go",
-          "locator": "func TestCozeAgentRunnerMapsScheduledTaskIntoAgentThread"
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "entry.scheduled_task",
+      "name": "Scheduled task ingress",
+      "entry": "integration.scheduled.execute",
+      "terminal": "application.create_task_thread",
+      "ordered_node_ids": [
+        "integration.scheduled.execute",
+        "integration.scheduled.start_new",
+        "application.create_task_thread"
+      ],
+      "ordered_edge_ids": [
+        "edge.scheduled_execute_routes_new",
+        "edge.scheduled_calls_create_thread"
+      ],
+      "required_side_edge_ids": [
+        "edge.scheduled_execute_routes_existing",
+        "edge.scheduled_existing_calls_create_run"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
         }
       ]
     },
@@ -3786,6 +4099,7 @@
         "edge.feishu_agent_calls_start_run",
         "edge.feishu_start_calls_create_thread"
       ],
+      "required_side_edge_ids": ["edge.feishu_start_calls_create_run"],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
@@ -4281,12 +4595,14 @@
       "ordered_node_ids": [
         "compat.langgraph.create_run",
         "application.create_run",
+        "runtime.new_run_policy",
         "runtime.selector.execute",
         "runtime.adk_executor.execute"
       ],
       "ordered_edge_ids": [
         "edge.langgraph_calls_app_create_run",
-        "edge.app_run_precedes_selector",
+        "edge.app_run_calls_new_run_policy",
+        "edge.new_run_policy_precedes_selector",
         "edge.selector_executes_adk"
       ],
       "required_side_edge_ids": [
@@ -4309,43 +4625,85 @@
       "id": "exclude.k2",
       "term": "K2",
       "status": "design_only",
-      "reason": "K2 is not implemented and must not produce current execution nodes or edges."
+      "reason": "K2 is not implemented and must not produce current execution nodes or edges.",
+      "evidence": [
+        {
+          "path": "docs/superpowers/context/workbench-chat.md",
+          "locator": "历史 ChatTask plans/specs 只用于追溯，K2 仍是设计语料，"
+        }
+      ]
     },
     {
       "id": "exclude.chattask",
       "term": "ChatTask",
       "status": "retired",
-      "reason": "The retired ChatTask path is not part of current Workbench execution."
+      "reason": "The retired ChatTask path is not part of current Workbench execution.",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts",
+          "locator": "keeps production task and workbench sources free of retired contracts"
+        }
+      ]
     },
     {
       "id": "exclude.langgraph_sdk",
       "term": "LangGraph SDK",
       "status": "not_used",
-      "reason": "LangGraph endpoints are compatibility adapters that delegate to agentthread; no LangGraph runtime executes Runs."
+      "reason": "LangGraph endpoints are compatibility adapters that delegate to agentthread; no LangGraph runtime executes Runs.",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, createReq)"
+        }
+      ]
     },
     {
       "id": "exclude.deerflow_runtime",
       "term": "DeerFlow runtime",
       "status": "not_used",
-      "reason": "DeerFlow names represent configuration and parity semantics implemented by Go and Eino."
+      "reason": "DeerFlow names represent configuration and parity semantics implemented by Go and Eino.",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "locator": "config.Runtime = RuntimeModeEinoADK"
+        }
+      ]
     },
     {
       "id": "exclude.legacy_new_run",
       "term": "legacy production runtime",
       "status": "historical_only",
-      "reason": "Only historical unmarked records may select legacy; new Runs normalize to runtime=eino_adk."
+      "reason": "Only historical unmarked records may select legacy; new Runs normalize to runtime=eino_adk.",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "legacy runtime is not selectable for new runs"
+        }
+      ]
     },
     {
       "id": "exclude.external_queue",
       "term": "Redis Kafka RabbitMQ NATS Asynq queue",
       "status": "not_used",
-      "reason": "Canonical Workbench Run admission and claim are MySQL row and lease based."
+      "reason": "Canonical Workbench Run admission and claim are MySQL row and lease based.",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "query = query.Clauses(clause.Locking{Strength: \"UPDATE\", Options: \"SKIP LOCKED\"})"
+        }
+      ]
     },
     {
       "id": "exclude.build_tools",
       "term": "Rush Rsbuild Vitest Atlas",
       "status": "build_or_test_only",
-      "reason": "Build, test, and migration tools do not execute production Runs."
+      "reason": "Build, test, and migration tools do not execute production Runs.",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/package.json",
+          "locator": "\"test\": \"vitest --run --passWithNoTests\""
+        }
+      ]
     }
   ],
   "required_queries": [
@@ -4353,6 +4711,7 @@
       "id": "query.framework_inventory",
       "question": "当前 Workbench 执行链使用哪些核心框架，各自职责和源码入口是什么？",
       "expanded_terms": [
+        "React",
         "framework",
         "implemented_with",
         "configures",
@@ -4362,6 +4721,7 @@
         "package",
         "version"
       ],
+      "smoke_node_ids": ["framework.react"],
       "required_node_ids": [
         "framework.react",
         "framework.thriftgo",
@@ -4390,6 +4750,7 @@
       "id": "query.frontend_to_eino",
       "question": "Workbench 前端消息如何进入 Eino ADK？",
       "expanded_terms": [
+        "Workbench Immediate Submit",
         "calls",
         "routes_to",
         "delegates_to",
@@ -4398,6 +4759,7 @@
         "executes",
         "precedes"
       ],
+      "smoke_node_ids": ["frontend.workbench.handle_send"],
       "required_node_ids": [
         "frontend.workbench.handle_send",
         "http.workbench.create_thread",
@@ -4419,6 +4781,7 @@
       "id": "query.eino_sdk_execution",
       "question": "Eino SDK 如何构建 Agent、执行 Run、映射并持久化事件？",
       "expanded_terms": [
+        "ADKExecutor.Execute",
         "ADKExecutor",
         "Runner",
         "ChatModelAgent",
@@ -4428,6 +4791,7 @@
         "AgentEvent",
         "EventSink"
       ],
+      "smoke_node_ids": ["runtime.adk_executor.execute"],
       "required_node_ids": [
         "runtime.adk_executor.execute",
         "runtime.adk_agent_factory.build",
@@ -4448,11 +4812,13 @@
       "id": "query.middleware_order",
       "question": "Eino middleware 的真实装配顺序是什么？",
       "expanded_terms": [
+        "reduction",
         "adkMiddlewareOrder",
         "precedes",
         "handler order",
         "wrapper order"
       ],
+      "smoke_node_ids": ["middleware.reduction"],
       "required_node_ids": [
         "middleware.reduction",
         "middleware.filesystem",
@@ -4479,6 +4845,7 @@
       "id": "query.control_recovery",
       "question": "取消、人工恢复、子智能体重试、checkpoint 和 lease 恢复如何执行？",
       "expanded_terms": [
+        "ApplicationService.CancelRun",
         "cancels",
         "resumes",
         "retries",
@@ -4486,6 +4853,7 @@
         "lease",
         "rollback"
       ],
+      "smoke_node_ids": ["application.cancel_run"],
       "required_node_ids": [
         "application.cancel_run",
         "runtime.cancel_registry",
@@ -4508,6 +4876,7 @@
       "id": "query.data_capabilities",
       "question": "Memory、Artifact、Token、Guardrail 和 MCP 审计数据走哪些持久化链？",
       "expanded_terms": [
+        "Application memory operations",
         "memory",
         "artifact",
         "token usage",
@@ -4516,6 +4885,7 @@
         "persists_via",
         "audits"
       ],
+      "smoke_node_ids": ["application.memory"],
       "required_node_ids": [
         "application.memory",
         "repository.memory",
@@ -4535,25 +4905,80 @@
       ]
     },
     {
+      "id": "query.integration_ingress",
+      "question": "LangGraph、Scheduled 和飞书如何创建或复用 TaskThread 并进入共享 Run 主链？",
+      "expanded_terms": [
+        "LangGraph stateless createLangGraphStatelessRun",
+        "Scheduled AgentTaskExecutor.Execute",
+        "Feishu RuntimeManager.processEvent",
+        "calls",
+        "routes_to",
+        "delegates_to",
+        "precedes"
+      ],
+      "smoke_node_ids": [
+        "compat.langgraph.stateless_run",
+        "integration.scheduled.execute",
+        "integration.feishu.process_event"
+      ],
+      "required_node_ids": [
+        "compat.langgraph.create_run",
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "integration.scheduled.execute",
+        "integration.scheduled.start_new",
+        "integration.scheduled.start_in_thread",
+        "integration.feishu.process_event",
+        "integration.feishu.agent_execute",
+        "integration.feishu.start_run",
+        "application.create_thread",
+        "application.create_task_thread",
+        "application.create_run"
+      ],
+      "required_edge_ids": [
+        "edge.langgraph_calls_app_create_run",
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run",
+        "edge.scheduled_execute_routes_new",
+        "edge.scheduled_calls_create_thread",
+        "edge.scheduled_execute_routes_existing",
+        "edge.scheduled_existing_calls_create_run",
+        "edge.feishu_event_calls_agent",
+        "edge.feishu_agent_calls_start_run",
+        "edge.feishu_start_calls_create_thread",
+        "edge.feishu_start_calls_create_run"
+      ]
+    },
+    {
       "id": "query.runtime_boundaries",
       "question": "LangGraph、DeerFlow 和 legacy 是否是当前并行生产运行时？",
       "expanded_terms": [
+        "LangGraph-compatible Run API adapter",
+        "LangGraph stateless createLangGraphStatelessRun",
+        "normalizeNewDeerFlowRunConfig new-run policy",
         "compatibility_contract",
         "historical_compatibility",
-        "adapts_to",
+        "routes_to",
         "configures",
         "excludes",
         "eino_adk"
       ],
+      "smoke_node_ids": ["compat.langgraph.create_run"],
       "required_node_ids": [
         "compat.langgraph.create_run",
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
         "compat.deerflow_config",
         "historical.legacy_runtime",
+        "runtime.new_run_policy",
         "runtime.selector.execute",
         "runtime.adk_executor.execute"
       ],
       "required_edge_ids": [
         "edge.langgraph_calls_app_create_run",
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
         "edge.deerflow_configures_eino",
         "edge.legacy_is_historical_only",
         "edge.legacy_excluded_from_new_runs"

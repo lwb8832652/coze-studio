@@ -58,8 +58,7 @@ Options:
   --help                Show this help
 `;
 
-const stringValue = value =>
-  typeof value === 'string' ? value.trim() : '';
+const stringValue = value => (typeof value === 'string' ? value.trim() : '');
 
 const parseArguments = argv => {
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === 'help') {
@@ -94,7 +93,9 @@ const parseArguments = argv => {
 
 const resolveFromRoot = (repoRoot, candidate, fallback) => {
   const value = stringValue(candidate) || fallback;
-  return path.isAbsolute(value) ? path.resolve(value) : path.resolve(repoRoot, value);
+  return path.isAbsolute(value)
+    ? path.resolve(value)
+    : path.resolve(repoRoot, value);
 };
 
 const relativeToRepo = (repoRoot, absolutePath, optionName) => {
@@ -126,6 +127,19 @@ const loadContext = async options => {
     options.derived_root,
     DERIVED_RELATIVE_ROOT,
   );
+  const derivedRelative = relativeToRepo(
+    repoRoot,
+    derivedRoot,
+    '--derived-root',
+  );
+  if (
+    !derivedRelative.startsWith('docs/superpowers/context/') ||
+    !path.basename(derivedRoot).startsWith('workbench-execution-graph')
+  ) {
+    throw new Error(
+      '--derived-root must be a Workbench graph path below docs/superpowers/context',
+    );
+  }
   const contract = JSON.parse(await readFile(contractPath, 'utf8'));
   contract.authority = {
     ...contract.authority,
@@ -149,10 +163,7 @@ const assertValid = result => {
   }
 };
 
-export const runCLI = async (
-  argv,
-  { stdout = process.stdout } = {},
-) => {
+export const runCLI = async (argv, { stdout = process.stdout } = {}) => {
   const parsed = parseArguments(argv);
   if (parsed.help) {
     stdout.write(CLI_HELP);
@@ -165,6 +176,7 @@ export const runCLI = async (
     : undefined;
   const validation = await validateContract(context.contract, {
     changedPaths,
+    requireCanonicalProfile: true,
     repoRoot: context.repoRoot,
   });
   assertValid(validation);

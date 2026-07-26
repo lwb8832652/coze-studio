@@ -15,11 +15,196 @@
  */
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 export const CURRENT_STATUS = 'current';
+
+const CANONICAL_CONTRACT_PATH =
+  'docs/superpowers/context/workbench-execution-graph.json';
+const WORKBENCH_PROFILE = 'workbench_execution_v1';
+const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
+  'c8d41c5a5f98c1a5a3540dfd74dade70496c34daedabab2e14497e1df4f459f7';
+const REQUIRED_CHAIN_IDS = [
+  'entry.workbench_immediate',
+  'entry.workbench_deferred',
+  'entry.task_detail_followup',
+  'entry.langgraph_compat',
+  'entry.langgraph_stateless',
+  'entry.scheduled_task',
+  'entry.feishu_message',
+  'run.atomic_create',
+  'run.pending_worker_execute',
+  'run.event_projection',
+  'control.cancel',
+  'control.human_resume',
+  'control.subagent_retry',
+  'control.checkpoint_resume',
+  'control.lease_recovery',
+  'control.multitask_rollback',
+  'data.memory',
+  'data.artifact',
+  'data.token_usage',
+  'data.guardrail_audit',
+  'data.mcp_runtime_audit',
+  'framework.canonical_stack',
+  'framework.eino_sdk',
+  'framework.eino_middleware_order',
+  'boundary.runtime_compatibility',
+];
+const REQUIRED_QUERY_IDS = [
+  'query.framework_inventory',
+  'query.frontend_to_eino',
+  'query.eino_sdk_execution',
+  'query.middleware_order',
+  'query.control_recovery',
+  'query.data_capabilities',
+  'query.integration_ingress',
+  'query.runtime_boundaries',
+];
+const REQUIRED_EXCLUSION_IDS = [
+  'exclude.k2',
+  'exclude.chattask',
+  'exclude.langgraph_sdk',
+  'exclude.deerflow_runtime',
+  'exclude.legacy_new_run',
+  'exclude.external_queue',
+  'exclude.build_tools',
+];
+const REQUIRED_NODE_IDS = [
+  'compat.langgraph.create_run',
+  'compat.langgraph.stateless_run',
+  'compat.langgraph.stateless_backing_thread',
+  'compat.deerflow_config',
+  'integration.scheduled.execute',
+  'integration.scheduled.start_new',
+  'integration.scheduled.start_in_thread',
+  'integration.feishu.process_event',
+  'integration.feishu.agent_execute',
+  'integration.feishu.start_run',
+  'application.create_thread',
+  'application.create_task_thread',
+  'application.create_run',
+  'runtime.new_run_policy',
+  'runtime.selector.execute',
+  'runtime.adk_executor.execute',
+  'historical.legacy_runtime',
+];
+const REQUIRED_EDGE_IDS = [
+  'edge.langgraph_calls_app_create_run',
+  'edge.langgraph_stateless_calls_backing_thread',
+  'edge.langgraph_backing_calls_create_thread',
+  'edge.langgraph_stateless_thread_precedes_run',
+  'edge.scheduled_execute_routes_new',
+  'edge.scheduled_calls_create_thread',
+  'edge.scheduled_execute_routes_existing',
+  'edge.scheduled_existing_calls_create_run',
+  'edge.feishu_event_calls_agent',
+  'edge.feishu_agent_calls_start_run',
+  'edge.feishu_start_calls_create_thread',
+  'edge.feishu_start_calls_create_run',
+  'edge.app_run_calls_new_run_policy',
+  'edge.new_run_policy_precedes_selector',
+  'edge.selector_executes_adk',
+  'edge.deerflow_configures_eino',
+  'edge.legacy_is_historical_only',
+  'edge.legacy_excluded_from_new_runs',
+];
+const REQUIRED_EDGE_SHAPES = {
+  'edge.langgraph_calls_app_create_run': [
+    'compat.langgraph.create_run',
+    'delegates_to',
+    'application.create_run',
+  ],
+  'edge.langgraph_stateless_calls_backing_thread': [
+    'compat.langgraph.stateless_run',
+    'calls',
+    'compat.langgraph.stateless_backing_thread',
+  ],
+  'edge.langgraph_backing_calls_create_thread': [
+    'compat.langgraph.stateless_backing_thread',
+    'delegates_to',
+    'application.create_thread',
+  ],
+  'edge.langgraph_stateless_thread_precedes_run': [
+    'application.create_thread',
+    'precedes',
+    'application.create_run',
+  ],
+  'edge.scheduled_execute_routes_new': [
+    'integration.scheduled.execute',
+    'routes_to',
+    'integration.scheduled.start_new',
+  ],
+  'edge.scheduled_calls_create_thread': [
+    'integration.scheduled.start_new',
+    'calls',
+    'application.create_task_thread',
+  ],
+  'edge.scheduled_execute_routes_existing': [
+    'integration.scheduled.execute',
+    'routes_to',
+    'integration.scheduled.start_in_thread',
+  ],
+  'edge.scheduled_existing_calls_create_run': [
+    'integration.scheduled.start_in_thread',
+    'calls',
+    'application.create_run',
+  ],
+  'edge.feishu_event_calls_agent': [
+    'integration.feishu.process_event',
+    'calls',
+    'integration.feishu.agent_execute',
+  ],
+  'edge.feishu_agent_calls_start_run': [
+    'integration.feishu.agent_execute',
+    'calls',
+    'integration.feishu.start_run',
+  ],
+  'edge.feishu_start_calls_create_thread': [
+    'integration.feishu.start_run',
+    'calls',
+    'application.create_task_thread',
+  ],
+  'edge.feishu_start_calls_create_run': [
+    'integration.feishu.start_run',
+    'calls',
+    'application.create_run',
+  ],
+  'edge.app_run_calls_new_run_policy': [
+    'application.create_run',
+    'delegates_to',
+    'runtime.new_run_policy',
+  ],
+  'edge.new_run_policy_precedes_selector': [
+    'runtime.new_run_policy',
+    'precedes',
+    'runtime.selector.execute',
+  ],
+  'edge.selector_executes_adk': [
+    'runtime.selector.execute',
+    'executes',
+    'runtime.adk_executor.execute',
+  ],
+  'edge.deerflow_configures_eino': [
+    'compat.deerflow_config',
+    'configures',
+    'runtime.selector.execute',
+  ],
+  'edge.legacy_is_historical_only': [
+    'runtime.selector.execute',
+    'routes_to',
+    'historical.legacy_runtime',
+  ],
+  'edge.legacy_excluded_from_new_runs': [
+    'runtime.new_run_policy',
+    'excludes',
+    'historical.legacy_runtime',
+  ],
+};
+const REQUIRED_FORBIDDEN_TERMS = ['k2', 'chattask'];
 
 const execFileAsync = promisify(execFile);
 
@@ -70,16 +255,14 @@ const ALLOWED_RELATIONS = new Set([
 
 const asArray = value => (Array.isArray(value) ? value : []);
 
-const stringValue = value =>
-  typeof value === 'string' ? value.trim() : '';
+const stringValue = value => (typeof value === 'string' ? value.trim() : '');
 
 const isFrameworkNode = node => FRAMEWORK_LAYERS.has(node?.layer);
 
 const readRepoFile = async (repoRoot, relativePath) =>
   readFile(normalizeRepoPath(repoRoot, relativePath), 'utf8');
 
-const regexEscape = value =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const regexEscape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const duplicateErrors = (items, type) => {
   const seen = new Set();
@@ -94,6 +277,122 @@ const duplicateErrors = (items, type) => {
       errors.push(`duplicate_${type}_id: ${id}`);
     }
     seen.add(id);
+  }
+  return errors;
+};
+
+const missingRequiredIDs = (items, requiredIDs, type) => {
+  const actual = new Set(asArray(items).map(item => stringValue(item?.id)));
+  return requiredIDs
+    .filter(id => !actual.has(id))
+    .map(id => `profile_${type}_missing: ${id}`);
+};
+
+const stableJSONValue = value => {
+  if (Array.isArray(value)) {
+    return value.map(stableJSONValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map(key => [key, stableJSONValue(value[key])]),
+    );
+  }
+  return value;
+};
+
+const canonicalProfileStructureDigest = contract => {
+  const byStableID = (left, right) =>
+    stringValue(left?.id).localeCompare(stringValue(right?.id));
+  const projection = {
+    schema_version: contract?.schema_version,
+    profile: contract?.profile,
+    authority_rule: contract?.authority?.rule,
+    scope: contract?.scope,
+    nodes: [...asArray(contract?.nodes)].sort(byStableID),
+    edges: [...asArray(contract?.edges)].sort(byStableID),
+    chains: [...asArray(contract?.chains)].sort(byStableID),
+    exclusions: [...asArray(contract?.exclusions)].sort(byStableID),
+    required_queries: [...asArray(contract?.required_queries)].sort(byStableID),
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(stableJSONValue(projection)))
+    .digest('hex');
+};
+
+const validateCanonicalProfile = (contract, required) => {
+  if (!required) {
+    return [];
+  }
+
+  const errors = [];
+  if (contract?.profile !== WORKBENCH_PROFILE) {
+    errors.push(`canonical_profile_mismatch: expected ${WORKBENCH_PROFILE}`);
+  }
+  const structureDigest = canonicalProfileStructureDigest(contract);
+  if (structureDigest !== WORKBENCH_PROFILE_STRUCTURE_DIGEST) {
+    errors.push(
+      `canonical_profile_structure_mismatch: expected ${WORKBENCH_PROFILE_STRUCTURE_DIGEST} actual ${structureDigest}`,
+    );
+  }
+  for (const [field, expected] of [
+    ['canonical_runtime', 'eino_adk'],
+    ['queue_backend', 'mysql'],
+    ['sensitive_content_policy', 'bounded_metadata_only'],
+  ]) {
+    if (contract?.scope?.[field] !== expected) {
+      errors.push(`profile_scope_mismatch: ${field}: expected ${expected}`);
+    }
+  }
+  const forbiddenTerms = new Set(
+    asArray(contract?.scope?.forbidden_current_terms)
+      .map(term => stringValue(term).toLowerCase())
+      .filter(Boolean),
+  );
+  for (const term of REQUIRED_FORBIDDEN_TERMS) {
+    if (!forbiddenTerms.has(term)) {
+      errors.push(`profile_forbidden_term_missing: ${term}`);
+    }
+    for (const node of asArray(contract?.nodes)) {
+      const searchable =
+        `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+      if (
+        node?.production_status === CURRENT_STATUS &&
+        searchable.includes(term)
+      ) {
+        errors.push(`profile_forbidden_current_node: ${node.id}: ${term}`);
+      }
+    }
+  }
+  errors.push(
+    ...missingRequiredIDs(contract?.nodes, REQUIRED_NODE_IDS, 'node'),
+    ...missingRequiredIDs(contract?.edges, REQUIRED_EDGE_IDS, 'edge'),
+    ...missingRequiredIDs(contract?.chains, REQUIRED_CHAIN_IDS, 'chain'),
+    ...missingRequiredIDs(
+      contract?.required_queries,
+      REQUIRED_QUERY_IDS,
+      'query',
+    ),
+    ...missingRequiredIDs(
+      contract?.exclusions,
+      REQUIRED_EXCLUSION_IDS,
+      'exclusion',
+    ),
+  );
+  const edgesByID = new Map(
+    asArray(contract?.edges).map(edge => [stringValue(edge?.id), edge]),
+  );
+  for (const [edgeID, [from, relation, to]] of Object.entries(
+    REQUIRED_EDGE_SHAPES,
+  )) {
+    const edge = edgesByID.get(edgeID);
+    if (
+      edge &&
+      (edge.from !== from || edge.relation !== relation || edge.to !== to)
+    ) {
+      errors.push(`profile_edge_shape_mismatch: ${edgeID}`);
+    }
   }
   return errors;
 };
@@ -185,7 +484,9 @@ export const validateFrameworkScopes = contract => {
     const nodeID = stringValue(node?.id) || '<missing-node-id>';
     const runtimeScope = stringValue(node?.runtime_scope);
     if (runtimeScope && !ALLOWED_RUNTIME_SCOPES.has(runtimeScope)) {
-      errors.push(`framework_runtime_scope_invalid: ${nodeID}: ${runtimeScope}`);
+      errors.push(
+        `framework_runtime_scope_invalid: ${nodeID}: ${runtimeScope}`,
+      );
     }
     if (!isFrameworkNode(node)) {
       continue;
@@ -246,7 +547,8 @@ const validateForbiddenCurrentNodes = contract => {
     if (node?.production_status !== CURRENT_STATUS) {
       continue;
     }
-    const searchable = `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+    const searchable =
+      `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
     for (const term of forbiddenTerms) {
       if (searchable.includes(term)) {
         errors.push(`forbidden_current_node: ${node.id}: ${term}`);
@@ -283,7 +585,9 @@ export const validateMiddlewareOrder = async (contract, options) => {
     /var\s+adkMiddlewareOrder\s*=\s*\[\]ADKMiddlewareName\s*{([\s\S]*?)\n}/,
   );
   if (!block) {
-    return ['middleware_order_source_invalid: adkMiddlewareOrder block is missing'];
+    return [
+      'middleware_order_source_invalid: adkMiddlewareOrder block is missing',
+    ];
   }
 
   const nodeByConstant = new Map();
@@ -310,22 +614,23 @@ export const validateMiddlewareOrder = async (contract, options) => {
   if (
     JSON.stringify(expected) !== JSON.stringify(asArray(chain.ordered_node_ids))
   ) {
-    return [
-      `middleware_order_mismatch: expected ${expected.join(' -> ')}`,
-    ];
+    return [`middleware_order_mismatch: expected ${expected.join(' -> ')}`];
   }
 
   return [];
 };
 
+const normalizeGitPath = candidate =>
+  typeof candidate === 'string' ? candidate.split(path.sep).join('/') : '';
+
 const globMatches = (candidate, pattern) => {
-  const normalizedCandidate = candidate.replaceAll('\\', '/');
-  const normalizedPattern = stringValue(pattern).replaceAll('\\', '/');
+  const normalizedCandidate = normalizeGitPath(candidate);
+  const normalizedPattern = normalizeGitPath(stringValue(pattern));
   let source = '^';
   for (let index = 0; index < normalizedPattern.length; index += 1) {
     const character = normalizedPattern[index];
     if (character === '*' && normalizedPattern[index + 1] === '*') {
-      source += '.*';
+      source += '[\\s\\S]*';
       index += 1;
     } else if (character === '*') {
       source += '[^/]*';
@@ -338,12 +643,65 @@ const globMatches = (candidate, pattern) => {
   return new RegExp(`${source}$`).test(normalizedCandidate);
 };
 
+const validateMonitoredCoverage = contract => {
+  const contractPath = stringValue(contract?.authority?.contract).replaceAll(
+    '\\',
+    '/',
+  );
+  if (contractPath !== CANONICAL_CONTRACT_PATH) {
+    return [];
+  }
+
+  const referenced = new Set();
+  const addPath = candidate => {
+    const value = stringValue(candidate).replaceAll('\\', '/');
+    if (value) {
+      referenced.add(value);
+    }
+  };
+  const addAnchors = anchors => {
+    for (const anchor of asArray(anchors)) {
+      addPath(anchor?.path);
+    }
+  };
+  for (const node of asArray(contract?.nodes)) {
+    addAnchors(node?.source_anchors);
+    addAnchors(node?.evidence);
+    addPath(node?.version_source?.path);
+  }
+  for (const edge of asArray(contract?.edges)) {
+    addAnchors(edge?.evidence);
+  }
+  for (const chain of asArray(contract?.chains)) {
+    addAnchors(chain?.test_evidence);
+    addAnchors(chain?.ordered_source_steps);
+  }
+  for (const exclusion of asArray(contract?.exclusions)) {
+    addAnchors(exclusion?.evidence);
+  }
+
+  const authorityFiles = new Set(
+    [contract?.authority?.contract, contract?.authority?.document]
+      .map(candidate => stringValue(candidate).replaceAll('\\', '/'))
+      .filter(Boolean),
+  );
+  const patterns = asArray(contract?.scope?.monitored_paths);
+  return [...referenced]
+    .filter(relativePath => !authorityFiles.has(relativePath))
+    .filter(
+      relativePath =>
+        !patterns.some(pattern => globMatches(relativePath, pattern)),
+    )
+    .sort()
+    .map(relativePath => `contract_source_unmonitored: ${relativePath}`);
+};
+
 export const evaluateAuthorityChanges = (changedPaths, scope) => {
   const changed = new Set(
-    asArray(changedPaths).map(candidate => stringValue(candidate).replaceAll('\\', '/')),
+    asArray(changedPaths).map(normalizeGitPath).filter(Boolean),
   );
   const authorityFiles = asArray(scope?.authority_files).map(candidate =>
-    stringValue(candidate).replaceAll('\\', '/'),
+    normalizeGitPath(stringValue(candidate)),
   );
   const changedAuthorityCount = authorityFiles.filter(candidate =>
     changed.has(candidate),
@@ -356,7 +714,9 @@ export const evaluateAuthorityChanges = (changedPaths, scope) => {
   }
 
   const monitoredChanged = [...changed].some(candidate =>
-    asArray(scope?.monitored_paths).some(pattern => globMatches(candidate, pattern)),
+    asArray(scope?.monitored_paths).some(pattern =>
+      globMatches(candidate, pattern),
+    ),
   );
   if (monitoredChanged && changedAuthorityCount === 0) {
     return ['authority_files_not_updated'];
@@ -367,15 +727,27 @@ export const evaluateAuthorityChanges = (changedPaths, scope) => {
 
 export const gitChangedPaths = async (repoRoot, baseRef) => {
   const commands = [
-    ['diff', '--name-only', '--diff-filter=ACMR'],
-    ['diff', '--cached', '--name-only', '--diff-filter=ACMR'],
+    ['diff', '--no-renames', '--name-only', '--diff-filter=ACDMRT', '-z', '--'],
+    [
+      'diff',
+      '--cached',
+      '--no-renames',
+      '--name-only',
+      '--diff-filter=ACDMRT',
+      '-z',
+      '--',
+    ],
+    ['ls-files', '--others', '--exclude-standard', '-z'],
   ];
   if (stringValue(baseRef)) {
     commands.push([
       'diff',
+      '--no-renames',
       '--name-only',
-      '--diff-filter=ACMR',
+      '--diff-filter=ACDMRT',
+      '-z',
       `${baseRef}...HEAD`,
+      '--',
     ]);
   }
 
@@ -385,8 +757,8 @@ export const gitChangedPaths = async (repoRoot, baseRef) => {
       cwd: repoRoot,
       encoding: 'utf8',
     });
-    for (const candidate of stdout.split(/\r?\n/)) {
-      const normalized = stringValue(candidate).replaceAll('\\', '/');
+    for (const candidate of stdout.split('\0')) {
+      const normalized = normalizeGitPath(candidate);
       if (normalized) {
         paths.add(normalized);
       }
@@ -420,7 +792,9 @@ export const validateSourceAnchor = async (anchor, options) => {
   if (!locator) {
     errors.push(`anchor_locator_missing: ${owner}: ${relativePath}`);
   } else if (!content.includes(locator)) {
-    errors.push(`anchor_locator_not_found: ${owner}: ${relativePath}: ${locator}`);
+    errors.push(
+      `anchor_locator_not_found: ${owner}: ${relativePath}: ${locator}`,
+    );
   }
 
   return errors;
@@ -480,6 +854,15 @@ export const validateOrderedChain = (chain, nodesByID, edgesByID) => {
     }
   }
 
+  for (const edgeID of asArray(chain?.required_side_edge_ids)) {
+    const edge = edgesByID.get(edgeID);
+    if (!edge) {
+      errors.push(`chain_side_edge_missing: ${chainID}: ${edgeID}`);
+    } else if (!asArray(edge?.chain_ids).includes(chainID)) {
+      errors.push(`chain_side_edge_membership_missing: ${chainID}: ${edgeID}`);
+    }
+  }
+
   if (chain.entry !== nodeIDs[0]) {
     errors.push(`chain_entry_mismatch: ${chainID}`);
   }
@@ -504,7 +887,9 @@ export const validateContract = async (contract, options) => {
     };
   }
   if (contract?.schema_version !== 1) {
-    errors.push(`schema_version_unsupported: ${String(contract?.schema_version)}`);
+    errors.push(
+      `schema_version_unsupported: ${String(contract?.schema_version)}`,
+    );
   }
 
   const nodes = asArray(contract?.nodes);
@@ -513,8 +898,17 @@ export const validateContract = async (contract, options) => {
   errors.push(...duplicateErrors(nodes, 'node'));
   errors.push(...duplicateErrors(edges, 'edge'));
   errors.push(...duplicateErrors(chains, 'chain'));
+  errors.push(
+    ...duplicateErrors(contract?.required_queries, 'required_query'),
+    ...duplicateErrors(contract?.exclusions, 'exclusion'),
+    ...validateCanonicalProfile(
+      contract,
+      options?.requireCanonicalProfile !== false,
+    ),
+  );
   errors.push(...validateFrameworkScopes(contract));
   errors.push(...validateForbiddenCurrentNodes(contract));
+  errors.push(...validateMonitoredCoverage(contract));
 
   const nodesByID = new Map();
   for (const node of nodes) {
@@ -527,7 +921,9 @@ export const validateContract = async (contract, options) => {
     }
     const sourceAnchors = asArray(node?.source_anchors);
     if (sourceAnchors.length === 0) {
-      errors.push(`node_source_anchor_missing: ${nodeID || '<missing-node-id>'}`);
+      errors.push(
+        `node_source_anchor_missing: ${nodeID || '<missing-node-id>'}`,
+      );
     }
     for (const [index, anchor] of sourceAnchors.entries()) {
       errors.push(
@@ -557,11 +953,14 @@ export const validateContract = async (contract, options) => {
           );
         }
       } catch (error) {
-        errors.push(`framework_version_source_invalid: ${nodeID}: ${error.message}`);
+        errors.push(
+          `framework_version_source_invalid: ${nodeID}: ${error.message}`,
+        );
       }
     }
   }
 
+  const chainIDs = new Set(chains.map(chain => stringValue(chain?.id)));
   const edgesByID = new Map();
   for (const edge of edges) {
     const edgeID = stringValue(edge?.id);
@@ -569,19 +968,32 @@ export const validateContract = async (contract, options) => {
       edgesByID.set(edgeID, edge);
     }
     if (!nodesByID.has(edge?.from)) {
-      errors.push(`edge_source_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.from)}`);
+      errors.push(
+        `edge_source_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.from)}`,
+      );
     }
     if (!nodesByID.has(edge?.to)) {
-      errors.push(`edge_target_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.to)}`);
+      errors.push(
+        `edge_target_missing: ${edgeID || '<missing-edge-id>'}: ${String(edge?.to)}`,
+      );
     }
     if (!ALLOWED_RELATIONS.has(edge?.relation)) {
-      errors.push(`edge_relation_invalid: ${edgeID || '<missing-edge-id>'}: ${String(edge?.relation)}`);
+      errors.push(
+        `edge_relation_invalid: ${edgeID || '<missing-edge-id>'}: ${String(edge?.relation)}`,
+      );
     }
     if (edge?.confidence !== 'extracted') {
       errors.push(`edge_confidence_invalid: ${edgeID || '<missing-edge-id>'}`);
     }
     if (asArray(edge?.chain_ids).length === 0) {
       errors.push(`edge_chain_ids_missing: ${edgeID || '<missing-edge-id>'}`);
+    }
+    for (const chainID of asArray(edge?.chain_ids)) {
+      if (!chainIDs.has(chainID)) {
+        errors.push(
+          `edge_chain_missing: ${edgeID || '<missing-edge-id>'}: ${chainID}`,
+        );
+      }
     }
     if (asArray(edge?.evidence).length === 0) {
       errors.push(`edge_evidence_missing: ${edgeID || '<missing-edge-id>'}`);
@@ -594,13 +1006,50 @@ export const validateContract = async (contract, options) => {
     );
   }
 
+  for (const query of asArray(contract?.required_queries)) {
+    const queryID = stringValue(query?.id) || '<missing-query-id>';
+    if (!stringValue(query?.question)) {
+      errors.push(`query_question_missing: ${queryID}`);
+    }
+    if (asArray(query?.required_node_ids).length === 0) {
+      errors.push(`query_required_nodes_missing: ${queryID}`);
+    }
+    for (const nodeID of asArray(query?.required_node_ids)) {
+      if (!nodesByID.has(nodeID)) {
+        errors.push(`query_required_node_missing: ${queryID}: ${nodeID}`);
+      }
+    }
+    if (asArray(query?.required_edge_ids).length === 0) {
+      errors.push(`query_required_edges_missing: ${queryID}`);
+    }
+    for (const edgeID of asArray(query?.required_edge_ids)) {
+      if (!edgesByID.has(edgeID)) {
+        errors.push(`query_required_edge_missing: ${queryID}: ${edgeID}`);
+      }
+    }
+    const expandedTerms = asArray(query?.expanded_terms).map(stringValue);
+    for (const nodeID of asArray(query?.smoke_node_ids)) {
+      const node = nodesByID.get(nodeID);
+      if (!node) {
+        errors.push(`query_smoke_node_missing: ${queryID}: ${nodeID}`);
+        continue;
+      }
+      const label = stringValue(node?.label);
+      if (!expandedTerms.includes(label)) {
+        errors.push(`query_smoke_term_missing: ${queryID}: ${label}`);
+      }
+    }
+  }
+
   for (const chain of chains) {
     const chainID = stringValue(chain?.id);
     if (chain?.production_status !== CURRENT_STATUS) {
       errors.push(`chain_not_current: ${chainID || '<missing-chain-id>'}`);
     }
     if (asArray(chain?.test_evidence).length === 0) {
-      errors.push(`chain_test_evidence_missing: ${chainID || '<missing-chain-id>'}`);
+      errors.push(
+        `chain_test_evidence_missing: ${chainID || '<missing-chain-id>'}`,
+      );
     }
     errors.push(
       ...(await validateEvidenceList(chain?.test_evidence, {
@@ -609,6 +1058,19 @@ export const validateContract = async (contract, options) => {
       })),
     );
     errors.push(...validateOrderedChain(chain, nodesByID, edgesByID));
+  }
+
+  for (const exclusion of asArray(contract?.exclusions)) {
+    const exclusionID = stringValue(exclusion?.id) || '<missing-exclusion-id>';
+    if (asArray(exclusion?.evidence).length === 0) {
+      errors.push(`exclusion_evidence_missing: ${exclusionID}`);
+    }
+    errors.push(
+      ...(await validateEvidenceList(exclusion?.evidence, {
+        repoRoot,
+        owner: `exclusion.${exclusionID}`,
+      })),
+    );
   }
 
   errors.push(...(await validateMiddlewareOrder(contract, { repoRoot })));

@@ -12,8 +12,15 @@
   `docs/superpowers/context/workbench-execution-chain.md`
 - 机器合同：
   `docs/superpowers/context/workbench-execution-graph.json`
-- 派生且 ignored 的图：
+- 派生且 ignored 的主执行图：
   `docs/superpowers/context/workbench-execution-graphify/graphify-out/graph.json`
+- 派生且 ignored 的业务检索图：
+  `docs/superpowers/context/workbench-execution-graphify/graphify-out/query-graph.json`
+
+`workbench-execution-graphify/` 是稳定符号链接；实际完整版本保存在 ignored 的
+`workbench-execution-graphify-versions/`。上一有效版本由 ignored 的
+`workbench-execution-graphify-previous` 指向。正常查询只使用稳定路径，previous
+只用于本地回滚核验。
 
 ## 前置条件
 
@@ -42,9 +49,24 @@ node scripts/workbench-execution-graph.mjs build
 node scripts/workbench-execution-graph.mjs verify-derived
 ```
 
-`verify` 检查合同、源码定位、版本、middleware 顺序、排除边界和权威文件联动；
-`build` 在临时目录构建 Graphify AST 后注入显式有向关系，成功后才替换旧图；
-`verify-derived` 检查摘要、图健康、必经路径与查询烟测。
+`verify` 由 CLI 强制启用 canonical 模式，并用完整结构摘要检查
+`workbench_execution_v1` profile、authority rule、源码定位、版本、
+middleware 顺序、必需分支、排除边界、监控覆盖和权威文件联动；`build` 在临时目录构建 Graphify
+AST，为 AST 边生成稳定 ID，并生成同基底的两张图：`graph.json` 只注入显式有向
+关系和源码锚点桥，`query-graph.json` 在同一基底上额外注入查询 overlay。完成两图
+一致性、健康和查询校验后，写入受管标记，把完整目录移入版本区并原子替换稳定
+指针，同时保留上一完整版本；
+`verify-derived` 检查语料/构建器摘要、
+AST 节点/边/源码覆盖、桥接数量、必经路径与查询结果。构建元数据记录 Git commit、
+dirty 状态和 status digest；构建器摘要绑定 CLI、合同校验器和派生构建器，提交、
+状态或任一脚本变化都必须重建。
+
+每个业务问题先在 `query-graph.json` 用完整 `question` 查询检索意图节点并返回全部
+必需节点；每个 `required_edge_id` 再在无 overlay 的 `graph.json` 用独立
+`graphify path` 校验一跳、正向和关系一致，最后在主图逐个使用完整节点标签做锚点
+烟测。查询输出只有真实 `NODE`/有向 path 行参与判断，命令回显、宽查询截断、反向
+箭头、同名文本或 `retrieves` 捷径不能充当执行证据。Graphify 将同端点多关系显示
+为 `relation_a/relation_b` 时，目标关系必须明确包含在该集合中。
 
 ## 工具职责
 
@@ -52,24 +74,32 @@ node scripts/workbench-execution-graph.mjs verify-derived
 
 Graphify 查询稳定业务关系和已提交框架事实。合同边的
 `authority=workbench_execution_contract`、`confidence=EXTRACTED` 是权威关系；
-AST 边只补充源码结构。Graphify 不得从历史文档推断当前执行链。
+AST 边只补充源码结构。`query_overlay` 只存在于业务检索图，把 8 类业务问题连接
+到必需事实；`workbench_source_anchor` 同时存在于两图，把合同节点连接到真实 AST
+文件节点。两张图由当前合同和白名单源码确定性生成，基底必须逐项一致。Graphify
+不得从历史文档推断当前执行链。
 
 常用查询：
 
 ```bash
-graphify query "workbench execution runtime framework" --graph docs/superpowers/context/workbench-execution-graphify/graphify-out/graph.json
-graphify query "eino adk runner chat model middleware tool event" --graph docs/superpowers/context/workbench-execution-graphify/graphify-out/graph.json
+graphify query "workbench execution runtime framework" --graph docs/superpowers/context/workbench-execution-graphify/graphify-out/query-graph.json
+graphify query "ADKExecutor.Execute" --graph docs/superpowers/context/workbench-execution-graphify/graphify-out/graph.json
 graphify path "Workbench Immediate Submit" "TaskDetail Event Projection" --graph docs/superpowers/context/workbench-execution-graphify/graphify-out/graph.json
 ```
 
+`graphify path` 可能为寻找连通路径而显示反向箭头。验收执行顺序时必须逐跳确认
+箭头方向；出现 `<--` 的路径不能作为有向执行链证据。顺序事实以合同中的
+`ordered_node_ids`、`ordered_edge_ids` 和 `verify-derived` 结果为准。
+
 ### codebase-memory / CodeGraph
 
-CodeGraph 查询当前 checkout 的函数、调用者、被调用者和影响范围。修改前后分别
-运行结构查询；如果索引状态不是 current，先刷新：
+CodeGraph 查询当前 checkout 的函数、调用者、被调用者和影响范围。首次使用先
+初始化；已有索引但状态不是 current 时再刷新：
 
 ```bash
-codegraph sync "$PWD"
 codegraph status "$PWD"
+codegraph init "$PWD" # 仅在 status 显示 Not initialized 时运行
+codegraph sync "$PWD" # 已初始化且有源码变化时运行
 codegraph explore -p "$PWD" --max-files 20 Workbench TaskThread RunWorker ADKExecutor EventSource
 ```
 
@@ -81,7 +111,8 @@ Graphify 与 CodeGraph 结论冲突时，以当前源码、IDL、迁移、测试
 以下任何变化都必须同时更新两份权威文件：
 
 - Workbench 立即/延迟提交、上传或 TaskDetail follow-up 顺序；
-- Thrift contract、生成 client、Hertz handler 或 SSE 投影；
+- Thrift contract、生成 client/model、生成 Hertz route、自定义 SSE route、handler
+  或 SSE 投影；
 - application/domain/repository 所有权或事务边界；
 - MySQL admission、pending/queued 状态、`SKIP LOCKED`、lease fence；
 - RunWorker、RunProcessor、RuntimeSelector 或 Eino ADK 执行；
@@ -91,6 +122,8 @@ Graphify 与 CodeGraph 结论冲突时，以当前源码、IDL、迁移、测试
 - React、Thriftgo、Hertz、Go、GORM/MySQL、Eino/Eino-ext、mcp-go、Sonic、
   Prometheus、cron、飞书 SDK 的版本或职责；
 - LangGraph、DeerFlow、legacy、K2、ChatTask 的边界事实。
+- LangGraph stateless backing thread、Scheduled 新建/复用会话、飞书新建/复用
+  session 的任一分支。
 
 更新时遵循：
 
@@ -101,13 +134,20 @@ Graphify 与 CodeGraph 结论冲突时，以当前源码、IDL、迁移、测试
 5. 重建并运行 `verify-derived`；
 6. 刷新 CodeGraph，复查改动符号和调用链。
 
-不得只改其中一份权威文件。不得用失效行号代替稳定 symbol/locator。不得为了图
-连通而把时序边写成调用边；没有直接调用时使用有证据的 `precedes` 或其它准确
-关系。
+每项 `exclusion` 必须带可定位的 `evidence`。监控变化集合包含 tracked diff、staged
+diff、未跟踪非 ignored 文件和 tracked 文件类型变化；Git rename 按删除旧路径和
+新增新路径处理，普通文件与符号链接互换、移出监控目录也必须触发两份权威文件
+联动。Git 路径使用 NUL 分隔读取，不能因换行、反斜杠或其它合法文件名字符漏报。
+
+不得只改其中一份权威文件；受监控源码的新增、修改、重命名和删除都属于联动
+范围。不得用失效行号代替稳定 symbol/locator。不得为了图连通而把时序边写成
+调用边；没有直接调用时使用有证据的 `precedes` 或其它准确关系。
 
 ## 派生图过期与恢复
 
-`verify-derived` 报 `stale_derived_digest` 时，先运行合同验证，再重建：
+`verify-derived` 报 `stale_derived_digest`、`stale_builder_digest` 或
+`stale_git_commit` / `stale_git_dirty` / `stale_git_status_digest` 时，先运行合同
+验证，再重建：
 
 ```bash
 node scripts/workbench-execution-graph.mjs verify
@@ -115,11 +155,26 @@ node scripts/workbench-execution-graph.mjs build
 node scripts/workbench-execution-graph.mjs verify-derived
 ```
 
-Graphify 不可用时，`build` 会报 `graphify_unavailable` 并保留上一份有效图；不要
-手工删除旧图。恢复 Graphify 后重新构建。若合同本身失败，先修合同或源码事实，
-不得用 `--force` 绕过。
+Graphify 不可用时，`build` 会报 `graphify_unavailable` 并保留上一份有效图；若
+提取结果缺少 AST 节点、AST 边、任一可解析源码文件，或任一 current 合同节点缺少
+真实 AST 文件桥、最终图缺少业务边、
+稳定 ID，构建同样失败且不会替换旧图。不要手工删除旧图。恢复 Graphify 或修正
+合同后重新构建，不得用 `--force` 绕过。
 
-派生目录全部 ignored，不提交 `corpus/`、`build-meta.json`、`graph.json` 或 HTML。
+若受限沙箱中出现 `AST extraction failed: Operation not permitted`，是 Graphify
+`ProcessPool` 被系统权限阻止；应授权同一条本地 `build` 命令使用所需进程权限后
+重跑。不得把 `graphify_ast_empty` 改成 warning，也不得安装空图或复用过期图冒充
+当前结果。
+
+派生稳定/previous 指针和版本目录全部 ignored，不提交 `corpus/`、`build-meta.json`、
+`graph.json`、`query-graph.json` 或 HTML。不要手工改写稳定指针；一次成功构建只
+切换当前指针并保留上一有效版本；首次旧目录迁移的可捕获失败会自动回滚。历史
+孤立版本只能在确认既不被 current/previous 指针引用后手工清理。
+
+`--derived-root` 只允许指向仓库内 `docs/superpowers/context` 下以
+`workbench-execution-graph` 开头的路径。发布器在移动任何既有目录前要求受管标记；
+绝不依据文件名猜测目录所有权，也不替换普通目录。若本机残留无标记的早期 ignored
+图谱，先核实其内容和 current/previous 引用，再经明确确认人工移走。
 
 ## 故障注入
 
@@ -133,8 +188,9 @@ node scripts/workbench-execution-graph.mjs verify --contract "$tmp_dir/contract.
 rm -rf "$tmp_dir"
 ```
 
-可注入的安全故障包括：框架版本漂移、middleware 换序、悬空 edge、兼容节点
-进入 `canonical_executor`、K2/ChatTask current node。不要在故障注入中写入真实
+可注入的安全故障包括：移除 profile/改写 authority path、框架版本漂移、middleware
+换序、悬空 edge、缺失 exclusion evidence、兼容节点进入 `canonical_executor`、
+K2/ChatTask current node。不要在故障注入中写入真实
 prompt、completion、tool 参数/结果、凭据、对象地址、checkpoint bytes、provider
 原始响应或 audit 原始载荷。
 
@@ -144,13 +200,17 @@ prompt、completion、tool 参数/结果、凭据、对象地址、checkpoint by
 
 - Workbench immediate submit 能到 pending Run、worker、Eino、EventSource；
 - 带文件的 Workbench 和 TaskDetail 路径保持先上传再创建 Run；
+- LangGraph stateless 先创建 backing Thread 再创建 Run；Scheduled 与飞书的
+  新建会话、复用会话两条分支都可检索；
 - Eino 查询返回 Runner、ChatModelAgent、middleware/tool/MCP 和 EventSink；
 - cancel、human resume、subagent retry、lease recovery 可分别遍历；
 - Memory、Artifact、Token、Guardrail、MCP audit 有独立持久化边；
 - LangGraph/DeerFlow/legacy 查询明确返回兼容边界，而不是并行运行时；
 - K2 和 ChatTask 的 current production node 数为 0。
 
-查询结果必须引用源码锚点，不能只经过文档 `references` 边。
+业务问题先在检索图返回合同要求的节点；查询结果中的有向业务边和执行路径必须
+再从主执行图取得，并可经 `anchored_in` 到达 Graphify AST 文件节点。不能只经过
+`retrieves`、文档 `references` 或反向连通边。
 
 ## 安全扫描
 
@@ -161,6 +221,17 @@ rg -n "K2|ChatTask" docs/superpowers/context/workbench-execution-graph.json
 
 敏感词只能出现在安全禁止声明；K2/ChatTask 只能出现在排除规则和解释性边界，
 不能成为 current node、runtime value 或 canonical edge。
+
+Corpus 只接受仓库内普通源码/合同文件。`.env`、私钥/keystore、数据库/日志文件、
+`.git`/`.ssh`/secret/credential/log 目录和任何 corpus 符号链接会以
+`sensitive_corpus_path`、`unsupported_corpus_path` 或
+`corpus_path_symlink` / `corpus_path_escapes_repo` 失败；不得为了构建图谱放宽该
+保护。候选路径和解析后的真实路径都必须通过同一敏感路径检查。
+
+语料按证据文件整文件复制，因此 ignored 的本地 `corpus/` 可能包含仓库已跟踪的
+合成安全测试值或公开的本地 Docker 默认值；这些值不得进入最终 Graphify JSON，
+也不得上传或导出。若未来引入远程语义提取、共享语料或产物导出，必须先增加
+内容级脱敏和独立安全复核。
 
 ## dev 两阶段审计
 

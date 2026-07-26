@@ -1,7 +1,7 @@
 # Workbench 当前执行链图谱设计
 
-日期：2026-07-26  
-状态：已确认，待实施
+日期：2026-07-26
+状态：已实施，待首次合入审计
 
 ## 背景
 
@@ -38,7 +38,7 @@ WorkbenchChat 已统一到 `TaskThread` 主模型，旧 `ChatTask` 链路已退�
 
 - 不修改 Workbench、AgentThread、Eino ADK 或数据库的业务行为。
 - 不把整个仓库无差别提交给 Graphify。
-- 不提交 Graphify 的派生 `graph.json`、HTML 或缓存。
+- 不提交 Graphify 的派生 `graph.json`、`query-graph.json`、HTML 或缓存。
 - 不把历史 plans/specs 转换为当前事实。
 - 不保存 prompt、模型原始输出、工具参数或结果、凭据、对象地址、checkpoint bytes
   或原始审计载荷。
@@ -59,10 +59,20 @@ WorkbenchChat 已统一到 `TaskThread` 主模型，旧 `ChatTask` 链路已退�
 4. **检索层**：Graphify 查询稳定业务关系，codebase-memory 查询实时符号调用和
    影响范围，最终结论必须回到源码、IDL 和测试核实。
 
-Markdown、JSON 合同和校验脚本提交到 Git。Graphify 输出保存在 ignored
-`docs/superpowers/context/workbench-execution-graphify/graphify-out/`，由已提交语料
-重建，不作为独立事实源。该目录同时保存 ignored 临时语料和构建元数据，形成
-唯一、稳定的 Workbench Graphify 查询入口。
+Markdown、JSON 合同和校验脚本提交到 Git。Graphify 稳定路径
+`docs/superpowers/context/workbench-execution-graphify/` 是 ignored 原子指针，
+指向 `workbench-execution-graphify-versions/` 中已完整校验的版本，由已提交语料
+重建，不作为独立事实源。版本内的 `graph.json` 是无检索边的执行路径视图，
+`query-graph.json` 是在同一基底上增加业务问题 overlay 的检索视图；临时语料和
+构建元数据也保存在 ignored 版本目录。稳定 current 指针原子切换，previous 指针
+保留上一完整版本。两图职责固定，不能互换。
+
+机器合同使用 `workbench_execution_v1` profile。canonical 模式由调用者默认强制，
+不能由合同内部的 profile 或 authority path 自行关闭。profile 对 authority rule、scope、
+全部 node/edge、chain、query 和 exclusion 的稳定投影计算 SHA-256，从而固定
+查询集合、链顺序/side edge、排除语义、关键节点属性及边方向，并固定
+`canonical_runtime=eino_adk`、`queue_backend=mysql` 和敏感内容策略；合同不能通过
+删除自身约束或改写禁词静默降级。
 
 ## 总体结构
 
@@ -185,9 +195,11 @@ Graphify 可以生成推断关系，但推断关系不能满足机器合同中�
 - Workbench 首次即时提交；
 - Workbench 延迟启动；
 - TaskDetail 追问、附件上传与原子建 Run；
-- LangGraph 兼容 API 创建 Thread/Run；
-- 定时任务触发 TaskThread/Run；
-- 飞书消息触发 TaskThread/Run。
+- LangGraph 有 Thread 的 API 直接创建 Run，stateless API 先创建 backing Thread
+  再创建 Run；
+- 定时任务由 `AgentTaskExecutor.Execute` 在 `StartNew -> CreateTaskThread` 与
+  `StartInThread -> CreateRun` 间分支；
+- 飞书 `startRun` 在无 session 时创建 TaskThread，在已有 Thread 时创建 Run。
 
 LangGraph、定时任务和飞书是当前真实生产者，必须连接到共享 AgentThread 主链，
 但不能被描述为 Workbench UI 的内部组件。
@@ -306,11 +318,23 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
    语料；
 4. 将权威 Markdown、关系账本和白名单源码复制到 ignored 临时语料目录；
 5. 保持仓库相对路径，避免同名文件失去所有权信息；
-6. 计算合同、文档和源码语料的确定性 SHA-256 摘要；
-7. 使用 Graphify 构建有向图，源码 AST 关系用于补充结构上下文，不能覆盖合同
-   中的显式关系；
-8. 写入派生图元数据，包括 Git tree、语料摘要、Graphify 版本和生成时间；
-9. 执行派生图健康检查和必需查询。
+6. 分别计算合同/文档/源码语料和图谱构建脚本的确定性 SHA-256 摘要；
+7. 使用 Graphify 构建有向图；代码语料必须产出非空 AST 节点和边，并覆盖每个
+   可解析白名单源码文件；
+8. 为无 ID 的 AST 边按有向三元组生成稳定 ID，并用 `anchored_in` 把每个 current
+   合同节点桥接到 Graphify 识别的真实文件节点；IDL 合同使用生成 Go/TypeScript
+   产物作为可解析桥；
+9. 生成同基底双图：主执行图只注入合同边和源码桥，检索图额外注入业务问题
+   `query_overlay`；
+10. 写入派生图元数据，包括 Git tree、语料/构建器摘要、两图节点/边数量、
+    AST/桥接/overlay 数量、AST 源文件列表、Graphify 版本和生成时间；
+11. 写入受管标记；在临时目录验证两图基底逐项一致，业务问题只查检索图，边与执行路径只查
+    主执行图；全部健康、路径和查询校验通过后，把完整目录移入版本区，再用一次
+    rename 原子替换稳定符号链接，并更新 previous 指针但不立即删除上一版本。
+    受管实体目录迁移带失败回滚；任何无标记目录都拒绝替换，不根据旧文件布局
+    猜测所有权。
+12. 元数据记录 Git commit、dirty 状态和 status digest；后续验证与当前工作树逐项
+    比较，提交或工作树状态变化后必须重建。
 
 框架语料账本必须从合同确定性生成，记录框架节点、版本来源、生产符号和边界
 分类。Graphify 的 AST 可以补充 import/call 关系，但不得仅凭 `go.mod` 或
@@ -335,6 +359,8 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - 所有边端点存在；
 - 所有链路节点、边和测试证据存在；
 - 源码路径和锚点真实存在；
+- 生成 TypeScript client、生成 Go model、生成 Hertz route 和自定义 SSE route 均
+  纳入监控与锚点；
 - 当前链路不引用 retired、K2 或历史节点；
 - 每条链从入口到终点可达；
 - 白名单路径位于仓库内，且不包含敏感或生成目录。
@@ -342,15 +368,35 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - 每个 `canonical_runtime` 框架至少有一个生产源码符号锚点，不能只锚定依赖
   清单；
 - Eino middleware 顺序与 `adkMiddlewareOrder` 完全一致；
+- 每个 Graphify 冒烟节点的完整标签必须作为独立 `expanded_terms` 词项存在；
+- 必需 chain/query/exclusion 和关键生产分支不能被删空；query ID 唯一，edge 的
+  `chain_ids` 必须引用真实 chain，ordered/side edge 必须反向声明所属 chain；
+- canonical 校验由调用者强制；同时删除 profile 并改写两条 authority path 仍必须
+  因完整结构摘要失败；
+- 每个 exclusion 都有可读取、locator 可命中的独立 evidence；
+- 合同引用的每个源码、测试和版本清单必须被 `monitored_paths` 覆盖；
 - `conditional_runtime_extension`、`compatibility_contract`、
   `historical_compatibility`、`ui_only`、`optional_observability` 和
   `build_or_test_only` 节点不能出现在 Run 执行器必经边中。
 
 `verify-derived` 必须检查：
 
-- 派生图语料摘要与当前文件完全一致；
-- Graphify 图中无悬空端点、自环和重复关系边；
-- 必需业务节点和显式链路都能查询到；
+- 派生图语料摘要和构建器摘要与当前文件完全一致；
+- Git commit、dirty 状态和 status digest 与当前工作树一致；
+- 派生根具有受管标记；既有普通目录不能成为安装或清理目标，previous 版本保持
+  完整可读；
+- Graphify 图中 AST 节点/边非空、AST 源文件覆盖完整，且无悬空端点、自环、
+  重复 ID 和重复关系边；
+- 主执行图不含任何 `query_overlay` 或 `retrieves` 关系，检索图除合同声明的
+  overlay 外不得增加其它
+  节点或边，且两图的 AST、合同事实和源码桥基底逐项一致；
+- 每个合同节点/边元数据、查询 overlay 和源码锚点桥均未被篡改，且每个 current
+  合同节点至少有一条到真实 AST 文件节点的桥；
+- 每个业务 `question` 在检索图查询并返回必需节点；每个 `required_edge_id` 另在
+  主执行图以一跳 `graphify path` 校验方向和关系，不能把反向连通或 `retrieves`
+  捷径当成执行边；
+- 每个冒烟节点继续使用合同声明的完整标签独立查询并原样回显，避免宽查询的起始
+  节点上限或 token 截断掩盖缺失节点；
 - Workbench 前端到 Eino 的路径经过真实跨层节点，不只经过文档
   `references`；
 - K2 和旧 ChatTask 当前节点数为 0。
@@ -359,6 +405,8 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - “Eino SDK 如何执行 Run”查询必须经过 RuntimeSelector、ADKExecutor、Runner、
   ChatModelAgent、middleware/tool 和 EventSink；
 - “LangGraph/DeerFlow/legacy 是否是当前并行运行时”查询必须返回明确否定边界。
+- “LangGraph、Scheduled 和飞书如何进入共享 Run 主链”查询必须覆盖 stateless
+  backing Thread、Scheduled 新建/复用和飞书新建/复用分支。
 
 ## 变化检测
 
@@ -379,8 +427,8 @@ node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
 - Event、Checkpoint、Memory、Artifact、Token、Guardrail、MCP；
 - 认证、租户隔离、bounded projection 或 fail-closed 边界。
 
-相关源码变化而两个权威文件均未更新时，变化检测必须失败。只更新文档但未更新
-合同，或只更新合同但未更新文档，同样失败。
+相关源码发生新增、修改、重命名或删除，而两个权威文件均未更新时，变化检测
+必须失败。只更新文档但未更新合同，或只更新合同但未更新文档，同样失败。
 
 ## 故障处理
 
@@ -388,18 +436,19 @@ node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
 - 缺少 codebase-memory MCP：记录降级，使用 Graphify、`rg`、源码和测试完成
   验证，不伪造结构查询结果。
 - 源码锚点漂移：校验失败，要求重新核实源码后更新合同。
-- 派生图过期：禁止查询为“当前图”，必须重建。
+- 任一派生图过期或两图基底不一致：禁止查询为“当前图”，必须重建。
 - 图谱推断与源码冲突：源码、IDL、生成代码和测试优先，删除或修正推断边。
 - 工作树含相关未提交改动：摘要覆盖实际文件内容，审计必须明确当前 tree 和 diff。
 
 ## 安全边界
 
 - 所有文件路径必须在仓库内并通过白名单选择。
-- 不读取 `.env`、密钥文件、凭据缓存、对象内容或运行日志原文。
+- 不读取 `.env`、密钥/keystore、凭据/日志目录、数据库文件、对象内容或运行日志
+  原文；符号链接解析后必须仍在仓库内。
 - 不把 prompt、completion、tool arguments、tool results、checkpoint bytes、
   credentials、object URI、raw provider body 或 raw audit payload 写入图谱。
 - Graphify 语料只包含源码结构、公开合同、bounded metadata 和测试名称。
-- 派生图不得自动上传外部服务。
+- 两张派生图均不得自动上传外部服务。
 
 ## 测试和验收
 
@@ -409,16 +458,21 @@ node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
 2. 损坏符号故障注入能够失败；
 3. 悬空边故障注入能够失败；
 4. K2 当前节点故障注入能够失败；
-5. 过期摘要故障注入能够失败；
+5. 过期语料摘要或构建器摘要故障注入能够失败；
 6. 框架版本漂移故障注入能够失败；
 7. Eino middleware 顺序漂移故障注入能够失败；
 8. 把 LangGraph、DeerFlow 或 legacy 错标为 canonical runtime 的故障注入能够失败；
-9. Graphify 有向图健康检查通过；
-10. 每个必需链路查询返回入口、真实跨层节点和终点；
-11. 框架查询返回职责、版本来源、生产符号和明确兼容边界；
-12. codebase-memory 在相同 Git tree 上刷新；
-13. codebase-memory 能找到当前关键符号，并确认旧 ChatTask 生产符号为 0；
-14. `git diff --check`、敏感信息扫描和工作树清洁检查通过。
+9. Graphify AST ID、每个 current 节点的文件桥、源文件覆盖、敏感 realpath/
+   symlink 防护、受管目录拒绝和连续两次 current/previous 指针发布故障注入通过；
+10. 主执行图无 overlay、两图基底一致；业务问题从检索图返回必需节点，有向边
+    从主执行图独立核验，标签烟测通过；
+11. LangGraph stateless、Scheduled 双分支、飞书双分支和 new-run/legacy 方向可查询；
+12. 框架查询返回职责、版本来源、生产符号和明确兼容边界；
+13. codebase-memory 在相同 Git tree 上刷新；
+14. codebase-memory 能找到当前关键符号，并确认旧 ChatTask 生产符号为 0；
+15. `git diff --check`、敏感信息扫描和工作树清洁检查通过。
+16. 未跟踪监控文件和移出监控目录的 rename 都触发权威文件联动；Git provenance
+    篡改可由 `verify-derived` 检出。
 
 本需求不改变业务代码，因此不要求页面行为变化。若实施过程中发现必须修改业务
 代码才能使声明链路成立，应停止并拆成新的业务修复需求，不能在图谱需求中顺手
