@@ -250,7 +250,7 @@ git commit -m "docs: refocus repository agent guidance"
 - Create: `docs/superpowers/context/project-context.md`
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 
-- [ ] **Step 1：验证长期上下文尚不存在**
+- [x] **Step 1：验证长期上下文尚不存在**
 
 Run:
 
@@ -260,7 +260,7 @@ test -f docs/superpowers/context/project-context.md
 
 Expected: 退出码 `1`。
 
-- [ ] **Step 2：创建长期上下文文件**
+- [x] **Step 2：创建长期上下文文件**
 
 使用 `apply_patch` 创建以下内容：
 
@@ -370,7 +370,7 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 时在同一需求分支修正，并在审计报告中列出。
 ```
 
-- [ ] **Step 3：验证长期上下文结构和链接**
+- [x] **Step 3：验证长期上下文结构和链接**
 
 Run:
 
@@ -388,7 +388,7 @@ test -f docs/superpowers/runbooks/local-debug-and-test.md && test -f docs/superp
 
 Expected: 退出码 `0`。
 
-- [ ] **Step 4：提交长期上下文**
+- [x] **Step 4：提交长期上下文**
 
 ```bash
 git add docs/superpowers/context/project-context.md docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
