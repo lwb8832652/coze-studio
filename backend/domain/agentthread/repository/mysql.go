@@ -57,7 +57,6 @@ type threadPO struct {
 	Title         string         `gorm:"column:title"`
 	Status        string         `gorm:"column:status;index:idx_agent_threads_space_status"`
 	Source        string         `gorm:"column:source"`
-	LegacyTaskID  int64          `gorm:"column:legacy_task_id;index:idx_agent_threads_legacy_task"`
 	Metadata      datatypes.JSON `gorm:"column:metadata;type:json"`
 	CreatedAt     int64          `gorm:"column:created_at"`
 	UpdatedAt     int64          `gorm:"column:updated_at;index:idx_agent_threads_space_updated;index:idx_agent_threads_creator_updated"`
@@ -4474,7 +4473,6 @@ func threadToPO(thread *entity.Thread) (*threadPO, error) {
 		Title:         thread.Title,
 		Status:        string(thread.Status),
 		Source:        string(thread.Source),
-		LegacyTaskID:  thread.LegacyTaskID,
 		Metadata:      metadata,
 		CreatedAt:     thread.CreatedAt,
 		UpdatedAt:     thread.UpdatedAt,
@@ -4491,7 +4489,6 @@ func (po *threadPO) toEntity() *entity.Thread {
 		Title:         po.Title,
 		Status:        entity.ThreadStatus(po.Status),
 		Source:        entity.ThreadSource(po.Source),
-		LegacyTaskID:  po.LegacyTaskID,
 		Metadata:      jsonToString(po.Metadata),
 		CreatedAt:     po.CreatedAt,
 		UpdatedAt:     po.UpdatedAt,

@@ -14,26 +14,26 @@
  * limitations under the License.
  */
 
-package task
+package workbench
 
 import (
-	"gorm.io/gorm"
+	"context"
 
-	"github.com/coze-dev/coze-studio/backend/domain/task/repository"
-	domain "github.com/coze-dev/coze-studio/backend/domain/task/service"
-	"github.com/coze-dev/coze-studio/backend/infra/idgen"
+	"github.com/cloudwego/eino/components/model"
+
+	"github.com/coze-dev/coze-studio/backend/bizpkg/llm/modelbuilder"
 )
 
-type ServiceComponents struct {
-	DB    *gorm.DB
-	IDGen idgen.IDGenerator
-}
+type chatModelProvider func(ctx context.Context, modelType int64) (model.BaseChatModel, bool, error)
 
-func InitService(c *ServiceComponents) *ApplicationService {
-	repo := repository.NewTaskRepository(c.DB, c.IDGen)
-	SVC.DomainSVC = domain.NewService(&domain.Components{
-		Repo:  repo,
-		IDGen: c.IDGen,
-	})
-	return SVC
+func defaultChatModelProvider(ctx context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+	if modelType > 0 {
+		chatModel, _, err := modelbuilder.BuildModelByID(ctx, modelType, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		return chatModel, true, nil
+	}
+
+	return modelbuilder.GetBuiltinChatModel(ctx, "WKB_")
 }

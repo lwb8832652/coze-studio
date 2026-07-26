@@ -14,8 +14,13 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
+import { type workbenchTask } from '@coze-studio/api-schema';
 
+import {
+  TaskThreadDetailStatus,
+  type TaskThreadDetailEvent,
+  type TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import type { TaskDetailTokenUsage } from './task-detail-token-usage';
 import {
   fetchTaskThreadSubagentRuns,
@@ -23,19 +28,17 @@ import {
   getSubagentTimelineByChildRunID,
   type TaskDetailSubagentRun,
 } from './task-detail-subagents';
-import { mergeJournalTaskEvents } from './task-detail-journal-events';
+import { mergeJournalTaskThreadEvents } from './task-detail-journal-events';
 import {
-  getTask,
   getTaskThread,
   listTaskThreadRuns,
   listTaskThreadArtifacts,
-  listTaskEvents,
   listTaskThreadMessages,
   listTaskThreadRunEvents,
 } from './service';
 export {
-  mapTaskThreadRunEventToTaskEvent,
-  mergeJournalTaskEvents,
+  mapTaskThreadRunEventToDetailEvent,
+  mergeJournalTaskThreadEvents,
 } from './task-detail-journal-events';
 
 export type {
@@ -46,21 +49,15 @@ export type {
 export type { TaskDetailTokenUsage } from './task-detail-token-usage';
 export type { TaskTokenUsageViewMode } from './task-detail-token-usage';
 
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
 type TaskThread = workbenchTask.TaskThread;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRun = workbenchTask.TaskThreadRun;
 type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
-export type LoadedTaskDetailSource = 'task' | 'thread';
-export type TaskDetailSource = LoadedTaskDetailSource | 'auto';
-
 export interface TaskDetail {
-  source: LoadedTaskDetailSource;
-  task?: ChatTask;
-  events: TaskEvent[];
+  task?: TaskThreadDetailModel;
+  events: TaskThreadDetailEvent[];
   artifacts?: TaskThreadArtifact[];
   latestTaskRunID?: string;
   latestTaskRunStatus?: string;
@@ -80,22 +77,22 @@ const getTaskThreadExecutionType = (thread: TaskThread) =>
 const mapTaskThreadStatus = (status: string) => {
   switch (status) {
     case 'running':
-      return workbenchTask.TaskStatus.Running;
+      return TaskThreadDetailStatus.Running;
     case 'completed':
     case 'succeeded':
-      return workbenchTask.TaskStatus.Succeeded;
+      return TaskThreadDetailStatus.Succeeded;
     case 'failed':
-      return workbenchTask.TaskStatus.Failed;
+      return TaskThreadDetailStatus.Failed;
     case 'canceling':
-      return workbenchTask.TaskStatus.Canceling;
+      return TaskThreadDetailStatus.Canceling;
     case 'canceled':
-      return workbenchTask.TaskStatus.Canceled;
+      return TaskThreadDetailStatus.Canceled;
     case 'queued':
-      return workbenchTask.TaskStatus.Queued;
+      return TaskThreadDetailStatus.Queued;
     case 'created':
     case 'idle':
     default:
-      return workbenchTask.TaskStatus.Created;
+      return TaskThreadDetailStatus.Created;
   }
 };
 
@@ -107,15 +104,15 @@ const mapTaskThreadRunStatus = (status?: string) => {
   ) {
     case 'pending':
     case 'queued':
-      return workbenchTask.TaskStatus.Queued;
+      return TaskThreadDetailStatus.Queued;
     case 'running':
-      return workbenchTask.TaskStatus.Running;
+      return TaskThreadDetailStatus.Running;
     case 'succeeded':
-      return workbenchTask.TaskStatus.Succeeded;
+      return TaskThreadDetailStatus.Succeeded;
     case 'failed':
-      return workbenchTask.TaskStatus.Failed;
+      return TaskThreadDetailStatus.Failed;
     case 'canceled':
-      return workbenchTask.TaskStatus.Canceled;
+      return TaskThreadDetailStatus.Canceled;
     default:
       return undefined;
   }
@@ -142,11 +139,11 @@ const getLatestThreadMessageContent = (
   return '';
 };
 
-const mapTaskThreadToTask = (
+const mapTaskThreadToDetailModel = (
   thread: TaskThread,
   messages: TaskThreadMessage[] = [],
   latestRun?: TaskThreadRun,
-): ChatTask => {
+): TaskThreadDetailModel => {
   const executionType = getTaskThreadExecutionType(thread);
   const userMessage =
     getLatestThreadMessageContent(messages, 'user') ||
@@ -158,7 +155,7 @@ const mapTaskThreadToTask = (
   const latestRunStatus = mapTaskThreadRunStatus(latestRun?.status);
   const status = latestRunStatus ?? mapTaskThreadStatus(thread.status);
   const progress =
-    status === workbenchTask.TaskStatus.Succeeded
+    status === TaskThreadDetailStatus.Succeeded
       ? 100
       : Math.max(thread.progress, 0);
 
@@ -220,44 +217,12 @@ const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
   };
 };
 
-const fetchLegacyTaskDetail = async (taskId: string): Promise<TaskDetail> => {
-  const [taskResponse, eventsResponse] = await Promise.all([
-    getTask({ task_id: taskId }),
-    listTaskEvents({ task_id: taskId }),
-  ]);
-
-  return {
-    source: 'task',
-    task: taskResponse.data,
-    events: eventsResponse.data?.events ?? [],
-  };
-};
-
-const getTaskThreadForDetail = async (
-  id: string,
-  { suppressNotFoundError = false } = {},
-) => {
-  try {
-    const threadResponse = await getTaskThread({ thread_id: id });
-
-    return threadResponse.data;
-  } catch (err) {
-    if (suppressNotFoundError) {
-      return undefined;
-    }
-
-    throw err;
-  }
-};
-
 const fetchTaskThreadDetail = async (
   id: string,
-  {
-    spaceId,
-    suppressNotFoundError = false,
-  }: { spaceId?: string; suppressNotFoundError?: boolean } = {},
+  { spaceId }: { spaceId?: string } = {},
 ): Promise<TaskDetail | undefined> => {
-  const thread = await getTaskThreadForDetail(id, { suppressNotFoundError });
+  const threadResponse = await getTaskThread({ thread_id: id });
+  const thread = threadResponse.data;
 
   if (!thread) {
     return undefined;
@@ -304,17 +269,16 @@ const fetchTaskThreadDetail = async (
   );
 
   return {
-    source: 'thread',
     threadId: thread.thread_id,
     messages: messagesResponse.data?.messages ?? [],
     todos: thread.values?.todos ?? [],
-    task: mapTaskThreadToTask(
+    task: mapTaskThreadToDetailModel(
       thread,
       messagesResponse.data?.messages ?? [],
       latestTopLevelRun,
     ),
     artifacts: artifactsResponse.data?.artifacts ?? [],
-    events: mergeJournalTaskEvents({
+    events: mergeJournalTaskThreadEvents({
       journalMessages: runEventsResponse.data?.journal_messages,
       runEvents: rawRunEvents,
     }),
@@ -329,31 +293,17 @@ const fetchTaskThreadDetail = async (
 export const fetchTaskDetail = async ({
   id,
   spaceId,
-  source,
 }: {
   id: string;
   spaceId?: string;
-  source: TaskDetailSource;
 }): Promise<TaskDetail> => {
-  if (source === 'task') {
-    return fetchLegacyTaskDetail(id);
-  }
-
-  const threadDetail = await fetchTaskThreadDetail(id, {
-    spaceId,
-    suppressNotFoundError: source === 'auto',
-  });
+  const threadDetail = await fetchTaskThreadDetail(id, { spaceId });
 
   if (threadDetail) {
     return threadDetail;
   }
 
-  if (source === 'auto') {
-    return fetchLegacyTaskDetail(id);
-  }
-
   return {
-    source: 'thread',
     threadId: id,
     task: undefined,
     events: [],

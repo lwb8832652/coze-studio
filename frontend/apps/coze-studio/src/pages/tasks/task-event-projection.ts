@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
-import { getTaskEventDisplay, type TaskEventDisplay } from './helpers';
-
-type TaskEvent = workbenchTask.TaskEvent;
+import type { TaskThreadDetailEvent } from './task-thread-detail-model';
+import {
+  getTaskThreadEventDisplay,
+  type TaskThreadEventDisplay,
+} from './helpers';
 
 interface ProjectedTaskExecutionEvent {
-  event: TaskEvent;
-  display: TaskEventDisplay;
+  event: TaskThreadDetailEvent;
+  display: TaskThreadEventDisplay;
 }
 
 interface ParsedToolCall {
@@ -132,7 +132,7 @@ const getToolQuery = (args: Record<string, unknown>) =>
 const getSkillName = (args: Record<string, unknown>) =>
   getFirstString(args, ['skill', 'skill_name']);
 
-const getLoadedSkillFallbackName = (events: TaskEvent[]) => {
+const getLoadedSkillFallbackName = (events: TaskThreadDetailEvent[]) => {
   const names = new Set<string>();
 
   events.forEach(event => {
@@ -193,8 +193,8 @@ const getToolCalls = (
     .filter((item): item is ParsedToolCall => Boolean(item));
 };
 
-const getToolResultByCallID = (events: TaskEvent[]) => {
-  const resultByCallID = new Map<string, TaskEvent>();
+const getToolResultByCallID = (events: TaskThreadDetailEvent[]) => {
+  const resultByCallID = new Map<string, TaskThreadDetailEvent>();
 
   events.forEach(event => {
     if (!event.event_type?.startsWith('tool.')) {
@@ -220,9 +220,9 @@ const createToolCallProjection = ({
   toolCall,
 }: {
   context: TaskExecutionProjectionContext;
-  event: TaskEvent;
+  event: TaskThreadDetailEvent;
   index: number;
-  resultByCallID: Map<string, TaskEvent>;
+  resultByCallID: Map<string, TaskThreadDetailEvent>;
   toolCall: ParsedToolCall;
 }): ProjectedTaskExecutionEvent => {
   const resultEvent = toolCall.id ? resultByCallID.get(toolCall.id) : undefined;
@@ -249,7 +249,7 @@ const createToolCallProjection = ({
     status: failed ? 'failed' : completed ? 'completed' : 'running',
     runtime: 'Agent',
   });
-  const projectedEvent: TaskEvent = {
+  const projectedEvent: TaskThreadDetailEvent = {
     ...event,
     id: `${event.id}:tool-call-${index}`,
     event_type: failed
@@ -262,7 +262,7 @@ const createToolCallProjection = ({
 
   return {
     event: projectedEvent,
-    display: getTaskEventDisplay(
+    display: getTaskThreadEventDisplay(
       projectedEvent.event_type,
       projectedEvent.payload,
     ),
@@ -270,8 +270,8 @@ const createToolCallProjection = ({
 };
 
 const projectAssistantMessageEvent = (
-  event: TaskEvent,
-  resultByCallID: Map<string, TaskEvent>,
+  event: TaskThreadDetailEvent,
+  resultByCallID: Map<string, TaskThreadDetailEvent>,
   context: TaskExecutionProjectionContext,
 ): ProjectedTaskExecutionEvent[] => {
   if (event.event_type !== 'message.completed') {
@@ -285,7 +285,10 @@ const projectAssistantMessageEvent = (
   }
 
   const projections: ProjectedTaskExecutionEvent[] = [];
-  const messageDisplay = getTaskEventDisplay(event.event_type, event.payload);
+  const messageDisplay = getTaskThreadEventDisplay(
+    event.event_type,
+    event.payload,
+  );
 
   if (messageDisplay.visibleInFlow !== false) {
     projections.push({ event, display: messageDisplay });
@@ -307,7 +310,7 @@ const projectAssistantMessageEvent = (
 };
 
 const hasProjectedToolCallSource = (
-  event: TaskEvent,
+  event: TaskThreadDetailEvent,
   projectedToolCallIDs: Set<string>,
 ) => {
   if (!event.event_type?.startsWith('tool.')) {
@@ -320,7 +323,7 @@ const hasProjectedToolCallSource = (
   return Boolean(toolCallID && projectedToolCallIDs.has(toolCallID));
 };
 
-const getPlanTaskId = (event: TaskEvent) => {
+const getPlanTaskId = (event: TaskThreadDetailEvent) => {
   if (!event.event_type?.startsWith('plan.task.')) {
     return undefined;
   }
@@ -346,7 +349,7 @@ const getPlanTaskId = (event: TaskEvent) => {
   return undefined;
 };
 
-export const projectTaskExecutionEvents = (events: TaskEvent[]) => {
+export const projectTaskExecutionEvents = (events: TaskThreadDetailEvent[]) => {
   const context: TaskExecutionProjectionContext = {
     fallbackSkillName: getLoadedSkillFallbackName(events),
   };
@@ -392,7 +395,7 @@ export const projectTaskExecutionEvents = (events: TaskEvent[]) => {
       return [
         {
           event,
-          display: getTaskEventDisplay(event.event_type, event.payload),
+          display: getTaskThreadEventDisplay(event.event_type, event.payload),
         },
       ];
     })

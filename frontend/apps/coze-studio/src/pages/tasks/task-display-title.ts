@@ -16,9 +16,9 @@
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { artifactFileName } from './task-artifacts-helpers';
 
-type ChatTask = workbenchTask.ChatTask;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 
 const TITLE_MAX_LENGTH = 48;
@@ -70,7 +70,7 @@ export const getTaskDisplayTitle = ({
   task,
 }: {
   artifacts?: TaskThreadArtifact[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   const sortedArtifacts = [...(artifacts ?? [])].sort(
     (left, right) =>

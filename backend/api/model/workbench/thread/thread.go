@@ -18,7 +18,6 @@ package thread
 
 type TaskThread struct {
 	ThreadID         int64             `json:"thread_id,string"`
-	LegacyTaskID     int64             `json:"legacy_task_id,string"`
 	SpaceID          int64             `json:"space_id,string"`
 	CreatorID        int64             `json:"creator_id,string"`
 	Title            string            `json:"title"`

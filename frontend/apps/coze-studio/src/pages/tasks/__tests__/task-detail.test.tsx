@@ -23,24 +23,19 @@ import { readFileSync } from 'node:fs';
 
 import { afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
-import {
-  workbench,
-  workbenchSkill,
-  workbenchTask,
-} from '@coze-studio/api-schema';
+import { workbenchSkill } from '@coze-studio/api-schema';
 
 import { createRoot, type Root } from './task-test-root-registry';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() =>
-  vi.fn(() => ({ space_id: 'space-1', task_id: 'task-1' })),
+  vi.fn(() => ({ space_id: 'space-1', thread_id: 'thread-1' })),
 );
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockUseUserInfo = vi.hoisted(() =>
   vi.fn(() => ({ user_id_str: 'user-1' })),
 );
-const mockGetTask = vi.hoisted(() => vi.fn());
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
 const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
 const mockListTaskThreadRuns = vi.hoisted(() => vi.fn());
@@ -79,8 +74,6 @@ const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 const mockResumeTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockRetryTaskThreadSubagentRun = vi.hoisted(() => vi.fn());
-const mockListTaskEvents = vi.hoisted(() => vi.fn());
-const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockGetWorkbenchLLMModels = vi.hoisted(() => vi.fn());
 const mockListWorkbenchKnowledgeResources = vi.hoisted(() => vi.fn());
 const mockListWorkbenchDatabaseResources = vi.hoisted(() => vi.fn());
@@ -166,7 +159,6 @@ vi.mock('../../system/service', async importOriginal => {
 });
 
 vi.mock('../service', () => ({
-  getTask: mockGetTask,
   getTaskThread: mockGetTaskThread,
   getTaskThreadRunEventsStreamURL: mockGetTaskThreadRunEventsStreamURL,
   listTaskThreadMessages: mockListTaskThreadMessages,
@@ -208,8 +200,6 @@ vi.mock('../service', () => ({
   resumeTaskThreadRun: mockResumeTaskThreadRun,
   cancelTaskThreadRun: mockCancelTaskThreadRun,
   retryTaskThreadSubagentRun: mockRetryTaskThreadSubagentRun,
-  listTaskEvents: mockListTaskEvents,
-  sendWorkbenchChat: mockSendWorkbenchChat,
 }));
 
 vi.mock('../../workbench/service', () => ({
@@ -684,9 +674,11 @@ describe('TaskDetailPage', () => {
     });
     window.localStorage.removeItem('coze.task-detail.token-usage-view-mode');
     MockEventSource.instances = [];
-    mockUseParams.mockReturnValue({ space_id: 'space-1', task_id: 'task-1' });
+    mockUseParams.mockReturnValue({
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
     mockUseUserInfo.mockReturnValue({ user_id_str: 'user-1' });
-    mockGetTask.mockReset();
     mockGetTaskThread.mockReset();
     mockGetTaskThreadRunEventsStreamURL.mockClear();
     mockListTaskThreadMessages.mockReset();
@@ -731,9 +723,7 @@ describe('TaskDetailPage', () => {
     mockResumeTaskThreadRun.mockReset();
     mockCancelTaskThreadRun.mockReset();
     mockRetryTaskThreadSubagentRun.mockReset();
-    mockListTaskEvents.mockReset();
     mockNavigate.mockReset();
-    mockSendWorkbenchChat.mockReset();
     mockGetWorkbenchLLMModels.mockReset();
     mockListWorkbenchKnowledgeResources.mockReset();
     mockListWorkbenchKnowledgeResources.mockResolvedValue([
@@ -797,29 +787,6 @@ describe('TaskDetailPage', () => {
             enabled: true,
           },
         ],
-      },
-      code: 0,
-      msg: '',
-    });
-    mockGetTask.mockResolvedValue({
-      data: {
-        id: 'task-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '生成周报',
-        status: workbenchTask.TaskStatus.Running,
-        progress: 65,
-        input: JSON.stringify({
-          message: '请总结本周项目进展',
-          execution_type: 'Agent',
-        }),
-        result: JSON.stringify({
-          message: '本周完成了 UI 改造方案。',
-          result_type: 'agent_trace',
-          execution_type: 'Agent',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
       },
       code: 0,
       msg: '',
@@ -986,12 +953,11 @@ describe('TaskDetailPage', () => {
             thread_id === 'thread-1'
               ? {
                   thread_id: 'thread-1',
-                  legacy_task_id: 'task-legacy-1',
                   space_id: 'space-1',
                   creator_id: 'user-1',
                   title: '生成周报',
                   status: 'running',
-                  source: 'task',
+                  source: 'agent',
                   progress: 65,
                   last_user_message: '请总结本周项目进展',
                   last_agent_message: '本周完成了 UI 改造方案。',
@@ -1005,8 +971,27 @@ describe('TaskDetailPage', () => {
     );
     mockListTaskThreadMessages.mockResolvedValue({
       data: {
-        messages: [],
-        total: 0,
+        messages: [
+          {
+            message_id: 'message-user-1',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请总结本周项目进展',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-assistant-1',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'assistant',
+            content: '本周完成了 UI 改造方案。',
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -1021,8 +1006,35 @@ describe('TaskDetailPage', () => {
     });
     mockListTaskThreadRunEvents.mockResolvedValue({
       data: {
-        events: [],
-        total: 0,
+        events: [
+          {
+            event_id: 'event-1',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            event_type: 'task.step',
+            payload: JSON.stringify({
+              title: '理解任务意图',
+              detail: '解析用户输入并确定执行路径',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000100000,
+          },
+          {
+            event_id: 'event-2',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            event_type: 'task.thought',
+            payload: JSON.stringify({
+              title: '思考过程',
+              thought: '我会先拆解目标，再组织报告结构。',
+              status: 'completed',
+              runtime: 'Agent',
+            }),
+            created_at: 1717000200000,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -1174,38 +1186,6 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockListTaskEvents.mockResolvedValue({
-      data: {
-        events: [
-          {
-            id: 'event-1',
-            task_id: 'task-1',
-            event_type: 'task.step',
-            payload: JSON.stringify({
-              title: '理解任务意图',
-              detail: '解析用户输入并确定执行路径',
-              status: 'completed',
-              runtime: 'Agent',
-            }),
-            created_at: 1717000100000,
-          },
-          {
-            id: 'event-2',
-            task_id: 'task-1',
-            event_type: 'task.thought',
-            payload: JSON.stringify({
-              title: '思考过程',
-              thought: '我会先拆解目标，再组织报告结构。',
-              status: 'completed',
-              runtime: 'Agent',
-            }),
-            created_at: 1717000200000,
-          },
-        ],
-      },
-      code: 0,
-      msg: '',
-    });
   });
 
   afterEach(() => {
@@ -1221,7 +1201,7 @@ describe('TaskDetailPage', () => {
     document.body.appendChild(container);
     let root: Root | undefined;
 
-    mockGetTask.mockReturnValue(new Promise(() => undefined));
+    mockGetTaskThread.mockReturnValue(new Promise(() => undefined));
 
     try {
       await act(async () => {
@@ -1259,13 +1239,16 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTask).toHaveBeenCalledWith({ task_id: 'task-1' });
-    expect(mockListTaskEvents).toHaveBeenCalledWith({ task_id: 'task-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      page: 1,
+      page_size: 100,
+    });
     expect(container.textContent).toContain('生成周报');
     expect(container.textContent).toContain('NewX AI · Agent');
     expect(container.textContent).toContain('请总结本周项目进展');
     expect(container.textContent).toContain('本周完成了 UI 改造方案。');
-    expect(container.textContent).toContain('Agent 最终结果');
     act(() => {
       const summaryTrigger = container.querySelector(
         '.coze-prototype-execution-summary-trigger',
@@ -1682,25 +1665,29 @@ describe('TaskDetailPage', () => {
       '```',
     ].join('\n');
 
-    mockGetTask.mockResolvedValue({
+    mockListTaskThreadMessages.mockResolvedValue({
       data: {
-        id: 'task-mermaid-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '绘制 Mermaid 图',
-        status: workbenchTask.TaskStatus.Succeeded,
-        progress: 100,
-        input: JSON.stringify({
-          message: '请绘制 Mermaid 图',
-          execution_type: 'Agent',
-        }),
-        result: JSON.stringify({
-          message: mermaidAnswer,
-          result_type: 'answer',
-          execution_type: 'Agent',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
+        messages: [
+          {
+            message_id: 'message-mermaid-user',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请绘制 Mermaid 图',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-mermaid-assistant',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'assistant',
+            content: mermaidAnswer,
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -1804,25 +1791,29 @@ describe('TaskDetailPage', () => {
       '```',
     ].join('\n');
 
-    mockGetTask.mockResolvedValue({
+    mockListTaskThreadMessages.mockResolvedValue({
       data: {
-        id: 'task-mermaid-error-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: 'Mermaid 错误态',
-        status: workbenchTask.TaskStatus.Succeeded,
-        progress: 100,
-        input: JSON.stringify({
-          message: '请绘制一张错误 Mermaid 图',
-          execution_type: 'Agent',
-        }),
-        result: JSON.stringify({
-          message: mermaidAnswer,
-          result_type: 'answer',
-          execution_type: 'Agent',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
+        messages: [
+          {
+            message_id: 'message-mermaid-error-user',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'user',
+            content: '请绘制一张错误 Mermaid 图',
+            metadata: '',
+            created_at: 1717000000000,
+          },
+          {
+            message_id: 'message-mermaid-error-assistant',
+            thread_id: 'thread-1',
+            run_id: 'run-1',
+            role: 'assistant',
+            content: mermaidAnswer,
+            metadata: '',
+            created_at: 1717000300000,
+          },
+        ],
+        total: 2,
       },
       code: 0,
       msg: '',
@@ -1890,7 +1881,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-assistant-actions-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '助手回复操作',
@@ -2008,47 +1998,11 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
-    expect(mockGetTask).not.toHaveBeenCalled();
-    expect(mockListTaskEvents).not.toHaveBeenCalled();
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-1',
       page: 1,
       page_size: 50,
     });
-
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
-  });
-
-  it('resolves task route params through task thread detail before legacy fallback', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    let root: Root | undefined;
-
-    mockUseParams.mockReturnValue({
-      space_id: 'space-1',
-      task_id: 'thread-1',
-    });
-
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
-    expect(mockGetTask).not.toHaveBeenCalled();
-    expect(mockListTaskEvents).not.toHaveBeenCalled();
-    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
-      thread_id: 'thread-1',
-      page: 1,
-      page_size: 50,
-    });
-    expect(container.textContent).toContain('生成周报');
 
     act(() => {
       root?.unmount();
@@ -2348,7 +2302,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-guardrail-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '安全审计任务',
@@ -2626,7 +2579,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-mcp-audit-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '工具调用审计任务',
@@ -2713,7 +2665,7 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('renders canonical thread summary when no legacy task exists', async () => {
+  it('renders canonical thread content from journal messages', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -2725,15 +2677,14 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-only-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '独立智能体任务',
         status: 'completed',
         source: 'agent',
         progress: 100,
-        last_user_message: '摘要里的旧用户消息',
-        last_agent_message: '摘要里的旧助手消息',
+        last_user_message: '摘要中的缓存用户消息',
+        last_agent_message: '摘要中的缓存助手消息',
         created_at: 1717000000000,
         updated_at: 1717000300000,
       },
@@ -2782,8 +2733,6 @@ describe('TaskDetailPage', () => {
       page: 1,
       page_size: 50,
     });
-    expect(mockGetTask).not.toHaveBeenCalled();
-    expect(mockListTaskEvents).not.toHaveBeenCalled();
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
       page: 1,
@@ -2792,8 +2741,8 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain('独立智能体任务');
     expect(container.textContent).toContain('请基于真实消息分析客户反馈');
     expect(container.textContent).toContain('真实消息显示响应速度最重要');
-    expect(container.textContent).not.toContain('摘要里的旧用户消息');
-    expect(container.textContent).not.toContain('摘要里的旧助手消息');
+    expect(container.textContent).not.toContain('摘要中的缓存用户消息');
+    expect(container.textContent).not.toContain('摘要中的缓存助手消息');
     expect(container.textContent).not.toContain('未找到任务');
 
     act(() => {
@@ -2802,19 +2751,18 @@ describe('TaskDetailPage', () => {
     container.remove();
   });
 
-  it('renders canonical thread summary when legacy task id is zero string', async () => {
+  it('renders a running canonical thread with one user message', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
 
     mockUseParams.mockReturnValue({
       space_id: 'space-1',
-      thread_id: 'thread-zero-legacy',
+      thread_id: 'thread-running',
     });
     mockGetTaskThread.mockResolvedValue({
       data: {
-        thread_id: 'thread-zero-legacy',
-        legacy_task_id: '0',
+        thread_id: 'thread-running',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: 'Canonical 新建任务',
@@ -2834,8 +2782,8 @@ describe('TaskDetailPage', () => {
         messages: [
           {
             message_id: 'msg-zero-1',
-            thread_id: 'thread-zero-legacy',
-            run_id: 'run-zero-1',
+            thread_id: 'thread-running',
+            run_id: 'run-running-1',
             role: 'user',
             content: '请用一句话回复 smoke OK',
             metadata: '',
@@ -2855,12 +2803,10 @@ describe('TaskDetailPage', () => {
     });
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({
-      thread_id: 'thread-zero-legacy',
+      thread_id: 'thread-running',
     });
-    expect(mockGetTask).not.toHaveBeenCalled();
-    expect(mockListTaskEvents).not.toHaveBeenCalled();
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
-      thread_id: 'thread-zero-legacy',
+      thread_id: 'thread-running',
       page: 1,
       page_size: 50,
     });
@@ -2886,7 +2832,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-runtime-1',
-        legacy_task_id: '',
         space_id: 'space-runtime-1',
         creator_id: 'user-1',
         title: '运行诊断任务',
@@ -3058,7 +3003,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-token-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: 'Token 统计任务',
@@ -3292,7 +3236,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-token-no-reply',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '等待首次回复',
@@ -3569,7 +3512,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-token-mixed-currency-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '混合币种 Token 统计',
@@ -3714,7 +3656,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-token-paginated-currency-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '分页币种 Token 统计',
@@ -3837,7 +3778,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-turn-token-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '每轮 Token 统计',
@@ -3972,7 +3912,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifacts-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物任务',
@@ -4420,7 +4359,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-doc-artifacts-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title:
@@ -4682,7 +4620,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-doc-followup-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -4848,7 +4785,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-doc-fallback-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -4984,7 +4920,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-doc-presented-before-answer',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -5136,7 +5071,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-history-steps-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: 'Java学习路线',
@@ -5318,7 +5252,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-skill-artifact-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '创建周报技能',
@@ -5461,7 +5394,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-delete-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物删除任务',
@@ -5585,7 +5517,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-restore-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物恢复任务',
@@ -5720,7 +5651,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-restore-list-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '已移除列表恢复任务',
@@ -5885,7 +5815,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-deleted-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '已移除产物任务',
@@ -6013,7 +5942,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-review-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物审核任务',
@@ -6132,7 +6060,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-artifact-review-preview-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物预览审核任务',
@@ -6276,7 +6203,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-values-todo-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '持久待办任务',
@@ -6338,7 +6264,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-scan-jobs-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '产物扫描任务',
@@ -6481,7 +6406,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-subagent-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '多智能体研究任务',
@@ -6884,7 +6808,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-subagent-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '多智能体研究任务',
@@ -7022,7 +6945,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-only-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '独立智能体任务',
@@ -7146,7 +7068,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-token-stream-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: 'Token 流式统计任务',
@@ -7360,7 +7281,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-title-sync-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '请帮我制定一份武汉3日游攻略，包含预算表和注意事项',
@@ -7430,7 +7350,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-flow-filter-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -7549,7 +7468,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-flow-labels-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -7739,7 +7657,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-reasoning-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '解释方案',
@@ -7858,7 +7775,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-stale-terminal-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: 'Mermaid 绘图任务',
@@ -7998,7 +7914,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-cancel-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '运行中任务',
@@ -8124,7 +8039,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-running-turn-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '继续查询天气',
@@ -8255,7 +8169,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-running-user-only-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '天气查询',
@@ -8331,7 +8244,6 @@ describe('TaskDetailPage', () => {
 
     const completedThread = {
       thread_id: 'thread-followup-pending-1',
-      legacy_task_id: '',
       space_id: 'space-1',
       creator_id: 'user-1',
       title: '天气追问',
@@ -8512,7 +8424,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-suggestions-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '武汉3日游攻略',
@@ -8653,7 +8564,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-retry-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '失败任务',
@@ -8825,6 +8735,7 @@ describe('TaskDetailPage', () => {
     expect(JSON.parse(retryRequest.metadata)).toMatchObject({
       source: 'task_retry',
       source_run_id: 'run-failed-1',
+      source_thread_id: 'thread-retry-1',
     });
     expect(mockGetTaskThread).toHaveBeenCalledTimes(2);
 
@@ -8846,7 +8757,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-human-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '需要补充信息的任务',
@@ -8961,7 +8871,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-confirm-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '需要确认的任务',
@@ -9148,7 +9057,6 @@ describe('TaskDetailPage', () => {
     mockGetTaskThread.mockResolvedValue({
       data: {
         thread_id: 'thread-only-1',
-        legacy_task_id: '',
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '独立智能体任务',
@@ -9359,7 +9267,6 @@ describe('TaskDetailPage', () => {
       mockCreateTaskThreadRun.mock.invocationCallOrder[0],
     );
     expect(mockAppendTaskThreadMessage).not.toHaveBeenCalled();
-    expect(mockSendWorkbenchChat).not.toHaveBeenCalled();
 
     const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
     const messageMetadata = JSON.parse(runRequest.message_metadata);
@@ -9451,334 +9358,6 @@ describe('TaskDetailPage', () => {
     expect(container.textContent).toContain(
       '建议优先安排线上客服，并在 48 小时内复盘。',
     );
-
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
-  });
-
-  it('renders answer results as ordinary conversation content', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    let root: Root | undefined;
-
-    mockGetTask.mockResolvedValue({
-      data: {
-        id: 'task-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '解释 Ark 模式',
-        status: workbenchTask.TaskStatus.Succeeded,
-        progress: 100,
-        input: JSON.stringify({
-          message: 'Ark 模式是什么',
-          execution_type: 'Ark',
-        }),
-        result: JSON.stringify({
-          message: 'Ark 模式会直接使用模型生成普通回答。',
-          result_type: 'answer',
-          execution_type: 'Ark',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
-      },
-      code: 0,
-      msg: '',
-    });
-    mockListTaskEvents.mockResolvedValue({
-      data: {
-        events: [],
-      },
-      code: 0,
-      msg: '',
-    });
-
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain(
-      'Ark 模式会直接使用模型生成普通回答。',
-    );
-    expect(container.textContent).not.toContain('普通回答 · Ark');
-    expect(
-      container.querySelector('.coze-prototype-result-eyebrow'),
-    ).toBeNull();
-    expect(container.textContent).not.toContain('一、任务输入');
-    expect(container.textContent).not.toContain('解释 Ark 模式报告');
-
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
-  });
-
-  it('renders streaming answer events before the final result is persisted', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    let root: Root | undefined;
-
-    mockGetTask.mockResolvedValue({
-      data: {
-        id: 'task-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '解释流式输出',
-        status: workbenchTask.TaskStatus.Running,
-        progress: 45,
-        input: JSON.stringify({
-          message: '为什么要流式输出',
-          execution_type: 'Ark',
-        }),
-        result: JSON.stringify({
-          message: '',
-          result_type: 'answer',
-          execution_type: 'Ark',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
-      },
-      code: 0,
-      msg: '',
-    });
-    mockListTaskEvents.mockResolvedValue({
-      data: {
-        events: [
-          {
-            id: 'event-answer-1',
-            task_id: 'task-1',
-            event_type: 'answer.delta',
-            payload: JSON.stringify({
-              title: '生成回答',
-              message: '任务创建后立即进入详情页，回答内容持续写入。',
-              status: 'running',
-              runtime: 'Ark',
-            }),
-            created_at: 1717000200000,
-          },
-        ],
-      },
-      code: 0,
-      msg: '',
-    });
-
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain(
-      '任务创建后立即进入详情页，回答内容持续写入。',
-    );
-    expect(container.textContent).not.toContain('结果生成中');
-
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
-  });
-
-  it('renders report results with the report template branch', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    let root: Root | undefined;
-
-    mockGetTask.mockResolvedValue({
-      data: {
-        id: 'task-1',
-        space_id: 'space-1',
-        creator_id: 'user-1',
-        title: '生成调研报告',
-        status: workbenchTask.TaskStatus.Succeeded,
-        progress: 100,
-        input: JSON.stringify({ message: '请生成调研报告' }),
-        result: JSON.stringify({
-          message: '这是一份调研报告正文。',
-          result_type: 'report',
-          execution_type: 'Ark',
-        }),
-        created_at: 1717000000000,
-        updated_at: 1717000300000,
-      },
-      code: 0,
-      msg: '',
-    });
-    mockListTaskEvents.mockResolvedValue({
-      data: {
-        events: [],
-      },
-      code: 0,
-      msg: '',
-    });
-
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-    });
-
-    expect(container.textContent).toContain('生成调研报告报告');
-    expect(container.textContent).toContain('这是一份调研报告正文。');
-    expect(container.textContent).toContain('一、任务输入');
-
-    act(() => {
-      root?.unmount();
-    });
-    container.remove();
-  });
-
-  it('sends follow-up messages through WorkbenchChat and refreshes in place', async () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    let root: Root | undefined;
-
-    mockGetTask
-      .mockResolvedValueOnce({
-        data: {
-          id: 'task-1',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '生成周报',
-          status: workbenchTask.TaskStatus.Succeeded,
-          progress: 100,
-          input: JSON.stringify({
-            message: '请总结本周项目进展',
-            execution_type: 'Agent',
-          }),
-          result: JSON.stringify({
-            message: '本周完成了 UI 改造方案。',
-            result_type: 'answer',
-            execution_type: 'Ark',
-          }),
-          created_at: 1717000000000,
-          updated_at: 1717000300000,
-        },
-        code: 0,
-        msg: '',
-      })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'task-1',
-          space_id: 'space-1',
-          creator_id: 'user-1',
-          title: '生成周报',
-          status: workbenchTask.TaskStatus.Succeeded,
-          progress: 100,
-          input: JSON.stringify({
-            message: '请总结本周项目进展',
-            execution_type: 'Agent',
-          }),
-          result: JSON.stringify({
-            message: '已补充风险项。',
-            result_type: 'answer',
-            execution_type: 'Ark',
-          }),
-          created_at: 1717000000000,
-          updated_at: 1717000400000,
-        },
-        code: 0,
-        msg: '',
-      });
-    mockListTaskEvents.mockResolvedValue({
-      data: {
-        events: [],
-      },
-      code: 0,
-      msg: '',
-    });
-    mockSendWorkbenchChat.mockResolvedValue({
-      data: {
-        task: {
-          id: 'task-1',
-        },
-      },
-      code: 0,
-      msg: '',
-    });
-
-    await act(async () => {
-      root = createRoot(container);
-      root.render(<TaskDetailPage />);
-      await Promise.resolve();
-    });
-
-    const textarea = container.querySelector(
-      'textarea[aria-label="任务描述"]',
-    ) as HTMLTextAreaElement;
-    act(() => {
-      Simulate.change(textarea, {
-        target: { value: '请补充风险项' },
-      } as unknown as Event);
-    });
-
-    const sendButton = container.querySelector(
-      'button[aria-label="发送任务"]',
-    ) as HTMLButtonElement;
-
-    await act(async () => {
-      sendButton.click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(mockSendWorkbenchChat).toHaveBeenCalledWith({
-      space_id: 'space-1',
-      task_id: 'task-1',
-      message: '请补充风险项',
-      mode: workbench.ChatMode.Agent,
-      model_type: '100002',
-      model_name: 'deepseek-v4-pro',
-      runtime_settings: expect.any(String),
-      enable_mcp: [],
-      enable_kbs: [],
-      enable_databases: [],
-    });
-    const legacyFollowUpRuntimeSettings = JSON.parse(
-      mockSendWorkbenchChat.mock.calls[0]?.[0].runtime_settings,
-    );
-    expect(legacyFollowUpRuntimeSettings).toMatchObject({
-      runtime: 'eino_adk',
-      mode: 'pro',
-      model_type: 100002,
-      model_name: 'deepseek-v4-pro',
-      thinking_enabled: true,
-      is_plan_mode: true,
-      subagent_enabled: false,
-      skills: {
-        enabled: true,
-        allowed_skills: [],
-      },
-      memory_retrieval: {
-        limit: 5,
-        candidate_limit: 20,
-        scopes: ['thread', 'long_term'],
-        min_confidence: 0.2,
-      },
-      web_tools: {
-        enabled: true,
-      },
-      token_usage: {
-        enabled: true,
-      },
-    });
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        legacyFollowUpRuntimeSettings,
-        'reasoning_effort',
-      ),
-    ).toBe(false);
-    expect(
-      Object.prototype.hasOwnProperty.call(
-        legacyFollowUpRuntimeSettings,
-        'enable_skills',
-      ),
-    ).toBe(false);
-    expect(mockGetTask).toHaveBeenCalledTimes(2);
-    expect(container.textContent).toContain('已补充风险项。');
 
     act(() => {
       root?.unmount();

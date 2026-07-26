@@ -240,13 +240,12 @@ func TestApplicationCreateThreadReturnsTaskSummary(t *testing.T) {
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
 	resp, err := app.CreateThread(context.Background(), &CreateThreadRequest{
-		SpaceID:      1,
-		UserID:       2,
-		AgentID:      3,
-		Title:        "生成周报",
-		Source:       ThreadSourceIM,
-		LegacyTaskID: 4,
-		Metadata:     `{"channel":"lark"}`,
+		SpaceID:  1,
+		UserID:   2,
+		AgentID:  3,
+		Title:    "生成周报",
+		Source:   ThreadSourceIM,
+		Metadata: `{"channel":"lark"}`,
 	})
 
 	require.NoError(t, err)
@@ -254,7 +253,6 @@ func TestApplicationCreateThreadReturnsTaskSummary(t *testing.T) {
 	require.Equal(t, "生成周报", domainSVC.createReq.Title)
 	require.Equal(t, int64(2), domainSVC.createReq.UserID)
 	require.Equal(t, entity.ThreadSourceIM, domainSVC.createReq.Source)
-	require.Equal(t, int64(4), domainSVC.createReq.LegacyTaskID)
 	require.Equal(t, `{"channel":"lark"}`, domainSVC.createReq.Metadata)
 	require.Equal(t, ThreadStatusIdle, resp.Thread.Status)
 	require.Equal(t, ThreadSourceIM, resp.Thread.Source)
@@ -5245,7 +5243,6 @@ func migrateAgentThreadTableForTest(db *gorm.DB) error {
 			title text,
 			status text,
 			source text,
-			legacy_task_id integer,
 			metadata json,
 			created_at integer,
 			updated_at integer,

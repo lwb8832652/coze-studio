@@ -17,23 +17,22 @@
 package workbench
 
 import (
-	"github.com/coze-dev/coze-studio/backend/application/agentthread"
 	"github.com/coze-dev/coze-studio/backend/application/mcptool"
 	"github.com/coze-dev/coze-studio/backend/application/skill"
-	"github.com/coze-dev/coze-studio/backend/application/task"
-	crossknowledge "github.com/coze-dev/coze-studio/backend/crossdomain/knowledge"
-	agentrun "github.com/coze-dev/coze-studio/backend/domain/conversation/agentrun/service"
 )
+
+type ApplicationService struct {
+	skillSVC          *skill.ApplicationService
+	mcpToolSVC        *mcptool.ApplicationService
+	chatModelProvider chatModelProvider
+	sandboxRepository SandboxRuntimeDiagnosticRepository
+}
 
 var SVC = new(ApplicationService)
 
 type ServiceComponents struct {
 	SkillSVC          *skill.ApplicationService
-	TaskSVC           *task.ApplicationService
-	AgentThreadSVC    *agentthread.ApplicationService
 	MCPToolSVC        *mcptool.ApplicationService
-	KnowledgeSVC      crossknowledge.Knowledge
-	AgentRunSVC       agentrun.Run
 	ChatModelProvider chatModelProvider
 	SandboxRepository SandboxRuntimeDiagnosticRepository
 }
@@ -45,20 +44,8 @@ func InitService(c *ServiceComponents) *ApplicationService {
 	if c.SkillSVC != nil {
 		SVC.skillSVC = c.SkillSVC
 	}
-	if c.TaskSVC != nil {
-		SVC.taskSVC = c.TaskSVC
-	}
-	if c.AgentThreadSVC != nil {
-		SVC.agentThreadSVC = c.AgentThreadSVC
-	}
 	if c.MCPToolSVC != nil {
 		SVC.mcpToolSVC = c.MCPToolSVC
-	}
-	if c.KnowledgeSVC != nil {
-		SVC.knowledgeSVC = c.KnowledgeSVC
-	}
-	if c.AgentRunSVC != nil {
-		SVC.agentRunSVC = c.AgentRunSVC
 	}
 	if c.ChatModelProvider != nil {
 		SVC.chatModelProvider = c.ChatModelProvider

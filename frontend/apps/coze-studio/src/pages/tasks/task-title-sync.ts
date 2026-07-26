@@ -19,15 +19,14 @@ import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { workbenchTask } from '@coze-studio/api-schema';
 
 import { emitWorkspaceTaskThreadUpsert } from './task-thread-events';
-
-type ChatTask = workbenchTask.ChatTask;
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 
 const buildThreadTitleUpdatedTask = ({
   currentTask,
   threadId,
   title,
 }: {
-  currentTask?: ChatTask;
+  currentTask?: TaskThreadDetailModel;
   threadId: string;
   title: string;
 }) => {
@@ -48,9 +47,9 @@ const emitThreadSummaryPatch = ({
   spaceID,
   task,
 }: {
-  previousTask: ChatTask;
+  previousTask: TaskThreadDetailModel;
   spaceID?: string;
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   const nextTitle = task.title?.trim();
   const titleChanged =
@@ -80,12 +79,12 @@ export const useTaskThreadTitleSync = ({
   setTask,
   spaceID,
 }: {
-  setTask: Dispatch<SetStateAction<ChatTask | undefined>>;
+  setTask: Dispatch<SetStateAction<TaskThreadDetailModel | undefined>>;
   spaceID?: string;
 }) => {
-  const taskRef = useRef<ChatTask | undefined>();
+  const taskRef = useRef<TaskThreadDetailModel | undefined>();
   const setCurrentTask = useCallback(
-    (nextTask?: ChatTask) => {
+    (nextTask?: TaskThreadDetailModel) => {
       const previousTask = taskRef.current;
       taskRef.current = nextTask;
       setTask(nextTask);

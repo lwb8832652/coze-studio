@@ -115,18 +115,6 @@ func TestGetTaskThreadHandlerAccessDeniedWithoutAuthenticatedViewer(t *testing.T
 	require.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestWorkbenchChatErrorResponseMapsThreadAccessDeniedToForbidden(t *testing.T) {
-	h := server.Default()
-	h.GET("/workbench-chat-error", func(ctx context.Context, c *app.RequestContext) {
-		workbenchChatErrorResponse(ctx, c, appagentthread.ErrThreadAccessDenied)
-	})
-
-	w := ut.PerformRequest(h.Engine, http.MethodGet, "/workbench-chat-error", nil)
-
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.Contains(t, string(w.Result().Body()), "thread access denied")
-}
-
 func TestGetTaskThreadHandlerReturnsThreadValuesTodos(t *testing.T) {
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/task_threads/:thread_id", GetTaskThread)
@@ -3450,12 +3438,11 @@ func installAgentThreadTestService(t *testing.T) {
 	appagentthread.SVC.ArtifactAuthorizer = nil
 	appagentthread.SVC.MemoryAuthorizer = nil
 	_, err = appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
-		SpaceID:      1,
-		UserID:       2,
-		Title:        "任务列表",
-		Source:       appagentthread.ThreadSourceWeb,
-		LegacyTaskID: 100,
-		Metadata:     `{"message":"hello"}`,
+		SpaceID:  1,
+		UserID:   2,
+		Title:    "任务列表",
+		Source:   appagentthread.ThreadSourceWeb,
+		Metadata: `{"message":"hello"}`,
 	})
 	require.NoError(t, err)
 }
@@ -3685,7 +3672,6 @@ func migrateAgentThreadHandlerTableForTest(db *gorm.DB) error {
 			title text,
 			status text,
 			source text,
-			legacy_task_id integer,
 			metadata json,
 			created_at integer,
 			updated_at integer,

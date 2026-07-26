@@ -22,7 +22,6 @@ import { afterAll, afterEach, vi } from 'vitest';
 import { act, Simulate } from 'react-dom/test-utils';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot as createReactRoot, type Root } from 'react-dom/client';
-import { workbench } from '@coze-studio/api-schema';
 
 const originalActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -313,7 +312,7 @@ vi.mock('@coze-arch/coze-design/icons', () => ({
 }));
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming checks after mocks. */
 
-import WorkbenchPage, { mapModeToChatMode, WorkbenchTopbar } from '../index';
+import WorkbenchPage, { WorkbenchTopbar } from '../index';
 import { WorkbenchComposer } from '../components/workbench-composer';
 import {
   createDefaultWorkbenchResourceSelection,
@@ -326,7 +325,6 @@ const buildCreateTaskThreadResponse = (threadId: string, title: string) => ({
   data: {
     thread: {
       thread_id: threadId,
-      legacy_task_id: '0',
       space_id: 'space-1',
       creator_id: 'user-1',
       title,
@@ -1464,13 +1462,6 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('maps local mode names to generated chat modes', () => {
-    expect(mapModeToChatMode('flash')).toBe(workbench.ChatMode.Auto);
-    expect(mapModeToChatMode('thinking')).toBe(workbench.ChatMode.Ask);
-    expect(mapModeToChatMode('pro')).toBe(workbench.ChatMode.Agent);
-    expect(mapModeToChatMode('ultra')).toBe(workbench.ChatMode.Agent);
-  });
-
   it('serializes DeerFlow mode runtime context for every mode', () => {
     const resourceSelection = createDefaultWorkbenchResourceSelection();
     const runtimeSettings =
@@ -1709,7 +1700,6 @@ describe('WorkbenchPage', () => {
       data: {
         thread: {
           thread_id: 'thread-upload-1',
-          legacy_task_id: '0',
           space_id: 'space-1',
           creator_id: 'user-1',
           title: '请总结附件',
@@ -1968,7 +1958,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('navigates to the task list without legacy task creation when chat returns no task', async () => {
+  it('navigates to the task list when thread creation returns no thread', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -2011,7 +2001,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('shows the chat error without falling back to legacy task creation', async () => {
+  it('shows the thread creation error without navigating', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;
@@ -2039,9 +2029,7 @@ describe('WorkbenchPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockNavigate).not.toHaveBeenCalledWith(
-      '/space/space-1/tasks/task-after-chat-error',
-    );
+    expect(mockNavigate).not.toHaveBeenCalled();
     expect(container.textContent).toContain('chat failed');
 
     act(() => {
@@ -2578,7 +2566,7 @@ describe('WorkbenchPage', () => {
     container.remove();
   });
 
-  it('sends DeerFlow extension defaults without the legacy runtime panel', async () => {
+  it('sends DeerFlow extension defaults from the composer', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     let root: Root | undefined;

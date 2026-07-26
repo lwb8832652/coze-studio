@@ -16,10 +16,28 @@
 
 package workbench
 
-type ChatMode int64
+import (
+	"errors"
+	"fmt"
 
-const (
-	ChatModeAuto  ChatMode = 1
-	ChatModeAsk   ChatMode = 2
-	ChatModeAgent ChatMode = 3
+	appmcptool "github.com/coze-dev/coze-studio/backend/application/mcptool"
+	appskill "github.com/coze-dev/coze-studio/backend/application/skill"
 )
+
+type invalidArgumentError struct {
+	msg string
+}
+
+func (e invalidArgumentError) Error() string {
+	return e.msg
+}
+
+func InvalidArgumentErrorf(format string, args ...any) error {
+	return invalidArgumentError{msg: fmt.Sprintf(format, args...)}
+}
+
+func IsClientError(err error) bool {
+	var target invalidArgumentError
+
+	return errors.As(err, &target) || appskill.IsClientError(err) || appmcptool.IsClientError(err)
+}

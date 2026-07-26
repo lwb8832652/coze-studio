@@ -26,7 +26,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import { workbenchTask } from '@coze-studio/api-schema';
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
@@ -150,6 +149,7 @@ vi.mock('../../workbench/service', () => ({
   listWorkbenchWorkflowResources: vi.fn(),
 }));
 
+import { TaskThreadDetailStatus } from '../task-thread-detail-model';
 import { TaskFollowUpComposer } from '../task-follow-up-composer';
 import { fetchTaskDetail, type TaskDetail } from '../task-detail-loader';
 import { useTaskDetailData } from '../task-detail-hooks';
@@ -261,11 +261,10 @@ const detail = (
   },
 ) =>
   ({
-    source: 'thread',
     threadId,
     task: {
       id: threadId,
-      status: workbenchTask.TaskStatus.Completed,
+      status: TaskThreadDetailStatus.Succeeded,
       progress: 100,
     },
     events: [
@@ -293,7 +292,6 @@ const RouteComposerHarness = ({
 }) => {
   const data = useTaskDetailData({
     taskDetailId,
-    taskDetailSource: 'thread',
   });
   const [value, setValue] = useState('不得提交到旧任务');
 
@@ -318,7 +316,6 @@ let currentData: ReturnType<typeof useTaskDetailData>;
 const TaskDetailDataHarness = ({ taskDetailId }: { taskDetailId: string }) => {
   currentData = useTaskDetailData({
     taskDetailId,
-    taskDetailSource: 'thread',
   });
 
   return null;
@@ -547,7 +544,6 @@ describe('task detail final route and revision scope', () => {
 
         return fetchTaskDetail({
           id: 'thread-a',
-          source: 'thread',
         }).then(nextDetail =>
           revisionData.applyTaskDetail(nextDetail, 'thread-a', requestToken),
         );

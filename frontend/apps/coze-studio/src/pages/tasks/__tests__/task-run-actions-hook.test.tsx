@@ -74,7 +74,6 @@ const HookHarness = ({
     spaceID: 'space-1',
     task: createTask(taskDetailId),
     taskDetailId,
-    taskDetailSource: 'thread',
   });
 
   return null;

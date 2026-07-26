@@ -39,10 +39,11 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 
 	createPayload, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{
-			"space_id": "7",
-			"user_id":  "9",
-			"title":    "LangGraph 兼容任务",
-			"source":   "api",
+			"space_id":       "7",
+			"user_id":        "9",
+			"title":          "LangGraph 兼容任务",
+			"source":         "api",
+			"legacy_task_id": "retired-7",
 		},
 	})
 	require.NoError(t, err)
@@ -66,6 +67,7 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.Contains(t, createBody, `"title":"LangGraph 兼容任务"`)
 	require.Contains(t, createBody, `"user_id":"2"`)
 	require.Contains(t, createBody, `"values":{"messages":[]}`)
+	require.NotContains(t, createBody, "legacy_task_id")
 
 	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/2", nil)
 	getBody := string(getResp.Result().Body())
@@ -77,6 +79,7 @@ func TestLangGraphThreadCreateGetAndSearchHandlers(t *testing.T) {
 	require.Contains(t, getBody, `"title":"LangGraph 兼容任务"`)
 	require.Contains(t, getBody, `"user_id":"2"`)
 	require.Contains(t, getBody, `"values":{"messages":[]}`)
+	require.NotContains(t, getBody, "legacy_task_id")
 
 	searchPayload, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{
@@ -193,17 +196,17 @@ func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
 
 	patchPayload, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{
-			"title":       "Patched title metadata",
-			"custom":      "new",
-			"space_id":    "999",
-			"user_id":     "888",
-			"creator_id":  "777",
-			"thread_id":   "666",
-			"created_at":  "bad",
-			"updated_at":  "bad",
-			"status":      "running",
-			"source":      "evil",
-			"legacy_task": "evil",
+			"title":          "Patched title metadata",
+			"custom":         "new",
+			"space_id":       "999",
+			"user_id":        "888",
+			"creator_id":     "777",
+			"thread_id":      "666",
+			"created_at":     "bad",
+			"updated_at":     "bad",
+			"status":         "running",
+			"source":         "evil",
+			"legacy_task_id": "evil",
 		},
 	})
 	require.NoError(t, err)
@@ -227,6 +230,7 @@ func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
 	require.Contains(t, patchBody, `"status":"idle"`)
 	require.NotContains(t, patchBody, `"thread_id":"666"`)
 	require.NotContains(t, patchBody, `"creator_id":"777"`)
+	require.NotContains(t, patchBody, "legacy_task_id")
 
 	getResp := ut.PerformRequest(h.Engine, http.MethodGet, "/api/threads/1", nil)
 	getBody := string(getResp.Result().Body())
@@ -235,6 +239,17 @@ func TestLangGraphThreadPatchMergesMetadataAndPreservesIdentity(t *testing.T) {
 	require.Contains(t, getBody, `"space_id":"1"`)
 	require.Contains(t, getBody, `"user_id":"2"`)
 	require.Contains(t, getBody, `"source":"web"`)
+	require.NotContains(t, getBody, "legacy_task_id")
+}
+
+func TestLangGraphThreadMetadataOmitsRetiredLegacyTaskID(t *testing.T) {
+	metadata := langGraphThreadMetadata(&appagentthread.ThreadSummary{
+		ThreadID: 1,
+		Metadata: `{"custom":"safe","legacy_task_id":"retired-1"}`,
+	})
+
+	require.Equal(t, "safe", metadata["custom"])
+	require.NotContains(t, metadata, "legacy_task_id")
 }
 
 func TestLangGraphThreadDeleteRemovesThreadData(t *testing.T) {

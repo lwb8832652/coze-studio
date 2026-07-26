@@ -19,46 +19,6 @@ export { task };
 import * as base from './../base';
 export { base };
 import { createAPI } from './../../api/config';
-export enum ChatMode {
-  Auto = 1,
-  Ask = 2,
-  Agent = 3,
-}
-export enum RouteTarget {
-  ChatDirect = 1,
-  AgentEngine = 2,
-  SkillEngine = 3,
-  TaskEngine = 4,
-}
-export interface WorkbenchChatRequest {
-  space_id: string,
-  conversation_id?: string,
-  message: string,
-  mode: ChatMode,
-  selected_skill_id?: string,
-  task_id?: string,
-  enable_skills?: string[],
-  enable_mcp?: string[],
-  enable_kbs?: string[],
-  enable_databases?: string[],
-  model_type?: string,
-  model_name?: string,
-  runtime_settings?: string,
-}
-export interface WorkbenchChatData {
-  route_target: RouteTarget,
-  answer?: string,
-  task?: task.ChatTask,
-  conversation_id?: string,
-  reason?: string,
-  result_type?: string,
-  execution_type?: string,
-}
-export interface WorkbenchChatResponse {
-  data?: WorkbenchChatData,
-  code: number,
-  msg: string,
-}
 export interface GetWorkbenchRuntimeDoctorRequest {
   space_id: string
 }
@@ -141,18 +101,6 @@ export interface WorkbenchRuntimeDoctorResponse {
   code: number,
   msg: string,
 }
-export const WorkbenchChat = /*#__PURE__*/createAPI<WorkbenchChatRequest, WorkbenchChatResponse>({
-  "url": "/api/workbench/chat",
-  "method": "POST",
-  "name": "WorkbenchChat",
-  "reqType": "WorkbenchChatRequest",
-  "reqMapping": {
-    "body": ["space_id", "conversation_id", "message", "mode", "selected_skill_id", "task_id", "enable_skills", "enable_mcp", "enable_kbs", "enable_databases", "model_type", "model_name", "runtime_settings"]
-  },
-  "resType": "WorkbenchChatResponse",
-  "schemaRoot": "api://schemas/idl_workbench_workbench",
-  "service": "workbench"
-});
 export const GetWorkbenchRuntimeDoctor = /*#__PURE__*/createAPI<GetWorkbenchRuntimeDoctorRequest, WorkbenchRuntimeDoctorResponse>({
   "url": "/api/workbench/runtime_doctor",
   "method": "GET",

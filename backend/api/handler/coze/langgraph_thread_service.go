@@ -34,7 +34,10 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
 
-const defaultLangGraphThreadTitle = "新建任务"
+const (
+	defaultLangGraphThreadTitle    = "新建任务"
+	retiredLegacyTaskIDMetadataKey = "legacy_task_id"
+)
 
 // CreateLangGraphThread .
 // @router /api/threads [POST]
@@ -1163,6 +1166,9 @@ func langGraphThreadStateConfig(threadID int64, checkpointID string, checkpointN
 func langGraphThreadStateMetadata(thread *appagentthread.ThreadSummary, extra map[string]any) map[string]any {
 	metadata := langGraphThreadMetadata(thread)
 	for key, value := range extra {
+		if isRetiredLangGraphMetadataKey(key) {
+			continue
+		}
 		metadata[key] = value
 	}
 
@@ -1213,6 +1219,11 @@ func langGraphStoredThreadMetadata(thread *appagentthread.ThreadSummary) map[str
 	if metadata == nil {
 		return map[string]any{}
 	}
+	for key := range metadata {
+		if isRetiredLangGraphMetadataKey(key) {
+			delete(metadata, key)
+		}
+	}
 	return metadata
 }
 
@@ -1223,6 +1234,9 @@ func normalizeLangGraphMetadata(metadata map[string]any) map[string]any {
 
 	result := make(map[string]any, len(metadata))
 	for key, value := range metadata {
+		if isRetiredLangGraphMetadataKey(key) {
+			continue
+		}
 		result[key] = value
 	}
 
@@ -1234,28 +1248,34 @@ func stripLangGraphPatchMetadata(metadata map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	reserved := map[string]struct{}{
-		"owner_id":       {},
-		"user_id":        {},
-		"creator_id":     {},
-		"space_id":       {},
-		"thread_id":      {},
-		"id":             {},
-		"status":         {},
-		"source":         {},
-		"legacy_task_id": {},
-		"created_at":     {},
-		"updated_at":     {},
-		"values":         {},
-		"interrupts":     {},
+		"owner_id":   {},
+		"user_id":    {},
+		"creator_id": {},
+		"space_id":   {},
+		"thread_id":  {},
+		"id":         {},
+		"status":     {},
+		"source":     {},
+		"created_at": {},
+		"updated_at": {},
+		"values":     {},
+		"interrupts": {},
 	}
 	result := make(map[string]any, len(metadata))
 	for key, value := range metadata {
+		if isRetiredLangGraphMetadataKey(key) {
+			continue
+		}
 		if _, ok := reserved[key]; ok {
 			continue
 		}
 		result[key] = value
 	}
 	return result
+}
+
+func isRetiredLangGraphMetadataKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), retiredLegacyTaskIDMetadataKey)
 }
 
 func langGraphStringMetadata(metadata map[string]any, key string) string {

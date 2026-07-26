@@ -22,9 +22,9 @@ import {
 } from '@coze-arch/coze-design/icons';
 import { Popover } from '@coze-arch/coze-design';
 
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { getTaskInputText, getTaskResultText } from './helpers';
 
-type ChatTask = workbenchTask.ChatTask;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskExportFormat = 'markdown' | 'json';
 type TaskExportMessageType = 'human' | 'ai';
@@ -93,7 +93,7 @@ const getExportableMessages = (messages: TaskThreadMessage[]) =>
       Boolean(message.type && message.roleTitle && message.content),
     );
 
-const getFallbackMessages = (task: ChatTask) => {
+const getFallbackMessages = (task: TaskThreadDetailModel) => {
   const userText = stripInternalExportMarkers(
     getTaskInputText(task.input) || task.title,
   );
@@ -124,7 +124,7 @@ const appendMetadata = ({
   task,
 }: {
   lines: string[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   lines.push(
     `*Exported on ${new Date().toLocaleString()} · Created ${formatTaskExportTime(
@@ -140,7 +140,7 @@ const getVisibleExportMessages = ({
   task,
 }: {
   messages?: TaskThreadMessage[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) =>
   messages?.length
     ? getExportableMessages(messages)
@@ -151,7 +151,7 @@ export const buildTaskMarkdownExport = ({
   task,
 }: {
   messages?: TaskThreadMessage[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   const lines = [`# ${task.title}`, ''];
   const visibleMessages = getVisibleExportMessages({ messages, task });
@@ -171,7 +171,7 @@ const resolveThreadID = ({
   threadId,
 }: {
   messages?: TaskThreadMessage[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   threadId?: string;
 }) =>
   threadId ||
@@ -185,7 +185,7 @@ export const buildTaskJSONExport = ({
   threadId,
 }: {
   messages?: TaskThreadMessage[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   threadId?: string;
 }) => {
   const visibleMessages = getVisibleExportMessages({ messages, task });
@@ -234,7 +234,7 @@ export const TaskExportAction = ({
   threadId,
 }: {
   messages?: TaskThreadMessage[];
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   threadId?: string;
 }) => {
   const handleExport = (format: TaskExportFormat) => {

@@ -14,19 +14,36 @@
  * limitations under the License.
  */
 
-package service
-
-import (
-	"errors"
-	"fmt"
-)
-
-var ErrInvalidArgument = errors.New("invalid argument")
-
-func InvalidArgumentErrorf(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrInvalidArgument, fmt.Sprintf(format, args...))
+export enum TaskThreadDetailStatus {
+  Created = 1,
+  Queued = 2,
+  Running = 3,
+  Succeeded = 4,
+  Failed = 5,
+  Canceling = 6,
+  Canceled = 7,
 }
 
-func IsClientError(err error) bool {
-	return errors.Is(err, ErrInvalidArgument)
+export interface TaskThreadDetailEvent {
+  id: string;
+  thread_id: string;
+  event_type: string;
+  payload?: string;
+  created_at: number;
+  run_id?: string;
+}
+
+export interface TaskThreadDetailModel {
+  id: string;
+  space_id: string;
+  creator_id: string;
+  conversation_id?: string;
+  title: string;
+  status: TaskThreadDetailStatus;
+  progress: number;
+  input?: string;
+  result?: string;
+  error?: string;
+  created_at: number;
+  updated_at: number;
 }

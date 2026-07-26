@@ -237,7 +237,6 @@ type Thread struct {
 	Title         string
 	Status        ThreadStatus
 	Source        ThreadSource
-	LegacyTaskID  int64
 	Metadata      string
 	CreatedAt     int64
 	UpdatedAt     int64

@@ -14,13 +14,52 @@
  * limitations under the License.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mergeJournalTaskEvents } from '../task-detail-journal-events';
+import {
+  fetchTaskDetail,
+  mergeJournalTaskThreadEvents,
+} from '../task-detail-loader';
 
-describe('mergeJournalTaskEvents', () => {
+const mockGetTaskThread = vi.hoisted(() => vi.fn());
+
+vi.mock('../service', () => ({
+  getTaskThread: mockGetTaskThread,
+  getTaskThreadTokenUsage: vi.fn(),
+  listTaskThreadArtifacts: vi.fn(),
+  listTaskThreadMessages: vi.fn(),
+  listTaskThreadRunEvents: vi.fn(),
+  listTaskThreadRuns: vi.fn(),
+}));
+
+describe('fetchTaskDetail', () => {
+  beforeEach(() => {
+    mockGetTaskThread.mockReset();
+
+    mockGetTaskThread.mockResolvedValue({
+      data: undefined,
+      code: 0,
+      msg: '',
+    });
+  });
+
+  it('returns an empty canonical detail when the task thread is missing', async () => {
+    await expect(
+      fetchTaskDetail({ id: 'missing-thread', spaceId: 'space-1' }),
+    ).resolves.toEqual({
+      threadId: 'missing-thread',
+      task: undefined,
+      events: [],
+    });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'missing-thread',
+    });
+  });
+});
+
+describe('mergeJournalTaskThreadEvents', () => {
   it('prefers journal-backed message and tool steps while keeping non-message events', () => {
-    const events = mergeJournalTaskEvents({
+    const events = mergeJournalTaskThreadEvents({
       runEvents: [
         {
           event_id: '1',

@@ -1806,7 +1806,6 @@ func taskThreadToAPI(thread *appagentthread.ThreadSummary) *threadapi.TaskThread
 
 	return &threadapi.TaskThread{
 		ThreadID:         thread.ThreadID,
-		LegacyTaskID:     thread.LegacyTaskID,
 		SpaceID:          thread.SpaceID,
 		CreatorID:        thread.CreatorID,
 		Title:            thread.Title,

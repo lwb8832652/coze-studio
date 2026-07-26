@@ -92,7 +92,6 @@ const createDeferred = <T,>() => {
 
 const createDetail = (id: string) =>
   ({
-    source: 'thread',
     threadId: id,
     task: {
       id,
@@ -140,7 +139,6 @@ const HookHarness = ({ taskDetailId }: { taskDetailId: string }) => {
   currentData = useTaskDetailData({
     spaceID: 'space-1',
     taskDetailId,
-    taskDetailSource: 'thread',
   });
   currentActions = useTaskDetailActions({
     applyTaskDetail: currentData.applyTaskDetail,
@@ -153,7 +151,6 @@ const HookHarness = ({ taskDetailId }: { taskDetailId: string }) => {
     subagentRuns: currentData.subagentRuns,
     task: currentData.task,
     taskDetailId,
-    taskDetailSource: 'thread',
     todos: currentData.todos,
     tokenUsage: currentData.tokenUsage,
     tokenUsageByRunID: currentData.tokenUsageByRunID,

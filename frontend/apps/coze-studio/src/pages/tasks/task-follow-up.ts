@@ -17,13 +17,11 @@
 import type { workbenchTask } from '@coze-studio/api-schema';
 
 import {
-  mapModeToChatMode,
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
 import {
   createTaskThreadRun,
-  sendWorkbenchChat,
   uploadTaskThreadFiles,
   type TaskThreadUploadedFile,
 } from './service';
@@ -67,70 +65,34 @@ export const createFollowUpIdempotencyKey = (threadId: string) => {
 };
 
 export const sendFollowUpMessage = async ({
-  activeTaskId,
-  isCanonicalThreadDetail,
   payload,
-  spaceId,
   threadId,
   idempotencyKey,
 }: {
-  activeTaskId: string;
-  isCanonicalThreadDetail: boolean;
   payload: WorkbenchComposerSubmitPayload;
-  spaceId: string;
   threadId: string;
   idempotencyKey?: string;
 }) => {
-  if (isCanonicalThreadDetail) {
-    const uploadResponse = await uploadTaskThreadFiles({
-      thread_id: threadId,
-      files: payload.files ?? [],
-    });
-    const runResponse = await createTaskThreadRun({
-      thread_id: threadId,
-      input: getThreadFollowUpRunInput({
-        payload,
-        uploadedFiles: uploadResponse.data?.files ?? [],
-      }),
-      config: getThreadFollowUpMetadata(payload),
-      metadata: getThreadFollowUpRunMetadata(payload),
-      message_content: payload.message,
-      message_metadata: getThreadFollowUpMetadata(payload),
-      idempotency_key: idempotencyKey ?? createFollowUpIdempotencyKey(threadId),
-    });
-
-    return {
-      kind: 'thread',
-      message: runResponse.message,
-      run: runResponse.data,
-    } satisfies CanonicalThreadFollowUpResult;
-  }
-
-  if (payload.files?.length) {
-    throw new Error('当前任务详情暂不支持附件追问');
-  }
-
-  await sendWorkbenchChat({
-    space_id: spaceId,
-    task_id: activeTaskId,
-    message: payload.message,
-    mode: mapModeToChatMode(payload.mode),
-    ...(payload.modelType
-      ? {
-          model_type: String(payload.modelType),
-          model_name: payload.modelName,
-        }
-      : {}),
-    runtime_settings: stringifyWorkbenchRunConfig(payload),
-    ...(payload.enable_skills
-      ? {
-          enable_skills: payload.enable_skills,
-        }
-      : {}),
-    enable_mcp: payload.enable_mcp,
-    enable_kbs: payload.enable_kbs,
-    enable_databases: payload.enable_databases,
+  const uploadResponse = await uploadTaskThreadFiles({
+    thread_id: threadId,
+    files: payload.files ?? [],
+  });
+  const runResponse = await createTaskThreadRun({
+    thread_id: threadId,
+    input: getThreadFollowUpRunInput({
+      payload,
+      uploadedFiles: uploadResponse.data?.files ?? [],
+    }),
+    config: getThreadFollowUpMetadata(payload),
+    metadata: getThreadFollowUpRunMetadata(payload),
+    message_content: payload.message,
+    message_metadata: getThreadFollowUpMetadata(payload),
+    idempotency_key: idempotencyKey ?? createFollowUpIdempotencyKey(threadId),
   });
 
-  return undefined;
+  return {
+    kind: 'thread',
+    message: runResponse.message,
+    run: runResponse.data,
+  } satisfies CanonicalThreadFollowUpResult;
 };

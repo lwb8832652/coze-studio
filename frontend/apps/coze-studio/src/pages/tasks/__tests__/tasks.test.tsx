@@ -19,13 +19,11 @@
 import { vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import { workbenchTask } from '@coze-studio/api-schema';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockUseParams = vi.hoisted(() => vi.fn(() => ({ space_id: 'space-1' })));
 const mockNavigate = vi.hoisted(() => vi.fn());
-const mockListTasks = vi.hoisted(() => vi.fn());
 const mockListTaskThreads = vi.hoisted(() => vi.fn());
 
 vi.hoisted(() => {
@@ -68,12 +66,10 @@ vi.mock('../../../components/workspace-page-top-bar', () => ({
 }));
 
 vi.mock('../service', () => ({
-  cancelTask: vi.fn(),
-  listTasks: mockListTasks,
   listTaskThreads: mockListTaskThreads,
-  retryTask: vi.fn(),
 }));
 
+import { TaskThreadDetailStatus } from '../task-thread-detail-model';
 import { getPendingHumanInteraction } from '../task-human-interaction';
 import { projectTaskExecutionEvents } from '../task-event-projection';
 import TasksPage from '../index';
@@ -81,7 +77,7 @@ import {
   canCancelTask,
   filterTasks,
   formatUpdatedTime,
-  getTaskEventDisplay,
+  getTaskThreadEventDisplay,
   getTaskInputText,
   getTaskStatusText,
 } from '../helpers';
@@ -90,26 +86,6 @@ describe('TasksPage helpers', () => {
   beforeEach(() => {
     mockUseParams.mockReturnValue({ space_id: 'space-1' });
     mockNavigate.mockReset();
-    mockListTasks.mockResolvedValue({
-      data: {
-        tasks: [
-          {
-            id: 'task-1',
-            space_id: 'space-1',
-            creator_id: 'user-1',
-            title: '生成周报',
-            status: workbenchTask.TaskStatus.Running,
-            progress: 40,
-            input: JSON.stringify({ message: '整理项目进展' }),
-            created_at: 1717000000000,
-            updated_at: 1717000300000,
-          },
-        ],
-        total: 1,
-      },
-      code: 0,
-      msg: '',
-    });
     mockListTaskThreads.mockReset();
     mockListTaskThreads.mockResolvedValue({
       data: {
@@ -122,7 +98,6 @@ describe('TasksPage helpers', () => {
             status: 'running',
             last_user_message: '整理项目进展',
             last_agent_message: '',
-            legacy_task_id: 'task-legacy-1',
             metadata: '{}',
             created_at: 1717000000000,
             updated_at: 1717000300000,
@@ -177,19 +152,18 @@ describe('TasksPage helpers', () => {
     container.remove();
   });
 
-  it('opens canonical thread id when legacy task id is zero string', async () => {
+  it('opens the canonical task thread id', async () => {
     mockListTaskThreads.mockResolvedValueOnce({
       data: {
         threads: [
           {
-            thread_id: 'thread-zero-legacy',
+            thread_id: 'thread-canonical',
             space_id: 'space-1',
             creator_id: 'user-1',
             title: 'Canonical 新建任务',
             status: 'idle',
             last_user_message: '请用一句话回复 smoke OK',
             last_agent_message: '',
-            legacy_task_id: '0',
             metadata: '{}',
             created_at: 1717000000000,
             updated_at: 1717000300000,
@@ -219,7 +193,7 @@ describe('TasksPage helpers', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/tasks/thread-zero-legacy',
+      '/space/space-1/tasks/thread-canonical',
     );
 
     act(() => {
@@ -242,7 +216,6 @@ describe('TasksPage helpers', () => {
             last_user_message:
               '请生成一份《武汉3日游攻略》正式文档，包含行程概览、每日安排、预算表、注意事项',
             last_agent_message: '',
-            legacy_task_id: '0',
             metadata: '{}',
             created_at: 1717000000000,
             updated_at: 1717000300000,
@@ -289,7 +262,6 @@ describe('TasksPage helpers', () => {
             status: 'running',
             last_user_message: '请帮我制定一份武汉3日游攻略',
             last_agent_message: '',
-            legacy_task_id: '0',
             metadata: '{}',
             created_at: 1717000000000,
             updated_at: 1717000300000,
@@ -419,9 +391,9 @@ describe('TasksPage helpers', () => {
   });
 
   it('allows canceling created tasks', () => {
-    expect(canCancelTask(workbenchTask.TaskStatus.Created)).toBe(true);
-    expect(canCancelTask(workbenchTask.TaskStatus.Queued)).toBe(true);
-    expect(canCancelTask(workbenchTask.TaskStatus.Running)).toBe(true);
+    expect(canCancelTask(TaskThreadDetailStatus.Created)).toBe(true);
+    expect(canCancelTask(TaskThreadDetailStatus.Queued)).toBe(true);
+    expect(canCancelTask(TaskThreadDetailStatus.Running)).toBe(true);
   });
 
   it('filters tasks by title and status', () => {
@@ -431,7 +403,7 @@ describe('TasksPage helpers', () => {
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '生成周报',
-        status: workbenchTask.TaskStatus.Running,
+        status: TaskThreadDetailStatus.Running,
         progress: 40,
         created_at: 1717000000000,
         updated_at: 1717000300000,
@@ -441,7 +413,7 @@ describe('TasksPage helpers', () => {
         space_id: 'space-1',
         creator_id: 'user-1',
         title: '排查错误',
-        status: workbenchTask.TaskStatus.Failed,
+        status: TaskThreadDetailStatus.Failed,
         progress: 100,
         created_at: 1717000000000,
         updated_at: 1717000300000,
@@ -450,9 +422,7 @@ describe('TasksPage helpers', () => {
 
     expect(filterTasks(tasks, '周报', 'all')).toHaveLength(1);
     expect(filterTasks(tasks, '', 'failed')).toHaveLength(1);
-    expect(getTaskStatusText(workbenchTask.TaskStatus.Succeeded)).toBe(
-      '已完成',
-    );
+    expect(getTaskStatusText(TaskThreadDetailStatus.Succeeded)).toBe('已完成');
   });
 
   it('formats JSON task input as readable text', () => {
@@ -463,14 +433,14 @@ describe('TasksPage helpers', () => {
   });
 
   it('formats agent run step events as execution steps', () => {
-    const started = getTaskEventDisplay(
+    const started = getTaskThreadEventDisplay(
       'step.started',
       JSON.stringify({
         step_name: 'generate_answer',
         step_index: 0,
       }),
     );
-    const completed = getTaskEventDisplay(
+    const completed = getTaskThreadEventDisplay(
       'step.completed',
       JSON.stringify({
         step_name: 'generate_answer',
@@ -488,7 +458,7 @@ describe('TasksPage helpers', () => {
   });
 
   it('formats agent tool events as execution steps', () => {
-    const started = getTaskEventDisplay(
+    const started = getTaskThreadEventDisplay(
       'tool.started',
       JSON.stringify({
         step_name: 'search_web',
@@ -496,7 +466,7 @@ describe('TasksPage helpers', () => {
         arguments_present: true,
       }),
     );
-    const completed = getTaskEventDisplay(
+    const completed = getTaskThreadEventDisplay(
       'tool.completed',
       JSON.stringify({
         step_name: 'search_web',
@@ -504,7 +474,7 @@ describe('TasksPage helpers', () => {
         result_present: true,
       }),
     );
-    const failed = getTaskEventDisplay(
+    const failed = getTaskThreadEventDisplay(
       'tool.failed',
       JSON.stringify({
         step_name: 'search_web',
@@ -523,7 +493,7 @@ describe('TasksPage helpers', () => {
   });
 
   it('hides unsafe tool event details from execution cards', () => {
-    const started = getTaskEventDisplay(
+    const started = getTaskThreadEventDisplay(
       'tool.started',
       JSON.stringify({
         tool_name: 'api_key=tool-secret',
@@ -532,7 +502,7 @@ describe('TasksPage helpers', () => {
         detail: 'tool_arguments include bearer=secret-token',
       }),
     );
-    const completed = getTaskEventDisplay(
+    const completed = getTaskThreadEventDisplay(
       'tool.completed',
       JSON.stringify({
         tool_name: 'safe_search',
@@ -541,7 +511,7 @@ describe('TasksPage helpers', () => {
         detail: 'provider_raw response https://private.example.test/result',
       }),
     );
-    const failed = getTaskEventDisplay(
+    const failed = getTaskThreadEventDisplay(
       'tool.failed',
       JSON.stringify({
         tool_name: 'safe_search',
@@ -624,7 +594,7 @@ describe('TasksPage helpers', () => {
     expect(projected[1].display.status).toBe('completed');
 
     expect(
-      getTaskEventDisplay(
+      getTaskThreadEventDisplay(
         'plan.task.deleted',
         JSON.stringify({
           plan_task_id: '2',

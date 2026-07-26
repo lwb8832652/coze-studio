@@ -16,7 +16,8 @@
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
-type TaskEvent = workbenchTask.TaskEvent;
+import type { TaskThreadDetailEvent } from './task-thread-detail-model';
+
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 type TaskThreadRunJournalMessage = workbenchTask.TaskThreadRunJournalMessage;
 
@@ -45,20 +46,20 @@ const parseJSONObject = (
 const normalizeJSONString = (value?: string) =>
   JSON.stringify(parseJSONObject(value) ?? {});
 
-export const mapTaskThreadRunEventToTaskEvent = (
+export const mapTaskThreadRunEventToDetailEvent = (
   event: TaskThreadRunEvent,
-): TaskEvent => ({
+): TaskThreadDetailEvent => ({
   id: event.event_id,
-  task_id: event.thread_id,
+  thread_id: event.thread_id,
   run_id: event.run_id,
   event_type: event.event_type,
   payload: event.payload,
   created_at: event.created_at,
 });
 
-const mapTaskThreadRunJournalMessageToTaskEvent = (
+const mapTaskThreadRunJournalMessageToDetailEvent = (
   message: TaskThreadRunJournalMessage,
-): TaskEvent | undefined => {
+): TaskThreadDetailEvent | undefined => {
   if (message.type === 'human') {
     return undefined;
   }
@@ -66,7 +67,7 @@ const mapTaskThreadRunJournalMessageToTaskEvent = (
   if (message.type === 'tool') {
     return {
       id: message.source_event_id || `journal-${message.id}`,
-      task_id: message.thread_id,
+      thread_id: message.thread_id,
       run_id: message.run_id,
       event_type: 'tool.completed',
       payload: JSON.stringify({
@@ -104,7 +105,7 @@ const mapTaskThreadRunJournalMessageToTaskEvent = (
 
   return {
     id: message.source_event_id || `journal-${message.id}`,
-    task_id: message.thread_id,
+    thread_id: message.thread_id,
     run_id: message.run_id,
     event_type: 'message.completed',
     payload: JSON.stringify(payload),
@@ -115,7 +116,7 @@ const mapTaskThreadRunJournalMessageToTaskEvent = (
 const isJournalBackedEventType = (eventType?: string) =>
   eventType === 'message.completed' || eventType?.startsWith('tool.');
 
-export const mergeJournalTaskEvents = ({
+export const mergeJournalTaskThreadEvents = ({
   journalMessages,
   runEvents,
 }: {
@@ -123,10 +124,10 @@ export const mergeJournalTaskEvents = ({
   runEvents: TaskThreadRunEvent[];
 }) => {
   const journalEvents = (journalMessages ?? [])
-    .map(mapTaskThreadRunJournalMessageToTaskEvent)
-    .filter((event): event is TaskEvent => Boolean(event));
+    .map(mapTaskThreadRunJournalMessageToDetailEvent)
+    .filter((event): event is TaskThreadDetailEvent => Boolean(event));
   const baseEvents = runEvents
-    .map(mapTaskThreadRunEventToTaskEvent)
+    .map(mapTaskThreadRunEventToDetailEvent)
     .filter(event =>
       journalEvents.length ? !isJournalBackedEventType(event.event_type) : true,
     );

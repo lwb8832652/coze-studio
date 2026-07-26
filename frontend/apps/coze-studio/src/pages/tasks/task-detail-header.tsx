@@ -25,12 +25,12 @@ import {
 
 import { buildTaskThreadListPath } from '../chats/task-thread-routes';
 import { WorkspaceHeaderActions } from '../../components/workspace-header-actions';
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { TaskExportAction } from './task-export-action';
 import { getTaskDisplayTitle } from './task-display-title';
 import { TaskDetailInspector } from './task-detail-inspector';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 
-type ChatTask = workbenchTask.ChatTask;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 
@@ -83,7 +83,7 @@ export const TaskDetailHeader = ({
   messages: TaskThreadMessage[];
   onArtifactsChanged?: () => void | Promise<void>;
   spaceId: string;
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   threadId?: string;
 }) => {
   const navigate = useNavigate();

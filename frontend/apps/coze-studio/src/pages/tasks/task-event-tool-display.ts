@@ -18,7 +18,7 @@ import {
   getSafeTaskToolDetail,
   getSafeTaskToolName,
 } from './task-tool-event-safety';
-import type { TaskEventDisplay, TaskExecutionType } from './helpers';
+import type { TaskThreadEventDisplay, TaskExecutionType } from './helpers';
 
 const getString = (
   payload: Record<string, unknown> | undefined,
@@ -230,7 +230,7 @@ export const getTaskToolEventDisplay = ({
   parsed?: Record<string, unknown>;
   runtime?: TaskExecutionType;
   title?: string;
-}): TaskEventDisplay | undefined => {
+}): TaskThreadEventDisplay | undefined => {
   if (!eventType?.startsWith('tool.')) {
     return undefined;
   }

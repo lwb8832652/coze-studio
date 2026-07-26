@@ -91,7 +91,6 @@ const HookHarness = ({
     spaceID: 'space-1',
     subagentRuns: [],
     taskDetailId,
-    taskDetailSource: 'task',
     todos: [],
     tokenUsageByRunID: {},
   });

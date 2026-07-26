@@ -471,33 +471,33 @@ describe('WorkbenchComposer interaction contract', () => {
     expect(detailEditor?.hasAttribute('rows')).toBe(false);
   });
 
-  it('disables legacy attachments up front and keeps canonical attachments available', () => {
-    const legacyContainer = renderComposer({
+  it('honors disabled and enabled attachment capabilities', () => {
+    const disabledContainer = renderComposer({
       capabilities: {
         attachments: false,
-        attachmentDisabledReason: '旧版任务暂不支持附件续聊',
+        attachmentDisabledReason: '当前任务不可添加附件',
       },
     });
-    const canonicalContainer = renderComposer({
+    const enabledContainer = renderComposer({
       capabilities: { attachments: true },
     });
 
     expect(
-      legacyContainer.querySelector<HTMLInputElement>('input[type="file"]')
+      disabledContainer.querySelector<HTMLInputElement>('input[type="file"]')
         ?.disabled,
     ).toBe(true);
     expect(
-      legacyContainer.querySelector<HTMLButtonElement>(
+      disabledContainer.querySelector<HTMLButtonElement>(
         'button[aria-label="添加附件"]',
       )?.disabled,
     ).toBe(true);
-    expect(legacyContainer.textContent).toContain('旧版任务暂不支持附件续聊');
+    expect(disabledContainer.textContent).toContain('当前任务不可添加附件');
     expect(
-      canonicalContainer.querySelector<HTMLInputElement>('input[type="file"]')
+      enabledContainer.querySelector<HTMLInputElement>('input[type="file"]')
         ?.disabled,
     ).toBe(false);
     expect(
-      canonicalContainer.querySelector<HTMLButtonElement>(
+      enabledContainer.querySelector<HTMLButtonElement>(
         'button[aria-label="添加附件"]',
       )?.disabled,
     ).toBe(false);
