@@ -21,13 +21,23 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { validateContract } from './workbench-execution-graph/contract.mjs';
+import {
+  evaluateAuthorityChanges,
+  validateContract,
+} from './workbench-execution-graph/contract.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACT_PATH = path.join(
   REPO_ROOT,
   'docs/superpowers/context/workbench-execution-graph.json',
 );
+const CONTRACT_RELATIVE =
+  'docs/superpowers/context/workbench-execution-graph.json';
+const CONTEXT_RELATIVE =
+  'docs/superpowers/context/workbench-execution-chain.md';
+
+const loadCanonicalContract = async () =>
+  JSON.parse(await readFile(CONTRACT_PATH, 'utf8'));
 
 const makeContract = () => ({
   schema_version: 1,
@@ -194,7 +204,89 @@ test('requires test evidence for every chain', async () => {
 });
 
 test('canonical Workbench execution contract is valid', async () => {
-  const contract = JSON.parse(await readFile(CONTRACT_PATH, 'utf8'));
+  const contract = await loadCanonicalContract();
   const result = await validateContract(contract, { repoRoot: REPO_ROOT });
   assert.deepEqual(result.errors, []);
+});
+
+test('rejects framework version drift from repository manifests', async () => {
+  const contract = await loadCanonicalContract();
+  contract.nodes.find(node => node.id === 'framework.eino').version = 'v0.0.0';
+
+  const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+  assert.match(result.errors.join('\n'), /framework_version_mismatch/);
+});
+
+test('requires canonical frameworks to anchor production code', async () => {
+  const contract = await loadCanonicalContract();
+  contract.nodes.find(node => node.id === 'framework.eino').source_anchors = [
+    {
+      path: 'backend/go.mod',
+      locator: 'github.com/cloudwego/eino v0.9.9',
+    },
+  ];
+
+  const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+  assert.match(result.errors.join('\n'), /canonical_framework_anchor_missing/);
+});
+
+test('rejects middleware order drift from adkMiddlewareOrder', async () => {
+  const contract = await loadCanonicalContract();
+  const chain = contract.chains.find(
+    item => item.id === 'framework.eino_middleware_order',
+  );
+  [chain.ordered_node_ids[0], chain.ordered_node_ids[1]] = [
+    chain.ordered_node_ids[1],
+    chain.ordered_node_ids[0],
+  ];
+
+  const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+  assert.match(result.errors.join('\n'), /middleware_order_mismatch/);
+});
+
+test('rejects compatibility nodes from canonical execution chains', async () => {
+  const contract = await loadCanonicalContract();
+  const chain = contract.chains.find(
+    item => item.id === 'framework.canonical_stack',
+  );
+  chain.ordered_node_ids[0] = 'compat.langgraph.create_run';
+
+  const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+  assert.match(result.errors.join('\n'), /noncanonical_runtime_in_execution_chain/);
+});
+
+for (const forbiddenTerm of ['K2', 'ChatTask']) {
+  test(`rejects forbidden current ${forbiddenTerm} nodes`, async () => {
+    const contract = await loadCanonicalContract();
+    const node = structuredClone(contract.nodes[0]);
+    node.id = `forbidden.${forbiddenTerm.toLowerCase()}`;
+    node.label = `${forbiddenTerm} current runtime`;
+    contract.nodes.push(node);
+
+    const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+    assert.match(result.errors.join('\n'), /forbidden_current_node/);
+  });
+}
+
+test('requires authority files to move together with monitored source', () => {
+  const scope = {
+    monitored_paths: ['backend/application/agentthread/**'],
+    authority_files: [CONTRACT_RELATIVE, CONTEXT_RELATIVE],
+  };
+
+  assert.deepEqual(
+    evaluateAuthorityChanges(
+      ['backend/application/agentthread/adk_executor.go'],
+      scope,
+    ),
+    ['authority_files_not_updated'],
+  );
+  assert.deepEqual(
+    evaluateAuthorityChanges([CONTRACT_RELATIVE], scope),
+    ['authority_files_must_change_together'],
+  );
+  assert.deepEqual(
+    evaluateAuthorityChanges([CONTRACT_RELATIVE, CONTEXT_RELATIVE], scope),
+    [],
+  );
 });

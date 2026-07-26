@@ -14,10 +14,36 @@
  * limitations under the License.
  */
 
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 export const CURRENT_STATUS = 'current';
+
+const execFileAsync = promisify(execFile);
+
+const FRAMEWORK_LAYERS = new Set(['framework', 'framework_extension']);
+const ALLOWED_RUNTIME_SCOPES = new Set([
+  'canonical_runtime',
+  'conditional_runtime_extension',
+  'transport_contract',
+  'persistence_runtime',
+  'integration_ingress',
+  'optional_observability',
+  'ui_only',
+  'compatibility_contract',
+  'historical_compatibility',
+  'build_or_test_only',
+]);
+const NONCANONICAL_EXECUTOR_SCOPES = new Set([
+  'conditional_runtime_extension',
+  'compatibility_contract',
+  'historical_compatibility',
+  'ui_only',
+  'optional_observability',
+  'build_or_test_only',
+]);
 
 const ALLOWED_RELATIONS = new Set([
   'routes_to',
@@ -46,6 +72,14 @@ const asArray = value => (Array.isArray(value) ? value : []);
 
 const stringValue = value =>
   typeof value === 'string' ? value.trim() : '';
+
+const isFrameworkNode = node => FRAMEWORK_LAYERS.has(node?.layer);
+
+const readRepoFile = async (repoRoot, relativePath) =>
+  readFile(normalizeRepoPath(repoRoot, relativePath), 'utf8');
+
+const regexEscape = value =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const duplicateErrors = (items, type) => {
   const seen = new Set();
@@ -78,6 +112,287 @@ export const normalizeRepoPath = (repoRoot, candidate) => {
   }
 
   return absolute;
+};
+
+export const resolveVersion = async (node, options) => {
+  const source = node?.version_source;
+  const sourceType = stringValue(source?.type);
+  if (sourceType === 'platform') {
+    return stringValue(node?.version);
+  }
+
+  const content = await readRepoFile(options.repoRoot, source?.path);
+  switch (sourceType) {
+    case 'json_dependency': {
+      const manifest = JSON.parse(content);
+      const dependencyName = stringValue(source?.name);
+      for (const section of [
+        'dependencies',
+        'devDependencies',
+        'peerDependencies',
+        'optionalDependencies',
+      ]) {
+        const version = stringValue(manifest?.[section]?.[dependencyName]);
+        if (version) {
+          return version;
+        }
+      }
+      throw new Error(`dependency ${dependencyName} is missing`);
+    }
+    case 'go_module': {
+      const moduleName = stringValue(source?.name);
+      const match = content.match(
+        new RegExp(`^\\s*${regexEscape(moduleName)}\\s+(\\S+)`, 'm'),
+      );
+      if (!match) {
+        throw new Error(`Go module ${moduleName} is missing`);
+      }
+      return match[1];
+    }
+    case 'go_directive': {
+      const match = content.match(/^go\s+(\S+)/m);
+      if (!match) {
+        throw new Error('Go directive is missing');
+      }
+      return match[1];
+    }
+    case 'text_pattern': {
+      const pattern = stringValue(source?.pattern);
+      if (!pattern) {
+        throw new Error('text pattern is missing');
+      }
+      const match = content.match(new RegExp(pattern, 'm'));
+      if (!match) {
+        throw new Error(`text pattern did not match: ${pattern}`);
+      }
+      const group = Number.isInteger(source?.group) ? source.group : 0;
+      if (match[group] === undefined) {
+        throw new Error(`text pattern capture group ${group} is missing`);
+      }
+      return stringValue(match[group]);
+    }
+    default:
+      throw new Error(`unsupported version source type: ${sourceType}`);
+  }
+};
+
+export const validateFrameworkScopes = contract => {
+  const errors = [];
+  const nodes = asArray(contract?.nodes);
+  const nodesByID = new Map(nodes.map(node => [node?.id, node]));
+
+  for (const node of nodes) {
+    const nodeID = stringValue(node?.id) || '<missing-node-id>';
+    const runtimeScope = stringValue(node?.runtime_scope);
+    if (runtimeScope && !ALLOWED_RUNTIME_SCOPES.has(runtimeScope)) {
+      errors.push(`framework_runtime_scope_invalid: ${nodeID}: ${runtimeScope}`);
+    }
+    if (!isFrameworkNode(node)) {
+      continue;
+    }
+    if (!runtimeScope) {
+      errors.push(`framework_runtime_scope_missing: ${nodeID}`);
+    }
+    if (!stringValue(node?.package)) {
+      errors.push(`framework_package_missing: ${nodeID}`);
+    }
+    if (!stringValue(node?.version)) {
+      errors.push(`framework_version_missing: ${nodeID}`);
+    }
+    if (!node?.version_source || !stringValue(node.version_source.type)) {
+      errors.push(`framework_version_source_missing: ${nodeID}`);
+    }
+
+    if (runtimeScope === 'canonical_runtime') {
+      const versionPath = stringValue(node?.version_source?.path);
+      const productionAnchor = asArray(node?.source_anchors).some(anchor => {
+        const anchorPath = stringValue(anchor?.path);
+        return (
+          anchorPath &&
+          anchorPath !== versionPath &&
+          /\.(?:go|[cm]?[jt]sx?)$/.test(anchorPath)
+        );
+      });
+      if (!productionAnchor) {
+        errors.push(`canonical_framework_anchor_missing: ${nodeID}`);
+      }
+    }
+  }
+
+  for (const chain of asArray(contract?.chains)) {
+    if (chain?.canonical_executor !== true) {
+      continue;
+    }
+    for (const nodeID of asArray(chain?.ordered_node_ids)) {
+      const runtimeScope = stringValue(nodesByID.get(nodeID)?.runtime_scope);
+      if (NONCANONICAL_EXECUTOR_SCOPES.has(runtimeScope)) {
+        errors.push(
+          `noncanonical_runtime_in_execution_chain: ${chain.id}: ${nodeID}: ${runtimeScope}`,
+        );
+      }
+    }
+  }
+
+  return errors;
+};
+
+const validateForbiddenCurrentNodes = contract => {
+  const errors = [];
+  const forbiddenTerms = asArray(contract?.scope?.forbidden_current_terms)
+    .map(term => stringValue(term).toLowerCase())
+    .filter(Boolean);
+
+  for (const node of asArray(contract?.nodes)) {
+    if (node?.production_status !== CURRENT_STATUS) {
+      continue;
+    }
+    const searchable = `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+    for (const term of forbiddenTerms) {
+      if (searchable.includes(term)) {
+        errors.push(`forbidden_current_node: ${node.id}: ${term}`);
+      }
+    }
+  }
+
+  return errors;
+};
+
+export const validateMiddlewareOrder = async (contract, options) => {
+  const chain = asArray(contract?.chains).find(
+    item => item?.id === 'framework.eino_middleware_order',
+  );
+  if (!chain) {
+    return [];
+  }
+
+  const middlewareNodes = asArray(contract?.nodes).filter(
+    node => node?.layer === 'eino_middleware',
+  );
+  const sourcePath = stringValue(middlewareNodes[0]?.source_anchors?.[0]?.path);
+  if (!sourcePath) {
+    return ['middleware_order_source_missing: framework.eino_middleware_order'];
+  }
+
+  let content;
+  try {
+    content = await readRepoFile(options.repoRoot, sourcePath);
+  } catch (error) {
+    return [`middleware_order_source_invalid: ${error.message}`];
+  }
+  const block = content.match(
+    /var\s+adkMiddlewareOrder\s*=\s*\[\]ADKMiddlewareName\s*{([\s\S]*?)\n}/,
+  );
+  if (!block) {
+    return ['middleware_order_source_invalid: adkMiddlewareOrder block is missing'];
+  }
+
+  const nodeByConstant = new Map();
+  for (const node of middlewareNodes) {
+    for (const anchor of asArray(node?.source_anchors)) {
+      const locator = stringValue(anchor?.locator);
+      const match = locator.match(/^(ADKMiddleware\w+),$/);
+      if (match) {
+        nodeByConstant.set(match[1], node.id);
+      }
+    }
+  }
+  const constants = [...block[1].matchAll(/^\s*(ADKMiddleware\w+),\s*$/gm)].map(
+    match => match[1],
+  );
+  const expected = constants.map(constant => nodeByConstant.get(constant));
+  if (expected.some(nodeID => !nodeID)) {
+    return [
+      `middleware_order_source_invalid: unmapped constants: ${constants
+        .filter((constant, index) => !expected[index])
+        .join(',')}`,
+    ];
+  }
+  if (
+    JSON.stringify(expected) !== JSON.stringify(asArray(chain.ordered_node_ids))
+  ) {
+    return [
+      `middleware_order_mismatch: expected ${expected.join(' -> ')}`,
+    ];
+  }
+
+  return [];
+};
+
+const globMatches = (candidate, pattern) => {
+  const normalizedCandidate = candidate.replaceAll('\\', '/');
+  const normalizedPattern = stringValue(pattern).replaceAll('\\', '/');
+  let source = '^';
+  for (let index = 0; index < normalizedPattern.length; index += 1) {
+    const character = normalizedPattern[index];
+    if (character === '*' && normalizedPattern[index + 1] === '*') {
+      source += '.*';
+      index += 1;
+    } else if (character === '*') {
+      source += '[^/]*';
+    } else if (character === '?') {
+      source += '[^/]';
+    } else {
+      source += regexEscape(character);
+    }
+  }
+  return new RegExp(`${source}$`).test(normalizedCandidate);
+};
+
+export const evaluateAuthorityChanges = (changedPaths, scope) => {
+  const changed = new Set(
+    asArray(changedPaths).map(candidate => stringValue(candidate).replaceAll('\\', '/')),
+  );
+  const authorityFiles = asArray(scope?.authority_files).map(candidate =>
+    stringValue(candidate).replaceAll('\\', '/'),
+  );
+  const changedAuthorityCount = authorityFiles.filter(candidate =>
+    changed.has(candidate),
+  ).length;
+  if (
+    changedAuthorityCount > 0 &&
+    changedAuthorityCount !== authorityFiles.length
+  ) {
+    return ['authority_files_must_change_together'];
+  }
+
+  const monitoredChanged = [...changed].some(candidate =>
+    asArray(scope?.monitored_paths).some(pattern => globMatches(candidate, pattern)),
+  );
+  if (monitoredChanged && changedAuthorityCount === 0) {
+    return ['authority_files_not_updated'];
+  }
+
+  return [];
+};
+
+export const gitChangedPaths = async (repoRoot, baseRef) => {
+  const commands = [
+    ['diff', '--name-only', '--diff-filter=ACMR'],
+    ['diff', '--cached', '--name-only', '--diff-filter=ACMR'],
+  ];
+  if (stringValue(baseRef)) {
+    commands.push([
+      'diff',
+      '--name-only',
+      '--diff-filter=ACMR',
+      `${baseRef}...HEAD`,
+    ]);
+  }
+
+  const paths = new Set();
+  for (const args of commands) {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    for (const candidate of stdout.split(/\r?\n/)) {
+      const normalized = stringValue(candidate).replaceAll('\\', '/');
+      if (normalized) {
+        paths.add(normalized);
+      }
+    }
+  }
+  return [...paths].sort();
 };
 
 export const validateSourceAnchor = async (anchor, options) => {
@@ -178,6 +493,7 @@ export const validateOrderedChain = (chain, nodesByID, edgesByID) => {
 export const validateContract = async (contract, options) => {
   const errors = [];
   const warnings = [];
+  const resolvedVersions = {};
   const repoRoot = options?.repoRoot;
 
   if (!repoRoot) {
@@ -197,6 +513,8 @@ export const validateContract = async (contract, options) => {
   errors.push(...duplicateErrors(nodes, 'node'));
   errors.push(...duplicateErrors(edges, 'edge'));
   errors.push(...duplicateErrors(chains, 'chain'));
+  errors.push(...validateFrameworkScopes(contract));
+  errors.push(...validateForbiddenCurrentNodes(contract));
 
   const nodesByID = new Map();
   for (const node of nodes) {
@@ -228,6 +546,20 @@ export const validateContract = async (contract, options) => {
         owner: `node.${nodeID}`,
       })),
     );
+
+    if (isFrameworkNode(node)) {
+      try {
+        const resolvedVersion = await resolveVersion(node, { repoRoot });
+        resolvedVersions[nodeID] = resolvedVersion;
+        if (resolvedVersion !== stringValue(node?.version)) {
+          errors.push(
+            `framework_version_mismatch: ${nodeID}: declared ${stringValue(node?.version)} resolved ${resolvedVersion}`,
+          );
+        }
+      } catch (error) {
+        errors.push(`framework_version_source_invalid: ${nodeID}: ${error.message}`);
+      }
+    }
   }
 
   const edgesByID = new Map();
@@ -279,9 +611,23 @@ export const validateContract = async (contract, options) => {
     errors.push(...validateOrderedChain(chain, nodesByID, edgesByID));
   }
 
+  errors.push(...(await validateMiddlewareOrder(contract, { repoRoot })));
+
+  if (Array.isArray(options?.changedPaths)) {
+    errors.push(
+      ...evaluateAuthorityChanges(options.changedPaths, {
+        ...contract?.scope,
+        authority_files: [
+          contract?.authority?.contract,
+          contract?.authority?.document,
+        ],
+      }),
+    );
+  }
+
   return {
     errors: errors.sort(),
     warnings: warnings.sort(),
-    resolvedVersions: {},
+    resolvedVersions,
   };
 };
