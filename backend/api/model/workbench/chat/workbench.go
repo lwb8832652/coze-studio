@@ -24,6 +24,7 @@ import (
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/coze-dev/coze-studio/backend/api/model/base"
 	"github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
+	"github.com/coze-dev/coze-studio/backend/api/model/workbench/thread_contract"
 )
 
 type GetWorkbenchRuntimeDoctorRequest struct {
@@ -4531,6 +4532,32 @@ func NewWorkbenchTaskServiceClient(c thrift.TClient) *WorkbenchTaskServiceClient
 	}
 }
 
+type WorkbenchCanonicalThreadService interface {
+	thread_contract.WorkbenchCanonicalThreadService
+}
+
+type WorkbenchCanonicalThreadServiceClient struct {
+	*thread_contract.WorkbenchCanonicalThreadServiceClient
+}
+
+func NewWorkbenchCanonicalThreadServiceClientFactory(t thrift.TTransport, f thrift.TProtocolFactory) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: thread_contract.NewWorkbenchCanonicalThreadServiceClientFactory(t, f),
+	}
+}
+
+func NewWorkbenchCanonicalThreadServiceClientProtocol(t thrift.TTransport, iprot thrift.TProtocol, oprot thrift.TProtocol) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: thread_contract.NewWorkbenchCanonicalThreadServiceClientProtocol(t, iprot, oprot),
+	}
+}
+
+func NewWorkbenchCanonicalThreadServiceClient(c thrift.TClient) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: thread_contract.NewWorkbenchCanonicalThreadServiceClient(c),
+	}
+}
+
 type WorkbenchChatServiceProcessor struct {
 	processorMap map[string]thrift.TProcessorFunction
 	handler      WorkbenchChatService
@@ -4920,5 +4947,14 @@ type WorkbenchTaskServiceProcessor struct {
 
 func NewWorkbenchTaskServiceProcessor(handler WorkbenchTaskService) *WorkbenchTaskServiceProcessor {
 	self := &WorkbenchTaskServiceProcessor{task.NewWorkbenchTaskServiceProcessor(handler)}
+	return self
+}
+
+type WorkbenchCanonicalThreadServiceProcessor struct {
+	*thread_contract.WorkbenchCanonicalThreadServiceProcessor
+}
+
+func NewWorkbenchCanonicalThreadServiceProcessor(handler WorkbenchCanonicalThreadService) *WorkbenchCanonicalThreadServiceProcessor {
+	self := &WorkbenchCanonicalThreadServiceProcessor{thread_contract.NewWorkbenchCanonicalThreadServiceProcessor(handler)}
 	return self
 }

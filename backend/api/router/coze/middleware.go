@@ -2001,6 +2001,131 @@ func _createtaskthreadMw() []app.HandlerFunc {
 	return nil
 }
 
+func _threadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createcanonicalthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _searchcanonicalthreadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _thread_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletecanonicalthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadhistoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _postcanonicalthreadhistoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadmessagesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _runs0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalrunsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _run_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _cancelcanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalruneventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _joincanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalrunmessagesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _resumecanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _reconnectcanonicalrunstreamMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _streamcanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _waitcanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createcanonicalrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadstateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatecanonicalthreadstateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _patchcanonicalthreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _workflow_apiMw() []app.HandlerFunc {
 	// your code...
 	return nil

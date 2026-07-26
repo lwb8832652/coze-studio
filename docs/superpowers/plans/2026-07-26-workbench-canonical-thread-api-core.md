@@ -132,6 +132,7 @@ git commit -m "test: freeze canonical workbench thread routes"
 - Generated: `backend/api/model/coze/api.go`
 - Generated: `backend/api/router/coze/api.go`
 - Generated: `backend/api/router/coze/middleware.go`
+- Modify: `.github/scripts/check-file-size.sh`
 - Create: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
 - Test: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
 
@@ -436,7 +437,9 @@ func _adminMw() []app.HandlerFunc {
 }
 ```
 
-对新增 generator-owned Go 文件补仓库 license header 并运行 `gofmt`。随后运行只读验证器：
+对新增 generator-owned Go 文件补仓库 license header 并运行 `gofmt`。生成 bundle 超过
+512KB 时只能加入 `.github/scripts/check-file-size.sh` 的 generator-owned allowlist，不能跳过
+file-size 门禁或手拆 generator-owned 文件。随后运行只读验证器：
 
 ```bash
 cd backend
@@ -450,7 +453,7 @@ Run:
 
 ```bash
 cd frontend/packages/arch/api-schema
-pnpm run update
+rushx update
 ```
 
 Expected: `src/idl/workbench/thread.ts` is generated and contains the exported service/types.

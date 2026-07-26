@@ -28,6 +28,7 @@ const config = [
       workbenchModel: './idl/workbench/model.thrift',
       workbenchSkill: './idl/workbench/skill.thrift',
       workbenchTask: './idl/workbench/task.thrift',
+      workbenchThread: './idl/workbench/thread.thrift',
       pluginDevelop: './idl/plugin/plugin_develop.thrift',
       playground: './idl/playground/playground.thrift',
     },

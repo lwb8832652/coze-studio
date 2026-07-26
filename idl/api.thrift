@@ -46,5 +46,6 @@ service ConfigService extends config.ConfigService {}
 service WorkbenchChatService extends workbench.WorkbenchChatService {}
 service WorkbenchSkillService extends skill.WorkbenchSkillService {}
 service WorkbenchTaskService extends workbench.WorkbenchTaskService {}
+service WorkbenchCanonicalThreadService extends workbench.WorkbenchCanonicalThreadService {}
 service WorkbenchModelService extends model.WorkbenchModelService {}
 service AppDevService extends app_dev.AppDevService {}
