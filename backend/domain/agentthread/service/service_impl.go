@@ -450,7 +450,11 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	runReq.MultitaskStrategy = strategy
 	runReq.OnDisconnect = onDisconnect
 	run := newRunEntity(&runReq, id, thread, runKind, status, input, now)
-	if err := s.repo.CreateRun(ctx, run); err != nil {
+	createRun := s.repo.CreateRun
+	if guardedRepo, ok := s.repo.(repository.ThreadGuardedRunRepository); ok {
+		createRun = guardedRepo.CreateRunWithThreadLock
+	}
+	if err := createRun(ctx, run); err != nil {
 		return nil, err
 	}
 

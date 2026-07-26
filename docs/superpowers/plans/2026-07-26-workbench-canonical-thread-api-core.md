@@ -702,6 +702,7 @@ Expected: PASS.
 ### Task 4A: Add Missing Application And Transaction Capabilities
 
 **Files:**
+- Modify: `.github/workflows/ci@backend.yml`
 - Create: `backend/application/agentthread/canonical_contract.go`
 - Create: `backend/application/agentthread/canonical_contract_test.go`
 - Modify: `backend/application/agentthread/dto.go`
@@ -713,6 +714,7 @@ Expected: PASS.
 - Create: `backend/domain/agentthread/repository/canonical_contract.go`
 - Create: `backend/domain/agentthread/repository/mysql_canonical.go`
 - Create: `backend/domain/agentthread/repository/mysql_canonical_test.go`
+- Create: `backend/domain/agentthread/repository/mysql_canonical_integration_test.go`
 - Modify: `backend/domain/agentthread/repository/repository.go`
 - Modify: `backend/domain/agentthread/repository/mysql.go`
 - Test: existing `backend/application/agentthread/service_test.go`
@@ -835,7 +837,12 @@ type ListCheckpointsBeforeRequest struct {
 测试 arbitrary `offset=7,limit=3`、ids、top-level scalar metadata equality、每种 sort、同方向
 `thread_id` tie-breaker、权限过滤后的 total、event type+cursor、checkpoint before cursor。
 metadata key 必须匹配 `^[A-Za-z][A-Za-z0-9_.-]{0,63}$`，最多 16 个；value 只允许
-string/bool/finite number/null，object/array 返回 domain invalid argument。
+string/bool/finite number/null，object/array 返回 domain invalid argument。number 按 MySQL JSON
+实际存储类型 `INTEGER`/`UNSIGNED INTEGER`/`DOUBLE` 和规范化数值比较：`1` 与 `1.0` 不相等，
+`1.2300` 与 `1.23` 相等，`-0.0` 与 `0.0` 相等。不得额外施加 15 位精度或 uint64 上限；
+高精度小数和更大但 MySQL JSON 可表示的有限整数仍被接受，落为 `DOUBLE` 后按生产存储值
+比较。handler 解码 metadata filter 必须使用 `json.Decoder.UseNumber()`，非法 JSON number 或
+超出 MySQL finite DOUBLE 范围的 number 在发 SQL 前返回 domain invalid argument。
 
 - [ ] **Step 6: Implement separate canonical query methods**
 
@@ -848,9 +855,13 @@ ListRunEventsByCursor(ctx context.Context, req ListRunEventsByCursorRequest) ([]
 ListCheckpointsBefore(ctx context.Context, req ListCheckpointsBeforeRequest) ([]*entity.Checkpoint, bool, error)
 ```
 
-repository 使用 GORM 参数绑定和 `datatypes.JSONQuery("metadata").Equals(value, key)`；sort column
-由 switch 映射固定 SQL 字符串，绝不拼接客户端原值。查询 `limit+1` 计算 `has_more`，total 和
-cursor 都在 space/user/thread 过滤后计算。ApplicationService 为这些方法补授权与 DTO projection。
+repository 使用 GORM 参数绑定与固定的 MySQL/SQLite JSON scalar helper，top-level key 转义为
+quoted JSON path；sort column 由 switch 映射固定 SQL 字符串，绝不拼接客户端原值。查询
+`limit+1` 计算 `has_more`，total 和
+cursor 都在 space/user/thread 过滤后计算。checkpoint 的 `before_checkpoint_id` 是单字段 ID cursor，
+因此必须同时使用 `ORDER BY id DESC`，不得混用 `created_at` 排序。MySQL number filter 使用规范化
+JSON storage type + value 比较；SQLite test dialect 对 int64、uint64-scale integer 和 MySQL DOUBLE
+分别模拟相同语义。ApplicationService 为这些方法补授权与 DTO projection。
 
 - [ ] **Step 7: Write failing atomic patch tests**
 
@@ -882,6 +893,11 @@ domain service 校验 title/metadata；repository 完成 row-lock transaction。
 只允许以下线性化结果：Run 先提交则 delete 返回 `ErrActiveRunExists` 且数据完整；delete 先提交则
 Run 创建失败且不存在孤立 Message/Event。pending/queued/running 顶层 Run 阻止删除；
 interrupted/succeeded/failed/canceled 与 child-only Run 不定义为 busy。
+
+除 `CreateRunBundle` 外，领域 `CreateRun` 的 standalone/child/recovery 写入也必须优先调用独立的
+`ThreadGuardedRunRepository.CreateRunWithThreadLock` 扩展；生产 MySQL repository 实现相同 Thread
+row lock，旧 `ThreadRepository` 接口保持不扩容。这样 canonical delete 不会与 lease recovery 或
+child Run 插入形成 orphan Run。
 
 - [ ] **Step 10: Implement DeleteThreadIfIdle without changing legacy delete**
 
@@ -922,9 +938,12 @@ checkpoint_ns = canonical.public
 
 - [ ] **Step 12: Implement UpdatePublicThreadState and query support**
 
-ApplicationService 授权并读取 Thread、latest top-level Run、base/latest checkpoint，merge 上一个
-`canonical_public_state` 的 `custom` map，再调用现有 `CreateCheckpoint`。history 查询同时返回 Eino
-公开投影和 canonical public checkpoints；runtime resume 仍只使用
+ApplicationService 只做授权与 DTO projection，然后调用一次领域 `UpdatePublicThreadState`。repository
+事务必须按统一顺序锁 Thread row，在锁内读取 latest top-level Run、验证 base/选择 latest parent、
+读取并 merge 上一个 `canonical_public_state.custom`、执行合并后 64 KiB 检查并插入新 checkpoint；
+不得再由 application 执行多次“先读再写”。新 checkpoint 的 `created_at` 必须相对上一条 canonical
+public checkpoint 单调递增，避免等锁前生成的时间导致后提交行无法成为 latest。history 查询同时
+返回 Eino 公开投影和 canonical public checkpoints；runtime resume 仍只使用
 `GetLatestRuntimeCheckpoint(runtime=eino_adk, runtime_key=...)`。
 
 - [ ] **Step 13: Run shared-layer tests and legacy regressions**
@@ -939,10 +958,31 @@ GOCACHE=/private/tmp/coze-workbench-canonical-go-cache go test -p 1 -gcflags="al
 
 Expected: PASS, including all Step 1 characterization tests.
 
+在显式 disposable MySQL 8.4.5 上补跑生产方言与真实多连接测试：
+
+```bash
+cd backend
+COZE_AGENTTHREAD_TEST_MYSQL_DSN='<dsn-to-agentthread_disposable>' \
+COZE_AGENTTHREAD_TEST_ALLOW_DDL=I_UNDERSTAND_DISPOSABLE_DB \
+GOCACHE=/private/tmp/coze-workbench-canonical-go-cache \
+go test -p 1 -gcflags="all=-l -N" ./domain/agentthread/repository \
+  -run '^TestCanonicalMySQLIntegration' -count=1
+```
+
+Expected: PASS，覆盖 number storage semantics、双连接 patch、双连接 public-state merge、standalone Run/delete
+线性化。DSN database name 不含 `agentthread_disposable` 时测试必须 fail closed。
+
+`.github/workflows/ci@backend.yml` 必须在 MySQL 8.4.5 job 中创建独立
+`agentthread_disposable` database，在 job 级设置 DSN 与 DDL gate，并以专用 `-race` 步骤运行
+`^TestCanonicalMySQLIntegration`。`CI=true` 时缺少任一变量必须直接失败，不得 `Skip` 后伪绿；
+本地未显式配置时仍允许 skip。
+
 - [ ] **Step 14: Commit additive shared capabilities**
 
 ```bash
-git add application/agentthread domain/agentthread/service domain/agentthread/repository
+cd ..
+git add .github/workflows/ci@backend.yml backend/application/agentthread \
+  backend/domain/agentthread/service backend/domain/agentthread/repository
 git commit -m "feat: add canonical agent thread use cases"
 ```
 
@@ -1481,6 +1521,8 @@ git commit -m "ci: verify canonical Workbench SDK contract"
 
 **Files:**
 - Modify: `docs/superpowers/context/project-context.md`
+- Modify: `docs/superpowers/context/workbench-execution-chain.md`
+- Modify: `docs/superpowers/context/workbench-execution-graph.json`
 - Create: `docs/superpowers/runbooks/workbench-canonical-thread-api.md`
 - Modify: `docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md`
 - Modify: `docs/superpowers/plans/2026-07-26-workbench-canonical-thread-api-core.md`
@@ -1488,6 +1530,10 @@ git commit -m "ci: verify canonical Workbench SDK contract"
 - [ ] **Step 1: Update long-term facts without overstating readiness**
 
 记录：canonical core 已实现但默认关闭；当前 UI 仍使用 `TaskThreadV1Client`；外部 production allowlist 尚未开放；当前 `/api/threads` 与 `/api/workbench/task_threads` 仍是来源合同；ChatTask 仍退役。明确后续顺序：生产 principal/scope/key -> 分布式限流与容量 -> 网关 SSE -> UI 双 client 联调 -> 灰度 -> 观察期 -> 分别删除旧接口。
+
+同步更新 Workbench 人类可读执行链和机器合同：canonical core 仅作为默认关闭的兼容入口，最终仍委托
+现有 `agentthread.ApplicationService`、领域服务、MySQL Run/lease 与 Eino ADK 主链；不得把它标为第二套
+storage/runtime，也不得把尚未迁移的当前 UI 标为 canonical client。
 
 - [ ] **Step 2: Add an operator/developer runbook**
 
@@ -1525,6 +1571,12 @@ cd backend
 bash scripts/verify_workbench_sdk_compat.sh
 ```
 
+```bash
+node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
+node scripts/workbench-execution-graph.mjs build
+node scripts/workbench-execution-graph.mjs verify-derived
+```
+
 Expected: all PASS.
 
 - [ ] **Step 5: Run source-contract and retirement scans**
@@ -1536,8 +1588,8 @@ rg -n 'api/workbench/(tasks|chat)|WorkbenchChat\(|ChatTask|backend/(application|
 Expected: no revived ChatTask route/IDL/client/application/domain symbol; Runtime Doctor service shell and denylist-only historical metadata cleanup are reviewed as allowed evidence, not treated as fallback.
 
 ```bash
-git diff --name-only eae28c1c04edb4edc9697b28f25b809af5967215...HEAD
-git diff --check eae28c1c04edb4edc9697b28f25b809af5967215...HEAD
+git diff --name-only origin/dev...HEAD
+git diff --check origin/dev...HEAD
 ```
 
 Expected: only planned IDL/generated schema、canonical handler/tests、additive
@@ -1547,12 +1599,12 @@ helper 或 canonical optional fields，Step 1 characterization tests 必须证�
 
 - [ ] **Step 6: Use codebase-memory to verify impact**
 
-运行 `detect_changes`（若当前 MCP 版本未提供，则以 `search_graph`/`trace_path` 检查新 handlers）并核对：所有 canonical handler 只进入 `agentthread.ApplicationService`；没有第二套 storage/runtime；旧 handler 的 inbound/outbound calls 未改变。图谱结论必须回到真实 diff 和源码复核。
+运行 `detect_changes`（若当前 MCP 版本未提供，则以 `search_graph`/`trace_path` 检查新 handlers）并核对：所有 canonical handler 只进入 `agentthread.ApplicationService`；没有第二套 storage/runtime；旧 handler 的 inbound/outbound calls 未改变。再用 execution graph 的 `verify/build/verify-derived` 核对更新后的权威节点、边、查询和源码锚点。图谱结论必须回到真实 diff 和源码复核。
 
 - [ ] **Step 7: Commit docs and final verification evidence**
 
 ```bash
-git add docs/superpowers/context/project-context.md docs/superpowers/runbooks/workbench-canonical-thread-api.md docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md docs/superpowers/plans/2026-07-26-workbench-canonical-thread-api-core.md
+git add docs/superpowers/context/project-context.md docs/superpowers/context/workbench-execution-chain.md docs/superpowers/context/workbench-execution-graph.json docs/superpowers/runbooks/workbench-canonical-thread-api.md docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md docs/superpowers/plans/2026-07-26-workbench-canonical-thread-api-core.md
 git commit -m "docs: record canonical Workbench API phase"
 ```
 
@@ -1573,14 +1625,14 @@ git rev-parse origin/dev
 git merge-base HEAD origin/dev
 ```
 
-Expected: clean `codex/workbench-canonical-thread-api`; branch contains local `dev@eae28c1...`; no remote push occurs.
+Expected: clean `codex/workbench-canonical-thread-api`; `merge-base HEAD origin/dev` 等于本轮审计开始时新鲜抓取的 `origin/dev`；no remote push occurs.
 
 - [ ] **Step 2: Review the full diff for scope and sensitive data**
 
 ```bash
-git diff --stat eae28c1c04edb4edc9697b28f25b809af5967215...HEAD
-git diff --check eae28c1c04edb4edc9697b28f25b809af5967215...HEAD
-git log --oneline --decorate eae28c1c04edb4edc9697b28f25b809af5967215..HEAD
+git diff --stat origin/dev...HEAD
+git diff --check origin/dev...HEAD
+git log --oneline --decorate origin/dev..HEAD
 ```
 
 逐文件确认无 credential/token/Cookie、无 request/response payload dump、无旧 route 语义变化、

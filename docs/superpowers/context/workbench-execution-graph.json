@@ -801,6 +801,26 @@
       ]
     },
     {
+      "id": "domain.create_run_guarded",
+      "label": "threadService.CreateRun guarded direct path",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).CreateRun",
+          "locator": "func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestCreateRunDefaultsStatusAndRuntimeOptions"
+        }
+      ]
+    },
+    {
       "id": "domain.append_run_event",
       "label": "threadService.AppendRunEvent",
       "layer": "domain",
@@ -897,6 +917,26 @@
         {
           "path": "backend/domain/agentthread/repository/mysql_test.go",
           "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ]
+    },
+    {
+      "id": "repository.create_run_with_thread_lock",
+      "label": "MySQL CreateRunWithThreadLock",
+      "layer": "repository",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).CreateRunWithThreadLock",
+          "locator": "func (r *threadRepository) CreateRunWithThreadLock(ctx context.Context, run *entity.Run) error"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_canonical_integration_test.go",
+          "locator": "func TestCanonicalMySQLIntegrationGuardedRunAndDeleteAreLinearizable"
         }
       ]
     },
@@ -2752,6 +2792,34 @@
       ]
     },
     {
+      "id": "edge.create_run_app_delegates_guarded",
+      "from": "application.create_run",
+      "to": "domain.create_run_guarded",
+      "relation": "delegates_to",
+      "chain_ids": ["run.guarded_direct_create"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.guarded_run_persists_with_thread_lock",
+      "from": "domain.create_run_guarded",
+      "to": "repository.create_run_with_thread_lock",
+      "relation": "persists_via",
+      "chain_ids": ["run.guarded_direct_create", "control.lease_recovery"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "createRun = guardedRepo.CreateRunWithThreadLock"
+        }
+      ]
+    },
+    {
       "id": "edge.worker_calls_processor",
       "from": "worker.run_once",
       "to": "worker.process_pending",
@@ -3078,6 +3146,20 @@
         {
           "path": "backend/application/agentthread/run_lease_recovery.go",
           "locator": "checkpoint, err := p.latestRecoverableCheckpoint(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.lease_recovery_creates_guarded_run",
+      "from": "runtime.lease_recovery",
+      "to": "domain.create_run_guarded",
+      "relation": "delegates_to",
+      "chain_ids": ["control.lease_recovery"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "locator": "run, err := p.app.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{"
         }
       ]
     },
@@ -4135,6 +4217,33 @@
       ]
     },
     {
+      "id": "run.guarded_direct_create",
+      "name": "Thread-locked direct Run creation",
+      "entry": "application.create_run",
+      "terminal": "repository.create_run_with_thread_lock",
+      "ordered_node_ids": [
+        "application.create_run",
+        "domain.create_run_guarded",
+        "repository.create_run_with_thread_lock"
+      ],
+      "ordered_edge_ids": [
+        "edge.create_run_app_delegates_guarded",
+        "edge.guarded_run_persists_with_thread_lock"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateRunMapsDomainRun"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql_canonical_integration_test.go",
+          "locator": "func TestCanonicalMySQLIntegrationGuardedRunAndDeleteAreLinearizable"
+        }
+      ]
+    },
+    {
       "id": "run.pending_worker_execute",
       "name": "MySQL pending Run claim and Eino execution",
       "entry": "worker.run_once",
@@ -4305,6 +4414,10 @@
       "ordered_edge_ids": [
         "edge.lease_recovery_reads_checkpoint",
         "edge.lease_checkpoint_precedes_resume"
+      ],
+      "required_side_edge_ids": [
+        "edge.lease_recovery_creates_guarded_run",
+        "edge.guarded_run_persists_with_thread_lock"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -4851,6 +4964,7 @@
         "retries",
         "checkpoint",
         "lease",
+        "thread lock",
         "rollback"
       ],
       "smoke_node_ids": ["application.cancel_run"],
@@ -4861,6 +4975,8 @@
         "application.retry_subagent",
         "runtime.checkpoint_store",
         "runtime.lease_recovery",
+        "domain.create_run_guarded",
+        "repository.create_run_with_thread_lock",
         "runtime.multitask_rollback"
       ],
       "required_edge_ids": [
@@ -4869,6 +4985,8 @@
         "edge.retry_app_creates_bundle",
         "edge.checkpoint_resumes_adk",
         "edge.lease_recovery_reads_checkpoint",
+        "edge.lease_recovery_creates_guarded_run",
+        "edge.guarded_run_persists_with_thread_lock",
         "edge.multitask_rollback_clears_checkpoint"
       ]
     },

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+)
+
+const (
+	canonicalPublicStateMaxJSONBytes = 64 * 1024
+	canonicalPublicStateRuntimeType  = "canonical_public_state"
+	canonicalPublicStateNamespace    = "canonical.public"
 )
 
 func (r *threadRepository) SearchThreads(
@@ -179,7 +186,7 @@ func (r *threadRepository) ListCheckpointsBefore(
 
 	pos := make([]*checkpointPO, 0, limit+1)
 	if err := query.
-		Order("created_at DESC, id DESC").
+		Order("id DESC").
 		Limit(int(limit + 1)).
 		Find(&pos).Error; err != nil {
 		return nil, false, err
@@ -299,6 +306,197 @@ func (r *threadRepository) DeleteThreadIfIdle(
 	return deleted, err
 }
 
+func (r *threadRepository) UpdatePublicThreadState(
+	ctx context.Context,
+	req UpdatePublicThreadStateRequest,
+) (*entity.Checkpoint, error) {
+	if req.CheckpointID <= 0 {
+		return nil, fmt.Errorf("checkpoint id is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, fmt.Errorf("thread id is required")
+	}
+	if req.BaseCheckpointID < 0 {
+		return nil, fmt.Errorf("base checkpoint id cannot be negative")
+	}
+	createdAt := req.CreatedAt
+	if createdAt <= 0 {
+		createdAt = time.Now().UnixMilli()
+	}
+
+	var snapshot *entity.Checkpoint
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, req.ThreadID); err != nil {
+			return err
+		}
+
+		var latestRun runPO
+		if err := tx.Where("thread_id = ?", req.ThreadID).
+			Where("parent_run_id = ?", 0).
+			Order("created_at DESC, id DESC").
+			First(&latestRun).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: thread %d has no top-level run", ErrPublicThreadStateConflict, req.ThreadID)
+			}
+			return err
+		}
+
+		parentCheckpointID, err := selectCanonicalPublicStateParent(
+			tx,
+			req.ThreadID,
+			req.BaseCheckpointID,
+		)
+		if err != nil {
+			return err
+		}
+
+		previousChannelValues, previousCreatedAt, err := latestCanonicalPublicStateChannelValues(
+			tx,
+			req.ThreadID,
+		)
+		if err != nil {
+			return err
+		}
+		if createdAt <= previousCreatedAt {
+			if previousCreatedAt == 1<<63-1 {
+				return fmt.Errorf("public thread state timestamp overflow")
+			}
+			createdAt = previousCreatedAt + 1
+		}
+		channelValues, err := mergeCanonicalPublicStateChannelValues(
+			previousChannelValues,
+			req.ChannelValues,
+		)
+		if err != nil {
+			return err
+		}
+		metadata := strings.TrimSpace(req.Metadata)
+		if metadata == "" {
+			metadata = `{}`
+		}
+		if _, err := decodeCanonicalMetadataObject(metadata); err != nil {
+			return fmt.Errorf("parse public thread state metadata: %w", err)
+		}
+
+		checkpoint := &entity.Checkpoint{
+			ID:                 req.CheckpointID,
+			ThreadID:           req.ThreadID,
+			RunID:              latestRun.ID,
+			ParentCheckpointID: parentCheckpointID,
+			CheckpointNS:       canonicalPublicStateNamespace,
+			RuntimeType:        canonicalPublicStateRuntimeType,
+			RuntimeKey:         fmt.Sprintf("thread:%d", req.ThreadID),
+			EnvelopeVersion:    0,
+			ChannelValues:      channelValues,
+			ChannelVersions:    `{}`,
+			PendingSends:       `[]`,
+			Metadata:           metadata,
+			CreatedAt:          createdAt,
+		}
+		po, err := checkpointToPO(checkpoint)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(po).Error; err != nil {
+			return err
+		}
+		snapshot = checkpoint
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func selectCanonicalPublicStateParent(
+	tx *gorm.DB,
+	threadID, baseCheckpointID int64,
+) (int64, error) {
+	query := tx.Where("thread_id = ?", threadID)
+	if baseCheckpointID > 0 {
+		var base checkpointPO
+		if err := query.Where("id = ?", baseCheckpointID).First(&base).Error; err != nil {
+			return 0, err
+		}
+		return base.ID, nil
+	}
+
+	var latest checkpointPO
+	if err := query.Order("created_at DESC, id DESC").First(&latest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return latest.ID, nil
+}
+
+func latestCanonicalPublicStateChannelValues(
+	tx *gorm.DB,
+	threadID int64,
+) (string, int64, error) {
+	var latest checkpointPO
+	if err := tx.Where("thread_id = ?", threadID).
+		Where("runtime_type = ?", canonicalPublicStateRuntimeType).
+		Order("created_at DESC, id DESC").
+		First(&latest).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	return string(latest.ChannelValues), latest.CreatedAt, nil
+}
+
+func mergeCanonicalPublicStateChannelValues(previousRaw, incomingRaw string) (string, error) {
+	previous, err := decodeCanonicalPublicStateCustom(previousRaw, false)
+	if err != nil {
+		return "", fmt.Errorf("parse previous public thread state: %w", err)
+	}
+	incoming, err := decodeCanonicalPublicStateCustom(incomingRaw, true)
+	if err != nil {
+		return "", fmt.Errorf("parse incoming public thread state: %w", err)
+	}
+	for key, value := range incoming {
+		previous[key] = value
+	}
+	customJSON, err := json.Marshal(previous)
+	if err != nil {
+		return "", fmt.Errorf("marshal merged public thread state: %w", err)
+	}
+	if len(customJSON) > canonicalPublicStateMaxJSONBytes {
+		return "", ErrPublicThreadStateTooLarge
+	}
+	channelValues, err := json.Marshal(map[string]json.RawMessage{"custom": customJSON})
+	if err != nil {
+		return "", fmt.Errorf("marshal public thread state channels: %w", err)
+	}
+	return string(channelValues), nil
+}
+
+func decodeCanonicalPublicStateCustom(raw string, required bool) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if required {
+			return nil, fmt.Errorf("custom channel is required")
+		}
+		return make(map[string]any), nil
+	}
+	var channels map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &channels); err != nil {
+		return nil, err
+	}
+	if len(channels) != 1 {
+		return nil, fmt.Errorf("only the custom channel is supported")
+	}
+	customRaw, ok := channels["custom"]
+	if !ok {
+		return nil, fmt.Errorf("custom channel is required")
+	}
+	return decodeCanonicalMetadataObject(string(customRaw))
+}
+
 func normalizeCanonicalRepositoryPage(page CanonicalPage, defaultLimit int32) (CanonicalPage, error) {
 	if page.Offset < 0 {
 		return CanonicalPage{}, fmt.Errorf("canonical offset cannot be negative")
@@ -358,20 +556,79 @@ func canonicalMetadataNullQuery(query *gorm.DB, key string) *gorm.DB {
 }
 
 func canonicalMetadataEqualsQuery(query *gorm.DB, key string, value any) (*gorm.DB, error) {
+	if isCanonicalMetadataNumber(value) {
+		if err := ValidateCanonicalMetadataNumber(value); err != nil {
+			return nil, fmt.Errorf("metadata value for %q: %w", key, err)
+		}
+	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata value for %q: %w", key, err)
 	}
 	path := canonicalTopLevelJSONPath(key)
-	if query.Dialector.Name() == "sqlite" && isCanonicalMetadataNumber(value) {
-		// JSON_EXTRACT coerces oversized and high-precision numbers to REAL;
-		// -> keeps the exact JSON scalar representation used by canonical filters.
-		return query.Where("metadata -> ? = ?", path, string(encoded)), nil
+	if isCanonicalMetadataNumber(value) {
+		if query.Dialector.Name() == "sqlite" {
+			encodedNumber := string(encoded)
+			if !strings.ContainsAny(encodedNumber, ".eE") {
+				if _, err := strconv.ParseInt(encodedNumber, 10, 64); err != nil {
+					if _, unsignedErr := strconv.ParseUint(encodedNumber, 10, 64); unsignedErr == nil {
+						// SQLite coerces uint64-scale JSON integers to REAL, so retain
+						// the exact token while MySQL keeps an UNSIGNED INTEGER.
+						return query.Where("metadata -> ? = ?", path, encodedNumber), nil
+					}
+					return canonicalSQLiteDoubleNumberEqualsQuery(query, path, encodedNumber), nil
+				}
+				return query.Where(
+					"json_type(metadata, ?) = ? AND JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
+					path, "integer", path, encodedNumber,
+				), nil
+			}
+			return canonicalSQLiteDoubleNumberEqualsQuery(query, path, encodedNumber), nil
+		}
+		// Match the MySQL storage type first, then its normalized numeric value so
+		// integer/decimal representations remain distinct without rejecting finite
+		// values that MySQL stores as DOUBLE.
+		return query.Where(
+			"JSON_TYPE(JSON_EXTRACT(metadata, ?)) = JSON_TYPE(JSON_EXTRACT(?, '$')) AND "+
+				"JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
+			path, string(encoded), path, string(encoded),
+		), nil
 	}
 	return query.Where(
 		"JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
 		path, string(encoded),
 	), nil
+}
+
+func canonicalSQLiteDoubleNumberEqualsQuery(
+	query *gorm.DB,
+	path, encodedNumber string,
+) *gorm.DB {
+	// MySQL stores decimal/exponent values and integers outside its signed and
+	// unsigned 64-bit ranges as DOUBLE. SQLite exposes every oversized integer
+	// token as REAL, so exclude the uint64-scale subset that MySQL keeps as an
+	// UNSIGNED INTEGER before applying numeric equality.
+	const maxMySQLUnsignedInteger = "18446744073709551615"
+	return query.Where(
+		"typeof(JSON_EXTRACT(metadata, ?)) = 'real' AND ("+
+			"json_type(metadata, ?) = 'real' OR ("+
+			"json_type(metadata, ?) = 'integer' AND ("+
+			"substr(CAST(metadata -> ? AS TEXT), 1, 1) = '-' OR "+
+			"length(CAST(metadata -> ? AS TEXT)) > 20 OR "+
+			"(length(CAST(metadata -> ? AS TEXT)) = 20 AND "+
+			"CAST(metadata -> ? AS TEXT) > CAST(? AS TEXT))"+
+			"))) AND JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
+		path,
+		path,
+		path,
+		path,
+		path,
+		path,
+		path,
+		maxMySQLUnsignedInteger,
+		path,
+		encodedNumber,
+	)
 }
 
 func isCanonicalMetadataNumber(value any) bool {

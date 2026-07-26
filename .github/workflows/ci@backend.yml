@@ -31,6 +31,8 @@ jobs:
     env:
       COVERAGE_FILE: coverage.out
       BREAKDOWN_FILE: main.breakdown
+      COZE_AGENTTHREAD_TEST_MYSQL_DSN: 'root:root@tcp(127.0.0.1:3306)/agentthread_disposable?charset=utf8mb4&parseTime=True&loc=UTC'
+      COZE_AGENTTHREAD_TEST_ALLOW_DDL: 'I_UNDERSTAND_DISPOSABLE_DB'
 
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +77,18 @@ jobs:
           timeout_minutes: 10
           max_attempts: 20
           command: mysql -h 127.0.0.1 -P 3306 -u root -proot opencoze < docker/volumes/mysql/schema.sql
+
+      - name: Initialize Disposable AgentThread Database
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -u root -proot \
+            -e "CREATE DATABASE IF NOT EXISTS agentthread_disposable CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+
+      - name: Run AgentThread MySQL Integration Test
+        working-directory: backend
+        run: |
+          go test -race -v -gcflags="all=-l -N" \
+            ./domain/agentthread/repository \
+            -run '^TestCanonicalMySQLIntegration' -count=1
 
       - name: Run Go Test
         run: |

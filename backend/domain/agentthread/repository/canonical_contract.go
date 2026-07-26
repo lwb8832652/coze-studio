@@ -18,8 +18,18 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+)
+
+var (
+	ErrPublicThreadStateConflict = errors.New("public thread state conflict")
+	ErrPublicThreadStateTooLarge = errors.New("public thread state exceeds size limit")
 )
 
 type CanonicalPage struct {
@@ -83,4 +93,58 @@ type DeleteThreadIfIdleRequest struct {
 
 type CanonicalDeleteRepository interface {
 	DeleteThreadIfIdle(context.Context, DeleteThreadIfIdleRequest) (bool, error)
+}
+
+// ThreadGuardedRunRepository serializes a standalone Run insert with Thread
+// aggregate mutations without enlarging the legacy repository contract.
+type ThreadGuardedRunRepository interface {
+	CreateRunWithThreadLock(context.Context, *entity.Run) error
+}
+
+type UpdatePublicThreadStateRequest struct {
+	CheckpointID     int64
+	ThreadID         int64
+	BaseCheckpointID int64
+	ChannelValues    string
+	Metadata         string
+	CreatedAt        int64
+}
+
+type CanonicalPublicStateRepository interface {
+	UpdatePublicThreadState(context.Context, UpdatePublicThreadStateRequest) (*entity.Checkpoint, error)
+}
+
+// ValidateCanonicalMetadataNumber rejects malformed or non-finite values that
+// cannot participate in the MySQL JSON metadata filter.
+func ValidateCanonicalMetadataNumber(value any) error {
+	switch number := value.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return nil
+	case float32:
+		if math.IsNaN(float64(number)) || math.IsInf(float64(number), 0) {
+			return fmt.Errorf("metadata number must be finite")
+		}
+		return nil
+	case float64:
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return fmt.Errorf("metadata number must be finite")
+		}
+		return nil
+	case json.Number:
+		return validateCanonicalJSONNumber(number.String())
+	default:
+		return fmt.Errorf("metadata value is not a supported number")
+	}
+}
+
+func validateCanonicalJSONNumber(raw string) error {
+	if _, err := json.Marshal(json.Number(raw)); err != nil {
+		return fmt.Errorf("metadata number is invalid")
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return fmt.Errorf("metadata number is outside the finite MySQL JSON range")
+	}
+	return nil
 }

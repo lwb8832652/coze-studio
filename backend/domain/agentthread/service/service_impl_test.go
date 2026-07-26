@@ -396,6 +396,8 @@ func TestCreateRunDefaultsStatusAndRuntimeOptions(t *testing.T) {
 	require.NotZero(t, run.CreatedAt)
 	require.Equal(t, run.CreatedAt, run.UpdatedAt)
 	require.Len(t, repo.runs[10], 1)
+	require.Equal(t, 1, repo.createRunWithThreadLockCalls)
+	require.Zero(t, repo.createRunCalls)
 }
 
 func TestCreateRunValidatesDisconnectModeAcrossCreationPaths(t *testing.T) {
@@ -2202,6 +2204,8 @@ type memoryRepo struct {
 	lastFinalizeRunSuccessReq          repository.FinalizeRunSuccessRequest
 	lastUpdateRunReq                   repository.UpdateRunStatusRequest
 	createThreadBundleCalls            int
+	createRunCalls                     int
+	createRunWithThreadLockCalls       int
 	createRunBundleCalls               int
 }
 
@@ -2407,6 +2411,15 @@ func (r *memoryRepo) ListMessages(ctx context.Context, req repository.ListMessag
 func (r *memoryRepo) CreateRun(ctx context.Context, run *entity.Run) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.createRunCalls++
+	r.runs[run.ThreadID] = append(r.runs[run.ThreadID], cloneRun(run))
+	return nil
+}
+
+func (r *memoryRepo) CreateRunWithThreadLock(ctx context.Context, run *entity.Run) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.createRunWithThreadLockCalls++
 	r.runs[run.ThreadID] = append(r.runs[run.ThreadID], cloneRun(run))
 	return nil
 }

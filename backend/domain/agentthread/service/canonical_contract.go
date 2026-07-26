@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -35,7 +34,7 @@ var canonicalMetadataKeyPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,
 
 var (
 	ErrUnsupportedPublicStateChannel = errors.New("unsupported public thread state channel")
-	ErrPublicThreadStateConflict     = errors.New("public thread state conflict")
+	ErrPublicThreadStateConflict     = repository.ErrPublicThreadStateConflict
 )
 
 const canonicalPublicStateMaxJSONBytes = 64 * 1024
@@ -122,6 +121,14 @@ type PreparedPublicThreadState struct {
 
 type CanonicalPublicStateService interface {
 	PreparePublicThreadState(context.Context, *PreparePublicThreadStateRequest) (*PreparedPublicThreadState, error)
+	UpdatePublicThreadState(context.Context, *UpdatePublicThreadStateRequest) (*entity.Checkpoint, error)
+}
+
+type UpdatePublicThreadStateRequest struct {
+	ThreadID         int64
+	BaseCheckpointID int64
+	Values           map[string]any
+	AsNode           string
 }
 
 func (s *threadService) SearchThreads(
@@ -400,6 +407,57 @@ func (s *threadService) PreparePublicThreadState(
 	}, nil
 }
 
+func (s *threadService) UpdatePublicThreadState(
+	ctx context.Context,
+	req *UpdatePublicThreadStateRequest,
+) (*entity.Checkpoint, error) {
+	if err := s.requireComponents(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, InvalidArgumentErrorf("update public thread state request is required")
+	}
+	if req.ThreadID <= 0 {
+		return nil, InvalidArgumentErrorf("thread id is required")
+	}
+	if req.BaseCheckpointID < 0 {
+		return nil, InvalidArgumentErrorf("base checkpoint id cannot be negative")
+	}
+	prepared, err := s.PreparePublicThreadState(ctx, &PreparePublicThreadStateRequest{
+		Values: req.Values,
+		AsNode: req.AsNode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	checkpointID, err := s.idGen.GenID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	repo, ok := s.repo.(repository.CanonicalPublicStateRepository)
+	if !ok {
+		return nil, fmt.Errorf("canonical public thread state repository is not configured")
+	}
+	checkpoint, err := repo.UpdatePublicThreadState(ctx, repository.UpdatePublicThreadStateRequest{
+		CheckpointID:     checkpointID,
+		ThreadID:         req.ThreadID,
+		BaseCheckpointID: req.BaseCheckpointID,
+		ChannelValues:    prepared.ChannelValues,
+		Metadata:         prepared.Metadata,
+		CreatedAt:        time.Now().UnixMilli(),
+	})
+	if err != nil {
+		if errors.Is(err, repository.ErrPublicThreadStateTooLarge) {
+			return nil, InvalidArgumentErrorf("public thread state custom value exceeds 64 KiB")
+		}
+		return nil, err
+	}
+	if checkpoint == nil {
+		return nil, fmt.Errorf("canonical public thread state repository returned empty checkpoint")
+	}
+	return checkpoint, nil
+}
+
 func (s *threadService) requireCanonicalQueryRepo() (repository.CanonicalQueryRepository, error) {
 	if err := s.requireRepo(); err != nil {
 		return nil, err
@@ -450,17 +508,12 @@ func validateCanonicalMetadataPatch(metadata map[string]any) (map[string]any, er
 
 func isCanonicalMetadataScalar(value any) bool {
 	switch value := value.(type) {
-	case nil, string, bool,
-		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64:
+	case nil, string, bool:
 		return true
-	case float32:
-		return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0)
-	case float64:
-		return !math.IsNaN(value) && !math.IsInf(value, 0)
-	case json.Number:
-		_, err := json.Marshal(value)
-		return err == nil
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, json.Number:
+		return repository.ValidateCanonicalMetadataNumber(value) == nil
 	default:
 		return false
 	}

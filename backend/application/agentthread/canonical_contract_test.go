@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
@@ -397,6 +398,7 @@ func TestCanonicalApplicationUpdatePublicThreadStateCreatesIsolatedCheckpoint(t 
 			ChannelValues: created.ChannelValues,
 			Metadata:      created.Metadata,
 		},
+		updatedPublicState: created,
 	}
 	threadAuthorizer := &recordingThreadAuthorizer{}
 	app := &ApplicationService{
@@ -415,26 +417,16 @@ func TestCanonicalApplicationUpdatePublicThreadStateCreatesIsolatedCheckpoint(t 
 
 	require.NoError(t, err)
 	require.Equal(t, int64(70), resp.Checkpoint.CheckpointID)
+	require.Equal(t, 1, domainSVC.updatePublicStateCalls)
+	require.Equal(t, &domainservice.UpdatePublicThreadStateRequest{
+		ThreadID: 10, BaseCheckpointID: 60, Values: values, AsNode: "editor",
+	}, domainSVC.updatePublicStateReq)
 	require.Equal(t, int64(10), domainSVC.getID)
-	require.NotNil(t, domainSVC.searchRunsReq)
-	require.Equal(t, int64(10), domainSVC.searchRunsReq.ThreadID)
-	require.Nil(t, domainSVC.searchRunsReq.ParentRunID)
-	require.Equal(t, domainservice.CanonicalPage{Limit: 1}, domainSVC.searchRunsReq.Page)
-	require.Equal(t, &domainservice.GetCheckpointRequest{CheckpointID: 60}, domainSVC.getCheckpointReq)
-	require.Equal(t, &domainservice.ListCheckpointsRequest{
-		ThreadID: 10, RuntimeType: "canonical_public_state", Limit: 1,
-	}, domainSVC.listCheckpointsReq)
-	require.Equal(t, 1, domainSVC.preparePublicStateCalls)
-	require.Equal(t, values, domainSVC.preparePublicStateReq.Values)
-	require.Equal(t, previous.ChannelValues, domainSVC.preparePublicStateReq.PreviousChannelValues)
-	require.Equal(t, "editor", domainSVC.preparePublicStateReq.AsNode)
-	require.Equal(t, &domainservice.CreateCheckpointRequest{
-		ThreadID: 10, RunID: 40, ParentCheckpointID: 60,
-		CheckpointNS: "canonical.public", RuntimeType: "canonical_public_state",
-		RuntimeKey: "thread:10", EnvelopeVersion: 0,
-		ChannelValues: created.ChannelValues, ChannelVersions: `{}`, PendingSends: `[]`,
-		Metadata: created.Metadata,
-	}, domainSVC.createCheckpointReq)
+	require.Nil(t, domainSVC.searchRunsReq)
+	require.Nil(t, domainSVC.getCheckpointReq)
+	require.Nil(t, domainSVC.listCheckpointsReq)
+	require.Zero(t, domainSVC.preparePublicStateCalls)
+	require.Nil(t, domainSVC.createCheckpointReq)
 	require.Nil(t, domainSVC.getLatestRuntimeReq)
 	require.Nil(t, domainSVC.deleteRuntimeReq)
 	require.Len(t, threadAuthorizer.requests, 1)
@@ -453,6 +445,9 @@ func TestCanonicalApplicationUpdatePublicThreadStateUsesLatestCheckpointAsParent
 		preparedPublicState: &domainservice.PreparedPublicThreadState{
 			ChannelValues: `{"custom":{"visible":true}}`, Metadata: `{}`,
 		},
+		updatedPublicState: &entity.Checkpoint{
+			ID: 70, ThreadID: 10, RunID: 40, ParentCheckpointID: 55,
+		},
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
@@ -462,8 +457,9 @@ func TestCanonicalApplicationUpdatePublicThreadStateUsesLatestCheckpointAsParent
 
 	require.NoError(t, err)
 	require.NotNil(t, resp.Checkpoint)
-	require.Equal(t, &domainservice.GetLatestCheckpointRequest{ThreadID: 10}, domainSVC.getLatestCheckpointReq)
-	require.Equal(t, int64(55), domainSVC.createCheckpointReq.ParentCheckpointID)
+	require.Equal(t, 1, domainSVC.updatePublicStateCalls)
+	require.Nil(t, domainSVC.getLatestCheckpointReq)
+	require.Nil(t, domainSVC.createCheckpointReq)
 }
 
 func TestCanonicalApplicationUpdatePublicThreadStateReturnsStableConflictWithoutRun(t *testing.T) {
@@ -471,6 +467,7 @@ func TestCanonicalApplicationUpdatePublicThreadStateReturnsStableConflictWithout
 		recordingThreadService: &recordingThreadService{
 			got: &entity.Thread{ID: 10, SpaceID: 20, CreatorID: 30},
 		},
+		updatePublicStateErr: domainservice.ErrPublicThreadStateConflict,
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
@@ -481,6 +478,7 @@ func TestCanonicalApplicationUpdatePublicThreadStateReturnsStableConflictWithout
 	require.Nil(t, resp)
 	require.ErrorIs(t, err, ErrPublicThreadStateConflict)
 	require.Zero(t, domainSVC.preparePublicStateCalls)
+	require.Equal(t, 1, domainSVC.updatePublicStateCalls)
 	require.Nil(t, domainSVC.createCheckpointReq)
 }
 
@@ -490,8 +488,9 @@ func TestCanonicalApplicationUpdatePublicThreadStateRejectsForeignBaseCheckpoint
 			got:        &entity.Thread{ID: 10, SpaceID: 20, CreatorID: 30},
 			checkpoint: &entity.Checkpoint{ID: 60, ThreadID: 11, RunID: 40},
 		},
-		searchRuns:      []*entity.Run{{ID: 40, ThreadID: 10}},
-		searchRunsTotal: 1,
+		searchRuns:           []*entity.Run{{ID: 40, ThreadID: 10}},
+		searchRunsTotal:      1,
+		updatePublicStateErr: gorm.ErrRecordNotFound,
 	}
 	app := &ApplicationService{
 		ThreadSVC:           domainSVC,
@@ -508,6 +507,7 @@ func TestCanonicalApplicationUpdatePublicThreadStateRejectsForeignBaseCheckpoint
 	require.Nil(t, resp)
 	require.ErrorIs(t, err, ErrThreadAccessDenied)
 	require.Zero(t, domainSVC.preparePublicStateCalls)
+	require.Equal(t, 1, domainSVC.updatePublicStateCalls)
 	require.Nil(t, domainSVC.createCheckpointReq)
 }
 
@@ -519,6 +519,7 @@ func TestCanonicalApplicationUpdatePublicThreadStatePreservesUnsupportedChannelE
 		searchRuns:            []*entity.Run{{ID: 40, ThreadID: 10}},
 		searchRunsTotal:       1,
 		preparePublicStateErr: domainservice.ErrUnsupportedPublicStateChannel,
+		updatePublicStateErr:  domainservice.ErrUnsupportedPublicStateChannel,
 	}
 	app := &ApplicationService{ThreadSVC: domainSVC}
 
@@ -528,6 +529,7 @@ func TestCanonicalApplicationUpdatePublicThreadStatePreservesUnsupportedChannelE
 
 	require.Nil(t, resp)
 	require.ErrorIs(t, err, ErrUnsupportedPublicStateChannel)
+	require.Equal(t, 1, domainSVC.updatePublicStateCalls)
 	require.Nil(t, domainSVC.createCheckpointReq)
 }
 
@@ -556,6 +558,10 @@ type recordingCanonicalQueryThreadService struct {
 	preparePublicStateErr   error
 	preparePublicStateReq   *domainservice.PreparePublicThreadStateRequest
 	preparePublicStateCalls int
+	updatedPublicState      *entity.Checkpoint
+	updatePublicStateErr    error
+	updatePublicStateReq    *domainservice.UpdatePublicThreadStateRequest
+	updatePublicStateCalls  int
 }
 
 func (s *recordingCanonicalQueryThreadService) SearchThreads(
@@ -615,4 +621,13 @@ func (s *recordingCanonicalQueryThreadService) PreparePublicThreadState(
 	s.preparePublicStateCalls++
 	s.preparePublicStateReq = req
 	return s.preparedPublicState, s.preparePublicStateErr
+}
+
+func (s *recordingCanonicalQueryThreadService) UpdatePublicThreadState(
+	_ context.Context,
+	req *domainservice.UpdatePublicThreadStateRequest,
+) (*entity.Checkpoint, error) {
+	s.updatePublicStateCalls++
+	s.updatePublicStateReq = req
+	return s.updatedPublicState, s.updatePublicStateErr
 }

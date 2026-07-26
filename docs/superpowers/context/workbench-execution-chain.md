@@ -130,6 +130,25 @@ Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 repository `CreateRunBundle` 原子写入 Run、当前轮 Message、初始 Event 和相关
 admission 状态。
 
+没有 Message/bundle 的非顶层 Run 走另一条受保护分支：
+`ApplicationService.CreateRun` -> `threadService.CreateRun` ->
+`CreateRunWithThreadLock`。repository 在插入 Run 前锁定所属 Thread；lease 恢复
+建立 resume Run 时也复用该分支。该锁与 `DeleteThreadIfIdle` 使用同一 Thread
+行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
+或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
+
+### Canonical 产品契约准备
+
+canonical Thread/Run/Checkpoint 应用层、领域层和 repository 合同正在为后续
+`/api/workbench/threads...` handler 接入做内部准备，当前还不是公开 HTTP 入口，
+也不改变现有 UI 路由。public-state 更新由领域服务一次委托给 repository，在同一
+事务内锁定 Thread、选择顶层 Run/父 checkpoint、合并审核后的 `custom` 并写入
+隔离的 `canonical_public_state` checkpoint；不会修改 Eino checkpoint bytes、
+runtime resume key 或内部事件。metadata 数值过滤接受 MySQL JSON 可表示的全部
+finite number，并让 SQLite 按 MySQL 的存储类型和规范值模拟相同查询语义，避免
+兼容测试与生产查询出现不同结果。公开 handler
+上线时再把其入口、鉴权与 SSE 链补入机器图谱。
+
 ### MySQL 队列与 lease
 
 Workbench 没有 Redis、Kafka、RabbitMQ、NATS 或 Asynq Run 队列。队列事实是

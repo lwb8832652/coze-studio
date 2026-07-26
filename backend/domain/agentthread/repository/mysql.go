@@ -803,6 +803,32 @@ func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error
 	return r.db.WithContext(ctx).Create(po).Error
 }
 
+func (r *threadRepository) CreateRunWithThreadLock(ctx context.Context, run *entity.Run) error {
+	if run == nil {
+		return fmt.Errorf("run is required")
+	}
+
+	now := time.Now().UnixMilli()
+	if run.CreatedAt == 0 {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+
+	po, err := runToPO(run)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, run.ThreadID); err != nil {
+			return err
+		}
+		return tx.Create(po).Error
+	})
+}
+
 func (r *threadRepository) CreateRunBundle(
 	ctx context.Context,
 	req CreateRunBundleRequest,

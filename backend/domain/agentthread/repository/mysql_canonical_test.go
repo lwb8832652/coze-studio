@@ -280,7 +280,7 @@ func TestCanonicalSearchThreadsMatchesLiteralTopLevelMetadataKeys(t *testing.T) 
 	}
 }
 
-func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *testing.T) {
+func TestCanonicalSearchThreadsSQLiteMatchesMySQLJSONScalarSemantics(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
 	repo := &threadRepository{db: db}
 	for _, thread := range []*entity.Thread{
@@ -289,7 +289,11 @@ func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *tes
 			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
 			Metadata: `{
 				"large":9223372036854775808,
-				"precise":0.123456789012345678901234567890,
+				"precise":0.123456789012345,
+				"rounded":0.123456789012345678901234567890,
+				"uint_boundary":18446744073709551615,
+				"beyond":18446744073709551616,
+				"zero":-0.0,
 				"label":"canonical",
 				"escaped":"\u0061",
 				"enabled":true,
@@ -303,7 +307,11 @@ func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *tes
 			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
 			Metadata: `{
 				"large":9223372036854775809,
-				"precise":0.123456789012345678901234567891,
+				"precise":0.123456789012346,
+				"rounded":0.123456789012345678901234567891,
+				"uint_boundary":18446744073709551615.0,
+				"beyond":18446744073709551617,
+				"zero":0.0,
 				"label":"other",
 				"enabled":false,
 				"ordinary":2.5
@@ -313,6 +321,11 @@ func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *tes
 			ID: 3, SpaceID: 10, CreatorID: 20, Title: "decimal representation",
 			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
 			Metadata: `{"representation":1.0}`,
+		},
+		{
+			ID: 4, SpaceID: 10, CreatorID: 20, Title: "normalized decimal",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{"normalized_decimal":1.2300}`,
 		},
 	} {
 		require.NoError(t, repo.CreateThread(context.Background(), thread))
@@ -325,7 +338,14 @@ func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *tes
 	}{
 		{name: "large json number", metadata: map[string]any{"large": json.Number("9223372036854775808")}, want: []int64{1}},
 		{name: "large uint64", metadata: map[string]any{"large": uint64(1) << 63}, want: []int64{1}},
-		{name: "precise decimal", metadata: map[string]any{"precise": json.Number("0.123456789012345678901234567890")}, want: []int64{1}},
+		{name: "precise decimal", metadata: map[string]any{"precise": json.Number("0.123456789012345")}, want: []int64{1}},
+		{name: "mysql rounded decimal", metadata: map[string]any{"rounded": json.Number("0.123456789012345678901234567890")}, want: []int64{1, 2}},
+		{name: "uint64 boundary integer", metadata: map[string]any{"uint_boundary": json.Number("18446744073709551615")}, want: []int64{1}},
+		{name: "uint64 boundary double", metadata: map[string]any{"uint_boundary": json.Number("18446744073709551615.0")}, want: []int64{2}},
+		{name: "mysql rounded integer", metadata: map[string]any{"beyond": json.Number("18446744073709551616")}, want: []int64{1, 2}},
+		{name: "normalized negative zero", metadata: map[string]any{"zero": json.Number("-0.0")}, want: []int64{1, 2}},
+		{name: "positive double underflow", metadata: map[string]any{"zero": json.Number("1e-400")}, want: []int64{1, 2}},
+		{name: "negative double underflow", metadata: map[string]any{"zero": json.Number("-1e-400")}, want: []int64{1, 2}},
 		{name: "string", metadata: map[string]any{"label": "canonical"}, want: []int64{1}},
 		{name: "escaped string", metadata: map[string]any{"escaped": "a"}, want: []int64{1}},
 		{name: "boolean", metadata: map[string]any{"enabled": true}, want: []int64{1}},
@@ -333,6 +353,7 @@ func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *tes
 		{name: "ordinary number", metadata: map[string]any{"ordinary": 1.5}, want: []int64{1}},
 		{name: "integer representation", metadata: map[string]any{"representation": json.Number("1")}, want: []int64{1}},
 		{name: "decimal representation", metadata: map[string]any{"representation": json.Number("1.0")}, want: []int64{3}},
+		{name: "normalized decimal", metadata: map[string]any{"normalized_decimal": json.Number("1.23")}, want: []int64{4}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -458,7 +479,7 @@ func TestCanonicalListRunEventsByCursorFiltersTypeAndReportsHasMore(t *testing.T
 	require.Equal(t, []int64{3, 4}, runEventIDs(events))
 }
 
-func TestCanonicalListCheckpointsBeforeUsesCursorAndReportsHasMore(t *testing.T) {
+func TestCanonicalListCheckpointsBeforeUsesIDCursorOrderAndReportsHasMore(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &checkpointPO{})
 	repo := &threadRepository{db: db}
 	runtimeTypes := []string{
@@ -468,10 +489,11 @@ func TestCanonicalListCheckpointsBeforeUsesCursorAndReportsHasMore(t *testing.T)
 		"canonical_public_state",
 		"eino_adk",
 	}
+	createdAtByID := []int64{500, 100, 400, 200, 300}
 	for index, runtimeType := range runtimeTypes {
 		id := int64(index + 1)
 		require.NoError(t, repo.CreateCheckpoint(context.Background(),
-			newCanonicalRepositoryCheckpoint(id, 10, 20, runtimeType, id)))
+			newCanonicalRepositoryCheckpoint(id, 10, 20, runtimeType, createdAtByID[index])))
 	}
 	require.NoError(t, repo.CreateCheckpoint(context.Background(),
 		newCanonicalRepositoryCheckpoint(6, 11, 21, "eino_adk", 100)))
@@ -664,6 +686,19 @@ func TestCanonicalMySQLThreadMutationsLockThreadFirstForUpdate(t *testing.T) {
 				run.MultitaskStrategy = "reject"
 				_, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{Run: run})
 				return err
+			},
+		},
+		{
+			name: "create standalone run",
+			call: func(repo *threadRepository) error {
+				guardedRepo, ok := any(repo).(ThreadGuardedRunRepository)
+				if !ok {
+					return fmt.Errorf("thread guarded run repository is not configured")
+				}
+				return guardedRepo.CreateRunWithThreadLock(
+					context.Background(),
+					newCanonicalRepositoryRun(20, 10, 0, 100),
+				)
 			},
 		},
 	}
@@ -864,6 +899,151 @@ func TestCanonicalPublicStateCheckpointDoesNotModifyEinoResumeCheckpoint(t *test
 	require.NoError(t, err)
 	require.Equal(t, int64(2), total)
 	require.Equal(t, []int64{2, 1}, checkpointIDs(checkpoints))
+}
+
+func TestCanonicalUpdatePublicThreadStateAtomicallyMergesReviewedValues(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &checkpointPO{})
+	repo := &threadRepository{db: db}
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 20, CreatorID: 30, Title: "public state",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+	}))
+	require.NoError(t, repo.CreateRun(context.Background(),
+		newCanonicalRepositoryRun(20, 10, 0, 100)))
+	require.NoError(t, repo.CreateRun(context.Background(),
+		newCanonicalRepositoryRun(21, 10, 0, 200)))
+	require.NoError(t, repo.CreateRun(context.Background(),
+		newCanonicalRepositoryRun(22, 10, 21, 300)))
+	eino := newCanonicalRepositoryCheckpoint(1, 10, 21, "eino_adk", 400)
+	eino.CheckpointNS = "eino.adk"
+	eino.RuntimeKey = "coze-run-21"
+	eino.ChannelValues = `{"checkpoint_bytes":"opaque"}`
+	require.NoError(t, repo.CreateCheckpoint(context.Background(), eino))
+	previous := newCanonicalRepositoryCheckpoint(2, 10, 21, "canonical_public_state", 500)
+	previous.CheckpointNS = "canonical.public"
+	previous.RuntimeKey = "thread:10"
+	previous.ChannelValues = `{"custom":{"base":true}}`
+	require.NoError(t, repo.CreateCheckpoint(context.Background(), previous))
+
+	first, err := repo.UpdatePublicThreadState(context.Background(), UpdatePublicThreadStateRequest{
+		CheckpointID: 3, ThreadID: 10, BaseCheckpointID: 1,
+		ChannelValues: `{"custom":{"first":true}}`,
+		Metadata:      `{"source":"canonical_public_state","as_node":"review"}`,
+		CreatedAt:     600,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(21), first.RunID)
+	require.Equal(t, int64(1), first.ParentCheckpointID)
+	require.Equal(t, "canonical.public", first.CheckpointNS)
+	require.Equal(t, "canonical_public_state", first.RuntimeType)
+	require.Equal(t, "thread:10", first.RuntimeKey)
+	require.JSONEq(t, `{"custom":{"base":true,"first":true}}`, first.ChannelValues)
+	require.JSONEq(t, `{"source":"canonical_public_state","as_node":"review"}`, first.Metadata)
+
+	second, err := repo.UpdatePublicThreadState(context.Background(), UpdatePublicThreadStateRequest{
+		CheckpointID: 4, ThreadID: 10,
+		ChannelValues: `{"custom":{"second":true}}`,
+		Metadata:      `{"source":"canonical_public_state"}`,
+		CreatedAt:     550,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(3), second.ParentCheckpointID)
+	require.JSONEq(t, `{"custom":{"base":true,"first":true,"second":true}}`, second.ChannelValues)
+	latestPublic, total, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{
+		ThreadID: 10, RuntimeType: "canonical_public_state", Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
+	require.Equal(t, int64(4), latestPublic[0].ID)
+	require.JSONEq(t, second.ChannelValues, latestPublic[0].ChannelValues)
+	persistedEino, err := repo.GetCheckpoint(context.Background(), eino.ID)
+	require.NoError(t, err)
+	require.Equal(t, eino, persistedEino)
+}
+
+func TestCanonicalUpdatePublicThreadStateRejectsInvalidTransactionalInputs(t *testing.T) {
+	t.Run("thread without top-level run", func(t *testing.T) {
+		db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &checkpointPO{})
+		repo := &threadRepository{db: db}
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: 10, SpaceID: 20, CreatorID: 30, Title: "no run",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		}))
+
+		checkpoint, err := repo.UpdatePublicThreadState(context.Background(), UpdatePublicThreadStateRequest{
+			CheckpointID: 1, ThreadID: 10,
+			ChannelValues: `{"custom":{"reviewed":true}}`, Metadata: `{}`,
+		})
+
+		require.Nil(t, checkpoint)
+		require.ErrorIs(t, err, ErrPublicThreadStateConflict)
+		require.Equal(t, int64(0), canonicalCheckpointCount(t, db))
+	})
+
+	t.Run("base checkpoint from another thread", func(t *testing.T) {
+		db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &checkpointPO{})
+		repo := &threadRepository{db: db}
+		for _, threadID := range []int64{10, 11} {
+			require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+				ID: threadID, SpaceID: 20, CreatorID: 30, Title: "foreign base",
+				Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			}))
+		}
+		require.NoError(t, repo.CreateRun(context.Background(),
+			newCanonicalRepositoryRun(20, 10, 0, 100)))
+		require.NoError(t, repo.CreateRun(context.Background(),
+			newCanonicalRepositoryRun(21, 11, 0, 100)))
+		require.NoError(t, repo.CreateCheckpoint(context.Background(),
+			newCanonicalRepositoryCheckpoint(50, 11, 21, "eino_adk", 100)))
+
+		checkpoint, err := repo.UpdatePublicThreadState(context.Background(), UpdatePublicThreadStateRequest{
+			CheckpointID: 51, ThreadID: 10, BaseCheckpointID: 50,
+			ChannelValues: `{"custom":{"reviewed":true}}`, Metadata: `{}`,
+		})
+
+		require.Nil(t, checkpoint)
+		require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+		require.Equal(t, int64(1), canonicalCheckpointCount(t, db))
+	})
+
+	t.Run("merged custom value exceeds limit", func(t *testing.T) {
+		db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &checkpointPO{})
+		repo := &threadRepository{db: db}
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: 10, SpaceID: 20, CreatorID: 30, Title: "large merge",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		}))
+		require.NoError(t, repo.CreateRun(context.Background(),
+			newCanonicalRepositoryRun(20, 10, 0, 100)))
+		previous := newCanonicalRepositoryCheckpoint(1, 10, 20, canonicalPublicStateRuntimeType, 100)
+		previous.ChannelValues = fmt.Sprintf(
+			`{"custom":{"base":"%s"}}`,
+			strings.Repeat("a", 40*1024),
+		)
+		require.NoError(t, repo.CreateCheckpoint(context.Background(), previous))
+
+		checkpoint, err := repo.UpdatePublicThreadState(context.Background(), UpdatePublicThreadStateRequest{
+			CheckpointID: 2, ThreadID: 10,
+			ChannelValues: fmt.Sprintf(
+				`{"custom":{"incoming":"%s"}}`,
+				strings.Repeat("b", 30*1024),
+			),
+			Metadata: `{}`,
+		})
+
+		require.Nil(t, checkpoint)
+		require.ErrorIs(t, err, ErrPublicThreadStateTooLarge)
+		require.Equal(t, int64(1), canonicalCheckpointCount(t, db))
+	})
+}
+
+func canonicalCheckpointCount(t *testing.T, db *gorm.DB) int64 {
+	t.Helper()
+	var count int64
+	require.NoError(t, db.Model(&checkpointPO{}).Count(&count).Error)
+	return count
 }
 
 func canonicalDeleteRepositoryTestDB(t *testing.T, dsn string) *gorm.DB {

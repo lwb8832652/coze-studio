@@ -76,23 +76,35 @@ func TestCanonicalSearchThreadsPreservesJSONNumberAndUnsignedMetadata(t *testing
 	repo := newCanonicalQueryMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 100}}).(*threadService)
 	largeInteger := json.Number("9223372036854775808")
-	preciseDecimal := json.Number("0.123456789012345678901234567890")
+	preciseDecimal := json.Number("0.123456789012345")
+	highPrecisionDecimal := json.Number("0.123456789012345678901234567890")
+	beyondUint64Integer := json.Number("18446744073709551616")
+	positiveUnderflow := json.Number("1e-400")
+	negativeUnderflow := json.Number("-1e-400")
 	unsigned := uint64(1) << 63
 	normal := int32(7)
 
 	_, _, err := svc.SearchThreads(context.Background(), &SearchThreadsRequest{
 		SpaceID: 10,
 		Metadata: map[string]any{
-			"large":    largeInteger,
-			"precise":  preciseDecimal,
-			"unsigned": unsigned,
-			"normal":   normal,
+			"large":          largeInteger,
+			"precise":        preciseDecimal,
+			"high_precision": highPrecisionDecimal,
+			"beyond_uint64":  beyondUint64Integer,
+			"underflow":      positiveUnderflow,
+			"negative_zero":  negativeUnderflow,
+			"unsigned":       unsigned,
+			"normal":         normal,
 		},
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, largeInteger, repo.searchThreadsReq.Metadata["large"])
 	require.Equal(t, preciseDecimal, repo.searchThreadsReq.Metadata["precise"])
+	require.Equal(t, highPrecisionDecimal, repo.searchThreadsReq.Metadata["high_precision"])
+	require.Equal(t, beyondUint64Integer, repo.searchThreadsReq.Metadata["beyond_uint64"])
+	require.Equal(t, positiveUnderflow, repo.searchThreadsReq.Metadata["underflow"])
+	require.Equal(t, negativeUnderflow, repo.searchThreadsReq.Metadata["negative_zero"])
 	require.Equal(t, unsigned, repo.searchThreadsReq.Metadata["unsigned"])
 	require.Equal(t, normal, repo.searchThreadsReq.Metadata["normal"])
 }
@@ -115,8 +127,11 @@ func TestCanonicalSearchThreadsRejectsUnsafeMetadataAndSort(t *testing.T) {
 		{name: "nan value", metadata: map[string]any{"score": math.NaN()}},
 		{name: "infinite value", metadata: map[string]any{"score": math.Inf(1)}},
 		{name: "invalid json number", metadata: map[string]any{"score": json.Number("1.2.3")}},
+		{name: "leading zero json number", metadata: map[string]any{"score": json.Number("01")}},
+		{name: "leading plus json number", metadata: map[string]any{"score": json.Number("+1")}},
 		{name: "nan json number", metadata: map[string]any{"score": json.Number("NaN")}},
 		{name: "infinite json number", metadata: map[string]any{"score": json.Number("Inf")}},
+		{name: "out-of-range json number", metadata: map[string]any{"score": json.Number("1e309")}},
 		{name: "unsafe sort", sortBy: "updated_at; DROP TABLE agent_threads"},
 		{name: "unsafe order", sortBy: "updated_at", sortOrder: "sideways"},
 	}
@@ -420,6 +435,32 @@ func TestCanonicalPreparePublicThreadStateRejectsInvalidOrOversizedCustomObject(
 	}
 }
 
+func TestCanonicalUpdatePublicThreadStateDelegatesOneAtomicRepositoryRequest(t *testing.T) {
+	repo := newCanonicalQueryMemoryRepo()
+	repo.updatedPublicState = &entity.Checkpoint{
+		ID: 900, ThreadID: 10, RunID: 20,
+		CheckpointNS: "canonical.public", RuntimeType: "canonical_public_state",
+		RuntimeKey: "thread:10", ChannelValues: `{"custom":{"reviewed":true}}`,
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 900}}).(*threadService)
+
+	checkpoint, err := svc.UpdatePublicThreadState(context.Background(), &UpdatePublicThreadStateRequest{
+		ThreadID: 10, BaseCheckpointID: 50,
+		Values: map[string]any{"custom": map[string]any{"reviewed": true}},
+		AsNode: "  editor  ",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, repo.updatedPublicState, checkpoint)
+	require.Equal(t, 1, repo.updatePublicStateCalls)
+	require.Equal(t, int64(900), repo.updatePublicStateReq.CheckpointID)
+	require.Equal(t, int64(10), repo.updatePublicStateReq.ThreadID)
+	require.Equal(t, int64(50), repo.updatePublicStateReq.BaseCheckpointID)
+	require.JSONEq(t, `{"custom":{"reviewed":true}}`, repo.updatePublicStateReq.ChannelValues)
+	require.JSONEq(t, `{"source":"canonical_public_state","as_node":"editor"}`, repo.updatePublicStateReq.Metadata)
+	require.NotZero(t, repo.updatePublicStateReq.CreatedAt)
+}
+
 type canonicalQueryMemoryRepo struct {
 	*memoryRepo
 	searchThreads           []*entity.Thread
@@ -442,6 +483,10 @@ type canonicalQueryMemoryRepo struct {
 	deleteThreadIfIdleErr   error
 	deleteThreadIfIdleReq   repository.DeleteThreadIfIdleRequest
 	deleteThreadIfIdleCalls int
+	updatedPublicState      *entity.Checkpoint
+	updatePublicStateReq    repository.UpdatePublicThreadStateRequest
+	updatePublicStateErr    error
+	updatePublicStateCalls  int
 }
 
 func newCanonicalQueryMemoryRepo() *canonicalQueryMemoryRepo {
@@ -497,6 +542,15 @@ func (r *canonicalQueryMemoryRepo) DeleteThreadIfIdle(
 	r.deleteThreadIfIdleCalls++
 	r.deleteThreadIfIdleReq = req
 	return r.deleteThreadIfIdleOK, r.deleteThreadIfIdleErr
+}
+
+func (r *canonicalQueryMemoryRepo) UpdatePublicThreadState(
+	_ context.Context,
+	req repository.UpdatePublicThreadStateRequest,
+) (*entity.Checkpoint, error) {
+	r.updatePublicStateCalls++
+	r.updatePublicStateReq = req
+	return r.updatedPublicState, r.updatePublicStateErr
 }
 
 func stringPointer(value string) *string {

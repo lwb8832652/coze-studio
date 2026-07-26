@@ -32,11 +32,6 @@ var (
 	ErrPublicThreadStateConflict     = domainservice.ErrPublicThreadStateConflict
 )
 
-const (
-	canonicalPublicStateRuntimeType = "canonical_public_state"
-	canonicalPublicStateNamespace   = "canonical.public"
-)
-
 type CanonicalPage struct {
 	Offset int32
 	Limit  int32
@@ -358,83 +353,16 @@ func (s *ApplicationService) UpdatePublicThreadState(
 	}); err != nil {
 		return nil, err
 	}
-	thread, err := s.ThreadSVC.GetThread(ctx, req.ThreadID)
-	if err != nil {
-		return nil, canonicalPublicStateResourceError(ctx, err)
-	}
-	if thread == nil || thread.ID != req.ThreadID {
-		return nil, canonicalPublicStateNotFound(ctx)
-	}
-
-	querySVC, ok := s.ThreadSVC.(domainservice.CanonicalQueryService)
-	if !ok {
-		return nil, fmt.Errorf("canonical agent thread query service is not configured")
-	}
-	runs, _, err := querySVC.SearchRuns(ctx, &domainservice.SearchRunsRequest{
-		ThreadID: req.ThreadID,
-		Page:     domainservice.CanonicalPage{Limit: 1},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(runs) == 0 {
-		return nil, fmt.Errorf("%w: thread %d has no top-level run", ErrPublicThreadStateConflict, req.ThreadID)
-	}
-	latestRun := runs[0]
-	if latestRun == nil || latestRun.ID <= 0 || latestRun.ThreadID != req.ThreadID || latestRun.ParentRunID != 0 {
-		return nil, fmt.Errorf("agent thread service returned invalid latest top-level run")
-	}
-
-	parentCheckpointID, err := s.selectCanonicalPublicStateParent(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	publicCheckpoints, _, err := s.ThreadSVC.ListCheckpoints(ctx, &domainservice.ListCheckpointsRequest{
-		ThreadID: req.ThreadID, RuntimeType: canonicalPublicStateRuntimeType, Limit: 1,
-	})
-	if err != nil {
-		return nil, err
-	}
-	previousChannelValues := ""
-	if len(publicCheckpoints) > 0 {
-		previous := publicCheckpoints[0]
-		if previous == nil || previous.ThreadID != req.ThreadID ||
-			previous.RuntimeType != canonicalPublicStateRuntimeType {
-			return nil, fmt.Errorf("agent thread service returned invalid public state checkpoint")
-		}
-		previousChannelValues = previous.ChannelValues
-	}
-
 	publicStateSVC, ok := s.ThreadSVC.(domainservice.CanonicalPublicStateService)
 	if !ok {
 		return nil, fmt.Errorf("canonical public thread state service is not configured")
 	}
-	prepared, err := publicStateSVC.PreparePublicThreadState(
-		ctx,
-		&domainservice.PreparePublicThreadStateRequest{
-			Values: req.Values, PreviousChannelValues: previousChannelValues, AsNode: req.AsNode,
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	if prepared == nil {
-		return nil, fmt.Errorf("agent thread service returned empty prepared public state")
-	}
-	checkpoint, err := s.ThreadSVC.CreateCheckpoint(ctx, &domainservice.CreateCheckpointRequest{
-		ThreadID: req.ThreadID, RunID: latestRun.ID,
-		ParentCheckpointID: parentCheckpointID,
-		CheckpointNS:       canonicalPublicStateNamespace,
-		RuntimeType:        canonicalPublicStateRuntimeType,
-		RuntimeKey:         fmt.Sprintf("thread:%d", req.ThreadID),
-		EnvelopeVersion:    0,
-		ChannelValues:      prepared.ChannelValues,
-		ChannelVersions:    `{}`,
-		PendingSends:       `[]`,
-		Metadata:           prepared.Metadata,
+	checkpoint, err := publicStateSVC.UpdatePublicThreadState(ctx, &domainservice.UpdatePublicThreadStateRequest{
+		ThreadID: req.ThreadID, BaseCheckpointID: req.BaseCheckpointID,
+		Values: req.Values, AsNode: req.AsNode,
 	})
 	if err != nil {
-		return nil, err
+		return nil, canonicalPublicStateResourceError(ctx, err)
 	}
 	if checkpoint == nil {
 		return nil, fmt.Errorf("agent thread service returned empty public state checkpoint")
@@ -442,41 +370,6 @@ func (s *ApplicationService) UpdatePublicThreadState(
 	return &UpdatePublicThreadStateResponse{
 		Checkpoint: DomainCheckpointToSummary(checkpoint),
 	}, nil
-}
-
-func (s *ApplicationService) selectCanonicalPublicStateParent(
-	ctx context.Context,
-	req *UpdatePublicThreadStateRequest,
-) (int64, error) {
-	if req.BaseCheckpointID > 0 {
-		base, err := s.ThreadSVC.GetCheckpoint(ctx, &domainservice.GetCheckpointRequest{
-			CheckpointID: req.BaseCheckpointID,
-		})
-		if err != nil {
-			return 0, canonicalPublicStateResourceError(ctx, err)
-		}
-		if base == nil || base.ID != req.BaseCheckpointID || base.ThreadID != req.ThreadID {
-			return 0, canonicalPublicStateNotFound(ctx)
-		}
-		return base.ID, nil
-	}
-
-	latest, err := s.ThreadSVC.GetLatestCheckpoint(ctx, &domainservice.GetLatestCheckpointRequest{
-		ThreadID: req.ThreadID,
-	})
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	if latest == nil {
-		return 0, nil
-	}
-	if latest.ID <= 0 || latest.ThreadID != req.ThreadID {
-		return 0, fmt.Errorf("agent thread service returned invalid latest checkpoint")
-	}
-	return latest.ID, nil
 }
 
 func canonicalPublicStateResourceError(ctx context.Context, err error) error {
