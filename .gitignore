@@ -68,4 +68,4 @@ opencoze
 opencoze.pid
 
 # Local Graphify cache
-/graphify-out/
+**/graphify-out/

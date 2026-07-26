@@ -688,7 +688,7 @@ Expected: 第一条命令有匹配；第二条命令退出码 `1`。
 ```gitignore
 
 # Local Graphify cache
-/graphify-out/
+**/graphify-out/
 ```
 
 - [x] **Step 4：验证旧入口消失且缓存被忽略**
@@ -705,10 +705,11 @@ Run:
 
 ```bash
 git check-ignore -v graphify-out/.graphify_detect.json
+git check-ignore -v docs/superpowers/context/graphify-out/cache/stat-index.json
 git diff --check -- .gitignore docs/superpowers/runbooks/local-debug-and-test.md
 ```
 
-Expected: Graphify 缓存路径命中 `.gitignore`；diff check 退出码 `0`。
+Expected: 根目录产物和语料目录缓存均命中 `.gitignore`；diff check 退出码 `0`。
 
 - [x] **Step 5：提交调试与忽略规则**
 
@@ -720,10 +721,11 @@ git commit -m "docs: retire legacy parity defaults"
 ## Task 5：验证长期记忆工具和文档合同
 
 **Files:**
+- Modify: `.gitignore`
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 - Local ignored output: `graphify-out/`
 
-- [ ] **Step 1：验证 codebase-memory 项目索引**
+- [x] **Step 1：验证 codebase-memory 项目索引**
 
 Run:
 
@@ -732,28 +734,35 @@ codebase-memory-mcp cli list_projects
 ```
 
 Expected: 输出项目根路径 `/Users/liuwenbo/code/BuildingAI/coze-studio`，节点和边数
-均大于 `0`。
+均大于 `0`。在隔离 worktree 执行时，为当前分支建立独立 fast 索引：
+
+```bash
+codebase-memory-mcp cli index_repository \
+  --repo-path /private/tmp/coze-studio-agents-context-memory-optimization \
+  --mode fast \
+  --name coze-studio-agents-context-memory-optimization
+```
 
 Run:
 
 ```bash
-codebase-memory-mcp cli get_architecture --project Users-liuwenbo-code-BuildingAI-coze-studio --aspects overview
+codebase-memory-mcp cli get_architecture --project coze-studio-agents-context-memory-optimization --aspects overview
 ```
 
 Expected: 退出码 `0`，包含 TypeScript、Go 和主要 backend 分层信息。
 
-- [ ] **Step 2：执行 codebase-memory 变更影响基线**
+- [x] **Step 2：执行 codebase-memory 变更影响基线**
 
 Run:
 
 ```bash
-codebase-memory-mcp cli detect_changes --project Users-liuwenbo-code-BuildingAI-coze-studio --since origin/dev --depth 2
+codebase-memory-mcp cli detect_changes --project coze-studio-agents-context-memory-optimization --since origin/dev --depth 2
 ```
 
 Expected: 退出码 `0`；输出列出本需求文档变更。文档变更可以没有受影响代码
 符号；用户已有无关未跟踪文件必须单独标记，不能归入本需求范围。
 
-- [ ] **Step 3：对精选上下文运行 Graphify**
+- [x] **Step 3：对精选上下文运行 Graphify**
 
 调用 Graphify skill，对 `docs/superpowers/context` 执行完整流程，技能调用参数为：
 
@@ -767,28 +776,44 @@ Expected: 退出码 `0`；输出列出本需求文档变更。文档变更可以
 Expected: `graphify-out/graph.json` 与 `graphify-out/GRAPH_REPORT.md` 存在，检测语料
 只来自 `docs/superpowers/context`，图非空。
 
-- [ ] **Step 4：验证精选语料和图谱输出**
+- [x] **Step 4：验证精选语料和图谱输出**
 
 Run:
 
 ```bash
 test -s graphify-out/graph.json
 test -s graphify-out/GRAPH_REPORT.md
-rg -n 'docs/superpowers/context' graphify-out/.graphify_root graphify-out/.graphify_detect.json
+rg -n 'docs/superpowers/context' graphify-out/.graphify_root
+rg -n 'project-context\.md' graphify-out/manifest.json
 ```
 
-Expected: 两个产物非空，root 与检测清单都指向精选 context 目录。
+Expected: 两个产物非空，root 与增量 manifest 都只指向精选 context 语料。
 
 Run:
 
 ```bash
-git check-ignore -v graphify-out/graph.json graphify-out/GRAPH_REPORT.md
+git check-ignore -v \
+  graphify-out/graph.json \
+  graphify-out/GRAPH_REPORT.md \
+  docs/superpowers/context/graphify-out/cache/stat-index.json
 git status --short
 ```
 
-Expected: 两个文件均命中 `.gitignore`；`git status` 不显示 `graphify-out/`。
+Expected: 主产物和嵌套缓存均命中 `.gitignore`；`git status` 不显示任何
+`graphify-out/`。
 
-- [ ] **Step 5：验证所有默认入口链接存在**
+Run:
+
+```bash
+graphify query \
+  "Why does Coze 原生内部优化阶段 connect durable context governance to application architecture contracts?" \
+  --budget 800
+```
+
+Expected: 查询返回 `project-context.md` 来源行号，并连接内部优化阶段、长期上下文
+治理、前后端架构和 IDL 合同。
+
+- [x] **Step 5：验证所有默认入口链接存在**
 
 Run:
 
@@ -805,12 +830,13 @@ done
 
 Expected: 退出码 `0`。
 
-- [ ] **Step 6：提交验证状态**
+- [x] **Step 6：提交验证状态**
 
-更新本计划 Task 5 checkbox 后提交，不包含 ignored 图谱：
+更新本计划 Task 5 checkbox 和 Graphify 嵌套缓存忽略规则后提交，不包含 ignored
+图谱：
 
 ```bash
-git add docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
+git add .gitignore docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
 git commit -m "docs: verify durable context tooling"
 ```
 
