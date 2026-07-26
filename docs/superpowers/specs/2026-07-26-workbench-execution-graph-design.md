@@ -242,6 +242,7 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 - `integration_ingress`
 - `optional_observability`
 - `ui_only`
+- `compatibility_contract`
 - `historical_compatibility`
 - `build_or_test_only`
 
@@ -335,7 +336,9 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - 每个 `canonical_runtime` 框架至少有一个生产源码符号锚点，不能只锚定依赖
   清单；
 - Eino middleware 顺序与 `adkMiddlewareOrder` 完全一致；
-- compatibility、UI、观测和构建工具不能出现在 Run 执行器必经边中。
+- `compatibility_contract`、`historical_compatibility`、`ui_only`、
+  `optional_observability` 和 `build_or_test_only` 节点不能出现在 Run 执行器必经
+  边中。
 
 `verify-derived` 必须检查：
 
