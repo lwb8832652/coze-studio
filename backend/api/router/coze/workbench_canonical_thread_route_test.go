@@ -163,8 +163,13 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		for _, route := range forbiddenCanonicalThreadRoutes {
 			route := route
 			t.Run(route.method+" "+route.path, func(t *testing.T) {
-				response := ut.PerformRequest(h.Engine, route.method, concreteRoutePath(route.path), nil)
-				require.Equal(t, http.StatusNotFound, response.Code)
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
 			})
 		}
 	})
@@ -180,12 +185,32 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
 		for _, path := range retiredChatTaskPaths {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
-				response := ut.PerformRequest(h.Engine, method, path, nil)
-				require.Equal(t, http.StatusNotFound, response.Code, "%s %s", method, path)
+				requireUnreachableRoute(t, h, handlerBoundary, method, path)
 			}
 		}
 		require.Zero(t, handlerBoundary.matchedHandlerCount)
 	})
+}
+
+func requireUnreachableRoute(
+	t *testing.T,
+	h *server.Hertz,
+	handlerBoundary *recordingHandlerBoundary,
+	method string,
+	path string,
+) {
+	t.Helper()
+	matchedBefore := handlerBoundary.matchedHandlerCount
+	response := ut.PerformRequest(h.Engine, method, path, nil)
+	require.Equal(t, http.StatusNotFound, response.Code, "%s %s", method, path)
+	require.Equal(
+		t,
+		matchedBefore,
+		handlerBoundary.matchedHandlerCount,
+		"request entered a handler chain: %s %s",
+		method,
+		path,
+	)
 }
 
 func registeredRouteSet(h *server.Hertz) map[routeExpectation]struct{} {
