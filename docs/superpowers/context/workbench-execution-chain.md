@@ -1,0 +1,291 @@
+# Workbench 当前执行链与框架事实
+
+更新时间：2026-07-26  
+状态：当前生产实现  
+机器合同：`docs/superpowers/context/workbench-execution-graph.json`
+
+## 结论
+
+Workbench 当前只有一套生产 Run 执行内核：Go `agentthread` 控制面配合 Eino ADK。
+主链是：
+
+```text
+React UI
+  -> generated Workbench API client / Thrift contract
+  -> Hertz HTTP handler
+  -> agentthread ApplicationService
+  -> agentthread domain service
+  -> GORM / MySQL transaction
+  -> MySQL pending Run + fenced lease
+  -> Go RunWorker / RunProcessor
+  -> RuntimeSelector(runtime=eino_adk)
+  -> ADKExecutor / Eino Runner / ChatModelAgent
+  -> MapADKEvent / EventSink
+  -> MySQL RunEvent
+  -> Hertz SSE
+  -> browser EventSource / TaskDetail projection
+```
+
+这不是两套新旧 Workbench。`ChatTask` 已退役；`legacy` 仅用于读取和恢复历史无
+runtime 标记记录。新 Run 在持久化前规范化为 `runtime=eino_adk`。
+
+## 权威规则
+
+- 本文负责解释当前实现；JSON 合同负责稳定节点、显式边、链路顺序、源码锚点
+  和测试证据。
+- `calls`、`delegates_to`、`persists_via` 等边必须有源码中的直接证据。
+- `precedes` 只表示同一已验证流程中的时序，不等同于函数调用。
+- Graphify 派生边只补充检索上下文，不能覆盖合同中的显式关系。
+- codebase-memory/CodeGraph 用于实时查调用方和影响范围；最终判断仍回到源码、
+  IDL 与测试。
+- 本上下文只保存 bounded metadata，不保存 prompt、completion、tool arguments、
+  tool results、credentials、object URI、checkpoint bytes 或原始审计载荷。
+
+## 入口链
+
+### Workbench 立即创建
+
+`WorkbenchPage.handleSend` 调用生成客户端 `CreateTaskThread`，经 Thrift 路由到
+Hertz `CreateTaskThread` handler。应用层 `ApplicationService.CreateTaskThread`
+调用领域层 `CreateThreadRunMessage`，最终由 MySQL `CreateThreadBundle` 在一个
+原子聚合中持久化 Thread、初始 Message、Pending Run 和初始 Event。
+
+源码锚点：
+
+- `frontend/apps/coze-studio/src/pages/workbench/index.tsx`：`handleSend`
+- `frontend/apps/coze-studio/src/pages/workbench/service.ts`：`createTaskThread`
+- `idl/workbench/task.thrift`：`WorkbenchTaskService.CreateTaskThread`
+- `backend/api/handler/coze/workbench_thread_service.go`：`CreateTaskThread`
+- `backend/application/agentthread/service.go`：`CreateTaskThread`
+- `backend/domain/agentthread/service/service_impl.go`：`CreateThreadRunMessage`
+- `backend/domain/agentthread/repository/mysql.go`：`CreateThreadBundle`
+
+### Workbench 带文件创建
+
+文件模式使用同一个 `handleSend`，但时序固定为：
+
+1. `CreateTaskThread(defer_start=true)` 只建立 Thread；
+2. `uploadTaskThreadFiles` 上传并取得受限文件元数据；
+3. `CreateTaskThreadRun` 创建正式 Pending Run。
+
+该顺序由
+`frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx` 的
+`uploads selected files before starting a new canonical task run` 覆盖。图谱使用
+`precedes` 表达三步顺序，不制造 `uploadTaskThreadFiles` 调用 Run API 的假边。
+
+### TaskDetail Follow-up
+
+`sendFollowUpMessage` 只提交当前轮消息，先上传文件，再调用
+`CreateTaskThreadRun`。服务端通过 Thread 历史重建权威输入。
+
+源码锚点：
+
+- `frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts`：
+  `sendFollowUpMessage`
+- `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts`：
+  `uploads files before creating a thread run`
+
+### 其它入口
+
+- LangGraph-compatible API：
+  `backend/api/handler/coze/langgraph_run_service.go` 的 `CreateLangGraphRun` 最终调用
+  `agentthread.ApplicationService.CreateRun`。
+- Scheduled Task：
+  `backend/application/scheduledtask/coze_adapters.go` 的
+  `CozeAgentRunner.StartNew/StartInThread` 调用 `CreateTaskThread/CreateRun`。
+- 飞书消息：
+  `backend/application/imchannel/runtime.go` 的 `processEvent` 调用
+  `AgentRunner.Execute`，再由 `agent_runner.go` 的 `startRun` 调用
+  `CreateTaskThread/CreateRun`。
+
+这些入口只生产 Run，不拥有 Run 状态机，也不是独立执行器。
+
+## 持久化与异步执行
+
+### 原子 Run 创建
+
+`CreateTaskThreadRun` handler 调用 `ApplicationService.CreateRun`，应用层完成权限、
+输入、幂等和 runtime 规范化，再调用领域层 `CreateRunBundle`。领域层经
+repository `CreateRunBundle` 原子写入 Run、当前轮 Message、初始 Event 和相关
+admission 状态。
+
+### MySQL 队列与 lease
+
+Workbench 没有 Redis、Kafka、RabbitMQ、NATS 或 Asynq Run 队列。队列事实是
+MySQL 中的 Pending/Queued Run 行：
+
+- `RunWorker.Start` 使用 Go goroutine 与 `time.Ticker` 周期执行；
+- `RunWorker.RunOnce` 调用 `RunProcessor.ProcessPendingRunsWithResult`；
+- claim 从 application、domain 下沉到 repository `ClaimPendingRuns`；
+- MySQL 使用 `SELECT ... FOR UPDATE SKIP LOCKED`；
+- lease fence 由 `lease_owner`、`lease_token` 和 `execution_generation` 组成；
+- 执行期间续租，lease 丢失或持久化取消时停止当前执行；
+- `RunLeaseRecoveryProcessor` 处理超时 lease，有可恢复 checkpoint 时建立恢复
+  路径，否则按规则对旧 Run 做终态协调。
+
+源码锚点：
+
+- `backend/application/agentthread/worker.go`：`RunWorker.Start/RunOnce`
+- `backend/application/agentthread/runner.go`：
+  `RunProcessor.ProcessPendingRunsWithResult/processRun`
+- `backend/domain/agentthread/repository/mysql.go`：`ClaimPendingRuns`、
+  `SKIP LOCKED`
+- `backend/application/agentthread/run_lease_recovery.go`：
+  `RecoverExpiredRunLeases`
+
+## Eino ADK 执行内核
+
+`RuntimeSelector.Execute` 读取持久化 Run config。当前生产标记
+`runtime=eino_adk` 选择 `ADKExecutor.Execute`；显式请求 Eino 但策略未启用时
+fail closed。
+
+`ADKExecutor.Execute` 的关键步骤：
+
+1. 通过 `ApplicationADKAgentFactory.Build` 解析模型、能力、工具和 middleware；
+2. 通过 Eino `adk.NewChatModelAgent` 建立可恢复 Agent；
+3. 通过 `adk.NewRunner` 执行并迭代 `AgentEvent`；
+4. `MapADKEvent` 把 Eino 内部事件映射为 Coze 公共 RunEvent；
+5. `applicationRunEventSink.EmitRunEvent` 调用
+   `ApplicationService.AppendRunEvent` 持久化；
+6. 最终结果由 `RunProcessor` 以 fence 条件完成 Run，并保存安全投影和 Assistant
+   Message。
+
+关键源码：
+
+- `backend/application/agentthread/runtime_selector.go`
+- `backend/application/agentthread/adk_executor.go`
+- `backend/application/agentthread/adk_agent_factory.go`
+- `backend/application/agentthread/adk_event_mapper.go`
+- `backend/application/agentthread/event_sink.go`
+
+### Middleware 顺序
+
+`backend/application/agentthread/adk_middleware.go` 的 `adkMiddlewareOrder` 是唯一
+顺序事实：
+
+```text
+reduction
+filesystem
+uploaded_files
+patchtoolcalls
+tool_error_normalization
+memory
+skill
+transcript
+summarization
+plantask
+provider_capability
+multimodalbudget
+toolsearch
+parity_state
+contextbudget
+safety_finish
+subagent_limit
+semantic_loop
+```
+
+装配顺序及 hook/wrapper 行为由
+`backend/application/agentthread/adk_middleware_test.go` 的
+`TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder` 验证。可选 middleware
+可以因能力或模式不适用而跳过，但活跃项必须保持上述相对顺序。
+
+### 工具、MCP 与模型适配
+
+- Eino `tool.BaseTool` 是当前工具合同。
+- `mcp-go` 负责 stdio、SSE 和 Streamable HTTP 等 MCP client/transport；
+  `adk_mcp_*_eino_runner.go` 将 MCP 工具适配为 Eino tool，并施加 Sandbox、
+  安全策略、超时、输出预算和 bounded audit。
+- Eino-ext Web 工具当前包含 DuckDuckGo 和 Wikipedia 适配，仍受工具策略和输出
+  边界控制。
+- `ApplicationADKAgentFactory` 当前直接支持 Eino-ext Ark、Claude、DeepSeek、
+  Gemini、OpenAI 和 Qwen model adapter；具体选择取决于 Run/model 配置，它们是
+  条件扩展，不是六套 Run 执行器。
+
+## 事件回传
+
+Eino 事件不会原样暴露。`MapADKEvent` 生成公共事件，EventSink 经过 application、
+domain 和 MySQL repository 写入 RunEvent。Hertz
+`StreamTaskThreadRunEvents` 按游标读取并以 SSE 输出；前端
+`useTaskThreadRunEventStream` 使用浏览器 `EventSource` 投影 Todo、工具状态、
+子智能体、澄清卡片和终态。
+
+Hertz/SSE 序列化使用 Sonic。SSE 断线重连、游标去重、取消模式和权限失败由
+`backend/api/handler/coze/workbench_thread_service_test.go` 覆盖。
+
+## 控制与恢复
+
+- Cancel：Hertz `CancelTaskThreadRun` -> `ApplicationService.CancelRun` ->
+  `threadService.RequestRunCancellation`，先持久化取消事实，再通过
+  `ADKCancelRegistry.Cancel` 通知活跃 Eino 执行。
+- Human resume：`ResumeTaskThreadRun` -> `ResumeHumanInteraction`，验证来源 Run、
+  interrupt 和 checkpoint 后原子创建 queued resume bundle。
+- Subagent retry：`RetryTaskThreadSubagentRun` -> `RetrySubagentRun`，根据失败或取消
+  的子 Run 创建幂等顶层 retry command bundle。
+- Checkpoint resume：`ADKCheckpointStore` 保存 Eino bytes 的内部封装；
+  `ADKExecutor.Resume` 使用 resume target 和 Eino Runner 恢复，不向 API/UI 暴露
+  checkpoint bytes。
+- Multitask rollback：RunProcessor 按持久化 interrupt/rollback 状态清理对应 Eino
+  checkpoint，并防止迟到成功覆盖已确定的取消或中断结果。
+
+## 附属数据
+
+- Memory：application/domain/repository 负责增删改、清空、恢复、导入导出和权限；
+  middleware 只通过受限 provider 召回或写入事实。
+- Artifact：MySQL 保存安全元数据，对象内容通过 Coze object storage abstraction；
+  上传、扫描、人工审核、读取、删除和恢复均有权限与审计边界。
+- Token Usage：模型回调经 collector 聚合并持久化，公共投影不暴露 provider raw
+  payload。
+- Guardrail Audit 与 MCP Runtime Audit：仅保存经过清洗的 metadata，支持权限、
+  retention 和归档策略，不保存原始请求/响应内容。
+
+## 框架职责与版本来源
+
+版本都来自当前仓库 manifest 或生成文件，不依靠记忆推断：
+
+- UI：React `~18.2.0`、React Router `^6.11.1`、browser EventSource；来源
+  `frontend/apps/coze-studio/package.json` 与对应生产源码。
+- API 合同：Thriftgo `0.4.5` 生成模型；来源
+  `backend/api/model/workbench/task/task.go` 生成头。
+- HTTP/SSE：Hertz `v0.10.2`；JSON codec 为 Sonic `v1.15.0`。
+- 后端运行：Go `1.24.0`；Run worker 使用 goroutine、context 和 ticker。
+- 持久化：GORM `v1.25.11`、GORM MySQL driver `v1.5.7`，本仓库 MySQL
+  baseline `8.4.5`。
+- Agent 内核：Eino `v0.9.9`。
+- 条件模型适配：Ark `v0.1.68`、Claude `v0.1.20`、DeepSeek `v0.1.6`、Gemini
+  `v0.1.32`、OpenAI `v0.1.13`、Qwen `v0.1.9`。
+- 条件工具适配：DuckDuckGo
+  `v2.0.0-20260630024214-84091ffbdce4`、Wikipedia
+  `v0.0.0-20260630024214-84091ffbdce4`。
+- MCP：mcp-go `v0.43.0`，适配到 Eino tools，不拥有 Run 状态机。
+- 可选观测：Prometheus client `v1.20.5`，只观测 worker、Run、模型、MCP、
+  memory、artifact 等 bounded metrics。
+- 外部入口：robfig cron `v3.0.1` 解析计划；飞书官方 Go SDK `v3.9.9` 负责长连接
+  和事件分发。二者最终都进入 agentthread。
+
+## 明确边界
+
+- LangGraph：只有兼容 HTTP/API 语义，不导入或运行 LangGraph SDK。
+- DeerFlow：只有 mode、config、prompt/behavior parity 语义，由当前 Go/Eino 实现；
+  不存在 DeerFlow runtime。
+- legacy executor：只处理历史无 runtime 标记记录和显式迁移测试；新 Run 拒绝
+  `legacy`。
+- Runtime Doctor：诊断和建议能力，不拥有状态机。
+- Rush、Rsbuild、Vitest、Atlas：构建、测试和迁移工具，不进入生产执行链。
+- K2：仍处于设计阶段，不得作为当前节点、执行边或实现依据。
+- 旧 `ChatTask`：已退役，不得作为 Workbench 当前实现入口或兼容兜底。
+
+## 更新触发
+
+修改下列任一事实时，必须同步更新本文和 JSON 合同，并重建/校验图谱：
+
+- Workbench/TaskDetail 入口或上传顺序；
+- Thrift route、HTTP handler、公开投影；
+- application/domain/repository 调用边界；
+- Run admission、claim、lease、worker、runtime selector；
+- Eino Runner、Agent、middleware、tool、MCP、checkpoint 或 event mapping；
+- cancel/resume/retry/recovery；
+- Memory、Artifact、Token、Guardrail/MCP audit；
+- 上述框架的 package、版本或 runtime scope。
+
+只改源码而不更新两份权威文件应由图谱校验器拒绝；只改其中一份权威文件也应
+拒绝。

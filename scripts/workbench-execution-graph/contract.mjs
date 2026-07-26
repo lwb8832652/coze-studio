@@ -39,6 +39,7 @@ const ALLOWED_RELATIONS = new Set([
   'adapts_to',
   'observes',
   'excludes',
+  'precedes',
 ]);
 
 const asArray = value => (Array.isArray(value) ? value : []);

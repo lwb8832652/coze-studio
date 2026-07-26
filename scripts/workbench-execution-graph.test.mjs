@@ -15,12 +15,19 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { validateContract } from './workbench-execution-graph/contract.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CONTRACT_PATH = path.join(
+  REPO_ROOT,
+  'docs/superpowers/context/workbench-execution-graph.json',
+);
 
 const makeContract = () => ({
   schema_version: 1,
@@ -184,4 +191,10 @@ test('requires test evidence for every chain', async () => {
     const result = await validateContract(contract, fixture);
     assert.match(result.errors.join('\n'), /chain_test_evidence_missing/);
   });
+});
+
+test('canonical Workbench execution contract is valid', async () => {
+  const contract = JSON.parse(await readFile(CONTRACT_PATH, 'utf8'));
+  const result = await validateContract(contract, { repoRoot: REPO_ROOT });
+  assert.deepEqual(result.errors, []);
 });

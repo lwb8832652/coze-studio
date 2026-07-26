@@ -157,6 +157,11 @@ flowchart LR
 - `adapts_to`
 - `observes`
 - `excludes`
+- `precedes`
+
+`precedes` 只表达同一已验证业务流程中的时序先后，例如上传完成后创建 Run、
+MySQL claim 完成后交给 RuntimeSelector，以及 middleware 的源码装配顺序；它不
+得伪装成函数调用关系。
 
 Graphify 可以生成推断关系，但推断关系不能满足机器合同中的必需边。
 
@@ -237,6 +242,7 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 框架节点的 `runtime_scope` 只能取：
 
 - `canonical_runtime`
+- `conditional_runtime_extension`
 - `transport_contract`
 - `persistence_runtime`
 - `integration_ingress`
@@ -336,9 +342,9 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - 每个 `canonical_runtime` 框架至少有一个生产源码符号锚点，不能只锚定依赖
   清单；
 - Eino middleware 顺序与 `adkMiddlewareOrder` 完全一致；
-- `compatibility_contract`、`historical_compatibility`、`ui_only`、
-  `optional_observability` 和 `build_or_test_only` 节点不能出现在 Run 执行器必经
-  边中。
+- `conditional_runtime_extension`、`compatibility_contract`、
+  `historical_compatibility`、`ui_only`、`optional_observability` 和
+  `build_or_test_only` 节点不能出现在 Run 执行器必经边中。
 
 `verify-derived` 必须检查：
 
