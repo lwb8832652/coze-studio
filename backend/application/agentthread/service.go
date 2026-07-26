@@ -213,13 +213,21 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}
 
 	title := taskThreadTitleWithRunConfig(req.Title, message, runConfig)
+	threadSource := req.ThreadSource
+	if threadSource == "" {
+		threadSource = ThreadSourceWeb
+	}
+	threadMetadata := strings.TrimSpace(req.ThreadMetadata)
+	if threadMetadata == "" {
+		threadMetadata = `{"source":"workbench_new_task"}`
+	}
 	if req.DeferStart {
 		threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
 			SpaceID:  req.SpaceID,
 			UserID:   req.UserID,
 			Title:    title,
-			Source:   ThreadSourceWeb,
-			Metadata: `{"source":"workbench_new_task"}`,
+			Source:   threadSource,
+			Metadata: threadMetadata,
 		})
 		if err != nil {
 			return nil, err
@@ -243,7 +251,7 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{
 		Thread: domainservice.CreateThreadRequest{
 			SpaceID: req.SpaceID, UserID: userID, Title: title,
-			Source: domainentity.ThreadSourceWeb, Metadata: `{"source":"workbench_new_task"}`,
+			Source: domainentity.ThreadSource(threadSource), Metadata: threadMetadata,
 		},
 		Run: domainservice.CreateRunRequest{
 			AssistantID: req.AssistantID, RunKind: domainentity.RunKindTask,

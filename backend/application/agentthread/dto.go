@@ -447,10 +447,13 @@ type CreateThreadResponse struct {
 }
 
 type CreateTaskThreadRequest struct {
-	SpaceID           int64
-	UserID            int64
-	Message           string
-	Title             string
+	SpaceID int64
+	UserID  int64
+	Message string
+	Title   string
+	// Zero values keep the legacy Workbench thread source and metadata.
+	ThreadMetadata    string
+	ThreadSource      ThreadSource
 	DeferStart        bool
 	AssistantID       string
 	Command           string
