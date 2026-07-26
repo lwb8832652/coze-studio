@@ -18,6 +18,12 @@
 常用入口：
 
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
+- Workbench 当前执行链：
+  `docs/superpowers/context/workbench-execution-chain.md`
+- Workbench 执行图合同：
+  `docs/superpowers/context/workbench-execution-graph.json`
+- Workbench 图谱运维：
+  `docs/superpowers/runbooks/workbench-execution-graph.md`
 - 本地调试与账号：`docs/superpowers/runbooks/local-debug-and-test.md`
 - `dev` 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox 运维：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
@@ -49,14 +55,37 @@
 ### Graphify
 
 - 只用于精选长期上下文、架构决策、关键 runbook 和活跃设计的关系查询。
-- `graphify-out/graph.json` 存在时优先查询，不重复全量构建。
-- 长期上下文变化后才做增量更新；普通局部修复不制造图谱噪声。
+- Workbench 派生目录存在时优先查询，不重复全量构建：业务意图检索使用
+  `graphify-out/query-graph.json`，执行路径和边方向审计使用
+  `graphify-out/graph.json`。该稳定目录是指向已完整校验版本的原子指针，不要
+  绕过指针直接读取 `workbench-execution-graphify-versions/`；上一有效版本由
+  `workbench-execution-graphify-previous` 指向，仅用于本地故障回滚。
+- 非 Workbench 的普通局部修复不制造图谱噪声；命中 Workbench 合同
+  `monitored_paths` 的新增、修改、重命名或删除必须同步两份权威文件并重建。
 - 不默认对整个 monorepo 建图，不提交 `graphify-out/` 产物。
 - 图谱缺失、过期或不可用时直接读取源文档，并记录缺失的图谱验证。
+- 图谱发布只能使用 `docs/superpowers/context` 下的受管目录；不得把
+  `--derived-root` 指向业务目录、仓库外目录或没有受管标记的现有目录。
+- Workbench 完整问题必须在 `query-graph.json` 命中 `query_overlay` 所需节点；
+  所需有向业务边和执行路径必须在无 overlay 的 `graph.json` 独立核验，并能经
+  `anchored_in` 到达真实 AST 文件节点。每个 current 合同节点都必须具备该桥；
+  同名文本、`retrieves` 检索边或无方向连通路径不能作为执行证据。
 
-涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，只把
-`docs/superpowers/context/workbench-chat.md` 与当前源码作为现状语料；K2 和
-历史 ChatTask plans/specs 只能按需追溯，不能用于推断当前合同。
+涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，先读
+`docs/superpowers/context/workbench-execution-chain.md`，再按
+`docs/superpowers/context/workbench-execution-graph.json` 查询当前链和源码证据；
+同时以 `workbench-chat.md` 与当前源码核实现状。任何节点、关系、顺序、框架或
+边界变化都要同步更新两份执行链权威文件，并运行：
+
+```bash
+node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
+node scripts/workbench-execution-graph.mjs build
+node scripts/workbench-execution-graph.mjs verify-derived
+```
+
+详细维护和两阶段 dev 图谱审计见
+`docs/superpowers/runbooks/workbench-execution-graph.md`。K2 和历史 ChatTask
+plans/specs 只能按需追溯，不能用于推断当前合同。
 
 ## 工作流程
 

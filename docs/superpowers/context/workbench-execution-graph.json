@@ -1,0 +1,4988 @@
+{
+  "schema_version": 1,
+  "profile": "workbench_execution_v1",
+  "authority": {
+    "contract": "docs/superpowers/context/workbench-execution-graph.json",
+    "document": "docs/superpowers/context/workbench-execution-chain.md",
+    "rule": "Explicit extracted edges and ordered chains are authoritative; generated Graphify edges are supplemental."
+  },
+  "scope": {
+    "name": "Workbench current production execution",
+    "forbidden_current_terms": ["K2", "ChatTask"],
+    "monitored_paths": [
+      "frontend/apps/coze-studio/src/pages/workbench/**",
+      "frontend/apps/coze-studio/src/pages/tasks/**",
+      "frontend/apps/coze-studio/package.json",
+      "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+      "docs/superpowers/context/workbench-chat.md",
+      "idl/workbench/task.thrift",
+      "backend/api/router/coze/api.go",
+      "backend/api/router/coze/custom_routes.go",
+      "backend/api/handler/coze/workbench_thread_service*.go",
+      "backend/api/handler/coze/langgraph_run_service*.go",
+      "backend/api/model/workbench/task/task.go",
+      "backend/application/application.go",
+      "backend/application/agentthread/**",
+      "backend/domain/agentthread/**",
+      "backend/application/scheduledtask/**",
+      "backend/domain/scheduledtask/**",
+      "backend/application/imchannel/**",
+      "backend/go.mod",
+      "docker/docker-compose.yml"
+    ],
+    "canonical_runtime": "eino_adk",
+    "queue_backend": "mysql",
+    "sensitive_content_policy": "bounded_metadata_only"
+  },
+  "nodes": [
+    {
+      "id": "frontend.workbench.handle_send",
+      "label": "Workbench Immediate Submit",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "symbol": "WorkbenchPage.handleSend",
+          "locator": "const handleSend = async (payload: WorkbenchComposerSubmitPayload) =>"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('navigates to the task execution page after send returns a task'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.task_detail.send_follow_up",
+      "label": "TaskDetail sendFollowUpMessage",
+      "layer": "frontend_entry",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "symbol": "sendFollowUpMessage",
+          "locator": "export const sendFollowUpMessage = async ({"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
+          "locator": "it('uploads files before creating a thread run'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.api.create_thread",
+      "label": "Generated CreateTaskThread client",
+      "layer": "frontend_transport",
+      "kind": "api_client",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "symbol": "createTaskThread",
+          "locator": "export const createTaskThread = workbenchTask.CreateTaskThread;"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThread",
+          "locator": "export const CreateTaskThread ="
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('navigates to the task execution page after send returns a task'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.api.upload_files",
+      "label": "uploadTaskThreadFiles",
+      "layer": "frontend_transport",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "symbol": "uploadTaskThreadFiles",
+          "locator": "export const uploadTaskThreadFiles = async ({"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('uploads selected files before starting a new canonical task run'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.api.create_run",
+      "label": "Generated CreateTaskThreadRun client",
+      "layer": "frontend_transport",
+      "kind": "api_client",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "symbol": "createTaskThreadRun",
+          "locator": "export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThreadRun",
+          "locator": "export const CreateTaskThreadRun ="
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
+          "locator": "it('submits only the current turn and lets the server rebuild thread history'"
+        }
+      ]
+    },
+    {
+      "id": "frontend.events.event_source",
+      "label": "TaskDetail Event Projection",
+      "layer": "frontend_projection",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "symbol": "useTaskThreadRunEventStream",
+          "locator": "const eventSource = new EventSource("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
+          "locator": "it('streams canonical thread run events into the execution flow'"
+        }
+      ]
+    },
+    {
+      "id": "contract.workbench_task.thrift",
+      "label": "WorkbenchTaskService Thrift contract",
+      "layer": "transport_contract",
+      "kind": "service_contract",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "idl/workbench/task.thrift",
+          "symbol": "WorkbenchTaskService",
+          "locator": "service WorkbenchTaskService {"
+        },
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "symbol": "CreateTaskThreadRequest",
+          "locator": "type CreateTaskThreadRequest struct {"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateTaskThread",
+          "locator": "export const CreateTaskThread ="
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.create_thread",
+      "label": "Hertz CreateTaskThread handler",
+      "layer": "http_handler",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "CreateTaskThread",
+          "locator": "func CreateTaskThread(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/api.go",
+          "symbol": "RegisterWorkBenchRoutes",
+          "locator": "_workbench.POST(\"/task_threads\","
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.create_run",
+      "label": "Hertz CreateTaskThreadRun handler",
+      "layer": "http_handler",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "CreateTaskThreadRun",
+          "locator": "func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/api.go",
+          "symbol": "RegisterWorkBenchRoutes",
+          "locator": "_thread_id.POST(\"/runs\","
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestCreateTaskThreadRunHandlerCreatesPendingRun"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.stream_events",
+      "label": "Hertz StreamTaskThreadRunEvents handler",
+      "layer": "http_sse",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "StreamTaskThreadRunEvents",
+          "locator": "func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/router/coze/custom_routes.go",
+          "symbol": "registerWorkBenchCustomRoutes",
+          "locator": "thread.GET(\"/run_events/stream\", handler.StreamTaskThreadRunEvents)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.cancel_run",
+      "label": "Hertz CancelTaskThreadRun handler",
+      "layer": "http_handler",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "CancelTaskThreadRun",
+          "locator": "func CancelTaskThreadRun(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestCancelTaskThreadRunHandlerTransitionsRun"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.resume_run",
+      "label": "Hertz ResumeTaskThreadRun handler",
+      "layer": "http_handler",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "ResumeTaskThreadRun",
+          "locator": "func ResumeTaskThreadRun(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun"
+        }
+      ]
+    },
+    {
+      "id": "http.workbench.retry_subagent",
+      "label": "Hertz RetryTaskThreadSubagentRun handler",
+      "layer": "http_handler",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "symbol": "RetryTaskThreadSubagentRun",
+          "locator": "func RetryTaskThreadSubagentRun(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun"
+        }
+      ]
+    },
+    {
+      "id": "compat.langgraph.create_run",
+      "label": "LangGraph-compatible Run API adapter",
+      "layer": "compatibility_api",
+      "kind": "function",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "package": "internal/http-adapter",
+      "version": "repository",
+      "version_source": {
+        "type": "text_pattern",
+        "path": "backend/api/handler/coze/langgraph_run_service.go",
+        "pattern": "func CreateLangGraphRun"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "symbol": "CreateLangGraphRun",
+          "locator": "func CreateLangGraphRun(ctx context.Context, c *app.RequestContext)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK"
+        }
+      ]
+    },
+    {
+      "id": "compat.langgraph.stateless_run",
+      "label": "LangGraph stateless createLangGraphStatelessRun",
+      "layer": "compatibility_api",
+      "kind": "function",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "symbol": "createLangGraphStatelessRun",
+          "locator": "func createLangGraphStatelessRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "compat.langgraph.stateless_backing_thread",
+      "label": "LangGraph stateless backing thread",
+      "layer": "compatibility_api",
+      "kind": "function",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "symbol": "createLangGraphStatelessBackingThread",
+          "locator": "func createLangGraphStatelessBackingThread("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "integration.scheduled.execute",
+      "label": "Scheduled AgentTaskExecutor.Execute",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "symbol": "(*AgentTaskExecutor).Execute",
+          "locator": "func (e *AgentTaskExecutor) Execute(ctx context.Context, task *entity.Task, execution *entity.Execution)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
+        }
+      ]
+    },
+    {
+      "id": "integration.scheduled.start_new",
+      "label": "Scheduled task CozeAgentRunner.StartNew",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "symbol": "(*CozeAgentRunner).StartNew",
+          "locator": "func (r *CozeAgentRunner) StartNew("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters_test.go",
+          "locator": "func TestCozeAgentRunnerMapsScheduledTaskIntoAgentThread"
+        }
+      ]
+    },
+    {
+      "id": "integration.scheduled.start_in_thread",
+      "label": "Scheduled task CozeAgentRunner.StartInThread",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "symbol": "(*CozeAgentRunner).StartInThread",
+          "locator": "func (r *CozeAgentRunner) StartInThread("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
+        }
+      ]
+    },
+    {
+      "id": "integration.feishu.process_event",
+      "label": "Feishu RuntimeManager.processEvent",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/imchannel/runtime.go",
+          "symbol": "(*RuntimeManager).processEvent",
+          "locator": "func (m *RuntimeManager) processEvent(ctx context.Context, active *activeChannel, event *domain.Event)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/runtime_test.go",
+          "locator": "func TestOfficialChannelFactoryConfiguresEventDispatcher"
+        }
+      ]
+    },
+    {
+      "id": "integration.feishu.agent_execute",
+      "label": "IM AgentRunner.Execute",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "symbol": "(*AgentRunner).Execute",
+          "locator": "func (r *AgentRunner) Execute("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner_test.go",
+          "locator": "func TestAgentRunnerFollowUpProvidesValidRunInput"
+        }
+      ]
+    },
+    {
+      "id": "integration.feishu.start_run",
+      "label": "IM AgentRunner.startRun",
+      "layer": "integration_ingress",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "symbol": "(*AgentRunner).startRun",
+          "locator": "func (r *AgentRunner) startRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner_test.go",
+          "locator": "func TestAgentRunnerFollowUpProvidesValidRunInput"
+        }
+      ]
+    },
+    {
+      "id": "application.create_thread",
+      "label": "ApplicationService.CreateThread",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).CreateThread",
+          "locator": "func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThreadRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateThreadReturnsTaskSummary"
+        }
+      ]
+    },
+    {
+      "id": "application.create_task_thread",
+      "label": "ApplicationService.CreateTaskThread",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).CreateTaskThread",
+          "locator": "func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTaskThreadRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateTaskThreadPersistsInitialAggregateAtomically"
+        }
+      ]
+    },
+    {
+      "id": "application.create_run",
+      "label": "ApplicationService.CreateRun",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).CreateRun",
+          "locator": "func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCreateTopLevelRunUsesAdmissionBundleAndCancelsSupersededADK"
+        }
+      ]
+    },
+    {
+      "id": "application.append_run_event",
+      "label": "ApplicationService.AppendRunEvent",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).AppendRunEvent",
+          "locator": "func (s *ApplicationService) AppendRunEvent(ctx context.Context, req *AppendRunEventRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationAppendRunEventMapsDomainEvent"
+        }
+      ]
+    },
+    {
+      "id": "application.cancel_run",
+      "label": "ApplicationService.CancelRun",
+      "layer": "application_control",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).CancelRun",
+          "locator": "func (s *ApplicationService) CancelRun(ctx context.Context, req *UpdateRunStatusRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCancelRunSignalsActiveADKExecution"
+        }
+      ]
+    },
+    {
+      "id": "application.resume_human",
+      "label": "ApplicationService.ResumeHumanInteraction",
+      "layer": "application_control",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/human_interaction_resume.go",
+          "symbol": "(*ApplicationService).ResumeHumanInteraction",
+          "locator": "func (s *ApplicationService) ResumeHumanInteraction("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+        }
+      ]
+    },
+    {
+      "id": "application.retry_subagent",
+      "label": "ApplicationService.RetrySubagentRun",
+      "layer": "application_control",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/subagent_retry.go",
+          "symbol": "(*ApplicationService).RetrySubagentRun",
+          "locator": "func (s *ApplicationService) RetrySubagentRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun"
+        }
+      ]
+    },
+    {
+      "id": "application.memory",
+      "label": "Application memory operations",
+      "layer": "application_data",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).ListMemories",
+          "locator": "func (s *ApplicationService) ListMemories(ctx context.Context, req *ListMemoriesRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationMemoryMethodsMapDomainMemories"
+        }
+      ]
+    },
+    {
+      "id": "application.artifact",
+      "label": "Application artifact operations",
+      "layer": "application_data",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).ListArtifacts",
+          "locator": "func (s *ApplicationService) ListArtifacts("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationListArtifactsMapsDomainArtifacts"
+        }
+      ]
+    },
+    {
+      "id": "application.token_usage",
+      "label": "Application token usage operations",
+      "layer": "application_data",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).RecordTokenUsage",
+          "locator": "func (s *ApplicationService) RecordTokenUsage(ctx context.Context, req *RecordTokenUsageRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTokenUsageMethodsMapDomainUsage"
+        }
+      ]
+    },
+    {
+      "id": "application.guardrail_audit",
+      "label": "Application guardrail audit",
+      "layer": "application_data",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).ListGuardrailAuditEvents",
+          "locator": "func (s *ApplicationService) ListGuardrailAuditEvents("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/guardrail_audit_test.go",
+          "locator": "func TestApplicationListGuardrailAuditEventsReturnsMetadataOnlyPage"
+        }
+      ]
+    },
+    {
+      "id": "application.mcp_runtime_audit",
+      "label": "Application MCP runtime audit",
+      "layer": "application_data",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).ListMCPRuntimeAuditEvents",
+          "locator": "func (s *ApplicationService) ListMCPRuntimeAuditEvents("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_runtime_audit_test.go",
+          "locator": "func TestApplicationListMCPRuntimeAuditEventsReturnsMetadataOnlyPage"
+        }
+      ]
+    },
+    {
+      "id": "domain.create_thread_atomic",
+      "label": "threadService.CreateThreadRunMessage",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).CreateThreadRunMessage",
+          "locator": "func (s *threadService) CreateThreadRunMessage("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestCreateThreadRunMessageCreatesOneAtomicAggregate"
+        }
+      ]
+    },
+    {
+      "id": "domain.create_run_bundle",
+      "label": "threadService.CreateRunBundle",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).CreateRunBundle",
+          "locator": "func (s *threadService) CreateRunBundle("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestCreateRunBundleBindsMessageAndEventToGeneratedRun"
+        }
+      ]
+    },
+    {
+      "id": "domain.append_run_event",
+      "label": "threadService.AppendRunEvent",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).AppendRunEvent",
+          "locator": "func (s *threadService) AppendRunEvent(ctx context.Context, req *AppendRunEventRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestAppendRunEvent"
+        }
+      ]
+    },
+    {
+      "id": "domain.claim_pending_runs",
+      "label": "threadService.ClaimPendingRuns",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).ClaimPendingRuns",
+          "locator": "func (s *threadService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestClaimPendingRunsRequiresWorkerID"
+        }
+      ]
+    },
+    {
+      "id": "domain.request_cancellation",
+      "label": "threadService.RequestRunCancellation",
+      "layer": "domain",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "symbol": "(*threadService).RequestRunCancellation",
+          "locator": "func (s *threadService) RequestRunCancellation("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestRequestRunCancellationPersistsEventAndReturnsPreviousStatus"
+        }
+      ]
+    },
+    {
+      "id": "repository.create_thread_bundle",
+      "label": "MySQL CreateThreadBundle",
+      "layer": "repository",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).CreateThreadBundle",
+          "locator": "func (r *threadRepository) CreateThreadBundle("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGet"
+        }
+      ]
+    },
+    {
+      "id": "repository.create_run_bundle",
+      "label": "MySQL CreateRunBundle",
+      "layer": "repository",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).CreateRunBundle",
+          "locator": "func (r *threadRepository) CreateRunBundle("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ]
+    },
+    {
+      "id": "repository.create_run_event",
+      "label": "MySQL CreateRunEvent",
+      "layer": "repository",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).CreateRunEvent",
+          "locator": "func (r *threadRepository) CreateRunEvent(ctx context.Context, event *entity.RunEvent)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ]
+    },
+    {
+      "id": "repository.claim_pending_runs",
+      "label": "MySQL ClaimPendingRuns with lease",
+      "layer": "repository",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).ClaimPendingRuns",
+          "locator": "func (r *threadRepository) ClaimPendingRuns(ctx context.Context, req ClaimPendingRunsRequest)"
+        },
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "clause.Locking{Strength: \"UPDATE\", Options: \"SKIP LOCKED\"}"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ],
+      "bounded_metadata": {
+        "queue": "run rows",
+        "claim": "SELECT FOR UPDATE SKIP LOCKED",
+        "fence": "lease_owner + lease_token + execution_generation"
+      }
+    },
+    {
+      "id": "repository.memory",
+      "label": "MySQL memory repository",
+      "layer": "repository",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).ListMemories",
+          "locator": "func (r *threadRepository) ListMemories(ctx context.Context, req ListMemoriesRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestMemorySearchLikeConditionUsesMySQLSafeEscape"
+        }
+      ]
+    },
+    {
+      "id": "repository.artifact",
+      "label": "MySQL artifact repository",
+      "layer": "repository",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).ListArtifacts",
+          "locator": "func (r *threadRepository) ListArtifacts("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestArtifactRepositoryUpsertsByFileAndListsByThread"
+        }
+      ]
+    },
+    {
+      "id": "repository.token_usage",
+      "label": "MySQL token usage repository",
+      "layer": "repository",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "symbol": "(*threadRepository).CreateTokenUsage",
+          "locator": "func (r *threadRepository) CreateTokenUsage(ctx context.Context, usage *entity.TokenUsage)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTokenUsageMethodsMapDomainUsage"
+        }
+      ]
+    },
+    {
+      "id": "repository.guardrail_audit",
+      "label": "MySQL guardrail audit repository",
+      "layer": "repository",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/guardrail_audit.go",
+          "symbol": "(*threadRepository).ListGuardrailAuditEvents",
+          "locator": "func (r *threadRepository) ListGuardrailAuditEvents("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/guardrail_audit_test.go",
+          "locator": "func TestApplicationGuardrailAuditRecorderPersistsContentFreeDecision"
+        }
+      ]
+    },
+    {
+      "id": "repository.mcp_runtime_audit",
+      "label": "MySQL MCP runtime audit repository",
+      "layer": "repository",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mcp_runtime_audit.go",
+          "symbol": "(*threadRepository).ListMCPRuntimeAuditEvents",
+          "locator": "func (r *threadRepository) ListMCPRuntimeAuditEvents("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_runtime_audit_test.go",
+          "locator": "func TestApplicationADKMCPRuntimeAuditRecorderPersistsContentFreeRecord"
+        }
+      ]
+    },
+    {
+      "id": "worker.run_once",
+      "label": "RunWorker.RunOnce",
+      "layer": "worker",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/worker.go",
+          "symbol": "(*RunWorker).RunOnce",
+          "locator": "func (w *RunWorker) RunOnce(ctx context.Context) RunProcessResult"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/worker_test.go",
+          "locator": "func TestRunWorkerRunOnceDelegatesToProcessor"
+        }
+      ]
+    },
+    {
+      "id": "worker.process_pending",
+      "label": "RunProcessor.ProcessPendingRunsWithResult",
+      "layer": "worker",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "symbol": "(*RunProcessor).ProcessPendingRunsWithResult",
+          "locator": "func (p *RunProcessor) ProcessPendingRunsWithResult(ctx context.Context) (RunProcessResult, error)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorCompletesClaimedRunWithAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "application.claim_pending_runs",
+      "label": "ApplicationService.ClaimPendingRuns",
+      "layer": "application",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "symbol": "(*ApplicationService).ClaimPendingRuns",
+          "locator": "func (s *ApplicationService) ClaimPendingRuns(ctx context.Context, req *ClaimPendingRunsRequest)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationClaimPendingRunsMapsDomainRuns"
+        }
+      ]
+    },
+    {
+      "id": "runtime.new_run_policy",
+      "label": "normalizeNewDeerFlowRunConfig new-run policy",
+      "layer": "runtime_selection",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "symbol": "normalizeNewDeerFlowRunConfig",
+          "locator": "func normalizeNewDeerFlowRunConfig("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "func TestNormalizeNewDeerFlowRunConfigRejectsLegacyRuntime"
+        }
+      ]
+    },
+    {
+      "id": "runtime.selector.execute",
+      "label": "RuntimeSelector.Execute",
+      "layer": "runtime_selection",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_selector.go",
+          "symbol": "(*RuntimeSelector).Execute",
+          "locator": "func (s *RuntimeSelector) Execute(ctx context.Context, run *RunSummary)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_selector_test.go",
+          "locator": "func TestRuntimeSelectorUsesCanonicalEinoRuntimeMarker"
+        }
+      ]
+    },
+    {
+      "id": "runtime.adk_executor.execute",
+      "label": "ADKExecutor.Execute",
+      "layer": "agent_runtime",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Execute",
+          "locator": "func (e *ADKExecutor) Execute("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "runtime.adk_executor.resume",
+      "label": "Workbench ADKExecutor.Resume",
+      "layer": "agent_runtime",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "(*ADKExecutor).Resume",
+          "locator": "func (e *ADKExecutor) Resume("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorInterruptsAndResumesWithTargets"
+        }
+      ]
+    },
+    {
+      "id": "runtime.adk_agent_factory.build",
+      "label": "ApplicationADKAgentFactory.Build",
+      "layer": "agent_runtime",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "symbol": "(*ApplicationADKAgentFactory).Build",
+          "locator": "func (f *ApplicationADKAgentFactory) Build("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent"
+        }
+      ]
+    },
+    {
+      "id": "runtime.eino.runner",
+      "label": "Eino ADK Runner",
+      "layer": "agent_runtime",
+      "kind": "sdk_primitive",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "symbol": "adk.NewRunner",
+          "locator": "runner := adk.NewRunner("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "runtime.eino.chat_model_agent",
+      "label": "Eino ChatModelAgent",
+      "layer": "agent_runtime",
+      "kind": "sdk_primitive",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "symbol": "adk.NewChatModelAgent",
+          "locator": "agent, err := adk.NewChatModelAgent("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent"
+        }
+      ]
+    },
+    {
+      "id": "runtime.map_adk_event",
+      "label": "MapADKEvent",
+      "layer": "event_mapping",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_event_mapper.go",
+          "symbol": "MapADKEvent",
+          "locator": "func MapADKEvent(ctx context.Context, threadID, runID int64, event *adk.AgentEvent)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_event_mapper_test.go",
+          "locator": "func TestMapADKEvent"
+        }
+      ]
+    },
+    {
+      "id": "runtime.event_sink.emit",
+      "label": "applicationRunEventSink.EmitRunEvent",
+      "layer": "event_sink",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/event_sink.go",
+          "symbol": "applicationRunEventSink.EmitRunEvent",
+          "locator": "func (s applicationRunEventSink) EmitRunEvent(ctx context.Context, event RunEvent)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "runtime.cancel_registry",
+      "label": "ADKCancelRegistry.Cancel",
+      "layer": "runtime_control",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_cancel.go",
+          "symbol": "(*ADKCancelRegistry).Cancel",
+          "locator": "func (r *ADKCancelRegistry) Cancel("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_cancel_test.go",
+          "locator": "func TestADKCancelRegistryCancelsRegisteredExecution"
+        }
+      ]
+    },
+    {
+      "id": "runtime.checkpoint_store",
+      "label": "Workbench ADK Checkpoint Store",
+      "layer": "runtime_state",
+      "kind": "capability",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_checkpoint.go",
+          "symbol": "(*ADKCheckpointStore).Set",
+          "locator": "func (s *ADKCheckpointStore) Set(ctx context.Context, checkpointID string, checkpoint []byte)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_checkpoint_test.go",
+          "locator": "func TestADKCheckpoint"
+        }
+      ]
+    },
+    {
+      "id": "runtime.lease_recovery",
+      "label": "RunLeaseRecoveryProcessor.RecoverExpiredRunLeases",
+      "layer": "runtime_recovery",
+      "kind": "function",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "symbol": "(*RunLeaseRecoveryProcessor).RecoverExpiredRunLeases",
+          "locator": "func (p *RunLeaseRecoveryProcessor) RecoverExpiredRunLeases("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+        }
+      ]
+    },
+    {
+      "id": "runtime.multitask_rollback",
+      "label": "Durable multitask rollback finalization",
+      "layer": "runtime_recovery",
+      "kind": "control_path",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "symbol": "(*RunProcessor).processRun",
+          "locator": "func (p *RunProcessor) processRun("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback"
+        }
+      ]
+    },
+    {
+      "id": "compat.deerflow_config",
+      "label": "DeerFlow parity and configuration semantics",
+      "layer": "compatibility",
+      "kind": "configuration_contract",
+      "production_status": "current",
+      "runtime_scope": "compatibility_contract",
+      "package": "internal/deerflow-parity",
+      "version": "repository",
+      "version_source": {
+        "type": "text_pattern",
+        "path": "backend/application/agentthread/runtime_config.go",
+        "pattern": "type DeerFlowRuntimeConfig struct"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "symbol": "normalizeNewDeerFlowRunConfig",
+          "locator": "func normalizeNewDeerFlowRunConfig("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "func TestNormalizeNewDeerFlowRunConfigCanonicalizesEinoAndPreservesFeatures"
+        }
+      ]
+    },
+    {
+      "id": "historical.legacy_runtime",
+      "label": "Historical unmarked-run legacy executor",
+      "layer": "historical_compatibility",
+      "kind": "runtime_boundary",
+      "production_status": "current",
+      "runtime_scope": "historical_compatibility",
+      "package": "internal/legacy-agent-runner",
+      "version": "historical-read-only",
+      "version_source": {
+        "type": "text_pattern",
+        "path": "backend/application/agentthread/runtime_selector.go",
+        "pattern": "RuntimeModeLegacy  RuntimeMode = \"legacy\""
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_selector.go",
+          "symbol": "RuntimeModeLegacy",
+          "locator": "RuntimeModeLegacy  RuntimeMode = \"legacy\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_selector_test.go",
+          "locator": "func TestRuntimeSelectorKeepsUnmarkedHistoricalRunsOnLegacy"
+        }
+      ]
+    },
+    {
+      "id": "framework.react",
+      "label": "React",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "ui_only",
+      "package": "react",
+      "version": "~18.2.0",
+      "version_source": {
+        "type": "json_dependency",
+        "path": "frontend/apps/coze-studio/package.json",
+        "name": "react"
+      },
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "import { useState } from 'react';"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('navigates to the task execution page after send returns a task'"
+        }
+      ]
+    },
+    {
+      "id": "framework.react_router",
+      "label": "React Router",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "ui_only",
+      "package": "react-router-dom",
+      "version": "^6.11.1",
+      "version_source": {
+        "type": "json_dependency",
+        "path": "frontend/apps/coze-studio/package.json",
+        "name": "react-router-dom"
+      },
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "import { useLocation, useNavigate, useParams } from 'react-router-dom';"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('navigates to the task execution page after send returns a task'"
+        }
+      ]
+    },
+    {
+      "id": "framework.browser_eventsource",
+      "label": "Browser EventSource",
+      "layer": "framework",
+      "kind": "platform_api",
+      "production_status": "current",
+      "runtime_scope": "ui_only",
+      "package": "browser:EventSource",
+      "version": "platform",
+      "version_source": { "type": "platform", "name": "browser" },
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "locator": "const eventSource = new EventSource("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
+          "locator": "it('streams canonical thread run events into the execution flow'"
+        }
+      ]
+    },
+    {
+      "id": "framework.thriftgo",
+      "label": "Thriftgo generated contract",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "package": "github.com/cloudwego/thriftgo",
+      "version": "0.4.5",
+      "version_source": {
+        "type": "text_pattern",
+        "path": "backend/api/model/workbench/task/task.go",
+        "pattern": "Code generated by thriftgo \\(([^)]+)\\)",
+        "group": 1
+      },
+      "source_anchors": [
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
+        }
+      ],
+      "evidence": [
+        {
+          "path": "idl/workbench/task.thrift",
+          "locator": "service WorkbenchTaskService {"
+        }
+      ]
+    },
+    {
+      "id": "framework.hertz",
+      "label": "CloudWeGo Hertz",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "package": "github.com/cloudwego/hertz",
+      "version": "v0.10.2",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/hertz"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "\"github.com/cloudwego/hertz/pkg/protocol/sse\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+        }
+      ]
+    },
+    {
+      "id": "framework.go",
+      "label": "Go runtime and stdlib worker loop",
+      "layer": "framework",
+      "kind": "language_runtime",
+      "production_status": "current",
+      "runtime_scope": "canonical_runtime",
+      "package": "go",
+      "version": "1.24.0",
+      "version_source": { "type": "go_directive", "path": "backend/go.mod" },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/worker.go",
+          "locator": "ticker := time.NewTicker(w.interval)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/worker_test.go",
+          "locator": "func TestRunWorkerRunOnceDelegatesToProcessor"
+        }
+      ]
+    },
+    {
+      "id": "framework.gorm",
+      "label": "GORM",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "persistence_runtime",
+      "package": "gorm.io/gorm",
+      "version": "v1.25.11",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "gorm.io/gorm"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "\"gorm.io/gorm/clause\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ]
+    },
+    {
+      "id": "framework.mysql_driver",
+      "label": "GORM MySQL driver",
+      "layer": "framework",
+      "kind": "driver",
+      "production_status": "current",
+      "runtime_scope": "persistence_runtime",
+      "package": "gorm.io/driver/mysql",
+      "version": "v1.5.7",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "gorm.io/driver/mysql"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "db *gorm.DB"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGet"
+        }
+      ]
+    },
+    {
+      "id": "framework.mysql_server",
+      "label": "MySQL server baseline",
+      "layer": "framework",
+      "kind": "database",
+      "production_status": "current",
+      "runtime_scope": "persistence_runtime",
+      "package": "mysql",
+      "version": "8.4.5",
+      "version_source": {
+        "type": "text_pattern",
+        "path": "docker/docker-compose.yml",
+        "pattern": "image: mysql:([^\\s]+)",
+        "group": 1
+      },
+      "source_anchors": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "Options: \"SKIP LOCKED\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql_test.go",
+          "locator": "func TestThreadRepositoryCreateAndGetRun"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino",
+      "label": "CloudWeGo Eino ADK",
+      "layer": "framework",
+      "kind": "agent_framework",
+      "production_status": "current",
+      "runtime_scope": "canonical_runtime",
+      "package": "github.com/cloudwego/eino",
+      "version": "v0.9.9",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "runner := adk.NewRunner("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_ark",
+      "label": "Eino-ext Ark model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/ark",
+      "version": "v0.1.68",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/ark"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "arkmodel \"github.com/cloudwego/eino-ext/components/model/ark\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_claude",
+      "label": "Eino-ext Claude model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/claude",
+      "version": "v0.1.20",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/claude"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "claudemodel \"github.com/cloudwego/eino-ext/components/model/claude\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryConfiguresModelFailoverCandidates"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_deepseek",
+      "label": "Eino-ext DeepSeek model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/deepseek",
+      "version": "v0.1.6",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/deepseek"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "deepseekmodel \"github.com/cloudwego/eino-ext/components/model/deepseek\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryConfiguresModelRetry"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_gemini",
+      "label": "Eino-ext Gemini model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/gemini",
+      "version": "v0.1.32",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/gemini"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "geminimodel \"github.com/cloudwego/eino-ext/components/model/gemini\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryProjectsReasoningOptions"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_openai",
+      "label": "Eino-ext OpenAI model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/openai",
+      "version": "v0.1.13",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/openai"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "openaimodel \"github.com/cloudwego/eino-ext/components/model/openai\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryBuildsRunnableSchemaMessageAgent"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_model_qwen",
+      "label": "Eino-ext Qwen model adapter",
+      "layer": "framework_extension",
+      "kind": "model_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/model/qwen",
+      "version": "v0.1.9",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/model/qwen"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "qwenmodel \"github.com/cloudwego/eino-ext/components/model/qwen\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory_test.go",
+          "locator": "func TestADKAgentFactoryPassesProviderCapabilitiesToMiddleware"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_tool_duckduckgo",
+      "label": "Eino-ext DuckDuckGo tool adapter",
+      "layer": "framework_extension",
+      "kind": "tool_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2",
+      "version": "v2.0.0-20260630024214-84091ffbdce4",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_duckduckgo_web_search_backend.go",
+          "locator": "duckduckgo \"github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_web_tools_test.go",
+          "locator": "func TestADKDuckDuckGoWebSearchBackendNormalizesResults"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_ext_tool_wikipedia",
+      "label": "Eino-ext Wikipedia tool adapter",
+      "layer": "framework_extension",
+      "kind": "tool_adapter",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/cloudwego/eino-ext/components/tool/wikipedia",
+      "version": "v0.0.0-20260630024214-84091ffbdce4",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/cloudwego/eino-ext/components/tool/wikipedia"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_wikipedia_web_search_backend.go",
+          "locator": "\"github.com/cloudwego/eino-ext/components/tool/wikipedia\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_web_tools_test.go",
+          "locator": "func TestADKWikipediaWebSearchBackendNormalizesResults"
+        }
+      ]
+    },
+    {
+      "id": "framework.mcp_go",
+      "label": "mcp-go transport client adapted to Eino tools",
+      "layer": "framework_extension",
+      "kind": "mcp_sdk",
+      "production_status": "current",
+      "runtime_scope": "conditional_runtime_extension",
+      "package": "github.com/mark3labs/mcp-go",
+      "version": "v0.43.0",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/mark3labs/mcp-go"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_remote_eino_runner.go",
+          "locator": "mcpclient \"github.com/mark3labs/mcp-go/client\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_remote_eino_runner_test.go",
+          "locator": "func TestADKMCPRuntimeRemoteEinoRunnerInvokesTargetTool"
+        }
+      ]
+    },
+    {
+      "id": "framework.prometheus",
+      "label": "Prometheus client",
+      "layer": "framework",
+      "kind": "observability_sdk",
+      "production_status": "current",
+      "runtime_scope": "optional_observability",
+      "package": "github.com/prometheus/client_golang",
+      "version": "v1.20.5",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/prometheus/client_golang"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/runtime_prometheus_metrics.go",
+          "locator": "\"github.com/prometheus/client_golang/prometheus\""
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_prometheus_metrics_test.go",
+          "locator": "func TestRuntimePrometheusMetricsCollectorRecordsRunTerminalSafely"
+        }
+      ]
+    },
+    {
+      "id": "framework.sonic",
+      "label": "Sonic JSON codec",
+      "layer": "framework",
+      "kind": "codec",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "package": "github.com/bytedance/sonic",
+      "version": "v1.15.0",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/bytedance/sonic"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "payload, err := sonic.Marshal(taskThreadRunEventToAPI(event))"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+        }
+      ]
+    },
+    {
+      "id": "framework.robfig_cron",
+      "label": "robfig cron",
+      "layer": "framework",
+      "kind": "scheduler_parser",
+      "production_status": "current",
+      "runtime_scope": "integration_ingress",
+      "package": "github.com/robfig/cron/v3",
+      "version": "v3.0.1",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/robfig/cron/v3"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/domain/scheduledtask/service/schedule.go",
+          "locator": "parsed, parseErr := cron.ParseStandard("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters_test.go",
+          "locator": "func TestCozeAgentRunnerMapsScheduledTaskIntoAgentThread"
+        }
+      ]
+    },
+    {
+      "id": "framework.feishu_sdk",
+      "label": "Feishu official Go SDK",
+      "layer": "framework",
+      "kind": "integration_sdk",
+      "production_status": "current",
+      "runtime_scope": "integration_ingress",
+      "package": "github.com/larksuite/oapi-sdk-go/v3",
+      "version": "v3.9.9",
+      "version_source": {
+        "type": "go_module",
+        "path": "backend/go.mod",
+        "name": "github.com/larksuite/oapi-sdk-go/v3"
+      },
+      "source_anchors": [
+        {
+          "path": "backend/application/imchannel/runtime.go",
+          "locator": "wsClient := larkws.NewClient("
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/runtime_test.go",
+          "locator": "func TestOfficialChannelFactoryConfiguresEventDispatcher"
+        }
+      ]
+    },
+    {
+      "id": "internal.object_storage",
+      "label": "Coze object storage abstraction",
+      "layer": "persistence",
+      "kind": "internal_service",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/application.go",
+          "locator": "ObjectStorage:   basicServices.infra.OSS,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_artifact_tools_test.go",
+          "locator": "func TestApplicationPresentOutputFilesRegistersArtifactsAndEmitsSafeEvent"
+        }
+      ]
+    },
+    {
+      "id": "middleware.reduction",
+      "label": "reduction",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareReduction,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.filesystem",
+      "label": "filesystem",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareFilesystem,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.uploaded_files",
+      "label": "uploaded_files",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareUploadedFiles,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.patch_tool_calls",
+      "label": "patchtoolcalls",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewarePatchTools,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.tool_error_normalization",
+      "label": "tool_error_normalization",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareToolErrorNormalization,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.memory",
+      "label": "memory",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareMemory,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.skill",
+      "label": "skill",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSkill,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.transcript",
+      "label": "transcript",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareTranscript,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.summarization",
+      "label": "summarization",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSummarization,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.plan_task",
+      "label": "plantask",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewarePlanTask,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.provider_capability",
+      "label": "provider_capability",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareProviderCapability,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.multimodal_budget",
+      "label": "multimodalbudget",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareMultimodal,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.tool_search",
+      "label": "toolsearch",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareToolSearch,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.parity_state",
+      "label": "parity_state",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareParityState,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.context_budget",
+      "label": "contextbudget",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareContextBudget,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.safety_finish",
+      "label": "safety_finish",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSafetyFinish,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.subagent_limit",
+      "label": "subagent_limit",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSubagentLimit,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "middleware.semantic_loop",
+      "label": "semantic_loop",
+      "layer": "eino_middleware",
+      "kind": "middleware",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSemanticLoop,"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge.workbench_calls_create_thread",
+      "from": "frontend.workbench.handle_send",
+      "to": "frontend.api.create_thread",
+      "relation": "calls",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const response = await createTaskThread({"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_thread_routes_handler",
+      "from": "frontend.api.create_thread",
+      "to": "http.workbench.create_thread",
+      "relation": "routes_to",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "idl/workbench/task.thrift",
+          "locator": "CreateTaskThreadResponse CreateTaskThread(1: CreateTaskThreadRequest request)("
+        }
+      ]
+    },
+    {
+      "id": "edge.create_thread_handler_calls_app",
+      "from": "http.workbench.create_thread",
+      "to": "application.create_task_thread",
+      "relation": "calls",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_thread_app_delegates_domain",
+      "from": "application.create_task_thread",
+      "to": "domain.create_thread_atomic",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_immediate", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_thread_domain_persists_bundle",
+      "from": "domain.create_thread_atomic",
+      "to": "repository.create_thread_bundle",
+      "relation": "persists_via",
+      "chain_ids": ["entry.workbench_immediate", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "result, err := s.repo.CreateThreadBundle(ctx, repository.CreateThreadBundleRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.deferred_thread_precedes_upload",
+      "from": "application.create_task_thread",
+      "to": "frontend.api.upload_files",
+      "relation": "precedes",
+      "chain_ids": ["entry.workbench_deferred"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        }
+      ]
+    },
+    {
+      "id": "edge.upload_precedes_create_run",
+      "from": "frontend.api.upload_files",
+      "to": "frontend.api.create_run",
+      "relation": "precedes",
+      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "const runResponse = await createTaskThreadRun({"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_routes_handler",
+      "from": "frontend.api.create_run",
+      "to": "http.workbench.create_run",
+      "relation": "routes_to",
+      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "idl/workbench/task.thrift",
+          "locator": "CreateTaskThreadRunResponse CreateTaskThreadRun(1: CreateTaskThreadRunRequest request)("
+        }
+      ]
+    },
+    {
+      "id": "edge.followup_calls_upload",
+      "from": "frontend.task_detail.send_follow_up",
+      "to": "frontend.api.upload_files",
+      "relation": "calls",
+      "chain_ids": ["entry.task_detail_followup"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_calls_app_create_run",
+      "from": "compat.langgraph.create_run",
+      "to": "application.create_run",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.langgraph_compat", "boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, createReq)"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_stateless_calls_backing_thread",
+      "from": "compat.langgraph.stateless_run",
+      "to": "compat.langgraph.stateless_backing_thread",
+      "relation": "calls",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "thread, err := createLangGraphStatelessBackingThread(ctx, req.Metadata)"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_backing_calls_create_thread",
+      "from": "compat.langgraph.stateless_backing_thread",
+      "to": "application.create_thread",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "return appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.langgraph_stateless_thread_precedes_run",
+      "from": "application.create_thread",
+      "to": "application.create_run",
+      "relation": "precedes",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "return appagentthread.SVC.CreateRun(ctx, createReq)"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_execute_routes_new",
+      "from": "integration.scheduled.execute",
+      "to": "integration.scheduled.start_new",
+      "relation": "routes_to",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "locator": "ref, err = e.Runner.StartNew(ctx, request)"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_calls_create_thread",
+      "from": "integration.scheduled.start_new",
+      "to": "application.create_task_thread",
+      "relation": "calls",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "locator": "resp, err := r.Client.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_execute_routes_existing",
+      "from": "integration.scheduled.execute",
+      "to": "integration.scheduled.start_in_thread",
+      "relation": "routes_to",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor.go",
+          "locator": "ref, err = e.Runner.StartInThread(ctx, task.ConversationID, request)"
+        }
+      ]
+    },
+    {
+      "id": "edge.scheduled_existing_calls_create_run",
+      "from": "integration.scheduled.start_in_thread",
+      "to": "application.create_run",
+      "relation": "calls",
+      "chain_ids": ["entry.scheduled_task"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/scheduledtask/coze_adapters.go",
+          "locator": "resp, err := r.Client.CreateRun(ctx, &appagentthread.CreateRunRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_event_calls_agent",
+      "from": "integration.feishu.process_event",
+      "to": "integration.feishu.agent_execute",
+      "relation": "calls",
+      "chain_ids": ["entry.feishu_message"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/runtime.go",
+          "locator": "answer, err := m.runner.Execute(ctx, active.config, event.EventKey, payload)"
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_agent_calls_start_run",
+      "from": "integration.feishu.agent_execute",
+      "to": "integration.feishu.start_run",
+      "relation": "calls",
+      "chain_ids": ["entry.feishu_message"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "locator": "r.startRun("
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_start_calls_create_thread",
+      "from": "integration.feishu.start_run",
+      "to": "application.create_task_thread",
+      "relation": "calls",
+      "chain_ids": ["entry.feishu_message"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "locator": "response, err := r.client.CreateTaskThread(ctx, &agentthread.CreateTaskThreadRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_start_calls_create_run",
+      "from": "integration.feishu.start_run",
+      "to": "application.create_run",
+      "relation": "calls",
+      "chain_ids": ["entry.feishu_message"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner.go",
+          "locator": "response, err := r.client.CreateRun(ctx, &agentthread.CreateRunRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_handler_calls_app",
+      "from": "http.workbench.create_run",
+      "to": "application.create_run",
+      "relation": "calls",
+      "chain_ids": ["run.atomic_create"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, &appagentthread.CreateRunRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_app_delegates_domain",
+      "from": "application.create_run",
+      "to": "domain.create_run_bundle",
+      "relation": "delegates_to",
+      "chain_ids": ["run.atomic_create"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.create_run_domain_persists_bundle",
+      "from": "domain.create_run_bundle",
+      "to": "repository.create_run_bundle",
+      "relation": "persists_via",
+      "chain_ids": ["run.atomic_create"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.worker_calls_processor",
+      "from": "worker.run_once",
+      "to": "worker.process_pending",
+      "relation": "calls",
+      "chain_ids": ["run.pending_worker_execute"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/worker.go",
+          "locator": "result, err := w.processor.ProcessPendingRunsWithResult(ctx)"
+        }
+      ]
+    },
+    {
+      "id": "edge.processor_calls_claim",
+      "from": "worker.process_pending",
+      "to": "application.claim_pending_runs",
+      "relation": "calls",
+      "chain_ids": ["run.pending_worker_execute"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "locator": "claimed, err := p.app.ClaimPendingRuns(ctx, &ClaimPendingRunsRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.app_claim_delegates_domain",
+      "from": "application.claim_pending_runs",
+      "to": "domain.claim_pending_runs",
+      "relation": "delegates_to",
+      "chain_ids": ["run.pending_worker_execute"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "runs, err := s.ThreadSVC.ClaimPendingRuns(ctx, &domainservice.ClaimPendingRunsRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.domain_claim_persists_repo",
+      "from": "domain.claim_pending_runs",
+      "to": "repository.claim_pending_runs",
+      "relation": "persists_via",
+      "chain_ids": ["run.pending_worker_execute"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "return s.repo.ClaimPendingRuns(ctx, repository.ClaimPendingRunsRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.claimed_run_precedes_selector",
+      "from": "repository.claim_pending_runs",
+      "to": "runtime.selector.execute",
+      "relation": "precedes",
+      "chain_ids": ["run.pending_worker_execute"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "locator": "result, err := p.executor.Execute(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.selector_executes_adk",
+      "from": "runtime.selector.execute",
+      "to": "runtime.adk_executor.execute",
+      "relation": "executes",
+      "chain_ids": [
+        "run.pending_worker_execute",
+        "framework.canonical_stack",
+        "boundary.runtime_compatibility"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_selector.go",
+          "locator": "return s.adk.Execute(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_maps_events",
+      "from": "runtime.adk_executor.execute",
+      "to": "runtime.map_adk_event",
+      "relation": "maps_to",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "mapped, err := MapADKEvent(ctx, run.ThreadID, run.RunID, event)"
+        }
+      ]
+    },
+    {
+      "id": "edge.mapper_emits_sink",
+      "from": "runtime.map_adk_event",
+      "to": "runtime.event_sink.emit",
+      "relation": "emits",
+      "chain_ids": [
+        "run.event_projection",
+        "framework.canonical_stack",
+        "framework.eino_sdk"
+      ],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "if err := e.eventSink.EmitRunEvent(ctx, mapped.RunEvent); err != nil {"
+        }
+      ]
+    },
+    {
+      "id": "edge.sink_calls_append_event",
+      "from": "runtime.event_sink.emit",
+      "to": "application.append_run_event",
+      "relation": "calls",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/event_sink.go",
+          "locator": "_, err := s.app.AppendRunEvent(ctx, &AppendRunEventRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.app_event_delegates_domain",
+      "from": "application.append_run_event",
+      "to": "domain.append_run_event",
+      "relation": "delegates_to",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "event, err := s.ThreadSVC.AppendRunEvent(ctx, &domainservice.AppendRunEventRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.domain_event_persists_repo",
+      "from": "domain.append_run_event",
+      "to": "repository.create_run_event",
+      "relation": "persists_via",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl.go",
+          "locator": "if err := s.repo.CreateRunEvent(ctx, event); err != nil {"
+        }
+      ]
+    },
+    {
+      "id": "edge.repo_event_streams_http",
+      "from": "repository.create_run_event",
+      "to": "http.workbench.stream_events",
+      "relation": "streams_to",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.http_streams_eventsource",
+      "from": "http.workbench.stream_events",
+      "to": "frontend.events.event_source",
+      "relation": "streams_to",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "locator": "const eventSource = new EventSource("
+        }
+      ]
+    },
+    {
+      "id": "edge.cancel_handler_calls_app",
+      "from": "http.workbench.cancel_run",
+      "to": "application.cancel_run",
+      "relation": "cancels",
+      "chain_ids": ["control.cancel"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.cancel_app_requests_domain",
+      "from": "application.cancel_run",
+      "to": "domain.request_cancellation",
+      "relation": "delegates_to",
+      "chain_ids": ["control.cancel"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "result, err := s.requestRunCancellation(ctx, &domainservice.RequestRunCancellationRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.cancel_app_signals_adk",
+      "from": "domain.request_cancellation",
+      "to": "runtime.cancel_registry",
+      "relation": "cancels",
+      "chain_ids": ["control.cancel"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "s.cancelActiveADKRun(ctx, result)"
+        }
+      ]
+    },
+    {
+      "id": "edge.resume_handler_calls_app",
+      "from": "http.workbench.resume_run",
+      "to": "application.resume_human",
+      "relation": "resumes",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.ResumeHumanInteraction(ctx, &appagentthread.ResumeHumanInteractionRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.resume_app_creates_bundle",
+      "from": "application.resume_human",
+      "to": "domain.create_run_bundle",
+      "relation": "delegates_to",
+      "chain_ids": ["control.human_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/human_interaction_resume.go",
+          "locator": "bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.retry_handler_calls_app",
+      "from": "http.workbench.retry_subagent",
+      "to": "application.retry_subagent",
+      "relation": "retries",
+      "chain_ids": ["control.subagent_retry"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "resp, err := appagentthread.SVC.RetrySubagentRun(ctx, &appagentthread.RetrySubagentRunRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.retry_app_creates_bundle",
+      "from": "application.retry_subagent",
+      "to": "domain.create_run_bundle",
+      "relation": "delegates_to",
+      "chain_ids": ["control.subagent_retry"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/subagent_retry.go",
+          "locator": "bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.checkpoint_resumes_adk",
+      "from": "runtime.checkpoint_store",
+      "to": "runtime.adk_executor.resume",
+      "relation": "resumes",
+      "chain_ids": ["control.checkpoint_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "func (e *ADKExecutor) Resume("
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_resume_executes_runner",
+      "from": "runtime.adk_executor.resume",
+      "to": "runtime.eino.runner",
+      "relation": "executes",
+      "chain_ids": ["control.checkpoint_resume"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "runner := adk.NewRunner(executionCtx, adk.RunnerConfig{"
+        }
+      ]
+    },
+    {
+      "id": "edge.lease_recovery_reads_checkpoint",
+      "from": "runtime.lease_recovery",
+      "to": "runtime.checkpoint_store",
+      "relation": "resumes",
+      "chain_ids": ["control.lease_recovery"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery.go",
+          "locator": "checkpoint, err := p.latestRecoverableCheckpoint(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.lease_checkpoint_precedes_resume",
+      "from": "runtime.checkpoint_store",
+      "to": "runtime.adk_executor.resume",
+      "relation": "precedes",
+      "chain_ids": ["control.lease_recovery"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+        }
+      ]
+    },
+    {
+      "id": "edge.multitask_rollback_clears_checkpoint",
+      "from": "runtime.multitask_rollback",
+      "to": "runtime.checkpoint_store",
+      "relation": "cancels",
+      "chain_ids": ["control.multitask_rollback"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback"
+        }
+      ]
+    },
+    {
+      "id": "edge.memory_persists_repo",
+      "from": "application.memory",
+      "to": "repository.memory",
+      "relation": "persists_via",
+      "chain_ids": ["data.memory"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationMemoryMethodsMapDomainMemories"
+        }
+      ]
+    },
+    {
+      "id": "edge.artifact_persists_repo",
+      "from": "application.artifact",
+      "to": "repository.artifact",
+      "relation": "persists_via",
+      "chain_ids": ["data.artifact"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationListArtifactsMapsDomainArtifacts"
+        }
+      ]
+    },
+    {
+      "id": "edge.token_persists_repo",
+      "from": "application.token_usage",
+      "to": "repository.token_usage",
+      "relation": "persists_via",
+      "chain_ids": ["data.token_usage"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTokenUsageMethodsMapDomainUsage"
+        }
+      ]
+    },
+    {
+      "id": "edge.guardrail_audits_repo",
+      "from": "application.guardrail_audit",
+      "to": "repository.guardrail_audit",
+      "relation": "audits",
+      "chain_ids": ["data.guardrail_audit"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/guardrail_audit_test.go",
+          "locator": "func TestApplicationGuardrailAuditRecorderPersistsContentFreeDecision"
+        }
+      ]
+    },
+    {
+      "id": "edge.mcp_audits_repo",
+      "from": "application.mcp_runtime_audit",
+      "to": "repository.mcp_runtime_audit",
+      "relation": "audits",
+      "chain_ids": ["data.mcp_runtime_audit"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_runtime_audit_test.go",
+          "locator": "func TestApplicationADKMCPRuntimeAuditRecorderPersistsContentFreeRecord"
+        }
+      ]
+    },
+    {
+      "id": "edge.persisted_bundle_precedes_worker",
+      "from": "repository.create_thread_bundle",
+      "to": "worker.process_pending",
+      "relation": "precedes",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorCompletesClaimedRunWithAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "edge.worker_executes_selector",
+      "from": "worker.process_pending",
+      "to": "runtime.selector.execute",
+      "relation": "executes",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runner.go",
+          "locator": "result, err := p.executor.Execute(ctx, run)"
+        }
+      ]
+    },
+    {
+      "id": "edge.ui_uses_react",
+      "from": "frontend.workbench.handle_send",
+      "to": "framework.react",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "import { useState } from 'react';"
+        }
+      ]
+    },
+    {
+      "id": "edge.ui_uses_router",
+      "from": "frontend.workbench.handle_send",
+      "to": "framework.react_router",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "import { useLocation, useNavigate, useParams } from 'react-router-dom';"
+        }
+      ]
+    },
+    {
+      "id": "edge.eventsource_uses_platform",
+      "from": "frontend.events.event_source",
+      "to": "framework.browser_eventsource",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "locator": "const eventSource = new EventSource("
+        }
+      ]
+    },
+    {
+      "id": "edge.contract_uses_thriftgo",
+      "from": "contract.workbench_task.thrift",
+      "to": "framework.thriftgo",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
+        }
+      ]
+    },
+    {
+      "id": "edge.http_uses_hertz",
+      "from": "http.workbench.stream_events",
+      "to": "framework.hertz",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "\"github.com/cloudwego/hertz/pkg/protocol/sse\""
+        }
+      ]
+    },
+    {
+      "id": "edge.worker_uses_go",
+      "from": "worker.run_once",
+      "to": "framework.go",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/worker.go",
+          "locator": "ticker := time.NewTicker(w.interval)"
+        }
+      ]
+    },
+    {
+      "id": "edge.repo_uses_gorm",
+      "from": "repository.claim_pending_runs",
+      "to": "framework.gorm",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "query = query.Clauses(clause.Locking{Strength: \"UPDATE\", Options: \"SKIP LOCKED\"})"
+        }
+      ]
+    },
+    {
+      "id": "edge.repo_uses_mysql_driver",
+      "from": "repository.claim_pending_runs",
+      "to": "framework.mysql_driver",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        { "path": "backend/go.mod", "locator": "gorm.io/driver/mysql v1.5.7" }
+      ]
+    },
+    {
+      "id": "edge.repo_uses_mysql_server",
+      "from": "repository.claim_pending_runs",
+      "to": "framework.mysql_server",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        { "path": "docker/docker-compose.yml", "locator": "image: mysql:8.4.5" }
+      ]
+    },
+    {
+      "id": "edge.adk_uses_eino",
+      "from": "runtime.adk_executor.execute",
+      "to": "framework.eino",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "runner := adk.NewRunner("
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_ark",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_ark",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "arkmodel \"github.com/cloudwego/eino-ext/components/model/ark\""
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_claude",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_claude",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "claudemodel \"github.com/cloudwego/eino-ext/components/model/claude\""
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_deepseek",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_deepseek",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "deepseekmodel \"github.com/cloudwego/eino-ext/components/model/deepseek\""
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_gemini",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_gemini",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "geminimodel \"github.com/cloudwego/eino-ext/components/model/gemini\""
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_openai",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_openai",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "openaimodel \"github.com/cloudwego/eino-ext/components/model/openai\""
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_configures_qwen",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_model_qwen",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "qwenmodel \"github.com/cloudwego/eino-ext/components/model/qwen\""
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_configures_duckduckgo",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_tool_duckduckgo",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_duckduckgo_web_search_backend.go",
+          "locator": "client, err := duckduckgo.NewSearch("
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_configures_wikipedia",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.eino_ext_tool_wikipedia",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_wikipedia_web_search_backend.go",
+          "locator": "client, err := wikipedia.NewTool("
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_adapts_mcp_go",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "framework.mcp_go",
+      "relation": "adapts_to",
+      "chain_ids": ["framework.canonical_stack", "framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_remote_eino_runner.go",
+          "locator": ") ([]tool.BaseTool, error)"
+        }
+      ]
+    },
+    {
+      "id": "edge.prometheus_observes_worker",
+      "from": "framework.prometheus",
+      "to": "worker.process_pending",
+      "relation": "observes",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_prometheus_metrics.go",
+          "locator": "type RuntimeWorkerTickMetricsObservation struct"
+        }
+      ]
+    },
+    {
+      "id": "edge.sonic_encodes_sse",
+      "from": "http.workbench.stream_events",
+      "to": "framework.sonic",
+      "relation": "implemented_with",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "locator": "payload, err := sonic.Marshal(taskThreadRunEventToAPI(event))"
+        }
+      ]
+    },
+    {
+      "id": "edge.cron_configures_scheduled",
+      "from": "framework.robfig_cron",
+      "to": "integration.scheduled.execute",
+      "relation": "configures",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/domain/scheduledtask/service/schedule.go",
+          "locator": "parsed, parseErr := cron.ParseStandard("
+        }
+      ]
+    },
+    {
+      "id": "edge.feishu_sdk_routes_event",
+      "from": "framework.feishu_sdk",
+      "to": "integration.feishu.process_event",
+      "relation": "routes_to",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/imchannel/runtime.go",
+          "locator": "wsClient := larkws.NewClient("
+        }
+      ]
+    },
+    {
+      "id": "edge.artifact_uses_object_storage",
+      "from": "application.artifact",
+      "to": "internal.object_storage",
+      "relation": "persists_via",
+      "chain_ids": ["framework.canonical_stack"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/artifact_output.go",
+          "locator": "writer, ok := s.ArtifactObjectStorage.(ArtifactObjectWriter)"
+        }
+      ]
+    },
+    {
+      "id": "edge.adk_builds_agent",
+      "from": "runtime.adk_executor.execute",
+      "to": "runtime.adk_agent_factory.build",
+      "relation": "delegates_to",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "agent, store, parityTracker, parityParentID, runtimeCtx, err := e.buildRuntime("
+        }
+      ]
+    },
+    {
+      "id": "edge.factory_builds_chat_agent",
+      "from": "runtime.adk_agent_factory.build",
+      "to": "runtime.eino.chat_model_agent",
+      "relation": "calls",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_agent_factory.go",
+          "locator": "agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{"
+        }
+      ]
+    },
+    {
+      "id": "edge.chat_agent_precedes_runner",
+      "from": "runtime.eino.chat_model_agent",
+      "to": "runtime.eino.runner",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "runner := adk.NewRunner(executionCtx, adk.RunnerConfig{"
+        }
+      ]
+    },
+    {
+      "id": "edge.runner_emits_adk_events",
+      "from": "runtime.eino.runner",
+      "to": "runtime.map_adk_event",
+      "relation": "emits",
+      "chain_ids": ["framework.eino_sdk"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor.go",
+          "locator": "result, err := e.consumeEvents(ctx, run, checkpointKey, store, iter"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_01",
+      "from": "middleware.reduction",
+      "to": "middleware.filesystem",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareReduction,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_02",
+      "from": "middleware.filesystem",
+      "to": "middleware.uploaded_files",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareFilesystem,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_03",
+      "from": "middleware.uploaded_files",
+      "to": "middleware.patch_tool_calls",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareUploadedFiles,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_04",
+      "from": "middleware.patch_tool_calls",
+      "to": "middleware.tool_error_normalization",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewarePatchTools,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_05",
+      "from": "middleware.tool_error_normalization",
+      "to": "middleware.memory",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareToolErrorNormalization,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_06",
+      "from": "middleware.memory",
+      "to": "middleware.skill",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareMemory,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_07",
+      "from": "middleware.skill",
+      "to": "middleware.transcript",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSkill,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_08",
+      "from": "middleware.transcript",
+      "to": "middleware.summarization",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareTranscript,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_09",
+      "from": "middleware.summarization",
+      "to": "middleware.plan_task",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSummarization,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_10",
+      "from": "middleware.plan_task",
+      "to": "middleware.provider_capability",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewarePlanTask,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_11",
+      "from": "middleware.provider_capability",
+      "to": "middleware.multimodal_budget",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareProviderCapability,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_12",
+      "from": "middleware.multimodal_budget",
+      "to": "middleware.tool_search",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareMultimodal,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_13",
+      "from": "middleware.tool_search",
+      "to": "middleware.parity_state",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareToolSearch,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_14",
+      "from": "middleware.parity_state",
+      "to": "middleware.context_budget",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareParityState,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_15",
+      "from": "middleware.context_budget",
+      "to": "middleware.safety_finish",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareContextBudget,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_16",
+      "from": "middleware.safety_finish",
+      "to": "middleware.subagent_limit",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSafetyFinish,"
+        }
+      ]
+    },
+    {
+      "id": "edge.middleware_17",
+      "from": "middleware.subagent_limit",
+      "to": "middleware.semantic_loop",
+      "relation": "precedes",
+      "chain_ids": ["framework.eino_middleware_order"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware.go",
+          "locator": "ADKMiddlewareSubagentLimit,"
+        }
+      ]
+    },
+    {
+      "id": "edge.app_run_calls_new_run_policy",
+      "from": "application.create_run",
+      "to": "runtime.new_run_policy",
+      "relation": "delegates_to",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/service.go",
+          "locator": "runConfig, err := s.normalizeNewRunRuntimeConfig(req.Config, req.Context)"
+        }
+      ]
+    },
+    {
+      "id": "edge.new_run_policy_precedes_selector",
+      "from": "runtime.new_run_policy",
+      "to": "runtime.selector.execute",
+      "relation": "precedes",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "locator": "config.Runtime = RuntimeModeEinoADK"
+        }
+      ]
+    },
+    {
+      "id": "edge.deerflow_configures_eino",
+      "from": "compat.deerflow_config",
+      "to": "runtime.selector.execute",
+      "relation": "configures",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "locator": "config.Runtime = RuntimeModeEinoADK"
+        }
+      ]
+    },
+    {
+      "id": "edge.legacy_is_historical_only",
+      "from": "runtime.selector.execute",
+      "to": "historical.legacy_runtime",
+      "relation": "routes_to",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_selector_test.go",
+          "locator": "func TestRuntimeSelectorKeepsUnmarkedHistoricalRunsOnLegacy"
+        }
+      ]
+    },
+    {
+      "id": "edge.legacy_excluded_from_new_runs",
+      "from": "runtime.new_run_policy",
+      "to": "historical.legacy_runtime",
+      "relation": "excludes",
+      "chain_ids": ["boundary.runtime_compatibility"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "func TestNormalizeNewDeerFlowRunConfigRejectsLegacyRuntime"
+        }
+      ]
+    }
+  ],
+  "chains": [
+    {
+      "id": "entry.workbench_immediate",
+      "name": "Workbench immediate thread and run creation",
+      "entry": "frontend.workbench.handle_send",
+      "terminal": "repository.create_thread_bundle",
+      "ordered_node_ids": [
+        "frontend.workbench.handle_send",
+        "frontend.api.create_thread",
+        "http.workbench.create_thread",
+        "application.create_task_thread",
+        "domain.create_thread_atomic",
+        "repository.create_thread_bundle"
+      ],
+      "ordered_edge_ids": [
+        "edge.workbench_calls_create_thread",
+        "edge.create_thread_routes_handler",
+        "edge.create_thread_handler_calls_app",
+        "edge.create_thread_app_delegates_domain",
+        "edge.create_thread_domain_persists_bundle"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('navigates to the task execution page after send returns a task'"
+        }
+      ]
+    },
+    {
+      "id": "entry.workbench_deferred",
+      "name": "Workbench deferred thread, upload, then run creation",
+      "entry": "frontend.workbench.handle_send",
+      "terminal": "http.workbench.create_run",
+      "ordered_node_ids": [
+        "frontend.workbench.handle_send",
+        "frontend.api.create_thread",
+        "http.workbench.create_thread",
+        "application.create_task_thread",
+        "frontend.api.upload_files",
+        "frontend.api.create_run",
+        "http.workbench.create_run"
+      ],
+      "ordered_edge_ids": [
+        "edge.workbench_calls_create_thread",
+        "edge.create_thread_routes_handler",
+        "edge.create_thread_handler_calls_app",
+        "edge.deferred_thread_precedes_upload",
+        "edge.upload_precedes_create_run",
+        "edge.create_run_routes_handler"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "ordered_source_steps": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const response = await createTaskThread({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
+          "locator": "await createTaskThreadRun({"
+        }
+      ],
+      "test_evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
+          "locator": "it('uploads selected files before starting a new canonical task run'"
+        }
+      ]
+    },
+    {
+      "id": "entry.task_detail_followup",
+      "name": "TaskDetail follow-up upload then run creation",
+      "entry": "frontend.task_detail.send_follow_up",
+      "terminal": "http.workbench.create_run",
+      "ordered_node_ids": [
+        "frontend.task_detail.send_follow_up",
+        "frontend.api.upload_files",
+        "frontend.api.create_run",
+        "http.workbench.create_run"
+      ],
+      "ordered_edge_ids": [
+        "edge.followup_calls_upload",
+        "edge.upload_precedes_create_run",
+        "edge.create_run_routes_handler"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "ordered_source_steps": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "const uploadResponse = await uploadTaskThreadFiles({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts",
+          "locator": "const runResponse = await createTaskThreadRun({"
+        }
+      ],
+      "test_evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
+          "locator": "it('uploads files before creating a thread run'"
+        }
+      ]
+    },
+    {
+      "id": "entry.langgraph_compat",
+      "name": "LangGraph-compatible HTTP adapter",
+      "entry": "compat.langgraph.create_run",
+      "terminal": "application.create_run",
+      "ordered_node_ids": [
+        "compat.langgraph.create_run",
+        "application.create_run"
+      ],
+      "ordered_edge_ids": ["edge.langgraph_calls_app_create_run"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK"
+        }
+      ]
+    },
+    {
+      "id": "entry.langgraph_stateless",
+      "name": "LangGraph stateless backing thread and Run creation",
+      "entry": "compat.langgraph.stateless_run",
+      "terminal": "application.create_run",
+      "ordered_node_ids": [
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "application.create_thread",
+        "application.create_run"
+      ],
+      "ordered_edge_ids": [
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        }
+      ]
+    },
+    {
+      "id": "entry.scheduled_task",
+      "name": "Scheduled task ingress",
+      "entry": "integration.scheduled.execute",
+      "terminal": "application.create_task_thread",
+      "ordered_node_ids": [
+        "integration.scheduled.execute",
+        "integration.scheduled.start_new",
+        "application.create_task_thread"
+      ],
+      "ordered_edge_ids": [
+        "edge.scheduled_execute_routes_new",
+        "edge.scheduled_calls_create_thread"
+      ],
+      "required_side_edge_ids": [
+        "edge.scheduled_execute_routes_existing",
+        "edge.scheduled_existing_calls_create_run"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/scheduledtask/executor_test.go",
+          "locator": "func TestAgentTaskExecutorCreatesAndReusesConversation"
+        }
+      ]
+    },
+    {
+      "id": "entry.feishu_message",
+      "name": "Feishu message ingress",
+      "entry": "integration.feishu.process_event",
+      "terminal": "application.create_task_thread",
+      "ordered_node_ids": [
+        "integration.feishu.process_event",
+        "integration.feishu.agent_execute",
+        "integration.feishu.start_run",
+        "application.create_task_thread"
+      ],
+      "ordered_edge_ids": [
+        "edge.feishu_event_calls_agent",
+        "edge.feishu_agent_calls_start_run",
+        "edge.feishu_start_calls_create_thread"
+      ],
+      "required_side_edge_ids": ["edge.feishu_start_calls_create_run"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/imchannel/agent_runner_test.go",
+          "locator": "func TestAgentRunnerFollowUpProvidesValidRunInput"
+        }
+      ]
+    },
+    {
+      "id": "run.atomic_create",
+      "name": "Atomic pending Run bundle creation",
+      "entry": "http.workbench.create_run",
+      "terminal": "repository.create_run_bundle",
+      "ordered_node_ids": [
+        "http.workbench.create_run",
+        "application.create_run",
+        "domain.create_run_bundle",
+        "repository.create_run_bundle"
+      ],
+      "ordered_edge_ids": [
+        "edge.create_run_handler_calls_app",
+        "edge.create_run_app_delegates_domain",
+        "edge.create_run_domain_persists_bundle"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/domain/agentthread/service/service_impl_test.go",
+          "locator": "func TestCreateRunBundleBindsMessageAndEventToGeneratedRun"
+        }
+      ]
+    },
+    {
+      "id": "run.pending_worker_execute",
+      "name": "MySQL pending Run claim and Eino execution",
+      "entry": "worker.run_once",
+      "terminal": "runtime.adk_executor.execute",
+      "ordered_node_ids": [
+        "worker.run_once",
+        "worker.process_pending",
+        "application.claim_pending_runs",
+        "domain.claim_pending_runs",
+        "repository.claim_pending_runs",
+        "runtime.selector.execute",
+        "runtime.adk_executor.execute"
+      ],
+      "ordered_edge_ids": [
+        "edge.worker_calls_processor",
+        "edge.processor_calls_claim",
+        "edge.app_claim_delegates_domain",
+        "edge.domain_claim_persists_repo",
+        "edge.claimed_run_precedes_selector",
+        "edge.selector_executes_adk"
+      ],
+      "production_status": "current",
+      "canonical_executor": true,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorRenewsLeaseWhileExecutionIsActive"
+        }
+      ]
+    },
+    {
+      "id": "run.event_projection",
+      "name": "Eino event persistence and frontend SSE projection",
+      "entry": "runtime.adk_executor.execute",
+      "terminal": "frontend.events.event_source",
+      "ordered_node_ids": [
+        "runtime.adk_executor.execute",
+        "runtime.map_adk_event",
+        "runtime.event_sink.emit",
+        "application.append_run_event",
+        "domain.append_run_event",
+        "repository.create_run_event",
+        "http.workbench.stream_events",
+        "frontend.events.event_source"
+      ],
+      "ordered_edge_ids": [
+        "edge.adk_maps_events",
+        "edge.mapper_emits_sink",
+        "edge.sink_calls_append_event",
+        "edge.app_event_delegates_domain",
+        "edge.domain_event_persists_repo",
+        "edge.repo_event_streams_http",
+        "edge.http_streams_eventsource"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
+          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+        }
+      ]
+    },
+    {
+      "id": "control.cancel",
+      "name": "Persisted Run cancellation and active ADK signal",
+      "entry": "http.workbench.cancel_run",
+      "terminal": "runtime.cancel_registry",
+      "ordered_node_ids": [
+        "http.workbench.cancel_run",
+        "application.cancel_run",
+        "domain.request_cancellation",
+        "runtime.cancel_registry"
+      ],
+      "ordered_edge_ids": [
+        "edge.cancel_handler_calls_app",
+        "edge.cancel_app_requests_domain",
+        "edge.cancel_app_signals_adk"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationCancelRunSignalsActiveADKExecution"
+        }
+      ]
+    },
+    {
+      "id": "control.human_resume",
+      "name": "Human interaction resume bundle",
+      "entry": "http.workbench.resume_run",
+      "terminal": "domain.create_run_bundle",
+      "ordered_node_ids": [
+        "http.workbench.resume_run",
+        "application.resume_human",
+        "domain.create_run_bundle"
+      ],
+      "ordered_edge_ids": [
+        "edge.resume_handler_calls_app",
+        "edge.resume_app_creates_bundle"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationResumeHumanInteractionCreatesQueuedRun"
+        }
+      ]
+    },
+    {
+      "id": "control.subagent_retry",
+      "name": "Subagent retry command bundle",
+      "entry": "http.workbench.retry_subagent",
+      "terminal": "domain.create_run_bundle",
+      "ordered_node_ids": [
+        "http.workbench.retry_subagent",
+        "application.retry_subagent",
+        "domain.create_run_bundle"
+      ],
+      "ordered_edge_ids": [
+        "edge.retry_handler_calls_app",
+        "edge.retry_app_creates_bundle"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationRetrySubagentRunCreatesQueuedTopLevelRun"
+        }
+      ]
+    },
+    {
+      "id": "control.checkpoint_resume",
+      "name": "Checkpoint-backed ADK resume",
+      "entry": "runtime.checkpoint_store",
+      "terminal": "runtime.eino.runner",
+      "ordered_node_ids": [
+        "runtime.checkpoint_store",
+        "runtime.adk_executor.resume",
+        "runtime.eino.runner"
+      ],
+      "ordered_edge_ids": [
+        "edge.checkpoint_resumes_adk",
+        "edge.adk_resume_executes_runner"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorInterruptsAndResumesWithTargets"
+        }
+      ]
+    },
+    {
+      "id": "control.lease_recovery",
+      "name": "Expired lease recovery from durable checkpoint",
+      "entry": "runtime.lease_recovery",
+      "terminal": "runtime.adk_executor.resume",
+      "ordered_node_ids": [
+        "runtime.lease_recovery",
+        "runtime.checkpoint_store",
+        "runtime.adk_executor.resume"
+      ],
+      "ordered_edge_ids": [
+        "edge.lease_recovery_reads_checkpoint",
+        "edge.lease_checkpoint_precedes_resume"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/run_lease_recovery_test.go",
+          "locator": "func TestRunLeaseRecoveryProcessorCreatesOneResumeAcrossRetry"
+        }
+      ]
+    },
+    {
+      "id": "control.multitask_rollback",
+      "name": "Durable multitask rollback checkpoint cleanup",
+      "entry": "runtime.multitask_rollback",
+      "terminal": "runtime.checkpoint_store",
+      "ordered_node_ids": [
+        "runtime.multitask_rollback",
+        "runtime.checkpoint_store"
+      ],
+      "ordered_edge_ids": ["edge.multitask_rollback_clears_checkpoint"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/runner_test.go",
+          "locator": "func TestRunProcessorCleansEinoCheckpointForDurableMultitaskRollback"
+        }
+      ]
+    },
+    {
+      "id": "data.memory",
+      "name": "Memory persistence and management",
+      "entry": "application.memory",
+      "terminal": "repository.memory",
+      "ordered_node_ids": ["application.memory", "repository.memory"],
+      "ordered_edge_ids": ["edge.memory_persists_repo"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationMemoryMethodsMapDomainMemories"
+        }
+      ]
+    },
+    {
+      "id": "data.artifact",
+      "name": "Artifact persistence and lifecycle",
+      "entry": "application.artifact",
+      "terminal": "repository.artifact",
+      "ordered_node_ids": ["application.artifact", "repository.artifact"],
+      "ordered_edge_ids": ["edge.artifact_persists_repo"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationListArtifactsMapsDomainArtifacts"
+        }
+      ]
+    },
+    {
+      "id": "data.token_usage",
+      "name": "Token usage persistence",
+      "entry": "application.token_usage",
+      "terminal": "repository.token_usage",
+      "ordered_node_ids": ["application.token_usage", "repository.token_usage"],
+      "ordered_edge_ids": ["edge.token_persists_repo"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/service_test.go",
+          "locator": "func TestApplicationTokenUsageMethodsMapDomainUsage"
+        }
+      ]
+    },
+    {
+      "id": "data.guardrail_audit",
+      "name": "Guardrail metadata-only audit",
+      "entry": "application.guardrail_audit",
+      "terminal": "repository.guardrail_audit",
+      "ordered_node_ids": [
+        "application.guardrail_audit",
+        "repository.guardrail_audit"
+      ],
+      "ordered_edge_ids": ["edge.guardrail_audits_repo"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/guardrail_audit_test.go",
+          "locator": "func TestApplicationGuardrailAuditRecorderPersistsContentFreeDecision"
+        }
+      ]
+    },
+    {
+      "id": "data.mcp_runtime_audit",
+      "name": "MCP runtime metadata-only audit",
+      "entry": "application.mcp_runtime_audit",
+      "terminal": "repository.mcp_runtime_audit",
+      "ordered_node_ids": [
+        "application.mcp_runtime_audit",
+        "repository.mcp_runtime_audit"
+      ],
+      "ordered_edge_ids": ["edge.mcp_audits_repo"],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_mcp_runtime_audit_test.go",
+          "locator": "func TestApplicationADKMCPRuntimeAuditRecorderPersistsContentFreeRecord"
+        }
+      ]
+    },
+    {
+      "id": "framework.canonical_stack",
+      "name": "Current Workbench production framework path",
+      "entry": "frontend.workbench.handle_send",
+      "terminal": "frontend.events.event_source",
+      "ordered_node_ids": [
+        "frontend.workbench.handle_send",
+        "frontend.api.create_thread",
+        "http.workbench.create_thread",
+        "application.create_task_thread",
+        "domain.create_thread_atomic",
+        "repository.create_thread_bundle",
+        "worker.process_pending",
+        "runtime.selector.execute",
+        "runtime.adk_executor.execute",
+        "runtime.map_adk_event",
+        "runtime.event_sink.emit",
+        "application.append_run_event",
+        "domain.append_run_event",
+        "repository.create_run_event",
+        "http.workbench.stream_events",
+        "frontend.events.event_source"
+      ],
+      "ordered_edge_ids": [
+        "edge.workbench_calls_create_thread",
+        "edge.create_thread_routes_handler",
+        "edge.create_thread_handler_calls_app",
+        "edge.create_thread_app_delegates_domain",
+        "edge.create_thread_domain_persists_bundle",
+        "edge.persisted_bundle_precedes_worker",
+        "edge.worker_executes_selector",
+        "edge.selector_executes_adk",
+        "edge.adk_maps_events",
+        "edge.mapper_emits_sink",
+        "edge.sink_calls_append_event",
+        "edge.app_event_delegates_domain",
+        "edge.domain_event_persists_repo",
+        "edge.repo_event_streams_http",
+        "edge.http_streams_eventsource"
+      ],
+      "required_side_edge_ids": [
+        "edge.ui_uses_react",
+        "edge.ui_uses_router",
+        "edge.eventsource_uses_platform",
+        "edge.contract_uses_thriftgo",
+        "edge.http_uses_hertz",
+        "edge.worker_uses_go",
+        "edge.repo_uses_gorm",
+        "edge.repo_uses_mysql_driver",
+        "edge.repo_uses_mysql_server",
+        "edge.adk_uses_eino",
+        "edge.factory_configures_ark",
+        "edge.factory_configures_claude",
+        "edge.factory_configures_deepseek",
+        "edge.factory_configures_gemini",
+        "edge.factory_configures_openai",
+        "edge.factory_configures_qwen",
+        "edge.adk_configures_duckduckgo",
+        "edge.adk_configures_wikipedia",
+        "edge.adk_adapts_mcp_go",
+        "edge.prometheus_observes_worker",
+        "edge.sonic_encodes_sse",
+        "edge.cron_configures_scheduled",
+        "edge.feishu_sdk_routes_event",
+        "edge.artifact_uses_object_storage"
+      ],
+      "production_status": "current",
+      "canonical_executor": true,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_contract_test.go",
+          "locator": "func TestADKParity"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_sdk",
+      "name": "Eino ADK SDK execution primitives",
+      "entry": "runtime.adk_executor.execute",
+      "terminal": "runtime.event_sink.emit",
+      "ordered_node_ids": [
+        "runtime.adk_executor.execute",
+        "runtime.adk_agent_factory.build",
+        "runtime.eino.chat_model_agent",
+        "runtime.eino.runner",
+        "runtime.map_adk_event",
+        "runtime.event_sink.emit"
+      ],
+      "ordered_edge_ids": [
+        "edge.adk_builds_agent",
+        "edge.factory_builds_chat_agent",
+        "edge.chat_agent_precedes_runner",
+        "edge.runner_emits_adk_events",
+        "edge.mapper_emits_sink"
+      ],
+      "required_side_edge_ids": [
+        "edge.adk_uses_eino",
+        "edge.adk_adapts_mcp_go",
+        "edge.factory_configures_ark",
+        "edge.factory_configures_claude",
+        "edge.factory_configures_deepseek",
+        "edge.factory_configures_gemini",
+        "edge.factory_configures_openai",
+        "edge.factory_configures_qwen"
+      ],
+      "production_status": "current",
+      "canonical_executor": true,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_executor_test.go",
+          "locator": "func TestADKExecutorPersistsEventsAndReturnsFinalAssistantMessage"
+        }
+      ]
+    },
+    {
+      "id": "framework.eino_middleware_order",
+      "name": "Eino middleware assembly order",
+      "entry": "middleware.reduction",
+      "terminal": "middleware.semantic_loop",
+      "ordered_node_ids": [
+        "middleware.reduction",
+        "middleware.filesystem",
+        "middleware.uploaded_files",
+        "middleware.patch_tool_calls",
+        "middleware.tool_error_normalization",
+        "middleware.memory",
+        "middleware.skill",
+        "middleware.transcript",
+        "middleware.summarization",
+        "middleware.plan_task",
+        "middleware.provider_capability",
+        "middleware.multimodal_budget",
+        "middleware.tool_search",
+        "middleware.parity_state",
+        "middleware.context_budget",
+        "middleware.safety_finish",
+        "middleware.subagent_limit",
+        "middleware.semantic_loop"
+      ],
+      "ordered_edge_ids": [
+        "edge.middleware_01",
+        "edge.middleware_02",
+        "edge.middleware_03",
+        "edge.middleware_04",
+        "edge.middleware_05",
+        "edge.middleware_06",
+        "edge.middleware_07",
+        "edge.middleware_08",
+        "edge.middleware_09",
+        "edge.middleware_10",
+        "edge.middleware_11",
+        "edge.middleware_12",
+        "edge.middleware_13",
+        "edge.middleware_14",
+        "edge.middleware_15",
+        "edge.middleware_16",
+        "edge.middleware_17"
+      ],
+      "production_status": "current",
+      "canonical_executor": true,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/adk_middleware_test.go",
+          "locator": "func TestADKMiddlewareAssemblyPreservesHookAndWrapperOrder"
+        }
+      ]
+    },
+    {
+      "id": "boundary.runtime_compatibility",
+      "name": "Runtime compatibility boundaries converge on Eino ADK",
+      "entry": "compat.langgraph.create_run",
+      "terminal": "runtime.adk_executor.execute",
+      "ordered_node_ids": [
+        "compat.langgraph.create_run",
+        "application.create_run",
+        "runtime.new_run_policy",
+        "runtime.selector.execute",
+        "runtime.adk_executor.execute"
+      ],
+      "ordered_edge_ids": [
+        "edge.langgraph_calls_app_create_run",
+        "edge.app_run_calls_new_run_policy",
+        "edge.new_run_policy_precedes_selector",
+        "edge.selector_executes_adk"
+      ],
+      "required_side_edge_ids": [
+        "edge.deerflow_configures_eino",
+        "edge.legacy_is_historical_only",
+        "edge.legacy_excluded_from_new_runs"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_selector_test.go",
+          "locator": "func TestRuntimeSelectorUsesCanonicalEinoRuntimeMarker"
+        }
+      ]
+    }
+  ],
+  "exclusions": [
+    {
+      "id": "exclude.k2",
+      "term": "K2",
+      "status": "design_only",
+      "reason": "K2 is not implemented and must not produce current execution nodes or edges.",
+      "evidence": [
+        {
+          "path": "docs/superpowers/context/workbench-chat.md",
+          "locator": "历史 ChatTask plans/specs 只用于追溯，K2 仍是设计语料，"
+        }
+      ]
+    },
+    {
+      "id": "exclude.chattask",
+      "term": "ChatTask",
+      "status": "retired",
+      "reason": "The retired ChatTask path is not part of current Workbench execution.",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts",
+          "locator": "keeps production task and workbench sources free of retired contracts"
+        }
+      ]
+    },
+    {
+      "id": "exclude.langgraph_sdk",
+      "term": "LangGraph SDK",
+      "status": "not_used",
+      "reason": "LangGraph endpoints are compatibility adapters that delegate to agentthread; no LangGraph runtime executes Runs.",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/langgraph_run_service.go",
+          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, createReq)"
+        }
+      ]
+    },
+    {
+      "id": "exclude.deerflow_runtime",
+      "term": "DeerFlow runtime",
+      "status": "not_used",
+      "reason": "DeerFlow names represent configuration and parity semantics implemented by Go and Eino.",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config.go",
+          "locator": "config.Runtime = RuntimeModeEinoADK"
+        }
+      ]
+    },
+    {
+      "id": "exclude.legacy_new_run",
+      "term": "legacy production runtime",
+      "status": "historical_only",
+      "reason": "Only historical unmarked records may select legacy; new Runs normalize to runtime=eino_adk.",
+      "evidence": [
+        {
+          "path": "backend/application/agentthread/runtime_config_test.go",
+          "locator": "legacy runtime is not selectable for new runs"
+        }
+      ]
+    },
+    {
+      "id": "exclude.external_queue",
+      "term": "Redis Kafka RabbitMQ NATS Asynq queue",
+      "status": "not_used",
+      "reason": "Canonical Workbench Run admission and claim are MySQL row and lease based.",
+      "evidence": [
+        {
+          "path": "backend/domain/agentthread/repository/mysql.go",
+          "locator": "query = query.Clauses(clause.Locking{Strength: \"UPDATE\", Options: \"SKIP LOCKED\"})"
+        }
+      ]
+    },
+    {
+      "id": "exclude.build_tools",
+      "term": "Rush Rsbuild Vitest Atlas",
+      "status": "build_or_test_only",
+      "reason": "Build, test, and migration tools do not execute production Runs.",
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/package.json",
+          "locator": "\"test\": \"vitest --run --passWithNoTests\""
+        }
+      ]
+    }
+  ],
+  "required_queries": [
+    {
+      "id": "query.framework_inventory",
+      "question": "当前 Workbench 执行链使用哪些核心框架，各自职责和源码入口是什么？",
+      "expanded_terms": [
+        "React",
+        "framework",
+        "implemented_with",
+        "configures",
+        "adapts_to",
+        "observes",
+        "runtime_scope",
+        "package",
+        "version"
+      ],
+      "smoke_node_ids": ["framework.react"],
+      "required_node_ids": [
+        "framework.react",
+        "framework.thriftgo",
+        "framework.hertz",
+        "framework.go",
+        "framework.gorm",
+        "framework.mysql_server",
+        "framework.eino",
+        "framework.mcp_go",
+        "framework.sonic",
+        "framework.prometheus",
+        "framework.robfig_cron",
+        "framework.feishu_sdk"
+      ],
+      "required_edge_ids": [
+        "edge.ui_uses_react",
+        "edge.contract_uses_thriftgo",
+        "edge.http_uses_hertz",
+        "edge.worker_uses_go",
+        "edge.repo_uses_gorm",
+        "edge.repo_uses_mysql_server",
+        "edge.adk_uses_eino"
+      ]
+    },
+    {
+      "id": "query.frontend_to_eino",
+      "question": "Workbench 前端消息如何进入 Eino ADK？",
+      "expanded_terms": [
+        "Workbench Immediate Submit",
+        "calls",
+        "routes_to",
+        "delegates_to",
+        "persists_via",
+        "claims",
+        "executes",
+        "precedes"
+      ],
+      "smoke_node_ids": ["frontend.workbench.handle_send"],
+      "required_node_ids": [
+        "frontend.workbench.handle_send",
+        "http.workbench.create_thread",
+        "application.create_task_thread",
+        "repository.create_thread_bundle",
+        "worker.process_pending",
+        "runtime.selector.execute",
+        "runtime.adk_executor.execute"
+      ],
+      "required_edge_ids": [
+        "edge.workbench_calls_create_thread",
+        "edge.create_thread_handler_calls_app",
+        "edge.persisted_bundle_precedes_worker",
+        "edge.worker_executes_selector",
+        "edge.selector_executes_adk"
+      ]
+    },
+    {
+      "id": "query.eino_sdk_execution",
+      "question": "Eino SDK 如何构建 Agent、执行 Run、映射并持久化事件？",
+      "expanded_terms": [
+        "ADKExecutor.Execute",
+        "ADKExecutor",
+        "Runner",
+        "ChatModelAgent",
+        "middleware",
+        "tool",
+        "MCP",
+        "AgentEvent",
+        "EventSink"
+      ],
+      "smoke_node_ids": ["runtime.adk_executor.execute"],
+      "required_node_ids": [
+        "runtime.adk_executor.execute",
+        "runtime.adk_agent_factory.build",
+        "runtime.eino.chat_model_agent",
+        "runtime.eino.runner",
+        "runtime.map_adk_event",
+        "runtime.event_sink.emit"
+      ],
+      "required_edge_ids": [
+        "edge.adk_builds_agent",
+        "edge.factory_builds_chat_agent",
+        "edge.chat_agent_precedes_runner",
+        "edge.runner_emits_adk_events",
+        "edge.mapper_emits_sink"
+      ]
+    },
+    {
+      "id": "query.middleware_order",
+      "question": "Eino middleware 的真实装配顺序是什么？",
+      "expanded_terms": [
+        "reduction",
+        "adkMiddlewareOrder",
+        "precedes",
+        "handler order",
+        "wrapper order"
+      ],
+      "smoke_node_ids": ["middleware.reduction"],
+      "required_node_ids": [
+        "middleware.reduction",
+        "middleware.filesystem",
+        "middleware.uploaded_files",
+        "middleware.patch_tool_calls",
+        "middleware.tool_error_normalization",
+        "middleware.memory",
+        "middleware.skill",
+        "middleware.transcript",
+        "middleware.summarization",
+        "middleware.plan_task",
+        "middleware.provider_capability",
+        "middleware.multimodal_budget",
+        "middleware.tool_search",
+        "middleware.parity_state",
+        "middleware.context_budget",
+        "middleware.safety_finish",
+        "middleware.subagent_limit",
+        "middleware.semantic_loop"
+      ],
+      "required_edge_ids": ["edge.middleware_01", "edge.middleware_17"]
+    },
+    {
+      "id": "query.control_recovery",
+      "question": "取消、人工恢复、子智能体重试、checkpoint 和 lease 恢复如何执行？",
+      "expanded_terms": [
+        "ApplicationService.CancelRun",
+        "cancels",
+        "resumes",
+        "retries",
+        "checkpoint",
+        "lease",
+        "rollback"
+      ],
+      "smoke_node_ids": ["application.cancel_run"],
+      "required_node_ids": [
+        "application.cancel_run",
+        "runtime.cancel_registry",
+        "application.resume_human",
+        "application.retry_subagent",
+        "runtime.checkpoint_store",
+        "runtime.lease_recovery",
+        "runtime.multitask_rollback"
+      ],
+      "required_edge_ids": [
+        "edge.cancel_app_signals_adk",
+        "edge.resume_app_creates_bundle",
+        "edge.retry_app_creates_bundle",
+        "edge.checkpoint_resumes_adk",
+        "edge.lease_recovery_reads_checkpoint",
+        "edge.multitask_rollback_clears_checkpoint"
+      ]
+    },
+    {
+      "id": "query.data_capabilities",
+      "question": "Memory、Artifact、Token、Guardrail 和 MCP 审计数据走哪些持久化链？",
+      "expanded_terms": [
+        "Application memory operations",
+        "memory",
+        "artifact",
+        "token usage",
+        "guardrail audit",
+        "MCP runtime audit",
+        "persists_via",
+        "audits"
+      ],
+      "smoke_node_ids": ["application.memory"],
+      "required_node_ids": [
+        "application.memory",
+        "repository.memory",
+        "application.artifact",
+        "repository.artifact",
+        "application.token_usage",
+        "repository.token_usage",
+        "repository.guardrail_audit",
+        "repository.mcp_runtime_audit"
+      ],
+      "required_edge_ids": [
+        "edge.memory_persists_repo",
+        "edge.artifact_persists_repo",
+        "edge.token_persists_repo",
+        "edge.guardrail_audits_repo",
+        "edge.mcp_audits_repo"
+      ]
+    },
+    {
+      "id": "query.integration_ingress",
+      "question": "LangGraph、Scheduled 和飞书如何创建或复用 TaskThread 并进入共享 Run 主链？",
+      "expanded_terms": [
+        "LangGraph stateless createLangGraphStatelessRun",
+        "Scheduled AgentTaskExecutor.Execute",
+        "Feishu RuntimeManager.processEvent",
+        "calls",
+        "routes_to",
+        "delegates_to",
+        "precedes"
+      ],
+      "smoke_node_ids": [
+        "compat.langgraph.stateless_run",
+        "integration.scheduled.execute",
+        "integration.feishu.process_event"
+      ],
+      "required_node_ids": [
+        "compat.langgraph.create_run",
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "integration.scheduled.execute",
+        "integration.scheduled.start_new",
+        "integration.scheduled.start_in_thread",
+        "integration.feishu.process_event",
+        "integration.feishu.agent_execute",
+        "integration.feishu.start_run",
+        "application.create_thread",
+        "application.create_task_thread",
+        "application.create_run"
+      ],
+      "required_edge_ids": [
+        "edge.langgraph_calls_app_create_run",
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run",
+        "edge.scheduled_execute_routes_new",
+        "edge.scheduled_calls_create_thread",
+        "edge.scheduled_execute_routes_existing",
+        "edge.scheduled_existing_calls_create_run",
+        "edge.feishu_event_calls_agent",
+        "edge.feishu_agent_calls_start_run",
+        "edge.feishu_start_calls_create_thread",
+        "edge.feishu_start_calls_create_run"
+      ]
+    },
+    {
+      "id": "query.runtime_boundaries",
+      "question": "LangGraph、DeerFlow 和 legacy 是否是当前并行生产运行时？",
+      "expanded_terms": [
+        "LangGraph-compatible Run API adapter",
+        "LangGraph stateless createLangGraphStatelessRun",
+        "normalizeNewDeerFlowRunConfig new-run policy",
+        "compatibility_contract",
+        "historical_compatibility",
+        "routes_to",
+        "configures",
+        "excludes",
+        "eino_adk"
+      ],
+      "smoke_node_ids": ["compat.langgraph.create_run"],
+      "required_node_ids": [
+        "compat.langgraph.create_run",
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "compat.deerflow_config",
+        "historical.legacy_runtime",
+        "runtime.new_run_policy",
+        "runtime.selector.execute",
+        "runtime.adk_executor.execute"
+      ],
+      "required_edge_ids": [
+        "edge.langgraph_calls_app_create_run",
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.deerflow_configures_eino",
+        "edge.legacy_is_historical_only",
+        "edge.legacy_excluded_from_new_runs"
+      ]
+    }
+  ]
+}

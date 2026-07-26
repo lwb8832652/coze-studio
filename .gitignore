@@ -69,3 +69,7 @@ opencoze.pid
 
 # Local Graphify cache
 **/graphify-out/
+docs/superpowers/context/workbench-execution-graphify
+docs/superpowers/context/workbench-execution-graphify-previous
+docs/superpowers/context/workbench-execution-graphify-versions/
+.codegraph/
