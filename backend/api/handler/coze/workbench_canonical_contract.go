@@ -30,6 +30,7 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 	hertzconsts "github.com/cloudwego/hertz/pkg/protocol/consts"
+	"gorm.io/gorm"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
@@ -54,11 +55,12 @@ type canonicalError struct {
 }
 
 type canonicalRequestLog struct {
-	Operation     string
-	RouteTemplate string
-	ThreadID      int64
-	RunID         int64
-	StartedAt     time.Time
+	Operation      string
+	RouteTemplate  string
+	SubmissionKind string
+	ThreadID       int64
+	RunID          int64
+	StartedAt      time.Time
 }
 
 func canonicalAPIEnabled(getenv func(string) string) bool {
@@ -70,6 +72,21 @@ func requireCanonicalAPI(_ context.Context, c *app.RequestContext) bool {
 		return true
 	}
 	c.Status(hertzconsts.StatusNotFound)
+	return false
+}
+
+func requireCanonicalAgentThreadService(ctx context.Context, c *app.RequestContext) bool {
+	if appagentthread.SVC != nil && appagentthread.SVC.ThreadSVC != nil {
+		return true
+	}
+	public := newCanonicalError(
+		hertzconsts.StatusServiceUnavailable,
+		"dependency_unavailable",
+		"Required service is unavailable",
+		"agent_thread_service_unavailable",
+		true,
+	)
+	writeCanonicalError(ctx, c, public.status, *public)
 	return false
 }
 
@@ -88,6 +105,10 @@ func decodeCanonicalJSON(c *app.RequestContext, dst any) *canonicalError {
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(body))
+	// Keep JSON numbers lossless until the domain or repository applies the
+	// MySQL JSON number contract. Decoding through float64 here would collapse
+	// distinct large metadata values before validation.
+	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
 		if field := canonicalUnknownJSONField(err); field != "" {
@@ -283,14 +304,78 @@ func logCanonicalRequestCompleted(
 	}
 	outcome = canonicalLogOutcome(outcome)
 	logs.CtxInfof(ctx,
-		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s thread_id=%d run_id=%d",
+		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s thread_id=%d run_id=%d",
 		canonicalContractVersion, canonicalTraceID(ctx), info.Operation, info.RouteTemplate,
-		string(c.Method()), c.Response.StatusCode(), duration, outcome, info.ThreadID, info.RunID,
+		string(c.Method()), c.Response.StatusCode(), duration, outcome,
+		canonicalSubmissionKind(info.SubmissionKind), info.ThreadID, info.RunID,
 	)
+}
+
+func beginCanonicalRequestLog(operation, routeTemplate string) *canonicalRequestLog {
+	return &canonicalRequestLog{
+		Operation: operation, RouteTemplate: routeTemplate, StartedAt: time.Now(),
+	}
+}
+
+func completeCanonicalRequestLog(
+	ctx context.Context,
+	c *app.RequestContext,
+	info *canonicalRequestLog,
+) {
+	if info == nil {
+		return
+	}
+	logCanonicalRequestCompleted(ctx, c, *info, canonicalHTTPOutcome(c.Response.StatusCode()))
+}
+
+func canonicalHTTPOutcome(status int) string {
+	switch {
+	case status >= hertzconsts.StatusOK && status < hertzconsts.StatusMultipleChoices:
+		return "success"
+	case status == hertzconsts.StatusConflict:
+		return "conflict"
+	case status >= hertzconsts.StatusBadRequest && status < hertzconsts.StatusInternalServerError:
+		return "rejected"
+	default:
+		return "failed"
+	}
+}
+
+func canonicalSubmissionKind(value string) string {
+	switch value {
+	case "empty_thread", "initial_run", "deferred_initial_run":
+		return value
+	default:
+		return "not_applicable"
+	}
 }
 
 func mapCanonicalApplicationError(err error) canonicalError {
 	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return *newCanonicalError(
+			hertzconsts.StatusNotFound,
+			"resource_not_found",
+			"Resource not found",
+			"resource_not_found",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrPublicThreadStateConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"state_conflict",
+			"Thread state cannot be updated",
+			"public_state_conflict",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrUnsupportedPublicStateChannel):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"unsupported_state_channel",
+			"Unsupported public state channel",
+			"unsupported_state_channel",
+			false,
+		)
 	case errors.Is(err, domainservice.ErrInvalidArgument):
 		return *newCanonicalError(
 			hertzconsts.StatusBadRequest,

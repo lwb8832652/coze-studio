@@ -36,56 +36,6 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// CreateCanonicalThread exposes the gated canonical thread-create contract.
-func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// SearchCanonicalThreads exposes the gated canonical thread-search contract.
-func SearchCanonicalThreads(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalThread exposes the gated canonical thread-read contract.
-func GetCanonicalThread(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// PatchCanonicalThread exposes the gated canonical thread-patch contract.
-func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// DeleteCanonicalThread exposes the gated canonical thread-delete contract.
-func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalThreadState exposes the gated canonical state-read contract.
-func GetCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// UpdateCanonicalThreadState exposes the gated canonical state-update contract.
-func UpdateCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalThreadHistory exposes the gated canonical history-read contract.
-func GetCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// PostCanonicalThreadHistory exposes the gated canonical history-search contract.
-func PostCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalThreadMessages exposes the gated canonical thread-message contract.
-func ListCanonicalThreadMessages(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // ListCanonicalRuns exposes the gated canonical run-list contract.
 func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)

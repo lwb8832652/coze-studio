@@ -405,6 +405,25 @@ func TestPublicCheckpointRedactsRuntimeBytes(t *testing.T) {
 	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
 }
 
+func TestPublicCheckpointProjectsOnlyCanonicalPublicCustomState(t *testing.T) {
+	got := ProjectPublicCheckpoint(&CheckpointSummary{
+		CheckpointID: 1,
+		ThreadID:     2,
+		RunID:        3,
+		RuntimeType:  "canonical_public_state",
+		ChannelValues: `{"custom":{"theme":"dark","count":1},` +
+			`"checkpoint_bytes":"` + publicProjectionSensitiveSentinel + `"}`,
+		ChannelVersions: publicProjectionSensitiveSentinel,
+		PendingSends:    publicProjectionSensitiveSentinel,
+	})
+
+	require.NotNil(t, got)
+	require.Equal(t, map[string]any{
+		"custom": map[string]any{"theme": "dark", "count": float64(1)},
+	}, got.Values)
+	requirePublicProjectionDoesNotContain(t, got, publicProjectionSensitiveSentinel)
+}
+
 func TestPublicCheckpointProjectsBoundedADKParityState(t *testing.T) {
 	tracker, err := NewADKParityStateTracker(&RunSummary{
 		RunID: 3, ThreadID: 2, SpaceID: 1, CreatorID: 4,

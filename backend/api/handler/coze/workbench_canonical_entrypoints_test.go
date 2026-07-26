@@ -30,28 +30,29 @@ import (
 var canonicalEntrypoints = []struct {
 	name    string
 	handler app.HandlerFunc
+	stub    bool
 }{
-	{"CreateCanonicalThread", CreateCanonicalThread},
-	{"SearchCanonicalThreads", SearchCanonicalThreads},
-	{"GetCanonicalThread", GetCanonicalThread},
-	{"PatchCanonicalThread", PatchCanonicalThread},
-	{"DeleteCanonicalThread", DeleteCanonicalThread},
-	{"GetCanonicalThreadState", GetCanonicalThreadState},
-	{"UpdateCanonicalThreadState", UpdateCanonicalThreadState},
-	{"GetCanonicalThreadHistory", GetCanonicalThreadHistory},
-	{"PostCanonicalThreadHistory", PostCanonicalThreadHistory},
-	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages},
-	{"ListCanonicalRuns", ListCanonicalRuns},
-	{"CreateCanonicalRun", CreateCanonicalRun},
-	{"StreamCanonicalRun", StreamCanonicalRun},
-	{"WaitCanonicalRun", WaitCanonicalRun},
-	{"GetCanonicalRun", GetCanonicalRun},
-	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream},
-	{"JoinCanonicalRun", JoinCanonicalRun},
-	{"CancelCanonicalRun", CancelCanonicalRun},
-	{"ResumeCanonicalRun", ResumeCanonicalRun},
-	{"ListCanonicalRunEvents", ListCanonicalRunEvents},
-	{"ListCanonicalRunMessages", ListCanonicalRunMessages},
+	{"CreateCanonicalThread", CreateCanonicalThread, false},
+	{"SearchCanonicalThreads", SearchCanonicalThreads, false},
+	{"GetCanonicalThread", GetCanonicalThread, false},
+	{"PatchCanonicalThread", PatchCanonicalThread, false},
+	{"DeleteCanonicalThread", DeleteCanonicalThread, false},
+	{"GetCanonicalThreadState", GetCanonicalThreadState, false},
+	{"UpdateCanonicalThreadState", UpdateCanonicalThreadState, false},
+	{"GetCanonicalThreadHistory", GetCanonicalThreadHistory, false},
+	{"PostCanonicalThreadHistory", PostCanonicalThreadHistory, false},
+	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages, false},
+	{"ListCanonicalRuns", ListCanonicalRuns, true},
+	{"CreateCanonicalRun", CreateCanonicalRun, true},
+	{"StreamCanonicalRun", StreamCanonicalRun, true},
+	{"WaitCanonicalRun", WaitCanonicalRun, true},
+	{"GetCanonicalRun", GetCanonicalRun, true},
+	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, true},
+	{"JoinCanonicalRun", JoinCanonicalRun, true},
+	{"CancelCanonicalRun", CancelCanonicalRun, true},
+	{"ResumeCanonicalRun", ResumeCanonicalRun, true},
+	{"ListCanonicalRunEvents", ListCanonicalRunEvents, true},
+	{"ListCanonicalRunMessages", ListCanonicalRunMessages, true},
 }
 
 func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
@@ -76,10 +77,13 @@ func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
 	require.Equal(t, consts.StatusNotFound, c.Response.StatusCode())
 }
 
-func TestCanonicalEntrypointEnabledFailsClosed(t *testing.T) {
+func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 
 	for _, entrypoint := range canonicalEntrypoints {
+		if !entrypoint.stub {
+			continue
+		}
 		entrypoint := entrypoint
 		t.Run(entrypoint.name, func(t *testing.T) {
 			var c app.RequestContext
