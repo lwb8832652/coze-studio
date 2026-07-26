@@ -55,7 +55,7 @@
 
 - [ ] **Step 1: Write the failing canonical route snapshot test**
 
-新增 table-driven test，使用现有 `Register` 测试方式枚举以下 method/path，并断言 canonical 路由当前缺失：
+新增 table-driven test，使用现有 `Register` 测试方式枚举以下 method/path，并断言 canonical 路由必须已注册；由于实现尚未注册这些路由，本步骤应精确产生 RED：
 
 ```go
 var canonicalThreadRoutes = []routeExpectation{
