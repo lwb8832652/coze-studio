@@ -189,8 +189,8 @@ describe('workbench canonical thread IDL', () => {
 Run:
 
 ```bash
-cd frontend
-node common/scripts/install-run-rush.js test --to @coze-studio/api-schema -- --run workbench-thread-contract
+cd frontend/packages/arch/api-schema
+rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
 
 Expected: FAIL because `idl/workbench/thread` does not exist.
@@ -474,8 +474,8 @@ GOCACHE=/private/tmp/coze-workbench-canonical-go-cache go test -p 1 -gcflags="al
 Run:
 
 ```bash
-cd frontend
-node common/scripts/install-run-rush.js test --to @coze-studio/api-schema -- --run workbench-thread-contract
+cd frontend/packages/arch/api-schema
+rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
 
 Expected: PASS.
@@ -1513,8 +1513,8 @@ GOCACHE=/private/tmp/coze-workbench-canonical-go-cache go test -p 1 -gcflags="al
 ```
 
 ```bash
-cd frontend
-node common/scripts/install-run-rush.js test --to @coze-studio/api-schema -- --run workbench-thread-contract
+cd frontend/packages/arch/api-schema
+rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
 
 ```bash
