@@ -25,6 +25,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -283,6 +284,268 @@ export const mergeExplicitGraph = (
     directed: true,
     nodes,
     links,
+  };
+};
+
+const graphLinks = graph => asArray(graph?.links ?? graph?.edges);
+
+export const verifyRequiredQueries = (graph, requiredQueries) => {
+  const errors = [];
+  const nodeIDs = new Set(asArray(graph?.nodes).map(node => stringValue(node?.id)));
+  const linksByID = new Map(
+    graphLinks(graph).map(link => [stringValue(link?.id), link]),
+  );
+
+  for (const query of asArray(requiredQueries)) {
+    const queryID = stringValue(query?.id) || '<missing-query-id>';
+    for (const nodeID of asArray(query?.required_node_ids)) {
+      if (!nodeIDs.has(nodeID)) {
+        errors.push(`required_query_node_missing: ${queryID}: ${nodeID}`);
+      }
+    }
+    for (const edgeID of asArray(query?.required_edge_ids)) {
+      if (!linksByID.has(edgeID)) {
+        errors.push(`required_query_edge_missing: ${queryID}: ${edgeID}`);
+      }
+    }
+  }
+
+  return errors;
+};
+
+export const verifyOrderedPaths = (graph, chains) => {
+  const errors = [];
+  const linksByID = new Map(
+    graphLinks(graph).map(link => [stringValue(link?.id), link]),
+  );
+
+  for (const chain of asArray(chains)) {
+    const chainID = stringValue(chain?.id) || '<missing-chain-id>';
+    const nodeIDs = asArray(chain?.ordered_node_ids);
+    const edgeIDs = asArray(chain?.ordered_edge_ids);
+    for (const [index, edgeID] of edgeIDs.entries()) {
+      const link = linksByID.get(edgeID);
+      if (!link) {
+        errors.push(`ordered_path_edge_missing: ${chainID}: ${edgeID}`);
+        continue;
+      }
+      const source = endpointID(link.source);
+      const target = endpointID(link.target);
+      if (source !== nodeIDs[index] || target !== nodeIDs[index + 1]) {
+        errors.push(
+          `ordered_path_edge_mismatch: ${chainID}: ${edgeID}: expected ${nodeIDs[index]} -> ${nodeIDs[index + 1]}`,
+        );
+      }
+    }
+    for (const edgeID of asArray(chain?.required_side_edge_ids)) {
+      if (!linksByID.has(edgeID)) {
+        errors.push(`ordered_path_side_edge_missing: ${chainID}: ${edgeID}`);
+      }
+    }
+  }
+
+  return errors;
+};
+
+const verifyGraphHealth = (graph, contract) => {
+  const errors = [];
+  if (graph?.directed !== true) {
+    errors.push('derived_graph_not_directed: directed must be true');
+  }
+
+  const nodes = asArray(graph?.nodes);
+  const links = graphLinks(graph);
+  const nodeIDs = new Set();
+  for (const node of nodes) {
+    const nodeID = stringValue(node?.id);
+    if (!nodeID) {
+      errors.push('derived_node_id_missing: node requires an id');
+    } else if (nodeIDs.has(nodeID)) {
+      errors.push(`duplicate_derived_node: ${nodeID}`);
+    }
+    nodeIDs.add(nodeID);
+  }
+
+  const relationTuples = new Set();
+  for (const link of links) {
+    const linkID = stringValue(link?.id) || '<missing-edge-id>';
+    const source = endpointID(link?.source);
+    const target = endpointID(link?.target);
+    const relation = stringValue(link?.relation);
+    if (!nodeIDs.has(source)) {
+      errors.push(`derived_edge_source_missing: ${linkID}: ${source}`);
+    }
+    if (!nodeIDs.has(target)) {
+      errors.push(`derived_edge_target_missing: ${linkID}: ${target}`);
+    }
+    if (source && source === target) {
+      errors.push(`derived_self_loop: ${linkID}: ${source}`);
+    }
+    const tuple = `${source}\u0000${target}\u0000${relation}`;
+    if (relationTuples.has(tuple)) {
+      errors.push(
+        `duplicate_derived_relation: ${source} -> ${target}: ${relation}`,
+      );
+    }
+    relationTuples.add(tuple);
+  }
+
+  const linksByID = new Map(links.map(link => [stringValue(link?.id), link]));
+  for (const node of asArray(contract?.nodes)) {
+    if (!nodeIDs.has(node.id)) {
+      errors.push(`contract_node_missing: ${node.id}`);
+    }
+  }
+  for (const edge of asArray(contract?.edges)) {
+    const link = linksByID.get(edge.id);
+    if (!link) {
+      errors.push(`contract_edge_missing: ${edge.id}`);
+      continue;
+    }
+    if (
+      endpointID(link.source) !== edge.from ||
+      endpointID(link.target) !== edge.to ||
+      stringValue(link.relation) !== edge.relation ||
+      link.confidence !== 'EXTRACTED'
+    ) {
+      errors.push(`contract_edge_mismatch: ${edge.id}`);
+    }
+  }
+
+  const forbiddenTerms = asArray(contract?.scope?.forbidden_current_terms)
+    .map(term => stringValue(term).toLowerCase())
+    .filter(Boolean);
+  for (const node of nodes) {
+    if (node?.production_status !== 'current') {
+      continue;
+    }
+    const searchable = `${stringValue(node?.id)} ${stringValue(node?.label)}`.toLowerCase();
+    for (const term of forbiddenTerms) {
+      if (searchable.includes(term)) {
+        errors.push(`forbidden_derived_node: ${node.id}: ${term}`);
+      }
+    }
+  }
+
+  return errors;
+};
+
+const defaultQueryRunner = async ({ graphPath, terms, graphifyBinary }) => {
+  const { stdout } = await execFileAsync(
+    graphifyBinary,
+    ['query', terms, '--graph', graphPath, '--budget', '2000'],
+    {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  return stdout;
+};
+
+const verifyGraphifyQueries = async (graph, contract, options) => {
+  const errors = [];
+  const nodesByID = new Map(
+    asArray(graph?.nodes).map(node => [stringValue(node?.id), node]),
+  );
+  const queryRunner = options.queryRunner ?? defaultQueryRunner;
+  for (const query of asArray(contract?.required_queries)) {
+    const queryID = stringValue(query?.id) || '<missing-query-id>';
+    const terms = asArray(query?.expanded_terms).map(stringValue).filter(Boolean);
+    if (terms.length === 0) {
+      errors.push(`graphify_query_terms_missing: ${queryID}`);
+      continue;
+    }
+    const smokeNodeIDs =
+      asArray(query?.smoke_node_ids).length > 0
+        ? query.smoke_node_ids
+        : asArray(query?.required_node_ids).slice(0, 1);
+    const requiredLabels = smokeNodeIDs
+      .map(nodeID => stringValue(nodesByID.get(nodeID)?.label))
+      .filter(Boolean);
+    try {
+      const output = String(
+        await queryRunner({
+          graphPath: options.graphPath,
+          graphifyBinary: options.graphifyBinary ?? 'graphify',
+          query,
+          requiredLabels,
+          terms: terms.join(' '),
+        }),
+      ).toLowerCase();
+      const missingLabels = requiredLabels.filter(
+        label => !output.includes(label.toLowerCase()),
+      );
+      if (missingLabels.length > 0) {
+        errors.push(
+          `graphify_query_smoke_failed: ${queryID}: missing ${missingLabels.join(', ')}`,
+        );
+      }
+    } catch (error) {
+      errors.push(
+        `graphify_query_smoke_failed: ${queryID}: ${stringValue(error?.message) || 'query failed'}`,
+      );
+    }
+  }
+  return errors;
+};
+
+export const verifyDerivedGraph = async (contract, options) => {
+  const errors = [];
+  const warnings = [];
+  const derivedRoot = path.resolve(
+    options?.derivedRoot ?? path.join(options.repoRoot, DERIVED_RELATIVE_ROOT),
+  );
+  const graphPath = path.join(derivedRoot, 'graphify-out', 'graph.json');
+  const metadataPath = path.join(derivedRoot, 'build-meta.json');
+
+  let graph;
+  let metadata;
+  try {
+    [graph, metadata] = await Promise.all([
+      readFile(graphPath, 'utf8').then(JSON.parse),
+      readFile(metadataPath, 'utf8').then(JSON.parse),
+    ]);
+  } catch (error) {
+    return {
+      errors: [`derived_graph_unreadable: ${error.message}`],
+      warnings,
+    };
+  }
+
+  const digestRoot = await mkdtemp(
+    path.join(os.tmpdir(), 'workbench-derived-digest-'),
+  );
+  try {
+    const current = await writeCorpus(contract, {
+      ...options,
+      derivedRoot: digestRoot,
+    });
+    if (metadata?.corpus_digest !== current.digest) {
+      errors.push(
+        `stale_derived_digest: built ${stringValue(metadata?.corpus_digest) || '<missing>'} current ${current.digest}`,
+      );
+    }
+  } catch (error) {
+    errors.push(`derived_digest_failed: ${error.message}`);
+  } finally {
+    await rm(digestRoot, { recursive: true, force: true });
+  }
+
+  errors.push(...verifyGraphHealth(graph, contract));
+  errors.push(...verifyRequiredQueries(graph, contract?.required_queries));
+  errors.push(...verifyOrderedPaths(graph, contract?.chains));
+  if (options?.runGraphifyQueries !== false) {
+    errors.push(
+      ...(await verifyGraphifyQueries(graph, contract, {
+        ...options,
+        graphPath,
+      })),
+    );
+  }
+
+  return {
+    errors: [...new Set(errors)].sort(),
+    warnings: [...new Set(warnings)].sort(),
   };
 };
 

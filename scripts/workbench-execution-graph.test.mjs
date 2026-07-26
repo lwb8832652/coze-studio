@@ -15,11 +15,13 @@
  */
 
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import {
   evaluateAuthorityChanges,
@@ -29,10 +31,15 @@ import {
   buildDerivedGraph,
   mergeExplicitGraph,
   renderContractLedger,
+  verifyDerivedGraph,
+  verifyOrderedPaths,
+  verifyRequiredQueries,
   writeCorpus,
 } from './workbench-execution-graph/derived.mjs';
 
+const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI_PATH = path.join(REPO_ROOT, 'scripts/workbench-execution-graph.mjs');
 const CONTRACT_PATH = path.join(
   REPO_ROOT,
   'docs/superpowers/context/workbench-execution-graph.json',
@@ -410,4 +417,165 @@ test('missing Graphify leaves the previous valid derived graph untouched', async
   } finally {
     await rm(outputRoot, { recursive: true, force: true });
   }
+});
+
+const withDerivedFixture = async callback => {
+  const contract = await loadCanonicalContract();
+  const validation = await validateContract(contract, { repoRoot: REPO_ROOT });
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'workbench-verify-'));
+  const derivedRoot = path.join(outputRoot, 'derived');
+  try {
+    const corpus = await writeCorpus(contract, {
+      repoRoot: REPO_ROOT,
+      derivedRoot: path.join(outputRoot, 'digest'),
+      authorityDocument: CONTEXT_RELATIVE,
+      resolvedVersions: validation.resolvedVersions,
+    });
+    const graph = mergeExplicitGraph(
+      { directed: true, nodes: [], links: [] },
+      contract,
+      validation.resolvedVersions,
+    );
+    await mkdir(path.join(derivedRoot, 'graphify-out'), { recursive: true });
+
+    const writeDerived = async (nextGraph = graph, digest = corpus.digest) => {
+      await writeFile(
+        path.join(derivedRoot, 'graphify-out/graph.json'),
+        `${JSON.stringify(nextGraph, null, 2)}\n`,
+        'utf8',
+      );
+      await writeFile(
+        path.join(derivedRoot, 'build-meta.json'),
+        `${JSON.stringify({ corpus_digest: digest }, null, 2)}\n`,
+        'utf8',
+      );
+    };
+    await writeDerived();
+    await callback({
+      contract,
+      derivedRoot,
+      graph,
+      resolvedVersions: validation.resolvedVersions,
+      writeDerived,
+    });
+  } finally {
+    await rm(outputRoot, { recursive: true, force: true });
+  }
+};
+
+test('derived graph verifier accepts complete explicit paths and queries', async () => {
+  await withDerivedFixture(async fixture => {
+    assert.deepEqual(
+      verifyRequiredQueries(fixture.graph, fixture.contract.required_queries),
+      [],
+    );
+    assert.deepEqual(
+      verifyOrderedPaths(fixture.graph, fixture.contract.chains),
+      [],
+    );
+    const result = await verifyDerivedGraph(fixture.contract, {
+      repoRoot: REPO_ROOT,
+      derivedRoot: fixture.derivedRoot,
+      resolvedVersions: fixture.resolvedVersions,
+      runGraphifyQueries: false,
+    });
+    assert.deepEqual(result.errors, []);
+  });
+});
+
+test('derived verifier rejects stale, malformed, and incomplete graphs', async () => {
+  await withDerivedFixture(async fixture => {
+    const verify = async () =>
+      verifyDerivedGraph(fixture.contract, {
+        repoRoot: REPO_ROOT,
+        derivedRoot: fixture.derivedRoot,
+        resolvedVersions: fixture.resolvedVersions,
+        runGraphifyQueries: false,
+      });
+
+    await fixture.writeDerived(fixture.graph, 'stale');
+    assert.match((await verify()).errors.join('\n'), /stale_derived_digest/);
+
+    const dangling = structuredClone(fixture.graph);
+    dangling.links.push({
+      id: 'fault.dangling',
+      source: 'frontend.workbench.handle_send',
+      target: 'missing.node',
+      relation: 'calls',
+    });
+    await fixture.writeDerived(dangling);
+    assert.match((await verify()).errors.join('\n'), /derived_edge_target_missing/);
+
+    const duplicate = structuredClone(fixture.graph);
+    duplicate.links.push({
+      ...duplicate.links[0],
+      id: 'fault.duplicate',
+    });
+    await fixture.writeDerived(duplicate);
+    assert.match((await verify()).errors.join('\n'), /duplicate_derived_relation/);
+
+    const selfLoop = structuredClone(fixture.graph);
+    selfLoop.links.push({
+      id: 'fault.self-loop',
+      source: 'frontend.workbench.handle_send',
+      target: 'frontend.workbench.handle_send',
+      relation: 'calls',
+    });
+    await fixture.writeDerived(selfLoop);
+    assert.match((await verify()).errors.join('\n'), /derived_self_loop/);
+
+    const missingNode = structuredClone(fixture.graph);
+    missingNode.nodes = missingNode.nodes.filter(
+      node => node.id !== 'runtime.adk_executor.execute',
+    );
+    await fixture.writeDerived(missingNode);
+    assert.match((await verify()).errors.join('\n'), /required_query_node_missing/);
+
+    const brokenPath = structuredClone(fixture.graph);
+    brokenPath.links = brokenPath.links.filter(
+      link => link.id !== 'edge.selector_executes_adk',
+    );
+    await fixture.writeDerived(brokenPath);
+    assert.match((await verify()).errors.join('\n'), /ordered_path_edge_missing/);
+
+    const forbidden = structuredClone(fixture.graph);
+    forbidden.nodes.push({
+      id: 'fault.k2',
+      label: 'K2 current runtime',
+      production_status: 'current',
+    });
+    await fixture.writeDerived(forbidden);
+    assert.match((await verify()).errors.join('\n'), /forbidden_derived_node/);
+  });
+});
+
+test('derived verifier reports Graphify query smoke failures', async () => {
+  await withDerivedFixture(async fixture => {
+    const result = await verifyDerivedGraph(fixture.contract, {
+      repoRoot: REPO_ROOT,
+      derivedRoot: fixture.derivedRoot,
+      resolvedVersions: fixture.resolvedVersions,
+      queryRunner: async () => '',
+    });
+    assert.match(result.errors.join('\n'), /graphify_query_smoke_failed/);
+  });
+});
+
+test('CLI verify succeeds and unknown commands fail concisely', async () => {
+  const verified = await execFileAsync(process.execPath, [CLI_PATH, 'verify'], {
+    cwd: os.tmpdir(),
+    encoding: 'utf8',
+  });
+  assert.match(verified.stdout, /verification passed/);
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [CLI_PATH, 'unknown'], {
+      cwd: os.tmpdir(),
+      encoding: 'utf8',
+    }),
+    error =>
+      error?.code === 1 &&
+      /unknown command/.test(error?.stderr) &&
+      !/at file:/.test(error?.stderr),
+  );
 });
