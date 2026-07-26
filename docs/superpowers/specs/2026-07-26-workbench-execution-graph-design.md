@@ -31,6 +31,8 @@ WorkbenchChat 已统一到 `TaskThread` 主模型，旧 `ChatTask` 链路已退�
 4. 让 Graphify 提供稳定业务关系检索，让 codebase-memory 提供实时结构追踪。
 5. 在源码变化后能够检测图谱语料过期、链路断裂和上下文漏更。
 6. 明确隔离 K2、旧 ChatTask 和历史设计语料，禁止用其推断当前实现。
+7. 建立源码锚定的框架使用子图，准确回答每个框架在执行链中的职责、入口、
+   版本来源和兼容边界，尤其覆盖 Eino SDK/ADK 的实际使用方式。
 
 ## 非目标
 
@@ -75,12 +77,13 @@ flowchart LR
   REPO["MySQL Repository"]
   QUEUE["Pending Run and Lease"]
   WORKER["RunWorker and RunProcessor"]
-  ADK["ADKExecutor and Eino Runner"]
+  ADK["ADKExecutor and Eino ADK"]
+  SDK["Runner / ChatModelAgent / Middleware / Tool / MCP"]
   EVENT["Event Mapper and EventSink"]
   PROJECTION["SSE / Query / Frontend Projection"]
 
   FE --> CLIENT --> IDL --> HTTP --> APP --> DOMAIN --> REPO
-  REPO --> QUEUE --> WORKER --> ADK --> EVENT --> REPO
+  REPO --> QUEUE --> WORKER --> ADK --> SDK --> EVENT --> REPO
   REPO --> PROJECTION --> FE
 ```
 
@@ -113,6 +116,8 @@ flowchart LR
 - 稳定且唯一的 `id`；
 - `label`、`layer`、`kind`；
 - `production_status`，权威执行链只能引用 `current` 节点；
+- 框架节点还必须包含 `runtime_scope`、`package` 和 `version_source`，其中版本只能
+  从 `go.mod`、`package.json` 或锁文件读取，不能手工猜测；
 - 一个或多个 `source_anchors`；
 - 至少一个 `evidence`，可指向测试或合同；
 - 可选的 `bounded_metadata`，不得包含敏感运行内容。
@@ -147,6 +152,10 @@ flowchart LR
 - `resumes`
 - `retries`
 - `audits`
+- `implemented_with`
+- `configures`
+- `adapts_to`
+- `observes`
 - `excludes`
 
 Graphify 可以生成推断关系，但推断关系不能满足机器合同中的必需边。
@@ -195,7 +204,58 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 - ADKExecutor；
 - Eino Agent Factory、Runner、Tool 和 Subagent。
 
-### 4. 事件和结果回传
+### 4. 核心框架使用子图
+
+框架子图不能只保存“项目用了 Eino、Hertz、React”这种技术栈标签。每个框架
+节点必须连接到实际生产符号，并标明它在主链中的职责：
+
+- 前端：React 18、React Router、生成的 `@coze-studio/api-schema` 客户端和浏览器
+  `EventSource`；Coze Design 只标记为 UI 依赖，不得连接为执行状态所有者。
+- 合同与传输：Workbench Thrift IDL、thriftgo/API Schema 代码生成、Hertz HTTP 和
+  Hertz SSE；必须明确线上协议是 HTTP JSON/SSE，而不是 Thrift 二进制 RPC。
+- 应用与持久化：Go 原生 `agentthread` Application/Domain 编排、GORM、MySQL 事务、
+  `FOR UPDATE SKIP LOCKED`、Lease 和 Heartbeat。
+- 异步调度：Go goroutine/ticker 加 MySQL 持久化队列；Kafka、RabbitMQ、NATS、
+  Asynq 和 Redis Queue 必须作为“不在当前主链”排除项，不能生成当前节点。
+- Eino SDK：`adk.NewRunner`、`RunnerConfig`、`Run`、`Resume`、
+  `ResumeWithParams`、`adk.NewChatModelAgent`、`ChatModelAgentConfig`，以及
+  `schema`、`components/model`、`components/tool`、`compose`、`callbacks`。
+- Eino middleware：按源码中的真实顺序收录 reduction、filesystem、uploaded
+  files、patch tool calls、tool error normalization、memory、skill、transcript、
+  summarization、plan task、provider capability、multimodal budget、tool search、
+  parity state、context budget、safety finish、subagent limit 和 semantic loop。
+- Eino 扩展：当前实际导入的 Ark、Claude、DeepSeek、Gemini、OpenAI、Qwen 模型
+  适配，以及 DuckDuckGo、Wikipedia 工具；不得把“依赖存在”误写成“当前 Run
+  一定调用”。
+- MCP：`mark3labs/mcp-go` 客户端和 transport 适配为 Eino `tool.BaseTool`，覆盖
+  stdio、SSE、Streamable HTTP、Sandbox、安全策略、输出预算和审计边界。
+- 运行支撑：Prometheus 只作为可选观测层，Sonic 只作为 JSON 编解码层，OSS
+  抽象只连接附件、Artifact、运行时 offload 和审计归档，不得提升为 Agent 内核。
+- 外部生产者：`robfig/cron` 和飞书官方 Go SDK 只连接到任务入口，不得连接为
+  Run 执行器。
+
+框架节点的 `runtime_scope` 只能取：
+
+- `canonical_runtime`
+- `transport_contract`
+- `persistence_runtime`
+- `integration_ingress`
+- `optional_observability`
+- `ui_only`
+- `historical_compatibility`
+- `build_or_test_only`
+
+下列名称必须用明确边界节点表达，不能被误认为并行生产框架：
+
+- LangGraph 仅是兼容 API，最终委托 `agentthread.ApplicationService`，不运行
+  LangGraph SDK；
+- DeerFlow 仅表示当前 Go/Eino 实现对其配置、模式和行为语义的兼容，不导入
+  DeerFlow 运行时；
+- `legacyAgentRunExecutor` 只服务历史无 runtime 标记记录；新 Run 拒绝选择
+  `legacy` 并持久化 `runtime=eino_adk`；
+- Rush、Rsbuild、Vitest 和 Atlas 属于构建、测试或迁移工具，不进入生产执行链。
+
+### 5. 事件和结果回传
 
 - Eino `AgentEvent`；
 - `MapADKEvent`；
@@ -205,7 +265,7 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 - SSE 或查询接口；
 - 前端事件投影、Todo、工具调用和结果展示。
 
-### 5. 控制和恢复
+### 6. 控制和恢复
 
 - Cancel；
 - Human Interaction Resume；
@@ -215,7 +275,7 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 - Multitask interrupt/rollback；
 - Worker 重启和重复执行保护。
 
-### 6. 附属数据链
+### 7. 附属数据链
 
 - Memory 增删改、导入导出、恢复和审计；
 - Artifact 上传、扫描、审核、下载、删除和恢复；
@@ -223,7 +283,7 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
 - Guardrail Audit；
 - MCP Runtime Audit。
 
-### 7. 边界链
+### 8. 边界链
 
 - Runtime Doctor 和建议生成只作为辅助能力，不连接为状态机所有者；
 - 旧 ChatTask 节点全部标为 retired，且不进入当前链路；
@@ -244,6 +304,10 @@ LangGraph、定时任务和飞书是当前真实生产者，必须连接到共�
    中的显式关系；
 8. 写入派生图元数据，包括 Git tree、语料摘要、Graphify 版本和生成时间；
 9. 执行派生图健康检查和必需查询。
+
+框架语料账本必须从合同确定性生成，记录框架节点、版本来源、生产符号和边界
+分类。Graphify 的 AST 可以补充 import/call 关系，但不得仅凭 `go.mod` 或
+`package.json` 中存在某个依赖就推断它位于当前执行主链。
 
 构建不得读取历史 plans/specs、K2 文档、旧 ChatTask 源码或未列入白名单的目录。
 
@@ -267,6 +331,11 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - 当前链路不引用 retired、K2 或历史节点；
 - 每条链从入口到终点可达；
 - 白名单路径位于仓库内，且不包含敏感或生成目录。
+- 框架版本来源文件存在，声明的 package 和版本与当前 manifest 一致；
+- 每个 `canonical_runtime` 框架至少有一个生产源码符号锚点，不能只锚定依赖
+  清单；
+- Eino middleware 顺序与 `adkMiddlewareOrder` 完全一致；
+- compatibility、UI、观测和构建工具不能出现在 Run 执行器必经边中。
 
 `verify-derived` 必须检查：
 
@@ -276,6 +345,11 @@ node scripts/workbench-execution-graph.mjs verify-derived
 - Workbench 前端到 Eino 的路径经过真实跨层节点，不只经过文档
   `references`；
 - K2 和旧 ChatTask 当前节点数为 0。
+- “当前主链使用哪些框架”查询必须返回框架职责和源码入口，而不是无方向的技术
+  栈标签；
+- “Eino SDK 如何执行 Run”查询必须经过 RuntimeSelector、ADKExecutor、Runner、
+  ChatModelAgent、middleware/tool 和 EventSink；
+- “LangGraph/DeerFlow/legacy 是否是当前并行运行时”查询必须返回明确否定边界。
 
 ## 变化检测
 
@@ -291,6 +365,8 @@ node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
 - Workbench TaskThread API 或生成 client；
 - AgentThread Application、Domain、Repository；
 - Worker、Lease、Runtime Selector、ADKExecutor；
+- `go.mod`、Workbench 应用 `package.json`、Eino/Hertz/GORM/MCP/React 框架入口和
+  `adkMiddlewareOrder`；
 - Event、Checkpoint、Memory、Artifact、Token、Guardrail、MCP；
 - 认证、租户隔离、bounded projection 或 fail-closed 边界。
 
@@ -325,11 +401,15 @@ node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
 3. 悬空边故障注入能够失败；
 4. K2 当前节点故障注入能够失败；
 5. 过期摘要故障注入能够失败；
-6. Graphify 有向图健康检查通过；
-7. 每个必需链路查询返回入口、真实跨层节点和终点；
-8. codebase-memory 在相同 Git tree 上刷新；
-9. codebase-memory 能找到当前关键符号，并确认旧 ChatTask 生产符号为 0；
-10. `git diff --check`、敏感信息扫描和工作树清洁检查通过。
+6. 框架版本漂移故障注入能够失败；
+7. Eino middleware 顺序漂移故障注入能够失败；
+8. 把 LangGraph、DeerFlow 或 legacy 错标为 canonical runtime 的故障注入能够失败；
+9. Graphify 有向图健康检查通过；
+10. 每个必需链路查询返回入口、真实跨层节点和终点；
+11. 框架查询返回职责、版本来源、生产符号和明确兼容边界；
+12. codebase-memory 在相同 Git tree 上刷新；
+13. codebase-memory 能找到当前关键符号，并确认旧 ChatTask 生产符号为 0；
+14. `git diff --check`、敏感信息扫描和工作树清洁检查通过。
 
 本需求不改变业务代码，因此不要求页面行为变化。若实施过程中发现必须修改业务
 代码才能使声明链路成立，应停止并拆成新的业务修复需求，不能在图谱需求中顺手
