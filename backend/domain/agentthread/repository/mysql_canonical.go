@@ -19,13 +19,14 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 )
@@ -60,7 +61,10 @@ func (r *threadRepository) SearchThreads(
 			query = canonicalMetadataNullQuery(query, key)
 			continue
 		}
-		query = query.Where(datatypes.JSONQuery("metadata").Equals(value, key))
+		query, err = canonicalMetadataEqualsQuery(query, key, value)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	var total int64
@@ -208,12 +212,8 @@ func (r *threadRepository) PatchThread(
 
 	var snapshot *entity.Thread
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		query := tx.Where("id = ?", req.ThreadID)
-		if tx.Dialector.Name() != "sqlite" {
-			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		var current threadPO
-		if err := query.First(&current).Error; err != nil {
+		current, err := lockThreadForUpdate(tx, req.ThreadID)
+		if err != nil {
 			return err
 		}
 
@@ -222,14 +222,14 @@ func (r *threadRepository) PatchThread(
 			updates["title"] = *req.Title
 		}
 		if len(req.MetadataPatch) > 0 {
-			metadata := make(map[string]any)
+			var metadata map[string]any
 			if raw := strings.TrimSpace(string(current.Metadata)); raw != "" {
-				if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+				metadata, err = decodeCanonicalMetadataObject(raw)
+				if err != nil {
 					return fmt.Errorf("parse current thread metadata: %w", err)
 				}
-				if metadata == nil {
-					metadata = make(map[string]any)
-				}
+			} else {
+				metadata = make(map[string]any)
 			}
 			for key, value := range req.MetadataPatch {
 				metadata[key] = value
@@ -275,12 +275,7 @@ func (r *threadRepository) DeleteThreadIfIdle(
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// This is the same admission lock used by CreateRunBundle, so create and
 		// delete have one linear order before either mutates the aggregate.
-		threadQuery := tx.Where("id = ?", req.ThreadID)
-		if tx.Dialector.Name() != "sqlite" {
-			threadQuery = threadQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		var thread threadPO
-		if err := threadQuery.First(&thread).Error; err != nil {
+		if _, err := lockThreadForUpdate(tx, req.ThreadID); err != nil {
 			if err == gorm.ErrRecordNotFound {
 				return nil
 			}
@@ -355,9 +350,45 @@ func canonicalThreadSort(sortBy, sortOrder string) (string, string, error) {
 }
 
 func canonicalMetadataNullQuery(query *gorm.DB, key string) *gorm.DB {
-	path := "$." + key
+	path := canonicalTopLevelJSONPath(key)
 	if query.Dialector.Name() == "sqlite" {
 		return query.Where("json_type(metadata, ?) = ?", path, "null")
 	}
 	return query.Where("JSON_TYPE(JSON_EXTRACT(metadata, ?)) = ?", path, "NULL")
+}
+
+func canonicalMetadataEqualsQuery(query *gorm.DB, key string, value any) (*gorm.DB, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal metadata value for %q: %w", key, err)
+	}
+	return query.Where(
+		"JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
+		canonicalTopLevelJSONPath(key), string(encoded),
+	), nil
+}
+
+func canonicalTopLevelJSONPath(key string) string {
+	encoded, _ := json.Marshal(key)
+	return "$." + string(encoded)
+}
+
+func decodeCanonicalMetadataObject(raw string) (map[string]any, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var metadata map[string]any
+	if err := decoder.Decode(&metadata); err != nil {
+		return nil, err
+	}
+	if metadata == nil {
+		return nil, fmt.Errorf("metadata must be a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("metadata must contain exactly one JSON object")
+		}
+		return nil, err
+	}
+	return metadata, nil
 }

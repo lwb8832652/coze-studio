@@ -859,12 +859,8 @@ func (r *threadRepository) CreateRunBundle(
 			return nil
 		}
 
-		threadQuery := tx.Where("id = ?", normalized.Run.ThreadID)
-		if tx.Dialector.Name() != "sqlite" {
-			threadQuery = threadQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		var thread threadPO
-		if err := threadQuery.First(&thread).Error; err != nil {
+		thread, err := lockThreadForUpdate(tx, normalized.Run.ThreadID)
+		if err != nil {
 			return err
 		}
 		if normalized.Run.SpaceID != thread.SpaceID || normalized.Run.CreatorID != thread.CreatorID {
@@ -961,6 +957,19 @@ func (r *threadRepository) CreateRunBundle(
 		return replayed, nil
 	}
 	return nil, err
+}
+
+// lockThreadForUpdate gives aggregate mutations one row-lock order on MySQL.
+func lockThreadForUpdate(tx *gorm.DB, threadID int64) (*threadPO, error) {
+	query := tx.Where("id = ?", threadID)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var thread threadPO
+	if err := query.First(&thread).Error; err != nil {
+		return nil, err
+	}
+	return &thread, nil
 }
 
 func isTopLevelTaskRun(run *entity.Run) bool {

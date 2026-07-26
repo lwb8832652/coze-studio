@@ -18,12 +18,17 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -33,12 +38,16 @@ import (
 func TestCanonicalExtensionsKeepLegacyListThreadsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
 	repo := NewThreadRepository(db)
+	for id := int64(1); id <= 23; id++ {
+		require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+			ID: id, SpaceID: 10, CreatorID: 20, Title: fmt.Sprintf("thread-%d", id),
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			CreatedAt: 100, UpdatedAt: 100,
+		}))
+	}
 	for _, thread := range []*entity.Thread{
-		{ID: 1, SpaceID: 10, CreatorID: 20, Title: "first", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 100},
-		{ID: 2, SpaceID: 10, CreatorID: 20, Title: "tie", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 100},
-		{ID: 3, SpaceID: 10, CreatorID: 20, Title: "latest", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 200},
-		{ID: 4, SpaceID: 10, CreatorID: 21, Title: "other user", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 300},
-		{ID: 5, SpaceID: 11, CreatorID: 20, Title: "other space", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 400},
+		{ID: 24, SpaceID: 10, CreatorID: 21, Title: "other user", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 200},
+		{ID: 25, SpaceID: 11, CreatorID: 20, Title: "other space", Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb, UpdatedAt: 300},
 	} {
 		require.NoError(t, repo.CreateThread(context.Background(), thread))
 	}
@@ -49,85 +58,87 @@ func TestCanonicalExtensionsKeepLegacyListThreadsPagingAndOrder(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Equal(t, []int64{3, 2, 1}, threadIDs(threads))
+	require.Equal(t, int64(23), total)
+	require.Equal(t, canonicalDescendingIDs(23, 4), threadIDs(threads))
 }
 
 func TestCanonicalExtensionsKeepLegacyListRunsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &runPO{})
 	repo := NewThreadRepository(db)
-	for _, run := range []*entity.Run{
-		newCanonicalRepositoryRun(1, 10, 0, 100),
-		newCanonicalRepositoryRun(2, 10, 0, 100),
-		newCanonicalRepositoryRun(3, 10, 0, 200),
-		newCanonicalRepositoryRun(4, 10, 99, 300),
-		newCanonicalRepositoryRun(5, 11, 0, 400),
-	} {
-		require.NoError(t, repo.CreateRun(context.Background(), run))
+	for id := int64(1); id <= 23; id++ {
+		require.NoError(t, repo.CreateRun(
+			context.Background(), newCanonicalRepositoryRun(id, 10, 0, 100),
+		))
 	}
+	require.NoError(t, repo.CreateRun(context.Background(), newCanonicalRepositoryRun(24, 10, 99, 200)))
+	require.NoError(t, repo.CreateRun(context.Background(), newCanonicalRepositoryRun(25, 11, 0, 300)))
 
 	runs, total, err := repo.ListRuns(context.Background(), ListRunsRequest{ThreadID: 10})
 
 	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Equal(t, []int64{3, 2, 1}, runIDs(runs))
+	require.Equal(t, int64(23), total)
+	require.Equal(t, canonicalDescendingIDs(23, 4), runIDs(runs))
 }
 
 func TestCanonicalExtensionsKeepLegacyListMessagesPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &messagePO{})
 	repo := NewThreadRepository(db)
-	for _, message := range []*entity.Message{
-		{ID: 2, ThreadID: 10, Role: entity.MessageRoleUser, Content: "tie", CreatedAt: 100},
-		{ID: 1, ThreadID: 10, Role: entity.MessageRoleUser, Content: "first", CreatedAt: 100},
-		{ID: 3, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "last", CreatedAt: 200},
-		{ID: 4, ThreadID: 11, Role: entity.MessageRoleUser, Content: "other", CreatedAt: 50},
-	} {
-		require.NoError(t, repo.CreateMessage(context.Background(), message))
+	for id := int64(1); id <= 53; id++ {
+		require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+			ID: id, ThreadID: 10, Role: entity.MessageRoleUser,
+			Content: fmt.Sprintf("message-%d", id), CreatedAt: 100,
+		}))
 	}
+	require.NoError(t, repo.CreateMessage(context.Background(), &entity.Message{
+		ID: 54, ThreadID: 11, Role: entity.MessageRoleUser, Content: "other", CreatedAt: 50,
+	}))
 
 	messages, total, err := repo.ListMessages(context.Background(), ListMessagesRequest{ThreadID: 10})
 
 	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Equal(t, []int64{1, 2, 3}, messageIDs(messages))
+	require.Equal(t, int64(53), total)
+	require.Equal(t, canonicalAscendingIDs(1, 50), messageIDs(messages))
 }
 
 func TestCanonicalExtensionsKeepLegacyListRunEventsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &runEventPO{})
 	repo := NewThreadRepository(db)
-	for _, event := range []*entity.RunEvent{
-		{ID: 3, ThreadID: 10, RunID: 20, EventType: "third", Payload: `{}`},
-		{ID: 1, ThreadID: 10, RunID: 20, EventType: "first", Payload: `{}`},
-		{ID: 2, ThreadID: 10, RunID: 21, EventType: "second", Payload: `{}`},
-		{ID: 4, ThreadID: 11, RunID: 22, EventType: "other", Payload: `{}`},
-	} {
-		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
+	for id := int64(1); id <= 103; id++ {
+		require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+			ID: id, ThreadID: 10, RunID: 20,
+			EventType: fmt.Sprintf("event-%d", id), Payload: `{}`,
+		}))
 	}
+	require.NoError(t, repo.CreateRunEvent(context.Background(), &entity.RunEvent{
+		ID: 104, ThreadID: 11, RunID: 21, EventType: "other", Payload: `{}`,
+	}))
 
 	events, total, err := repo.ListRunEvents(context.Background(), ListRunEventsRequest{ThreadID: 10})
 
 	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Equal(t, []int64{1, 2, 3}, runEventIDs(events))
+	require.Equal(t, int64(103), total)
+	require.Equal(t, canonicalAscendingIDs(1, 100), runEventIDs(events))
 }
 
 func TestCanonicalExtensionsKeepLegacyListCheckpointsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &checkpointPO{})
 	repo := NewThreadRepository(db)
-	for _, checkpoint := range []*entity.Checkpoint{
-		newCanonicalRepositoryCheckpoint(1, 10, 20, "eino_adk", 100),
-		newCanonicalRepositoryCheckpoint(2, 10, 20, "legacy", 100),
-		newCanonicalRepositoryCheckpoint(3, 10, 21, "canonical_public_state", 200),
-		newCanonicalRepositoryCheckpoint(4, 11, 22, "eino_adk", 300),
-	} {
-		require.NoError(t, repo.CreateCheckpoint(context.Background(), checkpoint))
+	for id := int64(1); id <= 23; id++ {
+		runtimeType := "eino_adk"
+		if id%2 == 0 {
+			runtimeType = "canonical_public_state"
+		}
+		require.NoError(t, repo.CreateCheckpoint(context.Background(),
+			newCanonicalRepositoryCheckpoint(id, 10, 20, runtimeType, 100)))
 	}
+	require.NoError(t, repo.CreateCheckpoint(context.Background(),
+		newCanonicalRepositoryCheckpoint(24, 11, 21, "eino_adk", 200)))
 
 	checkpoints, total, err := repo.ListCheckpoints(context.Background(), ListCheckpointsRequest{ThreadID: 10})
 
 	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Equal(t, []int64{3, 2, 1}, checkpointIDs(checkpoints))
+	require.Equal(t, int64(23), total)
+	require.Equal(t, canonicalDescendingIDs(23, 4), checkpointIDs(checkpoints))
 }
 
 func TestCanonicalExtensionsKeepLegacyDeleteThreadCascade(t *testing.T) {
@@ -227,6 +238,76 @@ func TestCanonicalSearchThreadsUsesExactOffsetMetadataAndPermissionTotal(t *test
 	require.NoError(t, err)
 	require.Equal(t, int64(15), total)
 	require.Equal(t, []int64{8, 9, 10}, threadIDs(threads))
+}
+
+func TestCanonicalSearchThreadsMatchesLiteralTopLevelMetadataKeys(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
+	repo := &threadRepository{db: db}
+	for _, thread := range []*entity.Thread{
+		{
+			ID: 1, SpaceID: 10, CreatorID: 20, Title: "literal keys",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{"source.kind":"canonical","feature-flag":true,"nullable.key":null}`,
+		},
+		{
+			ID: 2, SpaceID: 10, CreatorID: 20, Title: "nested keys",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{"source":{"kind":"canonical"},"feature":{"flag":true},"nullable":{"key":null}}`,
+		},
+	} {
+		require.NoError(t, repo.CreateThread(context.Background(), thread))
+	}
+
+	tests := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{name: "dot key", metadata: map[string]any{"source.kind": "canonical"}},
+		{name: "hyphen key", metadata: map[string]any{"feature-flag": true}},
+		{name: "null dot key", metadata: map[string]any{"nullable.key": nil}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			threads, total, err := repo.SearchThreads(context.Background(), SearchThreadsRequest{
+				SpaceID: 10, UserID: 20, Metadata: tt.metadata,
+				SortBy: "thread_id", SortOrder: "asc", Page: CanonicalPage{Limit: 10},
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Equal(t, []int64{1}, threadIDs(threads))
+		})
+	}
+}
+
+func TestCanonicalSearchThreadsMatchesJSONNumberMetadataValues(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
+	repo := &threadRepository{db: db}
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 1, SpaceID: 10, CreatorID: 20, Title: "numbers",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{"ratio":1.5,"count":9007199254740993}`,
+	}))
+
+	tests := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{name: "decimal", metadata: map[string]any{"ratio": json.Number("1.5")}},
+		{name: "large integer", metadata: map[string]any{"count": json.Number("9007199254740993")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			threads, total, err := repo.SearchThreads(context.Background(), SearchThreadsRequest{
+				SpaceID: 10, UserID: 20, Metadata: tt.metadata,
+				Page: CanonicalPage{Limit: 10},
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Equal(t, []int64{1}, threadIDs(threads))
+		})
+	}
 }
 
 func TestCanonicalSearchThreadsUsesWhitelistedSortsAndSameDirectionTieBreaker(t *testing.T) {
@@ -342,9 +423,17 @@ func TestCanonicalListRunEventsByCursorFiltersTypeAndReportsHasMore(t *testing.T
 func TestCanonicalListCheckpointsBeforeUsesCursorAndReportsHasMore(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &checkpointPO{})
 	repo := &threadRepository{db: db}
-	for id := int64(1); id <= 5; id++ {
+	runtimeTypes := []string{
+		"eino_adk",
+		"canonical_public_state",
+		"eino_adk",
+		"canonical_public_state",
+		"eino_adk",
+	}
+	for index, runtimeType := range runtimeTypes {
+		id := int64(index + 1)
 		require.NoError(t, repo.CreateCheckpoint(context.Background(),
-			newCanonicalRepositoryCheckpoint(id, 10, 20, "eino_adk", id)))
+			newCanonicalRepositoryCheckpoint(id, 10, 20, runtimeType, id)))
 	}
 	require.NoError(t, repo.CreateCheckpoint(context.Background(),
 		newCanonicalRepositoryCheckpoint(6, 11, 21, "eino_adk", 100)))
@@ -358,6 +447,17 @@ func TestCanonicalListCheckpointsBeforeUsesCursorAndReportsHasMore(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, hasMore)
 	require.Equal(t, []int64{4, 3}, checkpointIDs(checkpoints))
+	require.Equal(t, []string{"canonical_public_state", "eino_adk"}, checkpointRuntimeTypes(checkpoints))
+
+	checkpoints, hasMore, err = repo.ListCheckpointsBefore(context.Background(), ListCheckpointsBeforeRequest{
+		ThreadID:           10,
+		BeforeCheckpointID: 3,
+		Limit:              10,
+	})
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Equal(t, []int64{2, 1}, checkpointIDs(checkpoints))
+	require.Equal(t, []string{"canonical_public_state", "eino_adk"}, checkpointRuntimeTypes(checkpoints))
 }
 
 func TestCanonicalPatchThreadAtomicallyMergesMetadataAndTitle(t *testing.T) {
@@ -386,6 +486,67 @@ func TestCanonicalPatchThreadAtomicallyMergesMetadataAndTitle(t *testing.T) {
 	persisted, err := repo.GetThread(context.Background(), 10)
 	require.NoError(t, err)
 	require.Equal(t, patched, persisted)
+}
+
+func TestCanonicalPatchThreadPreservesExistingLargeIntegerMetadata(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
+	repo := &threadRepository{db: db}
+	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
+		ID: 10, SpaceID: 20, CreatorID: 30, Title: "numbers",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+		Metadata: `{"large":9007199254740993,"keep":true}`,
+	}))
+
+	patched, err := repo.PatchThread(context.Background(), PatchThreadRequest{
+		ThreadID: 10, MetadataPatch: map[string]any{"new_key": "value"}, UpdatedAt: 100,
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, patched.Metadata, `"large":9007199254740993`)
+	decoder := json.NewDecoder(strings.NewReader(patched.Metadata))
+	decoder.UseNumber()
+	var metadata map[string]any
+	require.NoError(t, decoder.Decode(&metadata))
+	require.Equal(t, json.Number("9007199254740993"), metadata["large"])
+	require.Equal(t, true, metadata["keep"])
+	require.Equal(t, "value", metadata["new_key"])
+
+	persisted, err := repo.GetThread(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, patched.Metadata, persisted.Metadata)
+}
+
+func TestCanonicalPatchThreadRejectsCurrentMetadataThatIsNotSingleObject(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+	}{
+		{name: "null", metadata: `null`},
+		{name: "array", metadata: `[]`},
+		{name: "trailing value", metadata: `{} {}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
+			repo := &threadRepository{db: db}
+			require.NoError(t, db.Create(&threadPO{
+				ID: 10, SpaceID: 20, CreatorID: 30, Title: "invalid metadata",
+				Status: string(entity.ThreadStatusIdle), Source: string(entity.ThreadSourceWeb),
+				Metadata: []byte(tt.metadata),
+			}).Error)
+
+			patched, err := repo.PatchThread(context.Background(), PatchThreadRequest{
+				ThreadID: 10, MetadataPatch: map[string]any{"new_key": "value"}, UpdatedAt: 100,
+			})
+
+			require.Error(t, err)
+			require.Nil(t, patched)
+			var persisted threadPO
+			require.NoError(t, db.Where("id = ?", 10).First(&persisted).Error)
+			require.Equal(t, tt.metadata, string(persisted.Metadata))
+		})
+	}
 }
 
 func TestCanonicalPatchThreadConcurrentMergesDoNotLoseKeys(t *testing.T) {
@@ -430,6 +591,58 @@ func TestCanonicalPatchThreadConcurrentMergesDoNotLoseKeys(t *testing.T) {
 	patched, err := repo.GetThread(context.Background(), 10)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"base":true,"first":true,"second":true}`, patched.Metadata)
+}
+
+func TestCanonicalMySQLThreadMutationsLockThreadFirstForUpdate(t *testing.T) {
+	expectedErr := errors.New("stop after thread lock")
+	const lockedThreadQuery = "SELECT \\* FROM `agent_threads` WHERE id = \\? ORDER BY `agent_threads`.`id` LIMIT \\? FOR UPDATE"
+
+	tests := []struct {
+		name string
+		call func(*threadRepository) error
+	}{
+		{
+			name: "patch thread",
+			call: func(repo *threadRepository) error {
+				title := "updated"
+				_, err := repo.PatchThread(context.Background(), PatchThreadRequest{
+					ThreadID: 10, Title: &title, UpdatedAt: 100,
+				})
+				return err
+			},
+		},
+		{
+			name: "delete thread if idle",
+			call: func(repo *threadRepository) error {
+				_, err := repo.DeleteThreadIfIdle(context.Background(), DeleteThreadIfIdleRequest{ThreadID: 10})
+				return err
+			},
+		},
+		{
+			name: "create run bundle",
+			call: func(repo *threadRepository) error {
+				run := newCanonicalRepositoryRun(20, 10, 0, 100)
+				run.Status = entity.RunStatusPending
+				run.MultitaskStrategy = "reject"
+				_, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{Run: run})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, mock := canonicalMySQLMockRepository(t)
+			mock.ExpectBegin()
+			mock.ExpectQuery(lockedThreadQuery).
+				WithArgs(int64(10), 1).
+				WillReturnError(expectedErr)
+			mock.ExpectRollback()
+
+			require.ErrorIs(t, tt.call(repo), expectedErr)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestCanonicalDeleteThreadIfIdleBlocksOnlyActiveTopLevelTaskRuns(t *testing.T) {
@@ -657,6 +870,23 @@ func canonicalRepositoryTestDB(t *testing.T, models ...any) *gorm.DB {
 	return db
 }
 
+func canonicalMySQLMockRepository(t *testing.T) (*threadRepository, sqlmock.Sqlmock) {
+	t.Helper()
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, sqlDB.Close())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+	db, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	require.NoError(t, err)
+	return &threadRepository{db: db}, mock
+}
+
 func newCanonicalRepositoryRun(id, threadID, parentRunID, createdAt int64) *entity.Run {
 	return &entity.Run{
 		ID: id, ThreadID: threadID, ParentRunID: parentRunID,
@@ -711,6 +941,30 @@ func checkpointIDs(checkpoints []*entity.Checkpoint) []int64 {
 	ids := make([]int64, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
 		ids = append(ids, checkpoint.ID)
+	}
+	return ids
+}
+
+func checkpointRuntimeTypes(checkpoints []*entity.Checkpoint) []string {
+	runtimeTypes := make([]string, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		runtimeTypes = append(runtimeTypes, checkpoint.RuntimeType)
+	}
+	return runtimeTypes
+}
+
+func canonicalAscendingIDs(first, last int64) []int64 {
+	ids := make([]int64, 0, last-first+1)
+	for id := first; id <= last; id++ {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func canonicalDescendingIDs(first, last int64) []int64 {
+	ids := make([]int64, 0, first-last+1)
+	for id := first; id >= last; id-- {
+		ids = append(ids, id)
 	}
 	return ids
 }
