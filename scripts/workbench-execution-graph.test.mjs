@@ -25,6 +25,12 @@ import {
   evaluateAuthorityChanges,
   validateContract,
 } from './workbench-execution-graph/contract.mjs';
+import {
+  buildDerivedGraph,
+  mergeExplicitGraph,
+  renderContractLedger,
+  writeCorpus,
+} from './workbench-execution-graph/derived.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACT_PATH = path.join(
@@ -289,4 +295,119 @@ test('requires authority files to move together with monitored source', () => {
     evaluateAuthorityChanges([CONTRACT_RELATIVE, CONTEXT_RELATIVE], scope),
     [],
   );
+});
+
+test('renders a deterministic corpus with repository-relative source paths', async () => {
+  const contract = await loadCanonicalContract();
+  const validation = await validateContract(contract, { repoRoot: REPO_ROOT });
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'workbench-corpus-'));
+
+  try {
+    const first = await writeCorpus(contract, {
+      repoRoot: REPO_ROOT,
+      derivedRoot: path.join(outputRoot, 'first'),
+      authorityDocument: CONTEXT_RELATIVE,
+      resolvedVersions: validation.resolvedVersions,
+    });
+    const second = await writeCorpus(contract, {
+      repoRoot: REPO_ROOT,
+      derivedRoot: path.join(outputRoot, 'second'),
+      authorityDocument: CONTEXT_RELATIVE,
+      resolvedVersions: validation.resolvedVersions,
+    });
+
+    assert.equal(first.digest, second.digest);
+    assert.equal(
+      await readFile(
+        path.join(
+          first.corpusDir,
+          'source/frontend/apps/coze-studio/src/pages/workbench/index.tsx',
+        ),
+        'utf8',
+      ),
+      await readFile(
+        path.join(
+          REPO_ROOT,
+          'frontend/apps/coze-studio/src/pages/workbench/index.tsx',
+        ),
+        'utf8',
+      ),
+    );
+    assert.equal(
+      renderContractLedger(contract, validation.resolvedVersions),
+      renderContractLedger(contract, validation.resolvedVersions),
+    );
+  } finally {
+    await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test('explicit contract nodes and directed edges override Graphify AST facts', async () => {
+  const contract = await loadCanonicalContract();
+  const graph = mergeExplicitGraph(
+    {
+      directed: false,
+      nodes: [
+        {
+          id: 'frontend.workbench.handle_send',
+          label: 'stale AST label',
+          type: 'ast_symbol',
+        },
+      ],
+      links: [
+        {
+          source: 'frontend.workbench.handle_send',
+          target: 'frontend.api.create_thread',
+          relation: 'INFERRED_CALL',
+          confidence: 'INFERRED',
+        },
+      ],
+    },
+    contract,
+    {},
+  );
+
+  assert.equal(graph.directed, true);
+  assert.equal(
+    graph.nodes.find(node => node.id === 'frontend.workbench.handle_send')
+      .label,
+    'Workbench handleSend',
+  );
+  const explicit = graph.links.find(
+    link =>
+      link.source === 'frontend.workbench.handle_send' &&
+      link.target === 'frontend.api.create_thread',
+  );
+  assert.equal(explicit.relation, 'calls');
+  assert.equal(explicit.confidence, 'EXTRACTED');
+  assert.deepEqual(explicit.chain_ids, [
+    'entry.workbench_immediate',
+    'entry.workbench_deferred',
+    'framework.canonical_stack',
+  ]);
+});
+
+test('missing Graphify leaves the previous valid derived graph untouched', async () => {
+  const contract = await loadCanonicalContract();
+  const validation = await validateContract(contract, { repoRoot: REPO_ROOT });
+  const outputRoot = await mkdtemp(path.join(os.tmpdir(), 'workbench-derived-'));
+  const derivedRoot = path.join(outputRoot, 'derived');
+  const markerPath = path.join(derivedRoot, 'previous-valid.txt');
+
+  try {
+    await mkdir(derivedRoot, { recursive: true });
+    await writeFile(markerPath, 'keep-me\n', 'utf8');
+    await assert.rejects(
+      buildDerivedGraph(contract, {
+        repoRoot: REPO_ROOT,
+        derivedRoot,
+        resolvedVersions: validation.resolvedVersions,
+        graphifyBinary: path.join(outputRoot, 'missing-graphify'),
+      }),
+      error => error?.code === 'graphify_unavailable',
+    );
+    assert.equal(await readFile(markerPath, 'utf8'), 'keep-me\n');
+  } finally {
+    await rm(outputRoot, { recursive: true, force: true });
+  }
 });
