@@ -1,7 +1,7 @@
 # Local Debug And Test Runbook
 
-本手册只记录 Coze Studio 当前主线的本地调试、nuwax-ai 页面参照和验收口径。
-不要写入真实生产密钥，也不要恢复已经移除的 DeerFlow 对齐流程。
+本手册只记录 Coze Studio 当前项目的本地调试和验收口径。不要写入真实生产
+密钥；历史 Nuwax/DeerFlow 环境只在任务明确要求回归追溯时按对应旧文档使用。
 
 ## 测试账号与地址
 
@@ -11,12 +11,6 @@ Coze Studio 本地功能测试：
 - Backend API: `http://localhost:8888`
 - Email: `840582614@qq.com`
 - Password: `z8832652`
-
-nuwax-ai 本地参照环境：
-
-- URL: `http://localhost/`
-- Email: `admin@nuwax.com`
-- Password: `123456`
 
 页面功能与样式验收默认使用 Codex in-app browser。验收时记录具体 URL、账号、
 空间、关键交互结果和控制台错误，不用 Chrome 或单纯 API 请求替代页面验收。
@@ -137,9 +131,10 @@ atlas migrate validate --dir file://docker/atlas/migrations
 
 不要手工编辑 `docker/atlas/migrations/atlas.sum`。
 
-## 分支与转测试
+## 分支与集成
 
-- 日常开发分支为 `codex/coze-nuwax-management-mainline`。
-- 不默认合并、推送或切换到 `dev`。
-- 转测试前先完成代码审核，再按用户本次明确授权的目标分支和步骤执行。
+- `dev` 是本地与远程集成分支，需求在独立 `codex/` 分支实施。
+- 合入本地 `dev` 前后分别执行一次审计，并在两个阶段各获得用户明确确认。
+- 完整命令、证据和停止条件见
+  `docs/superpowers/runbooks/dev-integration-audit.md`。
 - 目标分支被其他 worktree 占用时，报告占用路径，不强制 checkout。

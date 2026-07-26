@@ -1,342 +1,169 @@
 # AGENTS.md
 
-本文件是 Codex 在本仓库工作的短入口。它只保留高频规则和不可踩的边界；
-长上下文放到专题文档，避免每次开工都被历史细节淹没。
+本文件是 Codex 在本仓库工作的短入口，只保留高频流程、事实入口和不可破坏的
+边界。项目已经进入 Coze 原生能力的内部优化阶段；历史 Nuwax、DeerFlow 和
+阶段性迁移文档只用于按需追溯，不再作为默认产品基线。
 
-## 先读清单
+主应用由 React + TypeScript/Rush.js 前端和 Go + Hertz 后端组成，Agent 执行
+使用 Go-native Harness 与 Eino ADK，公共合同以 IDL、迁移和服务端事实为准。
 
-- 当前一期功能方向：
-  在 Coze Studio 基础上参考 `/Users/liuwenbo/code/BuildingAI/nuwax-ai`，
-  优先完成个人中心、工作空间、系统管理相关闭环。
-- 当前一期菜单约定：
-  左上角做工作空间下拉，支持切换个人/团队空间、创建团队空间，并为系统管
-  理员提供系统管理入口；工作空间侧边菜单使用 `工作空间`，放在 `全部任务`
-  上方；系统管理使用独立 `/system` 页面和二级菜单。
-- 本地调试、账号、Atlas、MySQL：
-  `docs/superpowers/runbooks/local-debug-and-test.md`
-- 只有任务明确涉及 Agent Runtime 时，再读：
-  `docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
+## 开工顺序
 
-做当前一期功能前，先明确本次只覆盖哪个闭环、参考 `nuwax-ai` 哪些页面/服
-务、Coze 当前差异和预期验证方式。若需要长期跟踪，在
-`docs/superpowers/plans/` 或 `docs/superpowers/specs/` 中创建/更新对应文档。
+1. 阅读 `docs/superpowers/context/project-context.md`，确认当前产品和架构边界。
+2. 检查当前分支、工作区、worktree、远程跟踪关系和用户已有改动。
+3. 用 codebase-memory 查询相关模块、调用链和预期影响，再核对真实源码。
+4. 只读取与任务直接相关的 runbook、spec 或 plan，不批量加载历史资料。
+5. 明确任务范围、验收方式和是否会改变长期项目事实。
 
-## 核心原则
+常用入口：
 
-- 当前主线优先：优先在 Coze Studio 内参考 `nuwax-ai` 完成个人中心、工作空
-  间、系统管理的一期可用闭环，不要顺手扩展完整 RBAC、支付、订阅、IM 或
-  其他平台增强。
-- 核实优先：任何参考 `nuwax-ai` 的改动都不能靠截图猜测；必须先核实
-  `nuwax-ai` 参照功能源码、接口/数据契约和 Coze 当前实现差异。
-- 菜单命名保持当前约定：工作空间侧边菜单使用 `工作空间`，不是
-  `成员与设置`；`工作空间` 放在 `全部任务` 上方；不要恢复已移动到设置下
-  的 `工具` 菜单。
-- 系统管理边界清晰：一级菜单保持不变；系统管理通过独立 `/system` 页面和
-  二级菜单承载，仅系统管理员可见，后端仍需强校验。
-- Go 原生目标：涉及后端能力时保持 Go-native 实现；涉及 Agent Runtime 时
-  优先使用 Go-native Agent Harness + Eino ADK，不引入 Python sidecar。
-- Eino 优先：只有任务涉及 Agent loop、重试、压缩、工具修复、动态工具搜
-  索、Skill、MCP、文件系统、子智能体时，先确认 Eino ADK 是否已有原语。
-- 质量第一：代码质量、租户隔离、权限、安全边界和可测试性不可妥协。
-- 透明记录：关键决策、任务状态、验证命令和已知风险必须能在文档或提交中
-  追溯。
-- IM Channels 当前只做飞书：仅允许使用飞书官方 Go SDK
-  `github.com/larksuite/oapi-sdk-go/v3`，入口放在现有设置弹窗内并按工作空间
-  隔离；暂不新增 Telegram、Slack、Discord、钉钉、企业微信、微信等其它
-  channel，也不新增生态市场或额外一级菜单。
+- 本地调试与账号：`docs/superpowers/runbooks/local-debug-and-test.md`
+- `dev` 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
+- Sandbox 运维：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
+- Agent Runtime：`docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
 
-## 当前功能对齐硬规则
+## 事实优先级
 
-- 修改左上角工作空间下拉、账号下拉、工作空间菜单、系统管理入口、系统管
-  理二级菜单、工作空间成员/设置前，必须先核实三类证据：
-  `nuwax-ai` 参照实现、Coze 当前入口/路由/store/API、后端真实权限和数据合
-  同。
-- 系统管理员可见性以后端事实为准。前端可以根据当前用户信息隐藏入口，但
-  `/api/admin/*` 或系统管理 API 必须继续使用服务端权限校验，不能只靠前端
-  `role` 字段。
-- 工作空间成员/设置必须使用真实空间角色。不要继续依赖前端把当前用户硬编
-  码为 `Owner` 的逻辑；权限应来自 `space_user.role_type` 或后端等价投影。
-- 对齐顺序固定为：先补等价数据契约和后端投影，再对齐前端路由、菜单、组件
-  和样式；旧 Coze stub 只能作为兼容兜底，不能当作主数据源。
-- 不确定时先补验证清单或测试用例，不直接实现；源码和运行时现象不一致时，
-  继续沿入口追根因，不做猜测式补丁。
+发生冲突时按以下顺序判断：
+
+1. 当前源码、IDL、数据库迁移和运行时行为；
+2. 相关测试和生成代码；
+3. `project-context.md` 与当前有效 runbook/spec；
+4. codebase-memory、Graphify 等派生图谱；
+5. 历史 plans/specs 和外部参考项目。
+
+图谱只用于导航，不能替代源码和运行时证据。历史 Nuwax/DeerFlow 文档只有任务
+明确要求迁移追溯、回归定位或行为来源时才读取。
+
+## 代码库分析工具
+
+### codebase-memory
+
+- 开工先检查索引和项目是否匹配当前仓库。
+- 用 `get_architecture`、`search_graph`、`trace_path` 分析结构和调用链。
+- 修改前检查调用方、被调用方、跨层依赖和共享合同。
+- 修改后用 `detect_changes` 检查影响面，再回到真实 diff 和源码核实。
+- 索引过期、缺失或与源码冲突时刷新索引；无法刷新则改用 `rg` 和直接读取。
+
+### Graphify
+
+- 只用于精选长期上下文、架构决策、关键 runbook 和活跃设计的关系查询。
+- `graphify-out/graph.json` 存在时优先查询，不重复全量构建。
+- 长期上下文变化后才做增量更新；普通局部修复不制造图谱噪声。
+- 不默认对整个 monorepo 建图，不提交 `graphify-out/` 产物。
+- 图谱缺失、过期或不可用时直接读取源文档，并记录缺失的图谱验证。
 
 ## 工作流程
 
-### 1. 任务分析
+### 分析
 
-- 先确认当前分支、工作区脏文件、P0 tracker 状态和相关源码。
-- 拆出依赖关系：哪些必须串行，哪些可以并行读取或验证。
-- 明确本次只解决哪个主线和子线，避免“顺手”做 P1/P2 增强。
-- 遇到 bug 时先找根因，再改代码；不要靠猜测叠补丁。
+- Bug 先定位根因，再修改；不靠猜测叠补丁。
+- 明确依赖关系、风险、权限边界和验证矩阵。
+- 独立读取可并行；相互依赖或写同一文件的任务必须串行。
+- 搜索优先使用图谱结构查询和 `rg` / `rg --files`。
 
-### 2. 并行收集
+### 实施
 
-- 独立的读取、搜索、查看日志、查看测试文件可以用
-  `multi_tool_use.parallel` 并行。
-- 并行任务不能写同一个文件，不能互相依赖输出。
-- 搜索优先用 `rg` / `rg --files`。
-- 不要用一串 `echo && sed && rg` 拼成嘈杂命令；需要多路输出时用并行工具。
-
-### 3. 实施
-
+- 所有需求在独立 `codex/` 分支实施，不直接在 `dev` 上开发。
 - 遵循现有目录、框架、命名、API client 和测试风格。
-- 手工编辑文件用 `apply_patch`。
-- 不做无关重构，不回滚用户改动，不强行清理无关脏文件。
-- 结构化数据优先用结构化 API/解析器，不靠脆弱字符串拼接。
-- 涉及前端体验时先看现有 Semi/Coze Design 用法；必要时查 Semi MCP。
+- 手工编辑使用 `apply_patch`；结构化数据使用结构化解析器。
+- 不做无关重构，不回滚用户改动，不清理无关脏文件。
+- 生成 client 可用时不新增手写 HTTP client。
 
-### 4. 验证
+### 验证
 
-- 改前端：至少跑相关 Vitest；高风险改动补 `tsc --noEmit` 或 lint。
-- 改后端：跑相关 Go package 的 targeted tests；Mockey 相关测试需要按仓库
-  现有方式加 `-gcflags="all=-l -N"`。
-- 改迁移：用本地 Atlas `v0.35.0` 校验 hash/validate。
-- 改 `nuwax-ai` 参考功能：用同一关键流程在 `nuwax-ai` 和 Coze 中对比浏览器
-  可见行为、接口字段和权限结果；若无法运行参考项目，记录源码证据和差异。
-- 页面验收默认使用 Codex 自带 in-app browser。不要把 Chrome、外部浏览器或
-  只跑 API 脚本当成等价页面验收；只有用户明确要求或内置浏览器工具不可用
-  且用户同意兜底时，才使用其它浏览器，并在结论里标明验收口径。
-- 页面验收必须记录具体 URL、登录账号/空间、关键可见状态、核心交互结果和
-  控制台错误；若因会话过期、工具连接超时或本地服务异常导致无法继续，先
-  说明阻塞原因，不要声称页面已验收通过。
-- 后台单测或长命令要设置合理超时或及时轮询，避免进程长时间卡住。
+- 前端至少运行相关 Vitest；高风险改动补 typecheck、lint 和构建。
+- 后端运行相关 Go package 测试；Mockey 测试按仓库方式加
+  `-gcflags="all=-l -N"`。
+- 迁移使用 Atlas Community `v0.35.0` 校验 hash 和 validate。
+- 页面验收默认使用 Codex in-app browser，记录 URL、账号/空间、可见状态、
+  核心交互和控制台错误。
+- 结论必须基于本轮新鲜命令输出；未运行的验证必须明确说明。
 
-### 5. 记录和提交
+### 长期上下文更新
 
-- 一个大的主线任务完成后提交一次代码。
-- 提交前更新 tracker 和相关专题文档。
-- 不提交 `.codex/config.toml`，除非用户明确要求。
-- 推送、合并或转测试前，先给用户代码审核；用户确认后按本次明确授权的
-  流程执行，不默认合并到固定分支。
+只有以下内容变化时更新 `project-context.md` 或对应 ADR/runbook：
 
-## 项目上下文
+- 跨模块架构和所有权边界；
+- 公共 API、IDL、持久化或安全合同；
+- 生产运行方式、故障恢复或发布流程；
+- 后续任务必须持续遵守的工程决策。
 
-Coze Studio 是 React + TypeScript + Go 的 AI Agent 平台，前端由 Rush.js 管理，
-后端使用 Hertz 和 DDD 风格分层。
+一次性任务状态、临时日志和局部实现细节保留在任务 plan、提交或验证证据中。
 
-当前集成目标是在 Coze Studio 基础上参考 `nuwax-ai` 完成后台管理和工作空间
-能力的一期闭环：
+## dev 集成门禁
 
-- 左上角工作空间下拉：切换个人/团队空间、创建团队空间、系统管理员进入
-  系统管理；
-- 工作空间菜单：新增 `工作空间`，放在 `全部任务` 上方，承载成员管理和空
-  间基础设置；
-- 系统管理：独立 `/system` 页面，内部二级菜单承载工作空间管理、用户管理、
-  系统配置等后台管理员能力；
-- 个人中心：保留账号身份能力边界，个人资料、API 授权、退出登录等仍属于账
-  号下拉/个人中心范畴；
-- IM 机器人：在设置弹窗中提供工作空间级飞书机器人配置，使用官方 SDK 长
-  连接、真实 Agent、持久化会话与事件去重；App Secret 只写入、加密保存且
-  不回显；
-- 前后端都必须是生产级边界，不接受只做 UI 壳或内存 stub。
+每个需求完成后必须遵循
+`docs/superpowers/runbooks/dev-integration-audit.md`：
 
-## 常用命令
+1. 在需求分支完成第一次审计，确保基于最新 `origin/dev`、范围正确且验证通过；
+2. 向用户提交审计报告，获得第一次明确确认后才可合入本地 `dev`；
+3. 从合并后的本地 `dev` 执行更严格的第二次审计；
+4. 向用户提交第二次报告，获得第二次明确确认后才可推送 `origin/dev`；
+5. 禁止 force push；远程 `dev` 在审计期间变化时重新从第一次审计开始。
 
-```bash
-# 安装前端依赖
-rush update
+用户确认只对报告中的分支、SHA、文件范围和验证结果有效；提交发生变化后必须
+重新审计。不得把“确认合入本地 dev”解释为远程推送授权。
 
-# 启动中间件
-make middleware
+## 项目结构
 
-# 启动后端
-make server
+- 前端主应用：`frontend/apps/coze-studio`
+- 前端共享包：`frontend/packages`
+- 后端入口：`backend/main.go`
+- 后端分层：`backend/api`、`backend/application`、`backend/domain`、
+  `backend/infra`、`backend/crossdomain`
+- IDL 源：`idl`
+- 前端生成 schema：`frontend/packages/arch/api-schema/src/idl`
+- 数据库迁移：`docker/atlas/migrations`
+- 长期文档：`docs/superpowers/context`、`docs/superpowers/runbooks`、
+  `docs/superpowers/specs`、`docs/superpowers/plans`
 
-# 启动前端
-cd frontend/apps/coze-studio
-npm run dev
-```
+## 前端边界
 
-```bash
-# 构建
-make fe
-make build_server
-make web
+- UI 优先使用 `@coze-arch/coze-design` 和其 icons；只有周边已有直接用法且
+  wrapper 不满足时才使用 Semi UI。
+- 保留键盘、焦点、ARIA、loading、empty、error、disabled、readonly 和 refresh
+  状态。
+- 页面必须使用真实后端合同，不做只有说明文字的壳或前端伪权限。
+- 页面验收使用 in-app browser；Chrome 仅在用户明确同意的兜底场景使用。
 
-# 测试
-rush test
-rush lint
-cd backend && go test ./...
-```
+## 后端边界
 
-常用 targeted 校验：
+- 后端使用 Go + Hertz，遵循现有 DDD 分层。
+- 身份、空间和权限以服务端认证上下文为准，不信任客户端提交的 owner、
+  `user_id` 或 `space_id`。
+- 新增持久化能力必须考虑租户隔离、幂等、重试、取消、恢复和安全审计。
+- credential、token、secret 不得明文落库、回显、写日志或发送到前端。
 
-```bash
-cd frontend/apps/coze-studio
-npm run test -- src/pages/tasks/__tests__/task-detail.test.tsx
-npx tsc --noEmit --project tsconfig.json
-
-cd backend
-go test ./application/agentthread ./api/handler/coze ./api/router/coze -run Test -count=1
-```
-
-## 本地测试账号
-
-Coze Studio 本地功能测试账号：
-
-- Email: `840582614@qq.com`
-- Password: `z8832652`
-
-nuwax-ai 演示环境用于页面样式和交互对齐：
-
-- URL: `http://localhost/`
-- Email: `admin@nuwax.com`
-- Password: `123456`
-
-本地 Coze 常用地址：
-
-- Frontend: `http://localhost:8080`
-- Backend: `http://localhost:8888`
-
-## 分支策略
-
-- 日常开发分支：`codex/coze-nuwax-management-mainline`。
-- 不默认合并、推送或切换到任何测试分支；转测试流程必须以用户本次明确
-  确认的分支和步骤为准。
-- 如果目标分支已被其他 worktree 占用，报告占用路径，不要强制 checkout。
-
-## 前端规则
-
-- 主应用在 `frontend/apps/coze-studio`。
-- UI 优先使用 `@coze-arch/coze-design` 和
-  `@coze-arch/coze-design/icons`。
-- 只有 Coze Design wrapper 不满足且周边已有直接用法时，才直接从
-  `@douyinfe/semi-ui` 导入。
-- 当前 Semi UI 版本通过 `@coze-arch/coze-design` 使用 `2.72.3`。
-- 保留 Semi 自带的键盘行为、焦点、ARIA、loading、disabled、校验、空态和
-  错误态。
-- 页面功能要像真实产品，不做只有说明文字的占位页面。
-- `nuwax-ai` 参考功能对比时，优先关注用户能看到的空间切换、创建团队空间、
-  工作空间成员/设置、系统管理二级菜单、管理员可见性和权限失败体验。
-
-## 后端规则
-
-- 后端使用 Go + Hertz。
-- 分层约定：
-  - `domain/`：业务实体和领域服务
-  - `application/`：用例编排
-  - `api/`：HTTP handler 和路由
-  - `infra/`：基础设施实现
-  - `crossdomain/`：跨域能力
-- 身份、空间、权限以服务端认证上下文为准，不能信任客户端提交的
-  `user_id`、`space_id` 或 owner 字段。
-- 新增持久化能力要考虑租户隔离、幂等、重试、取消、恢复和安全审计。
-- 飞书 IM 只使用官方 Go SDK 的 Channel + WebSocket 长连接；配置修改仅工作
-  空间 Owner/Admin 可执行，普通成员只读。外部消息必须先持久化去重，再映
-  射到 Coze `agentthread`，不得在回调中同步执行长耗时 Agent。
-- 飞书 App Secret 使用
-  `IM_CHANNEL_CREDENTIAL_KEYS_JSON` /
-  `IM_CHANNEL_CREDENTIAL_ACTIVE_KEY_ID` 加密；未单独配置时允许复用 Sandbox
-  keyring，但禁止明文落库、回显、日志输出或发送到前端。
-
-## Agent Runtime 规则
+## Agent Runtime 边界
 
 - Eino ADK 是执行内核，Coze 是控制面和系统记录。
-- 新建公共任务/Run 必须在持久化前规范化为 `runtime=eino_adk`；`legacy`
-  只能用于读取/恢复历史无标记记录和显式迁移测试，不能重新作为生产新任务
-  的选择项或回滚开关。
-- 公共 task、event、checkpoint、LangGraph、Skill、MCP、memory、token、
-  artifact、guardrail 合同都由 Coze adapter 暴露。
-- Eino `AgentEvent`、checkpoint bytes、Skill runtime state、provider metadata
-  都视为内部合同，不能原样暴露给 Workbench API/UI。
-- 生产消息基线使用 `*schema.Message`；`*schema.AgenticMessage` 保持实验态。
-- Runtime 默认必须 fail closed：显式请求 `eino_adk` 但服务端策略未启用时，
-  不能静默回退。
+- 新任务规范化为 `runtime=eino_adk`；`legacy` 只读历史记录和显式迁移测试。
+- Workbench API/UI 只暴露审核后的公共合同，不暴露内部事件、checkpoint bytes、
+  provider 原始载荷、tool 参数/结果或隐藏配置。
+- Runtime 和安全依赖默认 fail closed，不静默回退到未授权执行路径。
 
-更细的 subagent、tool policy、memory、token、artifact、guardrail 规则见：
+只有任务涉及 Agent loop、Skill、MCP、memory、subagent、token、artifact 或
+guardrail 时，才加载 Agent Runtime 专题文档。
 
-- `docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
+## IM 与 Sandbox 边界
 
-## IDL 和 API Client
+- IM Channels 当前只支持飞书官方 Go SDK，按工作空间隔离；外部事件先持久化
+  去重，再异步映射到 Agent，不在回调中执行长任务。
+- Sandbox 管理面与运行时路由分离；生产和共享环境只使用数据库中的 HTTPS
+  remote provider，缺少密钥、Redis、对象存储或安全依赖时 fail closed。
+- 本机 AppDev host runtime 只允许显式 Debug 模式和 loopback gateway。
 
-- IDL 源在 `idl/`。
-- 前端生成 schema 在 `frontend/packages/arch/api-schema/src/idl/`。
-- Workbench task、memory、token、artifact、Skill、MCP、runtime API 优先使用
-  生成 client。
-- 生成 client 可用时，不新增手写 fetch client，除非记录明确 blocker。
+## Git 与安全
 
-## 本地 Debug
+- 不提交 `.codex/config.toml`、本地图谱缓存、数据库密码或生产密钥。
+- 不使用 `git reset --hard` 或 `git checkout --` 回滚用户文件。
+- 删除、迁移 apply、批量数据更新、合并、推送和远程分支操作必须获得用户
+  对当前范围的明确确认。
+- 发现相关用户改动时先理解并协同处理；无关改动保持原样。
 
-- 从 `bin` 启动后端时使用 `APP_ENV=debug`，否则可能加载 `bin/.env` 而不是
-  `bin/.env.debug`。
-- 本地数据库尚未持久化 `basic_config` 时，可用
-  `COZE_SYSTEM_ADMIN_EMAILS` 引导首位系统管理员；一旦配置落库，数据库优先
-  且环境变量不能覆盖。不要把真实生产管理员邮箱写入 tracked 文件。
-- AppDev 本机运行时只允许在 `APP_ENV=debug` 且
-  `APP_DEV_HOST_RUNTIME_ENABLED=true` 时启用；debug HTTP gateway 只允许字面
-  loopback IP。生产和共享测试环境以数据库中启用、支持 `appdev` scope 的
-  HTTPS remote provider 为唯一 endpoint/credential 来源，并要求
-  `SANDBOX_CREDENTIAL_KEYS_JSON`、`SANDBOX_CREDENTIAL_ACTIVE_KEY_ID`、
-  `APP_DEV_PREVIEW_GATEWAY_BASE_URL`、`APP_DEV_ARTIFACT_GATEWAY_BASE_URL` 和
-  `APP_DEV_PROVIDER_AUTH_TOKEN`。Redis、对象存储或任一安全依赖缺失时按
-  fail-closed 处理。`APP_DEV_RUNNER_ENDPOINT` 与 `APP_DEV_RUNNER_TOKEN` 已移除，
-  不再兼容或回退。
-- Sandbox 上线必须分离管理面和运行流量：
-  `SANDBOX_CONTROL_PLANE_ENABLED=true` 可先用于配置 Provider、健康检查和默
-  认项，`SANDBOX_RUNTIME_ROUTING_ENABLED=false` 时 Agent、AppDev、MCP 和
-  CodeRunner 不得获得运行路由；完成 `agent`、`appdev`、`mcp` 三类 scope
-  验证后再显式开启。回滚只关闭运行时路由并保留配置和审计，绝不回退宿主
-  机。完整操作见
-  `docs/superpowers/runbooks/sandbox-control-plane-operations.md`。
-- Sandbox 页面验收包括管理员 `/system/sandbox`、普通用户服务端 `403`、
-  Runtime Doctor 安全状态、真实 Provider 最小任务和控制台错误；默认使用
-  Codex 自带 in-app browser。
-- 前端页面调试和验收优先使用当前 Codex 线程的 in-app browser。需要重新登
-  录时，优先在 in-app browser 内恢复会话；不要因为会话过期或自动化连接
-  抖动就切换到 Chrome 作为默认验证路径。
-- debug MySQL 使用忽略文件中的外部测试数据库配置；默认不要拉取或启动本地
-  MySQL 镜像。
-- 不提交 MySQL 密码。
-- 本地 Atlas 使用 Community `v0.35.0`：
+## 输出约定
 
-```bash
-atlas version
-(cd docker/atlas && atlas migrate hash)
-atlas migrate validate --dir file://docker/atlas/migrations
-```
-
-## 质量标准
-
-- 遵循 SOLID、DRY、关注点分离和 YAGNI。
-- 命名清晰，抽象只在能减少真实复杂度时引入。
-- 注释只写关键流程、复杂边界和容易误判的原因。
-- 删除无用代码；不要保留没有调用方的兼容分支。
-- 覆盖边界条件、错误路径、权限路径和空态。
-- 前端必须覆盖 loading、empty、error、disabled、readonly、refresh 等状态。
-- 后端 API 不只测 happy path，还要测鉴权、非法输入、幂等和安全脱敏。
-
-## 危险操作确认
-
-以下操作前必须获得用户明确确认，除非用户已经在当前对话中明确授权了同一
-范围的操作：
-
-- 删除、移动、批量改写大量文件；
-- 数据库删除、批量更新、结构变更、迁移 apply；
-- 推送、合并分支、创建/更新远程分支；
-- 发送敏感数据到外部服务或生产环境 API；
-- 全局安装/卸载工具，或大版本升级核心依赖；
-- 任何可能破坏用户未提交工作的操作。
-
-永远不要使用 `git reset --hard` 或 `git checkout --` 回滚文件，除非用户明确
-要求。
-
-## 输出风格
-
-- 默认使用简体中文和用户沟通。
-- 先给结论，再给关键证据和下一步。
-- 少用长表格；多数情况下用短段落和列表更清楚。
-- 命令、路径、变量和代码标识用反引号。
-- 引用本地文件时使用可点击的绝对路径链接。
-- 复杂流程可以用 Mermaid；任务状态必须写清楚主线、子线和验证证据。
-- 不把内部工具细节、无关日志、长 diff 全量倾倒给用户。
-
-## 安全边界
-
-- Workbench API/UI 不得暴露 prompt、model completion、tool arguments、
-  tool results、checkpoint bytes、credentials、object URIs、raw provider
-  bodies、hidden run config 或 raw audit payload。
-- Artifact、memory、token、MCP、guardrail、subagent UI 只能展示已审核的
-  bounded metadata。
-- 发现无关脏文件时忽略；发现相关脏文件时先读懂并协同处理。
-- 不要把测试账号以外的真实密钥写入 tracked 文件。
+- 默认使用简体中文，先给结论，再给证据和下一步。
+- 本地文件使用可点击绝对路径，命令、路径和标识符使用反引号。
+- 不倾倒无关日志或长 diff；必须写清已验证、未验证和剩余风险。
