@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -421,11 +420,10 @@ func validateCanonicalMetadata(metadata map[string]any) (map[string]any, error) 
 		if !canonicalMetadataKeyPattern.MatchString(key) {
 			return nil, InvalidArgumentErrorf("metadata key %q is invalid", key)
 		}
-		normalized, ok := normalizeCanonicalMetadataScalar(value)
-		if !ok {
+		if !isCanonicalMetadataScalar(value) {
 			return nil, InvalidArgumentErrorf("metadata value for %q must be a scalar", key)
 		}
-		validated[key] = normalized
+		validated[key] = value
 	}
 	return validated, nil
 }
@@ -450,72 +448,22 @@ func validateCanonicalMetadataPatch(metadata map[string]any) (map[string]any, er
 	return validated, nil
 }
 
-func normalizeCanonicalMetadataScalar(value any) (any, bool) {
+func isCanonicalMetadataScalar(value any) bool {
 	switch value := value.(type) {
-	case nil, string, bool:
-		return value, true
-	case int:
-		return int64(value), true
-	case int8:
-		return int64(value), true
-	case int16:
-		return int64(value), true
-	case int32:
-		return int64(value), true
-	case int64:
-		return value, true
-	case uint:
-		return normalizeCanonicalUnsignedMetadataScalar(uint64(value))
-	case uint8:
-		return int64(value), true
-	case uint16:
-		return int64(value), true
-	case uint32:
-		return int64(value), true
-	case uint64:
-		return normalizeCanonicalUnsignedMetadataScalar(value)
+	case nil, string, bool,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return true
 	case float32:
-		return normalizeCanonicalFloatMetadataScalar(float64(value))
+		return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0)
 	case float64:
-		return normalizeCanonicalFloatMetadataScalar(value)
+		return !math.IsNaN(value) && !math.IsInf(value, 0)
 	case json.Number:
-		return normalizeCanonicalJSONNumber(value)
+		_, err := json.Marshal(value)
+		return err == nil
 	default:
-		return nil, false
+		return false
 	}
-}
-
-func normalizeCanonicalUnsignedMetadataScalar(value uint64) (any, bool) {
-	if value > uint64(math.MaxInt64) {
-		return nil, false
-	}
-	return int64(value), true
-}
-
-func normalizeCanonicalFloatMetadataScalar(value float64) (any, bool) {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil, false
-	}
-	return value, true
-}
-
-func normalizeCanonicalJSONNumber(value json.Number) (any, bool) {
-	raw := string(value)
-	if !json.Valid([]byte(raw)) {
-		return nil, false
-	}
-	if !strings.ContainsAny(raw, ".eE") {
-		number, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
-			return nil, false
-		}
-		return number, true
-	}
-	number, err := strconv.ParseFloat(raw, 64)
-	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
-		return nil, false
-	}
-	return number, true
 }
 
 func normalizeCanonicalThreadSort(sortBy, sortOrder string) (string, string, error) {

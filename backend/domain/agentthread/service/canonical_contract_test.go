@@ -72,23 +72,29 @@ func TestCanonicalSearchThreadsValidatesAndMapsExactPage(t *testing.T) {
 	}, repo.searchThreadsReq)
 }
 
-func TestCanonicalSearchThreadsNormalizesJSONNumberMetadata(t *testing.T) {
+func TestCanonicalSearchThreadsPreservesJSONNumberAndUnsignedMetadata(t *testing.T) {
 	repo := newCanonicalQueryMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 100}}).(*threadService)
+	largeInteger := json.Number("9223372036854775808")
+	preciseDecimal := json.Number("0.123456789012345678901234567890")
+	unsigned := uint64(1) << 63
+	normal := int32(7)
 
 	_, _, err := svc.SearchThreads(context.Background(), &SearchThreadsRequest{
 		SpaceID: 10,
 		Metadata: map[string]any{
-			"ratio":  json.Number("1.5"),
-			"count":  json.Number("9007199254740993"),
-			"normal": int32(7),
+			"large":    largeInteger,
+			"precise":  preciseDecimal,
+			"unsigned": unsigned,
+			"normal":   normal,
 		},
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, float64(1.5), repo.searchThreadsReq.Metadata["ratio"])
-	require.Equal(t, int64(9007199254740993), repo.searchThreadsReq.Metadata["count"])
-	require.Equal(t, int64(7), repo.searchThreadsReq.Metadata["normal"])
+	require.Equal(t, largeInteger, repo.searchThreadsReq.Metadata["large"])
+	require.Equal(t, preciseDecimal, repo.searchThreadsReq.Metadata["precise"])
+	require.Equal(t, unsigned, repo.searchThreadsReq.Metadata["unsigned"])
+	require.Equal(t, normal, repo.searchThreadsReq.Metadata["normal"])
 }
 
 func TestCanonicalSearchThreadsRejectsUnsafeMetadataAndSort(t *testing.T) {
@@ -109,8 +115,8 @@ func TestCanonicalSearchThreadsRejectsUnsafeMetadataAndSort(t *testing.T) {
 		{name: "nan value", metadata: map[string]any{"score": math.NaN()}},
 		{name: "infinite value", metadata: map[string]any{"score": math.Inf(1)}},
 		{name: "invalid json number", metadata: map[string]any{"score": json.Number("1.2.3")}},
-		{name: "non finite json number", metadata: map[string]any{"score": json.Number("1e10000")}},
-		{name: "integer json number out of range", metadata: map[string]any{"score": json.Number("9223372036854775808")}},
+		{name: "nan json number", metadata: map[string]any{"score": json.Number("NaN")}},
+		{name: "infinite json number", metadata: map[string]any{"score": json.Number("Inf")}},
 		{name: "unsafe sort", sortBy: "updated_at; DROP TABLE agent_threads"},
 		{name: "unsafe order", sortBy: "updated_at", sortOrder: "sideways"},
 	}

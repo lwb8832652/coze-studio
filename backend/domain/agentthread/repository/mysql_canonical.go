@@ -362,10 +362,27 @@ func canonicalMetadataEqualsQuery(query *gorm.DB, key string, value any) (*gorm.
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata value for %q: %w", key, err)
 	}
+	path := canonicalTopLevelJSONPath(key)
+	if query.Dialector.Name() == "sqlite" && isCanonicalMetadataNumber(value) {
+		// JSON_EXTRACT coerces oversized and high-precision numbers to REAL;
+		// -> keeps the exact JSON scalar representation used by canonical filters.
+		return query.Where("metadata -> ? = ?", path, string(encoded)), nil
+	}
 	return query.Where(
 		"JSON_EXTRACT(metadata, ?) = JSON_EXTRACT(?, '$')",
-		canonicalTopLevelJSONPath(key), string(encoded),
+		path, string(encoded),
 	), nil
+}
+
+func isCanonicalMetadataNumber(value any) bool {
+	switch value.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, json.Number:
+		return true
+	default:
+		return false
+	}
 }
 
 func canonicalTopLevelJSONPath(key string) string {

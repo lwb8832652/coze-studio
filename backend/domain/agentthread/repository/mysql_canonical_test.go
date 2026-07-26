@@ -280,32 +280,70 @@ func TestCanonicalSearchThreadsMatchesLiteralTopLevelMetadataKeys(t *testing.T) 
 	}
 }
 
-func TestCanonicalSearchThreadsMatchesJSONNumberMetadataValues(t *testing.T) {
+func TestCanonicalSearchThreadsSQLiteMatchesExactJSONScalarRepresentation(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{})
 	repo := &threadRepository{db: db}
-	require.NoError(t, repo.CreateThread(context.Background(), &entity.Thread{
-		ID: 1, SpaceID: 10, CreatorID: 20, Title: "numbers",
-		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
-		Metadata: `{"ratio":1.5,"count":9007199254740993}`,
-	}))
+	for _, thread := range []*entity.Thread{
+		{
+			ID: 1, SpaceID: 10, CreatorID: 20, Title: "exact scalars",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{
+				"large":9223372036854775808,
+				"precise":0.123456789012345678901234567890,
+				"label":"canonical",
+				"escaped":"\u0061",
+				"enabled":true,
+				"nullable":null,
+				"ordinary":1.5,
+				"representation":1
+			}`,
+		},
+		{
+			ID: 2, SpaceID: 10, CreatorID: 20, Title: "adjacent scalars",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{
+				"large":9223372036854775809,
+				"precise":0.123456789012345678901234567891,
+				"label":"other",
+				"enabled":false,
+				"ordinary":2.5
+			}`,
+		},
+		{
+			ID: 3, SpaceID: 10, CreatorID: 20, Title: "decimal representation",
+			Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceWeb,
+			Metadata: `{"representation":1.0}`,
+		},
+	} {
+		require.NoError(t, repo.CreateThread(context.Background(), thread))
+	}
 
 	tests := []struct {
 		name     string
 		metadata map[string]any
+		want     []int64
 	}{
-		{name: "decimal", metadata: map[string]any{"ratio": json.Number("1.5")}},
-		{name: "large integer", metadata: map[string]any{"count": json.Number("9007199254740993")}},
+		{name: "large json number", metadata: map[string]any{"large": json.Number("9223372036854775808")}, want: []int64{1}},
+		{name: "large uint64", metadata: map[string]any{"large": uint64(1) << 63}, want: []int64{1}},
+		{name: "precise decimal", metadata: map[string]any{"precise": json.Number("0.123456789012345678901234567890")}, want: []int64{1}},
+		{name: "string", metadata: map[string]any{"label": "canonical"}, want: []int64{1}},
+		{name: "escaped string", metadata: map[string]any{"escaped": "a"}, want: []int64{1}},
+		{name: "boolean", metadata: map[string]any{"enabled": true}, want: []int64{1}},
+		{name: "null", metadata: map[string]any{"nullable": nil}, want: []int64{1}},
+		{name: "ordinary number", metadata: map[string]any{"ordinary": 1.5}, want: []int64{1}},
+		{name: "integer representation", metadata: map[string]any{"representation": json.Number("1")}, want: []int64{1}},
+		{name: "decimal representation", metadata: map[string]any{"representation": json.Number("1.0")}, want: []int64{3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			threads, total, err := repo.SearchThreads(context.Background(), SearchThreadsRequest{
 				SpaceID: 10, UserID: 20, Metadata: tt.metadata,
-				Page: CanonicalPage{Limit: 10},
+				SortBy: "thread_id", SortOrder: "asc", Page: CanonicalPage{Limit: 10},
 			})
 
 			require.NoError(t, err)
-			require.Equal(t, int64(1), total)
-			require.Equal(t, []int64{1}, threadIDs(threads))
+			require.Equal(t, int64(len(tt.want)), total)
+			require.Equal(t, tt.want, threadIDs(threads))
 		})
 	}
 }
