@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
-
+import {
+  TaskThreadDetailStatus,
+  type TaskThreadDetailEvent,
+  type TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import {
   getTaskReasoningContent,
   stripTaskThinkingTags,
 } from './task-reasoning';
-export { getTaskEventDisplay, getTaskEventText } from './task-event-display';
-
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
-type TaskThread = workbenchTask.TaskThread;
+export {
+  getTaskThreadEventDisplay,
+  getTaskThreadEventText,
+} from './task-event-display';
 
 export type TaskStatusFilter = 'all' | 'running' | 'succeeded' | 'failed';
 export type TaskExecutionType = 'Ark' | 'Agent';
@@ -36,7 +38,7 @@ export type TaskExecutionStatus =
   | 'pending'
   | 'neutral';
 
-export interface TaskEventDisplay {
+export interface TaskThreadEventDisplay {
   title: string;
   detail?: string;
   thought?: string;
@@ -55,14 +57,6 @@ export interface TaskResultPayload {
   executionType?: TaskExecutionType;
   retrievalSources: string[];
 }
-
-export const getTaskThreadDetailId = (
-  task: Pick<TaskThread, 'legacy_task_id' | 'thread_id'>,
-) => {
-  const legacyTaskID = task.legacy_task_id?.trim();
-
-  return legacyTaskID && legacyTaskID !== '0' ? legacyTaskID : task.thread_id;
-};
 
 const parseJSONObject = (
   value?: string,
@@ -176,7 +170,9 @@ export const getTaskExecutionType = (input?: string): TaskExecutionType => {
   );
 };
 
-export const getLatestAnswerEventMessage = (events: TaskEvent[]) => {
+export const getLatestAnswerEventMessage = (
+  events: TaskThreadDetailEvent[],
+) => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
 
@@ -210,7 +206,9 @@ export const getLatestAnswerEventMessage = (events: TaskEvent[]) => {
   return '';
 };
 
-export const getLatestAnswerEventReasoning = (events: TaskEvent[]) => {
+export const getLatestAnswerEventReasoning = (
+  events: TaskThreadDetailEvent[],
+) => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
 
@@ -246,35 +244,35 @@ export const getLatestAnswerEventReasoning = (events: TaskEvent[]) => {
   return '';
 };
 
-export const getTaskStatusText = (status: workbenchTask.TaskStatus) => {
-  const statusMap: Record<workbenchTask.TaskStatus, string> = {
-    [workbenchTask.TaskStatus.Created]: '已创建',
-    [workbenchTask.TaskStatus.Queued]: '排队中',
-    [workbenchTask.TaskStatus.Running]: '运行中',
-    [workbenchTask.TaskStatus.Succeeded]: '已完成',
-    [workbenchTask.TaskStatus.Failed]: '失败',
-    [workbenchTask.TaskStatus.Canceling]: '取消中',
-    [workbenchTask.TaskStatus.Canceled]: '已取消',
+export const getTaskStatusText = (status: TaskThreadDetailStatus) => {
+  const statusMap: Record<TaskThreadDetailStatus, string> = {
+    [TaskThreadDetailStatus.Created]: '已创建',
+    [TaskThreadDetailStatus.Queued]: '排队中',
+    [TaskThreadDetailStatus.Running]: '运行中',
+    [TaskThreadDetailStatus.Succeeded]: '已完成',
+    [TaskThreadDetailStatus.Failed]: '失败',
+    [TaskThreadDetailStatus.Canceling]: '取消中',
+    [TaskThreadDetailStatus.Canceled]: '已取消',
   };
 
   return statusMap[status] ?? '未知';
 };
 
-export const getTaskStatusTone = (status: workbenchTask.TaskStatus) => {
+export const getTaskStatusTone = (status: TaskThreadDetailStatus) => {
   if (
-    status === workbenchTask.TaskStatus.Running ||
-    status === workbenchTask.TaskStatus.Queued
+    status === TaskThreadDetailStatus.Running ||
+    status === TaskThreadDetailStatus.Queued
   ) {
     return 'running';
   }
 
-  if (status === workbenchTask.TaskStatus.Succeeded) {
+  if (status === TaskThreadDetailStatus.Succeeded) {
     return 'success';
   }
 
   if (
-    status === workbenchTask.TaskStatus.Failed ||
-    status === workbenchTask.TaskStatus.Canceled
+    status === TaskThreadDetailStatus.Failed ||
+    status === TaskThreadDetailStatus.Canceled
   ) {
     return 'danger';
   }
@@ -282,18 +280,18 @@ export const getTaskStatusTone = (status: workbenchTask.TaskStatus) => {
   return 'neutral';
 };
 
-export const canCancelTask = (status: workbenchTask.TaskStatus) =>
-  status === workbenchTask.TaskStatus.Created ||
-  status === workbenchTask.TaskStatus.Queued ||
-  status === workbenchTask.TaskStatus.Running;
+export const canCancelTask = (status: TaskThreadDetailStatus) =>
+  status === TaskThreadDetailStatus.Created ||
+  status === TaskThreadDetailStatus.Queued ||
+  status === TaskThreadDetailStatus.Running;
 
-export const canRetryTask = (status: workbenchTask.TaskStatus) =>
-  status === workbenchTask.TaskStatus.Failed;
+export const canRetryTask = (status: TaskThreadDetailStatus) =>
+  status === TaskThreadDetailStatus.Failed;
 
-export const isTaskTerminalStatus = (status: workbenchTask.TaskStatus) =>
-  status === workbenchTask.TaskStatus.Succeeded ||
-  status === workbenchTask.TaskStatus.Failed ||
-  status === workbenchTask.TaskStatus.Canceled;
+export const isTaskTerminalStatus = (status: TaskThreadDetailStatus) =>
+  status === TaskThreadDetailStatus.Succeeded ||
+  status === TaskThreadDetailStatus.Failed ||
+  status === TaskThreadDetailStatus.Canceled;
 
 export const formatUpdatedTime = (timestamp: number) => {
   if (!timestamp) {
@@ -304,7 +302,7 @@ export const formatUpdatedTime = (timestamp: number) => {
 };
 
 export const filterTasks = (
-  tasks: ChatTask[],
+  tasks: TaskThreadDetailModel[],
   keyword: string,
   statusFilter: TaskStatusFilter,
 ) => {
@@ -320,16 +318,16 @@ export const filterTasks = (
       statusFilter === 'all' ||
       (statusFilter === 'running' &&
         [
-          workbenchTask.TaskStatus.Created,
-          workbenchTask.TaskStatus.Queued,
-          workbenchTask.TaskStatus.Running,
+          TaskThreadDetailStatus.Created,
+          TaskThreadDetailStatus.Queued,
+          TaskThreadDetailStatus.Running,
         ].includes(task.status)) ||
       (statusFilter === 'succeeded' &&
-        task.status === workbenchTask.TaskStatus.Succeeded) ||
+        task.status === TaskThreadDetailStatus.Succeeded) ||
       (statusFilter === 'failed' &&
         [
-          workbenchTask.TaskStatus.Failed,
-          workbenchTask.TaskStatus.Canceled,
+          TaskThreadDetailStatus.Failed,
+          TaskThreadDetailStatus.Canceled,
         ].includes(task.status));
 
     return matchesKeyword && matchesStatus;

@@ -18,8 +18,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
 import {
   createDefaultWorkbenchResourceSelection,
   createDefaultWorkbenchRuntimeSettings,
@@ -27,20 +25,15 @@ import {
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import type { TaskRunActionLoading } from './task-run-action-bar';
-import {
-  fetchTaskDetail,
-  type LoadedTaskDetailSource,
-  type TaskDetail,
-} from './task-detail-loader';
+import { fetchTaskDetail, type TaskDetail } from './task-detail-loader';
 import {
   cancelTaskThreadRun,
   createTaskThreadRun,
   retryTaskThreadSubagentRun,
 } from './service';
 import { getTaskInputText } from './helpers';
-
-type ChatTask = workbenchTask.ChatTask;
 
 const getTaskRetryPayload = (
   message: string,
@@ -57,15 +50,15 @@ const getTaskRetryPayload = (
 
 const getTaskRetryMetadata = ({
   sourceRunId,
-  taskId,
+  threadId,
 }: {
   sourceRunId: string;
-  taskId: string;
+  threadId: string;
 }) =>
   JSON.stringify({
     source: 'task_retry',
     source_run_id: sourceRunId,
-    source_task_id: taskId,
+    source_thread_id: threadId,
     requested_at: Date.now(),
   });
 
@@ -75,7 +68,6 @@ export const useTaskRunActions = ({
   spaceID,
   task,
   taskDetailId,
-  taskDetailSource,
 }: {
   applyTaskDetail: (
     detail: TaskDetail,
@@ -84,9 +76,8 @@ export const useTaskRunActions = ({
   ) => void;
   captureTaskDetailRequestToken?: () => object;
   spaceID?: string;
-  task?: ChatTask;
+  task?: TaskThreadDetailModel;
   taskDetailId?: string;
-  taskDetailSource: LoadedTaskDetailSource;
 }) => {
   const [taskRunActionLoading, setTaskRunActionLoading] =
     useState<TaskRunActionLoading>('');
@@ -170,12 +161,11 @@ export const useTaskRunActions = ({
     if (!runId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId || taskDetailSource !== 'thread') {
+    if (!taskDetailId) {
       setTaskRunActionError('缺少任务运行上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const submittedTaskDetailSource = taskDetailSource;
     const mutationKey = `cancel:${submittedTaskDetailId}:${runId}`;
     const request = captureTaskRequest(submittedTaskDetailId, 'cancel');
 
@@ -209,7 +199,6 @@ export const useTaskRunActions = ({
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
           spaceId: spaceID,
-          source: submittedTaskDetailSource,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -232,12 +221,11 @@ export const useTaskRunActions = ({
     if (!sourceRunId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId || taskDetailSource !== 'thread' || !task) {
+    if (!taskDetailId || !task) {
       setTaskRunActionError('缺少任务重试上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const submittedTaskDetailSource = taskDetailSource;
     const mutationKey = `retry:${submittedTaskDetailId}:${sourceRunId}`;
     const request = captureTaskRequest(submittedTaskDetailId, 'retry');
 
@@ -264,7 +252,7 @@ export const useTaskRunActions = ({
             config: stringifyWorkbenchRunConfig(retryPayload),
             metadata: getTaskRetryMetadata({
               sourceRunId,
-              taskId: task.id,
+              threadId: task.id,
             }),
             idempotency_key: `${submittedTaskDetailId}:${sourceRunId}:task_retry`,
           });
@@ -287,7 +275,6 @@ export const useTaskRunActions = ({
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
           spaceId: spaceID,
-          source: submittedTaskDetailSource,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -310,12 +297,11 @@ export const useTaskRunActions = ({
     if (!runId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId || taskDetailSource !== 'thread') {
+    if (!taskDetailId) {
       setSubagentRetryError('缺少任务恢复上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const submittedTaskDetailSource = taskDetailSource;
     const mutationKey = `subagent:${submittedTaskDetailId}:${runId}`;
     const request = captureTaskRequest(submittedTaskDetailId, 'subagent');
 
@@ -351,7 +337,6 @@ export const useTaskRunActions = ({
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
           spaceId: spaceID,
-          source: submittedTaskDetailSource,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);

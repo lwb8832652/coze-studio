@@ -54,7 +54,8 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ## 主要产品域
 
-- 任务与 Agent Workbench：任务、消息、运行、恢复、工具、产物和长期记忆；
+- 任务与 Agent Workbench：唯一事实模型为 TaskThread、Message、Run 和
+  RunEvent，详细边界见 `docs/superpowers/context/workbench-chat.md`；
 - 工作空间与系统管理：成员、角色、系统配置、模型和管理员能力；
 - Skill 与 MCP：配置、版本、授权、健康状态和运行时装配；
 - AppDev 与 Sandbox：项目文件、构建、预览、Provider 和安全网关；
@@ -84,6 +85,7 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 ## 当前运行手册
 
+- WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
 - 本地调试：`docs/superpowers/runbooks/local-debug-and-test.md`
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`

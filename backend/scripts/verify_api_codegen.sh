@@ -90,9 +90,7 @@ handler_excludes=(
   api/handler/coze/public_product_service.go
   api/handler/coze/resource_service.go
   api/handler/coze/upload_service.go
-  api/handler/coze/workbench_chat_service.go
   api/handler/coze/workbench_skill_service.go
-  api/handler/coze/workbench_task_service.go
   api/handler/coze/workflow_service.go
 )
 

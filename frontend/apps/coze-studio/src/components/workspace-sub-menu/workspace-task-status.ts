@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
-
 export type WorkspaceTaskStatusTone =
   | 'waiting'
   | 'running'
@@ -29,11 +27,9 @@ export interface WorkspaceTaskStatusMeta {
   ariaLabel: string;
 }
 
-type WorkspaceTaskStatusValue = workbenchTask.TaskStatus | string;
+type WorkspaceTaskStatusValue = string;
 
 const waitingStatuses = new Set<WorkspaceTaskStatusValue>([
-  workbenchTask.TaskStatus.Created,
-  workbenchTask.TaskStatus.Queued,
   'created',
   'queued',
   'interrupted',
@@ -41,22 +37,16 @@ const waitingStatuses = new Set<WorkspaceTaskStatusValue>([
 ]);
 
 const runningStatuses = new Set<WorkspaceTaskStatusValue>([
-  workbenchTask.TaskStatus.Running,
-  workbenchTask.TaskStatus.Canceling,
   'running',
   'canceling',
 ]);
 
 const successStatuses = new Set<WorkspaceTaskStatusValue>([
-  workbenchTask.TaskStatus.Succeeded,
   'succeeded',
   'completed',
 ]);
 
-const dangerStatuses = new Set<WorkspaceTaskStatusValue>([
-  workbenchTask.TaskStatus.Failed,
-  'failed',
-]);
+const dangerStatuses = new Set<WorkspaceTaskStatusValue>(['failed']);
 
 export const getWorkspaceTaskStatusMeta = (
   status: WorkspaceTaskStatusValue,

@@ -14,12 +14,8 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
-import type { LoadedTaskDetailSource } from './task-detail-loader';
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { canRetryTask } from './helpers';
-
-type ChatTask = workbenchTask.ChatTask;
 
 export type TaskRunActionLoading = '' | 'cancel' | 'retry';
 
@@ -29,19 +25,16 @@ export const TaskRunActionBar = ({
   latestRunID,
   loading,
   task,
-  taskDetailSource,
   onRetryTaskRun,
 }: {
   disabled?: boolean;
   error?: string;
   latestRunID: string;
   loading: TaskRunActionLoading;
-  task: ChatTask;
-  taskDetailSource: LoadedTaskDetailSource;
+  task: TaskThreadDetailModel;
   onRetryTaskRun: (runId: string) => void | Promise<void>;
 }) => {
-  const showRetry =
-    taskDetailSource === 'thread' && latestRunID && canRetryTask(task.status);
+  const showRetry = latestRunID && canRetryTask(task.status);
 
   if (!showRetry && !error) {
     return null;

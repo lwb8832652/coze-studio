@@ -30,8 +30,8 @@ import (
 func TestGenerateSuggestionsUsesRecentMessagesAndParsesModelJSON(t *testing.T) {
 	ctx := context.Background()
 	var gotMessages []*schema.Message
-	app := withTestWorkbenchApp(t, &ServiceComponents{
-		ChatModelProvider: func(_ context.Context, modelType int64) (model.BaseChatModel, bool, error) {
+	app := &ApplicationService{
+		chatModelProvider: func(_ context.Context, modelType int64) (model.BaseChatModel, bool, error) {
 			require.Zero(t, modelType)
 			return &testutil.UTChatModel{
 				InvokeResultProvider: func(_ int, in []*schema.Message) (*schema.Message, error) {
@@ -40,7 +40,7 @@ func TestGenerateSuggestionsUsesRecentMessagesAndParsesModelJSON(t *testing.T) {
 				},
 			}, true, nil
 		},
-	})
+	}
 
 	resp, err := app.GenerateSuggestions(ctx, &GenerateSuggestionsRequest{
 		Messages: []SuggestionMessage{
@@ -62,11 +62,11 @@ func TestGenerateSuggestionsUsesRecentMessagesAndParsesModelJSON(t *testing.T) {
 
 func TestGenerateSuggestionsReportsModelDisabledError(t *testing.T) {
 	ctx := context.Background()
-	app := withTestWorkbenchApp(t, &ServiceComponents{
-		ChatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
+	app := &ApplicationService{
+		chatModelProvider: func(context.Context, int64) (model.BaseChatModel, bool, error) {
 			return nil, false, nil
 		},
-	})
+	}
 
 	resp, err := app.GenerateSuggestions(ctx, &GenerateSuggestionsRequest{
 		Messages: []SuggestionMessage{{Role: "user", Content: "hello"}},

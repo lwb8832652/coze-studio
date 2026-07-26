@@ -502,7 +502,6 @@ func Register(r *server.Hertz) {
 		}
 		{
 			_workbench := _api.Group("/workbench", _workbenchMw()...)
-			_workbench.POST("/chat", append(_workbenchchatMw(), coze.WorkbenchChat)...)
 			_workbench.GET("/models", append(_listworkspacemodelsMw(), coze.ListWorkspaceModels)...)
 			_models := _workbench.Group("/models", _modelsMw()...)
 			_models.DELETE("/:model_id", append(_deleteworkspacemodelMw(), coze.DeleteWorkspaceModel)...)
@@ -587,14 +586,6 @@ func Register(r *server.Hertz) {
 			_thread_id.POST("/suggestions", append(_generatetaskthreadsuggestionsMw(), coze.GenerateTaskThreadSuggestions)...)
 			_thread_id.GET("/token_usage", append(_gettaskthreadtokenusageMw(), coze.GetTaskThreadTokenUsage)...)
 			_workbench.POST("/task_threads", append(_createtaskthreadMw(), coze.CreateTaskThread)...)
-			_workbench.GET("/tasks", append(_listtasksMw(), coze.ListTasks)...)
-			_tasks := _workbench.Group("/tasks", _tasksMw()...)
-			_tasks.GET("/:task_id", append(_gettaskMw(), coze.GetTask)...)
-			_task_id0 := _tasks.Group("/:task_id", _task_id0Mw()...)
-			_task_id0.POST("/cancel", append(_canceltaskMw(), coze.CancelTask)...)
-			_task_id0.GET("/events", append(_listtaskeventsMw(), coze.ListTaskEvents)...)
-			_task_id0.POST("/retry", append(_retrytaskMw(), coze.RetryTask)...)
-			_workbench.POST("/tasks", append(_createtaskMw(), coze.CreateTask)...)
 		}
 		{
 			_workflow_api := _api.Group("/workflow_api", _workflow_apiMw()...)

@@ -22,14 +22,18 @@ import {
   IconCozListDisorder,
 } from '@coze-arch/coze-design/icons';
 
+import type {
+  TaskThreadDetailEvent,
+  TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import { projectTaskExecutionEvents } from './task-event-projection';
 import { isTaskTerminalStatus } from './helpers';
 
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
-const parseTaskEventPayload = (payload?: string): Record<string, unknown> => {
+const parseTaskThreadEventPayload = (
+  payload?: string,
+): Record<string, unknown> => {
   try {
     const parsed: unknown = JSON.parse(payload || '{}');
 
@@ -41,9 +45,9 @@ const parseTaskEventPayload = (payload?: string): Record<string, unknown> => {
   }
 };
 
-const isTodoExecutionEvent = (event: TaskEvent) => {
+const isTodoExecutionEvent = (event: TaskThreadDetailEvent) => {
   const eventType = String(event.event_type ?? '').toLowerCase();
-  const payload = parseTaskEventPayload(event.payload);
+  const payload = parseTaskThreadEventPayload(event.payload);
   const toolName =
     typeof payload.tool_name === 'string' ? payload.tool_name : undefined;
   const title = typeof payload.title === 'string' ? payload.title : undefined;
@@ -60,8 +64,8 @@ export const TaskExecutionTodoDock = ({
   task,
   todos,
 }: {
-  events: TaskEvent[];
-  task: ChatTask;
+  events: TaskThreadDetailEvent[];
+  task: TaskThreadDetailModel;
   todos?: TaskThreadTodo[];
 }) => {
   const [collapsed, setCollapsed] = useState(true);

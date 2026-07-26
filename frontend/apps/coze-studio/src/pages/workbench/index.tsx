@@ -57,8 +57,6 @@ import {
   type WorkbenchMode,
 } from './components/types';
 
-export { mapModeToChatMode } from './components/types';
-
 const TEMPLATE_TABS = ['公开模板 6268', '我收藏的', '我创建的'] as const;
 
 const CREATE_SKILL_NAME = 'skill-creator';

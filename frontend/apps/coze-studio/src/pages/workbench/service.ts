@@ -37,7 +37,6 @@ export interface WorkbenchReferenceResource {
 export const createTaskThread = workbenchTask.CreateTaskThread;
 export const appendTaskThreadMessage = workbenchTask.AppendTaskThreadMessage;
 export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;
-export const sendWorkbenchChat = workbench.WorkbenchChat;
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 
 export interface TaskThreadUploadedFile {

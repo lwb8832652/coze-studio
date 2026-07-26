@@ -35,6 +35,10 @@ import { useUserInfo } from '@coze-arch/foundation-sdk';
 import '../../components/workspace-prototype.less';
 import '../workbench/index.less';
 import { TaskUsagePopover } from './task-usage-popover';
+import type {
+  TaskThreadDetailEvent,
+  TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import { TaskSubagentRunsSection } from './task-subagent-runs-section';
 import {
   TaskRunActionBar,
@@ -60,8 +64,6 @@ import {
 import { TaskFollowUpComposer } from './task-follow-up-composer';
 import { TaskExecutionTodoDock } from './task-execution-todo-dock';
 import {
-  type LoadedTaskDetailSource,
-  type TaskDetailSource,
   type TaskDetailSubagentRun,
   type TaskTokenUsageViewMode,
 } from './task-detail-loader';
@@ -97,8 +99,6 @@ import {
   TaskUserTurn,
 } from './conversation-turn';
 
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
 type HumanInteractionResponse = workbenchTask.HumanInteractionResponse;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
@@ -133,15 +133,17 @@ const normalizeThreadRunID = (runID?: string) => {
   return value && value !== '0' ? value : '';
 };
 
-const getTaskEventRunID = (event: TaskEvent) =>
-  normalizeThreadRunID((event as TaskEvent & { run_id?: string }).run_id);
+const getTaskThreadEventRunID = (event: TaskThreadDetailEvent) =>
+  normalizeThreadRunID(
+    (event as TaskThreadDetailEvent & { run_id?: string }).run_id,
+  );
 
-const getRunEvents = (events: TaskEvent[], runID: string) => {
+const getRunEvents = (events: TaskThreadDetailEvent[], runID: string) => {
   if (!runID) {
     return events;
   }
 
-  return events.filter(event => getTaskEventRunID(event) === runID);
+  return events.filter(event => getTaskThreadEventRunID(event) === runID);
 };
 
 const getTaskArtifactRunID = (artifact: TaskThreadArtifact) =>
@@ -392,24 +394,13 @@ const normalizeTaskFollowUpSuggestions = (suggestions?: string[]) =>
     ...new Set((suggestions ?? []).map(item => item.trim()).filter(Boolean)),
   ].slice(0, TASK_DETAIL_SUGGESTION_COUNT);
 
-const getTaskDetailSource = (threadId?: string): TaskDetailSource =>
-  threadId ? 'thread' : 'auto';
-
 const isTaskMemoryReadOnly = ({
-  source,
   task,
   userID,
 }: {
-  source: LoadedTaskDetailSource;
-  task?: ChatTask;
+  task?: TaskThreadDetailModel;
   userID?: string;
-}) =>
-  Boolean(
-    source === 'thread' &&
-      task?.creator_id &&
-      userID &&
-      task.creator_id !== userID,
-  );
+}) => Boolean(task?.creator_id && userID && task.creator_id !== userID);
 
 const TaskDetailSkeletonBar = ({
   className,
@@ -495,20 +486,12 @@ const TaskDetailLoadingSkeleton = () => {
 const canStopTaskRunFromComposer = ({
   latestTaskRunID,
   task,
-  taskDetailSource,
 }: {
   latestTaskRunID: string;
-  task?: ChatTask;
-  taskDetailSource: LoadedTaskDetailSource;
-}) =>
-  Boolean(
-    taskDetailSource === 'thread' &&
-      latestTaskRunID &&
-      task &&
-      canCancelTask(task.status),
-  );
+  task?: TaskThreadDetailModel;
+}) => Boolean(latestTaskRunID && task && canCancelTask(task.status));
 
-const TaskConversation = ({ task }: { task: ChatTask }) => (
+const TaskConversation = ({ task }: { task: TaskThreadDetailModel }) => (
   <TaskUserTurn createdAt={task.created_at}>
     {getTaskInputText(task.input) || task.title}
   </TaskUserTurn>
@@ -556,7 +539,7 @@ const TaskThreadArtifactCards = ({
   artifactActions: TaskArtifactActions;
   artifacts: TaskThreadArtifact[];
   latestPreviewableArtifactID: string;
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   if (!artifacts.length) {
     return null;
@@ -588,11 +571,11 @@ const TaskThreadConversation = ({
 }: {
   artifactActions: TaskArtifactActions;
   artifacts: TaskThreadArtifact[];
-  events: TaskEvent[];
+  events: TaskThreadDetailEvent[];
   latestTaskRunID: string;
   messages: TaskThreadMessage[];
   onAssistantMessageRef?: (runID: string, element: HTMLElement | null) => void;
-  task: ChatTask;
+  task: TaskThreadDetailModel;
 }) => {
   const transcript = getThreadTranscriptMessages(messages);
   const artifactsByRunID = groupTaskArtifactsByRunID(artifacts);
@@ -737,7 +720,6 @@ const TaskTranscript = ({
   subagentRetryError,
   subagentRuns,
   task,
-  taskDetailSource,
   taskRunActionError,
   taskRunActionLoading,
   taskRunActionsDisabled,
@@ -749,7 +731,7 @@ const TaskTranscript = ({
 }: {
   artifacts: workbenchTask.TaskThreadArtifact[];
   artifactActions: TaskArtifactActions;
-  events: TaskEvent[];
+  events: TaskThreadDetailEvent[];
   humanInteractionError?: string;
   humanInteractionLoading: boolean;
   latestTaskRunID: string;
@@ -758,8 +740,7 @@ const TaskTranscript = ({
   retryingSubagentRunId?: string;
   subagentRetryError?: string;
   subagentRuns: TaskDetailSubagentRun[];
-  task: ChatTask;
-  taskDetailSource: LoadedTaskDetailSource;
+  task: TaskThreadDetailModel;
   taskRunActionError?: string;
   taskRunActionLoading: TaskRunActionLoading;
   taskRunActionsDisabled?: boolean;
@@ -781,10 +762,9 @@ const TaskTranscript = ({
         latestRunID={latestTaskRunID}
         loading={taskRunActionLoading}
         error={taskRunActionError}
-        taskDetailSource={taskDetailSource}
         onRetryTaskRun={onRetryTaskRun}
       />
-      {taskDetailSource === 'thread' && messages.length ? (
+      {messages.length ? (
         <TaskThreadConversation
           artifactActions={artifactActions}
           artifacts={artifacts}
@@ -808,17 +788,15 @@ const TaskTranscript = ({
               tokenUsage={undefined}
               tokenUsageViewMode="off"
             />
-            {taskDetailSource === 'thread' ? (
-              <TaskArtifactMessageList
-                artifactActions={artifactActions}
-                artifacts={artifacts}
-                autoPreview={true}
-                renderFeedback={false}
-                renderReviewActions={false}
-                spaceId={task.space_id}
-                threadId={task.id}
-              />
-            ) : null}
+            <TaskArtifactMessageList
+              artifactActions={artifactActions}
+              artifacts={artifacts}
+              autoPreview={true}
+              renderFeedback={false}
+              renderReviewActions={false}
+              spaceId={task.space_id}
+              threadId={task.id}
+            />
           </TaskAssistantTurnShell>
         </>
       )}
@@ -843,10 +821,9 @@ const TaskTranscript = ({
 
 // eslint-disable-next-line @coze-arch/max-line-per-function -- P0 keeps task detail orchestration together.
 const TaskDetailPage = () => {
-  const { space_id, task_id, thread_id } = useParams();
+  const { space_id, thread_id } = useParams();
   const userInfo = useUserInfo();
-  const taskDetailId = thread_id ?? task_id;
-  const taskDetailSource = getTaskDetailSource(thread_id);
+  const taskDetailId = thread_id;
 
   useEffect(() => {
     document.documentElement.classList.add(TASK_DETAIL_RESPONSIVE_PAGE_CLASS);
@@ -868,7 +845,6 @@ const TaskDetailPage = () => {
     events,
     latestTaskRunID,
     loadedTaskDetailCurrent,
-    loadedTaskDetailSource,
     loading,
     messages,
     refreshArtifacts,
@@ -888,7 +864,6 @@ const TaskDetailPage = () => {
   } = useTaskDetailData({
     spaceID: space_id,
     taskDetailId,
-    taskDetailSource,
   });
   const [tokenUsageViewMode, setTokenUsageViewMode] =
     useState<TaskTokenUsageViewMode>(loadTaskTokenUsageViewMode);
@@ -904,7 +879,6 @@ const TaskDetailPage = () => {
     saveTaskTokenUsageViewMode(tokenUsageViewMode);
   }, [tokenUsageViewMode]);
 
-  const activeTaskDetailSource = loadedTaskDetailSource;
   const activeTaskDetailId = taskDetailId;
   const registerAssistantMessageRef = useCallback(
     (runID: string, element: HTMLElement | null) => {
@@ -959,7 +933,6 @@ const TaskDetailPage = () => {
   );
   const pendingHumanInteraction = getPendingHumanInteraction(events);
   const memoryReadOnly = isTaskMemoryReadOnly({
-    source: activeTaskDetailSource,
     task,
     userID: userInfo?.user_id_str,
   });
@@ -995,7 +968,6 @@ const TaskDetailPage = () => {
     subagentRuns,
     task,
     taskDetailId: activeTaskDetailId,
-    taskDetailSource: activeTaskDetailSource,
     todos,
     tokenUsage,
     tokenUsageByRunID,
@@ -1003,7 +975,6 @@ const TaskDetailPage = () => {
   const canStopLatestTaskRun = canStopTaskRunFromComposer({
     latestTaskRunID,
     task,
-    taskDetailSource: activeTaskDetailSource,
   });
   const splitRef = useRef<HTMLElement | null>(null);
   const [artifactPanelWidth, setArtifactPanelWidth] = useState(
@@ -1012,21 +983,15 @@ const TaskDetailPage = () => {
   const artifactActions = useTaskArtifactActions({
     onArtifactsChanged: refreshArtifacts,
     spaceId: space_id,
-    threadId:
-      loadedTaskDetailCurrent && activeTaskDetailSource === 'thread'
-        ? activeTaskDetailId
-        : undefined,
+    threadId: loadedTaskDetailCurrent ? activeTaskDetailId : undefined,
   });
-  const artifactPanelOpen =
-    activeTaskDetailSource === 'thread' &&
-    Boolean(artifactActions.inlinePreview);
+  const artifactPanelOpen = Boolean(artifactActions.inlinePreview);
   const artifactSplitStyle: CSSProperties = {
     '--coze-prototype-artifact-side-preview-width': `${artifactPanelWidth}%`,
   };
 
   useEffect(() => {
     if (
-      activeTaskDetailSource !== 'thread' ||
       !activeTaskDetailId ||
       !task ||
       loading ||
@@ -1094,7 +1059,6 @@ const TaskDetailPage = () => {
     };
   }, [
     activeTaskDetailId,
-    activeTaskDetailSource,
     loading,
     messages,
     suggestionModelName,
@@ -1158,9 +1122,7 @@ const TaskDetailPage = () => {
           onArtifactsChanged={refreshArtifacts}
           spaceId={space_id}
           task={task}
-          threadId={
-            activeTaskDetailSource === 'thread' ? activeTaskDetailId : undefined
-          }
+          threadId={activeTaskDetailId}
         />
       ) : null}
       <section
@@ -1197,7 +1159,6 @@ const TaskDetailPage = () => {
                 subagentRetryError={subagentRetryError}
                 subagentRuns={subagentRuns}
                 task={task}
-                taskDetailSource={activeTaskDetailSource}
                 taskRunActionError={taskRunActionError}
                 taskRunActionLoading={taskRunActionLoading}
                 taskRunActionsDisabled={taskRunActionsDisabled}
@@ -1249,9 +1210,7 @@ const TaskDetailPage = () => {
               suggestions={followUpSuggestions}
               resetKey={followUpResetKey}
               capabilities={{
-                attachments: activeTaskDetailSource === 'thread',
-                attachmentDisabledReason:
-                  '旧版任务暂不支持附件续聊，请使用文字继续提问',
+                attachments: true,
               }}
               suggestionsHidden={followUpSuggestionsHidden}
               suggestionsLoading={followUpSuggestionsLoading}
@@ -1281,13 +1240,11 @@ const TaskDetailPage = () => {
             onPointerDown={handleArtifactResizePointerDown}
           />
         ) : null}
-        {activeTaskDetailSource === 'thread' ? (
-          <TaskArtifactFeedback
-            clearInlinePreview={artifactActions.clearInlinePreview}
-            error={artifactActions.error}
-            inlinePreview={artifactActions.inlinePreview}
-          />
-        ) : null}
+        <TaskArtifactFeedback
+          clearInlinePreview={artifactActions.clearInlinePreview}
+          error={artifactActions.error}
+          inlinePreview={artifactActions.inlinePreview}
+        />
       </section>
     </main>
   );

@@ -36,6 +36,61 @@ func _adminMw() []app.HandlerFunc {
 	return []app.HandlerFunc{adminAuthMiddlewareFactory()}
 }
 
+func _announcementsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listadminannouncementsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getadminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listadminannouncementauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _canceladminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _publishadminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _scheduleadminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updateadminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _replayadminannouncementsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _createadminannouncementMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _configMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -1236,6 +1291,26 @@ func _updatedraftbotinfoagwMw() []app.HandlerFunc {
 	return nil
 }
 
+func _noticeMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getnoticelistMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getnoticeunreadcountMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _noticemarkreadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _operateMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -1532,11 +1607,6 @@ func _userupdateavatarMw() []app.HandlerFunc {
 }
 
 func _workbenchMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _workbenchchatMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -1927,46 +1997,6 @@ func _gettaskthreadtokenusageMw() []app.HandlerFunc {
 }
 
 func _createtaskthreadMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _tasksMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listtasksMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _task_id0Mw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _gettaskMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _canceltaskMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listtaskeventsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _retrytaskMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createtaskMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -2462,81 +2492,6 @@ func _message0Mw() []app.HandlerFunc {
 }
 
 func _listchatmessageapiMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _announcementsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listadminannouncementsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _idMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getadminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _listadminannouncementauditeventsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _canceladminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _publishadminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _scheduleadminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _updateadminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _replayadminannouncementsMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _createadminannouncementMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _noticeMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getnoticelistMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _getnoticeunreadcountMw() []app.HandlerFunc {
-	// your code...
-	return nil
-}
-
-func _noticemarkreadMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }

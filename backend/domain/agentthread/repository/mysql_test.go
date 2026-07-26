@@ -48,7 +48,6 @@ func TestThreadRepositoryCreateAndGet(t *testing.T) {
 		Title:         "生成周报",
 		Status:        entity.ThreadStatusIdle,
 		Source:        entity.ThreadSourceWeb,
-		LegacyTaskID:  40,
 		Metadata:      `{"mode":"auto"}`,
 		CreatedAt:     1,
 		UpdatedAt:     2,
@@ -65,7 +64,6 @@ func TestThreadRepositoryCreateAndGet(t *testing.T) {
 	require.Equal(t, "生成周报", got.Title)
 	require.Equal(t, entity.ThreadStatusIdle, got.Status)
 	require.Equal(t, entity.ThreadSourceWeb, got.Source)
-	require.Equal(t, int64(40), got.LegacyTaskID)
 	require.Equal(t, `{"mode":"auto"}`, got.Metadata)
 	require.Equal(t, int64(1), got.CreatedAt)
 	require.Equal(t, int64(2), got.UpdatedAt)

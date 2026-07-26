@@ -52,7 +52,6 @@ import (
 	"github.com/coze-dev/coze-studio/backend/application/shortcutcmd"
 	"github.com/coze-dev/coze-studio/backend/application/singleagent"
 	"github.com/coze-dev/coze-studio/backend/application/skill"
-	"github.com/coze-dev/coze-studio/backend/application/task"
 	"github.com/coze-dev/coze-studio/backend/application/template"
 	"github.com/coze-dev/coze-studio/backend/application/upload"
 	"github.com/coze-dev/coze-studio/backend/application/user"
@@ -138,7 +137,6 @@ type primaryServices struct {
 	skillSVC             *skill.ApplicationService
 	mcpToolSVC           *mcptool.ApplicationService
 	mcpManagementRuntime *mcpManagementRuntime
-	taskSVC              *task.ApplicationService
 	scheduledTaskSVC     *scheduledtask.ApplicationService
 	scheduledTaskWorker  *scheduledtask.Worker
 	notificationRuntime  *appnotification.Runtime
@@ -210,7 +208,6 @@ func Init(ctx context.Context) (err error) {
 		return fmt.Errorf("Init - configure agent runtime policy: %w", err)
 	}
 	primaryServices.agentThreadSVC.RuntimePolicy = &runtimePolicy
-	task.NewWorker(primaryServices.taskSVC).Start(ctx)
 	runtimeSkillProvider := agentthread.NewRuntimeSkillProvider(
 		primaryServices.skillSVC.DomainSVC,
 	)
@@ -459,10 +456,6 @@ func Init(ctx context.Context) (err error) {
 	crossupload.SetDefaultSVC(uploadImpl.InitDomainService(basicServices.uploadSVC.UploadSVC))
 
 	crossapp.SetDefaultSVC(appImpl.InitDomainService(complexServices.appSVC.DomainSVC))
-	workbench.InitService(&workbench.ServiceComponents{
-		KnowledgeSVC: crossknowledge.DefaultSVC(),
-		AgentRunSVC:  complexServices.conversationSVC.AgentRunDomainSVC,
-	})
 	if primaryServices.notificationRuntime == nil {
 		return fmt.Errorf("Init - notification runtime is unavailable")
 	}
@@ -655,7 +648,7 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		AuditRepository:             mcptool.NewMySQLManagementAuditRepository(basicServices.infra.DB),
 		IDGen:                       basicServices.infra.IDGenSVC,
 		UserSpaceRoleReader:         basicServices.userSVC.DomainSVC,
-		SpaceMemberRoleReader:      mcptool.NewMySQLSpaceMemberRoleReader(basicServices.infra.DB),
+		SpaceMemberRoleReader:       mcptool.NewMySQLSpaceMemberRoleReader(basicServices.infra.DB),
 		DefaultDeerFlowMCPConfigRaw: mcptool.DefaultDeerFlowMCPConfigRaw(),
 	})
 	skillSVC := skill.InitService(&skill.ServiceComponents{
@@ -664,10 +657,6 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		CodeRunner:            basicServices.infra.CodeRunner,
 		ToolCandidateProvider: mcpToolSVC,
 		UserSpaceReader:       basicServices.userSVC.DomainSVC,
-	})
-	taskSVC := task.InitService(&task.ServiceComponents{
-		DB:    basicServices.infra.DB,
-		IDGen: basicServices.infra.IDGenSVC,
 	})
 	notificationRuntime, err := appnotification.NewRuntime(
 		basicServices.infra.DB,
@@ -711,54 +700,51 @@ func initPrimaryServices(ctx context.Context, basicServices *basicServices, mcpM
 		}
 	}
 	if _, _, err := appimchannel.InitService(&appimchannel.Components{
-		DB:           basicServices.infra.DB,
-		IDGen:        basicServices.infra.IDGenSVC,
-		Roles:        basicServices.userSVC.DomainSVC,
-		AgentThreads: agentThreadSVC,
-		RootContext:  ctx,
+		DB:                            basicServices.infra.DB,
+		IDGen:                         basicServices.infra.IDGenSVC,
+		Roles:                         basicServices.userSVC.DomainSVC,
+		AgentThreads:                  agentThreadSVC,
+		RootContext:                   ctx,
 		RuntimeStableFailureThreshold: appimchannel.RuntimeStableFailureThresholdFromEnv(os.Getenv),
 	}); err != nil {
 		return nil, fmt.Errorf("init Feishu IM channel service: %w", err)
 	}
 	scheduledTaskSVC, scheduledTaskWorker, err := scheduledtask.InitService(&scheduledtask.ServiceComponents{
-		DB:                basicServices.infra.DB,
-		IDGen:             basicServices.infra.IDGenSVC,
-		UserSpaceReader:   basicServices.userSVC.DomainSVC,
-		UserProfileReader: basicServices.userSVC.DomainSVC,
-		AgentThreadClient: agentThreadSVC,
-		WorkflowDomain:    workflowDomainSVC.DomainSVC,
+		DB:                 basicServices.infra.DB,
+		IDGen:              basicServices.infra.IDGenSVC,
+		UserSpaceReader:    basicServices.userSVC.DomainSVC,
+		UserProfileReader:  basicServices.userSVC.DomainSVC,
+		AgentThreadClient:  agentThreadSVC,
+		WorkflowDomain:     workflowDomainSVC.DomainSVC,
 		NotificationOutbox: notificationOutbox,
-		RootContext:       ctx,
+		RootContext:        ctx,
 	})
 	if err != nil {
 		return nil, err
 	}
 	workbenchSVC := workbench.InitService(&workbench.ServiceComponents{
 		SkillSVC:          skillSVC,
-		TaskSVC:           taskSVC,
-		AgentThreadSVC:    agentThreadSVC,
 		MCPToolSVC:        mcpToolSVC,
 		SandboxRepository: SandboxRuntimeRepository,
 	})
 
 	return &primaryServices{
-		basicServices:       basicServices,
-		pluginSVC:           pluginSVC,
-		memorySVC:           memorySVC,
-		knowledgeSVC:        knowledgeSVC,
-		workflowSVC:         workflowDomainSVC,
-		shortcutSVC:         shortcutSVC,
-		agentThreadSVC:      agentThreadSVC,
-		skillSVC:            skillSVC,
-		mcpToolSVC:          mcpToolSVC,
-		taskSVC:             taskSVC,
-		scheduledTaskSVC:    scheduledTaskSVC,
-		scheduledTaskWorker: scheduledTaskWorker,
-		notificationRuntime: notificationRuntime,
-		announcementWorker:  announcementWorker,
+		basicServices:        basicServices,
+		pluginSVC:            pluginSVC,
+		memorySVC:            memorySVC,
+		knowledgeSVC:         knowledgeSVC,
+		workflowSVC:          workflowDomainSVC,
+		shortcutSVC:          shortcutSVC,
+		agentThreadSVC:       agentThreadSVC,
+		skillSVC:             skillSVC,
+		mcpToolSVC:           mcpToolSVC,
+		scheduledTaskSVC:     scheduledTaskSVC,
+		scheduledTaskWorker:  scheduledTaskWorker,
+		notificationRuntime:  notificationRuntime,
+		announcementWorker:   announcementWorker,
 		sandboxHealthMonitor: sandboxHealthMonitor,
-		workbenchSVC:        workbenchSVC,
-		infra:               basicServices.infra,
+		workbenchSVC:         workbenchSVC,
+		infra:                basicServices.infra,
 	}, nil
 }
 

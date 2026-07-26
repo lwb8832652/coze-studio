@@ -16,7 +16,7 @@
 
 import { getTaskToolEventDisplay } from './task-event-tool-display';
 import type {
-  TaskEventDisplay,
+  TaskThreadEventDisplay,
   TaskExecutionStatus,
   TaskExecutionType,
 } from './helpers';
@@ -127,7 +127,10 @@ const normalizeExecutionStatus = (value?: string): TaskExecutionStatus => {
   }
 };
 
-export const getTaskEventText = (eventType?: string, payload?: string) => {
+export const getTaskThreadEventText = (
+  eventType?: string,
+  payload?: string,
+) => {
   const parsed = parseJSONObject(payload);
 
   if (typeof parsed?.message === 'string') {
@@ -161,7 +164,7 @@ interface EventDisplayContext {
 const getPlanEventDisplay = ({
   eventType,
   parsed,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (!eventType?.startsWith('plan.task.')) {
     return undefined;
   }
@@ -197,7 +200,7 @@ const getMessageEventDisplay = ({
   parsed,
   runtime,
   title,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (eventType !== 'message.completed') {
     return undefined;
   }
@@ -235,7 +238,7 @@ const getRunEventDisplay = ({
   payload,
   runtime,
   status,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (!eventType?.startsWith('run.')) {
     return undefined;
   }
@@ -244,14 +247,14 @@ const getRunEventDisplay = ({
   const errorMessage = getString(parsed, 'error_message');
   const runDisplayMap: Record<
     string,
-    Pick<TaskEventDisplay, 'title' | 'status'>
+    Pick<TaskThreadEventDisplay, 'title' | 'status'>
   > = {
     'run.started': { title: '任务开始执行', status: 'running' },
     'run.completed': { title: '任务执行完成', status: 'completed' },
     'run.failed': { title: '任务执行失败', status: 'failed' },
   };
   const display = runDisplayMap[eventType] ?? {
-    title: getTaskEventText(eventType, payload),
+    title: getTaskThreadEventText(eventType, payload),
     status,
   };
 
@@ -268,7 +271,7 @@ const getRunEventDisplay = ({
 const getSkillLoadedEventDisplay = ({
   eventType,
   parsed,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (eventType !== 'skills.loaded') {
     return undefined;
   }
@@ -299,7 +302,7 @@ const getStepEventDisplay = ({
   eventType,
   parsed,
   runtime,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (!eventType?.startsWith('step.')) {
     return undefined;
   }
@@ -353,7 +356,7 @@ const getDatabaseEventDisplay = ({
   parsed,
   status,
   title,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (eventType !== 'agent.database_query') {
     return undefined;
   }
@@ -384,7 +387,7 @@ const getDatabaseEventDisplay = ({
 const getInternalLifecycleEventDisplay = ({
   eventType,
   runtime,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (
     !eventType?.startsWith('context.') &&
     !eventType?.startsWith('memory.update_') &&
@@ -413,13 +416,13 @@ const getStructuredEventDisplay = ({
   structured,
   thought,
   title,
-}: EventDisplayContext): TaskEventDisplay | undefined => {
+}: EventDisplayContext): TaskThreadEventDisplay | undefined => {
   if (!structured) {
     return undefined;
   }
 
   return {
-    title: title ?? getTaskEventText(eventType, payload),
+    title: title ?? getTaskThreadEventText(eventType, payload),
     detail,
     thought,
     status,
@@ -430,10 +433,10 @@ const getStructuredEventDisplay = ({
   };
 };
 
-export const getTaskEventDisplay = (
+export const getTaskThreadEventDisplay = (
   eventType?: string,
   payload?: string,
-): TaskEventDisplay => {
+): TaskThreadEventDisplay => {
   const parsed = parseJSONObject(payload);
   const title = getString(parsed, 'title');
   const detail = getString(parsed, 'detail');
@@ -466,7 +469,7 @@ export const getTaskEventDisplay = (
     getDatabaseEventDisplay(context) ??
     getInternalLifecycleEventDisplay(context) ??
     getStructuredEventDisplay(context) ?? {
-      title: getTaskEventText(eventType, payload),
+      title: getTaskThreadEventText(eventType, payload),
       status: 'completed',
       structured: false,
       kind: 'event',

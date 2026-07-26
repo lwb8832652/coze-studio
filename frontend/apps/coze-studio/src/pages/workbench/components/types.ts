@@ -14,12 +14,9 @@
  * limitations under the License.
  */
 
-import { workbench } from '@coze-studio/api-schema';
-
 export const WORKBENCH_MODES = ['flash', 'thinking', 'pro', 'ultra'] as const;
 
 export type WorkbenchMode = (typeof WORKBENCH_MODES)[number];
-export type WorkbenchLegacyMode = 'Auto' | 'Ask' | 'Agent';
 
 export type WorkbenchComposerVariant = 'home' | 'detail';
 
@@ -442,22 +439,3 @@ export const getWorkbenchModeRuntimeContext = (mode: WorkbenchMode) => ({
   is_plan_mode: mode === 'pro' || mode === 'ultra',
   subagent_enabled: mode === 'ultra',
 });
-
-export const mapModeToChatMode = (
-  mode: WorkbenchMode | WorkbenchLegacyMode,
-): workbench.ChatMode => {
-  const modeMap: Record<
-    WorkbenchMode | WorkbenchLegacyMode,
-    workbench.ChatMode
-  > = {
-    flash: workbench.ChatMode.Auto,
-    thinking: workbench.ChatMode.Ask,
-    pro: workbench.ChatMode.Agent,
-    ultra: workbench.ChatMode.Agent,
-    Auto: workbench.ChatMode.Auto,
-    Ask: workbench.ChatMode.Ask,
-    Agent: workbench.ChatMode.Agent,
-  };
-
-  return modeMap[mode];
-};

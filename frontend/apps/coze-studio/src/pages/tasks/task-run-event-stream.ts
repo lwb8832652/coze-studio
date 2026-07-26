@@ -18,14 +18,14 @@ import { useEffect, type Dispatch, type SetStateAction } from 'react';
 
 import type { workbenchTask } from '@coze-studio/api-schema';
 
+import type { TaskThreadDetailEvent } from './task-thread-detail-model';
 import {
   parseTaskTokenUsageSnapshotEvent,
   type TaskTokenUsageSnapshot,
 } from './task-detail-token-usage';
-import { mapTaskThreadRunEventToTaskEvent } from './task-detail-loader';
+import { mapTaskThreadRunEventToDetailEvent } from './task-detail-loader';
 import { getTaskThreadRunEventsStreamURL } from './service';
 
-type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
 
 interface ThreadTitleUpdate {
@@ -33,8 +33,11 @@ interface ThreadTitleUpdate {
   title: string;
 }
 
-const mergeTaskEvents = (current: TaskEvent[], incoming: TaskEvent[]) => {
-  const eventsByID = new Map<string, TaskEvent>();
+const mergeTaskThreadDetailEvents = (
+  current: TaskThreadDetailEvent[],
+  incoming: TaskThreadDetailEvent[],
+) => {
+  const eventsByID = new Map<string, TaskThreadDetailEvent>();
 
   for (const event of [...current, ...incoming]) {
     eventsByID.set(event.id, event);
@@ -120,7 +123,7 @@ export const useTaskThreadRunEventStream = ({
     event: TaskThreadRunEvent,
   ) => void;
   onThreadTitleUpdated?: (update: ThreadTitleUpdate) => void;
-  setEvents: Dispatch<SetStateAction<TaskEvent[]>>;
+  setEvents: Dispatch<SetStateAction<TaskThreadDetailEvent[]>>;
   threadId?: string;
 }) => {
   useEffect(() => {
@@ -149,7 +152,9 @@ export const useTaskThreadRunEventStream = ({
       }
 
       setEvents(current =>
-        mergeTaskEvents(current, [mapTaskThreadRunEventToTaskEvent(runEvent)]),
+        mergeTaskThreadDetailEvents(current, [
+          mapTaskThreadRunEventToDetailEvent(runEvent),
+        ]),
       );
     };
     const handleDone = () => {

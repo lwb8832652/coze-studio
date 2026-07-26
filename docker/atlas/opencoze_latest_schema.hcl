@@ -4998,79 +4998,6 @@ table "skill_resources" {
     columns = [column.version_id, column.path]
   }
 }
-table "chat_tasks" {
-  schema  = schema.opencoze
-  collate = "utf8mb4_unicode_ci"
-  column "id" {
-    null = false
-    type = bigint
-  }
-  column "space_id" {
-    null = false
-    type = bigint
-  }
-  column "creator_id" {
-    null = false
-    type = bigint
-  }
-  column "conversation_id" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
-  column "message_id" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
-  column "skill_id" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
-  column "title" {
-    null = false
-    type = varchar(255)
-  }
-  column "status" {
-    null = false
-    type = varchar(32)
-  }
-  column "progress" {
-    null    = false
-    type    = int
-    default = 0
-  }
-  column "input" {
-    null = true
-    type = json
-  }
-  column "result" {
-    null = true
-    type = json
-  }
-  column "error" {
-    null = false
-    type = text
-  }
-  column "created_at" {
-    null = false
-    type = bigint
-  }
-  column "updated_at" {
-    null = false
-    type = bigint
-  }
-  primary_key {
-    columns = [column.id]
-  }
-  index "idx_chat_tasks_creator_updated" {
-    columns = [column.creator_id, column.updated_at]
-  }
-  index "idx_chat_tasks_space_status" {
-    columns = [column.space_id, column.status]
-  }
-}
 table "agent_threads" {
   schema  = schema.opencoze
   collate = "utf8mb4_unicode_ci"
@@ -5103,11 +5030,6 @@ table "agent_threads" {
     null = false
     type = varchar(32)
   }
-  column "legacy_task_id" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
   column "metadata" {
     null = true
     type = json
@@ -5129,9 +5051,6 @@ table "agent_threads" {
   }
   index "idx_agent_threads_creator_updated" {
     columns = [column.creator_id, column.updated_at]
-  }
-  index "idx_agent_threads_legacy_task" {
-    columns = [column.legacy_task_id]
   }
   index "idx_agent_threads_space_status" {
     columns = [column.space_id, column.status]
@@ -6595,82 +6514,6 @@ table "agent_token_usage" {
   index "uk_agent_token_usage_idempotency" {
     unique  = true
     columns = [column.run_id, column.usage_key]
-  }
-}
-table "chat_task_attempts" {
-  schema  = schema.opencoze
-  collate = "utf8mb4_unicode_ci"
-  column "id" {
-    null = false
-    type = bigint
-  }
-  column "task_id" {
-    null = false
-    type = bigint
-  }
-  column "attempt_no" {
-    null = false
-    type = int
-  }
-  column "status" {
-    null = false
-    type = varchar(32)
-  }
-  column "started_at" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
-  column "ended_at" {
-    null    = false
-    type    = bigint
-    default = 0
-  }
-  column "runtime" {
-    null    = false
-    type    = varchar(64)
-    default = ""
-  }
-  column "error" {
-    null = false
-    type = text
-  }
-  primary_key {
-    columns = [column.id]
-  }
-  index "uk_chat_task_attempts_task_attempt" {
-    unique  = true
-    columns = [column.task_id, column.attempt_no]
-  }
-}
-table "chat_task_events" {
-  schema  = schema.opencoze
-  collate = "utf8mb4_unicode_ci"
-  column "id" {
-    null = false
-    type = bigint
-  }
-  column "task_id" {
-    null = false
-    type = bigint
-  }
-  column "event_type" {
-    null = false
-    type = varchar(64)
-  }
-  column "payload" {
-    null = true
-    type = json
-  }
-  column "created_at" {
-    null = false
-    type = bigint
-  }
-  primary_key {
-    columns = [column.id]
-  }
-  index "idx_chat_task_events_task_created" {
-    columns = [column.task_id, column.created_at]
   }
 }
 table "sandbox_providers" {

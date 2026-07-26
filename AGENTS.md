@@ -17,6 +17,7 @@
 
 常用入口：
 
+- WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
 - 本地调试与账号：`docs/superpowers/runbooks/local-debug-and-test.md`
 - `dev` 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox 运维：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
@@ -52,6 +53,10 @@
 - 长期上下文变化后才做增量更新；普通局部修复不制造图谱噪声。
 - 不默认对整个 monorepo 建图，不提交 `graphify-out/` 产物。
 - 图谱缺失、过期或不可用时直接读取源文档，并记录缺失的图谱验证。
+
+涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，只把
+`docs/superpowers/context/workbench-chat.md` 与当前源码作为现状语料；K2 和
+历史 ChatTask plans/specs 只能按需追溯，不能用于推断当前合同。
 
 ## 工作流程
 

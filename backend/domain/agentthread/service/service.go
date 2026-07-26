@@ -25,13 +25,12 @@ import (
 )
 
 type CreateThreadRequest struct {
-	SpaceID      int64
-	UserID       int64
-	AgentID      int64
-	Title        string
-	Source       entity.ThreadSource
-	LegacyTaskID int64
-	Metadata     string
+	SpaceID  int64
+	UserID   int64
+	AgentID  int64
+	Title    string
+	Source   entity.ThreadSource
+	Metadata string
 }
 
 type ListThreadsRequest struct {

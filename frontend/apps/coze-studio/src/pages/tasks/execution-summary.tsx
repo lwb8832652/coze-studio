@@ -16,7 +16,6 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozArrowDown,
   IconCozCheckMarkCircleFill,
@@ -30,17 +29,18 @@ import {
   IconCozWarningCircleFill,
 } from '@coze-arch/coze-design/icons';
 
+import type {
+  TaskThreadDetailEvent,
+  TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import { projectTaskExecutionEvents } from './task-event-projection';
-import { isTaskTerminalStatus, type TaskEventDisplay } from './helpers';
-
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
+import { isTaskTerminalStatus, type TaskThreadEventDisplay } from './helpers';
 
 const isPathDetail = (detail?: string) =>
   detail?.startsWith('/mnt/') || detail?.startsWith('write-file:');
 
 const getStepIcon = (
-  display: TaskEventDisplay,
+  display: TaskThreadEventDisplay,
 ): { key: string; icon: ReactNode } => {
   if (display.kind === 'thought') {
     return { key: 'thought', icon: <IconCozLightbulb /> };
@@ -79,7 +79,7 @@ const normalizeTimestamp = (value?: number) => {
   return value < 1_000_000_000_000 ? value * 1000 : value;
 };
 
-const formatDuration = (events: TaskEvent[]) => {
+const formatDuration = (events: TaskThreadDetailEvent[]) => {
   const timestamps = events
     .map(event => normalizeTimestamp(event.created_at))
     .filter((value): value is number => Boolean(value));
@@ -101,7 +101,7 @@ const formatDuration = (events: TaskEvent[]) => {
 
 const getSummaryStatus = (
   displayItems: ReturnType<typeof projectTaskExecutionEvents>,
-  task: ChatTask,
+  task: TaskThreadDetailModel,
 ) => {
   if (displayItems.some(item => item.display.status === 'failed')) {
     return 'failed' as const;
@@ -136,8 +136,8 @@ export const TaskExecutionSummary = ({
   events,
   task,
 }: {
-  events: TaskEvent[];
-  task: ChatTask;
+  events: TaskThreadDetailEvent[];
+  task: TaskThreadDetailModel;
 }) => {
   const [expanded, setExpanded] = useState(false);
   const displayItems = useMemo(() => {

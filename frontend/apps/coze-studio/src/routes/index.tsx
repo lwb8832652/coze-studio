@@ -409,7 +409,7 @@ export const router: ReturnType<typeof createBrowserRouter> =
                   }),
                 },
                 {
-                  path: 'tasks/:task_id',
+                  path: 'tasks/:thread_id',
                   Component: TaskDetailPage,
                   loader: () => ({
                     subMenuKey: SPACE_SUB_MODULE.TASKS,

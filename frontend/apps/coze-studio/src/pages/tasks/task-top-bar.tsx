@@ -16,19 +16,17 @@
 
 import type { ReactNode } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozAsynchronousTask,
   IconCozBell,
 } from '@coze-arch/coze-design/icons';
 
 import { TaskTokenUsageIndicator } from './task-token-usage-indicator';
+import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
 } from './task-detail-loader';
-
-type ChatTask = workbenchTask.ChatTask;
 
 export const TaskTopBar = ({
   displayTitle,
@@ -43,7 +41,7 @@ export const TaskTopBar = ({
   exportAction?: ReactNode;
   inspectorAction?: ReactNode;
   onTokenUsageViewModeChange?: (mode: TaskTokenUsageViewMode) => void;
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => (

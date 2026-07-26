@@ -100,7 +100,6 @@ const (
 
 type ThreadSummary struct {
 	ThreadID         int64
-	LegacyTaskID     int64
 	SpaceID          int64
 	CreatorID        int64
 	Title            string
@@ -435,13 +434,12 @@ type RunTokenUsageAggregateSummary struct {
 }
 
 type CreateThreadRequest struct {
-	SpaceID      int64
-	UserID       int64
-	AgentID      int64
-	Title        string
-	Source       ThreadSource
-	LegacyTaskID int64
-	Metadata     string
+	SpaceID  int64
+	UserID   int64
+	AgentID  int64
+	Title    string
+	Source   ThreadSource
+	Metadata string
 }
 
 type CreateThreadResponse struct {

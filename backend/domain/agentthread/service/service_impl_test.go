@@ -75,20 +75,18 @@ func TestCreateThreadTrimsTitleAndPreservesSource(t *testing.T) {
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 902}})
 
 	thread, err := svc.CreateThread(context.Background(), &CreateThreadRequest{
-		SpaceID:      1,
-		UserID:       2,
-		AgentID:      3,
-		Title:        "  IM 任务  ",
-		Source:       entity.ThreadSourceIM,
-		LegacyTaskID: 100,
-		Metadata:     `{"channel":"slack"}`,
+		SpaceID:  1,
+		UserID:   2,
+		AgentID:  3,
+		Title:    "  IM 任务  ",
+		Source:   entity.ThreadSourceIM,
+		Metadata: `{"channel":"slack"}`,
 	})
 
 	require.NoError(t, err)
 	require.Equal(t, "IM 任务", thread.Title)
 	require.Equal(t, entity.ThreadSourceIM, thread.Source)
 	require.Equal(t, int64(3), thread.AgentID)
-	require.Equal(t, int64(100), thread.LegacyTaskID)
 	require.Equal(t, `{"channel":"slack"}`, thread.Metadata)
 }
 
@@ -1100,7 +1098,7 @@ func TestInterruptRunPassesPrePersistedAwaitingInputPayloadForOutboxAppend(t *te
 	require.NotNil(t, repo.lastUpdateRunReq.OutboxIntent)
 	require.Len(t, appended, 1)
 	require.Equal(t, domainnotification.EventTaskAwaitingInput, appended[0].EventType)
-	err = svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
+	_, err = svc.InterruptRun(context.Background(), &UpdateRunStatusRequest{
 		RunID: 1, From: entity.RunStatusRunning, WorkerID: "worker-a",
 		EventAlreadyPersisted: true,
 		EventPayload:          payload,

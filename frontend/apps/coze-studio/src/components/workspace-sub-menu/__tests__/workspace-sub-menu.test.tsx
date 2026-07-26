@@ -21,7 +21,6 @@ import type { ReactNode } from 'react';
 import { afterAll, afterEach, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot as createReactRoot, type Root } from 'react-dom/client';
-import { workbenchTask } from '@coze-studio/api-schema';
 
 const originalActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -744,15 +743,9 @@ describe('NewX AI WorkspaceSubMenu', () => {
   });
 
   it('uses distinct sidebar status indicators and keeps green for completed tasks only', () => {
-    const completedMeta = getWorkspaceTaskStatusMeta(
-      workbenchTask.TaskStatus.Succeeded,
-    );
-    const runningMeta = getWorkspaceTaskStatusMeta(
-      workbenchTask.TaskStatus.Running,
-    );
-    const failedMeta = getWorkspaceTaskStatusMeta(
-      workbenchTask.TaskStatus.Failed,
-    );
+    const completedMeta = getWorkspaceTaskStatusMeta('succeeded');
+    const runningMeta = getWorkspaceTaskStatusMeta('running');
+    const failedMeta = getWorkspaceTaskStatusMeta('failed');
 
     expect(completedMeta).toMatchObject({
       tone: 'success',
@@ -800,7 +793,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
         threads: [
           {
             thread_id: 'thread-1',
-            legacy_task_id: 'task-legacy-1',
             space_id: 'space-1',
             creator_id: 'user-1',
             title: '整理周报',
@@ -855,7 +847,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
   it('loads more recent tasks when the sidebar reaches the bottom', async () => {
     const firstPageThreads = Array.from({ length: 20 }, (_, index) => ({
       thread_id: `thread-${index + 1}`,
-      legacy_task_id: '0',
       space_id: 'space-1',
       creator_id: 'user-1',
       title: `任务 ${index + 1}`,
@@ -920,7 +911,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
           threads: [
             {
               thread_id: 'thread-21',
-              legacy_task_id: '0',
               space_id: 'space-1',
               creator_id: 'user-1',
               title: '任务 21',
@@ -956,7 +946,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
         threads: [
           {
             thread_id: 'thread-travel',
-            legacy_task_id: '0',
             space_id: 'space-1',
             creator_id: 'user-1',
             title:
@@ -1002,7 +991,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
         threads: [
           {
             thread_id: 'thread-old',
-            legacy_task_id: '0',
             space_id: 'space-1',
             creator_id: 'user-1',
             title: '旧任务',
@@ -1038,7 +1026,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
             space_id: 'space-1',
             thread: {
               thread_id: 'thread-new',
-              legacy_task_id: '0',
               space_id: 'space-1',
               creator_id: 'user-1',
               title: '新任务',
@@ -1073,7 +1060,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
         threads: [
           {
             thread_id: 'thread-travel',
-            legacy_task_id: '0',
             space_id: 'space-1',
             creator_id: 'user-1',
             title: '请生成一份《武汉3日游攻略》正式文档',
@@ -1153,7 +1139,6 @@ describe('NewX AI WorkspaceSubMenu', () => {
           threads: [
             {
               thread_id: 'thread-delayed-title',
-              legacy_task_id: '0',
               space_id: 'space-1',
               creator_id: 'user-1',
               title:
@@ -1216,14 +1201,13 @@ describe('NewX AI WorkspaceSubMenu', () => {
     container.remove();
   });
 
-  it('opens canonical recent task thread when legacy task id is zero string', async () => {
+  it('opens a canonical recent task thread', async () => {
     mockNavigate.mockReset();
     mockListTaskThreads.mockResolvedValue({
       data: {
         threads: [
           {
-            thread_id: 'thread-zero-legacy',
-            legacy_task_id: '0',
+            thread_id: 'thread-recent',
             space_id: 'space-1',
             creator_id: 'user-1',
             title: 'Canonical 新建任务',
@@ -1261,7 +1245,7 @@ describe('NewX AI WorkspaceSubMenu', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith(
-      '/space/space-1/tasks/thread-zero-legacy',
+      '/space/space-1/tasks/thread-recent',
     );
 
     act(() => {

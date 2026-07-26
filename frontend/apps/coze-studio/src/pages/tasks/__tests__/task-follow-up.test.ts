@@ -20,19 +20,16 @@ import { sendFollowUpMessage } from '../task-follow-up';
 import { createDefaultWorkbenchRuntimeSettings } from '../../workbench/components/types';
 
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
-const mockSendWorkbenchChat = vi.hoisted(() => vi.fn());
 const mockUploadTaskThreadFiles = vi.hoisted(() => vi.fn());
 
 vi.mock('../service', () => ({
   createTaskThreadRun: mockCreateTaskThreadRun,
-  sendWorkbenchChat: mockSendWorkbenchChat,
   uploadTaskThreadFiles: mockUploadTaskThreadFiles,
 }));
 
 describe('sendFollowUpMessage', () => {
   beforeEach(() => {
     mockCreateTaskThreadRun.mockReset();
-    mockSendWorkbenchChat.mockReset();
     mockUploadTaskThreadFiles.mockReset();
 
     mockUploadTaskThreadFiles.mockResolvedValue({
@@ -65,14 +62,11 @@ describe('sendFollowUpMessage', () => {
 
   it('submits only the current turn and lets the server rebuild thread history', async () => {
     await sendFollowUpMessage({
-      activeTaskId: 'thread-1',
-      isCanonicalThreadDetail: true,
       payload: {
         message: '继续分析',
         mode: 'pro',
         runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
       },
-      spaceId: 'space-1',
       threadId: 'thread-1',
     });
 
@@ -90,5 +84,56 @@ describe('sendFollowUpMessage', () => {
       message_metadata: expect.any(String),
       idempotency_key: expect.stringMatching(/^thread-1:.+:followup$/),
     });
+  });
+
+  it('uploads files before creating a thread run', async () => {
+    const file = new File(['draft'], 'draft.md', { type: 'text/markdown' });
+    mockUploadTaskThreadFiles.mockResolvedValueOnce({
+      data: {
+        files: [
+          {
+            file_id: 'file-1',
+            file_name: 'draft.md',
+            virtual_path: '/uploads/draft.md',
+            content_type: 'text/markdown',
+            size_bytes: 5,
+          },
+        ],
+        skipped_files: [],
+      },
+      code: 0,
+      msg: '',
+    });
+    const request = {
+      payload: {
+        files: [file],
+        message: '继续分析附件',
+        mode: 'pro' as const,
+        runtimeSettings: createDefaultWorkbenchRuntimeSettings(),
+      },
+      threadId: 'thread-1',
+    };
+
+    await expect(sendFollowUpMessage(request)).resolves.toMatchObject({
+      kind: 'thread',
+      run: { run_id: 'run-follow-up' },
+    });
+
+    expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      files: [file],
+    });
+    const runRequest = mockCreateTaskThreadRun.mock.calls[0]?.[0];
+    expect(JSON.parse(runRequest.input)).toMatchObject({
+      messages: [{ role: 'user', content: '继续分析附件' }],
+      uploaded_files: [
+        {
+          file_id: 'file-1',
+          file_name: 'draft.md',
+          virtual_path: '/uploads/draft.md',
+        },
+      ],
+    });
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledTimes(1);
   });
 });

@@ -154,13 +154,12 @@ func (s *ApplicationService) CreateThread(ctx context.Context, req *CreateThread
 	}
 
 	thread, err := s.ThreadSVC.CreateThread(ctx, &domainservice.CreateThreadRequest{
-		SpaceID:      req.SpaceID,
-		UserID:       userID,
-		AgentID:      req.AgentID,
-		Title:        req.Title,
-		Source:       domainentity.ThreadSource(req.Source),
-		LegacyTaskID: req.LegacyTaskID,
-		Metadata:     req.Metadata,
+		SpaceID:  req.SpaceID,
+		UserID:   userID,
+		AgentID:  req.AgentID,
+		Title:    req.Title,
+		Source:   domainentity.ThreadSource(req.Source),
+		Metadata: req.Metadata,
 	})
 	if err != nil {
 		return nil, err

@@ -31,8 +31,6 @@ export {
 } from '../workbench/service';
 export { isTaskThreadArtifactSafeError } from './task-artifact-safe-error';
 
-export const listTasks = workbenchTask.ListTasks;
-export const getTask = workbenchTask.GetTask;
 export const listTaskThreads = workbenchTask.ListTaskThreads;
 export const createTaskThread = workbenchTask.CreateTaskThread;
 export const getTaskThread = workbenchTask.GetTaskThread;
@@ -64,10 +62,6 @@ export const exportTaskThreadMemories = workbenchTask.ExportTaskThreadMemories;
 export const exportTaskThreadGuardrailAuditEvents =
   workbenchTask.ExportTaskThreadGuardrailAuditEvents;
 export const importTaskThreadMemories = workbenchTask.ImportTaskThreadMemories;
-export const cancelTask = workbenchTask.CancelTask;
-export const retryTask = workbenchTask.RetryTask;
-export const listTaskEvents = workbenchTask.ListTaskEvents;
-export const sendWorkbenchChat = workbench.WorkbenchChat;
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 export const installSkillFromArtifact = workbenchSkill.InstallSkillFromArtifact;
 export type TaskThreadMemory = workbenchTask.TaskThreadMemory;

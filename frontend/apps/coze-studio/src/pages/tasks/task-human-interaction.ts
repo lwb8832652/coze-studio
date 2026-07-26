@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
-type TaskEvent = workbenchTask.TaskEvent;
+import type { TaskThreadDetailEvent } from './task-thread-detail-model';
 
 export type HumanInteractionKind = 'clarification' | 'confirmation';
 
@@ -55,7 +53,7 @@ export interface PendingHumanInteraction {
   sourceRunId?: string;
   kind: HumanInteractionKind;
   prompt: HumanInteractionPrompt;
-  event: TaskEvent;
+  event: TaskThreadDetailEvent;
 }
 
 interface InterruptItem {
@@ -134,7 +132,7 @@ const promptFromInterrupt = (
 };
 
 const collectInterruptedPrompts = (
-  event: TaskEvent,
+  event: TaskThreadDetailEvent,
 ): PendingHumanInteraction[] => {
   const payload = parseEventPayload(event.payload);
   const interruptItems = interruptItemsFromPayload(payload);
@@ -190,7 +188,7 @@ const interactionKey = (interruptId: string, interactionId: string) =>
   `${interruptId}:${interactionId}`;
 
 export const getPendingHumanInteraction = (
-  events: TaskEvent[],
+  events: TaskThreadDetailEvent[],
 ): PendingHumanInteraction | undefined => {
   const pending = new Map<string, PendingHumanInteraction>();
 

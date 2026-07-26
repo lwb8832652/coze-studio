@@ -25,7 +25,7 @@ import {
   type SetStateAction,
 } from 'react';
 
-import { workbenchTask } from '@coze-studio/api-schema';
+import { type workbenchTask } from '@coze-studio/api-schema';
 
 import {
   DEFAULT_WORKBENCH_MODE,
@@ -34,6 +34,11 @@ import {
 } from '../workbench/components/types';
 import { useTaskUsageData } from './task-usage-loader';
 import { useTaskThreadTitleSync } from './task-title-sync';
+import {
+  TaskThreadDetailStatus,
+  type TaskThreadDetailEvent,
+  type TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import { useTaskThreadRunEventStream } from './task-run-event-stream';
 import { useTaskRunActions } from './task-run-actions-hook';
 import type { PendingHumanInteraction } from './task-human-interaction';
@@ -45,23 +50,19 @@ import {
 import type { TaskTokenUsageSnapshot } from './task-detail-token-usage';
 import {
   fetchTaskDetail,
-  type LoadedTaskDetailSource,
   type TaskDetail,
-  type TaskDetailSource,
   type TaskDetailSubagentRun,
   type TaskDetailTokenUsage,
 } from './task-detail-loader';
 import { listTaskThreadArtifacts, resumeTaskThreadRun } from './service';
 import { isTaskTerminalStatus } from './helpers';
 
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadTodo = workbenchTask.TaskThreadTodo;
 
 const EMPTY_TASK_ARTIFACTS: TaskThreadArtifact[] = [];
-const EMPTY_TASK_EVENTS: TaskEvent[] = [];
+const EMPTY_TASK_EVENTS: TaskThreadDetailEvent[] = [];
 const EMPTY_TASK_MESSAGES: TaskThreadMessage[] = [];
 const EMPTY_TASK_SUBAGENT_RUNS: TaskDetailSubagentRun[] = [];
 const EMPTY_TASK_TODOS: TaskThreadTodo[] = [];
@@ -101,10 +102,6 @@ const isAmbiguousFollowUpError = (error: unknown) => {
   );
 };
 
-const getInitialLoadedSource = (
-  source: TaskDetailSource,
-): LoadedTaskDetailSource => (source === 'thread' ? 'thread' : 'task');
-
 const shouldPollTaskDetail = (detail: TaskDetail) => {
   const latestRunStatus = String(detail.latestTaskRunStatus ?? '')
     .trim()
@@ -124,10 +121,10 @@ const mapRunStatusToOptimisticTaskStatus = (status?: string) => {
   ) {
     case 'pending':
     case 'queued':
-      return workbenchTask.TaskStatus.Queued;
+      return TaskThreadDetailStatus.Queued;
     case 'running':
     default:
-      return workbenchTask.TaskStatus.Running;
+      return TaskThreadDetailStatus.Running;
   }
 };
 
@@ -147,7 +144,7 @@ const appendOptimisticMessage = (
 
 interface TaskDetailCollectionSnapshot {
   artifacts: TaskThreadArtifact[];
-  events: TaskEvent[];
+  events: TaskThreadDetailEvent[];
   messages: TaskThreadMessage[];
 }
 
@@ -186,12 +183,10 @@ const useLoadTaskDetailEffect = ({
   applyTaskDetail,
   captureTaskDetailRequestToken,
   setError,
-  setLoadedTaskDetailSource,
   setLoadedThreadId,
   setLoading,
   spaceID,
   taskDetailId,
-  taskDetailSource,
 }: {
   applyTaskDetail: (
     detail: TaskDetail,
@@ -200,12 +195,10 @@ const useLoadTaskDetailEffect = ({
   ) => void;
   captureTaskDetailRequestToken: () => TaskDetailRequestToken;
   setError: (value: string) => void;
-  setLoadedTaskDetailSource: (value: LoadedTaskDetailSource) => void;
   setLoadedThreadId: (value: string) => void;
   setLoading: (value: boolean) => void;
   spaceID?: string;
   taskDetailId?: string;
-  taskDetailSource: TaskDetailSource;
 }) => {
   useEffect(() => {
     if (!taskDetailId) {
@@ -214,7 +207,6 @@ const useLoadTaskDetailEffect = ({
     let canceled = false;
     const loadTaskDetail = async () => {
       setLoading(true);
-      setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
       setLoadedThreadId('');
       setError('');
       const requestToken = captureTaskDetailRequestToken();
@@ -222,7 +214,6 @@ const useLoadTaskDetailEffect = ({
         const detail = await fetchTaskDetail({
           id: taskDetailId,
           spaceId: spaceID,
-          source: taskDetailSource,
         });
         if (!canceled) {
           applyTaskDetail(detail, taskDetailId, requestToken);
@@ -245,12 +236,10 @@ const useLoadTaskDetailEffect = ({
     applyTaskDetail,
     captureTaskDetailRequestToken,
     setError,
-    setLoadedTaskDetailSource,
     setLoadedThreadId,
     setLoading,
     spaceID,
     taskDetailId,
-    taskDetailSource,
   ]);
 };
 
@@ -261,7 +250,6 @@ const usePollTaskDetailEffect = ({
   setError,
   spaceID,
   taskDetailId,
-  taskDetailSource,
 }: {
   applyTaskDetail: (
     detail: TaskDetail,
@@ -273,7 +261,6 @@ const usePollTaskDetailEffect = ({
   setError: (value: string) => void;
   spaceID?: string;
   taskDetailId?: string;
-  taskDetailSource: TaskDetailSource;
 }) => {
   useEffect(() => {
     if (!taskDetailId || pollingVersion <= 0) {
@@ -289,7 +276,6 @@ const usePollTaskDetailEffect = ({
           const detail = await fetchTaskDetail({
             id: taskDetailId,
             spaceId: spaceID,
-            source: taskDetailSource,
           });
           if (!canceled) {
             applyTaskDetail(detail, taskDetailId, requestToken);
@@ -314,21 +300,18 @@ const usePollTaskDetailEffect = ({
     setError,
     spaceID,
     taskDetailId,
-    taskDetailSource,
   ]);
 };
 
 export const useTaskDetailData = ({
   spaceID,
   taskDetailId,
-  taskDetailSource,
 }: {
   spaceID?: string;
   taskDetailId?: string;
-  taskDetailSource: TaskDetailSource;
 }) => {
-  const [task, setTask] = useState<ChatTask | undefined>();
-  const [events, setEvents] = useState<TaskEvent[]>([]);
+  const [task, setTask] = useState<TaskThreadDetailModel | undefined>();
+  const [events, setEvents] = useState<TaskThreadDetailEvent[]>([]);
   const [messages, setMessages] = useState<TaskThreadMessage[]>([]);
   const [todos, setTodos] = useState<TaskThreadTodo[]>([]);
   const [artifacts, setArtifacts] = useState<
@@ -338,8 +321,6 @@ export const useTaskDetailData = ({
   const [suggestionModelName, setSuggestionModelName] = useState('');
   const [suggestionModelType, setSuggestionModelType] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
-  const [loadedTaskDetailSource, setLoadedTaskDetailSource] =
-    useState<LoadedTaskDetailSource>(getInitialLoadedSource(taskDetailSource));
   const [loadedTaskDetailId, setLoadedTaskDetailId] = useState('');
   const [loadedThreadId, setLoadedThreadId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -450,7 +431,6 @@ export const useTaskDetailData = ({
       collectionStateRef.current = nextCollections;
       authoritativeCollectionRef.current = nextCollections;
       collectionRevisionRef.current += 1;
-      setLoadedTaskDetailSource(detail.source);
       setLoadedTaskDetailId(detailIdentity ?? '');
       setLoadedThreadId(detail.threadId ?? '');
       setCurrentTask(detail.task);
@@ -469,7 +449,7 @@ export const useTaskDetailData = ({
     [setCurrentTask],
   );
   const setScopedEvents = useCallback(
-    (nextEvents: SetStateAction<TaskEvent[]>) => {
+    (nextEvents: SetStateAction<TaskThreadDetailEvent[]>) => {
       if (isCurrentTaskScope(taskDetailId, taskDetailGeneration)) {
         setEvents(currentEvents => {
           const resolvedEvents =
@@ -574,15 +554,9 @@ export const useTaskDetailData = ({
     [],
   );
   const loadedTaskDetailCurrent =
-    Boolean(taskDetailId) &&
-    loadedTaskDetailId === taskDetailId &&
-    (taskDetailSource === 'auto' ||
-      loadedTaskDetailSource === getInitialLoadedSource(taskDetailSource));
+    Boolean(taskDetailId) && loadedTaskDetailId === taskDetailId;
   const taskUsage = useTaskUsageData({
-    enabled:
-      loadedTaskDetailCurrent &&
-      loadedTaskDetailSource === 'thread' &&
-      Boolean(loadedThreadId),
+    enabled: loadedTaskDetailCurrent && Boolean(task && loadedThreadId),
     refreshKey:
       task && isTaskTerminalStatus(task.status) ? 'terminal' : 'active',
     threadID: loadedThreadId,
@@ -593,9 +567,7 @@ export const useTaskDetailData = ({
   const tokenUsageStreamThreadIDRef = useRef('');
   tokenUsageSnapshotHandlerRef.current = taskUsage.handleTokenUsageSnapshot;
   tokenUsageStreamThreadIDRef.current =
-    loadedTaskDetailCurrent && loadedTaskDetailSource === 'thread'
-      ? loadedThreadId
-      : '';
+    loadedTaskDetailCurrent && task ? loadedThreadId : '';
   const handleScopedTokenUsageSnapshot = useCallback(
     (
       snapshot: TaskTokenUsageSnapshot,
@@ -613,11 +585,7 @@ export const useTaskDetailData = ({
     [],
   );
   const refreshArtifacts = useCallback(async () => {
-    if (
-      !loadedTaskDetailCurrent ||
-      !loadedThreadId ||
-      loadedTaskDetailSource !== 'thread'
-    ) {
+    if (!loadedTaskDetailCurrent || !loadedThreadId || !task) {
       return;
     }
     const submittedTaskDetailId = taskDetailId;
@@ -641,9 +609,9 @@ export const useTaskDetailData = ({
   }, [
     isCurrentTaskScope,
     loadedTaskDetailCurrent,
-    loadedTaskDetailSource,
     loadedThreadId,
     spaceID,
+    task,
     taskDetailId,
   ]);
 
@@ -677,21 +645,18 @@ export const useTaskDetailData = ({
     setSubagentRuns([]);
     setLoadedTaskDetailId('');
     setLoadedThreadId('');
-    setLoadedTaskDetailSource(getInitialLoadedSource(taskDetailSource));
     setErrorTaskDetailId(taskDetailId ?? '');
     setError('');
-  }, [taskDetailId, taskDetailSource]);
+  }, [taskDetailId]);
 
   useLoadTaskDetailEffect({
     applyTaskDetail,
     captureTaskDetailRequestToken,
     setError: setCurrentScopeError,
-    setLoadedTaskDetailSource,
     setLoadedThreadId,
     setLoading,
     spaceID,
     taskDetailId,
-    taskDetailSource,
   });
   usePollTaskDetailEffect({
     applyTaskDetail,
@@ -700,14 +665,10 @@ export const useTaskDetailData = ({
     setError: setCurrentScopeError,
     spaceID,
     taskDetailId,
-    taskDetailSource,
   });
 
   useTaskThreadRunEventStream({
-    enabled:
-      loadedTaskDetailCurrent &&
-      loadedTaskDetailSource === 'thread' &&
-      Boolean(loadedThreadId),
+    enabled: loadedTaskDetailCurrent && Boolean(task && loadedThreadId),
     onTokenUsageSnapshot: handleScopedTokenUsageSnapshot,
     onThreadTitleUpdated: handleStableScopedThreadTitleUpdated,
     setEvents: setScopedEvents,
@@ -725,9 +686,6 @@ export const useTaskDetailData = ({
     latestTaskRunID: loadedTaskDetailCurrent ? latestTaskRunID : '',
     suggestionModelName: loadedTaskDetailCurrent ? suggestionModelName : '',
     suggestionModelType: loadedTaskDetailCurrent ? suggestionModelType : '',
-    loadedTaskDetailSource: loadedTaskDetailCurrent
-      ? loadedTaskDetailSource
-      : getInitialLoadedSource(taskDetailSource),
     loadedTaskDetailCurrent,
     loadedThreadId: loadedTaskDetailCurrent ? loadedThreadId : '',
     loading:
@@ -767,14 +725,13 @@ interface TaskDetailActionsOptions {
   }) => void;
   captureTaskDetailRequestToken?: () => TaskDetailRequestToken;
   artifacts: TaskThreadArtifact[];
-  events: TaskEvent[];
+  events: TaskThreadDetailEvent[];
   messages: TaskThreadMessage[];
   pendingHumanInteraction?: PendingHumanInteraction;
   spaceID?: string;
   subagentRuns: TaskDetailSubagentRun[];
-  task?: ChatTask;
+  task?: TaskThreadDetailModel;
   taskDetailId?: string;
-  taskDetailSource: LoadedTaskDetailSource;
   todos: TaskThreadTodo[];
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageByRunID: Record<string, TaskDetailTokenUsage>;
@@ -788,7 +745,6 @@ export const useTaskDetailActions = ({
   spaceID,
   task,
   taskDetailId,
-  taskDetailSource,
 }: TaskDetailActionsOptions) => {
   const [followUpValue, setFollowUpValue] = useState('');
   const [followUpMode, setFollowUpMode] = useState<WorkbenchMode>(
@@ -820,7 +776,6 @@ export const useTaskDetailActions = ({
     spaceID,
     task,
     taskDetailId,
-    taskDetailSource,
   });
 
   useEffect(() => {
@@ -883,8 +838,6 @@ export const useTaskDetailActions = ({
       setFollowUpError('缺少任务上下文，无法继续追问');
       return;
     }
-    const isCanonicalThreadDetail = taskDetailSource === 'thread';
-    const activeTaskId = task?.id ?? taskDetailId;
     const submittedTaskDetailId = taskDetailId;
     const fingerprint = getFollowUpFingerprint(payload);
     if (followUpAttemptRef.current?.fingerprint !== fingerprint) {
@@ -904,10 +857,7 @@ export const useTaskDetailActions = ({
     let followUpResult: Awaited<ReturnType<typeof sendFollowUpMessage>>;
     try {
       followUpResult = await sendFollowUpMessage({
-        activeTaskId,
-        isCanonicalThreadDetail,
         payload,
-        spaceId: spaceID,
         threadId: submittedTaskDetailId,
         idempotencyKey,
       });
@@ -934,13 +884,11 @@ export const useTaskDetailActions = ({
     }
 
     followUpAttemptRef.current = undefined;
-    if (isCanonicalThreadDetail) {
-      applyOptimisticFollowUp?.({
-        followUpResult,
-        payload,
-        threadId: submittedTaskDetailId,
-      });
-    }
+    applyOptimisticFollowUp?.({
+      followUpResult,
+      payload,
+      threadId: submittedTaskDetailId,
+    });
 
     setFollowUpValue('');
     setFollowUpResetKey(resetKey => resetKey + 1);
@@ -949,7 +897,6 @@ export const useTaskDetailActions = ({
       const detail = await fetchTaskDetail({
         id: submittedTaskDetailId,
         spaceId: spaceID,
-        source: taskDetailSource,
       });
       if (isCurrentRequest()) {
         applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -971,11 +918,7 @@ export const useTaskDetailActions = ({
     if (!pendingHumanInteraction || humanInteractionLoading) {
       return;
     }
-    if (
-      !taskDetailId ||
-      taskDetailSource !== 'thread' ||
-      !pendingHumanInteraction.sourceRunId
-    ) {
+    if (!taskDetailId || !pendingHumanInteraction.sourceRunId) {
       setHumanInteractionError('缺少任务恢复上下文，请刷新后重试');
       return;
     }
@@ -1002,7 +945,6 @@ export const useTaskDetailActions = ({
       const detail = await fetchTaskDetail({
         id: submittedTaskDetailId,
         spaceId: spaceID,
-        source: taskDetailSource,
       });
       if (isCurrentRequest()) {
         applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);

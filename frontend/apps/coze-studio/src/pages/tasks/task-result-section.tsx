@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
-
+import type {
+  TaskThreadDetailEvent,
+  TaskThreadDetailModel,
+} from './task-thread-detail-model';
 import { TaskMessageTokenUsage } from './task-message-token-usage';
 import { TaskMarkdownContent } from './task-markdown-content';
 import { TaskInlineReasoning } from './task-inline-reasoning';
@@ -32,9 +34,6 @@ import {
   parseTaskResultPayload,
   type TaskResultPayload,
 } from './helpers';
-
-type ChatTask = workbenchTask.ChatTask;
-type TaskEvent = workbenchTask.TaskEvent;
 
 export const TaskStreamingIndicator = () => (
   <div
@@ -56,7 +55,7 @@ const TaskAnswer = ({
   tokenUsage,
   tokenUsageViewMode,
 }: {
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   result: TaskResultPayload;
   reasoning?: string;
   streamingMessage?: string;
@@ -95,7 +94,7 @@ const TaskAgentResult = ({
   tokenUsage,
   tokenUsageViewMode,
 }: {
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   result: TaskResultPayload;
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageViewMode: TaskTokenUsageViewMode;
@@ -117,7 +116,7 @@ const TaskReport = ({
   task,
   result,
 }: {
-  task: ChatTask;
+  task: TaskThreadDetailModel;
   result: TaskResultPayload;
 }) => (
   <article className="coze-prototype-report">
@@ -135,8 +134,8 @@ export const TaskResultSection = ({
   tokenUsage,
   tokenUsageViewMode,
 }: {
-  task: ChatTask;
-  events: TaskEvent[];
+  task: TaskThreadDetailModel;
+  events: TaskThreadDetailEvent[];
   tokenUsage?: TaskDetailTokenUsage;
   tokenUsageViewMode: TaskTokenUsageViewMode;
 }) => {

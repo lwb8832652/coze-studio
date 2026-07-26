@@ -16,34 +16,7 @@
 
 package agentthread
 
-import (
-	"encoding/json"
-	"strings"
-
-	taskapi "github.com/coze-dev/coze-studio/backend/api/model/workbench/task"
-	"github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
-)
-
-func TaskToThreadSummary(task *taskapi.ChatTask) *ThreadSummary {
-	if task == nil {
-		return nil
-	}
-
-	return &ThreadSummary{
-		ThreadID:         task.ID,
-		LegacyTaskID:     task.ID,
-		SpaceID:          task.SpaceID,
-		CreatorID:        task.CreatorID,
-		Title:            task.Title,
-		Status:           taskStatusToThreadStatus(task.Status),
-		Source:           ThreadSourceWeb,
-		Progress:         task.Progress,
-		LastUserMessage:  extractTaskMessage(task.GetInput()),
-		LastAgentMessage: extractTaskMessage(task.GetResult()),
-		CreatedAt:        task.CreatedAt,
-		UpdatedAt:        task.UpdatedAt,
-	}
-}
+import "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
 
 func DomainThreadToSummary(thread *entity.Thread) *ThreadSummary {
 	if thread == nil {
@@ -51,16 +24,15 @@ func DomainThreadToSummary(thread *entity.Thread) *ThreadSummary {
 	}
 
 	return &ThreadSummary{
-		ThreadID:     thread.ID,
-		LegacyTaskID: thread.LegacyTaskID,
-		SpaceID:      thread.SpaceID,
-		CreatorID:    thread.CreatorID,
-		Title:        thread.Title,
-		Status:       ThreadStatus(thread.Status),
-		Source:       ThreadSource(thread.Source),
-		Metadata:     thread.Metadata,
-		CreatedAt:    thread.CreatedAt,
-		UpdatedAt:    thread.UpdatedAt,
+		ThreadID:  thread.ID,
+		SpaceID:   thread.SpaceID,
+		CreatorID: thread.CreatorID,
+		Title:     thread.Title,
+		Status:    ThreadStatus(thread.Status),
+		Source:    ThreadSource(thread.Source),
+		Metadata:  thread.Metadata,
+		CreatedAt: thread.CreatedAt,
+		UpdatedAt: thread.UpdatedAt,
 	}
 }
 
@@ -409,42 +381,4 @@ func DomainRunTokenUsageAggregateToSummary(aggregate *entity.RunTokenUsageAggreg
 		RunID:     aggregate.RunID,
 		Aggregate: DomainTokenUsageAggregateToSummary(aggregate.Aggregate),
 	}
-}
-
-func taskStatusToThreadStatus(status taskapi.TaskStatus) ThreadStatus {
-	switch status {
-	case taskapi.TaskStatus_Queued, taskapi.TaskStatus_Running, taskapi.TaskStatus_Canceling:
-		return ThreadStatusRunning
-	case taskapi.TaskStatus_Succeeded:
-		return ThreadStatusCompleted
-	case taskapi.TaskStatus_Failed:
-		return ThreadStatusFailed
-	case taskapi.TaskStatus_Canceled:
-		return ThreadStatusCanceled
-	default:
-		return ThreadStatusIdle
-	}
-}
-
-func extractTaskMessage(raw string) string {
-	text := strings.TrimSpace(raw)
-	if text == "" {
-		return ""
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(text), &payload); err != nil {
-		return text
-	}
-
-	for _, key := range []string{"message", "answer", "title"} {
-		if value, ok := payload[key].(string); ok {
-			value = strings.TrimSpace(value)
-			if value != "" {
-				return value
-			}
-		}
-	}
-
-	return text
 }

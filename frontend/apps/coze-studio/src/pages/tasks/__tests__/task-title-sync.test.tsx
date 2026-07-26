@@ -19,15 +19,17 @@ import { useState } from 'react';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
-import { workbenchTask } from '@coze-studio/api-schema';
 
 import { useTaskThreadTitleSync } from '../task-title-sync';
 import {
   WORKSPACE_TASK_THREAD_UPSERT_EVENT,
   type WorkspaceTaskThreadUpsertDetail,
 } from '../task-thread-events';
+import {
+  TaskThreadDetailStatus,
+  type TaskThreadDetailModel,
+} from '../task-thread-detail-model';
 
-type ChatTask = workbenchTask.ChatTask;
 type TitleSyncControls = ReturnType<typeof useTaskThreadTitleSync>;
 
 const originalActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
@@ -55,7 +57,7 @@ describe('task title synchronization', () => {
       );
     };
     const Harness = () => {
-      const [, setTask] = useState<ChatTask>();
+      const [, setTask] = useState<TaskThreadDetailModel>();
       controls = useTaskThreadTitleSync({
         setTask,
         spaceID: 'space-1',
@@ -77,7 +79,7 @@ describe('task title synchronization', () => {
         space_id: 'space-1',
         title: '请为一款面向中小企业的智能协作平台设计完整发布计划',
         updated_at: 1717000000000,
-      } as ChatTask);
+      } as TaskThreadDetailModel);
     });
     expect(emittedDetails).toHaveLength(0);
 
@@ -87,7 +89,7 @@ describe('task title synchronization', () => {
         space_id: 'space-1',
         title: '中小企业智能协作平台发布计划',
         updated_at: 1717000100000,
-      } as ChatTask);
+      } as TaskThreadDetailModel);
     });
 
     expect(emittedDetails).toEqual([
@@ -117,7 +119,7 @@ describe('task title synchronization', () => {
       );
     };
     const Harness = () => {
-      const [, setTask] = useState<ChatTask>();
+      const [, setTask] = useState<TaskThreadDetailModel>();
       controls = useTaskThreadTitleSync({
         setTask,
         spaceID: 'space-1',
@@ -138,18 +140,18 @@ describe('task title synchronization', () => {
         id: 'thread-1',
         space_id: 'space-1',
         title: '通知终态验收',
-        status: workbenchTask.TaskStatus.Created,
+        status: TaskThreadDetailStatus.Created,
         updated_at: 1717000000000,
-      } as ChatTask);
+      } as TaskThreadDetailModel);
     });
     act(() => {
       controls?.setCurrentTask({
         id: 'thread-1',
         space_id: 'space-1',
         title: '通知终态验收',
-        status: workbenchTask.TaskStatus.Succeeded,
+        status: TaskThreadDetailStatus.Succeeded,
         updated_at: 1717000100000,
-      } as ChatTask);
+      } as TaskThreadDetailModel);
     });
 
     expect(emittedDetails).toEqual([
@@ -158,7 +160,7 @@ describe('task title synchronization', () => {
         space_id: 'space-1',
         thread: {
           thread_id: 'thread-1',
-          status: workbenchTask.TaskStatus.Succeeded,
+          status: TaskThreadDetailStatus.Succeeded,
           updated_at: 1717000100000,
         },
       },
