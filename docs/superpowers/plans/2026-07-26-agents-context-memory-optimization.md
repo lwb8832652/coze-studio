@@ -25,7 +25,7 @@
 - Modify: `AGENTS.md`
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 
-- [ ] **Step 1：记录旧规则基线**
+- [x] **Step 1：记录旧规则基线**
 
 Run:
 
@@ -35,7 +35,7 @@ rg -n -i '当前一期|当前集成目标|nuwax|coze-nuwax-management-mainline' 
 
 Expected: 输出 Nuwax、一期目标和旧日常分支相关行，证明旧入口尚未收敛。
 
-- [ ] **Step 2：用短入口替换 `AGENTS.md`**
+- [x] **Step 2：用短入口替换 `AGENTS.md`**
 
 使用 `apply_patch` 将文件整体替换为以下内容：
 
@@ -211,7 +211,7 @@ guardrail 时，才加载 Agent Runtime 专题文档。
 - 不倾倒无关日志或长 diff；必须写清已验证、未验证和剩余风险。
 ```
 
-- [ ] **Step 3：验证入口已退出 Nuwax 默认主线**
+- [x] **Step 3：验证入口已退出 Nuwax 默认主线**
 
 Run:
 
@@ -229,7 +229,7 @@ rg -n 'codebase-memory|Graphify|dev-integration-audit|project-context' AGENTS.md
 
 Expected: 四类新入口均有匹配。
 
-- [ ] **Step 4：检查格式并提交**
+- [x] **Step 4：检查格式并提交**
 
 Run:
 
