@@ -18,30 +18,21 @@ package coze
 
 import (
 	"context"
-	"os"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 )
 
-const canonicalEntrypointEnabledEnv = "COZE_WORKBENCH_CANONICAL_API_ENABLED"
-
-type canonicalEntrypointError struct {
-	Detail    string `json:"detail"`
-	Code      string `json:"code"`
-	Retryable bool   `json:"retryable"`
-}
-
-func serveCanonicalEntrypoint(_ context.Context, c *app.RequestContext) {
-	if os.Getenv(canonicalEntrypointEnabledEnv) != "true" {
-		c.Status(consts.StatusNotFound)
+func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
+	if !requireCanonicalAPI(ctx, c) {
 		return
 	}
 
-	c.JSON(consts.StatusNotImplemented, canonicalEntrypointError{
-		Detail:    "Canonical Workbench API is not implemented",
-		Code:      "canonical_not_implemented",
-		Retryable: false,
+	writeCanonicalError(ctx, c, consts.StatusNotImplemented, canonicalError{
+		Detail:     "Canonical Workbench API is not implemented",
+		Code:       "canonical_not_implemented",
+		Retryable:  false,
+		errorClass: "canonical_not_implemented",
 	})
 }
 

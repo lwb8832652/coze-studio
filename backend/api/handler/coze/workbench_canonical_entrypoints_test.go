@@ -55,7 +55,7 @@ var canonicalEntrypoints = []struct {
 }
 
 func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
-	t.Setenv(canonicalEntrypointEnabledEnv, "")
+	t.Setenv(canonicalAPIEnabledEnv, "")
 
 	for _, entrypoint := range canonicalEntrypoints {
 		entrypoint := entrypoint
@@ -69,7 +69,7 @@ func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
 }
 
 func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
-	t.Setenv(canonicalEntrypointEnabledEnv, "TRUE")
+	t.Setenv(canonicalAPIEnabledEnv, "TRUE")
 
 	var c app.RequestContext
 	CreateCanonicalThread(context.Background(), &c)
@@ -77,7 +77,7 @@ func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
 }
 
 func TestCanonicalEntrypointEnabledFailsClosed(t *testing.T) {
-	t.Setenv(canonicalEntrypointEnabledEnv, "true")
+	t.Setenv(canonicalAPIEnabledEnv, "true")
 
 	for _, entrypoint := range canonicalEntrypoints {
 		entrypoint := entrypoint
@@ -86,7 +86,7 @@ func TestCanonicalEntrypointEnabledFailsClosed(t *testing.T) {
 			entrypoint.handler(context.Background(), &c)
 			require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
 
-			var response canonicalEntrypointError
+			var response canonicalError
 			require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
 			require.Equal(t, "canonical_not_implemented", response.Code)
 			require.False(t, response.Retryable)
