@@ -642,6 +642,9 @@ IDL/生成 client、前后端 fallback、`backend/application/task`、`backend/d
 - `canonical-frontend-contract.test.ts` 持续扫描生产源码中的退役标识符和调用；
 - `langGraphStoredThreadMetadata` 可以继续删除 `legacy_task_id` 等历史 metadata key；
   denylist 只做出站/入站清洗，不得查询旧表、恢复映射或改变路由；
+- `idl/workbench/workbench.thrift` 和生成代码中的 `WorkbenchChatService` 名称只承载
+  `GetWorkbenchRuntimeDoctor`；防复活门禁检查旧 DTO、写方法、route 和调用，不得误删
+  Runtime Doctor；
 - 新功能、故障回滚、SDK 兼容和数据修复均不得恢复 ChatTask adapter 或旁路写入；
 - 退役路径探测只记录安全的 route template、请求关联和 `404`，不得查询历史表或调用
   application/domain；

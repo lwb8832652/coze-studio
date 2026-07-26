@@ -1,21 +1,51 @@
-# WorkbenchChat 当前上下文与旧链路退役设计
+# WorkbenchChat 旧链路退役历史设计与验收记录
 
 ## 文档状态
 
-- 状态：已完成业务设计确认，尚未开始实施；
-- 基线：`dev` / `origin/dev` 的 `dcca3a9c4c7daf0b311317b1e99e94bc1d713513`；
-- 范围：WorkbenchChat 当前业务上下文、ChatTask 旧链迁移与退役、长期检索和同步门禁；
-- 权威边界：本文记录已核实的迁移前现状和已确认的实施目标，不代表代码已经完成退役；
-- 排除：Kernel V2/K2 仍处于设计阶段，不进入当前实现上下文或默认 Graphify 语料。
+- 状态：ChatTask 代码退役已完成；本文转为历史设计、迁移证据和验收清单；
+- 迁移前基线：`dev@dcca3a9c4c7daf0b311317b1e99e94bc1d713513`；
+- 当前核验基线：`dev@851c4da8fd72e8fa0cf1bcd8d06c9e489616507f`；
+- 实施提交：`68d4a2772c4ecc626e59a29a6b32f1c5c93c46ef`；
+- 当前权威：源码、IDL、迁移、测试和
+  `docs/superpowers/context/workbench-chat.md`；
+- 剩余边界：代码合入不等于各环境数据库已执行删除迁移，环境操作只遵循
+  `docs/superpowers/runbooks/workbench-chat-legacy-cleanup.md`；
+- 范围：保留迁移前事实、历史数据处置规则、代码退役边界和原验收依据；
+- 排除：本文不定义当前 ChatTask 兼容能力，也不批准 Kernel V2/K2 代码实施。
 
-## 背景
+> 阅读规则：下文的“迁移前”“原设计”“原计划”均为历史语境，不能据此恢复
+> `/api/workbench/tasks*`、`/api/workbench/chat`、ChatTask IDL/client/fallback 或
+> application/domain。当前产品与工程事实以本节列出的权威来源为准。
 
-WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的新任务流程已经
-使用 TaskThread，但仓库仍保留早期 ChatTask API、数据表、前端回退和运行编排。
+## 当前实施结果
+
+截至 `dev@851c4da8f`：
+
+- `/api/workbench/tasks*` 与 `/api/workbench/chat` 不再注册，负向路由测试固定断言
+  `404`；
+- `WorkbenchChatRequest/Data/Response`、ChatTask DTO/方法及其生成成员、前后端
+  fallback、`backend/application/task`、`backend/domain/task` 和旧 Workbench
+  runner/gateway 已删除；
+- 前端生产源码由
+  `frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts`
+  持续执行退役标识符扫描；
+- `legacy_task_id` 只允许出现在删除历史 metadata key 的 denylist 清洗或历史迁移、
+  runbook 和审计材料中，不得恢复对象映射或业务读取；
+- 删除迁移
+  `docker/atlas/migrations/20260726000100_drop_legacy_workbench_chat.sql`
+  已进入迁移链，但每个环境仍需独立完成统计、备份、确认和 apply；
+- `/api/workbench/task_threads` 仍是当前 Workbench 产品合同，未来
+  `/api/workbench/threads` 的迁移由 Thread API 专项规格独立约束，不以 ChatTask 为
+  fallback。
+
+## 历史背景
+
+WorkbenchChat 是工作台任务交互的业务域名称。迁移前，用户可见的新任务流程已经
+使用 TaskThread，但仓库当时仍保留早期 ChatTask API、数据表、前端回退和运行编排。
 如果把两者都描述成长期有效的主链，后续开发容易错误选择旧接口、旧状态模型
 或旧持久化结构。
 
-本设计同时解决两个问题：
+本设计当时用于解决两个问题：
 
 1. 将仍需保留的历史 ChatTask 数据迁入 TaskThread，并彻底删除旧运行时链路；
 2. 为清理后的 WorkbenchChat 建立受版本控制、可检索、可验证的长期上下文，
@@ -23,9 +53,9 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 
 ## 已核实的迁移前现状
 
-### 当前主链
+### 迁移前已生效主链
 
-当前工作台首次提交已经使用 TaskThread 合同：
+迁移前工作台首次提交已经使用 TaskThread 合同：
 
 - 前端入口：`frontend/apps/coze-studio/src/pages/workbench/index.tsx`；
 - 前端 API：`CreateTaskThread`、`CreateTaskThreadRun`；
@@ -40,9 +70,9 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 带附件时先使用 `defer_start` 创建 Thread，上传文件后再调用
 `CreateTaskThreadRun`。标准线程详情追问同样调用 `CreateTaskThreadRun`。
 
-### 尚存的旧链
+### 迁移前尚存的旧链
 
-仓库仍存在以下可执行旧链：
+迁移前仓库存在以下可执行旧链：
 
 - `/api/workbench/chat` 和 `WorkbenchChatRequest/Response`；
 - `/api/workbench/tasks*` 的创建、列表、详情、取消、重试和事件接口；
@@ -54,7 +84,7 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 - `agent_threads.legacy_task_id`；
 - 前端旧任务加载和追问回退。
 
-当前详情路由会优先加载 TaskThread；只有 Thread 不存在时才读取 ChatTask。
+迁移前详情路由会优先加载 TaskThread；只有 Thread 不存在时才读取 ChatTask。
 历史 ChatTask 详情追问仍会调用 `/api/workbench/chat`。因此早期链已经不是新业务
 主入口，但在删除前仍属于可达兼容路径。
 
@@ -67,7 +97,7 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 - `ff90f046b`：新增 AgentThread application service；
 - `d71e51bd5`：`fix: create canonical task threads from workbench`。
 
-仓库中没有正式 ADR 解释旧链为何一直保留。本文只把提交顺序、当前调用关系和
+仓库中没有正式 ADR 解释旧链为何一直保留。本文只把提交顺序、迁移前调用关系和
 数据事实作为证据，不补写未经证明的业务动机。
 
 ### 外部测试数据库审计
@@ -101,7 +131,7 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 已经停止，同时也证明直接删表会丢失历史数据。其它环境仍必须独立执行相同的
 只读审计，不能复用测试环境结论。
 
-## 目标
+## 原设计目标
 
 1. WorkbenchChat 只保留 TaskThread 主模型和 AgentThread 执行链。
 2. 仍需保留的历史任务迁入 Thread、Message、Run 和 RunEvent。
@@ -110,6 +140,9 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 5. Graphify 负责审核后业务语义，codebase-memory 负责当前源码结构和影响分析。
 6. WorkbenchChat 相关变化必须经过机器检查和两次 dev 集成审计。
 7. K2/Kernel V2 设计稿不得被默认检索误认为当前实现。
+
+其中代码、IDL、前后端 fallback 和迁移定义已经落地；各环境数据处置、migration apply
+和备份销毁状态不能由 Git 推断，继续按环境 runbook 验收。
 
 ## 非目标
 
@@ -128,7 +161,7 @@ WorkbenchChat 是工作台任务交互的业务域名称。当前用户可见的
 - **Message**：Thread 内的用户或助手可见消息；
 - **Run**：一次可独立追踪、取消、重试或恢复的执行轮次；
 - **RunEvent**：Run 的持久化、可投影事件；
-- **ChatTask**：待迁移并删除的旧实体，不属于最终架构；
+- **ChatTask**：迁移前待处置、当前代码已退役的历史实体，不属于最终架构；
 - **Task**：可以继续作为产品界面用语，但代码合同必须明确映射到 TaskThread，
   不得重新引入 ChatTask 数据模型。
 
@@ -167,6 +200,9 @@ UI -> /api/workbench/chat -> ChatTask -> chat_task_events
 ```
 
 ## 历史数据迁移
+
+本节保留原迁移规则，用于解释删除迁移的前置条件和环境运维依据。它不是在线兼容
+合同，也不表示当前代码仍能读取或写入 ChatTask。
 
 ### 发布原则
 
@@ -263,7 +299,7 @@ URI、checkpoint bytes、provider raw body 和 hidden config 不得因迁移进�
 - 审计映射、数量摘要和内容校验摘要可复核；
 - 未迁移、未知事件、冲突和最近旧写入均为零。
 
-### 阶段 B：代码和 schema 删除
+### 阶段 B：代码和 schema 删除（代码侧已实施）
 
 阶段 B 先发布不再读取旧表的代码，在最终页面与 API 验收通过后再执行 drop。
 这样可以在删表前回滚新代码；旧表 drop 完成后只允许向前修复，不允许回滚到
@@ -307,6 +343,11 @@ diagnostic service，随后删除不再承担职责的 `idl/workbench/workbench.
 `backend/api/model/workbench/diagnostic/diagnostic.go` 由同一合同生成链统一接管，
 不能与 generated model 并存；前端改用 diagnostic generated client。
 
+上述 namespace 搬迁没有按原提案落地。当前 `idl/workbench/workbench.thrift` 中的
+`WorkbenchChatService` 只保留 `GetWorkbenchRuntimeDoctor`，生成 service/client 壳也只服务
+该诊断方法；它不包含 `WorkbenchChat` 写方法、ChatTask DTO 或旧任务路由，不能作为旧链
+仍存在的证据。
+
 ### 后端
 
 删除：
@@ -322,15 +363,15 @@ diagnostic service，随后删除不再承担职责的 `idl/workbench/workbench.
 - `backend/application/agentthread/` 中 `TaskToThreadSummary` 和旧状态适配。
 
 `backend/application/workbench` 中仍服务 Runtime Doctor 和 suggestions 的能力
-继续保留。当前定义在旧 answer runner 中的 chat model provider 必须迁到语义
-明确的独立文件，不能因删除旧 runner 误删现用诊断和建议功能。当前定义在旧
+继续保留。迁移前定义在旧 answer runner 中的 chat model provider 必须迁到语义
+明确的独立文件，不能因删除旧 runner 误删现用诊断和建议功能。迁移前定义在旧
 chat gateway 中、仍被 Runtime Doctor handler 使用的 client error 分类也必须迁到
 独立 `errors.go`。`ApplicationService` 重建为只包含 Runtime Doctor 和 suggestions
 实际依赖的最小组件，移除 TaskSVC、AgentRunSVC、KnowledgeSVC 等旧 wiring。
 
 ### 数据库
 
-新增 Atlas migration 删除：
+原设计要求新增 Atlas migration 删除以下对象；当前迁移文件已经进入迁移链：
 
 - `chat_tasks`；
 - `chat_task_attempts`；
@@ -351,23 +392,27 @@ chat gateway 中、仍被 Runtime Doctor handler 使用的 client error 分类�
 
 ## 最终负面约束
 
-退役完成后必须持续满足：
+代码退役完成后必须持续满足：
 
 - 在线路由不存在 `/api/workbench/chat` 和 `/api/workbench/tasks*`；
-- 当前 IDL 和生成客户端不存在 `WorkbenchChat`、`ChatTask`、旧 `TaskEvent`；
-- 在线 Go/TypeScript 代码不存在 `legacy_task_id` 逻辑；
+- 当前 IDL 和生成客户端不存在 `WorkbenchChatRequest/Data/Response`、`ChatTask`、旧
+  `TaskEvent` 及旧任务方法；`WorkbenchChatService` 名称只允许承载 Runtime Doctor；
+- 在线 Go/TypeScript 代码不得读取、映射或回显 `legacy_task_id`；只删除该 key 的
+  denylist 清洗允许保留；
 - 最终数据库 schema 不存在三个 `chat_task*` 表和 `legacy_task_id`；
 - Task detail 不尝试加载 ChatTask；
 - Graphify 当前语料不把旧链建成活动节点；
 - codebase-memory 查不到被删除符号的有效调用方；
 - 历史 migration、Git 和退役审计可以保留旧名称，但必须带历史语境。
 
-## 权威上下文设计
+## 历史提案：权威上下文设计
 
-退役前现状由本文和 Git 保留。阶段 B 完成并验证后，再创建最终当前上下文，
-避免把即将删除的旧链固化为长期主事实。
+退役前现状由本文和 Git 保留。原设计曾计划建立目录化上下文与专用 manifest；最终
+落地采用 `docs/superpowers/context/workbench-chat.md` 和仓库通用 AGENTS/runbook 规则。
+下列 `current.md`、`sources.json` 与专用查询文件没有成为当前路径，不得作为已实现能力
+引用。
 
-计划新增：
+原计划新增：
 
 - `docs/superpowers/context/workbench-chat/current.md`；
 - `docs/superpowers/context/workbench-chat/sources.json`；
@@ -454,7 +499,10 @@ rename、delete 和新增文件都计入变化。`reason` 不允许空泛填写�
 只有用户明确讨论 K2 设计时才能按设计资料读取；设计内容不得反向覆盖
 `current.md`。
 
-## 双检索协议
+## 历史提案：双检索协议
+
+以下流程是原设计输入。当前开工和完成流程以根 `AGENTS.md` 为准；不存在的专用
+`current.md`、`sources.json` 或查询文件不构成门禁。
 
 ### 开工检索
 
@@ -487,7 +535,7 @@ rename、delete 和新增文件都计入变化。`reason` 不允许空泛填写�
 - Workbench UI 可展示和禁止展示哪些字段；
 - 当前是否仍存在 ChatTask/WorkbenchChat 兼容链，预期答案为“不存在”。
 
-## Graphify 语料与输出
+## 历史提案：Graphify 语料与输出
 
 Graphify 只扫描 `docs/superpowers/context/workbench-chat/` 受控目录，不扫描整个
 monorepo。仓库根目录已有但不完整的 `graphify-out` 重建为该精选语料的派生图。
@@ -500,9 +548,9 @@ monorepo。仓库根目录已有但不完整的 `graphify-out` 重建为该精�
 - CI 不依赖 LLM/Graphify 服务，只校验受版本控制语料和 digest；
 - K2 路径出现在 Graphify manifest 或来源列表时直接失败。
 
-## Context Guard
+## 未采纳的历史提案：Context Guard
 
-在 `backend/cmd/workbench-context-guard` 实现一个只依赖 Go 标准库和 Git 的
+原设计曾计划在 `backend/cmd/workbench-context-guard` 实现一个只依赖 Go 标准库和 Git 的
 轻量 guard，支持：
 
 - 计算受监控路径 digest；
@@ -534,9 +582,9 @@ monorepo。仓库根目录已有但不完整的 `graphify-out` 重建为该精�
 只要任务涉及该核心域并需要图谱审计，工具故障就阻止集成。只有用户针对当前
 SHA 和当前审计报告明确书面豁免，才允许例外。
 
-## CI 与本地门禁
+## 未采纳的历史提案：专用 CI 门禁
 
-新增 `.github/workflows/workbench-context.yml`，触发范围覆盖相关 PR 和 `dev`
+原设计曾计划新增 `.github/workflows/workbench-context.yml`，触发范围覆盖相关 PR 和 `dev`
 push。CI checkout 必须包含可计算 merge-base 的历史，使用完整 diff 基准执行
 Context Guard、禁止项检查和文档证据校验，不运行需要本地 MCP 或 LLM 的图谱
 构建。
@@ -634,7 +682,7 @@ Context Guard、禁止项检查和文档证据校验，不运行需要本地 MCP
 - K2 设计进入当前事实；
 - 用户尚未完成对应阶段确认。
 
-## 完成标准
+## 原设计完成标准
 
 1. 所有需保留 ChatTask 均已迁入 canonical TaskThread；
 2. 所有环境未迁移记录和旧写入均为零；
@@ -648,7 +696,11 @@ Context Guard、禁止项检查和文档证据校验，不运行需要本地 MCP
 10. 两次 dev 审计及两次用户确认完成；
 11. 本地与远程 `dev` SHA 最终一致。
 
-## 后续交付顺序
+## 原交付顺序
+
+该顺序用于追溯退役项目，不是当前待办。代码退役已经通过 `68d4a2772` 合入当前
+`dev`；数据库环境操作继续按清理 runbook 单独确认，canonical Thread API 则按新的
+专项规格独立实施。
 
 1. 用户复核本文；
 2. 编写可执行实施计划，按迁移、代码删除、上下文、图谱和审计拆分任务；

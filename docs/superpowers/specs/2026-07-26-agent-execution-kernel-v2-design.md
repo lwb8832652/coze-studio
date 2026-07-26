@@ -136,6 +136,11 @@ flowchart LR
 或映射业务对象的边界清洗 denylist 中，防止历史 metadata 被重新回显；该防御逻辑不构成
 兼容能力。
 
+`idl/workbench/workbench.thrift` 中名为 `WorkbenchChatService` 的生成 service 壳当前只承载
+`GetWorkbenchRuntimeDoctor`。它不包含 `WorkbenchChat` 写方法、ChatTask DTO 或旧任务 route，
+不能被视为 ChatTask 仍在线的证据；退役扫描应匹配旧 DTO、方法和调用，而不是误删现用
+Runtime Doctor。
+
 ### 5.2 接口边界
 
 接口边界分为“当前事实”和“目标合同”，两者不得混写：

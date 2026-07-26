@@ -83,6 +83,11 @@ ChatTask API、路由、IDL、前后端 fallback、应用层、领域层和旧 r
 输入或存量 metadata 投影中删除退役字段，不能据此查询旧表、建立映射、选择 route 或
 恢复 ChatTask DTO。
 
+`idl/workbench/workbench.thrift` 及生成代码中的 `WorkbenchChatService` 名称当前只服务
+`GetWorkbenchRuntimeDoctor`，不包含 `WorkbenchChat` 写方法、ChatTask DTO 或旧任务 route。
+防复活扫描必须定位退役方法和数据合同，不能把仍在使用的 Runtime Doctor service 壳误判为
+ChatTask fallback。
+
 ### 3.2 当前共同主链
 
 当前 Workbench 和 `/api/threads` 最终都进入现有 AgentThread 应用服务和数据链：
