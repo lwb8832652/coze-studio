@@ -23,6 +23,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { CLI_HELP } from './workbench-execution-graph.mjs';
 import {
   evaluateAuthorityChanges,
   validateContract,
@@ -48,6 +49,8 @@ const CONTRACT_RELATIVE =
   'docs/superpowers/context/workbench-execution-graph.json';
 const CONTEXT_RELATIVE =
   'docs/superpowers/context/workbench-execution-chain.md';
+const RUNBOOK_RELATIVE =
+  'docs/superpowers/runbooks/workbench-execution-graph.md';
 
 const loadCanonicalContract = async () =>
   JSON.parse(await readFile(CONTRACT_PATH, 'utf8'));
@@ -378,7 +381,7 @@ test('explicit contract nodes and directed edges override Graphify AST facts', a
   assert.equal(
     graph.nodes.find(node => node.id === 'frontend.workbench.handle_send')
       .label,
-    'Workbench handleSend',
+    'Workbench Immediate Submit',
   );
   const explicit = graph.links.find(
     link =>
@@ -578,4 +581,31 @@ test('CLI verify succeeds and unknown commands fail concisely', async () => {
       /unknown command/.test(error?.stderr) &&
       !/at file:/.test(error?.stderr),
   );
+});
+
+test('documentation references authority files and only supported CLI commands', async () => {
+  const documents = await Promise.all(
+    ['AGENTS.md', RUNBOOK_RELATIVE].map(relativePath =>
+      readFile(path.join(REPO_ROOT, relativePath), 'utf8'),
+    ),
+  );
+  for (const content of documents) {
+    assert.match(content, new RegExp(CONTRACT_RELATIVE.replaceAll('/', '\\/')));
+    assert.match(content, new RegExp(CONTEXT_RELATIVE.replaceAll('/', '\\/')));
+    const commandLines = content
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(line =>
+        line.startsWith('node scripts/workbench-execution-graph.mjs '),
+      );
+    assert.ok(commandLines.length > 0);
+    for (const commandLine of commandLines) {
+      const command = commandLine.split(/\s+/)[2];
+      assert.match(command, /^(verify|build|verify-derived)$/);
+      assert.match(
+        CLI_HELP,
+        new RegExp(`workbench-execution-graph\\.mjs ${command}(?: |\\n)`),
+      );
+    }
+  }
 });

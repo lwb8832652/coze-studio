@@ -26,7 +26,7 @@
   "nodes": [
     {
       "id": "frontend.workbench.handle_send",
-      "label": "Workbench handleSend",
+      "label": "Workbench Immediate Submit",
       "layer": "frontend_entry",
       "kind": "function",
       "production_status": "current",
@@ -126,7 +126,7 @@
     },
     {
       "id": "frontend.events.event_source",
-      "label": "TaskThread Run EventSource",
+      "label": "TaskDetail Event Projection",
       "layer": "frontend_projection",
       "kind": "function",
       "production_status": "current",

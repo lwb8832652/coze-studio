@@ -18,6 +18,12 @@
 常用入口：
 
 - WorkbenchChat 当前事实：`docs/superpowers/context/workbench-chat.md`
+- Workbench 当前执行链：
+  `docs/superpowers/context/workbench-execution-chain.md`
+- Workbench 执行图合同：
+  `docs/superpowers/context/workbench-execution-graph.json`
+- Workbench 图谱运维：
+  `docs/superpowers/runbooks/workbench-execution-graph.md`
 - 本地调试与账号：`docs/superpowers/runbooks/local-debug-and-test.md`
 - `dev` 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox 运维：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
@@ -54,9 +60,21 @@
 - 不默认对整个 monorepo 建图，不提交 `graphify-out/` 产物。
 - 图谱缺失、过期或不可用时直接读取源文档，并记录缺失的图谱验证。
 
-涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，只把
-`docs/superpowers/context/workbench-chat.md` 与当前源码作为现状语料；K2 和
-历史 ChatTask plans/specs 只能按需追溯，不能用于推断当前合同。
+涉及 WorkbenchChat、任务列表、任务详情或 Agent 运行链时，先读
+`docs/superpowers/context/workbench-execution-chain.md`，再按
+`docs/superpowers/context/workbench-execution-graph.json` 查询当前链和源码证据；
+同时以 `workbench-chat.md` 与当前源码核实现状。任何节点、关系、顺序、框架或
+边界变化都要同步更新两份执行链权威文件，并运行：
+
+```bash
+node scripts/workbench-execution-graph.mjs verify --changed-from origin/dev
+node scripts/workbench-execution-graph.mjs build
+node scripts/workbench-execution-graph.mjs verify-derived
+```
+
+详细维护和两阶段 dev 图谱审计见
+`docs/superpowers/runbooks/workbench-execution-graph.md`。K2 和历史 ChatTask
+plans/specs 只能按需追溯，不能用于推断当前合同。
 
 ## 工作流程
 
