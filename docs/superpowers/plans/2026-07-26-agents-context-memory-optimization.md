@@ -401,7 +401,7 @@ git commit -m "docs: add durable project context"
 - Create: `docs/superpowers/runbooks/dev-integration-audit.md`
 - Modify: `docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md`
 
-- [ ] **Step 1：验证审计手册尚不存在**
+- [x] **Step 1：验证审计手册尚不存在**
 
 Run:
 
@@ -411,7 +411,7 @@ test -f docs/superpowers/runbooks/dev-integration-audit.md
 
 Expected: 退出码 `1`。
 
-- [ ] **Step 2：创建审计手册**
+- [x] **Step 2：创建审计手册**
 
 使用 `apply_patch` 创建以下内容：
 
@@ -533,12 +533,12 @@ git rev-parse origin/dev
 ```bash
 git switch dev
 git merge --ff-only origin/dev
-git merge --no-ff <audited-feature-sha>
+git merge --no-ff --no-edit <audited-feature-sha>
 ```
 
 合并对象必须是第一次报告中的审计 SHA，并再次确认需求分支仍指向该 SHA。
-发生冲突时中止合并，回到需求分支吸收最新 `origin/dev`；不得直接在 `dev`
-解决冲突。
+发生冲突时立即执行 `git merge --abort`，回到需求分支吸收最新 `origin/dev`；
+不得直接在 `dev` 解决冲突。
 
 ## 第二次审计：本地 dev
 
@@ -608,7 +608,7 @@ git rev-parse dev
 开始。
 ```
 
-- [ ] **Step 3：验证双重门禁和停止条件**
+- [x] **Step 3：验证双重门禁和停止条件**
 
 Run:
 
@@ -626,7 +626,7 @@ rg -n '第一次确认|第二次确认|禁止 force push|回到第一次审计' 
 
 Expected: 两次确认、禁止强推和失效重审规则均有匹配。
 
-- [ ] **Step 4：提交审计手册**
+- [x] **Step 4：提交审计手册**
 
 ```bash
 git add docs/superpowers/runbooks/dev-integration-audit.md docs/superpowers/plans/2026-07-26-agents-context-memory-optimization.md
