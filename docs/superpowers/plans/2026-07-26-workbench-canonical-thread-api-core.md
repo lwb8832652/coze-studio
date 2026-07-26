@@ -97,7 +97,7 @@ var retiredChatTaskPaths = []string{
 }
 ```
 
-每个 retired path 必须返回 `404`，且 recording application service 的调用计数保持 `0`。
+每个 retired path 必须返回 `404`，且 recording handler-boundary middleware 的命中计数保持 `0`。当前 ChatTask application 入口已经删除，测试不得为了注入 recorder 而重新引入旧应用层；零 handler-boundary 命中用于证明请求未进入任何业务 handler。
 
 - [ ] **Step 3: Run the route test and verify RED**
 

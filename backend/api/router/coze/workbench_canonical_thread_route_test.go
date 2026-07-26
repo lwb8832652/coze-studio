@@ -134,21 +134,22 @@ var retiredChatTaskPaths = []string{
 	"/api/workbench/chat",
 }
 
-type recordingApplicationService struct {
-	invocationCount int
+type recordingHandlerBoundary struct {
+	matchedHandlerCount int
 }
 
-func (s *recordingApplicationService) recordMatchedRoute(ctx context.Context, c *app.RequestContext) {
+func (r *recordingHandlerBoundary) record(ctx context.Context, c *app.RequestContext) {
+	// Global middleware runs only after Hertz resolves a route into a handler chain.
 	if c.FullPath() != "" {
-		s.invocationCount++
+		r.matchedHandlerCount++
 	}
 	c.Next(ctx)
 }
 
 func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
-	recordingService := &recordingApplicationService{}
+	handlerBoundary := &recordingHandlerBoundary{}
 	h := server.Default()
-	h.Use(recordingService.recordMatchedRoute)
+	h.Use(handlerBoundary.record)
 	Register(h)
 	RegisterCustomRoutes(h)
 
@@ -183,7 +184,7 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 				require.Equal(t, http.StatusNotFound, response.Code, "%s %s", method, path)
 			}
 		}
-		require.Zero(t, recordingService.invocationCount)
+		require.Zero(t, handlerBoundary.matchedHandlerCount)
 	})
 }
 
