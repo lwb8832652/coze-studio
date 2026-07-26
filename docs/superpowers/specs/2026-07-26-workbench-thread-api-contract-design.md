@@ -2,11 +2,11 @@
 
 > 文档状态：设计已确认，待书面复审
 >
-> 版本：v1.0-rc5
+> 版本：v1.0-rc6
 >
 > 更新日期：2026-07-26
 >
-> Coze 现状基线：`dev@dcca3a9c4c7daf0b311317b1e99e94bc1d713513`
+> Coze 现状基线：`dev@851c4da8fd72e8fa0cf1bcd8d06c9e489616507f`
 >
 > DeerFlow 对照基线：`main@04b7e693f03a639288cc3aa1b3ed08a865492fe8`
 >
@@ -23,7 +23,7 @@
 - `/api/workbench/threads` 的路由、HTTP 方法、请求、响应、SSE 和错误语义；
 - LangGraph SDK 兼容范围及 Coze 产品扩展；
 - Workbench 当前全部功能到目标接口的逐项映射；
-- 新旧接口并行、前端切换、回滚和旧接口删除门槛；
+- 当前 TaskThread 合同与目标接口并行、前端切换、回滚和来源入口删除门槛；
 - 外部生产接入所需的鉴权、限流、网关和隔离规则；
 - 功能注释、结构化日志、指标和排障证据要求。
 
@@ -45,8 +45,10 @@
 - 核心 Thread/Run 合同兼容指定版本的 LangGraph JavaScript 和 Python SDK。
 - 保留 Workbench 的附件、消息、产物、用量、记忆和安全审计等完整产品能力。
 - 路由名称、方法和功能语义一一对应，让调用链可以从 URL 直接定位到领域用例。
-- 新旧接口共用 `agentthread.ApplicationService` 和同一套持久化记录，不复制数据。
-- UI 完成真实联调和生产灰度后再删除旧入口，切换过程允许即时回滚。
+- 当前 Workbench 与目标接口共用 `agentthread.ApplicationService` 和同一套持久化记录，
+  不复制数据。
+- UI 完成真实联调和生产灰度后再删除 `/api/workbench/task_threads`，切换过程允许回到
+  当前 TaskThread client，但不得回退到已退役 ChatTask 链路。
 - 外部流量不能挤占 Workbench 保留容量，也不能扩大租户、资源或运行时权限。
 
 ### 2.2 非目标
@@ -56,22 +58,30 @@
 - 不建立第二套 Thread、Run、Message、Event、Checkpoint 或 Artifact 存储。
 - 不承诺完整实现 assistants、store、crons、stateless runs、thread stream 或协议 v2。
 - 不让新 API 直接暴露 Eino 事件、checkpoint bytes、provider body、工具原始参数或结果。
-- 不以 HTTP 301/302/307/308 将旧接口重定向到新接口，SSE 尤其禁止重定向。
+- 不以 HTTP 301/302/307/308 将当前来源接口重定向到目标接口，SSE 尤其禁止重定向。
 - 不在迁移期对创建、追问、恢复、重试或取消请求执行双写。
+- 不恢复 `/api/workbench/tasks*`、`/api/workbench/chat`、ChatTask IDL、前后端 fallback、
+  `backend/application/task`、`backend/domain/task` 或旧 Workbench runner/gateway。
 
 ## 3. 已核验现状
 
-### 3.1 四组现有入口
+### 3.1 当前入口与已退役边界
 
 | 入口 | 当前职责 | 目标处置 |
 | --- | --- | --- |
 | `/api/workbench/task_threads` | 当前 Workbench UI 的 TaskThread 产品合同 | 冻结行为；UI 全量切换且观察期无流量后删除 |
 | `/api/threads` | 当前 LangGraph 形状的兼容实现 | 冻结行为；外部调用方迁移后独立删除 |
-| `/api/workbench/tasks*` | 历史 ChatTask 的列表、详情、事件、取消和重试 | 与历史数据一起保留，按 legacy 门槛退役 |
-| `/api/workbench/chat` | 旧 ChatTask 详情追问 | 仅 legacy；无旧记录追问需求后单独删除 |
+| `/api/workbench/tasks*` | 已退役 ChatTask 路由 | 保持 `404`，只保留防复活测试 |
+| `/api/workbench/chat` | 已退役 ChatTask 写入口 | 保持 `404`，不得注册 adapter 或 fallback |
 
-四组入口不能一次性删除。`/api/workbench/tasks*` 与 `/api/workbench/chat` 共同依赖
-历史 Task；它们的退役条件与新 UI 或 SDK 迁移不同，但 chat 写入口仍需单独观测。
+ChatTask API、路由、IDL、前后端 fallback、应用层、领域层和旧 runner/gateway 已在
+`dev@851c4da8f` 完成代码退役。后续迁移只涉及两个仍有效的来源合同：Workbench
+`/api/workbench/task_threads` 与 LangGraph 形状 `/api/threads`。已退役路径不得计入
+“兼容流量”，任何非 `404` 响应都视为合同回归。
+
+生产代码中允许保留 `legacy_task_id` 等历史 metadata key 的 denylist 清洗：它只能从
+输入或存量 metadata 投影中删除退役字段，不能据此查询旧表、建立映射、选择 route 或
+恢复 ChatTask DTO。
 
 ### 3.2 当前共同主链
 
@@ -81,13 +91,11 @@
 flowchart LR
     A["Workbench UI"] --> B["/api/workbench/task_threads"]
     C["LangGraph-shaped client"] --> D["/api/threads"]
-    E["Legacy Task UI"] --> F["/api/workbench/tasks* + /api/workbench/chat"]
     B --> G["AgentThread ApplicationService"]
     D --> G
-    F --> H["Legacy adapter"]
-    H --> G
     G --> I[("TaskThread / Message / Run / RunEvent / Artifact")]
     I --> J["Run Worker + Eino ADK"]
+    K["Retired ChatTask routes"] -->|"404 only"| L["Negative contract guard"]
 ```
 
 迁移只允许增加路由 adapter、公共 DTO 和前端 client，不允许把目标路由连接到新的
@@ -138,7 +146,8 @@ API adapter 和 client，不触发数据库重命名。
 6. 恢复和重试创建新的 attempt，并引用来源 Run，不改写历史 Run。
 7. cancel、resume、retry 和首个 Run 创建必须幂等；同键不同有效载荷返回冲突。
 8. 内部事件必须经过公开投影、大小限制和脱敏后才能进入 API 或 SSE。
-9. 切换 client 不迁移数据、不转换 ID，也不重放历史写请求。
+9. 在 `TaskThreadV1Client` 与 `CanonicalThreadClient` 之间切换不迁移数据、不转换 ID，
+   也不重放历史写请求；不存在 ChatTask client 或 ChatTask fallback。
 
 ## 5. Canonical 基础约定
 
@@ -176,7 +185,8 @@ ambiguous credentials，不能按中间件顺序随机选一个，也不能在�
 
 ### 5.3 幂等与请求关联
 
-- 写请求使用 `Idempotency-Key` header；旧 body 字段只在旧 route adapter 中保留。
+- 写请求使用 `Idempotency-Key` header；当前 body 字段只在
+  `/api/workbench/task_threads` 来源合同中冻结，不复制到 canonical body。
 - key 的唯一范围至少包含 `principal + space_id + operation`，不得只按空间全局碰撞。
 - 服务端保存规范化 payload fingerprint；同键同 payload 返回原结果，同键不同 payload
   返回 `409 idempotency_conflict`。
@@ -460,8 +470,8 @@ checkpoint。顶层 `interrupts` 用于兼容固定 Python SDK，JavaScript SDK 
 | `GET` | `/threads/{thread_id}/runs/{run_id}/events` | 读取该 Run 的公开事件快照 |
 | `GET` | `/threads/{thread_id}/runs/{run_id}/messages` | 读取该 Run 的公开消息投影 |
 
-canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。旧路径即使存在，
-也不得写进新 client 或新文档示例。
+canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。当前
+`/api/threads` 即使存在这些方法，也不得写进新 client 或新文档示例。
 
 成功响应固定为：
 
@@ -705,7 +715,7 @@ stream location。不得修改全局 `/api` 规则，也不能遗漏不带尾斜
 - 禁止压缩导致的批量缓冲；
 - 透传 `Last-Event-ID`、`X-Request-ID` 和认证 header；
 - 原样透传并校验上游 `Location`、`Content-Location`，不得补全成外部 origin、重复
-  `/api/workbench` 前缀或改写到 legacy route；
+  `/api/workbench` 前缀或改写到其他来源/退役 route；
 - 设置覆盖最长允许 Run 的 read timeout 与合理 send timeout；
 - 返回 `X-Accel-Buffering: no`；
 - 网关空闲超时、应用 heartbeat 和客户端重连间隔必须形成明确矩阵；
@@ -767,7 +777,7 @@ stream location。不得修改全局 `/api` 规则，也不能遗漏不带尾斜
 canonical client 可以组合调用这些服务，但不能把它们代理到 `/threads` 下，也不能因
 Thread API 回滚而改变其请求或权限行为。
 
-## 10. 旧接口到 canonical 的映射
+## 10. 当前接口到 canonical 的映射
 
 | 当前接口 | canonical 接口 | 迁移规则 |
 | --- | --- | --- |
@@ -784,15 +794,17 @@ Thread API 回滚而改变其请求或权限行为。
 | `POST .../cancel` | `POST .../cancel` | 保持幂等与终态竞争规则 |
 | `POST .../retry` | 产品扩展同名 route | 仍只表示子智能体 retry |
 | uploads/artifacts/memories/audits | canonical 同资源扩展 | 逐个 DTO 和权限合同迁移，不合并成泛型 endpoint |
-| `/api/workbench/tasks*` | 无 canonical alias | 历史 Task 列表、详情、事件和控制继续由独立 legacy client 承担 |
-| `POST /api/workbench/chat` | 无直接 alias | 历史 Task 单独退役，不允许新 UI 回退调用 |
 
-迁移 adapter 不允许通过调用多个旧写接口拼出一次 canonical 写入。新 route handler 必须
+迁移 adapter 不允许通过调用多个当前写接口拼出一次 canonical 写入。新 route handler 必须
 直接调用同一 application use case，确保事务、幂等和权限只有一个实现。
+
+`/api/workbench/tasks*` 与 `/api/workbench/chat` 没有 canonical 映射。它们已退役并由
+`workbench_legacy_route_test.go` 锁定为 `404`；实现或测试不得为了迁移重新创建
+`LegacyTaskClient`、兼容 DTO、fallback 或历史 Task 聚合。
 
 ### 10.1 请求参数等价映射
 
-本期不修改旧 route 的任何参数。下表只定义未来 canonical client 的新请求如何保持当前
+本期不修改当前 route 的任何参数。下表只定义未来 canonical client 的新请求如何保持当前
 用户语义，不代表现在就调整生产请求：
 
 | 当前 Workbench 参数/行为 | canonical 表达 | 业务影响判断 |
@@ -801,13 +813,13 @@ Thread API 回滚而改变其请求或权限行为。
 | JSON string `config/context/metadata` | 对应 JSON object | 只改变 transport 类型，不改变有效配置 |
 | `message` / `message_content` | `input.messages` 中唯一当前 User Message | 仍由服务端重建历史并原子写 Message + Run |
 | `defer_start=true` + `message/config` | `coze.deferred_initial_run` | 保持创建前配置校验、服务端标题推导，以及先上传、后创建首个 Run |
-| body `idempotency_key` | `Idempotency-Key` header | 旧 route 不变；canonical 增加 payload fingerprint |
+| body `idempotency_key` | `Idempotency-Key` header | 当前 route 不变；canonical 增加 payload fingerprint |
 | 省略 `multitask_strategy`，Domain 得到 `reject` | canonical 明确或默认 `reject` | 顶层并发准入不变 |
 | 省略 `durability`，Domain 得到 `async` | canonical 明确或默认 `async` | 持久化策略不变 |
 | 省略 `on_disconnect`，Run 记录为 `cancel`，但 UI 使用不绑定 Run 的 Thread SSE | canonical Run SSE 明确发送 `continue` | 参数值变化，但保持“页面断线不取消后台 Run”的现有用户语义 |
 | 省略 `stream_mode` | canonical UI 明确选择审核后的 modes | 只改变公开事件 transport，不改变 Agent 执行 |
 | 无 `stream_resumable` | SDK 默认 `false` | 接受兼容字段，不宣称协议级 resumable；恢复依赖持久化事件 cursor |
-| 当前 `/api/threads` 可直接删除 busy Thread | canonical 返回 `409 thread_busy` | 显式安全收紧；不影响旧 route，存量调用方必须单独验收后才迁移 |
+| 当前 `/api/threads` 可直接删除 busy Thread | canonical 返回 `409 thread_busy` | 显式安全收紧；不影响当前 route，存量调用方必须单独验收后才迁移 |
 
 因此不能用“请求字段必须逐字相同”判断无影响。验收比较的是权限、原子记录、执行策略、
 断线结果、公开事件和页面状态；任何参数映射若改变这些结果，都必须停止迁移并单独评审。
@@ -836,24 +848,25 @@ listMCPRuntimeAuditEvents
 
 实现分为：
 
-- `LegacyTaskThreadClient`：继续调用当前生成 client 和手写扩展请求；
+- `TaskThreadV1Client`：继续调用当前生成 client 和手写扩展请求；
 - `CanonicalThreadClient`：只调用 `/api/workbench/threads`；
 - view-model adapter：把两种 transport DTO 归一化为当前组件已使用的类型。
 
-历史 ChatTask 的 `list/get/events/cancel/retry/chat` 保留在独立 `LegacyTaskClient`，不塞入
-`WorkbenchThreadClient`。任务列表可以继续聚合 Thread 与 legacy Task，但新 Thread 的
-任何失败都不得自动调用 legacy Task 写接口。
+前端生产源码不得出现 `LegacyTaskClient`、`sendWorkbenchChat`、`GetTask`、
+`ListTaskEvents` 或 ChatTask DTO。`canonical-frontend-contract.test.ts` 的防复活扫描必须
+覆盖 Workbench、任务详情、工作区菜单和路由入口。
 
 React 组件、hooks、store 和页面投影在第一阶段不重写成 LangGraph `useStream`。先替换
 service/client 边界，避免把接口迁移与 UI 状态管理重构绑在同一次发布中。
 
 ### 11.2 开关与流量规则
 
-- 开关按环境、空间和用户稳定分桶，默认使用 legacy client。
+- 开关按环境、空间和用户稳定分桶，默认使用当前 `TaskThreadV1Client`。
 - 读请求可在 test/staging 做 shadow compare；生产只在采样且确认无敏感泄露时比较摘要。
 - 写请求绝对禁止 shadow write、双写或失败后自动切换另一个 client 重写。
 - 一个页面同一时刻只有一个 active SSE source 驱动状态。
-- canonical 写入结果不明确时，用原幂等键查询或重放 canonical 请求，不能回退旧 route。
+- canonical 写入结果不明确时，用原幂等键查询或重放 canonical 请求，不能改走当前
+  `/api/workbench/task_threads` 再写，更不能调用已退役 ChatTask route。
 - 开关回滚只改变后续请求使用的 client；现有 Thread/Run ID 继续可读，无需数据回滚。
 
 ### 11.3 UI 功能等价门禁
@@ -1032,7 +1045,8 @@ DeerFlow 最新 `main@04b7e693` 已使用真实 Python SDK payload 验证
 - 每个 scope、限流 bucket、`Retry-After`、错误码和 trace reference 说明；
 - SSE mode、frame、heartbeat、断线、cursor、超时和代理配置说明；
 - 不支持能力表、SDK 升级策略、兼容版本矩阵和变更日志；
-- legacy route 的弃用时间线、流量查询方式和迁移示例。
+- `/api/workbench/task_threads` 与 `/api/threads` 的迁移时间线、调用方查询方式和示例；
+- 已退役 ChatTask route 必须为 `404` 的负向合同，明确不存在兼容或 fallback 用法。
 
 文档示例必须由 CI 对真实服务执行，防止示例、OpenAPI 与 handler 漂移。任何外部破坏性
 变更先发布版本说明和迁移窗口，不能依赖调用方阅读内部源码猜测。
@@ -1043,7 +1057,7 @@ DeerFlow 最新 `main@04b7e693` 已使用真实 Python SDK payload 验证
 
 | 位置 | 必须说明的内容 |
 | --- | --- |
-| route 注册 | canonical/legacy 身份、HTTP 语义和是否会创建副作用 |
+| route 注册 | canonical/current/retired 身份、HTTP 语义和是否会创建副作用；retired route 只允许负向测试，不注册 handler |
 | handler 导出函数 | 请求来源、认证前提、调用的 application use case、成功响应类型和响应 header |
 | DTO 与 mapper | SDK 字段、Coze 扩展、脱敏和状态映射依据 |
 | Thread/Run/state projection | 固定 SDK 字段来源、空值策略、公开 checkpoint/interrupt 边界和禁止回显字段 |
@@ -1053,7 +1067,7 @@ DeerFlow 最新 `main@04b7e693` 已使用真实 Python SDK payload 验证
 | SSE writer/reader | event 名、cursor、回放到实时切换、`Location`、heartbeat 和关闭原因 |
 | cancel/resume/retry | 来源 Run、是否创建新 attempt、状态竞争处理 |
 | worker claim/finalization | lease、generation、晚到结果拒绝、取消优先级和谁有权提交终态 |
-| client adapter | 旧 DTO 与 canonical DTO 的一一映射及删除条件 |
+| client adapter | 当前 TaskThread DTO 与 canonical DTO 的一一映射及来源 client 删除条件 |
 | SDK Client factory | 固定版本、API base、认证/空间/幂等 header、重试边界和不可双写规则 |
 | feature flag | 分桶维度、默认值、回滚范围和禁止双写 |
 | 鉴权与限流 | principal、scope、空间校验和 fail-closed 原因 |
@@ -1130,7 +1144,7 @@ workbench.audit.exported
 workbench.audit.write_failed
 workbench.sdk.unsupported_field
 workbench.contract.mapping_failed
-workbench.compatibility.legacy_route_used
+workbench.contract.retired_route_probe
 workbench.compatibility.shadow_mismatch
 workbench.external.capacity_rejected
 ```
@@ -1171,7 +1185,9 @@ validation_field, unsupported_field, error_code, error_class, retryable
 - `raise_error_mode` 只记录 `omitted|true|false|not_applicable`，`failure_projection`
   只记录 `none|http_error|values_error`，不记录原始错误 body；
 - 状态迁移日志由真正提交状态的层记录一次，handler 不重复伪造成功日志；
-- 兼容 route 日志包含 `client_contract=legacy_task_threads|langgraph_v1|canonical_v1`。
+- 有效 route 日志包含 `client_contract=task_threads_v1|langgraph_v1|canonical_v1`；
+  已退役 ChatTask 路径只能记录 `client_contract=retired_chat_task`、route template、状态和
+  安全关联字段，必须返回 `404`，不得触发 application/domain 调用。
 - deferred 创建使用 `submission_kind=deferred_initial_run`，后续 Message + Run 创建使用
   `submission_kind=initial_run_with_uploads`，二者用各自 trace 并通过 Thread ID 关联。
 - worker claim、lease 续约与最终化使用 `run_id + run_generation + lease_id_hash`
@@ -1265,12 +1281,13 @@ error` 或自由文本而无法定位关闭方、资源归属和状态竞争，�
 
 最低指标：
 
-- canonical 与每组 legacy route 的请求量、错误率、p50/p95/p99；
+- canonical、`task_threads_v1` 与 `langgraph_v1` 的请求量、错误率、p50/p95/p99；
+- 已退役 ChatTask 路径的探测量和非 `404` 响应数；非 `404` 必须为零；
 - Thread 创建与 Message + Run 原子提交成功率；
 - 幂等 replay、conflict 和 duplicate prevention 次数；
 - 各状态 Run 数、排队时长、执行时长和终态分布；
 - SSE active connections、首帧时延、重连、回放量、丢失和重复；
-- UI legacy/canonical client 使用比例和 shadow mismatch；
+- UI `task_threads_v1/canonical_v1` client 使用比例和 shadow mismatch；
 - API key、空间、IP 和 scope 限流；
 - 外部与 Workbench 各自的 admission、worker 和模型容量；
 - SDK 版本分布与不兼容字段错误；
@@ -1288,7 +1305,7 @@ error` 或自由文本而无法定位关闭方、资源归属和状态竞争，�
 - 固定 SDK 方法的返回值精确断言：wait/join 为 values、cancel 无 body、update-state 双字段一致；
 - wait/join 失败的 `raise_error` 四组客户端投影、安全 `__error__` 和 Run 终态一致；
 - `Location`、`Content-Location`、API base 和 callback/reconnect 行为使用真实 SDK 断言；
-- UI canonical client 与 legacy view model 的 fixture 对比；
+- UI canonical client 与当前 TaskThread view model 的 fixture 对比；
 - 所有 ID 保持字符串，时间和分页稳定；
 - unsupported field/mode 返回明确 `422`；
 - 同一 route 不因 cookie、Bearer 或 x-api-key 改变响应形状。
@@ -1296,14 +1313,14 @@ error` 或自由文本而无法定位关闭方、资源归属和状态竞争，�
 ### 17.2 一致性与副作用测试
 
 - Thread + initial Message + Run 原子创建；
-- deferred 首提在配置无效时不创建 Thread；成功时标题与 legacy 一致且不创建 Message/Run；
+- deferred 首提在配置无效时不创建 Thread；成功时标题与当前 TaskThread 合同一致且不创建 Message/Run；
 - deferred 与后续附件 Run 分别重放时不重复创建 Thread、Message 或 Run；
 - 普通 User Message + Run 原子创建；
 - 同幂等键同 payload 只产生一组记录；
 - 同键不同 payload 冲突；
 - cancel/complete、resume/resume、retry/retry 并发竞争；
 - 非 busy Thread 删除沿用现有级联边界并返回 `204`；busy Thread 在 canonical 返回
-  `409 thread_busy`，且 legacy route 的合同快照保持原行为；
+  `409 thread_busy`，且当前来源 route 的合同快照保持原行为；
 - 外部副作用确认后不因重连或 retry 重复执行；
 - client 开关往返不需要数据迁移且 ID 不变。
 
@@ -1334,12 +1351,14 @@ error` 或自由文本而无法定位关闭方、资源归属和状态竞争，�
 
 canonical 切换必须满足：
 
-- 旧接口 contract snapshot 在切换前保持不变；
-- Workbench 全功能 E2E 在 legacy 和 canonical client 下结果等价；
-- 新旧读取投影的 Thread、Run、Message、Event、Artifact 和用量一致；
+- 当前 `/api/workbench/task_threads` 与 `/api/threads` contract snapshot 在切换前保持不变；
+- Workbench 全功能 E2E 在 `TaskThreadV1Client` 和 `CanonicalThreadClient` 下结果等价；
+- 当前与 canonical 读取投影的 Thread、Run、Message、Event、Artifact 和用量一致；
+- 已退役 ChatTask 标识符、IDL、client、handler、application/domain 包和 route 不得复活，
+  `/api/workbench/tasks*` 与 `/api/workbench/chat` 继续返回 `404`；
 - duplicate Thread/Message/Run 为零；
 - SSE cursor 丢失事件为零，重复事件经 client 去重后为零；
-- canonical 业务错误率相对 legacy 基线增加不超过 `0.1` 个百分点，p95 增幅不超过
+- canonical 业务错误率相对当前 TaskThread 基线增加不超过 `0.1` 个百分点，p95 增幅不超过
   `5%`；样本不足时不得据此扩大灰度；
 - 外部压测达到配置上限时，Workbench 业务错误率增加不超过 `0.1` 个百分点，p95
   增幅不超过 `5%`，且保留容量拒绝只能发生在外部 bucket；
@@ -1351,61 +1370,64 @@ canonical 切换必须满足：
 
 ```mermaid
 flowchart LR
-    A["冻结旧接口合同"] --> B["实现 canonical route adapter"]
+    A["冻结当前来源合同与 ChatTask 404 负向合同"] --> B["实现 canonical route adapter"]
     B --> C["真实 SDK 与合同测试"]
-    C --> D["前端双 client，默认 legacy"]
+    C --> D["前端双 client，默认 TaskThreadV1Client"]
     D --> E["测试环境全量 canonical"]
     E --> F["生产空间/用户灰度"]
     F --> G["100% canonical + 回滚观察期"]
-    G --> H["确认旧流量为零"]
-    H --> I["分别删除旧接口"]
+    G --> H["确认来源流量为零"]
+    H --> I["分别删除来源接口"]
 ```
 
 ### 18.1 阶段规则
 
-1. 新 route 与旧 route 并行注册，旧行为冻结。
+1. canonical route 与当前来源 route 并行注册，来源行为冻结；ChatTask route 不注册。
 2. 新 route 直接复用 application use case，先完成后端和 SDK 测试。
-3. 前端引入双 client，但默认仍走 legacy。
+3. 前端引入 `TaskThreadV1Client/CanonicalThreadClient`，但默认仍走当前 client。
 4. test/staging 全量切换并完成全功能 E2E、SSE 和网关验证。
 5. 生产按内部账号、测试空间、5%、25%、50%、100% 灰度。
 6. 100% 后保留完整发布观察期和一键 client 回滚能力。
-7. 删除前确认网关、服务日志、指标和调用方仓库均无旧流量。
+7. 删除前确认网关、服务日志、指标和调用方仓库均无来源流量。
 
 ### 18.2 分别删除
 
-| 旧入口 | 删除前提 |
+| 来源入口 | 删除前提 |
 | --- | --- |
 | `/api/workbench/task_threads` | UI 100% canonical、完整观察期无流量、无回滚、全部扩展已迁移 |
 | `/api/threads` | 所有 SDK/外部调用方切到 `/api/workbench`、兼容测试和观察期通过 |
-| `/api/workbench/tasks*` | 历史 Task 已迁移或明确只读，列表/详情/控制无调用 |
-| `/api/workbench/chat` | 历史 Task 已迁移或明确只读、无 legacy follow-up、书签与支持流程完成 |
 
-历史 ChatTask 的数据转换、代码/表清理和长期上下文更新继续遵循
-`2026-07-26-workbench-chat-context-and-legacy-retirement-design.md`。本文额外要求在删除
-route 前完成 canonical 流量观察；两份文档门禁同时适用，不取更宽松的那一个。
+ChatTask 代码退役已完成，不属于上表。数据库旧表、`legacy_task_id` 和 metadata 旧键在
+各环境的清理继续遵循 `docs/superpowers/runbooks/workbench-chat-legacy-cleanup.md`；该运维
+迁移不得被解释为恢复代码兼容层，也不等待 canonical route 上线。
 
-删除必须清理 route、IDL、生成 client、手写 service、测试、网关规则、监控和文档；但不能
-删除仍被 canonical 共用的 application/domain/repository 和历史数据。
+删除两个来源入口时必须清理对应 route、IDL 方法、生成 client、手写 service、测试、
+网关规则、监控和文档；但不能删除仍被 canonical 共用的
+application/domain/repository 或权威 TaskThread 数据。ChatTask 负向防复活测试继续保留。
 
 ### 18.3 回滚
 
-- canonical client 灰度异常时关闭前端开关，后续请求回到 legacy client；
+- canonical client 灰度异常时关闭前端开关，后续请求回到 `TaskThreadV1Client`；
 - 已由 canonical 创建的 Thread/Run 继续通过同一数据主链读取，不执行数据回滚；
-- canonical 请求结果不明确时先按幂等键确认，禁止改走 legacy 再创建；
+- canonical 请求结果不明确时先按幂等键确认，禁止改走当前来源 route 再创建；
+- 任何回滚路径都不得调用 `/api/workbench/tasks*`、`/api/workbench/chat` 或恢复
+  ChatTask application/domain；
 - 外部入口可独立关闭，不能连带关闭 Workbench session；
 - 发生跨租户、重复副作用或敏感泄露时立即停止灰度并进入安全事件流程。
 
 ## 19. 工作量与边界判断
 
 本期只有文档改动，运行时影响为零。后续实施属于中到大型 API 边界与 UI client 迁移，
-不是 Agent loop、Eino ADK 或数据库重构。粗略工作量为 16 至 28 工程日，取决于网关、
-外部认证基础设施和现有自动化测试复用程度。
+不是 Agent loop、Eino ADK 或数据库重构。粗略工作量仍为 16 至 28 工程日，仅覆盖
+canonical route、UI client 切换和生产级外部接入，不包含已经完成的 ChatTask 代码退役；
+具体投入取决于网关、外部认证基础设施和现有自动化测试复用程度，底座可直接复用时接近
+下限。
 
 不会直接修改：
 
 - Eino ADK 执行 loop；
 - `agentthread.ApplicationService` 的领域所有权；
-- 当前生产请求参数和旧 route 默认值；
+- 当前生产请求参数和来源 route 默认值；
 - 现有数据表和历史 ID；
 - 当前 UI 组件和页面布局。
 
@@ -1431,7 +1453,8 @@ route 前完成 canonical 流量观察；两份文档门禁同时适用，不取
 7. `GET .../join` 返回最终公开 state values，`GET .../stream` 返回 SSE，二者不混用。
 8. `cancel` 成功返回 `204` 无 body；`resume` 创建新 attempt，顶层 retry 与子智能体 retry 分开。
 9. JavaScript 1.6.0、Python 0.4.2 是首期唯一明确支持的 SDK 版本。
-10. 新旧 route 并行，不重定向、不双写、不复制数据。
+10. 当前来源 route 与 canonical route 并行，不重定向、不双写、不复制数据；已退役
+    ChatTask route 保持 `404`，不参与并行。
 11. UI 先迁移 client 层，不同时重写 React 状态管理。
 12. 外部流量使用独立鉴权、scope、限流和保留容量，不影响 Workbench。
 13. 固定 SDK 的 `Location`、`Content-Location`、Thread/Run/state shape 和方法返回类型属于
@@ -1444,6 +1467,7 @@ Coze 当前实现：
 
 - `idl/workbench/task.thrift`
 - `backend/api/router/coze/custom_routes.go`
+- `backend/api/router/coze/workbench_legacy_route_test.go`
 - `backend/api/handler/coze/workbench_thread_service.go`
 - `backend/api/handler/coze/langgraph_thread_service.go`
 - `backend/api/handler/coze/langgraph_run_service.go`
@@ -1452,6 +1476,9 @@ Coze 当前实现：
 - `frontend/apps/coze-studio/src/pages/workbench/index.tsx`
 - `frontend/apps/coze-studio/src/pages/tasks/service.ts`
 - `frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts`
+- `frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts`
+- `docs/superpowers/context/workbench-chat.md`
+- `docs/superpowers/runbooks/workbench-chat-legacy-cleanup.md`
 
 DeerFlow 固定对照：
 
