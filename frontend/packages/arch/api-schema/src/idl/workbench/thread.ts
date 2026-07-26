@@ -18,7 +18,7 @@ import * as base from './../base';
 export { base };
 import { createAPI } from './../../api/config';
 export interface CanonicalRouteRequest {
-  thread_id?: string
+  thread_id: string
 }
 export interface CanonicalRunRouteRequest {
   thread_id: string,

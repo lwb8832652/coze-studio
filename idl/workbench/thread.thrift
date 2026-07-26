@@ -3,7 +3,7 @@ namespace go workbench.thread_contract
 include "../base.thrift"
 
 struct CanonicalRouteRequest {
-    1: optional i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 

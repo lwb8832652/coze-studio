@@ -26,7 +26,7 @@ import (
 )
 
 type CanonicalRouteRequest struct {
-	ThreadID *int64     `thrift:"thread_id,1,optional" json:"thread_id,string,omitempty" path:"thread_id"`
+	ThreadID int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -37,13 +37,8 @@ func NewCanonicalRouteRequest() *CanonicalRouteRequest {
 func (p *CanonicalRouteRequest) InitDefault() {
 }
 
-var CanonicalRouteRequest_ThreadID_DEFAULT int64
-
 func (p *CanonicalRouteRequest) GetThreadID() (v int64) {
-	if !p.IsSetThreadID() {
-		return CanonicalRouteRequest_ThreadID_DEFAULT
-	}
-	return *p.ThreadID
+	return p.ThreadID
 }
 
 var CanonicalRouteRequest_Base_DEFAULT *base.Base
@@ -60,10 +55,6 @@ var fieldIDToName_CanonicalRouteRequest = map[int16]string{
 	255: "Base",
 }
 
-func (p *CanonicalRouteRequest) IsSetThreadID() bool {
-	return p.ThreadID != nil
-}
-
 func (p *CanonicalRouteRequest) IsSetBase() bool {
 	return p.Base != nil
 }
@@ -72,6 +63,7 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	var fieldTypeId thrift.TType
 	var fieldId int16
+	var issetThreadID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -92,6 +84,7 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 				if err = p.ReadField1(iprot); err != nil {
 					goto ReadFieldError
 				}
+				issetThreadID = true
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -116,6 +109,10 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 		goto ReadStructEndError
 	}
 
+	if !issetThreadID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
 	return nil
 ReadStructBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
@@ -130,15 +127,17 @@ ReadFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
 ReadStructEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CanonicalRouteRequest[fieldId]))
 }
 
 func (p *CanonicalRouteRequest) ReadField1(iprot thrift.TProtocol) error {
 
-	var _field *int64
+	var _field int64
 	if v, err := iprot.ReadI64(); err != nil {
 		return err
 	} else {
-		_field = &v
+		_field = v
 	}
 	p.ThreadID = _field
 	return nil
@@ -185,16 +184,14 @@ WriteStructEndError:
 }
 
 func (p *CanonicalRouteRequest) writeField1(oprot thrift.TProtocol) (err error) {
-	if p.IsSetThreadID() {
-		if err = oprot.WriteFieldBegin("thread_id", thrift.I64, 1); err != nil {
-			goto WriteFieldBeginError
-		}
-		if err := oprot.WriteI64(*p.ThreadID); err != nil {
-			return err
-		}
-		if err = oprot.WriteFieldEnd(); err != nil {
-			goto WriteFieldEndError
-		}
+	if err = oprot.WriteFieldBegin("thread_id", thrift.I64, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.ThreadID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
 	}
 	return nil
 WriteFieldBeginError:
