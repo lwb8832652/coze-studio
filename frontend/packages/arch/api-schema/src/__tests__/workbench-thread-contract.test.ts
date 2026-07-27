@@ -355,9 +355,20 @@ describe('canonical Workbench thread generated contract', () => {
     }
   });
 
-  it('uses stable upload IDs without legacy task dependencies', () => {
-    expect(generatedSource).toContain('/uploads/:file_id');
+  it('binds stable upload IDs to the canonical upload delete method', () => {
+    const config = apiConfig('DeleteCanonicalThreadUpload');
+
+    expect({ url: config.url, method: config.method }).toEqual({
+      url: '/api/workbench/threads/:thread_id/uploads/:file_id',
+      method: 'DELETE',
+    });
+  });
+
+  it('does not import legacy task generated contracts', () => {
     expect(generatedSource).not.toContain('workbench/task');
+    expect(generatedSource).not.toMatch(
+      /^import\s+(?:[^;\n]+\s+from\s+)?['"]\.\/task['"];?\s*$/m,
+    );
   });
 
   it('freezes every canonical method, path, and request mapping', () => {

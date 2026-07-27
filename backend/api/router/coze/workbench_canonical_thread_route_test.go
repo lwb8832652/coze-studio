@@ -245,29 +245,6 @@ func requireUnreachableRoute(
 	)
 }
 
-func registeredRouteSet(h *server.Hertz) map[routeExpectation]struct{} {
-	routes := make(map[routeExpectation]struct{}, len(h.Routes()))
-	for _, route := range h.Routes() {
-		routes[routeExpectation{method: route.Method, path: route.Path}] = struct{}{}
-	}
-	return routes
-}
-
-func requireRegisteredRoutes(
-	t *testing.T,
-	registeredRoutes map[routeExpectation]struct{},
-	expectedRoutes []routeExpectation,
-) {
-	t.Helper()
-	for _, route := range expectedRoutes {
-		route := route
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			_, ok := registeredRoutes[route]
-			require.True(t, ok, "canonical route is not registered: %s %s", route.method, route.path)
-		})
-	}
-}
-
 func requireExactRouteSnapshot(
 	t *testing.T,
 	h *server.Hertz,
