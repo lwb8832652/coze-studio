@@ -36,6 +36,7 @@ EXCLUDE_PATTERNS=(
   'backend/api/model/plugin_develop/plugin_develop.go'
   'backend/api/model/workbench/task/task.go'
   'backend/api/model/workbench/thread_contract/thread.go'
+  'backend/api/model/workbench/thread_product_contract/thread_product.go'
   'backend/api/model/workflow/workflow.go'
   'backend/api/model/workflow/workflow_svc.go'
   "**/lib/**"

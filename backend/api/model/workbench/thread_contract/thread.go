@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"github.com/apache/thrift/lib/go/thrift"
 	"github.com/coze-dev/coze-studio/backend/api/model/base"
+	"github.com/coze-dev/coze-studio/backend/api/model/workbench/thread_product_contract"
 )
 
 type CanonicalRouteRequest struct {
 	ThreadID int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
+	SpaceID  int64      `thrift:"space_id,2,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -41,6 +43,10 @@ func (p *CanonicalRouteRequest) GetThreadID() (v int64) {
 	return p.ThreadID
 }
 
+func (p *CanonicalRouteRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var CanonicalRouteRequest_Base_DEFAULT *base.Base
 
 func (p *CanonicalRouteRequest) GetBase() (v *base.Base) {
@@ -52,6 +58,7 @@ func (p *CanonicalRouteRequest) GetBase() (v *base.Base) {
 
 var fieldIDToName_CanonicalRouteRequest = map[int16]string{
 	1:   "thread_id",
+	2:   "space_id",
 	255: "Base",
 }
 
@@ -64,6 +71,7 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -85,6 +93,15 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetThreadID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -111,6 +128,11 @@ func (p *CanonicalRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 2
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -142,6 +164,17 @@ func (p *CanonicalRouteRequest) ReadField1(iprot thrift.TProtocol) error {
 	p.ThreadID = _field
 	return nil
 }
+func (p *CanonicalRouteRequest) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *CanonicalRouteRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -159,6 +192,10 @@ func (p *CanonicalRouteRequest) Write(oprot thrift.TProtocol) (err error) {
 	if p != nil {
 		if err = p.writeField1(oprot); err != nil {
 			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -200,6 +237,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
 }
 
+func (p *CanonicalRouteRequest) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
 func (p *CanonicalRouteRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -230,6 +284,7 @@ func (p *CanonicalRouteRequest) String() string {
 type CanonicalRunRouteRequest struct {
 	ThreadID int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
 	RunID    int64      `thrift:"run_id,2,required" json:"run_id,string,required" path:"run_id,required"`
+	SpaceID  int64      `thrift:"space_id,3,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -248,6 +303,10 @@ func (p *CanonicalRunRouteRequest) GetRunID() (v int64) {
 	return p.RunID
 }
 
+func (p *CanonicalRunRouteRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var CanonicalRunRouteRequest_Base_DEFAULT *base.Base
 
 func (p *CanonicalRunRouteRequest) GetBase() (v *base.Base) {
@@ -260,6 +319,7 @@ func (p *CanonicalRunRouteRequest) GetBase() (v *base.Base) {
 var fieldIDToName_CanonicalRunRouteRequest = map[int16]string{
 	1:   "thread_id",
 	2:   "run_id",
+	3:   "space_id",
 	255: "Base",
 }
 
@@ -273,6 +333,7 @@ func (p *CanonicalRunRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -306,6 +367,15 @@ func (p *CanonicalRunRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 3:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -334,6 +404,11 @@ func (p *CanonicalRunRouteRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 3
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -376,6 +451,17 @@ func (p *CanonicalRunRouteRequest) ReadField2(iprot thrift.TProtocol) error {
 	p.RunID = _field
 	return nil
 }
+func (p *CanonicalRunRouteRequest) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *CanonicalRunRouteRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -397,6 +483,10 @@ func (p *CanonicalRunRouteRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField2(oprot); err != nil {
 			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -453,6 +543,23 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CanonicalRunRouteRequest) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
 }
 
 func (p *CanonicalRunRouteRequest) writeField255(oprot thrift.TProtocol) (err error) {
@@ -2639,11 +2746,534 @@ func (p *CanonicalThreadUpdateStateResult) String() string {
 
 }
 
+type CanonicalMessage struct {
+	MessageID string  `thrift:"message_id,1,required" form:"message_id,required" json:"message_id,required" query:"message_id,required"`
+	ThreadID  string  `thrift:"thread_id,2,required" form:"thread_id,required" json:"thread_id,required" query:"thread_id,required"`
+	RunID     string  `thrift:"run_id,3,required" form:"run_id,required" json:"run_id,required" query:"run_id,required"`
+	Role      string  `thrift:"role,4,required" form:"role,required" json:"role,required" query:"role,required"`
+	Content   string  `thrift:"content,5,required" form:"content,required" json:"content,required" query:"content,required"`
+	Metadata  string  `thrift:"metadata,6,required" form:"metadata,required" json:"metadata,required" query:"metadata,required"`
+	CreatedAt string  `thrift:"created_at,7,required" form:"created_at,required" json:"created_at,required" query:"created_at,required"`
+	Seq       *string `thrift:"seq,8,optional" form:"seq" json:"seq,omitempty" query:"seq"`
+}
+
+func NewCanonicalMessage() *CanonicalMessage {
+	return &CanonicalMessage{}
+}
+
+func (p *CanonicalMessage) InitDefault() {
+}
+
+func (p *CanonicalMessage) GetMessageID() (v string) {
+	return p.MessageID
+}
+
+func (p *CanonicalMessage) GetThreadID() (v string) {
+	return p.ThreadID
+}
+
+func (p *CanonicalMessage) GetRunID() (v string) {
+	return p.RunID
+}
+
+func (p *CanonicalMessage) GetRole() (v string) {
+	return p.Role
+}
+
+func (p *CanonicalMessage) GetContent() (v string) {
+	return p.Content
+}
+
+func (p *CanonicalMessage) GetMetadata() (v string) {
+	return p.Metadata
+}
+
+func (p *CanonicalMessage) GetCreatedAt() (v string) {
+	return p.CreatedAt
+}
+
+var CanonicalMessage_Seq_DEFAULT string
+
+func (p *CanonicalMessage) GetSeq() (v string) {
+	if !p.IsSetSeq() {
+		return CanonicalMessage_Seq_DEFAULT
+	}
+	return *p.Seq
+}
+
+var fieldIDToName_CanonicalMessage = map[int16]string{
+	1: "message_id",
+	2: "thread_id",
+	3: "run_id",
+	4: "role",
+	5: "content",
+	6: "metadata",
+	7: "created_at",
+	8: "seq",
+}
+
+func (p *CanonicalMessage) IsSetSeq() bool {
+	return p.Seq != nil
+}
+
+func (p *CanonicalMessage) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+	var issetMessageID bool = false
+	var issetThreadID bool = false
+	var issetRunID bool = false
+	var issetRole bool = false
+	var issetContent bool = false
+	var issetMetadata bool = false
+	var issetCreatedAt bool = false
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMessageID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 2:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField2(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetThreadID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 3:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRunID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 4:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetRole = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 5:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetContent = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 6:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetMetadata = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 7:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetCreatedAt = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 8:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField8(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	if !issetMessageID {
+		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetThreadID {
+		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRunID {
+		fieldId = 3
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetRole {
+		fieldId = 4
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetContent {
+		fieldId = 5
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetMetadata {
+		fieldId = 6
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetCreatedAt {
+		fieldId = 7
+		goto RequiredFieldNotSetError
+	}
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_CanonicalMessage[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CanonicalMessage[fieldId]))
+}
+
+func (p *CanonicalMessage) ReadField1(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.MessageID = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField2(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.ThreadID = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.RunID = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Role = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Content = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.Metadata = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.CreatedAt = _field
+	return nil
+}
+func (p *CanonicalMessage) ReadField8(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Seq = _field
+	return nil
+}
+
+func (p *CanonicalMessage) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("CanonicalMessage"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+		if err = p.writeField2(oprot); err != nil {
+			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
+			goto WriteFieldError
+		}
+		if err = p.writeField8(oprot); err != nil {
+			fieldId = 8
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("message_id", thrift.STRING, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.MessageID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField2(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("thread_id", thrift.STRING, 2); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.ThreadID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("run_id", thrift.STRING, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.RunID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("role", thrift.STRING, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Role); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("content", thrift.STRING, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Content); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("metadata", thrift.STRING, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.Metadata); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("created_at", thrift.STRING, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteString(p.CreatedAt); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) writeField8(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSeq() {
+		if err = oprot.WriteFieldBegin("seq", thrift.STRING, 8); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Seq); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 8 end error: ", p), err)
+}
+
+func (p *CanonicalMessage) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("CanonicalMessage(%+v)", *p)
+
+}
+
 type CanonicalMessagePage struct {
-	Data          string  `thrift:"data,1,required" form:"data,required" json:"data,required" query:"data,required"`
-	HasMore       bool    `thrift:"has_more,2,required" form:"has_more,required" json:"has_more,required" query:"has_more,required"`
-	NextBeforeSeq *string `thrift:"next_before_seq,3,optional" form:"next_before_seq" json:"next_before_seq,omitempty" query:"next_before_seq"`
-	NextAfterSeq  *string `thrift:"next_after_seq,4,optional" form:"next_after_seq" json:"next_after_seq,omitempty" query:"next_after_seq"`
+	Data          []*CanonicalMessage `thrift:"data,1,required,list<CanonicalMessage>" form:"data,required" json:"data,required" query:"data,required"`
+	HasMore       bool                `thrift:"has_more,2,required" form:"has_more,required" json:"has_more,required" query:"has_more,required"`
+	NextBeforeSeq *string             `thrift:"next_before_seq,3,optional" form:"next_before_seq" json:"next_before_seq,omitempty" query:"next_before_seq"`
+	NextAfterSeq  *string             `thrift:"next_after_seq,4,optional" form:"next_after_seq" json:"next_after_seq,omitempty" query:"next_after_seq"`
 }
 
 func NewCanonicalMessagePage() *CanonicalMessagePage {
@@ -2653,7 +3283,7 @@ func NewCanonicalMessagePage() *CanonicalMessagePage {
 func (p *CanonicalMessagePage) InitDefault() {
 }
 
-func (p *CanonicalMessagePage) GetData() (v string) {
+func (p *CanonicalMessagePage) GetData() (v []*CanonicalMessage) {
 	return p.Data
 }
 
@@ -2716,7 +3346,7 @@ func (p *CanonicalMessagePage) Read(iprot thrift.TProtocol) (err error) {
 
 		switch fieldId {
 		case 1:
-			if fieldTypeId == thrift.STRING {
+			if fieldTypeId == thrift.LIST {
 				if err = p.ReadField1(iprot); err != nil {
 					goto ReadFieldError
 				}
@@ -2790,12 +3420,24 @@ RequiredFieldNotSetError:
 }
 
 func (p *CanonicalMessagePage) ReadField1(iprot thrift.TProtocol) error {
-
-	var _field string
-	if v, err := iprot.ReadString(); err != nil {
+	_, size, err := iprot.ReadListBegin()
+	if err != nil {
 		return err
-	} else {
-		_field = v
+	}
+	_field := make([]*CanonicalMessage, 0, size)
+	values := make([]CanonicalMessage, size)
+	for i := 0; i < size; i++ {
+		_elem := &values[i]
+		_elem.InitDefault()
+
+		if err := _elem.Read(iprot); err != nil {
+			return err
+		}
+
+		_field = append(_field, _elem)
+	}
+	if err := iprot.ReadListEnd(); err != nil {
+		return err
 	}
 	p.Data = _field
 	return nil
@@ -2875,10 +3517,18 @@ WriteStructEndError:
 }
 
 func (p *CanonicalMessagePage) writeField1(oprot thrift.TProtocol) (err error) {
-	if err = oprot.WriteFieldBegin("data", thrift.STRING, 1); err != nil {
+	if err = oprot.WriteFieldBegin("data", thrift.LIST, 1); err != nil {
 		goto WriteFieldBeginError
 	}
-	if err := oprot.WriteString(p.Data); err != nil {
+	if err := oprot.WriteListBegin(thrift.STRUCT, len(p.Data)); err != nil {
+		return err
+	}
+	for _, v := range p.Data {
+		if err := v.Write(oprot); err != nil {
+			return err
+		}
+	}
+	if err := oprot.WriteListEnd(); err != nil {
 		return err
 	}
 	if err = oprot.WriteFieldEnd(); err != nil {
@@ -4102,6 +4752,7 @@ type CreateCanonicalThreadRequest struct {
 	TTL        *string    `thrift:"ttl,4,optional" form:"ttl" json:"ttl,omitempty"`
 	Supersteps *string    `thrift:"supersteps,5,optional" form:"supersteps" json:"supersteps,omitempty"`
 	Coze       *string    `thrift:"coze,6,optional" form:"coze" json:"coze,omitempty"`
+	SpaceID    int64      `thrift:"space_id,7,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base       *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -4166,6 +4817,10 @@ func (p *CreateCanonicalThreadRequest) GetCoze() (v string) {
 	return *p.Coze
 }
 
+func (p *CreateCanonicalThreadRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var CreateCanonicalThreadRequest_Base_DEFAULT *base.Base
 
 func (p *CreateCanonicalThreadRequest) GetBase() (v *base.Base) {
@@ -4182,6 +4837,7 @@ var fieldIDToName_CreateCanonicalThreadRequest = map[int16]string{
 	4:   "ttl",
 	5:   "supersteps",
 	6:   "coze",
+	7:   "space_id",
 	255: "Base",
 }
 
@@ -4217,6 +4873,7 @@ func (p *CreateCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) 
 
 	var fieldTypeId thrift.TType
 	var fieldId int16
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -4280,6 +4937,15 @@ func (p *CreateCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) 
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 7:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -4301,6 +4967,10 @@ func (p *CreateCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) 
 		goto ReadStructEndError
 	}
 
+	if !issetSpaceID {
+		fieldId = 7
+		goto RequiredFieldNotSetError
+	}
 	return nil
 ReadStructBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
@@ -4315,6 +4985,8 @@ ReadFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
 ReadStructEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_CreateCanonicalThreadRequest[fieldId]))
 }
 
 func (p *CreateCanonicalThreadRequest) ReadField1(iprot thrift.TProtocol) error {
@@ -4383,6 +5055,17 @@ func (p *CreateCanonicalThreadRequest) ReadField6(iprot thrift.TProtocol) error 
 	p.Coze = _field
 	return nil
 }
+func (p *CreateCanonicalThreadRequest) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *CreateCanonicalThreadRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -4420,6 +5103,10 @@ func (p *CreateCanonicalThreadRequest) Write(oprot thrift.TProtocol) (err error)
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -4558,6 +5245,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
+func (p *CreateCanonicalThreadRequest) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
 func (p *CreateCanonicalThreadRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -4596,6 +5300,7 @@ type SearchCanonicalThreadsRequest struct {
 	Values    *bool      `thrift:"values,8,optional" form:"values" json:"values,omitempty"`
 	Select    []string   `thrift:"select,9,optional,list<string>" form:"select" json:"select,omitempty"`
 	Extract   *bool      `thrift:"extract,10,optional" form:"extract" json:"extract,omitempty"`
+	SpaceID   int64      `thrift:"space_id,11,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base      *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -4696,6 +5401,10 @@ func (p *SearchCanonicalThreadsRequest) GetExtract() (v bool) {
 	return *p.Extract
 }
 
+func (p *SearchCanonicalThreadsRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var SearchCanonicalThreadsRequest_Base_DEFAULT *base.Base
 
 func (p *SearchCanonicalThreadsRequest) GetBase() (v *base.Base) {
@@ -4716,6 +5425,7 @@ var fieldIDToName_SearchCanonicalThreadsRequest = map[int16]string{
 	8:   "values",
 	9:   "select",
 	10:  "extract",
+	11:  "space_id",
 	255: "Base",
 }
 
@@ -4767,6 +5477,7 @@ func (p *SearchCanonicalThreadsRequest) Read(iprot thrift.TProtocol) (err error)
 
 	var fieldTypeId thrift.TType
 	var fieldId int16
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -4862,6 +5573,15 @@ func (p *SearchCanonicalThreadsRequest) Read(iprot thrift.TProtocol) (err error)
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 11:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField11(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -4883,6 +5603,10 @@ func (p *SearchCanonicalThreadsRequest) Read(iprot thrift.TProtocol) (err error)
 		goto ReadStructEndError
 	}
 
+	if !issetSpaceID {
+		fieldId = 11
+		goto RequiredFieldNotSetError
+	}
 	return nil
 ReadStructBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
@@ -4897,6 +5621,8 @@ ReadFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
 ReadStructEndError:
 	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+RequiredFieldNotSetError:
+	return thrift.NewTProtocolExceptionWithType(thrift.INVALID_DATA, fmt.Errorf("required field %s is not set", fieldIDToName_SearchCanonicalThreadsRequest[fieldId]))
 }
 
 func (p *SearchCanonicalThreadsRequest) ReadField1(iprot thrift.TProtocol) error {
@@ -5033,6 +5759,17 @@ func (p *SearchCanonicalThreadsRequest) ReadField10(iprot thrift.TProtocol) erro
 	p.Extract = _field
 	return nil
 }
+func (p *SearchCanonicalThreadsRequest) ReadField11(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *SearchCanonicalThreadsRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -5086,6 +5823,10 @@ func (p *SearchCanonicalThreadsRequest) Write(oprot thrift.TProtocol) (err error
 		}
 		if err = p.writeField10(oprot); err != nil {
 			fieldId = 10
+			goto WriteFieldError
+		}
+		if err = p.writeField11(oprot); err != nil {
+			fieldId = 11
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -5316,6 +6057,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 10 end error: ", p), err)
 }
 
+func (p *SearchCanonicalThreadsRequest) writeField11(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 11); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 11 end error: ", p), err)
+}
+
 func (p *SearchCanonicalThreadsRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -5346,6 +6104,7 @@ func (p *SearchCanonicalThreadsRequest) String() string {
 type GetCanonicalThreadRequest struct {
 	ThreadID int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
 	Include  []string   `thrift:"include,2,optional,list<string>" json:"include,omitempty" query:"include"`
+	SpaceID  int64      `thrift:"space_id,3,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -5369,6 +6128,10 @@ func (p *GetCanonicalThreadRequest) GetInclude() (v []string) {
 	return p.Include
 }
 
+func (p *GetCanonicalThreadRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var GetCanonicalThreadRequest_Base_DEFAULT *base.Base
 
 func (p *GetCanonicalThreadRequest) GetBase() (v *base.Base) {
@@ -5381,6 +6144,7 @@ func (p *GetCanonicalThreadRequest) GetBase() (v *base.Base) {
 var fieldIDToName_GetCanonicalThreadRequest = map[int16]string{
 	1:   "thread_id",
 	2:   "include",
+	3:   "space_id",
 	255: "Base",
 }
 
@@ -5397,6 +6161,7 @@ func (p *GetCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -5429,6 +6194,15 @@ func (p *GetCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 3:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField3(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -5452,6 +6226,11 @@ func (p *GetCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 3
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -5506,6 +6285,17 @@ func (p *GetCanonicalThreadRequest) ReadField2(iprot thrift.TProtocol) error {
 	p.Include = _field
 	return nil
 }
+func (p *GetCanonicalThreadRequest) ReadField3(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *GetCanonicalThreadRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -5527,6 +6317,10 @@ func (p *GetCanonicalThreadRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField2(oprot); err != nil {
 			fieldId = 2
+			goto WriteFieldError
+		}
+		if err = p.writeField3(oprot); err != nil {
+			fieldId = 3
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -5595,6 +6389,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 2 end error: ", p), err)
 }
 
+func (p *GetCanonicalThreadRequest) writeField3(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 3); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
+}
+
 func (p *GetCanonicalThreadRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -5627,6 +6438,7 @@ type PatchCanonicalThreadRequest struct {
 	Prefer   *string    `thrift:"prefer,2,optional" header:"Prefer" json:"prefer,omitempty"`
 	Metadata *string    `thrift:"metadata,3,optional" form:"metadata" json:"metadata,omitempty"`
 	TTL      *string    `thrift:"ttl,4,optional" form:"ttl" json:"ttl,omitempty"`
+	SpaceID  int64      `thrift:"space_id,5,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -5668,6 +6480,10 @@ func (p *PatchCanonicalThreadRequest) GetTTL() (v string) {
 	return *p.TTL
 }
 
+func (p *PatchCanonicalThreadRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var PatchCanonicalThreadRequest_Base_DEFAULT *base.Base
 
 func (p *PatchCanonicalThreadRequest) GetBase() (v *base.Base) {
@@ -5682,6 +6498,7 @@ var fieldIDToName_PatchCanonicalThreadRequest = map[int16]string{
 	2:   "prefer",
 	3:   "metadata",
 	4:   "ttl",
+	5:   "space_id",
 	255: "Base",
 }
 
@@ -5706,6 +6523,7 @@ func (p *PatchCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -5754,6 +6572,15 @@ func (p *PatchCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -5777,6 +6604,11 @@ func (p *PatchCanonicalThreadRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 5
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -5841,6 +6673,17 @@ func (p *PatchCanonicalThreadRequest) ReadField4(iprot thrift.TProtocol) error {
 	p.TTL = _field
 	return nil
 }
+func (p *PatchCanonicalThreadRequest) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *PatchCanonicalThreadRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -5870,6 +6713,10 @@ func (p *PatchCanonicalThreadRequest) Write(oprot thrift.TProtocol) (err error) 
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -5968,6 +6815,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *PatchCanonicalThreadRequest) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
 func (p *PatchCanonicalThreadRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -6000,6 +6864,7 @@ type GetCanonicalThreadStateRequest struct {
 	Checkpoint   *string    `thrift:"checkpoint,2,optional" json:"checkpoint,omitempty" query:"checkpoint"`
 	CheckpointID *string    `thrift:"checkpoint_id,3,optional" json:"checkpoint_id,omitempty" query:"checkpoint_id"`
 	Subgraphs    *bool      `thrift:"subgraphs,4,optional" json:"subgraphs,omitempty" query:"subgraphs"`
+	SpaceID      int64      `thrift:"space_id,5,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -6041,6 +6906,10 @@ func (p *GetCanonicalThreadStateRequest) GetSubgraphs() (v bool) {
 	return *p.Subgraphs
 }
 
+func (p *GetCanonicalThreadStateRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var GetCanonicalThreadStateRequest_Base_DEFAULT *base.Base
 
 func (p *GetCanonicalThreadStateRequest) GetBase() (v *base.Base) {
@@ -6055,6 +6924,7 @@ var fieldIDToName_GetCanonicalThreadStateRequest = map[int16]string{
 	2:   "checkpoint",
 	3:   "checkpoint_id",
 	4:   "subgraphs",
+	5:   "space_id",
 	255: "Base",
 }
 
@@ -6079,6 +6949,7 @@ func (p *GetCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err error
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -6127,6 +6998,15 @@ func (p *GetCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err error
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -6150,6 +7030,11 @@ func (p *GetCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err error
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 5
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -6214,6 +7099,17 @@ func (p *GetCanonicalThreadStateRequest) ReadField4(iprot thrift.TProtocol) erro
 	p.Subgraphs = _field
 	return nil
 }
+func (p *GetCanonicalThreadStateRequest) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *GetCanonicalThreadStateRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -6243,6 +7139,10 @@ func (p *GetCanonicalThreadStateRequest) Write(oprot thrift.TProtocol) (err erro
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -6341,6 +7241,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *GetCanonicalThreadStateRequest) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
 func (p *GetCanonicalThreadStateRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -6374,6 +7291,7 @@ type UpdateCanonicalThreadStateRequest struct {
 	AsNode       *string    `thrift:"as_node,3,optional" form:"as_node" json:"as_node,omitempty"`
 	Checkpoint   *string    `thrift:"checkpoint,4,optional" form:"checkpoint" json:"checkpoint,omitempty"`
 	CheckpointID *string    `thrift:"checkpoint_id,5,optional" form:"checkpoint_id" json:"checkpoint_id,omitempty"`
+	SpaceID      int64      `thrift:"space_id,6,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -6424,6 +7342,10 @@ func (p *UpdateCanonicalThreadStateRequest) GetCheckpointID() (v string) {
 	return *p.CheckpointID
 }
 
+func (p *UpdateCanonicalThreadStateRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var UpdateCanonicalThreadStateRequest_Base_DEFAULT *base.Base
 
 func (p *UpdateCanonicalThreadStateRequest) GetBase() (v *base.Base) {
@@ -6439,6 +7361,7 @@ var fieldIDToName_UpdateCanonicalThreadStateRequest = map[int16]string{
 	3:   "as_node",
 	4:   "checkpoint",
 	5:   "checkpoint_id",
+	6:   "space_id",
 	255: "Base",
 }
 
@@ -6467,6 +7390,7 @@ func (p *UpdateCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err er
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -6523,6 +7447,15 @@ func (p *UpdateCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err er
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -6546,6 +7479,11 @@ func (p *UpdateCanonicalThreadStateRequest) Read(iprot thrift.TProtocol) (err er
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 6
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -6621,6 +7559,17 @@ func (p *UpdateCanonicalThreadStateRequest) ReadField5(iprot thrift.TProtocol) e
 	p.CheckpointID = _field
 	return nil
 }
+func (p *UpdateCanonicalThreadStateRequest) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *UpdateCanonicalThreadStateRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -6654,6 +7603,10 @@ func (p *UpdateCanonicalThreadStateRequest) Write(oprot thrift.TProtocol) (err e
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -6771,6 +7724,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
+func (p *UpdateCanonicalThreadStateRequest) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
 func (p *UpdateCanonicalThreadStateRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -6804,6 +7774,7 @@ type GetCanonicalThreadHistoryRequest struct {
 	Before       *string    `thrift:"before,3,optional" json:"before,omitempty" query:"before"`
 	Checkpoint   *string    `thrift:"checkpoint,4,optional" json:"checkpoint,omitempty" query:"checkpoint"`
 	CheckpointID *string    `thrift:"checkpoint_id,5,optional" json:"checkpoint_id,omitempty" query:"checkpoint_id"`
+	SpaceID      int64      `thrift:"space_id,6,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -6854,6 +7825,10 @@ func (p *GetCanonicalThreadHistoryRequest) GetCheckpointID() (v string) {
 	return *p.CheckpointID
 }
 
+func (p *GetCanonicalThreadHistoryRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var GetCanonicalThreadHistoryRequest_Base_DEFAULT *base.Base
 
 func (p *GetCanonicalThreadHistoryRequest) GetBase() (v *base.Base) {
@@ -6869,6 +7844,7 @@ var fieldIDToName_GetCanonicalThreadHistoryRequest = map[int16]string{
 	3:   "before",
 	4:   "checkpoint",
 	5:   "checkpoint_id",
+	6:   "space_id",
 	255: "Base",
 }
 
@@ -6897,6 +7873,7 @@ func (p *GetCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err err
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -6953,6 +7930,15 @@ func (p *GetCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err err
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -6976,6 +7962,11 @@ func (p *GetCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err err
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 6
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -7051,6 +8042,17 @@ func (p *GetCanonicalThreadHistoryRequest) ReadField5(iprot thrift.TProtocol) er
 	p.CheckpointID = _field
 	return nil
 }
+func (p *GetCanonicalThreadHistoryRequest) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *GetCanonicalThreadHistoryRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -7084,6 +8086,10 @@ func (p *GetCanonicalThreadHistoryRequest) Write(oprot thrift.TProtocol) (err er
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -7201,6 +8207,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
+func (p *GetCanonicalThreadHistoryRequest) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
 func (p *GetCanonicalThreadHistoryRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -7234,6 +8257,7 @@ type PostCanonicalThreadHistoryRequest struct {
 	Before       *string    `thrift:"before,3,optional" form:"before" json:"before,omitempty"`
 	Checkpoint   *string    `thrift:"checkpoint,4,optional" form:"checkpoint" json:"checkpoint,omitempty"`
 	CheckpointID *string    `thrift:"checkpoint_id,5,optional" form:"checkpoint_id" json:"checkpoint_id,omitempty"`
+	SpaceID      int64      `thrift:"space_id,6,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -7284,6 +8308,10 @@ func (p *PostCanonicalThreadHistoryRequest) GetCheckpointID() (v string) {
 	return *p.CheckpointID
 }
 
+func (p *PostCanonicalThreadHistoryRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var PostCanonicalThreadHistoryRequest_Base_DEFAULT *base.Base
 
 func (p *PostCanonicalThreadHistoryRequest) GetBase() (v *base.Base) {
@@ -7299,6 +8327,7 @@ var fieldIDToName_PostCanonicalThreadHistoryRequest = map[int16]string{
 	3:   "before",
 	4:   "checkpoint",
 	5:   "checkpoint_id",
+	6:   "space_id",
 	255: "Base",
 }
 
@@ -7327,6 +8356,7 @@ func (p *PostCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err er
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -7383,6 +8413,15 @@ func (p *PostCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err er
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -7406,6 +8445,11 @@ func (p *PostCanonicalThreadHistoryRequest) Read(iprot thrift.TProtocol) (err er
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 6
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -7481,6 +8525,17 @@ func (p *PostCanonicalThreadHistoryRequest) ReadField5(iprot thrift.TProtocol) e
 	p.CheckpointID = _field
 	return nil
 }
+func (p *PostCanonicalThreadHistoryRequest) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *PostCanonicalThreadHistoryRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -7514,6 +8569,10 @@ func (p *PostCanonicalThreadHistoryRequest) Write(oprot thrift.TProtocol) (err e
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -7631,6 +8690,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
+func (p *PostCanonicalThreadHistoryRequest) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
 func (p *PostCanonicalThreadHistoryRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -7663,6 +8739,7 @@ type ListCanonicalThreadMessagesRequest struct {
 	BeforeSeq *string    `thrift:"before_seq,2,optional" json:"before_seq,omitempty" query:"before_seq"`
 	AfterSeq  *string    `thrift:"after_seq,3,optional" json:"after_seq,omitempty" query:"after_seq"`
 	Limit     *int32     `thrift:"limit,4,optional" json:"limit,omitempty" query:"limit"`
+	SpaceID   int64      `thrift:"space_id,5,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base      *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -7704,6 +8781,10 @@ func (p *ListCanonicalThreadMessagesRequest) GetLimit() (v int32) {
 	return *p.Limit
 }
 
+func (p *ListCanonicalThreadMessagesRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ListCanonicalThreadMessagesRequest_Base_DEFAULT *base.Base
 
 func (p *ListCanonicalThreadMessagesRequest) GetBase() (v *base.Base) {
@@ -7718,6 +8799,7 @@ var fieldIDToName_ListCanonicalThreadMessagesRequest = map[int16]string{
 	2:   "before_seq",
 	3:   "after_seq",
 	4:   "limit",
+	5:   "space_id",
 	255: "Base",
 }
 
@@ -7742,6 +8824,7 @@ func (p *ListCanonicalThreadMessagesRequest) Read(iprot thrift.TProtocol) (err e
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -7790,6 +8873,15 @@ func (p *ListCanonicalThreadMessagesRequest) Read(iprot thrift.TProtocol) (err e
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -7813,6 +8905,11 @@ func (p *ListCanonicalThreadMessagesRequest) Read(iprot thrift.TProtocol) (err e
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 5
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -7877,6 +8974,17 @@ func (p *ListCanonicalThreadMessagesRequest) ReadField4(iprot thrift.TProtocol) 
 	p.Limit = _field
 	return nil
 }
+func (p *ListCanonicalThreadMessagesRequest) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ListCanonicalThreadMessagesRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -7906,6 +9014,10 @@ func (p *ListCanonicalThreadMessagesRequest) Write(oprot thrift.TProtocol) (err 
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -8004,6 +9116,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *ListCanonicalThreadMessagesRequest) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
 func (p *ListCanonicalThreadMessagesRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -8038,6 +9167,7 @@ type ListCanonicalRunsRequest struct {
 	Offset      *int32     `thrift:"offset,4,optional" json:"offset,omitempty" query:"offset"`
 	ParentRunID *string    `thrift:"parent_run_id,5,optional" json:"parent_run_id,omitempty" query:"parent_run_id"`
 	Select      []string   `thrift:"select,6,optional,list<string>" json:"select,omitempty" query:"select"`
+	SpaceID     int64      `thrift:"space_id,7,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base        *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -8097,6 +9227,10 @@ func (p *ListCanonicalRunsRequest) GetSelect() (v []string) {
 	return p.Select
 }
 
+func (p *ListCanonicalRunsRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ListCanonicalRunsRequest_Base_DEFAULT *base.Base
 
 func (p *ListCanonicalRunsRequest) GetBase() (v *base.Base) {
@@ -8113,6 +9247,7 @@ var fieldIDToName_ListCanonicalRunsRequest = map[int16]string{
 	4:   "offset",
 	5:   "parent_run_id",
 	6:   "select",
+	7:   "space_id",
 	255: "Base",
 }
 
@@ -8145,6 +9280,7 @@ func (p *ListCanonicalRunsRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldTypeId thrift.TType
 	var fieldId int16
 	var issetThreadID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -8209,6 +9345,15 @@ func (p *ListCanonicalRunsRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 7:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -8232,6 +9377,11 @@ func (p *ListCanonicalRunsRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetThreadID {
 		fieldId = 1
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 7
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -8330,6 +9480,17 @@ func (p *ListCanonicalRunsRequest) ReadField6(iprot thrift.TProtocol) error {
 	p.Select = _field
 	return nil
 }
+func (p *ListCanonicalRunsRequest) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ListCanonicalRunsRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -8367,6 +9528,10 @@ func (p *ListCanonicalRunsRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -8511,6 +9676,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
+func (p *ListCanonicalRunsRequest) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
 func (p *ListCanonicalRunsRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -8563,6 +9745,7 @@ type CreateCanonicalRunRequest struct {
 	CheckpointID      *string    `thrift:"checkpoint_id,22,optional" form:"checkpoint_id" json:"checkpoint_id,omitempty"`
 	LangsmithTracer   *string    `thrift:"langsmith_tracer,23,optional" form:"langsmith_tracer" json:"langsmith_tracer,omitempty"`
 	IdempotencyKey    *string    `thrift:"idempotency_key,24,optional" header:"Idempotency-Key" json:"idempotency_key,omitempty"`
+	SpaceID           int64      `thrift:"space_id,25,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base              *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -8779,6 +9962,10 @@ func (p *CreateCanonicalRunRequest) GetIdempotencyKey() (v string) {
 	return *p.IdempotencyKey
 }
 
+func (p *CreateCanonicalRunRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var CreateCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *CreateCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -8813,6 +10000,7 @@ var fieldIDToName_CreateCanonicalRunRequest = map[int16]string{
 	22:  "checkpoint_id",
 	23:  "langsmith_tracer",
 	24:  "idempotency_key",
+	25:  "space_id",
 	255: "Base",
 }
 
@@ -8914,6 +10102,7 @@ func (p *CreateCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetAssistantID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -9123,6 +10312,15 @@ func (p *CreateCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 25:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField25(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -9151,6 +10349,11 @@ func (p *CreateCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetAssistantID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 25
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -9435,6 +10638,17 @@ func (p *CreateCanonicalRunRequest) ReadField24(iprot thrift.TProtocol) error {
 	p.IdempotencyKey = _field
 	return nil
 }
+func (p *CreateCanonicalRunRequest) ReadField25(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *CreateCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -9544,6 +10758,10 @@ func (p *CreateCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField24(oprot); err != nil {
 			fieldId = 24
+			goto WriteFieldError
+		}
+		if err = p.writeField25(oprot); err != nil {
+			fieldId = 25
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -10020,6 +11238,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 24 end error: ", p), err)
 }
 
+func (p *CreateCanonicalRunRequest) writeField25(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 25); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 25 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 25 end error: ", p), err)
+}
+
 func (p *CreateCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -10073,6 +11308,7 @@ type WaitCanonicalRunRequest struct {
 	LangsmithTracer   *string    `thrift:"langsmith_tracer,23,optional" form:"langsmith_tracer" json:"langsmith_tracer,omitempty"`
 	RaiseError        *bool      `thrift:"raise_error,24,optional" form:"raise_error" json:"raise_error,omitempty"`
 	IdempotencyKey    *string    `thrift:"idempotency_key,25,optional" header:"Idempotency-Key" json:"idempotency_key,omitempty"`
+	SpaceID           int64      `thrift:"space_id,26,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base              *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -10298,6 +11534,10 @@ func (p *WaitCanonicalRunRequest) GetIdempotencyKey() (v string) {
 	return *p.IdempotencyKey
 }
 
+func (p *WaitCanonicalRunRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var WaitCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *WaitCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -10333,6 +11573,7 @@ var fieldIDToName_WaitCanonicalRunRequest = map[int16]string{
 	23:  "langsmith_tracer",
 	24:  "raise_error",
 	25:  "idempotency_key",
+	26:  "space_id",
 	255: "Base",
 }
 
@@ -10438,6 +11679,7 @@ func (p *WaitCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetAssistantID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -10655,6 +11897,15 @@ func (p *WaitCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 26:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField26(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -10683,6 +11934,11 @@ func (p *WaitCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetAssistantID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 26
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -10978,6 +12234,17 @@ func (p *WaitCanonicalRunRequest) ReadField25(iprot thrift.TProtocol) error {
 	p.IdempotencyKey = _field
 	return nil
 }
+func (p *WaitCanonicalRunRequest) ReadField26(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *WaitCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -11091,6 +12358,10 @@ func (p *WaitCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField25(oprot); err != nil {
 			fieldId = 25
+			goto WriteFieldError
+		}
+		if err = p.writeField26(oprot); err != nil {
+			fieldId = 26
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -11586,6 +12857,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 25 end error: ", p), err)
 }
 
+func (p *WaitCanonicalRunRequest) writeField26(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 26); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 26 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 26 end error: ", p), err)
+}
+
 func (p *WaitCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -11620,6 +12908,7 @@ type ReconnectCanonicalRunStreamRequest struct {
 	CancelOnDisconnect *string    `thrift:"cancel_on_disconnect,4,optional" json:"cancel_on_disconnect,omitempty" query:"cancel_on_disconnect"`
 	LastEventID        *string    `thrift:"last_event_id,5,optional" header:"Last-Event-ID" json:"last_event_id,omitempty"`
 	StreamMode         []string   `thrift:"stream_mode,6,optional,list<string>" json:"stream_mode,omitempty" query:"stream_mode"`
+	SpaceID            int64      `thrift:"space_id,7,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base               *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -11674,6 +12963,10 @@ func (p *ReconnectCanonicalRunStreamRequest) GetStreamMode() (v []string) {
 	return p.StreamMode
 }
 
+func (p *ReconnectCanonicalRunStreamRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ReconnectCanonicalRunStreamRequest_Base_DEFAULT *base.Base
 
 func (p *ReconnectCanonicalRunStreamRequest) GetBase() (v *base.Base) {
@@ -11690,6 +12983,7 @@ var fieldIDToName_ReconnectCanonicalRunStreamRequest = map[int16]string{
 	4:   "cancel_on_disconnect",
 	5:   "last_event_id",
 	6:   "stream_mode",
+	7:   "space_id",
 	255: "Base",
 }
 
@@ -11719,6 +13013,7 @@ func (p *ReconnectCanonicalRunStreamRequest) Read(iprot thrift.TProtocol) (err e
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -11784,6 +13079,15 @@ func (p *ReconnectCanonicalRunStreamRequest) Read(iprot thrift.TProtocol) (err e
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 7:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField7(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -11812,6 +13116,11 @@ func (p *ReconnectCanonicalRunStreamRequest) Read(iprot thrift.TProtocol) (err e
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 7
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -11910,6 +13219,17 @@ func (p *ReconnectCanonicalRunStreamRequest) ReadField6(iprot thrift.TProtocol) 
 	p.StreamMode = _field
 	return nil
 }
+func (p *ReconnectCanonicalRunStreamRequest) ReadField7(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ReconnectCanonicalRunStreamRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -11947,6 +13267,10 @@ func (p *ReconnectCanonicalRunStreamRequest) Write(oprot thrift.TProtocol) (err 
 		}
 		if err = p.writeField6(oprot); err != nil {
 			fieldId = 6
+			goto WriteFieldError
+		}
+		if err = p.writeField7(oprot); err != nil {
+			fieldId = 7
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -12089,6 +13413,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
 }
 
+func (p *ReconnectCanonicalRunStreamRequest) writeField7(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 7); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 7 end error: ", p), err)
+}
+
 func (p *ReconnectCanonicalRunStreamRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -12120,6 +13461,7 @@ type JoinCanonicalRunRequest struct {
 	ThreadID           int64      `thrift:"thread_id,1,required" json:"thread_id,string,required" path:"thread_id,required"`
 	RunID              int64      `thrift:"run_id,2,required" json:"run_id,string,required" path:"run_id,required"`
 	CancelOnDisconnect *string    `thrift:"cancel_on_disconnect,3,optional" json:"cancel_on_disconnect,omitempty" query:"cancel_on_disconnect"`
+	SpaceID            int64      `thrift:"space_id,4,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base               *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -12147,6 +13489,10 @@ func (p *JoinCanonicalRunRequest) GetCancelOnDisconnect() (v string) {
 	return *p.CancelOnDisconnect
 }
 
+func (p *JoinCanonicalRunRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var JoinCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *JoinCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -12160,6 +13506,7 @@ var fieldIDToName_JoinCanonicalRunRequest = map[int16]string{
 	1:   "thread_id",
 	2:   "run_id",
 	3:   "cancel_on_disconnect",
+	4:   "space_id",
 	255: "Base",
 }
 
@@ -12177,6 +13524,7 @@ func (p *JoinCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -12218,6 +13566,15 @@ func (p *JoinCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 4:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField4(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -12246,6 +13603,11 @@ func (p *JoinCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 4
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -12299,6 +13661,17 @@ func (p *JoinCanonicalRunRequest) ReadField3(iprot thrift.TProtocol) error {
 	p.CancelOnDisconnect = _field
 	return nil
 }
+func (p *JoinCanonicalRunRequest) ReadField4(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *JoinCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -12324,6 +13697,10 @@ func (p *JoinCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField3(oprot); err != nil {
 			fieldId = 3
+			goto WriteFieldError
+		}
+		if err = p.writeField4(oprot); err != nil {
+			fieldId = 4
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -12401,6 +13778,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 3 end error: ", p), err)
 }
 
+func (p *JoinCanonicalRunRequest) writeField4(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 4); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
+}
+
 func (p *JoinCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -12433,6 +13827,7 @@ type CancelCanonicalRunRequest struct {
 	RunID    int64      `thrift:"run_id,2,required" json:"run_id,string,required" path:"run_id,required"`
 	Action   *string    `thrift:"action,3,optional" json:"action,omitempty" query:"action"`
 	Wait     *string    `thrift:"wait,4,optional" json:"wait,omitempty" query:"wait"`
+	SpaceID  int64      `thrift:"space_id,5,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base     *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -12469,6 +13864,10 @@ func (p *CancelCanonicalRunRequest) GetWait() (v string) {
 	return *p.Wait
 }
 
+func (p *CancelCanonicalRunRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var CancelCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *CancelCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -12483,6 +13882,7 @@ var fieldIDToName_CancelCanonicalRunRequest = map[int16]string{
 	2:   "run_id",
 	3:   "action",
 	4:   "wait",
+	5:   "space_id",
 	255: "Base",
 }
 
@@ -12504,6 +13904,7 @@ func (p *CancelCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -12553,6 +13954,15 @@ func (p *CancelCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -12581,6 +13991,11 @@ func (p *CancelCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 5
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -12645,6 +14060,17 @@ func (p *CancelCanonicalRunRequest) ReadField4(iprot thrift.TProtocol) error {
 	p.Wait = _field
 	return nil
 }
+func (p *CancelCanonicalRunRequest) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *CancelCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -12674,6 +14100,10 @@ func (p *CancelCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -12770,6 +14200,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *CancelCanonicalRunRequest) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
 func (p *CancelCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -12802,6 +14249,7 @@ type ResumeCanonicalRunRequest struct {
 	RunID       int64      `thrift:"run_id,2,required" json:"run_id,string,required" path:"run_id,required"`
 	InterruptID *string    `thrift:"interrupt_id,3,optional" form:"interrupt_id" json:"interrupt_id,omitempty"`
 	Response    *string    `thrift:"response,4,optional" form:"response" json:"response,omitempty"`
+	SpaceID     int64      `thrift:"space_id,5,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base        *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -12838,6 +14286,10 @@ func (p *ResumeCanonicalRunRequest) GetResponse() (v string) {
 	return *p.Response
 }
 
+func (p *ResumeCanonicalRunRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ResumeCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *ResumeCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -12852,6 +14304,7 @@ var fieldIDToName_ResumeCanonicalRunRequest = map[int16]string{
 	2:   "run_id",
 	3:   "interrupt_id",
 	4:   "response",
+	5:   "space_id",
 	255: "Base",
 }
 
@@ -12873,6 +14326,7 @@ func (p *ResumeCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -12922,6 +14376,15 @@ func (p *ResumeCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 5:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField5(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -12950,6 +14413,11 @@ func (p *ResumeCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 5
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -13014,6 +14482,17 @@ func (p *ResumeCanonicalRunRequest) ReadField4(iprot thrift.TProtocol) error {
 	p.Response = _field
 	return nil
 }
+func (p *ResumeCanonicalRunRequest) ReadField5(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ResumeCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -13043,6 +14522,10 @@ func (p *ResumeCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField4(oprot); err != nil {
 			fieldId = 4
+			goto WriteFieldError
+		}
+		if err = p.writeField5(oprot); err != nil {
+			fieldId = 5
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -13139,6 +14622,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 4 end error: ", p), err)
 }
 
+func (p *ResumeCanonicalRunRequest) writeField5(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 5); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
+}
+
 func (p *ResumeCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -13172,6 +14672,7 @@ type ListCanonicalRunEventsRequest struct {
 	AfterEventID *string    `thrift:"after_event_id,3,optional" json:"after_event_id,omitempty" query:"after_event_id"`
 	EventTypes   []string   `thrift:"event_types,4,optional,list<string>" json:"event_types,omitempty" query:"event_types"`
 	Limit        *int32     `thrift:"limit,5,optional" json:"limit,omitempty" query:"limit"`
+	SpaceID      int64      `thrift:"space_id,6,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base         *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -13217,6 +14718,10 @@ func (p *ListCanonicalRunEventsRequest) GetLimit() (v int32) {
 	return *p.Limit
 }
 
+func (p *ListCanonicalRunEventsRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ListCanonicalRunEventsRequest_Base_DEFAULT *base.Base
 
 func (p *ListCanonicalRunEventsRequest) GetBase() (v *base.Base) {
@@ -13232,6 +14737,7 @@ var fieldIDToName_ListCanonicalRunEventsRequest = map[int16]string{
 	3:   "after_event_id",
 	4:   "event_types",
 	5:   "limit",
+	6:   "space_id",
 	255: "Base",
 }
 
@@ -13257,6 +14763,7 @@ func (p *ListCanonicalRunEventsRequest) Read(iprot thrift.TProtocol) (err error)
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -13314,6 +14821,15 @@ func (p *ListCanonicalRunEventsRequest) Read(iprot thrift.TProtocol) (err error)
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -13342,6 +14858,11 @@ func (p *ListCanonicalRunEventsRequest) Read(iprot thrift.TProtocol) (err error)
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 6
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -13429,6 +14950,17 @@ func (p *ListCanonicalRunEventsRequest) ReadField5(iprot thrift.TProtocol) error
 	p.Limit = _field
 	return nil
 }
+func (p *ListCanonicalRunEventsRequest) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ListCanonicalRunEventsRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -13462,6 +14994,10 @@ func (p *ListCanonicalRunEventsRequest) Write(oprot thrift.TProtocol) (err error
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -13585,6 +15121,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
+func (p *ListCanonicalRunEventsRequest) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
 func (p *ListCanonicalRunEventsRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -13618,6 +15171,7 @@ type ListCanonicalRunMessagesRequest struct {
 	BeforeSeq *string    `thrift:"before_seq,3,optional" json:"before_seq,omitempty" query:"before_seq"`
 	AfterSeq  *string    `thrift:"after_seq,4,optional" json:"after_seq,omitempty" query:"after_seq"`
 	Limit     *int32     `thrift:"limit,5,optional" json:"limit,omitempty" query:"limit"`
+	SpaceID   int64      `thrift:"space_id,6,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
 	Base      *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -13663,6 +15217,10 @@ func (p *ListCanonicalRunMessagesRequest) GetLimit() (v int32) {
 	return *p.Limit
 }
 
+func (p *ListCanonicalRunMessagesRequest) GetSpaceID() (v int64) {
+	return p.SpaceID
+}
+
 var ListCanonicalRunMessagesRequest_Base_DEFAULT *base.Base
 
 func (p *ListCanonicalRunMessagesRequest) GetBase() (v *base.Base) {
@@ -13678,6 +15236,7 @@ var fieldIDToName_ListCanonicalRunMessagesRequest = map[int16]string{
 	3:   "before_seq",
 	4:   "after_seq",
 	5:   "limit",
+	6:   "space_id",
 	255: "Base",
 }
 
@@ -13703,6 +15262,7 @@ func (p *ListCanonicalRunMessagesRequest) Read(iprot thrift.TProtocol) (err erro
 	var fieldId int16
 	var issetThreadID bool = false
 	var issetRunID bool = false
+	var issetSpaceID bool = false
 
 	if _, err = iprot.ReadStructBegin(); err != nil {
 		goto ReadStructBeginError
@@ -13760,6 +15320,15 @@ func (p *ListCanonicalRunMessagesRequest) Read(iprot thrift.TProtocol) (err erro
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
+		case 6:
+			if fieldTypeId == thrift.I64 {
+				if err = p.ReadField6(iprot); err != nil {
+					goto ReadFieldError
+				}
+				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
 		case 255:
 			if fieldTypeId == thrift.STRUCT {
 				if err = p.ReadField255(iprot); err != nil {
@@ -13788,6 +15357,11 @@ func (p *ListCanonicalRunMessagesRequest) Read(iprot thrift.TProtocol) (err erro
 
 	if !issetRunID {
 		fieldId = 2
+		goto RequiredFieldNotSetError
+	}
+
+	if !issetSpaceID {
+		fieldId = 6
 		goto RequiredFieldNotSetError
 	}
 	return nil
@@ -13863,6 +15437,17 @@ func (p *ListCanonicalRunMessagesRequest) ReadField5(iprot thrift.TProtocol) err
 	p.Limit = _field
 	return nil
 }
+func (p *ListCanonicalRunMessagesRequest) ReadField6(iprot thrift.TProtocol) error {
+
+	var _field int64
+	if v, err := iprot.ReadI64(); err != nil {
+		return err
+	} else {
+		_field = v
+	}
+	p.SpaceID = _field
+	return nil
+}
 func (p *ListCanonicalRunMessagesRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -13896,6 +15481,10 @@ func (p *ListCanonicalRunMessagesRequest) Write(oprot thrift.TProtocol) (err err
 		}
 		if err = p.writeField5(oprot); err != nil {
 			fieldId = 5
+			goto WriteFieldError
+		}
+		if err = p.writeField6(oprot); err != nil {
+			fieldId = 6
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -14011,6 +15600,23 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 5 end error: ", p), err)
 }
 
+func (p *ListCanonicalRunMessagesRequest) writeField6(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("space_id", thrift.I64, 6); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := oprot.WriteI64(p.SpaceID); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 6 end error: ", p), err)
+}
+
 func (p *ListCanonicalRunMessagesRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -14080,6 +15686,58 @@ type WorkbenchCanonicalThreadService interface {
 	ListCanonicalRunEvents(ctx context.Context, req *ListCanonicalRunEventsRequest) (r *CanonicalRunEventPage, err error)
 
 	ListCanonicalRunMessages(ctx context.Context, req *ListCanonicalRunMessagesRequest) (r *CanonicalMessagePage, err error)
+
+	AppendCanonicalThreadMessage(ctx context.Context, req *thread_product_contract.AppendCanonicalThreadMessageRequest) (r *CanonicalMessage, err error)
+
+	GenerateCanonicalThreadSuggestions(ctx context.Context, req *thread_product_contract.GenerateCanonicalThreadSuggestionsRequest) (r *thread_product_contract.CanonicalSuggestionResponse, err error)
+
+	ListCanonicalThreadUploads(ctx context.Context, req *thread_product_contract.CanonicalProductThreadRequest) (r *thread_product_contract.CanonicalUploadListResponse, err error)
+
+	UploadCanonicalThreadFiles(ctx context.Context, req *thread_product_contract.UploadCanonicalThreadFilesRequest) (r *thread_product_contract.CanonicalUploadResponse, err error)
+
+	DeleteCanonicalThreadUpload(ctx context.Context, req *thread_product_contract.DeleteCanonicalThreadUploadRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error)
+
+	ListCanonicalThreadArtifacts(ctx context.Context, req *thread_product_contract.ListCanonicalThreadArtifactsRequest) (r *thread_product_contract.CanonicalArtifactListResponse, err error)
+
+	GetCanonicalThreadArtifactContent(ctx context.Context, req *thread_product_contract.GetCanonicalThreadArtifactContentRequest) (r *thread_product_contract.CanonicalArtifactContentResponse, err error)
+
+	GetCanonicalThreadArtifactSignedURL(ctx context.Context, req *thread_product_contract.GetCanonicalThreadArtifactSignedURLRequest) (r *thread_product_contract.CanonicalArtifactSignedURLResponse, err error)
+
+	DeleteCanonicalThreadArtifact(ctx context.Context, req *thread_product_contract.CanonicalArtifactRouteRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error)
+
+	RestoreCanonicalThreadArtifact(ctx context.Context, req *thread_product_contract.CanonicalArtifactRouteRequest) (r *thread_product_contract.CanonicalArtifactRestoreResponse, err error)
+
+	ReviewCanonicalThreadArtifactScan(ctx context.Context, req *thread_product_contract.ReviewCanonicalThreadArtifactScanRequest) (r *thread_product_contract.CanonicalArtifactScanReviewResponse, err error)
+
+	ListCanonicalThreadArtifactScanJobs(ctx context.Context, req *thread_product_contract.ListCanonicalThreadArtifactScanJobsRequest) (r *thread_product_contract.CanonicalArtifactScanJobListResponse, err error)
+
+	RetryCanonicalThreadArtifactScanJob(ctx context.Context, req *thread_product_contract.RetryCanonicalThreadArtifactScanJobRequest) (r *thread_product_contract.CanonicalArtifactScanJobRetryResponse, err error)
+
+	GetCanonicalThreadTokenUsage(ctx context.Context, req *thread_product_contract.GetCanonicalThreadTokenUsageRequest) (r *thread_product_contract.CanonicalTokenUsageResponse, err error)
+
+	ListCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryListResponse, err error)
+
+	UpdateCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.UpdateCanonicalThreadMemoryRequest) (r *thread_product_contract.CanonicalMemoryUpdateResponse, err error)
+
+	DeleteCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.CanonicalMemoryRouteRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error)
+
+	RestoreCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.CanonicalMemoryRouteRequest) (r *thread_product_contract.CanonicalMemoryRestoreResponse, err error)
+
+	ClearCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ClearCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryClearResponse, err error)
+
+	ExportCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ExportCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryExportResponse, err error)
+
+	ImportCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ImportCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryImportResponse, err error)
+
+	ListCanonicalThreadMemoryAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMemoryAuditEventsRequest) (r *thread_product_contract.CanonicalMemoryAuditEventListResponse, err error)
+
+	ListCanonicalThreadGuardrailAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadGuardrailAuditEventsRequest) (r *thread_product_contract.CanonicalGuardrailAuditEventListResponse, err error)
+
+	ExportCanonicalThreadGuardrailAuditEvents(ctx context.Context, req *thread_product_contract.ExportCanonicalThreadGuardrailAuditEventsRequest) (r *thread_product_contract.CanonicalGuardrailAuditExportResponse, err error)
+
+	ListCanonicalThreadMCPRuntimeAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMCPRuntimeAuditEventsRequest) (r *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse, err error)
+
+	RetryCanonicalSubagentRun(ctx context.Context, req *thread_product_contract.RetryCanonicalSubagentRunRequest) (r *CanonicalRun, err error)
 }
 
 type WorkbenchCanonicalThreadServiceClient struct {
@@ -14297,6 +15955,240 @@ func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalRunMessages(ctx con
 	}
 	return _result.GetSuccess(), nil
 }
+func (p *WorkbenchCanonicalThreadServiceClient) AppendCanonicalThreadMessage(ctx context.Context, req *thread_product_contract.AppendCanonicalThreadMessageRequest) (r *CanonicalMessage, err error) {
+	var _args WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult
+	if err = p.Client_().Call(ctx, "AppendCanonicalThreadMessage", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) GenerateCanonicalThreadSuggestions(ctx context.Context, req *thread_product_contract.GenerateCanonicalThreadSuggestionsRequest) (r *thread_product_contract.CanonicalSuggestionResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult
+	if err = p.Client_().Call(ctx, "GenerateCanonicalThreadSuggestions", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadUploads(ctx context.Context, req *thread_product_contract.CanonicalProductThreadRequest) (r *thread_product_contract.CanonicalUploadListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadUploads", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) UploadCanonicalThreadFiles(ctx context.Context, req *thread_product_contract.UploadCanonicalThreadFilesRequest) (r *thread_product_contract.CanonicalUploadResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult
+	if err = p.Client_().Call(ctx, "UploadCanonicalThreadFiles", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) DeleteCanonicalThreadUpload(ctx context.Context, req *thread_product_contract.DeleteCanonicalThreadUploadRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult
+	if err = p.Client_().Call(ctx, "DeleteCanonicalThreadUpload", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadArtifacts(ctx context.Context, req *thread_product_contract.ListCanonicalThreadArtifactsRequest) (r *thread_product_contract.CanonicalArtifactListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadArtifacts", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) GetCanonicalThreadArtifactContent(ctx context.Context, req *thread_product_contract.GetCanonicalThreadArtifactContentRequest) (r *thread_product_contract.CanonicalArtifactContentResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult
+	if err = p.Client_().Call(ctx, "GetCanonicalThreadArtifactContent", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) GetCanonicalThreadArtifactSignedURL(ctx context.Context, req *thread_product_contract.GetCanonicalThreadArtifactSignedURLRequest) (r *thread_product_contract.CanonicalArtifactSignedURLResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult
+	if err = p.Client_().Call(ctx, "GetCanonicalThreadArtifactSignedURL", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) DeleteCanonicalThreadArtifact(ctx context.Context, req *thread_product_contract.CanonicalArtifactRouteRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult
+	if err = p.Client_().Call(ctx, "DeleteCanonicalThreadArtifact", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) RestoreCanonicalThreadArtifact(ctx context.Context, req *thread_product_contract.CanonicalArtifactRouteRequest) (r *thread_product_contract.CanonicalArtifactRestoreResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult
+	if err = p.Client_().Call(ctx, "RestoreCanonicalThreadArtifact", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ReviewCanonicalThreadArtifactScan(ctx context.Context, req *thread_product_contract.ReviewCanonicalThreadArtifactScanRequest) (r *thread_product_contract.CanonicalArtifactScanReviewResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult
+	if err = p.Client_().Call(ctx, "ReviewCanonicalThreadArtifactScan", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadArtifactScanJobs(ctx context.Context, req *thread_product_contract.ListCanonicalThreadArtifactScanJobsRequest) (r *thread_product_contract.CanonicalArtifactScanJobListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadArtifactScanJobs", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) RetryCanonicalThreadArtifactScanJob(ctx context.Context, req *thread_product_contract.RetryCanonicalThreadArtifactScanJobRequest) (r *thread_product_contract.CanonicalArtifactScanJobRetryResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult
+	if err = p.Client_().Call(ctx, "RetryCanonicalThreadArtifactScanJob", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) GetCanonicalThreadTokenUsage(ctx context.Context, req *thread_product_contract.GetCanonicalThreadTokenUsageRequest) (r *thread_product_contract.CanonicalTokenUsageResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult
+	if err = p.Client_().Call(ctx, "GetCanonicalThreadTokenUsage", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadMemories", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) UpdateCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.UpdateCanonicalThreadMemoryRequest) (r *thread_product_contract.CanonicalMemoryUpdateResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult
+	if err = p.Client_().Call(ctx, "UpdateCanonicalThreadMemory", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) DeleteCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.CanonicalMemoryRouteRequest) (r *thread_product_contract.CanonicalProductEmptyResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult
+	if err = p.Client_().Call(ctx, "DeleteCanonicalThreadMemory", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) RestoreCanonicalThreadMemory(ctx context.Context, req *thread_product_contract.CanonicalMemoryRouteRequest) (r *thread_product_contract.CanonicalMemoryRestoreResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult
+	if err = p.Client_().Call(ctx, "RestoreCanonicalThreadMemory", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ClearCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ClearCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryClearResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult
+	if err = p.Client_().Call(ctx, "ClearCanonicalThreadMemories", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ExportCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ExportCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryExportResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult
+	if err = p.Client_().Call(ctx, "ExportCanonicalThreadMemories", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ImportCanonicalThreadMemories(ctx context.Context, req *thread_product_contract.ImportCanonicalThreadMemoriesRequest) (r *thread_product_contract.CanonicalMemoryImportResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult
+	if err = p.Client_().Call(ctx, "ImportCanonicalThreadMemories", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadMemoryAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMemoryAuditEventsRequest) (r *thread_product_contract.CanonicalMemoryAuditEventListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadMemoryAuditEvents", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadGuardrailAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadGuardrailAuditEventsRequest) (r *thread_product_contract.CanonicalGuardrailAuditEventListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadGuardrailAuditEvents", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ExportCanonicalThreadGuardrailAuditEvents(ctx context.Context, req *thread_product_contract.ExportCanonicalThreadGuardrailAuditEventsRequest) (r *thread_product_contract.CanonicalGuardrailAuditExportResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult
+	if err = p.Client_().Call(ctx, "ExportCanonicalThreadGuardrailAuditEvents", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) ListCanonicalThreadMCPRuntimeAuditEvents(ctx context.Context, req *thread_product_contract.ListCanonicalThreadMCPRuntimeAuditEventsRequest) (r *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse, err error) {
+	var _args WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult
+	if err = p.Client_().Call(ctx, "ListCanonicalThreadMCPRuntimeAuditEvents", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+func (p *WorkbenchCanonicalThreadServiceClient) RetryCanonicalSubagentRun(ctx context.Context, req *thread_product_contract.RetryCanonicalSubagentRunRequest) (r *CanonicalRun, err error) {
+	var _args WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs
+	_args.Req = req
+	var _result WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult
+	if err = p.Client_().Call(ctx, "RetryCanonicalSubagentRun", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
 
 type WorkbenchCanonicalThreadServiceProcessor struct {
 	processorMap map[string]thrift.TProcessorFunction
@@ -14339,6 +16231,32 @@ func NewWorkbenchCanonicalThreadServiceProcessor(handler WorkbenchCanonicalThrea
 	self.AddToProcessorMap("ResumeCanonicalRun", &workbenchCanonicalThreadServiceProcessorResumeCanonicalRun{handler: handler})
 	self.AddToProcessorMap("ListCanonicalRunEvents", &workbenchCanonicalThreadServiceProcessorListCanonicalRunEvents{handler: handler})
 	self.AddToProcessorMap("ListCanonicalRunMessages", &workbenchCanonicalThreadServiceProcessorListCanonicalRunMessages{handler: handler})
+	self.AddToProcessorMap("AppendCanonicalThreadMessage", &workbenchCanonicalThreadServiceProcessorAppendCanonicalThreadMessage{handler: handler})
+	self.AddToProcessorMap("GenerateCanonicalThreadSuggestions", &workbenchCanonicalThreadServiceProcessorGenerateCanonicalThreadSuggestions{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadUploads", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadUploads{handler: handler})
+	self.AddToProcessorMap("UploadCanonicalThreadFiles", &workbenchCanonicalThreadServiceProcessorUploadCanonicalThreadFiles{handler: handler})
+	self.AddToProcessorMap("DeleteCanonicalThreadUpload", &workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadUpload{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadArtifacts", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifacts{handler: handler})
+	self.AddToProcessorMap("GetCanonicalThreadArtifactContent", &workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactContent{handler: handler})
+	self.AddToProcessorMap("GetCanonicalThreadArtifactSignedURL", &workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactSignedURL{handler: handler})
+	self.AddToProcessorMap("DeleteCanonicalThreadArtifact", &workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadArtifact{handler: handler})
+	self.AddToProcessorMap("RestoreCanonicalThreadArtifact", &workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadArtifact{handler: handler})
+	self.AddToProcessorMap("ReviewCanonicalThreadArtifactScan", &workbenchCanonicalThreadServiceProcessorReviewCanonicalThreadArtifactScan{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadArtifactScanJobs", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifactScanJobs{handler: handler})
+	self.AddToProcessorMap("RetryCanonicalThreadArtifactScanJob", &workbenchCanonicalThreadServiceProcessorRetryCanonicalThreadArtifactScanJob{handler: handler})
+	self.AddToProcessorMap("GetCanonicalThreadTokenUsage", &workbenchCanonicalThreadServiceProcessorGetCanonicalThreadTokenUsage{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadMemories", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemories{handler: handler})
+	self.AddToProcessorMap("UpdateCanonicalThreadMemory", &workbenchCanonicalThreadServiceProcessorUpdateCanonicalThreadMemory{handler: handler})
+	self.AddToProcessorMap("DeleteCanonicalThreadMemory", &workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadMemory{handler: handler})
+	self.AddToProcessorMap("RestoreCanonicalThreadMemory", &workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadMemory{handler: handler})
+	self.AddToProcessorMap("ClearCanonicalThreadMemories", &workbenchCanonicalThreadServiceProcessorClearCanonicalThreadMemories{handler: handler})
+	self.AddToProcessorMap("ExportCanonicalThreadMemories", &workbenchCanonicalThreadServiceProcessorExportCanonicalThreadMemories{handler: handler})
+	self.AddToProcessorMap("ImportCanonicalThreadMemories", &workbenchCanonicalThreadServiceProcessorImportCanonicalThreadMemories{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadMemoryAuditEvents", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemoryAuditEvents{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadGuardrailAuditEvents", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadGuardrailAuditEvents{handler: handler})
+	self.AddToProcessorMap("ExportCanonicalThreadGuardrailAuditEvents", &workbenchCanonicalThreadServiceProcessorExportCanonicalThreadGuardrailAuditEvents{handler: handler})
+	self.AddToProcessorMap("ListCanonicalThreadMCPRuntimeAuditEvents", &workbenchCanonicalThreadServiceProcessorListCanonicalThreadMCPRuntimeAuditEvents{handler: handler})
+	self.AddToProcessorMap("RetryCanonicalSubagentRun", &workbenchCanonicalThreadServiceProcessorRetryCanonicalSubagentRun{handler: handler})
 	return self
 }
 func (p *WorkbenchCanonicalThreadServiceProcessor) Process(ctx context.Context, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
@@ -15350,6 +17268,1254 @@ func (p *workbenchCanonicalThreadServiceProcessorListCanonicalRunMessages) Proce
 		result.Success = retval
 	}
 	if err2 = oprot.WriteMessageBegin("ListCanonicalRunMessages", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorAppendCanonicalThreadMessage struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorAppendCanonicalThreadMessage) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("AppendCanonicalThreadMessage", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult{}
+	var retval *CanonicalMessage
+	if retval, err2 = p.handler.AppendCanonicalThreadMessage(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing AppendCanonicalThreadMessage: "+err2.Error())
+		oprot.WriteMessageBegin("AppendCanonicalThreadMessage", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("AppendCanonicalThreadMessage", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorGenerateCanonicalThreadSuggestions struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorGenerateCanonicalThreadSuggestions) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("GenerateCanonicalThreadSuggestions", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult{}
+	var retval *thread_product_contract.CanonicalSuggestionResponse
+	if retval, err2 = p.handler.GenerateCanonicalThreadSuggestions(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing GenerateCanonicalThreadSuggestions: "+err2.Error())
+		oprot.WriteMessageBegin("GenerateCanonicalThreadSuggestions", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("GenerateCanonicalThreadSuggestions", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadUploads struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadUploads) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadUploads", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult{}
+	var retval *thread_product_contract.CanonicalUploadListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadUploads(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadUploads: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadUploads", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadUploads", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorUploadCanonicalThreadFiles struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorUploadCanonicalThreadFiles) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("UploadCanonicalThreadFiles", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult{}
+	var retval *thread_product_contract.CanonicalUploadResponse
+	if retval, err2 = p.handler.UploadCanonicalThreadFiles(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing UploadCanonicalThreadFiles: "+err2.Error())
+		oprot.WriteMessageBegin("UploadCanonicalThreadFiles", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("UploadCanonicalThreadFiles", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadUpload struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadUpload) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadUpload", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult{}
+	var retval *thread_product_contract.CanonicalProductEmptyResponse
+	if retval, err2 = p.handler.DeleteCanonicalThreadUpload(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing DeleteCanonicalThreadUpload: "+err2.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadUpload", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("DeleteCanonicalThreadUpload", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifacts struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifacts) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadArtifacts", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult{}
+	var retval *thread_product_contract.CanonicalArtifactListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadArtifacts(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadArtifacts: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadArtifacts", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadArtifacts", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactContent struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactContent) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadArtifactContent", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult{}
+	var retval *thread_product_contract.CanonicalArtifactContentResponse
+	if retval, err2 = p.handler.GetCanonicalThreadArtifactContent(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing GetCanonicalThreadArtifactContent: "+err2.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadArtifactContent", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("GetCanonicalThreadArtifactContent", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactSignedURL struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorGetCanonicalThreadArtifactSignedURL) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadArtifactSignedURL", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult{}
+	var retval *thread_product_contract.CanonicalArtifactSignedURLResponse
+	if retval, err2 = p.handler.GetCanonicalThreadArtifactSignedURL(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing GetCanonicalThreadArtifactSignedURL: "+err2.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadArtifactSignedURL", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("GetCanonicalThreadArtifactSignedURL", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadArtifact struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadArtifact) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadArtifact", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult{}
+	var retval *thread_product_contract.CanonicalProductEmptyResponse
+	if retval, err2 = p.handler.DeleteCanonicalThreadArtifact(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing DeleteCanonicalThreadArtifact: "+err2.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadArtifact", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("DeleteCanonicalThreadArtifact", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadArtifact struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadArtifact) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("RestoreCanonicalThreadArtifact", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult{}
+	var retval *thread_product_contract.CanonicalArtifactRestoreResponse
+	if retval, err2 = p.handler.RestoreCanonicalThreadArtifact(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing RestoreCanonicalThreadArtifact: "+err2.Error())
+		oprot.WriteMessageBegin("RestoreCanonicalThreadArtifact", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("RestoreCanonicalThreadArtifact", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorReviewCanonicalThreadArtifactScan struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorReviewCanonicalThreadArtifactScan) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ReviewCanonicalThreadArtifactScan", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult{}
+	var retval *thread_product_contract.CanonicalArtifactScanReviewResponse
+	if retval, err2 = p.handler.ReviewCanonicalThreadArtifactScan(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ReviewCanonicalThreadArtifactScan: "+err2.Error())
+		oprot.WriteMessageBegin("ReviewCanonicalThreadArtifactScan", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ReviewCanonicalThreadArtifactScan", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifactScanJobs struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadArtifactScanJobs) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadArtifactScanJobs", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult{}
+	var retval *thread_product_contract.CanonicalArtifactScanJobListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadArtifactScanJobs(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadArtifactScanJobs: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadArtifactScanJobs", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadArtifactScanJobs", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorRetryCanonicalThreadArtifactScanJob struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorRetryCanonicalThreadArtifactScanJob) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("RetryCanonicalThreadArtifactScanJob", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult{}
+	var retval *thread_product_contract.CanonicalArtifactScanJobRetryResponse
+	if retval, err2 = p.handler.RetryCanonicalThreadArtifactScanJob(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing RetryCanonicalThreadArtifactScanJob: "+err2.Error())
+		oprot.WriteMessageBegin("RetryCanonicalThreadArtifactScanJob", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("RetryCanonicalThreadArtifactScanJob", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorGetCanonicalThreadTokenUsage struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorGetCanonicalThreadTokenUsage) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadTokenUsage", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult{}
+	var retval *thread_product_contract.CanonicalTokenUsageResponse
+	if retval, err2 = p.handler.GetCanonicalThreadTokenUsage(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing GetCanonicalThreadTokenUsage: "+err2.Error())
+		oprot.WriteMessageBegin("GetCanonicalThreadTokenUsage", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("GetCanonicalThreadTokenUsage", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemories struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemories) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult{}
+	var retval *thread_product_contract.CanonicalMemoryListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadMemories(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadMemories: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadMemories", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorUpdateCanonicalThreadMemory struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorUpdateCanonicalThreadMemory) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("UpdateCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult{}
+	var retval *thread_product_contract.CanonicalMemoryUpdateResponse
+	if retval, err2 = p.handler.UpdateCanonicalThreadMemory(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing UpdateCanonicalThreadMemory: "+err2.Error())
+		oprot.WriteMessageBegin("UpdateCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("UpdateCanonicalThreadMemory", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadMemory struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorDeleteCanonicalThreadMemory) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult{}
+	var retval *thread_product_contract.CanonicalProductEmptyResponse
+	if retval, err2 = p.handler.DeleteCanonicalThreadMemory(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing DeleteCanonicalThreadMemory: "+err2.Error())
+		oprot.WriteMessageBegin("DeleteCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("DeleteCanonicalThreadMemory", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadMemory struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorRestoreCanonicalThreadMemory) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("RestoreCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult{}
+	var retval *thread_product_contract.CanonicalMemoryRestoreResponse
+	if retval, err2 = p.handler.RestoreCanonicalThreadMemory(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing RestoreCanonicalThreadMemory: "+err2.Error())
+		oprot.WriteMessageBegin("RestoreCanonicalThreadMemory", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("RestoreCanonicalThreadMemory", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorClearCanonicalThreadMemories struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorClearCanonicalThreadMemories) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ClearCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult{}
+	var retval *thread_product_contract.CanonicalMemoryClearResponse
+	if retval, err2 = p.handler.ClearCanonicalThreadMemories(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ClearCanonicalThreadMemories: "+err2.Error())
+		oprot.WriteMessageBegin("ClearCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ClearCanonicalThreadMemories", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorExportCanonicalThreadMemories struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorExportCanonicalThreadMemories) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ExportCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult{}
+	var retval *thread_product_contract.CanonicalMemoryExportResponse
+	if retval, err2 = p.handler.ExportCanonicalThreadMemories(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ExportCanonicalThreadMemories: "+err2.Error())
+		oprot.WriteMessageBegin("ExportCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ExportCanonicalThreadMemories", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorImportCanonicalThreadMemories struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorImportCanonicalThreadMemories) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ImportCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult{}
+	var retval *thread_product_contract.CanonicalMemoryImportResponse
+	if retval, err2 = p.handler.ImportCanonicalThreadMemories(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ImportCanonicalThreadMemories: "+err2.Error())
+		oprot.WriteMessageBegin("ImportCanonicalThreadMemories", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ImportCanonicalThreadMemories", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemoryAuditEvents struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadMemoryAuditEvents) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMemoryAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult{}
+	var retval *thread_product_contract.CanonicalMemoryAuditEventListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadMemoryAuditEvents(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadMemoryAuditEvents: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMemoryAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadMemoryAuditEvents", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadGuardrailAuditEvents struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadGuardrailAuditEvents) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadGuardrailAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult{}
+	var retval *thread_product_contract.CanonicalGuardrailAuditEventListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadGuardrailAuditEvents(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadGuardrailAuditEvents: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadGuardrailAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadGuardrailAuditEvents", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorExportCanonicalThreadGuardrailAuditEvents struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorExportCanonicalThreadGuardrailAuditEvents) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ExportCanonicalThreadGuardrailAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult{}
+	var retval *thread_product_contract.CanonicalGuardrailAuditExportResponse
+	if retval, err2 = p.handler.ExportCanonicalThreadGuardrailAuditEvents(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ExportCanonicalThreadGuardrailAuditEvents: "+err2.Error())
+		oprot.WriteMessageBegin("ExportCanonicalThreadGuardrailAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ExportCanonicalThreadGuardrailAuditEvents", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorListCanonicalThreadMCPRuntimeAuditEvents struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorListCanonicalThreadMCPRuntimeAuditEvents) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMCPRuntimeAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult{}
+	var retval *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse
+	if retval, err2 = p.handler.ListCanonicalThreadMCPRuntimeAuditEvents(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing ListCanonicalThreadMCPRuntimeAuditEvents: "+err2.Error())
+		oprot.WriteMessageBegin("ListCanonicalThreadMCPRuntimeAuditEvents", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("ListCanonicalThreadMCPRuntimeAuditEvents", thrift.REPLY, seqId); err2 != nil {
+		err = err2
+	}
+	if err2 = result.Write(oprot); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.WriteMessageEnd(); err == nil && err2 != nil {
+		err = err2
+	}
+	if err2 = oprot.Flush(ctx); err == nil && err2 != nil {
+		err = err2
+	}
+	if err != nil {
+		return
+	}
+	return true, err
+}
+
+type workbenchCanonicalThreadServiceProcessorRetryCanonicalSubagentRun struct {
+	handler WorkbenchCanonicalThreadService
+}
+
+func (p *workbenchCanonicalThreadServiceProcessorRetryCanonicalSubagentRun) Process(ctx context.Context, seqId int32, iprot, oprot thrift.TProtocol) (success bool, err thrift.TException) {
+	args := WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs{}
+	if err = args.Read(iprot); err != nil {
+		iprot.ReadMessageEnd()
+		x := thrift.NewTApplicationException(thrift.PROTOCOL_ERROR, err.Error())
+		oprot.WriteMessageBegin("RetryCanonicalSubagentRun", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return false, err
+	}
+
+	iprot.ReadMessageEnd()
+	var err2 error
+	result := WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult{}
+	var retval *CanonicalRun
+	if retval, err2 = p.handler.RetryCanonicalSubagentRun(ctx, args.Req); err2 != nil {
+		x := thrift.NewTApplicationException(thrift.INTERNAL_ERROR, "Internal error processing RetryCanonicalSubagentRun: "+err2.Error())
+		oprot.WriteMessageBegin("RetryCanonicalSubagentRun", thrift.EXCEPTION, seqId)
+		x.Write(oprot)
+		oprot.WriteMessageEnd()
+		oprot.Flush(ctx)
+		return true, err2
+	} else {
+		result.Success = retval
+	}
+	if err2 = oprot.WriteMessageBegin("RetryCanonicalSubagentRun", thrift.REPLY, seqId); err2 != nil {
 		err = err2
 	}
 	if err2 = result.Write(oprot); err == nil && err2 != nil {
@@ -21538,5 +24704,7649 @@ func (p *WorkbenchCanonicalThreadServiceListCanonicalRunMessagesResult) String()
 		return "<nil>"
 	}
 	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalRunMessagesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs struct {
+	Req *thread_product_contract.AppendCanonicalThreadMessageRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs() *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs {
+	return &WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs_Req_DEFAULT *thread_product_contract.AppendCanonicalThreadMessageRequest
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) GetReq() (v *thread_product_contract.AppendCanonicalThreadMessageRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewAppendCanonicalThreadMessageRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("AppendCanonicalThreadMessage_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult struct {
+	Success *CanonicalMessage `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult() *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult {
+	return &WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult_Success_DEFAULT *CanonicalMessage
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) GetSuccess() (v *CanonicalMessage) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewCanonicalMessage()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("AppendCanonicalThreadMessage_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceAppendCanonicalThreadMessageResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs struct {
+	Req *thread_product_contract.GenerateCanonicalThreadSuggestionsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs() *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs {
+	return &WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs_Req_DEFAULT *thread_product_contract.GenerateCanonicalThreadSuggestionsRequest
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) GetReq() (v *thread_product_contract.GenerateCanonicalThreadSuggestionsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewGenerateCanonicalThreadSuggestionsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GenerateCanonicalThreadSuggestions_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult struct {
+	Success *thread_product_contract.CanonicalSuggestionResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult() *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult {
+	return &WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult_Success_DEFAULT *thread_product_contract.CanonicalSuggestionResponse
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) GetSuccess() (v *thread_product_contract.CanonicalSuggestionResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalSuggestionResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GenerateCanonicalThreadSuggestions_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGenerateCanonicalThreadSuggestionsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs struct {
+	Req *thread_product_contract.CanonicalProductThreadRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs_Req_DEFAULT *thread_product_contract.CanonicalProductThreadRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) GetReq() (v *thread_product_contract.CanonicalProductThreadRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalProductThreadRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadUploads_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult struct {
+	Success *thread_product_contract.CanonicalUploadListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult_Success_DEFAULT *thread_product_contract.CanonicalUploadListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) GetSuccess() (v *thread_product_contract.CanonicalUploadListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalUploadListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadUploads_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadUploadsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs struct {
+	Req *thread_product_contract.UploadCanonicalThreadFilesRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs() *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs {
+	return &WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs_Req_DEFAULT *thread_product_contract.UploadCanonicalThreadFilesRequest
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) GetReq() (v *thread_product_contract.UploadCanonicalThreadFilesRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewUploadCanonicalThreadFilesRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UploadCanonicalThreadFiles_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult struct {
+	Success *thread_product_contract.CanonicalUploadResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult() *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult {
+	return &WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult_Success_DEFAULT *thread_product_contract.CanonicalUploadResponse
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) GetSuccess() (v *thread_product_contract.CanonicalUploadResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalUploadResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UploadCanonicalThreadFiles_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceUploadCanonicalThreadFilesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs struct {
+	Req *thread_product_contract.DeleteCanonicalThreadUploadRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs_Req_DEFAULT *thread_product_contract.DeleteCanonicalThreadUploadRequest
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) GetReq() (v *thread_product_contract.DeleteCanonicalThreadUploadRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewDeleteCanonicalThreadUploadRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadUpload_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult struct {
+	Success *thread_product_contract.CanonicalProductEmptyResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult_Success_DEFAULT *thread_product_contract.CanonicalProductEmptyResponse
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) GetSuccess() (v *thread_product_contract.CanonicalProductEmptyResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalProductEmptyResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadUpload_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadUploadResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadArtifactsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadArtifactsRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadArtifactsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadArtifactsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadArtifacts_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult struct {
+	Success *thread_product_contract.CanonicalArtifactListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadArtifacts_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs struct {
+	Req *thread_product_contract.GetCanonicalThreadArtifactContentRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs() *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs_Req_DEFAULT *thread_product_contract.GetCanonicalThreadArtifactContentRequest
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) GetReq() (v *thread_product_contract.GetCanonicalThreadArtifactContentRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewGetCanonicalThreadArtifactContentRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadArtifactContent_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult struct {
+	Success *thread_product_contract.CanonicalArtifactContentResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult() *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactContentResponse
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactContentResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactContentResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadArtifactContent_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactContentResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs struct {
+	Req *thread_product_contract.GetCanonicalThreadArtifactSignedURLRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs() *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs_Req_DEFAULT *thread_product_contract.GetCanonicalThreadArtifactSignedURLRequest
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) GetReq() (v *thread_product_contract.GetCanonicalThreadArtifactSignedURLRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewGetCanonicalThreadArtifactSignedURLRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadArtifactSignedURL_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult struct {
+	Success *thread_product_contract.CanonicalArtifactSignedURLResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult() *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactSignedURLResponse
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactSignedURLResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactSignedURLResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadArtifactSignedURL_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadArtifactSignedURLResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs struct {
+	Req *thread_product_contract.CanonicalArtifactRouteRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs_Req_DEFAULT *thread_product_contract.CanonicalArtifactRouteRequest
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) GetReq() (v *thread_product_contract.CanonicalArtifactRouteRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactRouteRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadArtifact_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult struct {
+	Success *thread_product_contract.CanonicalProductEmptyResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult_Success_DEFAULT *thread_product_contract.CanonicalProductEmptyResponse
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) GetSuccess() (v *thread_product_contract.CanonicalProductEmptyResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalProductEmptyResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadArtifact_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadArtifactResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs struct {
+	Req *thread_product_contract.CanonicalArtifactRouteRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs() *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs {
+	return &WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs_Req_DEFAULT *thread_product_contract.CanonicalArtifactRouteRequest
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) GetReq() (v *thread_product_contract.CanonicalArtifactRouteRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactRouteRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RestoreCanonicalThreadArtifact_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult struct {
+	Success *thread_product_contract.CanonicalArtifactRestoreResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult() *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult {
+	return &WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactRestoreResponse
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactRestoreResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactRestoreResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RestoreCanonicalThreadArtifact_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRestoreCanonicalThreadArtifactResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs struct {
+	Req *thread_product_contract.ReviewCanonicalThreadArtifactScanRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs() *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs {
+	return &WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs_Req_DEFAULT *thread_product_contract.ReviewCanonicalThreadArtifactScanRequest
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) GetReq() (v *thread_product_contract.ReviewCanonicalThreadArtifactScanRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewReviewCanonicalThreadArtifactScanRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ReviewCanonicalThreadArtifactScan_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult struct {
+	Success *thread_product_contract.CanonicalArtifactScanReviewResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult() *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult {
+	return &WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactScanReviewResponse
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactScanReviewResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactScanReviewResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ReviewCanonicalThreadArtifactScan_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceReviewCanonicalThreadArtifactScanResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadArtifactScanJobsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadArtifactScanJobsRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadArtifactScanJobsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadArtifactScanJobsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadArtifactScanJobs_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult struct {
+	Success *thread_product_contract.CanonicalArtifactScanJobListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactScanJobListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactScanJobListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactScanJobListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadArtifactScanJobs_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadArtifactScanJobsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs struct {
+	Req *thread_product_contract.RetryCanonicalThreadArtifactScanJobRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs() *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs {
+	return &WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs_Req_DEFAULT *thread_product_contract.RetryCanonicalThreadArtifactScanJobRequest
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) GetReq() (v *thread_product_contract.RetryCanonicalThreadArtifactScanJobRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewRetryCanonicalThreadArtifactScanJobRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RetryCanonicalThreadArtifactScanJob_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult struct {
+	Success *thread_product_contract.CanonicalArtifactScanJobRetryResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult() *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult {
+	return &WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult_Success_DEFAULT *thread_product_contract.CanonicalArtifactScanJobRetryResponse
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) GetSuccess() (v *thread_product_contract.CanonicalArtifactScanJobRetryResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalArtifactScanJobRetryResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RetryCanonicalThreadArtifactScanJob_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRetryCanonicalThreadArtifactScanJobResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs struct {
+	Req *thread_product_contract.GetCanonicalThreadTokenUsageRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs() *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs_Req_DEFAULT *thread_product_contract.GetCanonicalThreadTokenUsageRequest
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) GetReq() (v *thread_product_contract.GetCanonicalThreadTokenUsageRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewGetCanonicalThreadTokenUsageRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadTokenUsage_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult struct {
+	Success *thread_product_contract.CanonicalTokenUsageResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult() *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult {
+	return &WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult_Success_DEFAULT *thread_product_contract.CanonicalTokenUsageResponse
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) GetSuccess() (v *thread_product_contract.CanonicalTokenUsageResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalTokenUsageResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("GetCanonicalThreadTokenUsage_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceGetCanonicalThreadTokenUsageResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadMemoriesRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadMemoriesRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadMemoriesRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadMemoriesRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMemories_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult struct {
+	Success *thread_product_contract.CanonicalMemoryListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMemories_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMemoriesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs struct {
+	Req *thread_product_contract.UpdateCanonicalThreadMemoryRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs() *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs {
+	return &WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs_Req_DEFAULT *thread_product_contract.UpdateCanonicalThreadMemoryRequest
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) GetReq() (v *thread_product_contract.UpdateCanonicalThreadMemoryRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewUpdateCanonicalThreadMemoryRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateCanonicalThreadMemory_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult struct {
+	Success *thread_product_contract.CanonicalMemoryUpdateResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult() *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult {
+	return &WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryUpdateResponse
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryUpdateResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryUpdateResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("UpdateCanonicalThreadMemory_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceUpdateCanonicalThreadMemoryResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs struct {
+	Req *thread_product_contract.CanonicalMemoryRouteRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs_Req_DEFAULT *thread_product_contract.CanonicalMemoryRouteRequest
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) GetReq() (v *thread_product_contract.CanonicalMemoryRouteRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryRouteRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadMemory_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult struct {
+	Success *thread_product_contract.CanonicalProductEmptyResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult() *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult {
+	return &WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult_Success_DEFAULT *thread_product_contract.CanonicalProductEmptyResponse
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) GetSuccess() (v *thread_product_contract.CanonicalProductEmptyResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalProductEmptyResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("DeleteCanonicalThreadMemory_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceDeleteCanonicalThreadMemoryResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs struct {
+	Req *thread_product_contract.CanonicalMemoryRouteRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs() *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs {
+	return &WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs_Req_DEFAULT *thread_product_contract.CanonicalMemoryRouteRequest
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) GetReq() (v *thread_product_contract.CanonicalMemoryRouteRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryRouteRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RestoreCanonicalThreadMemory_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult struct {
+	Success *thread_product_contract.CanonicalMemoryRestoreResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult() *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult {
+	return &WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryRestoreResponse
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryRestoreResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryRestoreResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RestoreCanonicalThreadMemory_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRestoreCanonicalThreadMemoryResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs struct {
+	Req *thread_product_contract.ClearCanonicalThreadMemoriesRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs() *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs {
+	return &WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs_Req_DEFAULT *thread_product_contract.ClearCanonicalThreadMemoriesRequest
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) GetReq() (v *thread_product_contract.ClearCanonicalThreadMemoriesRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewClearCanonicalThreadMemoriesRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ClearCanonicalThreadMemories_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult struct {
+	Success *thread_product_contract.CanonicalMemoryClearResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult() *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult {
+	return &WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryClearResponse
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryClearResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryClearResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ClearCanonicalThreadMemories_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceClearCanonicalThreadMemoriesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs struct {
+	Req *thread_product_contract.ExportCanonicalThreadMemoriesRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs() *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs {
+	return &WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs_Req_DEFAULT *thread_product_contract.ExportCanonicalThreadMemoriesRequest
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) GetReq() (v *thread_product_contract.ExportCanonicalThreadMemoriesRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewExportCanonicalThreadMemoriesRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ExportCanonicalThreadMemories_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult struct {
+	Success *thread_product_contract.CanonicalMemoryExportResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult() *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult {
+	return &WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryExportResponse
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryExportResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryExportResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ExportCanonicalThreadMemories_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceExportCanonicalThreadMemoriesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs struct {
+	Req *thread_product_contract.ImportCanonicalThreadMemoriesRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs() *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs {
+	return &WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs_Req_DEFAULT *thread_product_contract.ImportCanonicalThreadMemoriesRequest
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) GetReq() (v *thread_product_contract.ImportCanonicalThreadMemoriesRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewImportCanonicalThreadMemoriesRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ImportCanonicalThreadMemories_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult struct {
+	Success *thread_product_contract.CanonicalMemoryImportResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult() *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult {
+	return &WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryImportResponse
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryImportResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryImportResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ImportCanonicalThreadMemories_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceImportCanonicalThreadMemoriesResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadMemoryAuditEventsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadMemoryAuditEventsRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadMemoryAuditEventsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadMemoryAuditEventsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMemoryAuditEvents_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult struct {
+	Success *thread_product_contract.CanonicalMemoryAuditEventListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult_Success_DEFAULT *thread_product_contract.CanonicalMemoryAuditEventListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) GetSuccess() (v *thread_product_contract.CanonicalMemoryAuditEventListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMemoryAuditEventListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMemoryAuditEvents_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMemoryAuditEventsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadGuardrailAuditEventsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadGuardrailAuditEventsRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadGuardrailAuditEventsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadGuardrailAuditEventsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadGuardrailAuditEvents_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult struct {
+	Success *thread_product_contract.CanonicalGuardrailAuditEventListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult_Success_DEFAULT *thread_product_contract.CanonicalGuardrailAuditEventListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) GetSuccess() (v *thread_product_contract.CanonicalGuardrailAuditEventListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalGuardrailAuditEventListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadGuardrailAuditEvents_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadGuardrailAuditEventsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs struct {
+	Req *thread_product_contract.ExportCanonicalThreadGuardrailAuditEventsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs() *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs {
+	return &WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs_Req_DEFAULT *thread_product_contract.ExportCanonicalThreadGuardrailAuditEventsRequest
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) GetReq() (v *thread_product_contract.ExportCanonicalThreadGuardrailAuditEventsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewExportCanonicalThreadGuardrailAuditEventsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ExportCanonicalThreadGuardrailAuditEvents_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult struct {
+	Success *thread_product_contract.CanonicalGuardrailAuditExportResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult() *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult {
+	return &WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult_Success_DEFAULT *thread_product_contract.CanonicalGuardrailAuditExportResponse
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) GetSuccess() (v *thread_product_contract.CanonicalGuardrailAuditExportResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalGuardrailAuditExportResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ExportCanonicalThreadGuardrailAuditEvents_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceExportCanonicalThreadGuardrailAuditEventsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs struct {
+	Req *thread_product_contract.ListCanonicalThreadMCPRuntimeAuditEventsRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs() *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs_Req_DEFAULT *thread_product_contract.ListCanonicalThreadMCPRuntimeAuditEventsRequest
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) GetReq() (v *thread_product_contract.ListCanonicalThreadMCPRuntimeAuditEventsRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewListCanonicalThreadMCPRuntimeAuditEventsRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMCPRuntimeAuditEvents_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult struct {
+	Success *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult() *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult {
+	return &WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult_Success_DEFAULT *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) GetSuccess() (v *thread_product_contract.CanonicalMCPRuntimeAuditEventListResponse) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewCanonicalMCPRuntimeAuditEventListResponse()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("ListCanonicalThreadMCPRuntimeAuditEvents_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceListCanonicalThreadMCPRuntimeAuditEventsResult(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs struct {
+	Req *thread_product_contract.RetryCanonicalSubagentRunRequest `thrift:"req,1"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs() *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs {
+	return &WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs_Req_DEFAULT *thread_product_contract.RetryCanonicalSubagentRunRequest
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) GetReq() (v *thread_product_contract.RetryCanonicalSubagentRunRequest) {
+	if !p.IsSetReq() {
+		return WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs = map[int16]string{
+	1: "req",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 1:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField1(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) ReadField1(iprot thrift.TProtocol) error {
+	_field := thread_product_contract.NewRetryCanonicalSubagentRunRequest()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Req = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RetryCanonicalSubagentRun_args"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField1(oprot); err != nil {
+			fieldId = 1
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) writeField1(oprot thrift.TProtocol) (err error) {
+	if err = oprot.WriteFieldBegin("req", thrift.STRUCT, 1); err != nil {
+		goto WriteFieldBeginError
+	}
+	if err := p.Req.Write(oprot); err != nil {
+		return err
+	}
+	if err = oprot.WriteFieldEnd(); err != nil {
+		goto WriteFieldEndError
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 1 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunArgs(%+v)", *p)
+
+}
+
+type WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult struct {
+	Success *CanonicalRun `thrift:"success,0,optional"`
+}
+
+func NewWorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult() *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult {
+	return &WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult{}
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) InitDefault() {
+}
+
+var WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult_Success_DEFAULT *CanonicalRun
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) GetSuccess() (v *CanonicalRun) {
+	if !p.IsSetSuccess() {
+		return WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult_Success_DEFAULT
+	}
+	return p.Success
+}
+
+var fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult = map[int16]string{
+	0: "success",
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) Read(iprot thrift.TProtocol) (err error) {
+
+	var fieldTypeId thrift.TType
+	var fieldId int16
+
+	if _, err = iprot.ReadStructBegin(); err != nil {
+		goto ReadStructBeginError
+	}
+
+	for {
+		_, fieldTypeId, fieldId, err = iprot.ReadFieldBegin()
+		if err != nil {
+			goto ReadFieldBeginError
+		}
+		if fieldTypeId == thrift.STOP {
+			break
+		}
+
+		switch fieldId {
+		case 0:
+			if fieldTypeId == thrift.STRUCT {
+				if err = p.ReadField0(iprot); err != nil {
+					goto ReadFieldError
+				}
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		default:
+			if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		}
+		if err = iprot.ReadFieldEnd(); err != nil {
+			goto ReadFieldEndError
+		}
+	}
+	if err = iprot.ReadStructEnd(); err != nil {
+		goto ReadStructEndError
+	}
+
+	return nil
+ReadStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct begin error: ", p), err)
+ReadFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d begin error: ", p, fieldId), err)
+ReadFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T read field %d '%s' error: ", p, fieldId, fieldIDToName_WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult[fieldId]), err)
+SkipFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T field %d skip type %d error: ", p, fieldId, fieldTypeId), err)
+
+ReadFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read field end error", p), err)
+ReadStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T read struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) ReadField0(iprot thrift.TProtocol) error {
+	_field := NewCanonicalRun()
+	if err := _field.Read(iprot); err != nil {
+		return err
+	}
+	p.Success = _field
+	return nil
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) Write(oprot thrift.TProtocol) (err error) {
+	var fieldId int16
+	if err = oprot.WriteStructBegin("RetryCanonicalSubagentRun_result"); err != nil {
+		goto WriteStructBeginError
+	}
+	if p != nil {
+		if err = p.writeField0(oprot); err != nil {
+			fieldId = 0
+			goto WriteFieldError
+		}
+	}
+	if err = oprot.WriteFieldStop(); err != nil {
+		goto WriteFieldStopError
+	}
+	if err = oprot.WriteStructEnd(); err != nil {
+		goto WriteStructEndError
+	}
+	return nil
+WriteStructBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct begin error: ", p), err)
+WriteFieldError:
+	return thrift.PrependError(fmt.Sprintf("%T write field %d error: ", p, fieldId), err)
+WriteFieldStopError:
+	return thrift.PrependError(fmt.Sprintf("%T write field stop error: ", p), err)
+WriteStructEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write struct end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) writeField0(oprot thrift.TProtocol) (err error) {
+	if p.IsSetSuccess() {
+		if err = oprot.WriteFieldBegin("success", thrift.STRUCT, 0); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := p.Success.Write(oprot); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 0 end error: ", p), err)
+}
+
+func (p *WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("WorkbenchCanonicalThreadServiceRetryCanonicalSubagentRunResult(%+v)", *p)
 
 }

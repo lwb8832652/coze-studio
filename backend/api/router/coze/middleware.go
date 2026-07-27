@@ -2026,6 +2026,86 @@ func _deletecanonicalthreadMw() []app.HandlerFunc {
 	return nil
 }
 
+func _artifact_scan_jobsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadartifactscanjobsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _job_idMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _retrycanonicalthreadartifactscanjobMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _artifacts0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadartifactsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _artifact_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletecanonicalthreadartifactMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _restorecanonicalthreadartifactMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _reviewcanonicalthreadartifactscanMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _artifact_id1Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadartifactcontentMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadartifactsignedurlMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _guardrail_audit_events0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadguardrailauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportcanonicalthreadguardrailauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _getcanonicalthreadhistoryMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -2036,7 +2116,67 @@ func _postcanonicalthreadhistoryMw() []app.HandlerFunc {
 	return nil
 }
 
+func _listcanonicalthreadmcpruntimeauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _memories0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreadmemoryauditeventsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _clearcanonicalthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _exportcanonicalthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _importcanonicalthreadmemoriesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _memory_id0Mw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletecanonicalthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _restorecanonicalthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _updatecanonicalthreadmemoryMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _listcanonicalthreadmessagesMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _appendcanonicalthreadmessageMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
@@ -2086,6 +2226,11 @@ func _resumecanonicalrunMw() []app.HandlerFunc {
 	return nil
 }
 
+func _retrycanonicalsubagentrunMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
 func _reconnectcanonicalrunstreamMw() []app.HandlerFunc {
 	// your code...
 	return nil
@@ -2112,6 +2257,36 @@ func _getcanonicalthreadstateMw() []app.HandlerFunc {
 }
 
 func _updatecanonicalthreadstateMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _generatecanonicalthreadsuggestionsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _getcanonicalthreadtokenusageMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _uploadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _listcanonicalthreaduploadsMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _deletecanonicalthreaduploadMw() []app.HandlerFunc {
+	// your code...
+	return nil
+}
+
+func _uploadcanonicalthreadfilesMw() []app.HandlerFunc {
 	// your code...
 	return nil
 }
