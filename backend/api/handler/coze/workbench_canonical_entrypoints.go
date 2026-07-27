@@ -36,16 +36,6 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// StreamCanonicalRun exposes the gated canonical run-create stream contract.
-func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ReconnectCanonicalRunStream exposes the gated canonical reconnect contract.
-func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // AppendCanonicalThreadMessage exposes the gated canonical message append contract.
 func AppendCanonicalThreadMessage(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)

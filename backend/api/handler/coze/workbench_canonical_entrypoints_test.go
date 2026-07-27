@@ -44,10 +44,10 @@ var canonicalEntrypoints = []struct {
 	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages, false},
 	{"ListCanonicalRuns", ListCanonicalRuns, false},
 	{"CreateCanonicalRun", CreateCanonicalRun, false},
-	{"StreamCanonicalRun", StreamCanonicalRun, true},
+	{"StreamCanonicalRun", StreamCanonicalRun, false},
 	{"WaitCanonicalRun", WaitCanonicalRun, false},
 	{"GetCanonicalRun", GetCanonicalRun, false},
-	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, true},
+	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, false},
 	{"JoinCanonicalRun", JoinCanonicalRun, false},
 	{"CancelCanonicalRun", CancelCanonicalRun, false},
 	{"ResumeCanonicalRun", ResumeCanonicalRun, false},
@@ -113,7 +113,7 @@ func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 			stubCount++
 		}
 	}
-	require.Equal(t, 28, stubCount)
+	require.Equal(t, 26, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {
