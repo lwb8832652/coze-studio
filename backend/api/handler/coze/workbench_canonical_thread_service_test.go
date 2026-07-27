@@ -177,6 +177,132 @@ func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
 	require.Contains(t, string(initialJSON), `"run_id":"`)
 }
 
+func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testing.T) {
+	tests := map[string]string{
+		"internal assistant selector": `{
+			"assistant_id":"default",
+			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]}
+		}`,
+		"protected config identity": `{
+			"assistant_id":"agent",
+			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
+			"config":{"user_id":"forged"}
+		}`,
+		"sensitive context credential": `{
+			"assistant_id":"agent",
+			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
+			"context":{"api_key":"TOP_SECRET"}
+		}`,
+		"protected run metadata": `{
+			"assistant_id":"agent",
+			"input":{"messages":[{"role":"user","content":"请生成产品发布方案"}]},
+			"metadata":{"_idempotency":"forged"}
+		}`,
+	}
+
+	for name, initialRun := range tests {
+		name, initialRun := name, initialRun
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(canonicalAPIEnabledEnv, "true")
+			h := authenticatedAgentThreadTestServer()
+			h.POST("/api/workbench/threads", CreateCanonicalThread)
+			installAgentThreadTestService(t)
+
+			body := `{"metadata":{},"coze":{"initial_run":` + initialRun + `}}`
+			response := performCanonicalThreadJSONRequest(
+				t, h, http.MethodPost, "/api/workbench/threads", body,
+			)
+
+			require.Equal(t, http.StatusUnprocessableEntity, response.Code)
+			require.Zero(t, canonicalThreadCount(t, 1001, 2))
+		})
+	}
+}
+
+func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	values := make([]string, 65)
+	for index := range values {
+		values[index] = strings.Repeat("x", 16<<10)
+	}
+	body, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{},
+		"coze": map[string]any{
+			"initial_run": map[string]any{
+				"assistant_id": "agent",
+				"input": map[string]any{"messages": []map[string]any{{
+					"role": "user", "content": "oversized request",
+				}}},
+				"config": map[string]any{"payload": values},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(body), canonicalMaxRequestBytes)
+
+	response := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", string(body),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "request_too_large", public.Code)
+	require.Zero(t, canonicalThreadCount(t, 1001, 2))
+}
+
+func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	h := authenticatedAgentThreadTestServer()
+	h.POST("/api/workbench/threads", CreateCanonicalThread)
+	installAgentThreadTestService(t)
+
+	const idempotencyKey = "canonical-initial-thread-1"
+	firstBody := `{
+		"metadata":{"title":"首提任务"},
+		"coze":{"initial_run":{
+			"assistant_id":"agent",
+			"input":{"messages":[{"role":"user","content":"first payload"}]},
+			"config":{"runtime":"eino_adk","mode":"pro"},
+			"metadata":{"source":"workbench_home"}
+		}}
+	}`
+	requestHeader := ut.Header{Key: "Idempotency-Key", Value: idempotencyKey}
+	first := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, requestHeader,
+	)
+	require.Equal(t, http.StatusOK, first.Code)
+	var firstThread canonicalThread
+	require.NoError(t, json.Unmarshal(first.Result().Body(), &firstThread))
+
+	replayed := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", firstBody, requestHeader,
+	)
+	require.Equal(t, http.StatusOK, replayed.Code)
+	var replayedThread canonicalThread
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &replayedThread))
+	require.Equal(t, firstThread.ThreadID, replayedThread.ThreadID)
+
+	changedBody := strings.Replace(firstBody, "first payload", "changed payload", 1)
+	conflict := performCanonicalThreadJSONRequest(
+		t, h, http.MethodPost, "/api/workbench/threads", changedBody, requestHeader,
+	)
+	require.Equal(t, http.StatusConflict, conflict.Code)
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(conflict.Result().Body(), &public))
+	require.Equal(t, "idempotency_conflict", public.Code)
+	require.Equal(t, 1, canonicalThreadCount(t, 1001, 2))
+
+	messages, runs := canonicalThreadMessagesAndRuns(t, mustCanonicalTestID(t, firstThread.ThreadID))
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 1)
+	require.Equal(t, "first payload", messages[0].Content)
+	require.Contains(t, runs[0].Metadata, `"_idempotency"`)
+}
+
 func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
@@ -682,15 +808,20 @@ func performCanonicalThreadJSONRequest(
 	method string,
 	path string,
 	body string,
+	headers ...ut.Header,
 ) *ut.ResponseRecorder {
 	t.Helper()
+	requestHeaders := []ut.Header{
+		{Key: "Content-Type", Value: "application/json"},
+		{Key: canonicalSpaceIDHeader, Value: "1001"},
+	}
+	requestHeaders = append(requestHeaders, headers...)
 	return ut.PerformRequest(
 		h.Engine,
 		method,
 		path,
 		&ut.Body{Body: strings.NewReader(body), Len: len(body)},
-		ut.Header{Key: "Content-Type", Value: "application/json"},
-		ut.Header{Key: canonicalSpaceIDHeader, Value: "1001"},
+		requestHeaders...,
 	)
 }
 
@@ -720,10 +851,20 @@ func createCanonicalTestThread(
 	title string,
 	metadata string,
 ) *appagentthread.ThreadSummary {
+	return createCanonicalTestThreadForUser(t, spaceID, 2, title, metadata)
+}
+
+func createCanonicalTestThreadForUser(
+	t *testing.T,
+	spaceID int64,
+	userID int64,
+	title string,
+	metadata string,
+) *appagentthread.ThreadSummary {
 	t.Helper()
 	response, err := appagentthread.SVC.CreateThread(context.Background(), &appagentthread.CreateThreadRequest{
 		SpaceID:  spaceID,
-		UserID:   2,
+		UserID:   userID,
 		Title:    title,
 		Source:   appagentthread.ThreadSourceAPI,
 		Metadata: metadata,

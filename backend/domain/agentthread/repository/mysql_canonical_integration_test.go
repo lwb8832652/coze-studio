@@ -335,6 +335,72 @@ func TestCanonicalMySQLIntegrationGuardedRunAndDeleteAreLinearizable(t *testing.
 	}
 }
 
+func TestCanonicalMySQLIntegrationConcurrentInitialThreadReplayValidatesFingerprint(t *testing.T) {
+	db, repoA, repoB := canonicalMySQLIntegrationRepositories(t)
+	metadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.thread.initial_run.v1",
+		strings.Repeat("a", 64),
+	)
+	require.NoError(t, err)
+	first := canonicalThreadBundleFixture(10, 100, 101, "principal-key", metadata, "same payload")
+	second := canonicalThreadBundleFixture(20, 200, 201, "principal-key", metadata, "same payload")
+
+	type outcome struct {
+		result *CreateThreadBundleResult
+		err    error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := make(chan struct{})
+	outcomes := make(chan outcome, 2)
+	create := func(repo *threadRepository, fixture canonicalThreadBundleTestFixture) {
+		<-start
+		result, createErr := repo.CreateThreadBundle(ctx, CreateThreadBundleRequest{
+			Thread: fixture.Thread, Run: fixture.Run, Message: fixture.Message,
+			ValidateIdempotencyReplay: true,
+		})
+		outcomes <- outcome{result: result, err: createErr}
+	}
+	go create(repoA, first)
+	go create(repoB, second)
+	close(start)
+	firstOutcome := <-outcomes
+	secondOutcome := <-outcomes
+
+	require.NoError(t, firstOutcome.err)
+	require.NoError(t, secondOutcome.err)
+	require.NotNil(t, firstOutcome.result)
+	require.NotNil(t, secondOutcome.result)
+	require.Equal(t, firstOutcome.result.Thread.ID, secondOutcome.result.Thread.ID)
+	require.Equal(t, firstOutcome.result.Run.ID, secondOutcome.result.Run.ID)
+	require.Equal(t, firstOutcome.result.Message.ID, secondOutcome.result.Message.ID)
+	require.NotEqual(t, firstOutcome.result.Created, secondOutcome.result.Created)
+
+	for model, where := range map[any]string{
+		&threadPO{}:  "space_id = 1",
+		&runPO{}:     "space_id = 1 AND idempotency_key = 'principal-key'",
+		&messagePO{}: "thread_id IN (10, 20)",
+	} {
+		var count int64
+		require.NoError(t, db.Model(model).Where(where).Count(&count).Error)
+		require.Equal(t, int64(1), count)
+	}
+
+	changedMetadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.thread.initial_run.v1",
+		strings.Repeat("b", 64),
+	)
+	require.NoError(t, err)
+	changed := canonicalThreadBundleFixture(30, 300, 301, "principal-key", changedMetadata, "changed")
+	_, err = repoA.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: changed.Thread, Run: changed.Run, Message: changed.Message,
+		ValidateIdempotencyReplay: true,
+	})
+	require.ErrorIs(t, err, ErrRunIdempotencyConflict)
+}
+
 func canonicalMySQLIntegrationRepositories(
 	t *testing.T,
 ) (*gorm.DB, *threadRepository, *threadRepository) {
@@ -412,7 +478,7 @@ func createCanonicalMySQLIntegrationSchema(db *gorm.DB) error {
 
 func canonicalMySQLCascadeTableDDL() []string {
 	return []string{
-		"CREATE TABLE `agent_thread_messages` (`id` BIGINT NOT NULL PRIMARY KEY, `thread_id` BIGINT NOT NULL, `run_id` BIGINT NOT NULL) ENGINE=InnoDB",
+		"CREATE TABLE `agent_thread_messages` (`id` BIGINT NOT NULL PRIMARY KEY, `thread_id` BIGINT NOT NULL, `run_id` BIGINT NOT NULL, `role` VARCHAR(32) NOT NULL, `content` LONGTEXT NOT NULL, `metadata` JSON NULL, `created_at` BIGINT NOT NULL, KEY `idx_agent_thread_messages_thread_created` (`thread_id`, `created_at`), KEY `idx_agent_thread_messages_run_created` (`run_id`, `created_at`)) ENGINE=InnoDB",
 		"CREATE TABLE `agent_run_events` (`id` BIGINT NOT NULL PRIMARY KEY, `thread_id` BIGINT NOT NULL, `run_id` BIGINT NOT NULL) ENGINE=InnoDB",
 		"CREATE TABLE `agent_thread_memories` (`id` BIGINT NOT NULL PRIMARY KEY, `thread_id` BIGINT NOT NULL, `run_id` BIGINT NOT NULL) ENGINE=InnoDB",
 		"CREATE TABLE `agent_memory_audit_events` (`id` BIGINT NOT NULL PRIMARY KEY, `thread_id` BIGINT NOT NULL, `run_id` BIGINT NOT NULL) ENGINE=InnoDB",

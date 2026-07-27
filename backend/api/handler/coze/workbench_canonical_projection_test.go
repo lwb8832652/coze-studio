@@ -125,6 +125,18 @@ func TestCanonicalRunProjectionRedactsInternalFields(t *testing.T) {
 	require.NotContains(t, encoded, canonicalProjectionSensitiveSentinel)
 }
 
+func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *testing.T) {
+	for _, internal := range []string{"default", "singleagent:42", ""} {
+		projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+			RunID: 3001, ThreadID: 2001, AssistantID: internal,
+			Status: appagentthread.RunStatusPending,
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, canonicalPublicAssistantID, projected.AssistantID)
+	}
+}
+
 func TestCanonicalThreadStatusProjection(t *testing.T) {
 	safeInterrupts := map[string]any{
 		"interrupt-1": []map[string]any{{

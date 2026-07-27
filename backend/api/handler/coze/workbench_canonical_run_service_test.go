@@ -219,7 +219,7 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 	require.Len(t, runs, 1)
 	require.Equal(t, runID, messages[0].RunID)
 	require.Equal(t, "analyze the current turn", messages[0].Content)
-	require.Equal(t, "canonical-create-1", runs[0].IdempotencyKey)
+	require.Equal(t, canonicalScopedIdempotencyKey(2, "canonical-create-1"), runs[0].IdempotencyKey)
 	require.Contains(t, runs[0].Input, "analyze the current turn")
 	require.Contains(t, runs[0].Metadata, `"_message":{"message_id":`)
 	require.Contains(t, runs[0].Metadata, `"_idempotency":`)
@@ -275,6 +275,34 @@ func TestCanonicalCreateRunRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.
 	require.NoError(t, json.Unmarshal(conflict.Result().Body(), &public))
 	require.Equal(t, "idempotency_conflict", public.Code)
 	require.Empty(t, canonicalRunsForThread(t, secondThread.ThreadID))
+}
+
+func TestCanonicalCreateRunScopesIdempotencyBySessionPrincipal(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	firstThread := createCanonicalTestThreadForUser(t, 1001, 2, "first principal", `{}`)
+	secondThread := createCanonicalTestThreadForUser(t, 1001, 3, "second principal", `{}`)
+	firstServer := canonicalRunTestServerForUser(2)
+	secondServer := canonicalRunTestServerForUser(3)
+	body := `{
+		"assistant_id":"agent",
+		"input":{"messages":[{"role":"user","content":"principal-scoped request"}]}
+	}`
+	header := ut.Header{Key: "Idempotency-Key", Value: "shared-client-key"}
+
+	first := performCanonicalRunJSONRequest(
+		t, firstServer, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", firstThread.ThreadID), body, header,
+	)
+	second := performCanonicalRunJSONRequest(
+		t, secondServer, http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs", secondThread.ThreadID), body, header,
+	)
+
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, http.StatusOK, second.Code)
+	require.Len(t, canonicalRunsForThread(t, firstThread.ThreadID), 1)
+	require.Len(t, canonicalRunsForThread(t, secondThread.ThreadID), 1)
 }
 
 func TestCanonicalListRunsUsesExactPaginationAndRejectsSelect(t *testing.T) {
@@ -609,7 +637,8 @@ func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) 
 	conflicting, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
 		ThreadID: otherThread.ThreadID, AssistantID: "agent", Input: `{"uploaded_files":[]}`,
 		MessageContent: "other turn", StreamMode: `["values"]`, MultitaskStrategy: "reject",
-		OnDisconnect: "cancel", Durability: "async", IdempotencyKey: "canonical-resume-conflict",
+		OnDisconnect: "cancel", Durability: "async",
+		IdempotencyKey: canonicalScopedIdempotencyKey(2, "canonical-resume-conflict"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, conflicting)
@@ -1376,7 +1405,12 @@ func TestCanonicalRunHandlersFailClosedWhenApplicationServiceIsUnavailable(t *te
 }
 
 func canonicalRunTestServer() *server.Hertz {
-	h := authenticatedAgentThreadTestServer()
+	return canonicalRunTestServerForUser(2)
+}
+
+func canonicalRunTestServerForUser(userID int64) *server.Hertz {
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(userID))
 	h.GET("/api/workbench/threads/:thread_id/runs", ListCanonicalRuns)
 	h.POST("/api/workbench/threads/:thread_id/runs", CreateCanonicalRun)
 	h.POST("/api/workbench/threads/:thread_id/runs/wait", WaitCanonicalRun)
@@ -1515,7 +1549,7 @@ func assertCanonicalResumePersistence(t *testing.T, sourceRunID int64, idempoten
 	require.Len(t, response.Runs, 2)
 	resumed := response.Runs[0]
 	require.Equal(t, appagentthread.RunStatusQueued, resumed.Status)
-	require.Equal(t, idempotencyKey, resumed.IdempotencyKey)
+	require.Equal(t, canonicalScopedIdempotencyKey(2, idempotencyKey), resumed.IdempotencyKey)
 	require.Contains(t, resumed.Command, `"interrupt-1"`)
 	require.NotEqual(t, sourceRunID, resumed.RunID)
 }

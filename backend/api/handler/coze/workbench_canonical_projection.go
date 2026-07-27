@@ -270,7 +270,7 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	return &canonicalRun{
 		RunID:             strconv.FormatInt(public.RunID, 10),
 		ThreadID:          strconv.FormatInt(public.ThreadID, 10),
-		AssistantID:       public.AssistantID,
+		AssistantID:       canonicalPublicAssistantID,
 		Status:            status,
 		CreatedAt:         canonicalTime(public.CreatedAt),
 		UpdatedAt:         canonicalTime(public.UpdatedAt),

@@ -81,6 +81,14 @@ type canonicalInitialThreadRun struct {
 	Metadata    map[string]any              `json:"metadata,omitempty"`
 }
 
+type canonicalValidatedInitialThreadRun struct {
+	AssistantID    string
+	MessageContent string
+	Config         string
+	Context        string
+	Metadata       string
+}
+
 type canonicalInitialThreadInput struct {
 	Messages []canonicalInitialThreadMessage `json:"messages"`
 }
@@ -147,6 +155,10 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
+	if public := canonicalRequestBodyLimit(c, "Thread"); public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 
 	var req canonicalCreateThreadRequest
 	if public := decodeCanonicalJSON(c, &req); public != nil {
@@ -206,41 +218,47 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 		} else {
 			requestLog.SubmissionKind = "initial_run"
 		}
-		message, public := canonicalInitialThreadMessageContent(initialRun)
+		validatedRun, public := validateCanonicalInitialThreadRun(initialRun)
 		if public != nil {
 			writeCanonicalError(ctx, c, public.status, *public)
 			return
 		}
-		configJSON, err := canonicalMarshalOptionalObject(initialRun.Config)
-		if err != nil {
-			writeCanonicalApplicationError(ctx, c, fmt.Errorf("marshal canonical initial config: %w", err))
+		clientIdempotencyKey, public := canonicalRunIdempotencyKey(c)
+		if public != nil {
+			writeCanonicalError(ctx, c, public.status, *public)
 			return
 		}
-		contextJSON, err := canonicalMarshalOptionalObject(initialRun.Context)
-		if err != nil {
-			writeCanonicalApplicationError(ctx, c, fmt.Errorf("marshal canonical initial context: %w", err))
-			return
-		}
-		runMetadata := canonicalSanitizeMap(initialRun.Metadata)
-		runMetadataJSON, err := canonicalMarshalOptionalObject(runMetadata)
-		if err != nil {
-			writeCanonicalApplicationError(ctx, c, fmt.Errorf("marshal canonical initial metadata: %w", err))
-			return
+		requestLog.IdempotencyKeyHash = canonicalLogHash(clientIdempotencyKey)
+		persistedIdempotencyKey := ""
+		idempotencyOperation := ""
+		idempotencyFingerprint := ""
+		if !deferred && clientIdempotencyKey != "" {
+			persistedIdempotencyKey, public = canonicalPrincipalScopedIdempotencyKey(ctx, clientIdempotencyKey)
+			if public != nil {
+				writeCanonicalError(ctx, c, public.status, *public)
+				return
+			}
+			idempotencyOperation = canonicalRunIdempotencyOperationInitial
+			idempotencyFingerprint = canonicalInitialThreadRunRequestFingerprint(
+				string(metadataJSON), title, threadSource, validatedRun,
+			)
 		}
 
 		response, err := appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{
-			SpaceID:        spaceID,
-			UserID:         workbenchViewerIDFromCtx(ctx),
-			Message:        message,
-			Title:          title,
-			ThreadMetadata: string(metadataJSON),
-			ThreadSource:   threadSource,
-			DeferStart:     deferred,
-			AssistantID:    strings.TrimSpace(initialRun.AssistantID),
-			Config:         configJSON,
-			Context:        contextJSON,
-			Metadata:       runMetadataJSON,
-			IdempotencyKey: strings.TrimSpace(string(c.GetHeader("Idempotency-Key"))),
+			SpaceID:                spaceID,
+			UserID:                 workbenchViewerIDFromCtx(ctx),
+			Message:                validatedRun.MessageContent,
+			Title:                  title,
+			ThreadMetadata:         string(metadataJSON),
+			ThreadSource:           threadSource,
+			DeferStart:             deferred,
+			AssistantID:            validatedRun.AssistantID,
+			Config:                 validatedRun.Config,
+			Context:                validatedRun.Context,
+			Metadata:               validatedRun.Metadata,
+			IdempotencyKey:         persistedIdempotencyKey,
+			IdempotencyOperation:   idempotencyOperation,
+			IdempotencyFingerprint: idempotencyFingerprint,
 		})
 		if err != nil {
 			writeCanonicalApplicationError(ctx, c, err)
@@ -1654,7 +1672,8 @@ func canonicalInitialThreadMessageContent(
 		)
 	}
 	message := run.Input.Messages[0]
-	if strings.TrimSpace(message.Role) != "user" || strings.TrimSpace(message.Content) == "" {
+	if strings.TrimSpace(message.Role) != "user" || strings.TrimSpace(message.Content) == "" ||
+		len(message.Content) > canonicalMaxRunMessageBytes {
 		return "", canonicalInvalidRequest(
 			"Initial submission must contain one non-empty user message",
 			"invalid_initial_message",
@@ -1663,15 +1682,79 @@ func canonicalInitialThreadMessageContent(
 	return strings.TrimSpace(message.Content), nil
 }
 
-func canonicalMarshalOptionalObject(value map[string]any) (string, error) {
+func validateCanonicalInitialThreadRun(
+	run *canonicalInitialThreadRun,
+) (*canonicalValidatedInitialThreadRun, *canonicalError) {
+	if run == nil {
+		return nil, canonicalInvalidRequest("Initial submission is required", "missing_initial_submission")
+	}
+	assistantID := strings.TrimSpace(run.AssistantID)
+	if assistantID != canonicalPublicAssistantID {
+		return nil, canonicalInvalidRequest("assistant_id is invalid", "invalid_assistant_id")
+	}
+	messageContent, public := canonicalInitialThreadMessageContent(run)
+	if public != nil {
+		return nil, public
+	}
+	config, public := canonicalJSONObjectMapPayload(run.Config, "config")
+	if public != nil {
+		return nil, public
+	}
+	runContext, public := canonicalJSONObjectMapPayload(run.Context, "context")
+	if public != nil {
+		return nil, public
+	}
+	metadata, public := canonicalRunMetadataPayload(run.Metadata)
+	if public != nil {
+		return nil, public
+	}
+	return &canonicalValidatedInitialThreadRun{
+		AssistantID: assistantID, MessageContent: messageContent,
+		Config: config, Context: runContext, Metadata: metadata,
+	}, nil
+}
+
+func canonicalJSONObjectMapPayload(value map[string]any, field string) (string, *canonicalError) {
 	if len(value) == 0 {
 		return "", nil
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return "", err
+		return "", canonicalInvalidRequest(field+" is invalid", "invalid_"+field)
 	}
-	return string(raw), nil
+	return canonicalJSONObjectPayload(raw, field)
+}
+
+func canonicalInitialThreadRunRequestFingerprint(
+	threadMetadata string,
+	title string,
+	threadSource appagentthread.ThreadSource,
+	run *canonicalValidatedInitialThreadRun,
+) string {
+	if run == nil {
+		return ""
+	}
+	payload := struct {
+		Version        string `json:"version"`
+		Operation      string `json:"operation"`
+		ThreadMetadata string `json:"thread_metadata"`
+		Title          string `json:"title"`
+		ThreadSource   string `json:"thread_source"`
+		AssistantID    string `json:"assistant_id"`
+		MessageContent string `json:"message_content"`
+		Config         string `json:"config"`
+		Context        string `json:"context"`
+		Metadata       string `json:"metadata"`
+	}{
+		Version: "v1", Operation: canonicalRunIdempotencyOperationInitial,
+		ThreadMetadata: canonicalRunFingerprintJSONObject(threadMetadata),
+		Title:          title, ThreadSource: string(threadSource), AssistantID: run.AssistantID,
+		MessageContent: run.MessageContent,
+		Config:         canonicalRunFingerprintJSONObject(run.Config),
+		Context:        canonicalRunFingerprintJSONObject(run.Context),
+		Metadata:       canonicalRunFingerprintJSONObject(run.Metadata),
+	}
+	return canonicalRunRequestFingerprint(payload)
 }
 
 func canonicalUnsupportedField(field string) *canonicalError {

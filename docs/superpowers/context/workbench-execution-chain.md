@@ -160,13 +160,21 @@ canonical Run create/list/get/wait/join/cancel/resume/events/messages 已接入�
 游标查询用例。请求只接受审核后的 SDK 字段；Run、Event、Message、wait/join values 均经
 公开投影，禁止回显原始 input、command、config、context、checkpoint bytes 或 provider
 载荷。`command.resume` 与专用 resume route 进入同一 human-interaction 恢复用例，不原地
-改写来源 Run。普通 turn 只接受公开 assistant 别名 `agent` 和一个 User Message；请求体
-上限为 1 MiB，Message 上限为 256 KiB，config/context 的单个持久化字符串上限为 32 KiB，
+改写来源 Run。普通 turn 只接受公开 assistant 别名 `agent` 和一个 User Message；普通 turn
+以及 Thread create 的 `initial_run/deferred_initial_run` 请求体上限均为 1 MiB，Message 上限为
+256 KiB，config/context 的单个持久化字符串上限为 32 KiB，
 上传文件最多引用 10 个正整数 ID。handler 不信任客户端文件描述，只在授权后的 path
 Thread 中查询文件并重建权威摘要。`Idempotency-Key` 只从 header 接受：同 Thread 重试回放
 首个已提交 Run/Message，即使上传文件后来被删除；服务端持久化 operation/payload
 fingerprint，同键改 payload、跨 turn/resume 或跨 Thread 复用都返回稳定 `409`，并发唯一键
-竞争也由 repository 二次读取执行相同校验。Run/User Message 原子 bundle 同时写入不公开的
+竞争也由 repository 二次读取执行相同校验。canonical handler 在持久化前把原始 key 与
+session principal 组合成稳定摘要，因此同一 workspace 的不同用户互不碰撞，原始 key 不会
+进入数据库或日志；operation 仍保存在隐藏 fingerprint metadata 中，保持同一用户跨操作
+复用 key 时返回 `409`。Thread create 的 `initial_run` 复用普通 turn 的 assistant、Message、
+config/context 和 metadata 安全校验，并参与相同的 operation/fingerprint 回放校验；历史内部
+assistant selector 统一投影为公开别名 `agent`。不携带 Run 的空 Thread 和
+`deferred_initial_run` 的通用 exactly-once registry 仍是后续能力，不在当前合同内。
+Run/User Message 原子 bundle 同时写入不公开的
 Message 关联，GET/list 不依赖客户端 metadata 推导 `message_id/attempt_kind/source_run_id`。
 应用层、领域层和仓储层的 operation、fingerprint、Message 关联及重放校验开关默认均为空或
 `false`，仅 canonical handler 显式启用；历史调用即使已有同名 metadata 也保持原语义。

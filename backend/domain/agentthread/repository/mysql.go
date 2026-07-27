@@ -466,7 +466,10 @@ func (r *threadRepository) CreateThreadBundle(
 		return nil, err
 	}
 
-	normalized := CreateThreadBundleRequest{Thread: &thread, Run: &run, Message: &message}
+	normalized := CreateThreadBundleRequest{
+		Thread: &thread, Run: &run, Message: &message,
+		ValidateIdempotencyReplay: req.ValidateIdempotencyReplay,
+	}
 	var result *CreateThreadBundleResult
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var found bool
@@ -527,6 +530,11 @@ func findExistingThreadBundle(
 	if run.SpaceID != req.Thread.SpaceID || run.CreatorID != req.Thread.CreatorID ||
 		run.ParentRunID != 0 || run.RunKind != string(entity.RunKindTask) {
 		return nil, false, fmt.Errorf("idempotency key belongs to a different thread request")
+	}
+	if req.ValidateIdempotencyReplay {
+		if err := entity.ValidateRunIdempotencyReplay(string(run.Metadata), req.Run.Metadata); err != nil {
+			return nil, false, err
+		}
 	}
 
 	var thread threadPO

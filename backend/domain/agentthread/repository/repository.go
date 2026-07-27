@@ -109,9 +109,10 @@ type ThreadRepository interface {
 }
 
 type CreateThreadBundleRequest struct {
-	Thread  *entity.Thread
-	Run     *entity.Run
-	Message *entity.Message
+	Thread                    *entity.Thread
+	Run                       *entity.Run
+	Message                   *entity.Message
+	ValidateIdempotencyReplay bool
 }
 
 type CreateThreadBundleResult struct {

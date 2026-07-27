@@ -190,6 +190,7 @@ func (s *threadService) CreateThreadRunMessage(
 	}
 	result, err := s.repo.CreateThreadBundle(ctx, repository.CreateThreadBundleRequest{
 		Thread: thread, Run: run, Message: message,
+		ValidateIdempotencyReplay: strings.TrimSpace(req.Run.IdempotencyOperation) != "",
 	})
 	if err != nil {
 		return nil, err

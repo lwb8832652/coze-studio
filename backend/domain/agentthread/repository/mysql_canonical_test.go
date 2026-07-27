@@ -179,6 +179,37 @@ func TestCanonicalRunBundleReturnsTypedIdempotencyConflictAcrossThreads(t *testi
 	require.ErrorIs(t, err, ErrRunIdempotencyConflict)
 }
 
+func TestCanonicalThreadBundleValidatesIdempotencyFingerprintWhenOptedIn(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &messagePO{})
+	repo := NewThreadRepository(db)
+	firstMetadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.thread.initial_run.v1",
+		strings.Repeat("a", 64),
+	)
+	require.NoError(t, err)
+	first := canonicalThreadBundleFixture(10, 100, 101, "shared-key", firstMetadata, "first")
+	created, err := repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: first.Thread, Run: first.Run, Message: first.Message,
+		ValidateIdempotencyReplay: true,
+	})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+
+	changedMetadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.thread.initial_run.v1",
+		strings.Repeat("b", 64),
+	)
+	require.NoError(t, err)
+	changed := canonicalThreadBundleFixture(20, 200, 201, "shared-key", changedMetadata, "changed")
+	_, err = repo.CreateThreadBundle(context.Background(), CreateThreadBundleRequest{
+		Thread: changed.Thread, Run: changed.Run, Message: changed.Message,
+		ValidateIdempotencyReplay: true,
+	})
+	require.ErrorIs(t, err, ErrRunIdempotencyConflict)
+}
+
 func TestCanonicalExtensionsKeepLegacyListRunEventsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &runEventPO{})
 	repo := NewThreadRepository(db)
@@ -1192,6 +1223,37 @@ func newCanonicalRepositoryRun(id, threadID, parentRunID, createdAt int64) *enti
 		Command: `{}`, Input: `{}`, Config: `{}`, Context: `{}`, Metadata: `{}`,
 		StreamMode: `[]`, CreatedAt: createdAt, UpdatedAt: createdAt,
 	}
+}
+
+type canonicalThreadBundleTestFixture struct {
+	Thread  *entity.Thread
+	Run     *entity.Run
+	Message *entity.Message
+}
+
+func canonicalThreadBundleFixture(
+	threadID int64,
+	runID int64,
+	messageID int64,
+	idempotencyKey string,
+	metadata string,
+	messageContent string,
+) canonicalThreadBundleTestFixture {
+	thread := &entity.Thread{
+		ID: threadID, SpaceID: 1, CreatorID: 2, Title: "canonical initial thread",
+		Status: entity.ThreadStatusIdle, Source: entity.ThreadSourceAPI,
+	}
+	run := newCanonicalRepositoryRun(runID, threadID, 0, 100)
+	run.SpaceID = thread.SpaceID
+	run.CreatorID = thread.CreatorID
+	run.Status = entity.RunStatusQueued
+	run.IdempotencyKey = idempotencyKey
+	run.Metadata = metadata
+	message := &entity.Message{
+		ID: messageID, ThreadID: threadID, RunID: runID,
+		Role: entity.MessageRoleUser, Content: messageContent, CreatedAt: 100,
+	}
+	return canonicalThreadBundleTestFixture{Thread: thread, Run: run, Message: message}
 }
 
 func newCanonicalRepositoryCheckpoint(id, threadID, runID int64, runtimeType string, createdAt int64) *entity.Checkpoint {

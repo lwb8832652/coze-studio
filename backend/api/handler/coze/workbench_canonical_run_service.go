@@ -36,13 +36,14 @@ import (
 )
 
 const (
-	canonicalPublicAssistantID             = "agent"
-	canonicalRunIdempotencyOperationTurn   = "workbench.run.turn.v1"
-	canonicalRunIdempotencyOperationResume = "workbench.run.resume.v1"
-	canonicalMaxRunRequestBytes            = 1 << 20
-	canonicalMaxRunMessageBytes            = 256 << 10
-	canonicalMaxRunPersistedStringBytes    = 32 << 10
-	canonicalMaxRunUploadedFileReferences  = 10
+	canonicalPublicAssistantID              = "agent"
+	canonicalRunIdempotencyOperationInitial = "workbench.thread.initial_run.v1"
+	canonicalRunIdempotencyOperationTurn    = "workbench.run.turn.v1"
+	canonicalRunIdempotencyOperationResume  = "workbench.run.resume.v1"
+	canonicalMaxRequestBytes                = 1 << 20
+	canonicalMaxRunMessageBytes             = 256 << 10
+	canonicalMaxRunPersistedStringBytes     = 32 << 10
+	canonicalMaxRunUploadedFileReferences   = 10
 )
 
 var canonicalRunDefaults = canonicalRunOptions{
@@ -188,6 +189,11 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog.ResponseBodyKind = "run"
 	requestLog.StreamModes = strings.Join(submission.Options.StreamModes, ",")
 	requestLog.IdempotencyKeyHash = canonicalLogHash(submission.IdempotencyKey)
+	submission.IdempotencyKey, public = canonicalPrincipalScopedIdempotencyKey(ctx, submission.IdempotencyKey)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	requestLog.SubmissionKind = "run_turn"
 	if submission.Resume != nil {
 		requestLog.SubmissionKind = "run_resume"
@@ -371,6 +377,11 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog.ResponseBodyKind = "values"
 	requestLog.StreamModes = strings.Join(submission.Options.StreamModes, ",")
 	requestLog.IdempotencyKeyHash = canonicalLogHash(submission.IdempotencyKey)
+	submission.IdempotencyKey, public = canonicalPrincipalScopedIdempotencyKey(ctx, submission.IdempotencyKey)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	requestLog.RaiseErrorMode = "omitted"
 	if submission.RaiseError != nil {
 		requestLog.RaiseErrorMode = canonicalRaiseErrorMode(submission.RaiseError)
@@ -579,7 +590,7 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	}
 	requestLog.ThreadID, requestLog.RunID = threadID, sourceRunID
 	requestLog.SourceRunID = sourceRunID
-	if public := canonicalRunRequestBodyLimit(c); public != nil {
+	if public := canonicalRequestBodyLimit(c, "Run"); public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
 		return
 	}
@@ -599,6 +610,11 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.IdempotencyKeyHash = canonicalLogHash(idempotencyKey)
+	idempotencyKey, public = canonicalPrincipalScopedIdempotencyKey(ctx, idempotencyKey)
+	if public != nil {
+		writeCanonicalError(ctx, c, public.status, *public)
+		return
+	}
 	run, public, err := resumeCanonicalHumanInteraction(ctx, threadID, submission, idempotencyKey)
 	if public != nil {
 		writeCanonicalError(ctx, c, public.status, *public)
@@ -1348,7 +1364,7 @@ func parseCanonicalRunSubmission(
 	c *app.RequestContext,
 	allowRaiseError bool,
 ) (*canonicalRunSubmission, *canonicalError) {
-	if public := canonicalRunRequestBodyLimit(c); public != nil {
+	if public := canonicalRequestBodyLimit(c, "Run"); public != nil {
 		return nil, public
 	}
 	var req canonicalCreateRunRequest
@@ -1430,12 +1446,12 @@ func parseCanonicalRunSubmission(
 	return submission, nil
 }
 
-func canonicalRunRequestBodyLimit(c *app.RequestContext) *canonicalError {
-	if c != nil && len(c.Request.Body()) > canonicalMaxRunRequestBytes {
+func canonicalRequestBodyLimit(c *app.RequestContext, resource string) *canonicalError {
+	if c != nil && len(c.Request.Body()) > canonicalMaxRequestBytes {
 		return newCanonicalError(
 			consts.StatusRequestEntityTooLarge,
 			"request_too_large",
-			"Request body exceeds the canonical Run limit",
+			"Request body exceeds the canonical "+resource+" limit",
 			"request_body_too_large",
 			false,
 		)
@@ -1528,6 +1544,38 @@ func canonicalRunIdempotencyKey(c *app.RequestContext) (string, *canonicalError)
 		return "", canonicalInvalidRequest("Idempotency-Key is invalid", "invalid_idempotency_key")
 	}
 	return value, nil
+}
+
+// canonicalPrincipalScopedIdempotencyKey adapts the public client key to the
+// existing (space_id, idempotency_key) unique index. The principal is included
+// in a stable digest so two workspace members cannot reserve each other's key;
+// operation remains in the persisted fingerprint contract so turn/resume reuse
+// is still rejected instead of becoming an independent record.
+func canonicalPrincipalScopedIdempotencyKey(
+	ctx context.Context,
+	clientKey string,
+) (string, *canonicalError) {
+	clientKey = strings.TrimSpace(clientKey)
+	if clientKey == "" {
+		return "", nil
+	}
+	principalID := workbenchViewerIDFromCtx(ctx)
+	if principalID <= 0 {
+		return "", newCanonicalError(
+			consts.StatusUnauthorized,
+			"unauthenticated",
+			"Authentication required",
+			"unauthenticated",
+			false,
+		)
+	}
+	return canonicalScopedIdempotencyKey(principalID, clientKey), nil
+}
+
+func canonicalScopedIdempotencyKey(principalID int64, clientKey string) string {
+	payload := "session\x00" + strconv.FormatInt(principalID, 10) + "\x00" + strings.TrimSpace(clientKey)
+	sum := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("canonical:v1:%x", sum[:])
 }
 
 func canonicalRunTurnRequestFingerprint(submission *canonicalRunSubmission) string {

@@ -260,6 +260,8 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 			Context: req.Context, Metadata: req.Metadata, StreamMode: req.StreamMode,
 			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			IdempotencyOperation:   req.IdempotencyOperation,
+			IdempotencyFingerprint: req.IdempotencyFingerprint,
 		},
 		Message: domainservice.CreateMessageSpec{
 			Role: domainentity.MessageRoleUser, Content: message,

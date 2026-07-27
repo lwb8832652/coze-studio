@@ -465,6 +465,9 @@ type CreateTaskThreadRequest struct {
 	OnDisconnect      string
 	Durability        string
 	IdempotencyKey    string
+	// Canonical-only replay fields remain empty for all legacy callers.
+	IdempotencyOperation   string
+	IdempotencyFingerprint string
 }
 
 type CreateTaskThreadResponse struct {
