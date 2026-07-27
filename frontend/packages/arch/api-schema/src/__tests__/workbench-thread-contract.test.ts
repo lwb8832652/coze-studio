@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import * as threadSchema from '../idl/workbench/thread';
+import * as api from '../idl/workbench/thread';
 
 const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
@@ -47,6 +47,35 @@ const canonicalAPIFunctions = [
   'ResumeCanonicalRun',
   'ListCanonicalRunEvents',
   'ListCanonicalRunMessages',
+] as const;
+
+const productMethods = [
+  'AppendCanonicalThreadMessage',
+  'GenerateCanonicalThreadSuggestions',
+  'ListCanonicalThreadUploads',
+  'UploadCanonicalThreadFiles',
+  'DeleteCanonicalThreadUpload',
+  'ListCanonicalThreadArtifacts',
+  'GetCanonicalThreadArtifactContent',
+  'GetCanonicalThreadArtifactSignedURL',
+  'DeleteCanonicalThreadArtifact',
+  'RestoreCanonicalThreadArtifact',
+  'ReviewCanonicalThreadArtifactScan',
+  'ListCanonicalThreadArtifactScanJobs',
+  'RetryCanonicalThreadArtifactScanJob',
+  'GetCanonicalThreadTokenUsage',
+  'ListCanonicalThreadMemories',
+  'UpdateCanonicalThreadMemory',
+  'DeleteCanonicalThreadMemory',
+  'RestoreCanonicalThreadMemory',
+  'ClearCanonicalThreadMemories',
+  'ExportCanonicalThreadMemories',
+  'ImportCanonicalThreadMemories',
+  'ListCanonicalThreadMemoryAuditEvents',
+  'ListCanonicalThreadGuardrailAuditEvents',
+  'ExportCanonicalThreadGuardrailAuditEvents',
+  'ListCanonicalThreadMCPRuntimeAuditEvents',
+  'RetryCanonicalSubagentRun',
 ] as const;
 
 interface CanonicalAPIExpectation {
@@ -306,7 +335,7 @@ describe('canonical Workbench thread generated contract', () => {
     expect(interfaceSource('CanonicalRun')).toMatch(/run_id:\s*string[,;]/);
   });
 
-  it('exports exactly the 21 canonical createAPI functions', () => {
+  it('exports exactly the 47 canonical createAPI functions', () => {
     const generatedAPIFunctions = Array.from(
       generatedSource.matchAll(
         /export const (\w+) = \/\*#__PURE__\*\/createAPI</g,
@@ -314,10 +343,21 @@ describe('canonical Workbench thread generated contract', () => {
       match => match[1],
     );
 
-    expect(generatedAPIFunctions).toEqual(canonicalAPIFunctions);
+    expect(generatedAPIFunctions).toEqual([
+      ...canonicalAPIFunctions,
+      ...productMethods,
+    ]);
     for (const functionName of canonicalAPIFunctions) {
-      expect(threadSchema[functionName]).toBeTypeOf('function');
+      expect(api[functionName]).toBeTypeOf('function');
     }
+    for (const method of productMethods) {
+      expect(api[method]).toBeTypeOf('function');
+    }
+  });
+
+  it('uses stable upload IDs without legacy task dependencies', () => {
+    expect(generatedSource).toContain('/uploads/:file_id');
+    expect(generatedSource).not.toContain('workbench/task');
   });
 
   it('freezes every canonical method, path, and request mapping', () => {
