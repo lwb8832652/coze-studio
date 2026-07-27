@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 
 import * as api from '../idl/workbench/thread';
 
@@ -24,6 +25,25 @@ const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
   'utf8',
 );
+const generatedProductSource = readFileSync(
+  new URL('../idl/workbench/thread_product.ts', import.meta.url),
+  'utf8',
+);
+const threadSourceFile = ts.createSourceFile(
+  'thread.ts',
+  generatedSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const threadProductSourceFile = ts.createSourceFile(
+  'thread_product.ts',
+  generatedProductSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const generatedSourceFiles = [threadSourceFile, threadProductSourceFile];
 
 const canonicalAPIFunctions = [
   'CreateCanonicalThread',
@@ -611,25 +631,84 @@ function apiTypeArguments(name: string): {
   request: string;
   response: string;
 } {
-  const declarationStart = generatedSource.indexOf(`export const ${name} =`);
-  expect(declarationStart, `${name} must be generated`).toBeGreaterThanOrEqual(
-    0,
-  );
+  const declaration = threadSourceFile.statements
+    .filter(ts.isVariableStatement)
+    .filter(statement =>
+      statement.modifiers?.some(
+        modifier => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      ),
+    )
+    .flatMap(statement => [...statement.declarationList.declarations])
+    .find(
+      candidate =>
+        ts.isIdentifier(candidate.name) && candidate.name.text === name,
+    );
+  expect(declaration, `${name} must be generated`).toBeDefined();
 
-  const declarationEnd = generatedSource.indexOf('\n', declarationStart);
-  const declaration = generatedSource.slice(declarationStart, declarationEnd);
-  const match = declaration.match(
-    /createAPI<\s*([^,]+?)\s*,\s*([^>]+?)\s*>\s*\(\{$/,
-  );
+  const initializer = declaration?.initializer;
   expect(
-    match,
+    initializer && ts.isCallExpression(initializer),
+    `${name} must initialize with a createAPI call`,
+  ).toBe(true);
+  if (!initializer || !ts.isCallExpression(initializer)) {
+    return { request: '', response: '' };
+  }
+
+  expect(
+    ts.isIdentifier(initializer.expression) &&
+      initializer.expression.text === 'createAPI',
+    `${name} must call createAPI`,
+  ).toBe(true);
+
+  const typeArguments = initializer.typeArguments ?? [];
+  expect(
+    typeArguments,
     `${name} must declare request and response types`,
-  ).not.toBeNull();
+  ).toHaveLength(2);
 
   return {
-    request: match?.[1] ?? '',
-    response: match?.[2] ?? '',
+    request:
+      typeArguments[0]?.getText(threadSourceFile).replace(/\s+/g, '') ?? '',
+    response:
+      typeArguments[1]?.getText(threadSourceFile).replace(/\s+/g, '') ?? '',
   };
+}
+
+function taskContractImportSpecifiers(sourceFile: ts.SourceFile): string[] {
+  return sourceFile.statements
+    .filter(ts.isImportDeclaration)
+    .map(statement => statement.moduleSpecifier)
+    .filter(ts.isStringLiteral)
+    .map(moduleSpecifier => moduleSpecifier.text)
+    .filter(
+      moduleSpecifier =>
+        moduleSpecifier === './task' ||
+        moduleSpecifier.includes('workbench/task'),
+    );
+}
+
+function taskThreadIdentifiers(sourceFile: ts.SourceFile): string[] {
+  const identifiers = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text.includes('TaskThread')) {
+      identifiers.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return [...identifiers];
+}
+
+function assertNoTaskThreadContracts(sourceFile: ts.SourceFile): void {
+  expect(
+    taskContractImportSpecifiers(sourceFile),
+    `${sourceFile.fileName} must not import task contracts`,
+  ).toEqual([]);
+  expect(
+    taskThreadIdentifiers(sourceFile),
+    `${sourceFile.fileName} must not reference TaskThread identifiers`,
+  ).toEqual([]);
 }
 
 function apiConfig(name: string): {
@@ -721,11 +800,9 @@ describe('canonical Workbench thread generated contract', () => {
   });
 
   it('does not import or reference legacy task generated contracts', () => {
-    expect(generatedSource).not.toContain('workbench/task');
-    expect(generatedSource).not.toMatch(
-      /^import\s+(?:[^;\n]+\s+from\s+)?['"]\.\/task['"];?\s*$/m,
-    );
-    expect(generatedSource).not.toMatch(/\bTask[A-Za-z0-9_]*\b/);
+    for (const sourceFile of generatedSourceFiles) {
+      assertNoTaskThreadContracts(sourceFile);
+    }
     expect(interfaceSource('CanonicalThreadState')).toMatch(
       /\btasks:\s*any[,;]/,
     );
