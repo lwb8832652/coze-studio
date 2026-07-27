@@ -320,6 +320,13 @@ required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_c
 
 Allocate the next unused field number in each struct. This is an IDL/client correction only; handlers continue to read and authorize the same header, and no body gains `space_id`.
 
+Define the core `CanonicalMessage` DTO from the existing public projection with required
+`message_id,thread_id,run_id,role,content,metadata,created_at` and optional `seq`. IDs and time
+are strings; metadata uses `(api.value_type="any")`. Change `CanonicalMessagePage.data` from
+untyped JSON to `list<CanonicalMessage>`. This is a generated type correction only: the existing
+handler already returns this exact JSON shape. Extend the TypeScript contract test to freeze these
+fields and the typed page.
+
 - [ ] **Step 3: Extend the existing canonical service**
 
 Add `include "./thread_product.thrift"` and all 26 methods to `WorkbenchCanonicalThreadService`. The service declarations must use the exact method and route names from the Product Route Matrix. Representative declarations:
