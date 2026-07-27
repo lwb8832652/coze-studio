@@ -424,6 +424,16 @@ func TestApplicationResourceFamiliesAuthorizesThreadAccess(t *testing.T) {
 			},
 		},
 		{
+			name:     "run idempotency read",
+			threadID: 10,
+			operation: func(ctx context.Context, app *ApplicationService) error {
+				_, err := app.GetRunByIdempotencyKey(ctx, &GetRunByIdempotencyKeyRequest{
+					ThreadID: 10, IdempotencyKey: "canonical-replay-1",
+				})
+				return err
+			},
+		},
+		{
 			name:     "run creation",
 			threadID: 10,
 			operation: func(ctx context.Context, app *ApplicationService) error {

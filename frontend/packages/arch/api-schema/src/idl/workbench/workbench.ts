@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import * as thread from './thread';
+export { thread };
 import * as task from './task';
 export { task };
 import * as base from './../base';

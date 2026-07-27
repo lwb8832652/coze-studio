@@ -46,6 +46,7 @@ var SVC = new(ApplicationService)
 var (
 	ErrActiveRunExists              = domainservice.ErrActiveRunExists
 	ErrUnsupportedMultitaskStrategy = domainservice.ErrUnsupportedMultitaskStrategy
+	ErrRunIdempotencyConflict       = domainservice.ErrRunIdempotencyConflict
 )
 
 var ErrArtifactScanReviewDecisionInvalid = errors.New(
@@ -213,13 +214,21 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	}
 
 	title := taskThreadTitleWithRunConfig(req.Title, message, runConfig)
+	threadSource := req.ThreadSource
+	if threadSource == "" {
+		threadSource = ThreadSourceWeb
+	}
+	threadMetadata := strings.TrimSpace(req.ThreadMetadata)
+	if threadMetadata == "" {
+		threadMetadata = `{"source":"workbench_new_task"}`
+	}
 	if req.DeferStart {
 		threadResp, err := s.CreateThread(ctx, &CreateThreadRequest{
 			SpaceID:  req.SpaceID,
 			UserID:   req.UserID,
 			Title:    title,
-			Source:   ThreadSourceWeb,
-			Metadata: `{"source":"workbench_new_task"}`,
+			Source:   threadSource,
+			Metadata: threadMetadata,
 		})
 		if err != nil {
 			return nil, err
@@ -243,7 +252,7 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 	bundle, err := s.ThreadSVC.CreateThreadRunMessage(ctx, &domainservice.CreateThreadRunMessageRequest{
 		Thread: domainservice.CreateThreadRequest{
 			SpaceID: req.SpaceID, UserID: userID, Title: title,
-			Source: domainentity.ThreadSourceWeb, Metadata: `{"source":"workbench_new_task"}`,
+			Source: domainentity.ThreadSource(threadSource), Metadata: threadMetadata,
 		},
 		Run: domainservice.CreateRunRequest{
 			AssistantID: req.AssistantID, RunKind: domainentity.RunKindTask,
@@ -251,6 +260,8 @@ func (s *ApplicationService) CreateTaskThread(ctx context.Context, req *CreateTa
 			Context: req.Context, Metadata: req.Metadata, StreamMode: req.StreamMode,
 			MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 			Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+			IdempotencyOperation:   req.IdempotencyOperation,
+			IdempotencyFingerprint: req.IdempotencyFingerprint,
 		},
 		Message: domainservice.CreateMessageSpec{
 			Role: domainentity.MessageRoleUser, Content: message,
@@ -777,11 +788,14 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				Metadata: req.Metadata, StreamMode: req.StreamMode,
 				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+				IdempotencyOperation:   req.IdempotencyOperation,
+				IdempotencyFingerprint: req.IdempotencyFingerprint,
 			},
 			Message: &domainservice.CreateMessageSpec{
 				Role: domainentity.MessageRoleUser, Content: messageContent,
 				Metadata: req.MessageMetadata,
 			},
+			PersistMessageReference: req.PersistMessageReference,
 		})
 		if err != nil {
 			return nil, err
@@ -804,6 +818,8 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 				Metadata: req.Metadata, StreamMode: req.StreamMode,
 				MultitaskStrategy: req.MultitaskStrategy, OnDisconnect: req.OnDisconnect,
 				Durability: req.Durability, IdempotencyKey: req.IdempotencyKey,
+				IdempotencyOperation:   req.IdempotencyOperation,
+				IdempotencyFingerprint: req.IdempotencyFingerprint,
 			},
 		})
 		if err != nil {
@@ -817,21 +833,23 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 	}
 
 	run, err := s.ThreadSVC.CreateRun(ctx, &domainservice.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		ParentRunID:       req.ParentRunID,
-		AssistantID:       req.AssistantID,
-		RunKind:           domainentity.RunKind(req.RunKind),
-		Status:            domainentity.RunStatus(req.Status),
-		Command:           req.Command,
-		Input:             req.Input,
-		Config:            runConfig,
-		Context:           req.Context,
-		Metadata:          req.Metadata,
-		StreamMode:        req.StreamMode,
-		MultitaskStrategy: req.MultitaskStrategy,
-		OnDisconnect:      req.OnDisconnect,
-		Durability:        req.Durability,
-		IdempotencyKey:    req.IdempotencyKey,
+		ThreadID:               req.ThreadID,
+		ParentRunID:            req.ParentRunID,
+		AssistantID:            req.AssistantID,
+		RunKind:                domainentity.RunKind(req.RunKind),
+		Status:                 domainentity.RunStatus(req.Status),
+		Command:                req.Command,
+		Input:                  req.Input,
+		Config:                 runConfig,
+		Context:                req.Context,
+		Metadata:               req.Metadata,
+		StreamMode:             req.StreamMode,
+		MultitaskStrategy:      req.MultitaskStrategy,
+		OnDisconnect:           req.OnDisconnect,
+		Durability:             req.Durability,
+		IdempotencyKey:         req.IdempotencyKey,
+		IdempotencyOperation:   req.IdempotencyOperation,
+		IdempotencyFingerprint: req.IdempotencyFingerprint,
 	})
 	if err != nil {
 		return nil, err
@@ -1069,6 +1087,51 @@ func (s *ApplicationService) GetRun(ctx context.Context, req *GetRunRequest) (*G
 	}
 
 	return &GetRunResponse{Run: DomainRunToSummary(run)}, nil
+}
+
+// GetRunByIdempotencyKey performs an authorized, read-only lookup for API
+// replay handling. The SpaceID is always derived from the persisted Thread,
+// and a key belonging to another Thread is never returned to the caller.
+func (s *ApplicationService) GetRunByIdempotencyKey(
+	ctx context.Context,
+	req *GetRunByIdempotencyKeyRequest,
+) (*GetRunByIdempotencyKeyResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("get run by idempotency key request is required")
+	}
+	key := strings.TrimSpace(req.IdempotencyKey)
+	if req.ThreadID <= 0 || key == "" || len(key) > 128 {
+		return nil, fmt.Errorf("run idempotency lookup is invalid")
+	}
+	threadResponse, err := s.GetThread(ctx, &GetThreadRequest{ThreadID: req.ThreadID})
+	if err != nil {
+		return nil, err
+	}
+	if threadResponse == nil || threadResponse.Thread == nil ||
+		threadResponse.Thread.ThreadID != req.ThreadID {
+		return nil, fmt.Errorf("agent thread service returned invalid thread")
+	}
+	run, err := s.ThreadSVC.GetRunByIdempotencyKey(ctx, threadResponse.Thread.SpaceID, key)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return &GetRunByIdempotencyKeyResponse{}, nil
+	}
+	if run.ThreadID != req.ThreadID {
+		return nil, fmt.Errorf("%w: key belongs to another thread", ErrRunIdempotencyConflict)
+	}
+	if err := domainentity.ValidateRunIdempotencyValues(
+		run.Metadata,
+		req.IdempotencyOperation,
+		req.IdempotencyFingerprint,
+	); err != nil {
+		return nil, err
+	}
+	return &GetRunByIdempotencyKeyResponse{Run: DomainRunToSummary(run)}, nil
 }
 
 func (s *ApplicationService) ListRuns(ctx context.Context, req *ListRunsRequest) (*ListRunsResponse, error) {

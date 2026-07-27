@@ -26,8 +26,9 @@ import (
 )
 
 const (
-	maxPublicIdentifierRunes = 128
-	maxPublicLabelRunes      = 512
+	maxPublicIdentifierRunes        = 128
+	maxPublicLabelRunes             = 512
+	canonicalPublicStateRuntimeType = "canonical_public_state"
 )
 
 var (
@@ -390,10 +391,84 @@ func ProjectPublicCheckpoint(checkpoint *CheckpointSummary) *PublicCheckpoint {
 		result.Values["interrupts"] = append([]string{}, result.InterruptIDs...)
 		return result
 	}
+	if strings.TrimSpace(checkpoint.RuntimeType) == canonicalPublicStateRuntimeType {
+		result.Runtime = canonicalPublicStateRuntimeType
+		result.Values = projectCanonicalPublicStateValues(checkpoint.ChannelValues)
+		return result
+	}
 
 	result.Values = projectPublicCheckpointValues(checkpoint.ChannelValues)
 	result.InterruptIDs = publicStringSlice(publicJSONValue(checkpoint.PendingSends))
 	return result
+}
+
+func projectCanonicalPublicStateValues(raw string) map[string]any {
+	payload := publicJSONObject(raw)
+	custom, ok := payload["custom"].(map[string]any)
+	if !ok || custom == nil {
+		return map[string]any{}
+	}
+	projected, ok := projectCanonicalPublicCustomValue(custom, 0)
+	if !ok {
+		return map[string]any{}
+	}
+	return map[string]any{"custom": projected}
+}
+
+func projectCanonicalPublicCustomValue(value any, depth int) (any, bool) {
+	if depth > 32 {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case nil, bool, float64, json.Number:
+		return typed, true
+	case string:
+		projected := publicCleanString(typed, 64*1024)
+		if publicSensitivePattern.MatchString(projected) {
+			return nil, false
+		}
+		return projected, true
+	case []any:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			projected, ok := projectCanonicalPublicCustomValue(item, depth+1)
+			if ok {
+				result = append(result, projected)
+			}
+		}
+		return result, true
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			key = publicCleanString(key, 128)
+			if key == "" || canonicalPublicStateUnsafeKey(key) {
+				continue
+			}
+			projected, ok := projectCanonicalPublicCustomValue(item, depth+1)
+			if ok {
+				result[key] = projected
+			}
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func canonicalPublicStateUnsafeKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, fragment := range []string{
+		"checkpoint_bytes", "channel_versions", "pending_sends", "provider_body",
+		"provider_payload", "raw_provider", "tool_arguments", "tool_args", "tool_result",
+		"hidden_config", "worker_id", "lease_owner", "lease_token", "idempotency_key",
+		"error_chain", "stack_trace", "traceback", "api_key", "credential", "secret",
+		"access_token", "authorization", "password",
+	} {
+		if strings.Contains(key, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func adkEnvelopeMatchesPublicCheckpoint(

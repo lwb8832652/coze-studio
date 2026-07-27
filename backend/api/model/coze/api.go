@@ -590,6 +590,32 @@ func NewWorkbenchTaskServiceClient(c thrift.TClient) *WorkbenchTaskServiceClient
 	}
 }
 
+type WorkbenchCanonicalThreadService interface {
+	chat.WorkbenchCanonicalThreadService
+}
+
+type WorkbenchCanonicalThreadServiceClient struct {
+	*chat.WorkbenchCanonicalThreadServiceClient
+}
+
+func NewWorkbenchCanonicalThreadServiceClientFactory(t thrift.TTransport, f thrift.TProtocolFactory) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: chat.NewWorkbenchCanonicalThreadServiceClientFactory(t, f),
+	}
+}
+
+func NewWorkbenchCanonicalThreadServiceClientProtocol(t thrift.TTransport, iprot thrift.TProtocol, oprot thrift.TProtocol) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: chat.NewWorkbenchCanonicalThreadServiceClientProtocol(t, iprot, oprot),
+	}
+}
+
+func NewWorkbenchCanonicalThreadServiceClient(c thrift.TClient) *WorkbenchCanonicalThreadServiceClient {
+	return &WorkbenchCanonicalThreadServiceClient{
+		WorkbenchCanonicalThreadServiceClient: chat.NewWorkbenchCanonicalThreadServiceClient(c),
+	}
+}
+
 type WorkbenchModelService interface {
 	model.WorkbenchModelService
 }
@@ -828,6 +854,15 @@ type WorkbenchTaskServiceProcessor struct {
 
 func NewWorkbenchTaskServiceProcessor(handler WorkbenchTaskService) *WorkbenchTaskServiceProcessor {
 	self := &WorkbenchTaskServiceProcessor{chat.NewWorkbenchTaskServiceProcessor(handler)}
+	return self
+}
+
+type WorkbenchCanonicalThreadServiceProcessor struct {
+	*chat.WorkbenchCanonicalThreadServiceProcessor
+}
+
+func NewWorkbenchCanonicalThreadServiceProcessor(handler WorkbenchCanonicalThreadService) *WorkbenchCanonicalThreadServiceProcessor {
+	self := &WorkbenchCanonicalThreadServiceProcessor{chat.NewWorkbenchCanonicalThreadServiceProcessor(handler)}
 	return self
 }
 

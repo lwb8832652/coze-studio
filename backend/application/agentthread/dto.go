@@ -447,10 +447,13 @@ type CreateThreadResponse struct {
 }
 
 type CreateTaskThreadRequest struct {
-	SpaceID           int64
-	UserID            int64
-	Message           string
-	Title             string
+	SpaceID int64
+	UserID  int64
+	Message string
+	Title   string
+	// Zero values keep the legacy Workbench thread source and metadata.
+	ThreadMetadata    string
+	ThreadSource      ThreadSource
 	DeferStart        bool
 	AssistantID       string
 	Command           string
@@ -462,6 +465,9 @@ type CreateTaskThreadRequest struct {
 	OnDisconnect      string
 	Durability        string
 	IdempotencyKey    string
+	// Canonical-only replay fields remain empty for all legacy callers.
+	IdempotencyOperation   string
+	IdempotencyFingerprint string
 }
 
 type CreateTaskThreadResponse struct {
@@ -543,23 +549,26 @@ type ListMessagesResponse struct {
 }
 
 type CreateRunRequest struct {
-	ThreadID          int64
-	ParentRunID       int64
-	AssistantID       string
-	RunKind           RunKind
-	Status            RunStatus
-	Command           string
-	Input             string
-	Config            string
-	Context           string
-	Metadata          string
-	StreamMode        string
-	MultitaskStrategy string
-	OnDisconnect      string
-	Durability        string
-	IdempotencyKey    string
-	MessageContent    string
-	MessageMetadata   string
+	ThreadID                int64
+	ParentRunID             int64
+	AssistantID             string
+	RunKind                 RunKind
+	Status                  RunStatus
+	Command                 string
+	Input                   string
+	Config                  string
+	Context                 string
+	Metadata                string
+	StreamMode              string
+	MultitaskStrategy       string
+	OnDisconnect            string
+	Durability              string
+	IdempotencyKey          string
+	IdempotencyOperation    string
+	IdempotencyFingerprint  string
+	MessageContent          string
+	MessageMetadata         string
+	PersistMessageReference bool
 }
 
 type CreateRunResponse struct {
@@ -568,11 +577,14 @@ type CreateRunResponse struct {
 }
 
 type ResumeHumanInteractionRequest struct {
-	ThreadID       int64
-	SourceRunID    int64
-	InterruptID    string
-	Response       HumanInteractionResponse
-	IdempotencyKey string
+	ThreadID                int64
+	SourceRunID             int64
+	InterruptID             string
+	Response                HumanInteractionResponse
+	IdempotencyKey          string
+	IdempotencyOperation    string
+	IdempotencyFingerprint  string
+	PersistMessageReference bool
 }
 
 type ResumeHumanInteractionResponse struct {
@@ -594,6 +606,20 @@ type GetRunRequest struct {
 }
 
 type GetRunResponse struct {
+	Run *RunSummary
+}
+
+// GetRunByIdempotencyKeyRequest resolves an optional existing Run only within
+// the already-authorized Thread. Idempotency keys are scoped by the Thread's
+// server-owned SpaceID rather than any caller-supplied ownership field.
+type GetRunByIdempotencyKeyRequest struct {
+	ThreadID               int64
+	IdempotencyKey         string
+	IdempotencyOperation   string
+	IdempotencyFingerprint string
+}
+
+type GetRunByIdempotencyKeyResponse struct {
 	Run *RunSummary
 }
 

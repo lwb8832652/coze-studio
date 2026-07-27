@@ -466,7 +466,10 @@ func (r *threadRepository) CreateThreadBundle(
 		return nil, err
 	}
 
-	normalized := CreateThreadBundleRequest{Thread: &thread, Run: &run, Message: &message}
+	normalized := CreateThreadBundleRequest{
+		Thread: &thread, Run: &run, Message: &message,
+		ValidateIdempotencyReplay: req.ValidateIdempotencyReplay,
+	}
 	var result *CreateThreadBundleResult
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var found bool
@@ -527,6 +530,11 @@ func findExistingThreadBundle(
 	if run.SpaceID != req.Thread.SpaceID || run.CreatorID != req.Thread.CreatorID ||
 		run.ParentRunID != 0 || run.RunKind != string(entity.RunKindTask) {
 		return nil, false, fmt.Errorf("idempotency key belongs to a different thread request")
+	}
+	if req.ValidateIdempotencyReplay {
+		if err := entity.ValidateRunIdempotencyReplay(string(run.Metadata), req.Run.Metadata); err != nil {
+			return nil, false, err
+		}
 	}
 
 	var thread threadPO
@@ -643,45 +651,50 @@ func (r *threadRepository) DeleteThread(ctx context.Context, req DeleteThreadReq
 
 	var deleted bool
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		runPlanIDs := tx.Model(&agentRunPlanPO{}).
-			Select("run_id").
-			Where("thread_id = ?", req.ThreadID)
-		if err := tx.Where("run_id IN (?)", runPlanIDs).Delete(&agentRunPlanItemPO{}).Error; err != nil {
-			return err
-		}
-
-		cascadeDeletes := []struct {
-			model any
-			where string
-		}{
-			{model: &agentRunPlanPO{}, where: "thread_id = ?"},
-			{model: &agentArtifactScanJobPO{}, where: "thread_id = ?"},
-			{model: &agentArtifactPO{}, where: "thread_id = ?"},
-			{model: &agentFilePO{}, where: "thread_id = ?"},
-			{model: &tokenUsagePO{}, where: "thread_id = ?"},
-			{model: &memoryFlushJobPO{}, where: "thread_id = ?"},
-			{model: &transcriptSnapshotPO{}, where: "thread_id = ?"},
-			{model: &memoryAuditEventPO{}, where: "thread_id = ?"},
-			{model: &memoryPO{}, where: "thread_id = ?"},
-			{model: &checkpointPO{}, where: "thread_id = ?"},
-			{model: &runEventPO{}, where: "thread_id = ?"},
-			{model: &messagePO{}, where: "thread_id = ?"},
-			{model: &runPO{}, where: "thread_id = ?"},
-		}
-		for _, item := range cascadeDeletes {
-			if err := tx.Where(item.where, req.ThreadID).Delete(item.model).Error; err != nil {
-				return err
-			}
-		}
-
-		result := tx.Where("id = ?", req.ThreadID).Delete(&threadPO{})
-		if result.Error != nil {
-			return result.Error
-		}
-		deleted = result.RowsAffected > 0
-		return nil
+		var err error
+		deleted, err = deleteThreadCascade(tx, req.ThreadID)
+		return err
 	})
 	return deleted, err
+}
+
+func deleteThreadCascade(tx *gorm.DB, threadID int64) (bool, error) {
+	runPlanIDs := tx.Model(&agentRunPlanPO{}).
+		Select("run_id").
+		Where("thread_id = ?", threadID)
+	if err := tx.Where("run_id IN (?)", runPlanIDs).Delete(&agentRunPlanItemPO{}).Error; err != nil {
+		return false, err
+	}
+
+	cascadeDeletes := []struct {
+		model any
+		where string
+	}{
+		{model: &agentRunPlanPO{}, where: "thread_id = ?"},
+		{model: &agentArtifactScanJobPO{}, where: "thread_id = ?"},
+		{model: &agentArtifactPO{}, where: "thread_id = ?"},
+		{model: &agentFilePO{}, where: "thread_id = ?"},
+		{model: &tokenUsagePO{}, where: "thread_id = ?"},
+		{model: &memoryFlushJobPO{}, where: "thread_id = ?"},
+		{model: &transcriptSnapshotPO{}, where: "thread_id = ?"},
+		{model: &memoryAuditEventPO{}, where: "thread_id = ?"},
+		{model: &memoryPO{}, where: "thread_id = ?"},
+		{model: &checkpointPO{}, where: "thread_id = ?"},
+		{model: &runEventPO{}, where: "thread_id = ?"},
+		{model: &messagePO{}, where: "thread_id = ?"},
+		{model: &runPO{}, where: "thread_id = ?"},
+	}
+	for _, item := range cascadeDeletes {
+		if err := tx.Where(item.where, threadID).Delete(item.model).Error; err != nil {
+			return false, err
+		}
+	}
+
+	result := tx.Where("id = ?", threadID).Delete(&threadPO{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 func (r *threadRepository) ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error) {
@@ -798,6 +811,32 @@ func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error
 	return r.db.WithContext(ctx).Create(po).Error
 }
 
+func (r *threadRepository) CreateRunWithThreadLock(ctx context.Context, run *entity.Run) error {
+	if run == nil {
+		return fmt.Errorf("run is required")
+	}
+
+	now := time.Now().UnixMilli()
+	if run.CreatedAt == 0 {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt == 0 {
+		run.UpdatedAt = run.CreatedAt
+	}
+
+	po, err := runToPO(run)
+	if err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := lockThreadForUpdate(tx, run.ThreadID); err != nil {
+			return err
+		}
+		return tx.Create(po).Error
+	})
+}
+
 func (r *threadRepository) CreateRunBundle(
 	ctx context.Context,
 	req CreateRunBundleRequest,
@@ -825,6 +864,7 @@ func (r *threadRepository) CreateRunBundle(
 	normalized := CreateRunBundleRequest{
 		Run:                         &run,
 		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay:   req.ValidateIdempotencyReplay,
 		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
 	}
 	if req.Message != nil {
@@ -854,12 +894,8 @@ func (r *threadRepository) CreateRunBundle(
 			return nil
 		}
 
-		threadQuery := tx.Where("id = ?", normalized.Run.ThreadID)
-		if tx.Dialector.Name() != "sqlite" {
-			threadQuery = threadQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		var thread threadPO
-		if err := threadQuery.First(&thread).Error; err != nil {
+		thread, err := lockThreadForUpdate(tx, normalized.Run.ThreadID)
+		if err != nil {
 			return err
 		}
 		if normalized.Run.SpaceID != thread.SpaceID || normalized.Run.CreatorID != thread.CreatorID {
@@ -956,6 +992,19 @@ func (r *threadRepository) CreateRunBundle(
 		return replayed, nil
 	}
 	return nil, err
+}
+
+// lockThreadForUpdate gives aggregate mutations one row-lock order on MySQL.
+func lockThreadForUpdate(tx *gorm.DB, threadID int64) (*threadPO, error) {
+	query := tx.Where("id = ?", threadID)
+	if tx.Dialector.Name() != "sqlite" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var thread threadPO
+	if err := query.First(&thread).Error; err != nil {
+		return nil, err
+	}
+	return &thread, nil
 }
 
 func isTopLevelTaskRun(run *entity.Run) bool {
@@ -1154,7 +1203,12 @@ func findExistingRunBundle(
 	}
 	if run.ThreadID != req.Run.ThreadID || run.ParentRunID != req.Run.ParentRunID ||
 		run.RunKind != string(req.Run.RunKind) {
-		return nil, false, fmt.Errorf("idempotency key belongs to a different run request")
+		return nil, false, fmt.Errorf("%w: key belongs to a different run request", ErrRunIdempotencyConflict)
+	}
+	if req.ValidateIdempotencyReplay {
+		if err := entity.ValidateRunIdempotencyReplay(string(run.Metadata), req.Run.Metadata); err != nil {
+			return nil, false, err
+		}
 	}
 
 	result := &CreateRunBundleResult{Run: run.toEntity()}

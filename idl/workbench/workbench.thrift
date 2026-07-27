@@ -2,6 +2,7 @@ namespace go workbench.chat
 
 include "../base.thrift"
 include "./task.thrift"
+include "./thread.thrift"
 
 struct GetWorkbenchRuntimeDoctorRequest {
     1: required i64 space_id (agw.js_conv="str", api.js_conv="true")
@@ -108,3 +109,4 @@ service WorkbenchChatService {
 
 // Re-export through workbench to avoid the task include alias collision in idl/api.thrift.
 service WorkbenchTaskService extends task.WorkbenchTaskService {}
+service WorkbenchCanonicalThreadService extends thread.WorkbenchCanonicalThreadService {}

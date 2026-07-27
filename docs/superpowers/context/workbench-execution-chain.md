@@ -130,6 +130,67 @@ Thread 分支是否都进入共享 `ApplicationService` Run 主链。
 repository `CreateRunBundle` 原子写入 Run、当前轮 Message、初始 Event 和相关
 admission 状态。
 
+没有 Message/bundle 的非顶层 Run 走另一条受保护分支：
+`ApplicationService.CreateRun` -> `threadService.CreateRun` ->
+`CreateRunWithThreadLock`。repository 在插入 Run 前锁定所属 Thread；lease 恢复
+建立 resume Run 时也复用该分支。该锁与 `DeleteThreadIfIdle` 使用同一 Thread
+行，因此删除与直接 Run 创建只能形成两个可线性化结果：删除成功且 Run 不存在，
+或 Run 成功且忙碌 Thread 拒绝删除，不会留下孤立 Run。
+
+### Canonical Thread HTTP 契约
+
+`/api/workbench/threads...` 的 Thread create/search/get/patch/delete、state、history
+和 messages handler 已接入真实 HTTP 路由，但由
+`COZE_WORKBENCH_CANONICAL_API_ENABLED` 默认关闭。当前入口只接受 session principal；
+create/search 必须提交 `X-Coze-Space-ID`，服务端再用认证主体校验 workspace。其余资源
+路由从 path Thread/Run 读取服务端归属并执行 Thread 授权，拒绝依赖客户端提交 owner、
+`user_id` 或 `space_id`。
+
+canonical handler 只做严格 SDK 参数、公开投影和稳定错误适配，随后调用同一个
+`agentthread.ApplicationService`。create 继续进入既有 `CreateThread` 或
+`CreateTaskThread` 事务链；query、patch、busy-delete 和 public-state 则进入 additive
+应用/领域/repository use case，不建立第二套 runtime、storage 或双写。public-state 更新
+在同一事务内锁定 Thread、选择顶层 Run/父 checkpoint、合并审核后的 `custom`，并写入
+隔离的 `canonical_public_state` checkpoint；不会修改或公开 Eino checkpoint bytes、
+runtime resume key 或内部事件。metadata 数值过滤接受 MySQL JSON 可表示的全部 finite
+number，并让 SQLite 按 MySQL 的存储类型和规范值模拟相同查询语义。
+
+canonical Run create/list/get/wait/join/cancel/resume/events/messages 已接入真实 handler，
+并复用同一个 `agentthread.ApplicationService` 的原子 Run 创建、权限校验、取消、恢复和
+游标查询用例。请求只接受审核后的 SDK 字段；Run、Event、Message、wait/join values 均经
+公开投影，禁止回显原始 input、command、config、context、checkpoint bytes 或 provider
+载荷。`command.resume` 与专用 resume route 进入同一 human-interaction 恢复用例，不原地
+改写来源 Run。普通 turn 只接受公开 assistant 别名 `agent` 和一个 User Message；普通 turn
+以及 Thread create 的 `initial_run/deferred_initial_run` 请求体上限均为 1 MiB，Message 上限为
+256 KiB，config/context 的单个持久化字符串上限为 32 KiB，
+上传文件最多引用 10 个正整数 ID。handler 不信任客户端文件描述，只在授权后的 path
+Thread 中查询文件并重建权威摘要。`Idempotency-Key` 只从 header 接受：同 Thread 重试回放
+首个已提交 Run/Message，即使上传文件后来被删除；服务端持久化 operation/payload
+fingerprint，同键改 payload、跨 turn/resume 或跨 Thread 复用都返回稳定 `409`，并发唯一键
+竞争也由 repository 二次读取执行相同校验。canonical handler 在持久化前把原始 key 与
+session principal 组合成稳定摘要，因此同一 workspace 的不同用户互不碰撞，原始 key 不会
+进入数据库或日志；operation 仍保存在隐藏 fingerprint metadata 中，保持同一用户跨操作
+复用 key 时返回 `409`。Thread create 的 `initial_run` 复用普通 turn 的 assistant、Message、
+config/context 和 metadata 安全校验，并参与相同的 operation/fingerprint 回放校验；历史内部
+assistant selector 统一投影为公开别名 `agent`。不携带 Run 的空 Thread 和
+`deferred_initial_run` 的通用 exactly-once registry 仍是后续能力，不在当前合同内。
+Run/User Message 原子 bundle 同时写入不公开的
+Message 关联，GET/list 不依赖客户端 metadata 推导 `message_id/attempt_kind/source_run_id`。
+应用层、领域层和仓储层的 operation、fingerprint、Message 关联及重放校验开关默认均为空或
+`false`，仅 canonical handler 显式启用；历史调用即使已有同名 metadata 也保持原语义。
+wait/join 只在 Run 终态返回 `200 values`，不再复用旧事件流的 30 秒定时器；请求 deadline
+和 cancel 分别映射为 `504/408`，只有 wait 的 `on_disconnect=cancel` 会触发现有授权取消
+用例。终态 Run 或 cancel/complete 竞争统一返回幂等 `204`。resume 的客户端语义错误返回
+`422`、状态竞争返回 `409`。Thread/Run message 全局序列投影保留现有精确语义，但以 5000 条
+原始记录和 32 MiB 原始字符串为双预算，超限返回 `422 journal_too_large`，不做无界扫描。
+生产网关仍必须在读取或缓冲 body 前执行同等或更严格的请求体限制，handler 限制是第二道
+契约防线。
+
+canonical create-stream 和 reconnect-stream 两个 SSE handler 仍是 feature gate 后的
+`501` 占位；其余 canonical 路由也继续由默认关闭的 feature gate 隔离，因此当前还没有
+切换生产流量。现有 Workbench UI 继续使用 `/api/workbench/task_threads`，`/api/threads`
+兼容入口也未修改；两条来源合同在完整联调、灰度和观察期结束前都不得删除。
+
 ### MySQL 队列与 lease
 
 Workbench 没有 Redis、Kafka、RabbitMQ、NATS 或 Asynq Run 队列。队列事实是

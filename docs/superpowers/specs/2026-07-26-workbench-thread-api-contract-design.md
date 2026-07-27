@@ -398,7 +398,8 @@ Thread，不创建 Message、Run 或事件，也不把未提交消息保存成�
 - `GET Thread` 的 `include` 首期只允许省略；Thread create 的非空 `metadata.graph_id`、`ttl`、
   `supersteps`、客户端 `thread_id` 以及 patch 的 `ttl` 均返回 `422`。
 - `DELETE` 在 Thread 为 busy 时返回 `409 thread_busy`，不通过删除隐式取消运行。
-  非 busy 删除直接复用现有 `ApplicationService.DeleteThread` 及同一 repository 级联边界，
+  非 busy 删除调用原子 `ApplicationService.DeleteThreadIfIdle`，并复用同一 repository
+  级联边界，
   不新增软删除分支或第二套清理逻辑。这是 canonical 安全收紧；发现依赖
   “运行中删除”的存量调用方时，该调用方不得进入迁移灰度。
 - `POST state` 只允许更新白名单 channel。Run 状态、Message、Artifact、用量和审计字段
@@ -516,9 +517,10 @@ canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。�
 
 | 字段 | 规则 |
 | --- | --- |
-| `assistant_id` | 首期只接受已配置的公开别名，例如 `agent`；不因此承诺 assistants API |
-| `input` | 必填；`messages` 表示本次 state update，不得被当作客户端提交的权威完整历史 |
-| `command.resume` | SDK 恢复形式，与专用 `resume` route 进入同一恢复用例 |
+| `assistant_id` | 首期只接受公开别名 `agent`；不接受任意内部 assistant ID，也不因此承诺 assistants API |
+| `input` | 普通 Run 必填；`messages` 必须只有一个非空 User Message，表示本次 state update，不得被当作客户端提交的权威完整历史。使用 `command.resume` 时必须省略或为 `null` |
+| `input.uploaded_files` | 最多 10 项；每项只接受正整数或十进制字符串形式的 `file_id`，其他描述字段一律拒绝。服务端按 session principal 和 path Thread 查询文件并重建名称、路径、大小等权威摘要 |
+| `command.resume` | SDK 恢复形式；不得和普通 `input`、`metadata`、`config`、`context` 同时提交，并与专用 `resume` route 进入同一恢复用例 |
 | `metadata` | 仅允许业务标签；身份、空间、权限和内部状态由服务端覆盖或拒绝 |
 | `config` | 服务端重新校验 runtime、mode、模型与资源；客户端不能扩大能力 |
 | `context` | 只接受公开、有限大小的上下文；凭据和内部 provider 配置禁止传入 |
@@ -545,6 +547,58 @@ canonical 不提供 `POST .../{run_id}/stream` 或 `POST .../{run_id}/join`。�
 
 `checkpoint_during` 及其他未声明字段返回 `422 unsupported_sdk_field`。JSON 反序列化必须
 `disallow unknown fields`，不能静默吞掉新 SDK 字段后继续执行。
+
+请求和可持久化载荷必须同时满足下列上限：
+
+- HTTP body 最大 1 MiB；外部生产网关必须在代理读取或缓冲 body 前执行同等或更严格的
+  限制，应用 handler 再做一次契约校验；
+- 本次 User Message 最大 256 KiB；
+- `config`、`context` 中单个字符串最大 32 KiB，最大嵌套深度 16，每层 object 或 array
+  最多 256 项；
+- 身份、workspace/tenant、token、cookie、private key、provider 原始载荷和其他内部字段
+  在持久化前拒绝，不能依赖响应投影再隐藏；`appended_message_id`、`source_run_id`、
+  `attempt_kind`、human-interaction/checkpoint-resume 标记和 `_idempotency/_message` 也属于
+  服务端字段，canonical metadata 不能提交。
+
+`Idempotency-Key` 只允许放在 header，去除首尾空白后最长 128 字节。相同 Thread 的重试
+必须回放首个已提交 Run 和 User Message，不重新验证已经变化的可变外部状态，因此即使
+首个请求引用的上传文件随后被删除，也必须返回相同 `run_id` 和 `message_id`；同一工作空间
+内把该 key 用于另一 Thread 时返回 `409 idempotency_conflict`，且不暴露原资源标识。body
+中的 `idempotency_key` 始终返回 `422`。这些冲突与回放规则同时适用于普通创建、
+`command.resume` 和专用 `resume` route；恢复路径不能把跨 Thread 冲突降级成 `500`。
+服务端为 opt-in canonical Run 持久化不公开的 operation + payload fingerprint：同键、同
+operation、同规范化 payload 才能回放；同 Thread 改消息、文件引用、metadata、config、
+context、执行选项，或在 turn/resume 间复用 key，统一返回 `409 idempotency_conflict`。
+仓储必须在唯一键竞争后的二次读取中执行同一校验，不能只依赖 handler 预查询。
+应用层、领域层和仓储层新增的 operation、fingerprint、Message 关联及重放校验字段必须默认
+为空或 `false`，且只由 canonical handler 显式启用；历史调用即使已有 `_idempotency` 同名
+metadata，也不得自动切换到新指纹语义。
+
+SDK 恢复请求固定为下列结构；`source_run_id` 是来源 interrupted Run，响应中的新
+`run_id` 是恢复 attempt：
+
+```json
+{
+  "assistant_id": "agent",
+  "command": {
+    "resume": {
+      "source_run_id": "3001",
+      "interrupt_id": "interrupt-1",
+      "response": {
+        "schema": "coze.human_interaction_response.v1",
+        "interaction_id": "interaction-1",
+        "kind": "clarification",
+        "decision": "answered",
+        "answer": "按退款规则继续"
+      }
+    }
+  }
+}
+```
+
+`response` 的 `schema`、`interaction_id`、`kind` 和 `decision` 必填；`answer`、
+`choice_id`、`comment` 按 interaction 类型选填。客户端不能提交 actor、source 或
+submitted time，服务端必须从 session principal 和路由资源重建这些身份字段。
 
 JavaScript 1.6.0 和 Python 0.4.2 的异步 `wait` 都不发送 `raise_error`，而是在
 客户端按本地 `raiseError/raise_error` 检查返回 values 中的 `__error__`；Python 0.4.2
@@ -597,6 +651,10 @@ Run 响应不得回显原始 `input`、`command`、`config` 或 `context`。这�
 消息、资源选择和内部执行配置，也不属于固定 SDK 的 `Run` 返回类型；排障使用不可逆 hash、
 公开 Message/RunEvent 和 trace reference，不能靠响应回显敏感载荷。
 
+`coze.message_id` 必须来自与 Run/User Message 同一事务分配并持久化的服务端关联；
+`coze.attempt_kind/source_run_id` 只能由审核后的内部 resume/retry 结构推导。客户端 metadata
+中的同名字段或 `source` 标签不得改变这些投影，内部 `_message/_idempotency` 也不得回显。
+
 公开状态映射固定为：
 
 | 内部状态 | SDK Run 状态 | Workbench 解释 |
@@ -612,8 +670,12 @@ Run 响应不得回显原始 `input`、`command`、`config` 或 `context`。这�
 
 ### 7.4 Wait、Join、Cancel 与 Resume
 
-- `runs/wait` 先创建 Run，再等待终态，成功返回最终公开 state values；超时不取消 Run，
-  除非请求明确使用 `on_disconnect=cancel` 且服务器确认连接已经断开。
+- `runs/wait` 先创建 Run，再等待终态，成功返回最终公开 state values。canonical handler
+  不复用旧事件流的固定 30 秒定时器，不能把非终态 checkpoint 当作最终 values 返回 `200`；
+  阻塞边界由请求 context 和生产网关 timeout 决定，deadline 返回 `504 run_wait_timeout`，
+  请求取消映射为 `408 request_canceled`（连接已关闭时主要用于结构化日志）。
+- `runs/wait` 的 context 结束且持久化 `on_disconnect=cancel` 时调用现有授权取消用例；
+  `continue` 保持后台 Run。`GET .../join` 和 `cancel?wait=1` 不继承该取消动作。
 - `runs/wait` 和 `GET .../join` 返回相同元素形状：Thread 的最终公开 state values 本身，
   不是 `Run`、`ThreadState` 或 `{data: ...}` envelope。Run 元数据由 get/list route 读取。
 - 失败 values 的 `__error__` 字段及 `runs/wait` 的 `raise_error` 分支按 7.2 执行；
@@ -625,11 +687,15 @@ Run 响应不得回显原始 `input`、`command`、`config` 或 `context`。这�
   返回；`wait=1` 等待 Run 到达结束状态后返回。`action=rollback` 在完整 rollback 合同
   落地前返回 `422`；成功统一返回 `204`，即使 Run 已终态也不返回 Run JSON。UI 与外部
   调用方通过 get/state 再读取实际终态。
-- 取消与完成竞争时以持久化成功的单调状态转换为准。
+- 已 `succeeded/failed/canceled` 的 Run 重复取消直接返回 `204`；取消与完成竞争时若取消
+  写入失败，handler 重新读取权威 Run，已终态同样返回 `204`，其他错误才继续上抛。
 - `resume` 的 path `run_id` 是来源 interrupted Run，不是要原地改写的 Run。成功响应是
   新 attempt，`coze.source_run_id` 指向来源 Run。
 - SDK 使用 `POST .../runs` + `command.resume` 时，必须调用与专用 `resume` 相同的
   application use case、幂等规则和状态校验。
+- resume 的 schema、kind、decision、interaction 匹配和响应大小错误返回
+  `422 invalid_resume`；来源 Run 已不再可恢复的状态竞争返回 `409 run_not_resumable`；
+  checkpoint 损坏、依赖失败等真正服务端故障才返回 `5xx`。
 - 顶层失败任务重试仍调用普通 Run 创建，设置 `coze.attempt_kind=retry` 和来源元数据；
   子智能体 retry 作为产品扩展另行保留，不能和顶层 retry 混为一谈。
 
@@ -644,6 +710,10 @@ Run 响应不得回显原始 `input`、`command`、`config` 或 `context`。这�
 - Thread/Run messages 使用 `before_seq`、`after_seq`、`limit`，返回
   `{data, has_more, next_before_seq, next_after_seq}`；同一 Message 在不同读取入口的
   `message_id/role/content/created_at/run_id` 必须一致。
+- 全局 `seq` 仍按完整 Thread journal 精确计算，但单次投影最多扫描 5000 条原始
+  Run/Message/RunEvent 且原始字符串累计不超过 32 MiB；任一预算超限返回
+  `422 journal_too_large`，不得为了 `limit=1` 无界加载整个大 Thread。后续若需要突破该
+  上限，必须先引入持久化 sequence/cursor 合同，不能静默提高内存扫描阈值。
 - `limit` 缺省值和最大值在 OpenAPI 中固定；越界值规范化或拒绝的策略必须在所有列表
   route 一致，不能由 repository 各自决定。
 - 分页 token、header 和 cursor 均从权限过滤后的结果计算，不能泄露其他空间的总量。
