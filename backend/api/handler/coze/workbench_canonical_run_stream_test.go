@@ -111,8 +111,9 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 	)
 	require.Equal(t, http.StatusOK, firstResponse.Code, firstResponse.Result().Body())
 
-	_, createdRuns := canonicalThreadMessagesAndRuns(t, 1)
+	createdMessages, createdRuns := canonicalThreadMessagesAndRuns(t, 1)
 	require.Len(t, createdRuns, 1)
+	require.Len(t, createdMessages, 1)
 	firstEvent := appendCanonicalRunStreamEvent(t, createdRuns[0], "step.started", `{"step_name":"planner"}`)
 	secondEvent := appendCanonicalRunStreamEvent(
 		t,
@@ -135,6 +136,7 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 	require.Len(t, runs, 1)
 	require.Len(t, messages, 1)
 	require.Equal(t, appagentthread.MessageRoleUser, messages[0].Role)
+	require.Equal(t, createdMessages[0].MessageID, messages[0].MessageID)
 	require.Equal(t, runs[0].RunID, messages[0].RunID)
 	require.Equal(t, canonicalRunPath(1, runs[0].RunID), firstResponse.Result().Header.Get("Content-Location"))
 	require.Equal(
