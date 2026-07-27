@@ -158,6 +158,21 @@ func createCanonicalStreamRun(
 		if projected == nil || run == nil || run.ThreadID != threadID {
 			return nil, nil, fmt.Errorf("canonical resume stream projection returned invalid run")
 		}
+		accessCtx := workbenchThreadAccessContext(ctx, threadID, run.RunID)
+		message, err := getCanonicalRunUserMessage(accessCtx, threadID, run.RunID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if message == nil || message.ThreadID != threadID || message.RunID != run.RunID {
+			return nil, nil, fmt.Errorf("canonical resume stream projection returned invalid message")
+		}
+		projectedMessage, err := projectCanonicalMessage(message)
+		if err != nil {
+			return nil, nil, err
+		}
+		if projectedMessage == nil {
+			return nil, nil, fmt.Errorf("canonical resume stream projection returned empty message")
+		}
 		return run, nil, nil
 	}
 
@@ -245,6 +260,7 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.StreamModes = strings.Join(streamModes, ",")
+	c.Header("Content-Location", canonicalRunPath(threadID, runID))
 
 	streamWriter := canonicalRunStreamWriterFactory(c)
 	if streamWriter.writer == nil {

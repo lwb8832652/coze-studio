@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
+	domainentity "github.com/coze-dev/coze-studio/backend/domain/agentthread/entity"
+	domainservice "github.com/coze-dev/coze-studio/backend/domain/agentthread/service"
 )
 
 const canonicalRunStreamRequestBody = `{
@@ -168,6 +170,43 @@ func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T
 	assertCanonicalResumePersistence(t, sourceRunID, "canonical-stream-resume-1")
 }
 
+func TestStreamCanonicalRunCommandResumeValidatesMessageProjectionBeforeSSE(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	sourceRunID := createInterruptedHumanInteractionRun(t)
+	appagentthread.SVC.ThreadSVC = invalidCanonicalResumeMessageThreadService{
+		ThreadService: appagentthread.SVC.ThreadSVC,
+	}
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+	payload := fmt.Sprintf(`{
+		"assistant_id":"agent",
+		"command":{"resume":{
+			"source_run_id":"%d",
+			"interrupt_id":"interrupt-1",
+			"response":{
+				"schema":"coze.human_interaction_response.v1",
+				"interaction_id":"hi_1",
+				"kind":"clarification",
+				"decision":"answered",
+				"answer":"last 30 days"
+			}
+		}}
+	}`, sourceRunID)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		payload,
+		ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-resume-invalid-message"},
+	)
+
+	require.Equal(t, http.StatusInternalServerError, response.Code, response.Result().Body())
+	require.Empty(t, writers.writers)
+}
+
 func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents(t *testing.T) {
 	installAgentThreadTestService(t)
 	run := createCanonicalRunStreamFixture(t, 1, "reconnect replay", "continue")
@@ -224,6 +263,7 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 		ut.Header{Key: "Last-Event-ID", Value: strconv.FormatInt(second.EventID, 10)},
 	)
 	require.Equal(t, http.StatusOK, queryWins.Code, queryWins.Result().Body())
+	require.Equal(t, canonicalRunPath(1, run.RunID), queryWins.Result().Header.Get("Content-Location"))
 	require.Equal(
 		t,
 		canonicalRunStreamIDsAfter(allEvents, first.EventID),
@@ -238,6 +278,7 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 		ut.Header{Key: "Last-Event-ID", Value: strconv.FormatInt(second.EventID, 10)},
 	)
 	require.Equal(t, http.StatusOK, headerOnly.Code, headerOnly.Result().Body())
+	require.Equal(t, canonicalRunPath(1, run.RunID), headerOnly.Result().Header.Get("Content-Location"))
 	require.Equal(
 		t,
 		canonicalRunStreamIDsAfter(allEvents, second.EventID),
@@ -409,6 +450,30 @@ type callbackCanonicalRunStreamWriter struct {
 
 type canonicalRunStreamWriterRecorder struct {
 	writers []*recordingTaskThreadRunEventStreamWriter
+}
+
+type invalidCanonicalResumeMessageThreadService struct {
+	domainservice.ThreadService
+}
+
+func (s invalidCanonicalResumeMessageThreadService) ListMessages(
+	ctx context.Context,
+	req *domainservice.ListMessagesRequest,
+) ([]*domainentity.Message, int64, error) {
+	messages, total, err := s.ThreadService.ListMessages(ctx, req)
+	if err != nil {
+		return nil, 0, err
+	}
+	invalid := make([]*domainentity.Message, len(messages))
+	for i, message := range messages {
+		if message == nil {
+			continue
+		}
+		copy := *message
+		copy.ID = 0
+		invalid[i] = &copy
+	}
+	return invalid, total, nil
 }
 
 func installCanonicalRunStreamRecordingWriters(t *testing.T) *canonicalRunStreamWriterRecorder {
