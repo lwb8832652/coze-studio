@@ -137,6 +137,7 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 	require.Len(t, messages, 1)
 	require.Equal(t, appagentthread.MessageRoleUser, messages[0].Role)
 	require.Equal(t, createdMessages[0].MessageID, messages[0].MessageID)
+	require.Equal(t, createdMessages[0].RunID, messages[0].RunID)
 	require.Equal(t, runs[0].RunID, messages[0].RunID)
 	require.Equal(t, canonicalRunPath(1, runs[0].RunID), firstResponse.Result().Header.Get("Content-Location"))
 	require.Equal(
