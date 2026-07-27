@@ -82,6 +82,14 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.ThreadID = threadID
+	ctx = workbenchThreadAccessContext(ctx, threadID, 0)
+	if err := appagentthread.SVC.AuthorizeThreadAccess(ctx, appagentthread.ThreadAccessRequest{
+		ViewerID: workbenchViewerIDFromCtx(ctx),
+		ThreadID: threadID,
+	}); err != nil {
+		writeCanonicalApplicationError(ctx, c, err)
+		return
+	}
 
 	submission, public := parseCanonicalRunSubmission(c, false)
 	if public != nil {
@@ -177,8 +185,7 @@ func createCanonicalStreamRun(
 	}
 
 	requestLog.SubmissionKind = "run_turn"
-	accessCtx := workbenchThreadAccessContext(ctx, threadID, 0)
-	response, public, err := createCanonicalRunBundle(accessCtx, threadID, submission)
+	response, public, err := createCanonicalRunBundle(ctx, threadID, submission)
 	if public != nil {
 		return nil, public, nil
 	}

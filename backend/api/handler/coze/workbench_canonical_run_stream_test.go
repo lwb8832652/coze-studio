@@ -99,30 +99,73 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
-	installCanonicalRunStreamRecordingWriters(t)
+	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalRunStreamTestServer(20 * time.Millisecond)
-	locations := make([]string, 0, 2)
+	firstResponse := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		canonicalRunStreamRequestBody,
+		ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-replay"},
+	)
+	require.Equal(t, http.StatusOK, firstResponse.Code, firstResponse.Result().Body())
 
-	for range 2 {
-		response := performCanonicalRunJSONRequest(
-			t,
-			h,
-			http.MethodPost,
-			"/api/workbench/threads/1/runs/stream",
-			canonicalRunStreamRequestBody,
-			ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-replay"},
-		)
-		require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
-		locations = append(locations, response.Result().Header.Get("Content-Location"))
-	}
+	_, createdRuns := canonicalThreadMessagesAndRuns(t, 1)
+	require.Len(t, createdRuns, 1)
+	firstEvent := appendCanonicalRunStreamEvent(t, createdRuns[0], "step.started", `{"step_name":"planner"}`)
+	secondEvent := appendCanonicalRunStreamEvent(
+		t,
+		createdRuns[0],
+		"tool.completed",
+		`{"tool_name":"search","tool_arguments":"secret","provider_body":"secret"}`,
+	)
+
+	secondResponse := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		canonicalRunStreamRequestBody,
+		ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-replay"},
+	)
+	require.Equal(t, http.StatusOK, secondResponse.Code, secondResponse.Result().Body())
 
 	messages, runs := canonicalThreadMessagesAndRuns(t, 1)
 	require.Len(t, runs, 1)
 	require.Len(t, messages, 1)
 	require.Equal(t, appagentthread.MessageRoleUser, messages[0].Role)
 	require.Equal(t, runs[0].RunID, messages[0].RunID)
-	require.Equal(t, canonicalRunPath(1, runs[0].RunID), locations[0])
-	require.Equal(t, locations[0], locations[1])
+	require.Equal(t, canonicalRunPath(1, runs[0].RunID), firstResponse.Result().Header.Get("Content-Location"))
+	require.Equal(
+		t,
+		firstResponse.Result().Header.Get("Content-Location"),
+		secondResponse.Result().Header.Get("Content-Location"),
+	)
+	replayed := writers.writer(t, 1).String()
+	require.Equal(t, []int64{firstEvent.EventID, secondEvent.EventID}, canonicalRunStreamEventIDs(t, replayed))
+	require.NotContains(t, replayed, "tool_arguments")
+	require.NotContains(t, replayed, "provider_body")
+}
+
+func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	writers := installCanonicalRunStreamRecordingWriters(t)
+	h := server.Default()
+	h.Use(workbenchSessionMiddlewareForTest(999))
+	h.POST("/api/workbench/threads/:thread_id/runs/stream", StreamCanonicalRun)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		`{`,
+	)
+
+	require.Equal(t, http.StatusNotFound, response.Code, response.Result().Body())
+	require.Empty(t, writers.writers)
 }
 
 func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T) {

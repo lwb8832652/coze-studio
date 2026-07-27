@@ -187,8 +187,9 @@ wait/join 只在 Run 终态返回 `200 values`，不再复用旧事件流的 30 
 契约防线。
 
 canonical create-stream 和 reconnect-stream 两个 SSE handler 已在默认关闭的 feature
-gate 后完成实现。create-stream 复用现有原子 Run/Message 创建和 human resume 用例，按
-principal 隔离幂等键，并在 Run 与 User Message 的公共投影通过后返回精确
+gate 后完成实现。create-stream 在读取请求体前完成 path Thread/space 授权，再严格解析
+submission；随后复用现有原子 Run/Message 创建和 human resume 用例，按 principal 隔离
+幂等键，并在 Run 与 User Message 的公共投影通过后返回精确
 `Content-Location`、写入 metadata、回放持久化事件并跟随 live 事件；reconnect-stream
 以 query `after_event_id` 优先、`Last-Event-ID` 兜底，支持受控 `stream_mode` 覆盖和严格
 `cancel_on_disconnect=true|false`。两条路径均按 `event_id` 顺序输出审核后的公共事件，

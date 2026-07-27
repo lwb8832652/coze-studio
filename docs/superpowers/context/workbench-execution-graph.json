@@ -2630,6 +2630,10 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
           "locator": "func TestCanonicalRunStreamCancelCancelsOnlyAfterConfirmedDisconnect"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission"
         }
       ]
     },
