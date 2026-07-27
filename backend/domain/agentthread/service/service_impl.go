@@ -175,7 +175,10 @@ func (s *threadService) CreateThreadRunMessage(
 	runReq := req.Run
 	runReq.MultitaskStrategy = strategy
 	runReq.OnDisconnect = onDisconnect
-	run := newRunEntity(&runReq, ids[1], thread, runKind, status, input, now)
+	run, err := newRunEntity(&runReq, ids[1], thread, runKind, status, input, now)
+	if err != nil {
+		return nil, err
+	}
 	message := &entity.Message{
 		ID:        ids[2],
 		ThreadID:  thread.ID,
@@ -449,7 +452,10 @@ func (s *threadService) CreateRun(ctx context.Context, req *CreateRunRequest) (*
 	runReq := *req
 	runReq.MultitaskStrategy = strategy
 	runReq.OnDisconnect = onDisconnect
-	run := newRunEntity(&runReq, id, thread, runKind, status, input, now)
+	run, err := newRunEntity(&runReq, id, thread, runKind, status, input, now)
+	if err != nil {
+		return nil, err
+	}
 	createRun := s.repo.CreateRun
 	if guardedRepo, ok := s.repo.(repository.ThreadGuardedRunRepository); ok {
 		createRun = guardedRepo.CreateRunWithThreadLock
@@ -543,7 +549,10 @@ func (s *threadService) CreateRunBundle(
 	runReq := req.Run
 	runReq.MultitaskStrategy = strategy
 	runReq.OnDisconnect = onDisconnect
-	run := newRunEntity(&runReq, ids[0], thread, runKind, status, input, now)
+	run, err := newRunEntity(&runReq, ids[0], thread, runKind, status, input, now)
+	if err != nil {
+		return nil, err
+	}
 	nextID := 1
 	var message *entity.Message
 	if req.Message != nil {
@@ -557,6 +566,15 @@ func (s *threadService) CreateRunBundle(
 			CreatedAt: now,
 		}
 		nextID++
+	}
+	if req.PersistMessageReference {
+		if message == nil {
+			return nil, InvalidArgumentErrorf("persisted run message reference requires a message")
+		}
+		run.Metadata, err = entity.MergeRunMessageReference(run.Metadata, message.ID)
+		if err != nil {
+			return nil, InvalidArgumentErrorf("persist run message reference: %v", err)
+		}
 	}
 	var event *entity.RunEvent
 	if req.Event != nil {
@@ -572,7 +590,8 @@ func (s *threadService) CreateRunBundle(
 
 	result, err := s.repo.CreateRunBundle(ctx, repository.CreateRunBundleRequest{
 		Run: run, Message: message, Event: event,
-		SkipTopLevelAdmission: req.SkipTopLevelAdmission,
+		SkipTopLevelAdmission:     req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay: strings.TrimSpace(req.Run.IdempotencyOperation) != "",
 		AllocateInterruptedEventIDs: func(count int) ([]int64, error) {
 			return s.idGen.GenMultiIDs(ctx, count)
 		},
@@ -598,7 +617,15 @@ func newRunEntity(
 	status entity.RunStatus,
 	input string,
 	now int64,
-) *entity.Run {
+) (*entity.Run, error) {
+	metadata, err := entity.MergeRunIdempotencyContract(
+		req.Metadata,
+		req.IdempotencyOperation,
+		req.IdempotencyFingerprint,
+	)
+	if err != nil {
+		return nil, InvalidArgumentErrorf("run idempotency contract is invalid: %v", err)
+	}
 	run := &entity.Run{
 		ID:                id,
 		ThreadID:          thread.ID,
@@ -612,7 +639,7 @@ func newRunEntity(
 		Input:             input,
 		Config:            defaultJSON(req.Config, "{}"),
 		Context:           defaultJSON(req.Context, "{}"),
-		Metadata:          defaultJSON(req.Metadata, "{}"),
+		Metadata:          defaultJSON(metadata, "{}"),
 		StreamMode:        defaultJSON(req.StreamMode, `["messages","updates"]`),
 		MultitaskStrategy: defaultString(req.MultitaskStrategy, "reject"),
 		OnDisconnect:      defaultString(req.OnDisconnect, "cancel"),
@@ -624,7 +651,7 @@ func newRunEntity(
 	if status == entity.RunStatusRunning {
 		run.StartedAt = now
 	}
-	return run
+	return run, nil
 }
 
 func normalizeMultitaskStrategy(strategy string, runKind entity.RunKind) (string, error) {

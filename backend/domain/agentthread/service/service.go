@@ -66,21 +66,23 @@ type AppendMessageRequest struct {
 }
 
 type CreateRunRequest struct {
-	ThreadID          int64
-	ParentRunID       int64
-	AssistantID       string
-	RunKind           entity.RunKind
-	Status            entity.RunStatus
-	Command           string
-	Input             string
-	Config            string
-	Context           string
-	Metadata          string
-	StreamMode        string
-	MultitaskStrategy string
-	OnDisconnect      string
-	Durability        string
-	IdempotencyKey    string
+	ThreadID               int64
+	ParentRunID            int64
+	AssistantID            string
+	RunKind                entity.RunKind
+	Status                 entity.RunStatus
+	Command                string
+	Input                  string
+	Config                 string
+	Context                string
+	Metadata               string
+	StreamMode             string
+	MultitaskStrategy      string
+	OnDisconnect           string
+	Durability             string
+	IdempotencyKey         string
+	IdempotencyOperation   string
+	IdempotencyFingerprint string
 }
 
 type CreateMessageSpec struct {
@@ -109,10 +111,11 @@ type CreateThreadRunMessageResult struct {
 }
 
 type CreateRunBundleRequest struct {
-	Run                   CreateRunRequest
-	Message               *CreateMessageSpec
-	Event                 *CreateRunEventSpec
-	SkipTopLevelAdmission bool
+	Run                     CreateRunRequest
+	Message                 *CreateMessageSpec
+	Event                   *CreateRunEventSpec
+	SkipTopLevelAdmission   bool
+	PersistMessageReference bool
 }
 
 type CreateRunBundleResult struct {

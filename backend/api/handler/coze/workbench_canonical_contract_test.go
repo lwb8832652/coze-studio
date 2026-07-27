@@ -269,6 +269,12 @@ func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
 		{"invalid argument", domainservice.ErrInvalidArgument, hertzconsts.StatusBadRequest, "invalid_request", false},
 		{"access denied", appagentthread.ErrThreadAccessDenied, hertzconsts.StatusNotFound, "resource_not_found", false},
 		{"active run", appagentthread.ErrActiveRunExists, hertzconsts.StatusConflict, "run_conflict", false},
+		{"idempotency conflict", appagentthread.ErrRunIdempotencyConflict, hertzconsts.StatusConflict, "idempotency_conflict", false},
+		{"invalid resume", appagentthread.ErrHumanInteractionResumeInvalid, hertzconsts.StatusUnprocessableEntity, "invalid_resume", false},
+		{"resume conflict", appagentthread.ErrHumanInteractionResumeConflict, hertzconsts.StatusConflict, "run_not_resumable", false},
+		{"journal budget", errCanonicalJournalBudgetExceeded, hertzconsts.StatusUnprocessableEntity, "journal_too_large", false},
+		{"deadline", context.DeadlineExceeded, hertzconsts.StatusGatewayTimeout, "run_wait_timeout", true},
+		{"canceled", context.Canceled, hertzconsts.StatusRequestTimeout, "request_canceled", true},
 		{"unsupported value", appagentthread.ErrUnsupportedMultitaskStrategy, hertzconsts.StatusUnprocessableEntity, "unsupported_value", false},
 		{"runtime config", appagentthread.ErrInvalidRuntimeConfig, hertzconsts.StatusUnprocessableEntity, "invalid_runtime_config", false},
 		{"dependency", appagentthread.ErrThreadAuthorizationUnavailable, hertzconsts.StatusServiceUnavailable, "dependency_unavailable", true},
@@ -296,6 +302,26 @@ func TestCanonicalTraceIDUsesRequestLogID(t *testing.T) {
 		projectconsts.CtxLogIDKey,
 		int64(42),
 	)))
+}
+
+func TestCanonicalLogHashIsStableAndNeverEchoesSource(t *testing.T) {
+	const source = "canonical-idempotency-secret"
+	first := canonicalLogHash(source)
+	second := canonicalLogHash(source)
+
+	require.Equal(t, first, second)
+	require.Len(t, first, 16)
+	require.NotContains(t, first, source)
+	require.Equal(t, "none", canonicalLogHash(""))
+}
+
+func TestCanonicalLogEnumsFailClosed(t *testing.T) {
+	require.Equal(t, "values", canonicalResponseBodyKind("values", hertzconsts.StatusOK))
+	require.Equal(t, "error", canonicalResponseBodyKind("values", hertzconsts.StatusBadRequest))
+	require.Equal(t, "none", canonicalResponseBodyKind("request-body", hertzconsts.StatusOK))
+	require.Equal(t, "not_applicable", canonicalRaiseErrorMode(nil))
+	value := true
+	require.Equal(t, "true", canonicalRaiseErrorMode(&value))
 }
 
 func TestCanonicalHeadersAreAPIBaseRelative(t *testing.T) {

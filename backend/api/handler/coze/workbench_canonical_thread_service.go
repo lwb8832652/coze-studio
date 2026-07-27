@@ -33,7 +33,31 @@ import (
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
 
-const canonicalMaxThreadMetadataKeys = 16
+const (
+	canonicalMaxThreadMetadataKeys = 16
+	canonicalMaxJournalRecords     = 5000
+	canonicalMaxJournalSourceBytes = 32 << 20
+)
+
+var errCanonicalJournalBudgetExceeded = errors.New("canonical thread journal budget exceeded")
+
+type canonicalJournalBudget struct {
+	remainingRecords int
+	remainingBytes   int64
+}
+
+func newCanonicalJournalBudget(maxRecords int, maxBytes int64) *canonicalJournalBudget {
+	return &canonicalJournalBudget{remainingRecords: maxRecords, remainingBytes: maxBytes}
+}
+
+func (b *canonicalJournalBudget) consume(recordBytes int) error {
+	if b == nil || b.remainingRecords <= 0 || recordBytes < 0 || int64(recordBytes) > b.remainingBytes {
+		return errCanonicalJournalBudgetExceeded
+	}
+	b.remainingRecords--
+	b.remainingBytes -= int64(recordBytes)
+	return nil
+}
 
 type canonicalCreateThreadRequest struct {
 	ThreadID   *string                    `json:"thread_id,omitempty"`
@@ -1015,15 +1039,30 @@ func loadCanonicalThreadMessages(
 	ctx context.Context,
 	threadID int64,
 ) ([]*canonicalMessage, error) {
-	runs, err := loadAllCanonicalThreadRuns(ctx, threadID)
+	return loadCanonicalThreadMessagesWithBudget(
+		ctx,
+		threadID,
+		canonicalMaxJournalRecords,
+		canonicalMaxJournalSourceBytes,
+	)
+}
+
+func loadCanonicalThreadMessagesWithBudget(
+	ctx context.Context,
+	threadID int64,
+	maxRecords int,
+	maxBytes int64,
+) ([]*canonicalMessage, error) {
+	budget := newCanonicalJournalBudget(maxRecords, maxBytes)
+	runs, err := loadAllCanonicalThreadRuns(ctx, threadID, budget)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := loadAllCanonicalPersistedMessages(ctx, threadID)
+	messages, err := loadAllCanonicalPersistedMessages(ctx, threadID, budget)
 	if err != nil {
 		return nil, err
 	}
-	events, err := loadAllCanonicalThreadRunEvents(ctx, threadID)
+	events, err := loadAllCanonicalThreadRunEvents(ctx, threadID, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -1073,10 +1112,11 @@ func loadCanonicalThreadMessages(
 func loadAllCanonicalThreadRuns(
 	ctx context.Context,
 	threadID int64,
+	budget *canonicalJournalBudget,
 ) ([]*appagentthread.RunSummary, error) {
 	const pageSize = int32(100)
 	result := []*appagentthread.RunSummary{}
-	for offset := int32(0); ; offset += pageSize {
+	for offset := int32(0); ; {
 		response, err := appagentthread.SVC.SearchRuns(ctx, &appagentthread.SearchRunsRequest{
 			ThreadID: threadID, Page: appagentthread.CanonicalPage{Offset: offset, Limit: pageSize},
 		})
@@ -1086,19 +1126,29 @@ func loadAllCanonicalThreadRuns(
 		if response == nil {
 			return nil, fmt.Errorf("agent thread application returned empty run page")
 		}
-		result = append(result, response.Runs...)
+		if response.Total > int64(len(result)+budget.remainingRecords) {
+			return nil, fmt.Errorf("%w: run record count", errCanonicalJournalBudgetExceeded)
+		}
+		for _, run := range response.Runs {
+			if err := budget.consume(canonicalRunJournalSourceBytes(run)); err != nil {
+				return nil, fmt.Errorf("%w: run source bytes", err)
+			}
+			result = append(result, run)
+		}
 		if int64(offset)+int64(len(response.Runs)) >= response.Total || len(response.Runs) == 0 {
 			return result, nil
 		}
-		if offset > math.MaxInt32-pageSize {
+		if offset > math.MaxInt32-int32(len(response.Runs)) {
 			return nil, fmt.Errorf("canonical run journal is too large")
 		}
+		offset += int32(len(response.Runs))
 	}
 }
 
 func loadAllCanonicalPersistedMessages(
 	ctx context.Context,
 	threadID int64,
+	budget *canonicalJournalBudget,
 ) ([]*appagentthread.MessageSummary, error) {
 	const pageSize = int32(100)
 	result := []*appagentthread.MessageSummary{}
@@ -1112,7 +1162,15 @@ func loadAllCanonicalPersistedMessages(
 		if response == nil {
 			return nil, fmt.Errorf("agent thread application returned empty message page")
 		}
-		result = append(result, response.Messages...)
+		if response.Total > int64(len(result)+budget.remainingRecords) {
+			return nil, fmt.Errorf("%w: message record count", errCanonicalJournalBudgetExceeded)
+		}
+		for _, message := range response.Messages {
+			if err := budget.consume(canonicalMessageJournalSourceBytes(message)); err != nil {
+				return nil, fmt.Errorf("%w: message source bytes", err)
+			}
+			result = append(result, message)
+		}
 		if int64(len(result)) >= response.Total || len(response.Messages) == 0 {
 			return result, nil
 		}
@@ -1125,6 +1183,7 @@ func loadAllCanonicalPersistedMessages(
 func loadAllCanonicalThreadRunEvents(
 	ctx context.Context,
 	threadID int64,
+	budget *canonicalJournalBudget,
 ) ([]*appagentthread.RunEventSummary, error) {
 	const pageSize = int32(100)
 	result := []*appagentthread.RunEventSummary{}
@@ -1138,7 +1197,15 @@ func loadAllCanonicalThreadRunEvents(
 		if response == nil {
 			return nil, fmt.Errorf("agent thread application returned empty event page")
 		}
-		result = append(result, response.Events...)
+		if response.Total > int64(len(result)+budget.remainingRecords) {
+			return nil, fmt.Errorf("%w: event record count", errCanonicalJournalBudgetExceeded)
+		}
+		for _, event := range response.Events {
+			if err := budget.consume(canonicalRunEventJournalSourceBytes(event)); err != nil {
+				return nil, fmt.Errorf("%w: event source bytes", err)
+			}
+			result = append(result, event)
+		}
 		if int64(len(result)) >= response.Total || len(response.Events) == 0 {
 			return result, nil
 		}
@@ -1146,6 +1213,31 @@ func loadAllCanonicalThreadRunEvents(
 			return nil, fmt.Errorf("canonical event journal is too large")
 		}
 	}
+}
+
+func canonicalRunJournalSourceBytes(run *appagentthread.RunSummary) int {
+	if run == nil {
+		return 0
+	}
+	return len(run.AssistantID) + len(run.RunKind) + len(run.Status) + len(run.Command) +
+		len(run.Input) + len(run.Config) + len(run.Context) + len(run.Metadata) +
+		len(run.StreamMode) + len(run.MultitaskStrategy) + len(run.OnDisconnect) +
+		len(run.Durability) + len(run.IdempotencyKey) + len(run.WorkerID) +
+		len(run.LeaseOwner) + len(run.LeaseToken) + len(run.ErrorCode) + len(run.ErrorMessage)
+}
+
+func canonicalMessageJournalSourceBytes(message *appagentthread.MessageSummary) int {
+	if message == nil {
+		return 0
+	}
+	return len(message.Role) + len(message.Content) + len(message.Metadata)
+}
+
+func canonicalRunEventJournalSourceBytes(event *appagentthread.RunEventSummary) int {
+	if event == nil {
+		return 0
+	}
+	return len(event.EventType) + len(event.Payload)
 }
 
 func canonicalMessageSourceOrder(id string) (int, int64) {

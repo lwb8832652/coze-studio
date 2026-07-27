@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +31,38 @@ import (
 )
 
 const humanInteractionResolvedEventType = "human.interaction.resolved"
+
+var (
+	ErrHumanInteractionResumeInvalid  = errors.New("human interaction resume request is invalid")
+	ErrHumanInteractionResumeConflict = errors.New("human interaction run is not resumable")
+)
+
+type humanInteractionResumeSemanticError struct {
+	kind  error
+	cause error
+}
+
+func (e *humanInteractionResumeSemanticError) Error() string {
+	if e == nil || e.cause == nil {
+		return ""
+	}
+	return e.cause.Error()
+}
+
+func (e *humanInteractionResumeSemanticError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *humanInteractionResumeSemanticError) Is(target error) bool {
+	return e != nil && (errors.Is(e.kind, target) || errors.Is(e.cause, target))
+}
+
+func newHumanInteractionResumeSemanticError(kind error, cause error) error {
+	return &humanInteractionResumeSemanticError{kind: kind, cause: cause}
+}
 
 func (s *ApplicationService) ResumeHumanInteraction(
 	ctx context.Context,
@@ -60,7 +93,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	response.SubmittedBy = strings.TrimSpace(response.SubmittedBy)
 	response.Source = strings.TrimSpace(response.Source)
 	if err := validateHumanInteractionResponse(response); err != nil {
-		return nil, err
+		return nil, newHumanInteractionResumeSemanticError(ErrHumanInteractionResumeInvalid, err)
 	}
 
 	sourceRun, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{RunID: req.SourceRunID})
@@ -74,7 +107,10 @@ func (s *ApplicationService) ResumeHumanInteraction(
 		return nil, fmt.Errorf("source run does not belong to thread")
 	}
 	if sourceRun.Status != domainentity.RunStatusInterrupted {
-		return nil, fmt.Errorf("source run must be interrupted")
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeConflict,
+			errors.New("source run must be interrupted"),
+		)
 	}
 
 	idempotencyKey, err := humanInteractionResumeIdempotencyKey(req, response)
@@ -86,6 +122,13 @@ func (s *ApplicationService) ResumeHumanInteraction(
 		return nil, err
 	}
 	if existing != nil {
+		if err := domainentity.ValidateRunIdempotencyValues(
+			existing.Metadata,
+			req.IdempotencyOperation,
+			req.IdempotencyFingerprint,
+		); err != nil {
+			return nil, err
+		}
 		return &ResumeHumanInteractionResponse{Run: DomainRunToSummary(existing)}, nil
 	}
 
@@ -95,17 +138,29 @@ func (s *ApplicationService) ResumeHumanInteraction(
 	}
 	interrupt, ok := envelope.Interrupts[interruptID]
 	if !ok {
-		return nil, fmt.Errorf("interrupt id is not resumable")
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeInvalid,
+			errors.New("interrupt id is not resumable"),
+		)
 	}
 	if strings.TrimSpace(interrupt.ID) != "" && strings.TrimSpace(interrupt.ID) != interruptID {
-		return nil, fmt.Errorf("interrupt id is not resumable")
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeInvalid,
+			errors.New("interrupt id is not resumable"),
+		)
 	}
 	prompt, ok := humanInteractionPromptFromInfo(interrupt.Info)
 	if !ok || prompt == nil {
-		return nil, fmt.Errorf("interrupt id is not a human interaction")
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeInvalid,
+			errors.New("interrupt id is not a human interaction"),
+		)
 	}
 	if prompt.InteractionID != response.InteractionID || prompt.Kind != response.Kind {
-		return nil, fmt.Errorf("human interaction response does not match interrupt")
+		return nil, newHumanInteractionResumeSemanticError(
+			ErrHumanInteractionResumeInvalid,
+			errors.New("human interaction response does not match interrupt"),
+		)
 	}
 	if response.SubmittedAt <= 0 {
 		response.SubmittedAt = time.Now().UnixMilli()
@@ -129,6 +184,8 @@ func (s *ApplicationService) ResumeHumanInteraction(
 			Metadata: metadata, StreamMode: sourceRun.StreamMode,
 			MultitaskStrategy: "reject", OnDisconnect: sourceRun.OnDisconnect,
 			Durability: sourceRun.Durability, IdempotencyKey: idempotencyKey,
+			IdempotencyOperation:   req.IdempotencyOperation,
+			IdempotencyFingerprint: req.IdempotencyFingerprint,
 		},
 		Message: &domainservice.CreateMessageSpec{
 			Role:     domainentity.MessageRoleUser,
@@ -142,6 +199,7 @@ func (s *ApplicationService) ResumeHumanInteraction(
 				return encodeRunEventPayload(ctx, resolved)
 			},
 		},
+		PersistMessageReference: req.PersistMessageReference,
 	})
 	if err != nil {
 		return nil, err

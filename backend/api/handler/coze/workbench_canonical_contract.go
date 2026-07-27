@@ -19,6 +19,7 @@ package coze
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,12 +56,20 @@ type canonicalError struct {
 }
 
 type canonicalRequestLog struct {
-	Operation      string
-	RouteTemplate  string
-	SubmissionKind string
-	ThreadID       int64
-	RunID          int64
-	StartedAt      time.Time
+	Operation          string
+	RouteTemplate      string
+	SubmissionKind     string
+	ResponseBodyKind   string
+	LocationKind       string
+	RaiseErrorMode     string
+	FailureProjection  string
+	StreamModes        string
+	IdempotencyKeyHash string
+	ThreadID           int64
+	RunID              int64
+	SourceRunID        int64
+	AfterEventID       int64
+	StartedAt          time.Time
 }
 
 func canonicalAPIEnabled(getenv func(string) string) bool {
@@ -304,10 +313,20 @@ func logCanonicalRequestCompleted(
 	}
 	outcome = canonicalLogOutcome(outcome)
 	logs.CtxInfof(ctx,
-		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s thread_id=%d run_id=%d",
+		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s principal_id_hash=%s thread_id=%d run_id=%d source_run_id=%d after_event_id=%d response_body_kind=%s location_kind=%s content_location_present=%t response_projection_version=%s stream_modes=%s raise_error_mode=%s failure_projection=%s idempotency_key_hash=%s",
 		canonicalContractVersion, canonicalTraceID(ctx), info.Operation, info.RouteTemplate,
 		string(c.Method()), c.Response.StatusCode(), duration, outcome,
-		canonicalSubmissionKind(info.SubmissionKind), info.ThreadID, info.RunID,
+		canonicalSubmissionKind(info.SubmissionKind),
+		canonicalLogHash(strconv.FormatInt(workbenchViewerIDFromCtx(ctx), 10)),
+		info.ThreadID, info.RunID, info.SourceRunID, info.AfterEventID,
+		canonicalResponseBodyKind(info.ResponseBodyKind, c.Response.StatusCode()),
+		canonicalLocationKind(info.LocationKind),
+		len(c.Response.Header.Peek("Content-Location")) > 0,
+		canonicalContractVersion,
+		canonicalStreamModesLogValue(info.StreamModes),
+		canonicalLogEnum(info.RaiseErrorMode, "not_applicable", "omitted", "true", "false"),
+		canonicalLogEnum(info.FailureProjection, "none", "http_error", "values_error"),
+		canonicalLogHashValue(info.IdempotencyKeyHash),
 	)
 }
 
@@ -343,11 +362,74 @@ func canonicalHTTPOutcome(status int) string {
 
 func canonicalSubmissionKind(value string) string {
 	switch value {
-	case "empty_thread", "initial_run", "deferred_initial_run":
+	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_resume":
 		return value
 	default:
 		return "not_applicable"
 	}
+}
+
+func canonicalLogHash(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func canonicalLogHashValue(value string) string {
+	if len(value) != 16 {
+		return "none"
+	}
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return "none"
+		}
+	}
+	return value
+}
+
+func canonicalResponseBodyKind(value string, status int) string {
+	if status >= hertzconsts.StatusBadRequest {
+		return "error"
+	}
+	return canonicalLogEnum(value, "none", "run", "run_array", "values", "event_page", "message_page", "empty")
+}
+
+func canonicalLocationKind(value string) string {
+	return canonicalLogEnum(value, "none", "run_join", "run_stream")
+}
+
+func canonicalRaiseErrorMode(value *bool) string {
+	if value == nil {
+		return "not_applicable"
+	}
+	if *value {
+		return "true"
+	}
+	return "false"
+}
+
+func canonicalLogEnum(value, fallback string, allowed ...string) string {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value
+		}
+	}
+	return fallback
+}
+
+func canonicalStreamModesLogValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "none"
+	}
+	for _, mode := range strings.Split(value, ",") {
+		if _, ok := canonicalRunStreamModeAllowlist[mode]; !ok {
+			return "none"
+		}
+	}
+	return value
 }
 
 func mapCanonicalApplicationError(err error) canonicalError {
@@ -404,6 +486,38 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"active_run_exists",
 			false,
 		)
+	case errors.Is(err, appagentthread.ErrRunIdempotencyConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"idempotency_conflict",
+			"Idempotency-Key is already used by another Run",
+			"idempotency_key_conflict",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrHumanInteractionResumeInvalid):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"invalid_resume",
+			"Resume request does not match the pending interaction",
+			"invalid_human_interaction_resume",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrHumanInteractionResumeConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_resumable",
+			"Run is not resumable",
+			"human_interaction_resume_conflict",
+			false,
+		)
+	case errors.Is(err, errCanonicalJournalBudgetExceeded):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"journal_too_large",
+			"Thread journal exceeds the canonical projection limit",
+			"canonical_journal_budget_exceeded",
+			false,
+		)
 	case errors.Is(err, appagentthread.ErrUnsupportedMultitaskStrategy):
 		return *newCanonicalError(
 			hertzconsts.StatusUnprocessableEntity,
@@ -420,8 +534,23 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"invalid_runtime_config",
 			false,
 		)
-	case errors.Is(err, appagentthread.ErrThreadAuthorizationUnavailable),
-		errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded):
+		return *newCanonicalError(
+			hertzconsts.StatusGatewayTimeout,
+			"run_wait_timeout",
+			"Run did not reach a terminal state before the request deadline",
+			"run_wait_timeout",
+			true,
+		)
+	case errors.Is(err, context.Canceled):
+		return *newCanonicalError(
+			hertzconsts.StatusRequestTimeout,
+			"request_canceled",
+			"Request was canceled before completion",
+			"request_canceled",
+			true,
+		)
+	case errors.Is(err, appagentthread.ErrThreadAuthorizationUnavailable):
 		return *newCanonicalError(
 			hertzconsts.StatusServiceUnavailable,
 			"dependency_unavailable",

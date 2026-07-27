@@ -253,9 +253,10 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	if err != nil {
 		return nil, err
 	}
-	metadata := canonicalMetadataFromJSON(summary.Metadata, "")
-	messageID := canonicalMetadataID(metadata["appended_message_id"])
-	sourceRunID := canonicalMetadataID(metadata["source_run_id"])
+	rawMetadata := canonicalJSONObject(summary.Metadata)
+	metadata := canonicalMetadataFromMap(rawMetadata, "")
+	messageID := canonicalNestedMetadataID(rawMetadata, "_message", "message_id")
+	sourceRunID := canonicalRunSourceRunID(rawMetadata)
 	removeCanonicalInternalMetadata(metadata)
 	if sourceRunID == nil && public.RunKind == appagentthread.RunKindSubagent && public.ParentRunID > 0 {
 		formatted := strconv.FormatInt(public.ParentRunID, 10)
@@ -277,7 +278,7 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 		MultitaskStrategy: multitaskStrategy,
 		Coze: canonicalRunCoze{
 			MessageID:      messageID,
-			AttemptKind:    canonicalRunAttemptKind(public.RunKind, metadata),
+			AttemptKind:    canonicalRunAttemptKind(public.RunKind, rawMetadata),
 			SourceRunID:    sourceRunID,
 			StreamModes:    canonicalRunStreamModes(public.StreamMode),
 			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
@@ -565,17 +566,65 @@ func canonicalRunStatus(status appagentthread.RunStatus) (string, *string, error
 }
 
 func canonicalRunAttemptKind(kind appagentthread.RunKind, metadata map[string]any) string {
-	source := strings.ToLower(canonicalString(metadata["source"]))
 	switch {
-	case strings.Contains(source, "resume"), source == "human_interaction":
+	case canonicalMetadataObjectSchema(
+		metadata,
+		"human_interaction",
+		"coze.human_interaction_resolved.v1",
+	) != nil:
 		return "resume"
-	case strings.Contains(source, "retry"):
+	case canonicalMetadataObjectSchema(
+		metadata,
+		"subagent_retry",
+		"coze.subagent_retry.metadata.v1",
+	) != nil:
 		return "retry"
 	case kind == appagentthread.RunKindSubagent:
 		return "subagent"
 	default:
 		return "turn"
 	}
+}
+
+func canonicalRunSourceRunID(metadata map[string]any) *string {
+	if human := canonicalMetadataObjectSchema(
+		metadata,
+		"human_interaction",
+		"coze.human_interaction_resolved.v1",
+	); human != nil {
+		if sourceRunID := canonicalMetadataID(human["source_run_id"]); sourceRunID != nil {
+			return sourceRunID
+		}
+		return canonicalNestedMetadataID(metadata, "checkpoint_resume", "source_run_id")
+	}
+	if canonicalMetadataObjectSchema(
+		metadata,
+		"subagent_retry",
+		"coze.subagent_retry.metadata.v1",
+	) != nil {
+		return canonicalMetadataID(metadata["source_run_id"])
+	}
+	return nil
+}
+
+func canonicalNestedMetadataID(metadata map[string]any, objectKey, idKey string) *string {
+	object, ok := metadata[objectKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return canonicalMetadataID(object[idKey])
+}
+
+func canonicalMetadataObjectSchema(
+	metadata map[string]any,
+	key string,
+	wantSchema string,
+) map[string]any {
+	object, ok := metadata[key].(map[string]any)
+	if !ok || canonicalString(object["schema"]) != wantSchema {
+		return nil
+	}
+	return object
 }
 
 func canonicalRunStreamModes(raw string) []string {

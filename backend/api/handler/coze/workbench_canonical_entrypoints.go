@@ -36,57 +36,12 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// ListCanonicalRuns exposes the gated canonical run-list contract.
-func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// CreateCanonicalRun exposes the gated canonical run-create contract.
-func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // StreamCanonicalRun exposes the gated canonical run-create stream contract.
 func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)
 }
 
-// WaitCanonicalRun exposes the gated canonical run-wait contract.
-func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalRun exposes the gated canonical run-read contract.
-func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // ReconnectCanonicalRunStream exposes the gated canonical reconnect contract.
 func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// JoinCanonicalRun exposes the gated canonical run-join contract.
-func JoinCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// CancelCanonicalRun exposes the gated canonical run-cancel contract.
-func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ResumeCanonicalRun exposes the gated canonical run-resume contract.
-func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalRunEvents exposes the gated canonical run-event contract.
-func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalRunMessages exposes the gated canonical run-message contract.
-func ListCanonicalRunMessages(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)
 }

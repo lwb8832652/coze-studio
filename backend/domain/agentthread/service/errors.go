@@ -25,6 +25,7 @@ import (
 
 var (
 	ErrInvalidArgument              = errors.New("invalid argument")
+	ErrRunIdempotencyConflict       = repository.ErrRunIdempotencyConflict
 	ErrActiveRunExists              = repository.ErrActiveRunExists
 	ErrUnsupportedMultitaskStrategy = repository.ErrUnsupportedMultitaskStrategy
 )

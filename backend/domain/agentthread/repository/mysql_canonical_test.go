@@ -100,6 +100,85 @@ func TestCanonicalExtensionsKeepLegacyListMessagesPagingAndOrder(t *testing.T) {
 	require.Equal(t, canonicalAscendingIDs(1, 50), messageIDs(messages))
 }
 
+func TestCanonicalRunBundleReturnsTypedIdempotencyConflictAcrossThreads(t *testing.T) {
+	db := canonicalRepositoryTestDB(t, &threadPO{}, &runPO{}, &messagePO{})
+	repo := NewThreadRepository(db)
+	for _, thread := range []*entity.Thread{
+		{ID: 10, SpaceID: 1, CreatorID: 2, Title: "first", Status: entity.ThreadStatusIdle},
+		{ID: 11, SpaceID: 1, CreatorID: 2, Title: "second", Status: entity.ThreadStatusIdle},
+	} {
+		require.NoError(t, repo.CreateThread(context.Background(), thread))
+	}
+	firstMetadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.run.turn.v1",
+		strings.Repeat("a", 64),
+	)
+	require.NoError(t, err)
+	firstRun := newCanonicalRepositoryRun(100, 10, 0, 100)
+	firstRun.SpaceID = 1
+	firstRun.CreatorID = 2
+	firstRun.Status = entity.RunStatusQueued
+	firstRun.IdempotencyKey = "shared-key"
+	firstRun.Metadata = firstMetadata
+	_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: firstRun,
+		Message: &entity.Message{
+			ID: 101, ThreadID: 10, RunID: 100, Role: entity.MessageRoleUser,
+			Content: "first payload", CreatedAt: 100,
+		},
+	})
+	require.NoError(t, err)
+
+	secondMetadata, err := entity.MergeRunIdempotencyContract(
+		`{}`,
+		"workbench.run.turn.v1",
+		strings.Repeat("b", 64),
+	)
+	require.NoError(t, err)
+	changedRun := newCanonicalRepositoryRun(150, 10, 0, 150)
+	changedRun.SpaceID = 1
+	changedRun.CreatorID = 2
+	changedRun.Status = entity.RunStatusQueued
+	changedRun.IdempotencyKey = "shared-key"
+	changedRun.Metadata = secondMetadata
+	legacyReplay, err := repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: changedRun,
+		Message: &entity.Message{
+			ID: 151, ThreadID: 10, RunID: 150, Role: entity.MessageRoleUser,
+			Content: "changed payload", CreatedAt: 150,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(100), legacyReplay.Run.ID)
+
+	_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: changedRun,
+		Message: &entity.Message{
+			ID: 151, ThreadID: 10, RunID: 150, Role: entity.MessageRoleUser,
+			Content: "changed payload", CreatedAt: 150,
+		},
+		ValidateIdempotencyReplay: true,
+	})
+	require.ErrorIs(t, err, ErrRunIdempotencyConflict)
+
+	secondRun := newCanonicalRepositoryRun(200, 11, 0, 200)
+	secondRun.SpaceID = 1
+	secondRun.CreatorID = 2
+	secondRun.Status = entity.RunStatusQueued
+	secondRun.IdempotencyKey = "shared-key"
+	secondRun.Metadata = secondMetadata
+	_, err = repo.CreateRunBundle(context.Background(), CreateRunBundleRequest{
+		Run: secondRun,
+		Message: &entity.Message{
+			ID: 201, ThreadID: 11, RunID: 200, Role: entity.MessageRoleUser,
+			Content: "second payload", CreatedAt: 200,
+		},
+		ValidateIdempotencyReplay: true,
+	})
+	require.ErrorIs(t, err, ErrRunIdempotencyConflict)
+}
+
 func TestCanonicalExtensionsKeepLegacyListRunEventsPagingAndOrder(t *testing.T) {
 	db := canonicalRepositoryTestDB(t, &runEventPO{})
 	repo := NewThreadRepository(db)

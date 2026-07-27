@@ -28,6 +28,7 @@ import (
 var (
 	ErrRunLeaseLost                 = errors.New("agent run lease lost")
 	ErrRunCanceled                  = errors.New("agent run canceled")
+	ErrRunIdempotencyConflict       = entity.ErrRunIdempotencyConflict
 	ErrActiveRunExists              = errors.New("agent thread already has an active run")
 	ErrUnsupportedMultitaskStrategy = errors.New("unsupported multitask strategy")
 )
@@ -125,6 +126,7 @@ type CreateRunBundleRequest struct {
 	Message                     *entity.Message
 	Event                       *entity.RunEvent
 	SkipTopLevelAdmission       bool
+	ValidateIdempotencyReplay   bool
 	AllocateInterruptedEventIDs func(count int) ([]int64, error)
 }
 

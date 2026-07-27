@@ -1810,7 +1810,8 @@ func TestApplicationResumeHumanInteractionRejectsNonInterruptedSourceRun(t *test
 
 	require.Error(t, err)
 	require.Nil(t, resp)
-	require.Contains(t, err.Error(), "source run must be interrupted")
+	require.ErrorIs(t, err, ErrHumanInteractionResumeConflict)
+	require.EqualError(t, err, "source run must be interrupted")
 }
 
 func TestApplicationResumeHumanInteractionRejectsUnknownInterrupt(t *testing.T) {
@@ -1862,7 +1863,8 @@ func TestApplicationResumeHumanInteractionRejectsUnknownInterrupt(t *testing.T) 
 
 	require.Error(t, err)
 	require.Nil(t, resp)
-	require.Contains(t, err.Error(), "interrupt id is not resumable")
+	require.ErrorIs(t, err, ErrHumanInteractionResumeInvalid)
+	require.EqualError(t, err, "interrupt id is not resumable")
 }
 
 func TestApplicationResumeHumanInteractionReturnsExistingIdempotentRun(t *testing.T) {

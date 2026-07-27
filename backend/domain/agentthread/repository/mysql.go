@@ -856,6 +856,7 @@ func (r *threadRepository) CreateRunBundle(
 	normalized := CreateRunBundleRequest{
 		Run:                         &run,
 		SkipTopLevelAdmission:       req.SkipTopLevelAdmission,
+		ValidateIdempotencyReplay:   req.ValidateIdempotencyReplay,
 		AllocateInterruptedEventIDs: req.AllocateInterruptedEventIDs,
 	}
 	if req.Message != nil {
@@ -1194,7 +1195,12 @@ func findExistingRunBundle(
 	}
 	if run.ThreadID != req.Run.ThreadID || run.ParentRunID != req.Run.ParentRunID ||
 		run.RunKind != string(req.Run.RunKind) {
-		return nil, false, fmt.Errorf("idempotency key belongs to a different run request")
+		return nil, false, fmt.Errorf("%w: key belongs to a different run request", ErrRunIdempotencyConflict)
+	}
+	if req.ValidateIdempotencyReplay {
+		if err := entity.ValidateRunIdempotencyReplay(string(run.Metadata), req.Run.Metadata); err != nil {
+			return nil, false, err
+		}
 	}
 
 	result := &CreateRunBundleResult{Run: run.toEntity()}
