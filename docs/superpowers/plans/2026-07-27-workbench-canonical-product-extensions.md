@@ -426,9 +426,13 @@ func TestCanonicalRunStreamContinueDoesNotCancelOnDisconnect(t *testing.T)
 func TestCanonicalRunStreamCancelCancelsOnlyAfterConfirmedDisconnect(t *testing.T)
 func TestCanonicalRunStreamWritesMetadataEventAndOneTerminalEnd(t *testing.T)
 func TestCanonicalRunStreamProjectsErrorsWithoutInternalDetails(t *testing.T)
+func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents(t *testing.T)
+func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue(t *testing.T)
+func TestReconnectCanonicalRunStreamFalseCancelEncodingOverridesPersistedCancel(t *testing.T)
 ```
 
 Each test must assert the Run belongs to the path Thread, persisted events are ordered by `event_id`, `Content-Location` points to the canonical Run, and no provider/tool payload appears in emitted data.
+Create and reconnect success responses must also expose the exact API-base-relative `Location` for the existing Run stream.
 
 - [ ] **Step 2: Verify the current `501` failure**
 
@@ -456,6 +460,7 @@ Use `parseCanonicalRunSubmission(c, false)` and `createCanonicalRunBundle`; do n
 
 ```go
 c.Header("Content-Location", canonicalRunPath(threadID, response.Run.RunID))
+c.Header("Location", canonicalRunStreamPath(threadID, response.Run.RunID))
 setLangGraphRunStreamHeaders(c)
 ```
 
@@ -463,7 +468,7 @@ Then call the new lower-level `streamCanonicalRunEvents` with the persisted Run,
 
 - [ ] **Step 4: Implement reconnect replay and disconnect policy**
 
-`ReconnectCanonicalRunStream` must parse `after_event_id` first, then `Last-Event-ID`, validate `cancel_on_disconnect` as `true|false`, authorize the path Run, set SSE headers and call the same lower-level streamer. The lower-level loop must:
+`ReconnectCanonicalRunStream` must independently parse `after_event_id` and `Last-Event-ID`, use the larger valid cursor when both are present, validate `cancel_on_disconnect` as exact SDK-compatible `true|1` or `false|0`, authorize the path Run, set `Content-Location`, the exact reconnect `Location`, and SSE headers, then call the same lower-level streamer. A reconnect request with `cancel_on_disconnect=true|1` is an explicit per-connection override and must not be suppressed by the Run's persisted `on_disconnect=continue` default. Case variants, surrounding whitespace and other values return `422`. The lower-level loop must:
 
 1. write one `metadata` event;
 2. page `ApplicationService.ListRunEvents` after the cursor;
@@ -472,6 +477,10 @@ Then call the new lower-level `streamCanonicalRunEvents` with the persisted Run,
 5. write one `end` event after terminal state;
 6. cancel only when the writer confirms a client disconnect and the request opted into cancellation;
 7. stop without cancellation on timeout, terminal close or `on_disconnect=continue`.
+
+For canonical output, `messages-tuple` remains a request mode only: publicly projected
+`message.*`, `llm.*` and equivalent message events use `event: messages` with tuple data.
+Do not change the legacy LangGraph or TaskThread route behavior while adding this adapter.
 
 The implementation may reuse package-local SSE writer interfaces, constants and public event projection helpers from `langgraph_run_service.go`; it must not call a LangGraph or TaskThread HTTP handler.
 

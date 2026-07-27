@@ -84,6 +84,7 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 	run := runs[0]
 	require.Equal(t, int64(1), run.ThreadID)
 	require.Equal(t, canonicalRunPath(1, run.RunID), response.Result().Header.Get("Content-Location"))
+	require.Equal(t, canonicalRunStreamPath(1, run.RunID), response.Result().Header.Get("Location"))
 
 	events := canonicalRunStreamEventsForTest(t, run)
 	require.NotEmpty(t, events)
@@ -301,19 +302,34 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalRunStreamTestServer(20 * time.Millisecond)
 
-	queryWins := ut.PerformRequest(
+	maxCursor := ut.PerformRequest(
 		h.Engine,
 		http.MethodGet,
 		fmt.Sprintf("/api/workbench/threads/1/runs/%d/stream?after_event_id=%d", run.RunID, first.EventID),
 		nil,
 		ut.Header{Key: "Last-Event-ID", Value: strconv.FormatInt(second.EventID, 10)},
 	)
-	require.Equal(t, http.StatusOK, queryWins.Code, queryWins.Result().Body())
-	require.Equal(t, canonicalRunPath(1, run.RunID), queryWins.Result().Header.Get("Content-Location"))
+	require.Equal(t, http.StatusOK, maxCursor.Code, maxCursor.Result().Body())
+	require.Equal(t, canonicalRunPath(1, run.RunID), maxCursor.Result().Header.Get("Content-Location"))
+	require.Equal(t, canonicalRunStreamPath(1, run.RunID), maxCursor.Result().Header.Get("Location"))
 	require.Equal(
 		t,
-		canonicalRunStreamIDsAfter(allEvents, first.EventID),
+		canonicalRunStreamIDsAfter(allEvents, second.EventID),
 		canonicalRunStreamEventIDs(t, writers.writer(t, 0).String()),
+	)
+
+	reverseMaxCursor := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/stream?after_event_id=%d", run.RunID, second.EventID),
+		nil,
+		ut.Header{Key: "Last-Event-ID", Value: strconv.FormatInt(first.EventID, 10)},
+	)
+	require.Equal(t, http.StatusOK, reverseMaxCursor.Code, reverseMaxCursor.Result().Body())
+	require.Equal(
+		t,
+		canonicalRunStreamIDsAfter(allEvents, second.EventID),
+		canonicalRunStreamEventIDs(t, writers.writer(t, 1).String()),
 	)
 
 	headerOnly := ut.PerformRequest(
@@ -325,11 +341,21 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, headerOnly.Code, headerOnly.Result().Body())
 	require.Equal(t, canonicalRunPath(1, run.RunID), headerOnly.Result().Header.Get("Content-Location"))
+	require.Equal(t, canonicalRunStreamPath(1, run.RunID), headerOnly.Result().Header.Get("Location"))
 	require.Equal(
 		t,
 		canonicalRunStreamIDsAfter(allEvents, second.EventID),
-		canonicalRunStreamEventIDs(t, writers.writer(t, 1).String()),
+		canonicalRunStreamEventIDs(t, writers.writer(t, 2).String()),
 	)
+
+	invalidHeader := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/1/runs/%d/stream?after_event_id=%d", run.RunID, first.EventID),
+		nil,
+		ut.Header{Key: "Last-Event-ID", Value: "invalid"},
+	)
+	require.Equal(t, http.StatusUnprocessableEntity, invalidHeader.Code)
 
 	invalidCursor := ut.PerformRequest(
 		h.Engine,
@@ -340,13 +366,33 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, invalidCursor.Code)
 
-	invalidCancelMode := ut.PerformRequest(
-		h.Engine,
-		http.MethodGet,
-		fmt.Sprintf("/api/workbench/threads/1/runs/%d/stream?cancel_on_disconnect=1", run.RunID),
-		nil,
-	)
-	require.Equal(t, http.StatusUnprocessableEntity, invalidCancelMode.Code)
+	for _, value := range []string{"0", "1", "false", "true"} {
+		response := ut.PerformRequest(
+			h.Engine,
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/workbench/threads/1/runs/%d/stream?cancel_on_disconnect=%s",
+				run.RunID,
+				value,
+			),
+			nil,
+		)
+		require.Equal(t, http.StatusOK, response.Code, "cancel_on_disconnect=%s: %s", value, response.Result().Body())
+	}
+
+	for _, value := range []string{"yes", "TRUE", "%20false%20"} {
+		invalidCancelMode := ut.PerformRequest(
+			h.Engine,
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/workbench/threads/1/runs/%d/stream?cancel_on_disconnect=%s",
+				run.RunID,
+				value,
+			),
+			nil,
+		)
+		require.Equal(t, http.StatusUnprocessableEntity, invalidCancelMode.Code, "cancel_on_disconnect=%s", value)
+	}
 
 	modeOverrideRun := createCanonicalRunFixture(t, 1, "reconnect mode override")
 	appendCanonicalRunStreamEvent(t, modeOverrideRun, "step.started", `{"step_name":"override"}`)
@@ -363,7 +409,7 @@ func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
 	require.Equal(
 		t,
 		canonicalRunStreamSummaryIDs(modeOverrideEvents),
-		canonicalRunStreamEventIDs(t, writers.writer(t, 2).String()),
+		canonicalRunStreamEventIDs(t, writers.writer(t, 7).String()),
 	)
 
 	invalidStreamMode := ut.PerformRequest(
@@ -389,6 +435,63 @@ func TestCanonicalRunStreamContinueDoesNotCancelOnDisconnect(t *testing.T) {
 	require.Zero(t, cancelCalls)
 	persisted := canonicalRunStreamCurrentRun(t, run.RunID)
 	require.Equal(t, appagentthread.RunStatusPending, persisted.Status)
+}
+
+func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	previousWriterFactory := canonicalRunStreamWriterFactory
+	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
+		return canonicalRunStreamWriterHandle{writer: failingTaskThreadRunEventStreamWriter{}}
+	}
+	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+
+	for _, value := range []string{"true", "1"} {
+		run := createCanonicalRunStreamFixture(t, 1, "request cancel override "+value, "continue")
+		response := ut.PerformRequest(
+			h.Engine,
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/workbench/threads/1/runs/%d/stream?cancel_on_disconnect=%s",
+				run.RunID,
+				value,
+			),
+			nil,
+		)
+
+		require.Equal(t, http.StatusOK, response.Code, "cancel_on_disconnect=%s: %s", value, response.Result().Body())
+		require.Equal(t, appagentthread.RunStatusCanceled, canonicalRunStreamCurrentRun(t, run.RunID).Status)
+	}
+}
+
+func TestReconnectCanonicalRunStreamFalseCancelEncodingOverridesPersistedCancel(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	previousWriterFactory := canonicalRunStreamWriterFactory
+	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
+		return canonicalRunStreamWriterHandle{writer: failingTaskThreadRunEventStreamWriter{}}
+	}
+	t.Cleanup(func() { canonicalRunStreamWriterFactory = previousWriterFactory })
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+
+	for _, value := range []string{"false", "0"} {
+		run := createCanonicalRunStreamFixture(t, 1, "request continue override "+value, "cancel")
+		response := ut.PerformRequest(
+			h.Engine,
+			http.MethodGet,
+			fmt.Sprintf(
+				"/api/workbench/threads/1/runs/%d/stream?cancel_on_disconnect=%s",
+				run.RunID,
+				value,
+			),
+			nil,
+		)
+
+		require.Equal(t, http.StatusOK, response.Code, "cancel_on_disconnect=%s: %s", value, response.Result().Body())
+		require.Equal(t, appagentthread.RunStatusPending, canonicalRunStreamCurrentRun(t, run.RunID).Status)
+		cancelCanonicalRunFixture(t, run)
+	}
 }
 
 func TestCanonicalRunStreamCancelCancelsOnlyAfterConfirmedDisconnect(t *testing.T) {
@@ -456,6 +559,57 @@ func TestCanonicalRunStreamWritesMetadataEventAndOneTerminalEnd(t *testing.T) {
 	require.Less(t, strings.LastIndex(body, "event: events"), strings.Index(body, "event: end"))
 	require.Contains(t, body, `"step_name":"terminal_flush"`)
 	require.Contains(t, body, `"status":"canceled"`)
+}
+
+func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents(t *testing.T) {
+	installAgentThreadTestService(t)
+	run := createCanonicalRunStreamFixture(t, 1, "messages tuple", "continue")
+	messageEvent := appendCanonicalRunStreamEvent(
+		t,
+		run,
+		"message.completed",
+		`{"role":"assistant","content":"done","finish_reason":"stop","provider_body":"SECRET_MESSAGE_PROVIDER"}`,
+	)
+	llmEvent := appendCanonicalRunStreamEvent(
+		t,
+		run,
+		"llm.token",
+		`{"chunk":{"role":"assistant","content":"!","provider_body":"SECRET_CHUNK_PROVIDER"},"node":"agent"}`,
+	)
+	cancelCanonicalRunFixture(t, run)
+	run = canonicalRunStreamCurrentRun(t, run.RunID)
+	writer := &recordingTaskThreadRunEventStreamWriter{}
+
+	streamCanonicalRunEvents(context.Background(), writer, run, canonicalRunEventStreamConfig{
+		StreamModes: []string{"messages-tuple"}, PollInterval: time.Millisecond, Timeout: time.Millisecond,
+	})
+
+	body := writer.String()
+	require.Equal(t, []int64{messageEvent.EventID, llmEvent.EventID}, canonicalRunStreamEventIDs(t, body))
+	require.Equal(t, 2, strings.Count(body, "event: messages\n"))
+	require.NotContains(t, body, "event: messages-tuple")
+	require.NotContains(t, body, "SECRET_MESSAGE_PROVIDER")
+	require.NotContains(t, body, "SECRET_CHUNK_PROVIDER")
+	payloads := canonicalRunStreamPayloads(t, body, langGraphRunStreamMessages)
+	require.Len(t, payloads, 2)
+	for i, expected := range []struct {
+		event *appagentthread.RunEventSummary
+		text  string
+	}{{event: messageEvent, text: "done"}, {event: llmEvent, text: "!"}} {
+		tuple, ok := payloads[i].([]any)
+		require.True(t, ok)
+		require.Len(t, tuple, 2)
+		chunk, ok := tuple[0].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, expected.text, chunk["content"])
+		require.Equal(t, "assistant", chunk["role"])
+		metadata, ok := tuple[1].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, strconv.FormatInt(expected.event.EventID, 10), metadata["event_id"])
+		require.Equal(t, strconv.FormatInt(run.RunID, 10), metadata["run_id"])
+		require.Equal(t, expected.event.EventType, metadata["event_type"])
+		require.Equal(t, "agent", metadata["node"])
+	}
 }
 
 func TestCanonicalRunStreamProjectsErrorsWithoutInternalDetails(t *testing.T) {
@@ -639,6 +793,31 @@ func canonicalRunStreamEventIDs(t *testing.T, body string) []int64 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func canonicalRunStreamPayloads(t *testing.T, body, eventType string) []any {
+	t.Helper()
+	payloads := make([]any, 0)
+	for _, frame := range strings.Split(strings.TrimSpace(body), "\n\n") {
+		lines := strings.Split(frame, "\n")
+		matched := false
+		for _, line := range lines {
+			matched = matched || line == "event: "+eventType
+		}
+		if !matched {
+			continue
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var payload any
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &payload))
+			payloads = append(payloads, payload)
+			break
+		}
+	}
+	return payloads
 }
 
 func canonicalRunStreamStringIDs(t *testing.T, raw []string) []int64 {

@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/sse"
 
@@ -60,7 +62,7 @@ func (c canonicalRunEventStreamConfig) normalized() canonicalRunEventStreamConfi
 		c.Timeout = time.Duration(defaultRunEventStreamTimeoutMs) * time.Millisecond
 	}
 	if c.CancelRun == nil {
-		c.CancelRun = cancelRunAfterStreamDisconnect
+		c.CancelRun = cancelCanonicalRunAfterStreamDisconnect
 	}
 	return c
 }
@@ -122,6 +124,7 @@ func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog.RunID = run.RunID
 	ctx = workbenchThreadAccessContext(ctx, threadID, run.RunID)
 	c.Header("Content-Location", canonicalRunPath(threadID, run.RunID))
+	c.Header("Location", canonicalRunStreamPath(threadID, run.RunID))
 
 	streamWriter := canonicalRunStreamWriterFactory(c)
 	if streamWriter.writer == nil {
@@ -211,8 +214,8 @@ func createCanonicalStreamRun(
 	return response.Run, nil, nil
 }
 
-// ReconnectCanonicalRunStream replays persisted events after the explicit query
-// cursor, or Last-Event-ID when the query is absent, before following live events.
+// ReconnectCanonicalRunStream validates both client cursors, replays after the
+// greater value, and then follows live events for the same authorized Run.
 func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.reconnect", "/api/workbench/threads/:thread_id/runs/:run_id/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
@@ -268,6 +271,7 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	}
 	requestLog.StreamModes = strings.Join(streamModes, ",")
 	c.Header("Content-Location", canonicalRunPath(threadID, runID))
+	c.Header("Location", canonicalRunStreamPath(threadID, runID))
 
 	streamWriter := canonicalRunStreamWriterFactory(c)
 	if streamWriter.writer == nil {
@@ -286,15 +290,19 @@ func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 }
 
 func canonicalReconnectRunEventCursor(c *app.RequestContext) (int64, *canonicalError) {
-	raw, exists := c.GetQuery("after_event_id")
-	if !exists {
-		raw = string(c.GetHeader("Last-Event-ID"))
-	}
-	value, ok := parseRunEventCursor(raw)
+	queryRaw, _ := c.GetQuery("after_event_id")
+	queryCursor, ok := parseRunEventCursor(queryRaw)
 	if !ok {
 		return 0, canonicalInvalidRequest("after_event_id must be a non-negative decimal ID", "invalid_event_cursor")
 	}
-	return value, nil
+	headerCursor, ok := parseRunEventCursor(string(c.GetHeader("Last-Event-ID")))
+	if !ok {
+		return 0, canonicalInvalidRequest("Last-Event-ID must be a non-negative decimal ID", "invalid_event_cursor")
+	}
+	if headerCursor > queryCursor {
+		return headerCursor, nil
+	}
+	return queryCursor, nil
 }
 
 func canonicalReconnectCancelOnDisconnect(c *app.RequestContext) (bool, *canonicalError) {
@@ -303,12 +311,12 @@ func canonicalReconnectCancelOnDisconnect(c *app.RequestContext) (bool, *canonic
 		return false, nil
 	}
 	switch raw {
-	case "true":
+	case "true", "1":
 		return true, nil
-	case "false":
+	case "false", "0":
 		return false, nil
 	default:
-		return false, canonicalInvalidRequest("cancel_on_disconnect must be true or false", "invalid_cancel_on_disconnect")
+		return false, canonicalInvalidRequest("cancel_on_disconnect must be true, false, 1, or 0", "invalid_cancel_on_disconnect")
 	}
 }
 
@@ -410,7 +418,7 @@ func streamCanonicalRunEvents(
 					writeLangGraphRunStreamError(ctx, trackedWriter, err)
 					return false
 				}
-				if !writeLangGraphRunStreamEvent(ctx, trackedWriter, event, streamModes) {
+				if !writeCanonicalRunStreamEvent(ctx, trackedWriter, event, streamModes) {
 					return false
 				}
 				afterEventID = event.EventID
@@ -479,6 +487,63 @@ func streamCanonicalRunEvents(
 	}
 }
 
+// writeCanonicalRunStreamEvent keeps source-route behavior unchanged while
+// adapting the canonical messages-tuple request mode to the fixed SDK wire form.
+func writeCanonicalRunStreamEvent(
+	ctx context.Context,
+	writer langGraphRunStreamWriter,
+	event *appagentthread.RunEventSummary,
+	streamModes map[string]struct{},
+) bool {
+	if _, generic := streamModes[langGraphRunStreamEvents]; generic {
+		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+	}
+	if _, tuple := streamModes["messages-tuple"]; !tuple {
+		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+	}
+	projected := appagentthread.ProjectPublicRunEvent(event)
+	if projected == nil {
+		return true
+	}
+	mode := langGraphPublicRunStreamEventMode(projected)
+	if mode != langGraphRunStreamMessages && mode != "messages-tuple" {
+		return writeLangGraphRunStreamEvent(ctx, writer, event, streamModes)
+	}
+	payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))
+	if err != nil {
+		writeLangGraphRunStreamError(ctx, writer, err)
+		return false
+	}
+	if err := writer.WriteEvent(strconv.FormatInt(event.EventID, 10), langGraphRunStreamMessages, payload); err != nil {
+		logs.CtxWarnf(ctx, "event_name=workbench.run.stream.write_failed client_contract=%s stage=message thread_id=%d run_id=%d", canonicalContractVersion, event.ThreadID, event.RunID)
+		return false
+	}
+	return true
+}
+
+// cancelCanonicalRunAfterStreamDisconnect applies the reconnect request's
+// explicit cancel choice, independent of the Run's persisted default policy.
+func cancelCanonicalRunAfterStreamDisconnect(ctx context.Context, runID int64) {
+	if runID <= 0 {
+		return
+	}
+	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
+	if err != nil || current == nil || current.Run == nil || isTaskThreadRunTerminal(current.Run.Status) {
+		if err != nil {
+			logCanonicalRunStreamFailure(ctx, "disconnect_cancel", &appagentthread.RunSummary{RunID: runID}, err)
+		}
+		return
+	}
+	if _, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
+		RunID:        runID,
+		From:         current.Run.Status,
+		ErrorCode:    "client_disconnected",
+		ErrorMessage: "stream client disconnected",
+	}); err != nil {
+		logCanonicalRunStreamFailure(ctx, "disconnect_cancel", current.Run, err)
+	}
+}
+
 func finishCanonicalRunStreamWhenTerminal(
 	ctx context.Context,
 	writer langGraphRunStreamWriter,
@@ -524,7 +589,7 @@ func logCanonicalRunStreamFailure(
 		ctx,
 		"event_name=workbench.run.stream.failed client_contract=%s stage=%s thread_id=%d run_id=%d error_code=%s error_class=%s",
 		canonicalContractVersion,
-		canonicalLogEnum(stage, "list_events", "project_event", "get_terminal_run", "disconnect_state"),
+		canonicalLogEnum(stage, "list_events", "project_event", "get_terminal_run", "disconnect_state", "disconnect_cancel"),
 		threadID,
 		runID,
 		errorCode,

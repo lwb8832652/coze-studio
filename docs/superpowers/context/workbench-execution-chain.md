@@ -189,12 +189,17 @@ wait/join 只在 Run 终态返回 `200 values`，不再复用旧事件流的 30 
 canonical create-stream 和 reconnect-stream 两个 SSE handler 已在默认关闭的 feature
 gate 后完成实现。create-stream 在读取请求体前完成 path Thread/space 授权，再严格解析
 submission；随后复用现有原子 Run/Message 创建和 human resume 用例，按 principal 隔离
-幂等键，并在 Run 与 User Message 的公共投影通过后返回精确
-`Content-Location`、写入 metadata、回放持久化事件并跟随 live 事件；reconnect-stream
-以 query `after_event_id` 优先、`Last-Event-ID` 兜底，支持受控 `stream_mode` 覆盖和严格
-`cancel_on_disconnect=true|false`。两条路径均按 `event_id` 顺序输出审核后的公共事件，
-终态前执行最后一次事件 flush，且只在 SSE writer 明确确认断连且请求选择 cancel 时取消
-Run；context 结束、流超时和正常终态都不会触发取消。
+幂等键，并在 Run 与 User Message 的公共投影通过后返回精确 `Content-Location` 与指向
+既有 Run GET stream 的 `Location`，写入 metadata、回放持久化事件并跟随 live 事件。
+reconnect-stream 分别校验 query `after_event_id` 和 `Last-Event-ID`，同时存在时使用较大值，
+支持受控 `stream_mode` 覆盖；`cancel_on_disconnect` 只接受固定 SDK 的精确 `1|0` 和显式
+小写 `true|false`，大小写变体、空白包裹及其他值严格拒绝。`messages-tuple` 只作为
+请求 mode，匹配 `message.*`、`llm.*` 及同类公开事件，wire event 固定为 `messages`，data
+为二元数组。两条路径均按 `event_id` 顺序输出审核后的公共事件，终态前执行最后一次
+event flush，且只在 SSE writer 明确确认断连且请求选择 cancel 时取消 Run；reconnect 的
+显式 `true|1` 覆盖 Run 持久化的默认断线策略，`false|0` 不取消。context 结束、流超时和正常
+终态都不会触发取消。执行图用独立 canonical Run SSE chain 记录创建、幂等回放、事件查询、
+human resume 与断线取消的应用层依赖，不把 SSE handler 伪装成非流式 handler 的调用方。
 
 canonical feature gate 仍默认关闭，因此当前没有切换生产流量。现有 Workbench UI 继续
 使用 `/api/workbench/task_threads`，`/api/threads` 兼容入口也未修改；两条来源合同在完整
