@@ -607,6 +607,31 @@ function interfaceSource(name: string): string {
   return match?.[1] ?? '';
 }
 
+function apiTypeArguments(name: string): {
+  request: string;
+  response: string;
+} {
+  const declarationStart = generatedSource.indexOf(`export const ${name} =`);
+  expect(declarationStart, `${name} must be generated`).toBeGreaterThanOrEqual(
+    0,
+  );
+
+  const declarationEnd = generatedSource.indexOf('\n', declarationStart);
+  const declaration = generatedSource.slice(declarationStart, declarationEnd);
+  const match = declaration.match(
+    /createAPI<\s*([^,]+?)\s*,\s*([^>]+?)\s*>\s*\(\{$/,
+  );
+  expect(
+    match,
+    `${name} must declare request and response types`,
+  ).not.toBeNull();
+
+  return {
+    request: match?.[1] ?? '',
+    response: match?.[2] ?? '',
+  };
+}
+
 function apiConfig(name: string): {
   url: string;
   method: string;
@@ -660,6 +685,10 @@ describe('canonical Workbench thread generated contract', () => {
     expect(interfaceSource('CanonicalMessagePage')).not.toMatch(
       /data:\s*any[,;]/,
     );
+    expect(apiTypeArguments('AppendCanonicalThreadMessage')).toEqual({
+      request: 'thread_product.AppendCanonicalThreadMessageRequest',
+      response: 'CanonicalMessage',
+    });
   });
 
   it('exports exactly the 47 canonical createAPI functions', () => {
@@ -691,10 +720,14 @@ describe('canonical Workbench thread generated contract', () => {
     });
   });
 
-  it('does not import legacy task generated contracts', () => {
+  it('does not import or reference legacy task generated contracts', () => {
     expect(generatedSource).not.toContain('workbench/task');
     expect(generatedSource).not.toMatch(
       /^import\s+(?:[^;\n]+\s+from\s+)?['"]\.\/task['"];?\s*$/m,
+    );
+    expect(generatedSource).not.toMatch(/\bTask[A-Za-z0-9_]*\b/);
+    expect(interfaceSource('CanonicalThreadState')).toMatch(
+      /\btasks:\s*any[,;]/,
     );
   });
 
