@@ -207,8 +207,10 @@ git commit -m "test: freeze canonical workbench product routes"
 - Generated: `backend/api/model/coze/api.go`
 - Generated: `backend/api/router/coze/api.go`
 - Generated: `backend/api/router/coze/middleware.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
 - Generated: `frontend/packages/arch/api-schema/src/idl/workbench/thread_product.ts`
 - Generated: `frontend/packages/arch/api-schema/src/idl/workbench/thread.ts`
+- Modify: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
 - Modify: `.github/scripts/check-file-size.sh`
 
 - [ ] **Step 1: Define transport-independent product DTOs**
@@ -304,6 +306,12 @@ The upload response contains `uploads` and `skipped_files`; suggestion response 
 
 - [ ] **Step 2: Add explicit workspace header mappings to core requests**
 
+Before changing the IDL, extend `workbench-thread-contract.test.ts` so every core and
+product request config expects `X-Coze-Space-ID` in `reqMapping.header`; preserve
+`Idempotency-Key`, `Last-Event-ID` and `Prefer` alongside it. Run the focused Vitest and
+observe a RED failure because the generated core requests do not yet expose the workspace
+header.
+
 In `thread.thrift`, add this field to every core request struct, including `CanonicalRouteRequest` and `CanonicalRunRouteRequest`:
 
 ```thrift
@@ -335,6 +343,13 @@ CanonicalRun RetryCanonicalSubagentRun(
 ```
 
 `thread.thrift` must not include `task.thrift`, and no product response may reuse a TaskThread DTO.
+
+Add one exported gate-only entrypoint for each new product method to
+`workbench_canonical_entrypoints.go`. Each entrypoint must call
+`serveCanonicalEntrypoint` and do nothing else. This keeps the generated router compilable and
+preserves the established default-off behavior: gate disabled returns `404`; gate enabled returns
+`501 canonical_not_implemented` until Tasks 5-9 replace each stub with its real handler. Do not
+accept the generic Hertz generated handler body, return `200`, or call a TaskThread handler.
 
 - [ ] **Step 4: Run the fixed generators**
 
@@ -368,10 +383,19 @@ rushx test src/__tests__/workbench-thread-contract.test.ts
 
 Expected: generated `thread_product.ts` exists, all 47 methods are exported from `thread.ts`, every request exposes the `X-Coze-Space-ID` header mapping, and the contract test passes.
 
+Run:
+
+```bash
+cd backend
+GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=-l -N" ./api/router/coze -run '^TestWorkbenchCanonicalThreadRoutes$' -count=1
+```
+
+Expected: PASS with exactly 47 canonical routes; both source snapshots and retired ChatTask probes remain unchanged.
+
 - [ ] **Step 5: Commit IDL and generated code**
 
 ```bash
-git add idl/workbench/thread.thrift idl/workbench/thread_product.thrift backend/api/model backend/api/router/coze frontend/packages/arch/api-schema .github/scripts/check-file-size.sh
+git add idl/workbench/thread.thrift idl/workbench/thread_product.thrift backend/api/model backend/api/router/coze backend/api/handler/coze/workbench_canonical_entrypoints.go frontend/packages/arch/api-schema .github/scripts/check-file-size.sh
 git commit -m "feat: define canonical workbench product contract"
 ```
 
