@@ -1044,11 +1044,14 @@ func cancelCanonicalRunAfterWaitDisconnect(ctx context.Context, runID int64) {
 	if _, err := appagentthread.SVC.CancelRunOnDisconnect(cancelCtx, &appagentthread.CancelRunOnDisconnectRequest{
 		RunID: runID,
 	}); err != nil {
+		errorCode, errorClass := canonicalErrorLogFields(err)
 		logs.CtxWarnf(
 			cancelCtx,
-			"canonical run wait disconnect cancellation failed, disconnect_source=canonical_wait, run_id=%d, err=%v",
+			"event_name=workbench.run.disconnect_cancel_failed client_contract=%s disconnect_source=canonical_wait run_id=%d error_code=%s error_class=%s",
+			canonicalContractVersion,
 			runID,
-			err,
+			errorCode,
+			errorClass,
 		)
 	}
 }

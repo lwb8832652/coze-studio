@@ -293,6 +293,17 @@ func TestCanonicalErrorMapsApplicationFailures(t *testing.T) {
 	}
 }
 
+func TestCanonicalErrorLogFieldsNeverExposeRawCause(t *testing.T) {
+	const sensitiveCause = "database failed with sk-secret and raw provider payload"
+
+	errorCode, errorClass := canonicalErrorLogFields(errors.New(sensitiveCause))
+
+	require.Equal(t, "internal_error", errorCode)
+	require.Equal(t, "internal_error", errorClass)
+	require.NotContains(t, errorCode, sensitiveCause)
+	require.NotContains(t, errorClass, sensitiveCause)
+}
+
 func TestCanonicalTraceIDUsesRequestLogID(t *testing.T) {
 	ctx := context.WithValue(context.Background(), projectconsts.CtxLogIDKey, "trace-test")
 	require.Equal(t, "trace-test", canonicalTraceID(ctx))

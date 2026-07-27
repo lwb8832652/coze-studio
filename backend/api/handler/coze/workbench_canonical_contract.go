@@ -569,6 +569,15 @@ func mapCanonicalApplicationError(err error) canonicalError {
 	}
 }
 
+func canonicalErrorLogFields(err error) (errorCode, errorClass string) {
+	public := mapCanonicalApplicationError(err)
+	errorClass = public.errorClass
+	if errorClass == "" {
+		errorClass = public.Code
+	}
+	return public.Code, errorClass
+}
+
 func newCanonicalError(
 	status int,
 	code string,
