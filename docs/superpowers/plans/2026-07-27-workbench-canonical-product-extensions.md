@@ -590,7 +590,7 @@ type canonicalRunCoze struct {
 }
 ```
 
-Populate these only from existing public application projections. In create-run responses attach the already committed User Message; list/get responses leave `submission_message` absent. This is additive JSON inside the existing `coze` extension and does not change core SDK fields.
+Populate these only from existing public application projections. `Source`, `Progress`, `LastUserMessage` and `LastAgentMessage` are compatibility pass-throughs from the current `ThreadSummary`; this task does not add their domain/application sources, queries or synthesis, and UI migration retains its messages/title/status fallbacks. In create-run responses attach the already committed User Message; an idempotent POST replay remains a create response and returns that same public `submission_message`, while list/get responses leave it absent. This is additive JSON inside the existing `coze` extension and does not change core SDK fields.
 
 - [x] **Step 4: Extend structured completion logging safely**
 
@@ -607,7 +607,7 @@ Expected: PASS with no sensitive fixture values in output or logs.
 
 - [x] **Step 5a: Harden IDL wire shape and public identifier boundaries**
 
-Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs and required `*_at` times fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs.
+Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs and required `*_at` times fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs. Idempotent POST create replay preserves the same public `submission_message`; list/get projections do not retain it.
 
 - [x] **Step 6: Commit shared helpers**
 

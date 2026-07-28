@@ -207,7 +207,10 @@ required/optional presence 一致，所有必填实体 ID 均 fail closed；公�
 字符串/RFC3339，Artifact 和 token usage 先经过 application public projection。非数字
 `source_id`/`target_id` 仅在符合公开标识符与敏感值边界时保留；scan worker 只保留稳定哈希引用，
 不公开租约或原始错误。完成日志只记录审核后的资源、分页和生命周期字段。普通 Run 创建响应可附带
-同一原子 bundle 已提交的 User Message 投影；后续 list/get/read 投影不保留该一次性字段。
+同一原子 bundle 已提交的 User Message 投影；幂等 POST replay 仍是 create 响应，保留同一公开
+`submission_message`，后续 list/get/read 投影不保留该一次性字段。Thread 的 `Source`、`Progress`
+与最后消息字段仅兼容透传现有 `ThreadSummary`，不在此层补充数据来源；UI 继续保留 messages/title/status
+fallback。
 
 canonical feature gate 仍默认关闭，因此当前没有切换生产流量。现有 Workbench UI 继续
 使用 `/api/workbench/task_threads`，`/api/threads` 兼容入口也未修改；两条来源合同在完整

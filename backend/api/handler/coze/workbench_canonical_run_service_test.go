@@ -1219,6 +1219,8 @@ func TestCanonicalRunReplaysIdempotentUploadAfterFileDeletion(t *testing.T) {
 	require.Equal(t, http.StatusOK, first.Code, first.Result().Body())
 	var created canonicalRun
 	require.NoError(t, json.Unmarshal(first.Result().Body(), &created))
+	require.NotNil(t, created.Coze.SubmissionMessage)
+	require.NotNil(t, created.Coze.MessageID)
 
 	_, deleted, err := appagentthread.SVC.UploadFileSVC.DeleteUploadFile(
 		context.Background(),
@@ -1236,6 +1238,21 @@ func TestCanonicalRunReplaysIdempotentUploadAfterFileDeletion(t *testing.T) {
 	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &got))
 	require.Equal(t, created.RunID, got.RunID)
 	require.Equal(t, created.Coze.MessageID, got.Coze.MessageID)
+	require.NotNil(t, got.Coze.SubmissionMessage)
+	require.Equal(t, created.Coze.SubmissionMessage.MessageID, got.Coze.SubmissionMessage.MessageID)
+	require.Equal(t, created.Coze.SubmissionMessage.Content, got.Coze.SubmissionMessage.Content)
+	require.Equal(t, created.Coze.SubmissionMessage.Role, got.Coze.SubmissionMessage.Role)
+
+	read := ut.PerformRequest(
+		h.Engine,
+		http.MethodGet,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/%s", thread.ThreadID, got.RunID),
+		nil,
+	)
+	require.Equal(t, http.StatusOK, read.Code, read.Result().Body())
+	var persisted canonicalRun
+	require.NoError(t, json.Unmarshal(read.Result().Body(), &persisted))
+	require.Nil(t, persisted.Coze.SubmissionMessage)
 	require.Len(t, canonicalRunsForThread(t, thread.ThreadID), 1)
 }
 

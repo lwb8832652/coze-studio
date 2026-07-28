@@ -137,7 +137,9 @@ func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *te
 	}
 }
 
-func TestCanonicalCoreCozeExtensionsProjectPublicRunAndThreadFields(t *testing.T) {
+// Thread coze fields are compatibility pass-throughs from ThreadSummary; this
+// projection does not enrich them from domain state, queries, or messages.
+func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(t *testing.T) {
 	parentRunID := int64(2000)
 	projectedRun, err := projectCanonicalRun(&appagentthread.RunSummary{
 		RunID: 3001, ThreadID: 2001, ParentRunID: parentRunID, RunKind: appagentthread.RunKindSubagent,
@@ -158,6 +160,42 @@ func TestCanonicalCoreCozeExtensionsProjectPublicRunAndThreadFields(t *testing.T
 	require.Equal(t, int32(80), projectedThread.Coze.Progress)
 	require.Equal(t, "user message", projectedThread.Coze.LastUserMessage)
 	require.Equal(t, "agent message", projectedThread.Coze.LastAgentMessage)
+}
+
+func TestCanonicalThreadAndRunProjectionRejectsUnknownNonEmptyEnums(t *testing.T) {
+	t.Run("thread source", func(t *testing.T) {
+		for _, source := range []appagentthread.ThreadSource{
+			appagentthread.ThreadSourceWeb,
+			appagentthread.ThreadSourceIM,
+			appagentthread.ThreadSourceAPI,
+			"",
+		} {
+			projected, err := projectCanonicalThreadSnapshot(
+				&appagentthread.ThreadSummary{ThreadID: 2001, Source: source},
+				canonicalThreadProjectionSnapshot{},
+			)
+			require.NoError(t, err)
+			require.Equal(t, string(source), projected.Coze.Source)
+		}
+		_, err := projectCanonicalThreadSnapshot(
+			&appagentthread.ThreadSummary{ThreadID: 2001, Source: appagentthread.ThreadSource("future_source")},
+			canonicalThreadProjectionSnapshot{},
+		)
+		require.ErrorContains(t, err, "unsupported canonical thread source")
+	})
+
+	t.Run("run kind", func(t *testing.T) {
+		projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+			RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "task", projected.Coze.RunKind)
+		_, err = projectCanonicalRun(&appagentthread.RunSummary{
+			RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+			RunKind: appagentthread.RunKind("future_kind"),
+		})
+		require.ErrorContains(t, err, "unsupported canonical run kind")
+	})
 }
 
 func TestCanonicalThreadStatusProjection(t *testing.T) {

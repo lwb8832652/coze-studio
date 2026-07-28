@@ -224,6 +224,10 @@ func projectCanonicalThreadSnapshot(
 	if summary.ThreadID <= 0 {
 		return nil, fmt.Errorf("canonical thread projection requires a positive thread id")
 	}
+	source, err := canonicalThreadSource(summary.Source)
+	if err != nil {
+		return nil, err
+	}
 
 	status, productStatus, err := canonicalThreadStatus(snapshot.LatestRun, snapshot.Interrupts)
 	if err != nil {
@@ -245,7 +249,7 @@ func projectCanonicalThreadSnapshot(
 		Interrupts: interrupts,
 		Coze: canonicalThreadCoze{
 			ProductStatus: productStatus,
-			Source:        canonicalCleanString(string(summary.Source), 128),
+			Source:        source,
 			Progress:      summary.Progress,
 			LastUserMessage: canonicalCleanString(
 				summary.LastUserMessage, canonicalMaxPublicValueRunes,
@@ -267,6 +271,10 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	}
 
 	status, terminalReason, err := canonicalRunStatus(public.Status)
+	if err != nil {
+		return nil, err
+	}
+	runKind, err := canonicalRunKind(public.RunKind)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +306,7 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 			AttemptKind:    canonicalRunAttemptKind(public.RunKind, rawMetadata),
 			SourceRunID:    sourceRunID,
 			ParentRunID:    canonicalOptionalTimeID(public.ParentRunID),
-			RunKind:        canonicalRunKind(public.RunKind),
+			RunKind:        runKind,
 			StreamModes:    canonicalRunStreamModes(public.StreamMode),
 			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
 			Durability:     canonicalRunDurability(public.Durability),
@@ -695,12 +703,25 @@ func canonicalRunDurability(string) string {
 	return "async"
 }
 
-func canonicalRunKind(kind appagentthread.RunKind) string {
-	switch kind {
-	case appagentthread.RunKindSubagent:
-		return "subagent"
+func canonicalThreadSource(source appagentthread.ThreadSource) (string, error) {
+	switch source {
+	case "":
+		return "", nil
+	case appagentthread.ThreadSourceWeb, appagentthread.ThreadSourceIM, appagentthread.ThreadSourceAPI:
+		return string(source), nil
 	default:
-		return "task"
+		return "", fmt.Errorf("unsupported canonical thread source %q", source)
+	}
+}
+
+func canonicalRunKind(kind appagentthread.RunKind) (string, error) {
+	switch kind {
+	case "", appagentthread.RunKindTask:
+		return "task", nil
+	case appagentthread.RunKindSubagent:
+		return "subagent", nil
+	default:
+		return "", fmt.Errorf("unsupported canonical run kind %q", kind)
 	}
 }
 
