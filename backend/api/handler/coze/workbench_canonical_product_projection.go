@@ -19,7 +19,6 @@ package coze
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
@@ -212,7 +211,11 @@ func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: canonicalTime(public.DeletedAt)}, nil
+	deletedAt, err := canonicalProductOptionalTime(public.DeletedAt, "artifact deleted_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: deletedAt}, nil
 }
 
 func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScanJobSummary) (*canonicalProductArtifactScanJob, error) {
@@ -247,8 +250,20 @@ func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScan
 	if err != nil {
 		return nil, err
 	}
+	availableAt, err := canonicalProductOptionalTime(summary.AvailableAt, "artifact scan job available_at")
+	if err != nil {
+		return nil, err
+	}
+	startedAt, err := canonicalProductOptionalTime(summary.StartedAt, "artifact scan job started_at")
+	if err != nil {
+		return nil, err
+	}
+	endedAt, err := canonicalProductOptionalTime(summary.EndedAt, "artifact scan job ended_at")
+	if err != nil {
+		return nil, err
+	}
 	status := canonicalProductScanStatus(string(summary.Status))
-	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: threadID, RunID: runID, ArtifactID: artifactID, FileID: fileID, Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, WorkerRef: canonicalLogHash(summary.WorkerID), AttemptCount: summary.AttemptCount, ErrorCode: "none", AvailableAt: canonicalTime(summary.AvailableAt), StartedAt: canonicalTime(summary.StartedAt), EndedAt: canonicalTime(summary.EndedAt), CreatedAt: createdAt, UpdatedAt: updatedAt}
+	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: threadID, RunID: runID, ArtifactID: artifactID, FileID: fileID, Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, WorkerRef: canonicalLogHash(summary.WorkerID), AttemptCount: summary.AttemptCount, ErrorCode: "none", AvailableAt: availableAt, StartedAt: startedAt, EndedAt: endedAt, CreatedAt: createdAt, UpdatedAt: updatedAt}
 	if status == "failed" {
 		result.ErrorCode = "scan_failed"
 	}
@@ -317,7 +332,19 @@ func projectCanonicalProductMemory(summary *appagentthread.MemorySummary) (*cano
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: canonicalTime(summary.CorrectedAt), ExpiresAt: canonicalTime(summary.ExpiresAt), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: canonicalTime(summary.DeletedAt)}, nil
+	correctedAt, err := canonicalProductOptionalTime(summary.CorrectedAt, "memory corrected_at")
+	if err != nil {
+		return nil, err
+	}
+	expiresAt, err := canonicalProductOptionalTime(summary.ExpiresAt, "memory expires_at")
+	if err != nil {
+		return nil, err
+	}
+	deletedAt, err := canonicalProductOptionalTime(summary.DeletedAt, "memory deleted_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: correctedAt, ExpiresAt: expiresAt, CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: deletedAt}, nil
 }
 
 func projectCanonicalProductMemoryAudit(summary *appagentthread.MemoryAuditEventSummary) (*canonicalProductMemoryAudit, error) {
@@ -386,14 +413,15 @@ func canonicalProductRequiredID(value int64, resource string) (string, error) {
 }
 
 func canonicalProductRequiredTime(value int64, resource string) (string, error) {
-	projected := canonicalTime(value)
-	if projected == "" {
-		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
+	return canonicalRequiredTime(value, resource)
+}
+
+func canonicalProductOptionalTime(value int64, resource string) (string, error) {
+	projected, err := canonicalOptionalTime(value, resource)
+	if err != nil || projected == nil {
+		return "", err
 	}
-	if _, err := time.Parse(time.RFC3339Nano, projected); err != nil {
-		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
-	}
-	return projected, nil
+	return *projected, nil
 }
 
 func canonicalProductIdentifier(value string) string {

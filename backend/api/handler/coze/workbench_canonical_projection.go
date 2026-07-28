@@ -291,6 +291,14 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 	if multitaskStrategy == "" {
 		multitaskStrategy = "reject"
 	}
+	startedAt, err := canonicalOptionalTime(public.StartedAt, "run started_at")
+	if err != nil {
+		return nil, err
+	}
+	endedAt, err := canonicalOptionalTime(public.EndedAt, "run ended_at")
+	if err != nil {
+		return nil, err
+	}
 
 	return &canonicalRun{
 		RunID:             strconv.FormatInt(public.RunID, 10),
@@ -311,8 +319,8 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
 			Durability:     canonicalRunDurability(public.Durability),
 			TerminalReason: terminalReason,
-			StartedAt:      canonicalOptionalTime(public.StartedAt),
-			EndedAt:        canonicalOptionalTime(public.EndedAt),
+			StartedAt:      startedAt,
+			EndedAt:        endedAt,
 		},
 	}, nil
 }
@@ -733,12 +741,36 @@ func canonicalOptionalTimeID(value int64) *string {
 	return &formatted
 }
 
-func canonicalOptionalTime(value int64) *string {
-	formatted := canonicalTime(value)
-	if formatted == "" {
-		return nil
+func canonicalOptionalTime(value int64, resource string) (*string, error) {
+	return canonicalCheckedTime(value, resource)
+}
+
+func canonicalRequiredTime(value int64, resource string) (string, error) {
+	projected, err := canonicalCheckedTime(value, resource)
+	if err != nil {
+		return "", err
 	}
-	return &formatted
+	if projected == nil {
+		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	return *projected, nil
+}
+
+func canonicalCheckedTime(value int64, resource string) (*string, error) {
+	if value == 0 {
+		return nil, nil
+	}
+	if value < 0 {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	projected := canonicalTime(value)
+	if projected == "" {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, projected); err != nil {
+		return nil, fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	return &projected, nil
 }
 
 func canonicalMetadataFromJSON(raw, title string) map[string]any {

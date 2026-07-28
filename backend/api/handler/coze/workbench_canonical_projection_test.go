@@ -19,7 +19,9 @@ package coze
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/bytedance/mockey"
 	"github.com/stretchr/testify/require"
@@ -196,6 +198,42 @@ func TestCanonicalThreadAndRunProjectionRejectsUnknownNonEmptyEnums(t *testing.T
 		})
 		require.ErrorContains(t, err, "unsupported canonical run kind")
 	})
+}
+
+func TestCanonicalRunOptionalTimesFailClosed(t *testing.T) {
+	const validTime = int64(1710000000123)
+
+	zero, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+	})
+	require.NoError(t, err)
+	require.Nil(t, zero.Coze.StartedAt)
+	require.Nil(t, zero.Coze.EndedAt)
+
+	valid, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+		StartedAt: validTime, EndedAt: validTime,
+	})
+	require.NoError(t, err)
+	for _, value := range []*string{valid.Coze.StartedAt, valid.Coze.EndedAt} {
+		require.NotNil(t, value)
+		_, parseErr := time.Parse(time.RFC3339Nano, *value)
+		require.NoError(t, parseErr)
+	}
+
+	for _, test := range []struct {
+		name string
+		run  *appagentthread.RunSummary
+	}{
+		{name: "started negative", run: &appagentthread.RunSummary{RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending, StartedAt: -1}},
+		{name: "ended overflowing", run: &appagentthread.RunSummary{RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending, EndedAt: math.MaxInt64}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			_, projectionErr := projectCanonicalRun(test.run)
+			require.Error(t, projectionErr)
+		})
+	}
 }
 
 func TestCanonicalThreadStatusProjection(t *testing.T) {

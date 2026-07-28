@@ -607,7 +607,7 @@ Expected: PASS with no sensitive fixture values in output or logs.
 
 - [x] **Step 5a: Harden IDL wire shape and public identifier boundaries**
 
-Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs and required `*_at` times fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs. Idempotent POST create replay preserves the same public `submission_message`; list/get projections do not retain it.
+Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs and required `*_at` times fail closed; optional `*_at` times omit zero and fail closed for every invalid nonzero value. Scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs. Idempotent POST create replay preserves the same public `submission_message`; list/get projections do not retain it.
 
 - [x] **Step 6: Commit shared helpers**
 

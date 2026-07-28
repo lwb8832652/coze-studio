@@ -210,6 +210,88 @@ func TestCanonicalProductProjectionRejectsMissingOrInvalidRequiredTimes(t *testi
 	}
 }
 
+func TestCanonicalProductProjectionOptionalTimesFailClosed(t *testing.T) {
+	const validTime = int64(1710000000123)
+
+	artifact, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{
+		ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4, CreatedAt: validTime, UpdatedAt: validTime,
+	})
+	require.NoError(t, err)
+	require.Empty(t, artifact.DeletedAt)
+	artifact, err = projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{
+		ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4, CreatedAt: validTime, UpdatedAt: validTime, DeletedAt: validTime,
+	})
+	require.NoError(t, err)
+	requireCanonicalProductRFC3339(t, artifact.DeletedAt)
+
+	scan, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{
+		JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: validTime, UpdatedAt: validTime,
+	})
+	require.NoError(t, err)
+	require.Empty(t, scan.AvailableAt)
+	require.Empty(t, scan.StartedAt)
+	require.Empty(t, scan.EndedAt)
+	scan, err = projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{
+		JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: validTime, UpdatedAt: validTime,
+		AvailableAt: validTime, StartedAt: validTime, EndedAt: validTime,
+	})
+	require.NoError(t, err)
+	requireCanonicalProductRFC3339(t, scan.AvailableAt, scan.StartedAt, scan.EndedAt)
+
+	memory, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{
+		MemoryID: 1, ThreadID: 2, CreatedAt: validTime, UpdatedAt: validTime,
+	})
+	require.NoError(t, err)
+	require.Empty(t, memory.CorrectedAt)
+	require.Empty(t, memory.ExpiresAt)
+	require.Empty(t, memory.DeletedAt)
+	memory, err = projectCanonicalProductMemory(&appagentthread.MemorySummary{
+		MemoryID: 1, ThreadID: 2, CreatedAt: validTime, UpdatedAt: validTime,
+		CorrectedAt: validTime, ExpiresAt: validTime, DeletedAt: validTime,
+	})
+	require.NoError(t, err)
+	requireCanonicalProductRFC3339(t, memory.CorrectedAt, memory.ExpiresAt, memory.DeletedAt)
+
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "artifact deleted overflowing", call: func() error {
+			_, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4, CreatedAt: validTime, UpdatedAt: validTime, DeletedAt: math.MaxInt64})
+			return err
+		}},
+		{name: "scan available negative", call: func() error {
+			_, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: validTime, UpdatedAt: validTime, AvailableAt: -1})
+			return err
+		}},
+		{name: "scan started overflowing", call: func() error {
+			_, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: validTime, UpdatedAt: validTime, StartedAt: math.MaxInt64})
+			return err
+		}},
+		{name: "scan ended negative", call: func() error {
+			_, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: validTime, UpdatedAt: validTime, EndedAt: -1})
+			return err
+		}},
+		{name: "memory corrected overflowing", call: func() error {
+			_, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, CreatedAt: validTime, UpdatedAt: validTime, CorrectedAt: math.MaxInt64})
+			return err
+		}},
+		{name: "memory expires negative", call: func() error {
+			_, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, CreatedAt: validTime, UpdatedAt: validTime, ExpiresAt: -1})
+			return err
+		}},
+		{name: "memory deleted overflowing", call: func() error {
+			_, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, CreatedAt: validTime, UpdatedAt: validTime, DeletedAt: math.MaxInt64})
+			return err
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			require.Error(t, test.call())
+		})
+	}
+}
+
 func TestCanonicalProductProjectionRejectsInvalidRequiredIDs(t *testing.T) {
 	for _, test := range []struct {
 		name string
