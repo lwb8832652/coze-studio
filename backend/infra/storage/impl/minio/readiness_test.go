@@ -25,19 +25,17 @@ import (
 	"testing"
 
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/contract"
 )
 
 type minioReadinessRecorder struct {
-	BucketExistsCalls int
-	CreateCalls       int
-	PutCalls          int
-	DeleteCalls       int
-	exists            bool
-	err               error
+	contract.ReadinessRecorder
+	exists bool
+	err    error
 }
 
 func (r *minioReadinessRecorder) BucketExists(context.Context, string) (bool, error) {
-	r.BucketExistsCalls++
+	r.HeadBucketCalls++
 	return r.exists, r.err
 }
 
@@ -52,9 +50,11 @@ func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CheckReadiness(canceled) error = %v", err)
 	}
-	assertMinIONoWriteCalls(t, recorder)
-	if recorder.BucketExistsCalls != 0 {
-		t.Fatalf("BucketExistsCalls = %d, want 0", recorder.BucketExistsCalls)
+	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
+		t.Fatalf("write calls = %+v, want all 0", recorder.ReadinessRecorder)
+	}
+	if recorder.HeadBucketCalls != 0 {
+		t.Fatalf("BucketExistsCalls = %d, want 0", recorder.HeadBucketCalls)
 	}
 }
 
@@ -67,34 +67,27 @@ func TestCheckReadinessMapsSDKError(t *testing.T) {
 	if !errors.Is(err, storage.ErrReadinessUnavailable) {
 		t.Fatalf("CheckReadiness(sdk error) error = %v", err)
 	}
-	assertMinIONoWriteCalls(t, recorder)
-	if recorder.BucketExistsCalls != 1 {
-		t.Fatalf("BucketExistsCalls = %d, want 1", recorder.BucketExistsCalls)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
+	if recorder.HeadBucketCalls != 1 {
+		t.Fatalf("BucketExistsCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
 }
 
-func TestCheckReadinessSuccessUsesOnlyBucketExists(t *testing.T) {
+func TestMinIOReadinessIsReadOnly(t *testing.T) {
 	recorder := &minioReadinessRecorder{exists: true}
 	client := &minioClient{bucketName: "bucket", readinessCheck: recorder.BucketExists}
 
 	if err := client.CheckReadiness(context.Background()); err != nil {
 		t.Fatalf("CheckReadiness() error = %v", err)
 	}
-	assertMinIONoWriteCalls(t, recorder)
-	if recorder.BucketExistsCalls != 1 {
-		t.Fatalf("BucketExistsCalls = %d, want 1", recorder.BucketExistsCalls)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
+	if recorder.HeadBucketCalls != 1 {
+		t.Fatalf("BucketExistsCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
 }
 
 func TestProductionFileDoesNotExposeReadinessTestHook(t *testing.T) {
 	assertNoReadinessTestHook(t, "minio.go")
-}
-
-func assertMinIONoWriteCalls(t *testing.T, recorder *minioReadinessRecorder) {
-	t.Helper()
-	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
-		t.Fatalf("write calls = create:%d put:%d delete:%d, want all 0", recorder.CreateCalls, recorder.PutCalls, recorder.DeleteCalls)
-	}
 }
 
 func assertNoReadinessTestHook(t *testing.T, filename string) {

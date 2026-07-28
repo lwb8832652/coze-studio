@@ -27,14 +27,12 @@ import (
 
 	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/contract"
 )
 
 type s3ReadinessRecorder struct {
-	HeadBucketCalls   int
-	CreateBucketCalls int
-	PutCalls          int
-	DeleteCalls       int
-	err               error
+	contract.ReadinessRecorder
+	err error
 }
 
 func (r *s3ReadinessRecorder) HeadBucket(context.Context, string) error {
@@ -53,7 +51,9 @@ func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CheckReadiness(canceled) error = %v", err)
 	}
-	assertS3NoWriteCalls(t, recorder)
+	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
+		t.Fatalf("write calls = %+v, want all 0", recorder.ReadinessRecorder)
+	}
 	if recorder.HeadBucketCalls != 0 {
 		t.Fatalf("HeadBucketCalls = %d, want 0", recorder.HeadBucketCalls)
 	}
@@ -68,20 +68,20 @@ func TestCheckReadinessMapsSDKError(t *testing.T) {
 	if !errors.Is(err, storage.ErrReadinessUnavailable) {
 		t.Fatalf("CheckReadiness(sdk error) error = %v", err)
 	}
-	assertS3NoWriteCalls(t, recorder)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
 	if recorder.HeadBucketCalls != 1 {
 		t.Fatalf("HeadBucketCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
 }
 
-func TestCheckReadinessSuccessUsesOnlyHeadBucket(t *testing.T) {
+func TestS3ReadinessIsReadOnly(t *testing.T) {
 	recorder := &s3ReadinessRecorder{}
 	client := &s3Client{bucketName: "bucket", readinessCheck: recorder.HeadBucket}
 
 	if err := client.CheckReadiness(context.Background()); err != nil {
 		t.Fatalf("CheckReadiness() error = %v", err)
 	}
-	assertS3NoWriteCalls(t, recorder)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
 	if recorder.HeadBucketCalls != 1 {
 		t.Fatalf("HeadBucketCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
@@ -109,13 +109,6 @@ func TestNewFromConfigIgnoresGenericEndpointField(t *testing.T) {
 	}
 	if options.EndpointResolver != nil {
 		t.Fatal("EndpointResolver is set from generic endpoint, want nil")
-	}
-}
-
-func assertS3NoWriteCalls(t *testing.T, recorder *s3ReadinessRecorder) {
-	t.Helper()
-	if recorder.CreateBucketCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
-		t.Fatalf("write calls = create:%d put:%d delete:%d, want all 0", recorder.CreateBucketCalls, recorder.PutCalls, recorder.DeleteCalls)
 	}
 }
 

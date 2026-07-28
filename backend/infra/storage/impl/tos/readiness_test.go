@@ -27,14 +27,12 @@ import (
 	"testing"
 
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/contract"
 )
 
 type tosReadinessRecorder struct {
-	HeadBucketCalls   int
-	CreateBucketCalls int
-	PutCalls          int
-	DeleteCalls       int
-	err               error
+	contract.ReadinessRecorder
+	err error
 }
 
 func (r *tosReadinessRecorder) HeadBucket(context.Context, string) error {
@@ -53,7 +51,9 @@ func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CheckReadiness(canceled) error = %v", err)
 	}
-	assertTOSNoWriteCalls(t, recorder)
+	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
+		t.Fatalf("write calls = %+v, want all 0", recorder.ReadinessRecorder)
+	}
 	if recorder.HeadBucketCalls != 0 {
 		t.Fatalf("HeadBucketCalls = %d, want 0", recorder.HeadBucketCalls)
 	}
@@ -68,20 +68,20 @@ func TestCheckReadinessMapsSDKError(t *testing.T) {
 	if !errors.Is(err, storage.ErrReadinessUnavailable) {
 		t.Fatalf("CheckReadiness(sdk error) error = %v", err)
 	}
-	assertTOSNoWriteCalls(t, recorder)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
 	if recorder.HeadBucketCalls != 1 {
 		t.Fatalf("HeadBucketCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
 }
 
-func TestCheckReadinessSuccessUsesOnlyHeadBucket(t *testing.T) {
+func TestTOSReadinessIsReadOnly(t *testing.T) {
 	recorder := &tosReadinessRecorder{}
 	client := &tosClient{bucketName: "bucket", readinessCheck: recorder.HeadBucket}
 
 	if err := client.CheckReadiness(context.Background()); err != nil {
 		t.Fatalf("CheckReadiness() error = %v", err)
 	}
-	assertTOSNoWriteCalls(t, recorder)
+	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
 	if recorder.HeadBucketCalls != 1 {
 		t.Fatalf("HeadBucketCalls = %d, want 1", recorder.HeadBucketCalls)
 	}
@@ -102,13 +102,6 @@ func TestLoggingDoesNotIncludeSignedURL(t *testing.T) {
 	}
 	if strings.Contains(content, "object.URL") {
 		t.Fatal("tos.go debug logs include object.URL")
-	}
-}
-
-func assertTOSNoWriteCalls(t *testing.T, recorder *tosReadinessRecorder) {
-	t.Helper()
-	if recorder.CreateBucketCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
-		t.Fatalf("write calls = create:%d put:%d delete:%d, want all 0", recorder.CreateBucketCalls, recorder.PutCalls, recorder.DeleteCalls)
 	}
 }
 
