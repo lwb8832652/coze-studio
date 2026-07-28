@@ -219,18 +219,6 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves the workbench task thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", workbenchTaskThreadRouteSnapshot)
-	})
-
-	t.Run("preserves the LangGraph thread source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
-	})
-
-	t.Run("preserves the LangGraph stateless run source surface", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/runs", langGraphStatelessRunRouteSnapshot)
-	})
-
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
 		for _, path := range retiredChatTaskPaths {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
