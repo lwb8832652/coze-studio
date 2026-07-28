@@ -225,7 +225,7 @@ func (q *qiniuClient) DeleteObject(ctx context.Context, objectKey string) error 
 	if err := q.bucketManager.Delete(q.bucketName, objectKey); err != nil {
 		return fmt.Errorf("DeleteObject failed: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
 
 func (q *qiniuClient) GetObjectUrl(ctx context.Context, objectKey string, opts ...storage.GetOptFn) (string, error) {
@@ -266,6 +266,9 @@ func (q *qiniuClient) HeadObject(ctx context.Context, objectKey string, opts ...
 			return nil, storage.ErrObjectNotFound
 		}
 		return nil, fmt.Errorf("HeadObject failed for key %s: %w", objectKey, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	fileInfo := &storage.FileInfo{
 		Key:          objectKey,
@@ -393,7 +396,9 @@ func qiniuPutTime(putTime int64) time.Time {
 func isQiniuNotFound(err error) bool {
 	var info *qiniugo.ErrorInfo
 	if errors.As(err, &info) {
-		return info.Code == http.StatusNotFound || info.Code == http.StatusBadRequest && strings.Contains(strings.ToLower(info.Err), "no such")
+		return info.Code == http.StatusNotFound ||
+			info.Code == 612 ||
+			info.Code == http.StatusBadRequest && strings.Contains(strings.ToLower(info.Err), "no such")
 	}
 	return false
 }

@@ -49,6 +49,16 @@ func TestValidateConfigAcceptsSupportedProviders(t *testing.T) {
 	}
 }
 
+func TestValidatePublicConfigDefaultsQiniuToHTTPS(t *testing.T) {
+	normalized, err := ValidatePublicConfig(ProviderQiniu, PublicConfig{Bucket: "coze", DownloadDomain: "cdn.example.com"}, ValidationMode{})
+	if err != nil {
+		t.Fatalf("ValidatePublicConfig(qiniu) error = %v", err)
+	}
+	if !normalized.UseHTTPS {
+		t.Fatal("ValidatePublicConfig(qiniu).UseHTTPS = false, want true by default")
+	}
+}
+
 func TestValidateConfigRejectsProviderSpecificInvalidInput(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -56,6 +66,8 @@ func TestValidateConfigRejectsProviderSpecificInvalidInput(t *testing.T) {
 		config   PublicConfig
 	}{
 		{name: "qiniu domain with scheme", provider: ProviderQiniu, config: PublicConfig{Bucket: "coze", DownloadDomain: "https://cdn.example.com"}},
+		{name: "qiniu domain with query", provider: ProviderQiniu, config: PublicConfig{Bucket: "coze", DownloadDomain: "cdn.example.com?token=1"}},
+		{name: "qiniu domain with fragment", provider: ProviderQiniu, config: PublicConfig{Bucket: "coze", DownloadDomain: "cdn.example.com#frag"}},
 		{name: "tencent bucket missing appid", provider: ProviderTencentCOS, config: PublicConfig{Bucket: "coze", Region: "ap-guangzhou"}},
 		{name: "aws http endpoint outside debug", provider: ProviderAWSS3, config: PublicConfig{Bucket: "coze", Region: "us-east-1", EndpointOverride: "http://s3.example.com"}},
 		{name: "minio endpoint empty", provider: ProviderMinIO, config: PublicConfig{Bucket: "coze"}},

@@ -21,6 +21,8 @@ import (
 	"errors"
 	"testing"
 
+	qiniugo "github.com/qiniu/go-sdk/v7/client"
+
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/contract"
 )
@@ -71,4 +73,12 @@ func TestQiniuReadinessIsReadOnly(t *testing.T) {
 		t.Fatalf("CheckReadiness() error = %v", err)
 	}
 	contract.AssertReadinessIsReadOnly(t, recorder.ReadinessRecorder)
+}
+
+func TestQiniuNotFoundMapsSDKCode612(t *testing.T) {
+	err := &qiniugo.ErrorInfo{Code: 612, Err: "no such file or directory"}
+
+	if !isQiniuNotFound(err) {
+		t.Fatal("isQiniuNotFound(612) = false, want true")
+	}
 }

@@ -81,6 +81,9 @@ func ValidatePublicConfig(provider ProviderType, input PublicConfig, mode Valida
 		if err := validateDownloadDomain(normalized.DownloadDomain); err != nil {
 			return PublicConfig{}, err
 		}
+		if !mode.AllowHTTP {
+			normalized.UseHTTPS = true
+		}
 	case ProviderAliyunOSS:
 		if normalized.Region == "" {
 			return PublicConfig{}, fmt.Errorf("%w: region is required", ErrConfigInvalid)
@@ -186,7 +189,7 @@ func validateDownloadDomain(domain string) error {
 	if domain == "" {
 		return fmt.Errorf("%w: download domain is required", ErrConfigInvalid)
 	}
-	if strings.Contains(domain, "://") || strings.ContainsAny(domain, "/\\\x00\r\n") {
+	if strings.Contains(domain, "://") || strings.ContainsAny(domain, "/\\\x00\r\n?#") {
 		return fmt.Errorf("%w: download domain must not include scheme or path", ErrConfigInvalid)
 	}
 	return nil
