@@ -197,6 +197,29 @@ func TestCredentialCodecDecryptRejectsUnavailableInputsSafely(t *testing.T) {
 	}
 }
 
+func TestCredentialCodecDecryptRejectsUnknownEnvelopeFieldsWithoutLeaking(t *testing.T) {
+	codec := testCredentialCodec(t, fixedNonceReader([]byte{1}))
+	envelope, err := codec.Encrypt(1, domain.ProviderMinIO, 1, domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"})
+	if err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+	var injected map[string]any
+	if err = json.Unmarshal([]byte(envelope), &injected); err != nil {
+		t.Fatalf("Unmarshal(envelope) error = %v", err)
+	}
+	injected["access_key_id"] = "ak-leak-marker"
+	injectedEnvelope, err := json.Marshal(injected)
+	if err != nil {
+		t.Fatalf("Marshal(injected) error = %v", err)
+	}
+
+	if _, err = codec.Decrypt(1, domain.ProviderMinIO, 1, string(injectedEnvelope)); !errors.Is(err, domain.ErrCredentialUnavailable) {
+		t.Fatalf("Decrypt(injected envelope) error = %v", err)
+	} else if errorContainsAny(err, "ak-leak-marker") {
+		t.Fatalf("Decrypt(injected envelope) leaked marker in error: %v", err)
+	}
+}
+
 func TestCredentialCodecEncryptNormalizesCredentials(t *testing.T) {
 	codec := testCredentialCodec(t, fixedNonceReader([]byte{1}))
 	envelope, err := codec.Encrypt(1, domain.ProviderMinIO, 1, domain.CredentialInput{

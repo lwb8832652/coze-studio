@@ -113,8 +113,8 @@ func (c *CredentialCodec) Encrypt(id uint64, provider domain.ProviderType, versi
 	}
 
 	c.nonceMutex.Lock()
+	defer c.nonceMutex.Unlock()
 	nonce, ciphertext, err := secureaead.Seal(c.key, credentialAAD(id, provider, version), plaintext, c.nonce)
-	c.nonceMutex.Unlock()
 	if err != nil {
 		return "", domain.ErrCredentialUnavailable
 	}
@@ -135,7 +135,12 @@ func (c *CredentialCodec) Decrypt(id uint64, provider domain.ProviderType, versi
 		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
 	}
 	var parsed credentialEnvelope
-	if err := json.Unmarshal([]byte(envelope), &parsed); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(envelope))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parsed); err != nil {
+		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
 	}
 	if parsed.Version != credentialEnvelopeVersion {
