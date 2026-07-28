@@ -45,17 +45,13 @@ const updatedAtISO = '2026-01-01T00:01:00.000Z';
 const deletedAtISO = '2026-01-01T00:02:00.000Z';
 const ids = {
   thread: '1001',
-  todo: '1101',
   message: '2001',
   run: '3001',
-  assistant: '4001',
   runEvent: '5001',
   file: '6001',
   artifact: '7001',
   scanJob: '8001',
-  worker: '8101',
   usage: '8201',
-  step: '8301',
   memory: '8401',
   correctedMemory: '8400',
   memoryAudit: '8501',
@@ -63,9 +59,20 @@ const ids = {
   guardrailAudit: '8701',
   mcpAudit: '8901',
   space: '9001',
-  server: '9002',
-  interaction: '9101',
-  journal: '9201',
+} as const;
+const opaque = {
+  todo: 'todo-1',
+  assistant: 'agent',
+  legacyAssistant: 'assistant-a',
+  worker: 'worker-safe-1',
+  step: 'step-1',
+  source: 'message:3001',
+  target: 'artifact:5001',
+  server: 'server-main',
+  interaction: 'hi_1',
+  choice: 'a',
+  submittedBy: 'user:8601',
+  journal: 'journal-1',
 } as const;
 
 export interface PairedTransportFixture<Legacy, Canonical, Visible> {
@@ -89,14 +96,16 @@ export const threadTransportFixture = pairFixture({
       creator_id: ids.actor,
       title: 'Prepare launch brief',
       status: 'running',
-      source: 'agent',
+      source: 'web',
       progress: 40,
       last_user_message: 'Prepare the launch brief',
       last_agent_message: 'Drafting the brief',
       created_at: createdAt,
       updated_at: updatedAt,
       values: {
-        todos: [{ id: ids.todo, title: 'Draft outline', status: 'completed' }],
+        todos: [
+          { id: opaque.todo, title: 'Draft outline', status: 'completed' },
+        ],
       },
     },
   },
@@ -105,15 +114,15 @@ export const threadTransportFixture = pairFixture({
     created_at: createdAtISO,
     updated_at: updatedAtISO,
     metadata: { title: 'Prepare launch brief' },
-    status: 'running',
+    status: 'busy',
     values: {
-      todos: [{ id: ids.todo, title: 'Draft outline', status: 'completed' }],
+      todos: [{ id: opaque.todo, title: 'Draft outline', status: 'completed' }],
     },
-    interrupts: [],
+    interrupts: {},
     coze: {
-      product_status: 'active',
-      initial_submission: 'Prepare the launch brief',
-      source: 'agent',
+      product_status: 'running',
+      initial_submission: null,
+      source: 'web',
       progress: 40,
       last_user_message: 'Prepare the launch brief',
       last_agent_message: 'Drafting the brief',
@@ -125,7 +134,7 @@ export const threadTransportFixture = pairFixture({
     space_id: ids.space,
     title: 'Prepare launch brief',
     status: 'running',
-    source: 'agent',
+    source: 'web',
     progress: 40,
     last_user_message: 'Prepare the launch brief',
     last_agent_message: 'Drafting the brief',
@@ -133,7 +142,7 @@ export const threadTransportFixture = pairFixture({
     created_at: createdAt,
     updated_at: updatedAt,
     values: {
-      todos: [{ id: ids.todo, title: 'Draft outline', status: 'completed' }],
+      todos: [{ id: opaque.todo, title: 'Draft outline', status: 'completed' }],
     },
   } satisfies WorkbenchThread,
 });
@@ -142,15 +151,15 @@ export const todoTransportFixture = pairFixture({
   v1: {
     code: 0,
     msg: 'success',
-    data: { id: ids.todo, title: 'Draft outline', status: 'completed' },
+    data: { id: opaque.todo, title: 'Draft outline', status: 'completed' },
   },
   canonical: {
     values: {
-      todos: [{ id: ids.todo, title: 'Draft outline', status: 'completed' }],
+      todos: [{ id: opaque.todo, title: 'Draft outline', status: 'completed' }],
     },
   },
   visible: {
-    id: ids.todo,
+    id: opaque.todo,
     title: 'Draft outline',
     status: 'completed',
   } satisfies WorkbenchTodo,
@@ -201,7 +210,7 @@ export const runTransportFixture = pairFixture({
       parent_run_id: '',
       space_id: ids.space,
       creator_id: ids.actor,
-      assistant_id: ids.assistant,
+      assistant_id: opaque.legacyAssistant,
       run_kind: 'agent',
       status: 'running',
       command: '',
@@ -213,7 +222,7 @@ export const runTransportFixture = pairFixture({
       multitask_strategy: 'reject',
       on_disconnect: 'continue',
       durability: 'async',
-      worker_id: ids.worker,
+      worker_id: opaque.worker,
       error_code: '',
       error_message: '',
       started_at: createdAt,
@@ -225,31 +234,36 @@ export const runTransportFixture = pairFixture({
   canonical: {
     run_id: ids.run,
     thread_id: ids.thread,
-    assistant_id: ids.assistant,
+    assistant_id: opaque.assistant,
     status: 'running',
     created_at: createdAtISO,
     updated_at: updatedAtISO,
     metadata: { mode: 'agent' },
     multitask_strategy: 'reject',
     coze: {
-      attempt_kind: 'initial',
-      run_kind: 'agent',
+      message_id: null,
+      attempt_kind: 'turn',
+      source_run_id: null,
+      parent_run_id: null,
+      run_kind: 'task',
       stream_modes: ['events'],
       on_disconnect: 'continue',
       durability: 'async',
+      terminal_reason: null,
       started_at: createdAtISO,
+      ended_at: null,
     },
   },
   visible: {
     run_id: ids.run,
     thread_id: ids.thread,
     space_id: ids.space,
-    assistant_id: ids.assistant,
+    assistant_id: opaque.assistant,
     status: 'running',
     metadata: '{"mode":"agent"}',
     multitask_strategy: 'reject',
-    attempt_kind: 'initial',
-    run_kind: 'agent',
+    attempt_kind: 'turn',
+    run_kind: 'task',
     stream_modes: ['events'],
     on_disconnect: 'continue',
     durability: 'async',
@@ -277,7 +291,7 @@ export const runEventTransportFixture = pairFixture({
       total: 1,
       journal_messages: [
         {
-          id: ids.journal,
+          id: opaque.journal,
           tool_calls: [{ arguments: '{"must":"be dropped"}' }],
           usage: '{"must":"be dropped"}',
         },
@@ -432,7 +446,7 @@ export const artifactScanJobTransportFixture = pairFixture({
           file_id: ids.file,
           scanner: 'default',
           status: 'succeeded',
-          worker_id: ids.worker,
+          worker_id: opaque.worker,
           attempt_count: 1,
           last_error: '',
           available_at: createdAt,
@@ -455,7 +469,7 @@ export const artifactScanJobTransportFixture = pairFixture({
         file_id: ids.file,
         scanner: 'default',
         status: 'succeeded',
-        worker_ref: ids.worker,
+        worker_ref: opaque.worker,
         attempt_count: 1,
         error_code: '',
         available_at: createdAtISO,
@@ -477,7 +491,7 @@ export const artifactScanJobTransportFixture = pairFixture({
     file_id: ids.file,
     scanner: 'default',
     status: 'succeeded',
-    worker_id: ids.worker,
+    worker_id: opaque.worker,
     attempt_count: 1,
     error_code: '',
     available_at: createdAt,
@@ -506,7 +520,7 @@ const visibleTokenUsage = {
   run_id: ids.run,
   space_id: ids.space,
   source: 'lead_agent',
-  step_id: ids.step,
+  step_id: opaque.step,
   step_index: 0,
   step_name: 'answer',
   model_name: 'gpt-test',
@@ -544,7 +558,7 @@ export const tokenUsageTransportFixture = pairFixture({
         thread_id: ids.thread,
         run_id: ids.run,
         source: 'lead_agent',
-        step_id: ids.step,
+        step_id: opaque.step,
         step_index: 0,
         step_name: 'answer',
         model_name: 'gpt-test',
@@ -583,7 +597,7 @@ const visibleMemory = {
   score: 0.9,
   confidence: 0.95,
   source_type: 'message',
-  source_id: ids.message,
+  source_id: opaque.source,
   correction_of_memory_id: ids.correctedMemory,
   corrected_at: createdAt,
   expires_at: updatedAt,
@@ -610,7 +624,7 @@ export const memoryTransportFixture = pairFixture({
         score: 0.9,
         confidence: 0.95,
         source_type: 'message',
-        source_id: ids.message,
+        source_id: opaque.source,
         correction_of_memory_id: ids.correctedMemory,
         corrected_at: createdAtISO,
         expires_at: updatedAtISO,
@@ -635,7 +649,7 @@ const visibleMemoryAudit = {
   event_type: 'memory.updated',
   scope: 'thread',
   source_type: 'message',
-  source_id: ids.message,
+  source_id: opaque.source,
   affected_count: 1,
   created_at: updatedAt,
 } satisfies WorkbenchMemoryAuditEvent;
@@ -657,7 +671,7 @@ export const memoryAuditTransportFixture = pairFixture({
         event_type: 'memory.updated',
         scope: 'thread',
         source_type: 'message',
-        source_id: ids.message,
+        source_id: opaque.source,
         affected_count: 1,
         created_at: updatedAtISO,
       },
@@ -676,7 +690,7 @@ const visibleGuardrailAudit = {
   actor_id: ids.actor,
   event_type: 'guardrail.evaluated',
   target_type: 'run',
-  target_id: ids.run,
+  target_id: opaque.target,
   operation: 'output',
   source: 'runtime',
   action: 'allow',
@@ -702,7 +716,7 @@ export const guardrailAuditTransportFixture = pairFixture({
         actor_id: ids.actor,
         event_type: 'guardrail.evaluated',
         target_type: 'run',
-        target_id: ids.run,
+        target_id: opaque.target,
         operation: 'output',
         source: 'runtime',
         action: 'allow',
@@ -724,7 +738,7 @@ const visibleMCPAudit = {
   space_id: ids.space,
   thread_id: ids.thread,
   run_id: ids.run,
-  server_id: ids.server,
+  server_id: opaque.server,
   runtime_tool_name: 'search',
   event_type: 'tool.completed',
   error_code: '',
@@ -745,7 +759,7 @@ export const mcpRuntimeAuditTransportFixture = pairFixture({
         event_id: ids.mcpAudit,
         thread_id: ids.thread,
         run_id: ids.run,
-        server_id: ids.server,
+        server_id: opaque.server,
         runtime_tool_name: 'search',
         event_type: 'tool.completed',
         error_code: '',
@@ -763,33 +777,36 @@ export const mcpRuntimeAuditTransportFixture = pairFixture({
 export const humanInteractionTransportFixture = pairFixture({
   v1: {
     schema: 'human_interaction_v1',
-    interaction_id: ids.interaction,
+    interaction_id: opaque.interaction,
     kind: 'confirmation',
     decision: 'approve',
     comment: 'Proceed',
-    submitted_by: ids.actor,
+    choice_id: opaque.choice,
+    submitted_by: opaque.submittedBy,
     submitted_at: updatedAt,
-    source: 'workbench',
+    source: 'web',
   },
   canonical: {
     schema: 'human_interaction_v1',
-    interaction_id: ids.interaction,
+    interaction_id: opaque.interaction,
     kind: 'confirmation',
     decision: 'approve',
     comment: 'Proceed',
-    submitted_by: ids.actor,
+    choice_id: opaque.choice,
+    submitted_by: opaque.submittedBy,
     submitted_at: updatedAtISO,
-    source: 'workbench',
+    source: 'web',
   },
   visible: {
     schema: 'human_interaction_v1',
-    interaction_id: ids.interaction,
+    interaction_id: opaque.interaction,
     kind: 'confirmation',
     decision: 'approve',
     comment: 'Proceed',
-    submitted_by: ids.actor,
+    choice_id: opaque.choice,
+    submitted_by: opaque.submittedBy,
     submitted_at: updatedAt,
-    source: 'workbench',
+    source: 'web',
   } satisfies HumanInteractionResponse,
 });
 
@@ -840,14 +857,11 @@ const asArray = (value: unknown, label: string): unknown[] => {
   return value;
 };
 
-const asID = (value: unknown, label: string): string => {
-  if (typeof value === 'string' && /^(?:0|[1-9]\d*)$/.test(value)) {
+const asResourceID = (value: unknown, label: string): string => {
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) {
     return value;
   }
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return String(value);
-  }
-  throw new TypeError(`${label} must be a decimal string or safe integer ID`);
+  throw new TypeError(`${label} must be a positive decimal string ID`);
 };
 
 const asString = (value: unknown, label: string): string => {
@@ -855,6 +869,14 @@ const asString = (value: unknown, label: string): string => {
     throw new TypeError(`${label} must be a string`);
   }
   return value;
+};
+
+const asNonEmptyString = (value: unknown, label: string): string => {
+  const decoded = asString(value, label);
+  if (!decoded) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  return decoded;
 };
 
 const asBoolean = (value: unknown, label: string): boolean => {
@@ -881,10 +903,14 @@ const asSafeInteger = (value: unknown, label: string): number => {
 const rfc3339 =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-const asEpoch = (value: unknown, label: string): number => {
+const asV1Epoch = (value: unknown, label: string): number => {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
     return value;
   }
+  throw new TypeError(`${label} must be non-negative safe epoch milliseconds`);
+};
+
+const asCanonicalEpoch = (value: unknown, label: string): number => {
   const milliseconds =
     typeof value === 'string' && rfc3339.test(value)
       ? Date.parse(value)
@@ -892,14 +918,12 @@ const asEpoch = (value: unknown, label: string): number => {
   if (Number.isSafeInteger(milliseconds) && milliseconds >= 0) {
     return milliseconds;
   }
-  throw new TypeError(
-    `${label} must be safe epoch milliseconds or valid RFC3339`,
-  );
+  throw new TypeError(`${label} must be a valid RFC3339 string`);
 };
 
-const parseJSON = (value: unknown, label: string): unknown => {
+const parseV1JSON = (value: unknown, label: string): unknown => {
   if (typeof value !== 'string') {
-    return value;
+    throw new TypeError(`${label} must be a JSON string`);
   }
   try {
     return JSON.parse(value) as unknown;
@@ -908,7 +932,42 @@ const parseJSON = (value: unknown, label: string): unknown => {
   }
 };
 
+const assertJSONValue = (
+  value: unknown,
+  label: string,
+  seen = new WeakSet<object>(),
+): void => {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  ) {
+    return;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${label} must not contain non-finite numbers`);
+    }
+    return;
+  }
+  if (typeof value !== 'object') {
+    throw new TypeError(`${label} must contain JSON values only`);
+  }
+  if (seen.has(value)) {
+    throw new TypeError(`${label} must not contain cycles`);
+  }
+  seen.add(value);
+  const entries = Array.isArray(value)
+    ? value.entries()
+    : Object.entries(asRecord(value, label));
+  for (const [key, child] of entries) {
+    assertJSONValue(child, `${label}.${String(key)}`, seen);
+  }
+  seen.delete(value);
+};
+
 const serializeJSON = (value: unknown, label: string): string => {
+  assertJSONValue(value, label);
   const serialized = JSON.stringify(value);
   if (typeof serialized !== 'string') {
     throw new TypeError(`${label} must be JSON serializable`);
@@ -916,11 +975,33 @@ const serializeJSON = (value: unknown, label: string): string => {
   return serialized;
 };
 
-const asJSONObject = (value: unknown, label: string): string =>
-  serializeJSON(asRecord(parseJSON(value, label), label), label);
+const asV1JSONObject = (value: unknown, label: string): string =>
+  serializeJSON(asRecord(parseV1JSON(value, label), label), label);
 
-const asJSONArray = (value: unknown, label: string): string =>
-  serializeJSON(asArray(parseJSON(value, label), label), label);
+const asCanonicalJSONObject = (value: unknown, label: string): string =>
+  serializeJSON(asRecord(value, label), label);
+
+const asV1JSONArray = (value: unknown, label: string): string =>
+  serializeJSON(asArray(parseV1JSON(value, label), label), label);
+
+const asCanonicalJSONArray = (value: unknown, label: string): string =>
+  serializeJSON(asArray(value, label), label);
+
+const asCanonicalObject = (value: unknown, label: string): WireRecord => {
+  const object = asRecord(value, label);
+  assertJSONValue(object, label);
+  return object;
+};
+
+const asCanonicalInitialSubmission = (
+  value: unknown,
+  label: string,
+): unknown => {
+  if (value === null) {
+    return value;
+  }
+  return asCanonicalObject(value, label);
+};
 
 const asStringArray = (value: unknown, label: string): string[] =>
   asArray(value, label).map((item, index) =>
@@ -940,6 +1021,16 @@ const exact =
     return value;
   };
 
+const oneOfStrings =
+  (allowed: readonly string[]): WireDecoder =>
+  (value, label) => {
+    const decoded = asString(value, label);
+    if (!allowed.includes(decoded)) {
+      throw new TypeError(`${label} must be one of ${allowed.join(', ')}`);
+    }
+    return decoded;
+  };
+
 const read = (from: string, decode: WireDecoder): ReadRule => ({
   from,
   decode,
@@ -952,27 +1043,38 @@ const optionalRead = (
   from,
   decode,
   optional: true,
-  omit: value =>
-    value === null || value === undefined || !!options.omit?.(value),
+  omit: options.omit,
 });
 const fixed = (constant: unknown): FieldRule => ({ constant });
 const fields = <Schema extends FieldMap>(schema: Schema): Schema => schema;
 
-const id = (from: string): ReadRule => read(from, asID);
+const v1ID = (from: string): ReadRule => read(from, asResourceID);
+const canonicalID = (from: string): ReadRule => read(from, asResourceID);
 const string = (from: string): ReadRule => read(from, asString);
+const nonEmptyString = (from: string): ReadRule => read(from, asNonEmptyString);
 const boolean = (from: string): ReadRule => read(from, asBoolean);
 const number = (from: string): ReadRule => read(from, asFiniteNumber);
 const integer = (from: string): ReadRule => read(from, asSafeInteger);
-const epoch = (from: string): ReadRule => read(from, asEpoch);
-const jsonObject = (from: string): ReadRule => read(from, asJSONObject);
-const jsonArray = (from: string): ReadRule => read(from, asJSONArray);
-const optionalID = (from: string): ReadRule => optionalRead(from, asID);
-const optionalLegacyID = (from: string): ReadRule =>
-  optionalRead(from, asID, { omit: value => value === '' });
-const optionalString = (from: string): ReadRule => optionalRead(from, asString);
-const optionalEpoch = (from: string): ReadRule => optionalRead(from, asEpoch);
-const optionalLegacyEpoch = (from: string): ReadRule =>
-  optionalRead(from, asEpoch, { omit: value => value === 0 });
+const v1Epoch = (from: string): ReadRule => read(from, asV1Epoch);
+const canonicalEpoch = (from: string): ReadRule => read(from, asCanonicalEpoch);
+const v1JSONObject = (from: string): ReadRule => read(from, asV1JSONObject);
+const canonicalJSONObject = (from: string): ReadRule =>
+  read(from, asCanonicalJSONObject);
+const v1JSONArray = (from: string): ReadRule => read(from, asV1JSONArray);
+const canonicalJSONArray = (from: string): ReadRule =>
+  read(from, asCanonicalJSONArray);
+const optionalV1ID = (from: string): ReadRule =>
+  optionalRead(from, asResourceID, { omit: value => value === '' });
+const optionalCanonicalID = (from: string): ReadRule =>
+  optionalRead(from, asResourceID, { omit: value => value === null });
+const optionalV1String = (from: string): ReadRule =>
+  optionalRead(from, asString);
+const optionalCanonicalString = (from: string): ReadRule =>
+  optionalRead(from, asString, { omit: value => value === null });
+const optionalV1Epoch = (from: string): ReadRule =>
+  optionalRead(from, asV1Epoch, { omit: value => value === 0 });
+const optionalCanonicalEpoch = (from: string): ReadRule =>
+  optionalRead(from, asCanonicalEpoch, { omit: value => value === null });
 
 const readPath = (
   source: unknown,
@@ -1100,19 +1202,19 @@ const canonicalProjector = (
 ) => createProjector(`canonical.${family}`, root, schema, checks);
 
 const v1TodoFields = fields({
-  id: id('id'),
+  id: string('id'),
   title: string('title'),
   status: string('status'),
 });
 const canonicalTodoFields = fields({
-  id: id('id'),
+  id: string('id'),
   title: string('title'),
   status: string('status'),
 });
 
 const v1ThreadFields = fields({
-  thread_id: id('thread_id'),
-  space_id: id('space_id'),
+  thread_id: v1ID('thread_id'),
+  space_id: v1ID('space_id'),
   title: string('title'),
   status: string('status'),
   source: string('source'),
@@ -1120,25 +1222,25 @@ const v1ThreadFields = fields({
   last_user_message: string('last_user_message'),
   last_agent_message: string('last_agent_message'),
   can_edit: fixed(true),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  created_at: v1Epoch('created_at'),
+  updated_at: v1Epoch('updated_at'),
   values: read(
     'values',
     objectOf({ todos: read('todos', arrayOf(v1TodoFields)) }),
   ),
 });
 const canonicalThreadFields = fields({
-  thread_id: id('thread_id'),
+  thread_id: canonicalID('thread_id'),
   space_id: fixed(fixtureSpaceID),
   title: string('metadata.title'),
-  status: string('status'),
-  source: string('coze.source'),
+  status: string('coze.product_status'),
+  source: read('coze.source', oneOfStrings(['', 'web', 'im', 'api'])),
   progress: number('coze.progress'),
   last_user_message: string('coze.last_user_message'),
   last_agent_message: string('coze.last_agent_message'),
   can_edit: boolean('coze.can_edit'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  created_at: canonicalEpoch('created_at'),
+  updated_at: canonicalEpoch('updated_at'),
   values: read(
     'values',
     objectOf({ todos: read('todos', arrayOf(canonicalTodoFields)) }),
@@ -1146,168 +1248,168 @@ const canonicalThreadFields = fields({
 });
 
 const v1MessageFields = fields({
-  message_id: id('message_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  message_id: v1ID('message_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: v1ID('run_id'),
   role: string('role'),
   content: string('content'),
-  metadata: jsonObject('metadata'),
-  created_at: epoch('created_at'),
+  metadata: v1JSONObject('metadata'),
+  created_at: v1Epoch('created_at'),
 });
 const canonicalMessageFields = fields({
-  message_id: id('message_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  message_id: canonicalID('message_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: canonicalID('run_id'),
   role: string('role'),
   content: string('content'),
-  metadata: jsonObject('metadata'),
-  created_at: epoch('created_at'),
+  metadata: canonicalJSONObject('metadata'),
+  created_at: canonicalEpoch('created_at'),
 });
 
 const v1RunFields = fields({
-  run_id: id('run_id'),
-  thread_id: id('thread_id'),
-  space_id: id('space_id'),
-  assistant_id: id('assistant_id'),
+  run_id: v1ID('run_id'),
+  thread_id: v1ID('thread_id'),
+  space_id: v1ID('space_id'),
+  assistant_id: fixed('agent'),
   status: string('status'),
-  metadata: jsonObject('metadata'),
+  metadata: v1JSONObject('metadata'),
   multitask_strategy: string('multitask_strategy'),
-  attempt_kind: fixed('initial'),
-  parent_run_id: optionalLegacyID('parent_run_id'),
-  run_kind: string('run_kind'),
+  attempt_kind: fixed('turn'),
+  parent_run_id: optionalV1ID('parent_run_id'),
+  run_kind: fixed('task'),
   stream_modes: read('stream_mode', asSingletonStringArray),
   on_disconnect: string('on_disconnect'),
   durability: string('durability'),
-  started_at: optionalLegacyEpoch('started_at'),
-  ended_at: optionalLegacyEpoch('ended_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  started_at: optionalV1Epoch('started_at'),
+  ended_at: optionalV1Epoch('ended_at'),
+  created_at: v1Epoch('created_at'),
+  updated_at: v1Epoch('updated_at'),
 });
 const canonicalRunFields = fields({
-  run_id: id('run_id'),
-  thread_id: id('thread_id'),
+  run_id: canonicalID('run_id'),
+  thread_id: canonicalID('thread_id'),
   space_id: fixed(fixtureSpaceID),
-  assistant_id: id('assistant_id'),
+  assistant_id: read('assistant_id', exact('agent')),
   status: string('status'),
-  metadata: jsonObject('metadata'),
+  metadata: canonicalJSONObject('metadata'),
   multitask_strategy: string('multitask_strategy'),
-  message_id: optionalID('coze.message_id'),
+  message_id: optionalCanonicalID('coze.message_id'),
   attempt_kind: string('coze.attempt_kind'),
-  source_run_id: optionalID('coze.source_run_id'),
-  parent_run_id: optionalID('coze.parent_run_id'),
+  source_run_id: optionalCanonicalID('coze.source_run_id'),
+  parent_run_id: optionalCanonicalID('coze.parent_run_id'),
   run_kind: string('coze.run_kind'),
   stream_modes: read('coze.stream_modes', asStringArray),
   on_disconnect: string('coze.on_disconnect'),
   durability: string('coze.durability'),
-  terminal_reason: optionalString('coze.terminal_reason'),
-  started_at: optionalEpoch('coze.started_at'),
-  ended_at: optionalEpoch('coze.ended_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  terminal_reason: optionalCanonicalString('coze.terminal_reason'),
+  started_at: optionalCanonicalEpoch('coze.started_at'),
+  ended_at: optionalCanonicalEpoch('coze.ended_at'),
+  created_at: canonicalEpoch('created_at'),
+  updated_at: canonicalEpoch('updated_at'),
 });
 
 const v1RunEventFields = fields({
-  event_id: id('event_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  event_id: v1ID('event_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: v1ID('run_id'),
   event_type: string('event_type'),
-  payload: jsonObject('payload'),
-  created_at: epoch('created_at'),
+  payload: v1JSONObject('payload'),
+  created_at: v1Epoch('created_at'),
 });
 const canonicalRunEventFields = fields({
-  event_id: id('event_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  event_id: canonicalID('event_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: canonicalID('run_id'),
   event_type: string('event_type'),
-  payload: jsonObject('payload'),
-  created_at: epoch('created_at'),
+  payload: canonicalJSONObject('payload'),
+  created_at: canonicalEpoch('created_at'),
 });
 
 const v1UploadFields = fields({
-  file_id: id('file_id'),
+  file_id: v1ID('file_id'),
   file_name: string('filename'),
   virtual_path: string('virtual_path'),
   content_type: string('content_type'),
   size_bytes: integer('size'),
-  created_at: epoch('created_at'),
+  created_at: v1Epoch('created_at'),
 });
 const canonicalUploadFields = fields({
-  file_id: id('file_id'),
+  file_id: canonicalID('file_id'),
   file_name: string('file_name'),
   virtual_path: string('virtual_path'),
   content_type: string('content_type'),
   size_bytes: integer('size_bytes'),
-  created_at: epoch('created_at'),
+  created_at: canonicalEpoch('created_at'),
 });
 
 const v1ArtifactFields = fields({
-  artifact_id: id('artifact_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
-  file_id: id('file_id'),
+  artifact_id: v1ID('artifact_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: v1ID('run_id'),
+  file_id: v1ID('file_id'),
   title: string('title'),
   artifact_type: string('artifact_type'),
   virtual_path: string('virtual_path'),
   content_type: string('content_type'),
   size_bytes: integer('size_bytes'),
   preview_mode: string('preview_mode'),
-  metadata: jsonObject('metadata'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
-  deleted_at: optionalLegacyEpoch('deleted_at'),
+  metadata: v1JSONObject('metadata'),
+  created_at: v1Epoch('created_at'),
+  updated_at: v1Epoch('updated_at'),
+  deleted_at: optionalV1Epoch('deleted_at'),
 });
 const canonicalArtifactFields = fields({
-  artifact_id: id('artifact_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
-  file_id: id('file_id'),
+  artifact_id: canonicalID('artifact_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: canonicalID('run_id'),
+  file_id: canonicalID('file_id'),
   title: string('title'),
   artifact_type: string('artifact_type'),
   virtual_path: string('virtual_path'),
   content_type: string('content_type'),
   size_bytes: integer('size_bytes'),
   preview_mode: string('preview_mode'),
-  metadata: jsonObject('metadata'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
-  deleted_at: optionalEpoch('deleted_at'),
+  metadata: canonicalJSONObject('metadata'),
+  created_at: canonicalEpoch('created_at'),
+  updated_at: canonicalEpoch('updated_at'),
+  deleted_at: optionalCanonicalEpoch('deleted_at'),
 });
 
 const v1ScanFields = fields({
-  job_id: id('job_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
-  space_id: id('space_id'),
-  artifact_id: id('artifact_id'),
-  file_id: id('file_id'),
+  job_id: v1ID('job_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: v1ID('run_id'),
+  space_id: v1ID('space_id'),
+  artifact_id: v1ID('artifact_id'),
+  file_id: v1ID('file_id'),
   scanner: string('scanner'),
   status: string('status'),
-  worker_id: id('worker_id'),
+  worker_id: string('worker_id'),
   attempt_count: integer('attempt_count'),
   error_code: string('last_error'),
-  available_at: optionalLegacyEpoch('available_at'),
-  started_at: optionalLegacyEpoch('started_at'),
-  ended_at: optionalLegacyEpoch('ended_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  available_at: optionalV1Epoch('available_at'),
+  started_at: optionalV1Epoch('started_at'),
+  ended_at: optionalV1Epoch('ended_at'),
+  created_at: v1Epoch('created_at'),
+  updated_at: v1Epoch('updated_at'),
 });
 const canonicalScanFields = fields({
-  job_id: id('job_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  job_id: canonicalID('job_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: canonicalID('run_id'),
   space_id: fixed(fixtureSpaceID),
-  artifact_id: id('artifact_id'),
-  file_id: id('file_id'),
+  artifact_id: canonicalID('artifact_id'),
+  file_id: canonicalID('file_id'),
   scanner: string('scanner'),
   status: string('status'),
-  worker_id: id('worker_ref'),
+  worker_id: string('worker_ref'),
   attempt_count: integer('attempt_count'),
   error_code: string('error_code'),
-  available_at: optionalEpoch('available_at'),
-  started_at: optionalEpoch('started_at'),
-  ended_at: optionalEpoch('ended_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
+  available_at: optionalCanonicalEpoch('available_at'),
+  started_at: optionalCanonicalEpoch('started_at'),
+  ended_at: optionalCanonicalEpoch('ended_at'),
+  created_at: canonicalEpoch('created_at'),
+  updated_at: canonicalEpoch('updated_at'),
 });
 
 const tokenAggregateFields = (): FieldMap =>
@@ -1322,19 +1424,19 @@ const tokenAggregateFields = (): FieldMap =>
     middleware_tokens: integer('middleware_tokens'),
     tool_tokens: integer('tool_tokens'),
   });
-const runAggregateFields = (): FieldMap =>
+const runAggregateFields = (resourceID: (from: string) => ReadRule): FieldMap =>
   fields({
-    run_id: id('run_id'),
+    run_id: resourceID('run_id'),
     aggregate: read('aggregate', objectOf(tokenAggregateFields())),
   });
 
 const v1TokenFields = fields({
-  usage_id: id('usage_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
-  space_id: id('space_id'),
+  usage_id: v1ID('usage_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: v1ID('run_id'),
+  space_id: v1ID('space_id'),
   source: string('source'),
-  step_id: id('step_id'),
+  step_id: string('step_id'),
   step_index: integer('step_index'),
   step_name: string('step_name'),
   model_name: string('model_name'),
@@ -1345,15 +1447,15 @@ const v1TokenFields = fields({
   cost_micros: integer('cost_micros'),
   currency: string('currency'),
   estimated: boolean('estimated'),
-  created_at: epoch('created_at'),
+  created_at: v1Epoch('created_at'),
 });
 const canonicalTokenFields = fields({
-  usage_id: id('usage_id'),
-  thread_id: id('thread_id'),
-  run_id: id('run_id'),
+  usage_id: canonicalID('usage_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: canonicalID('run_id'),
   space_id: fixed(fixtureSpaceID),
   source: string('source'),
-  step_id: id('step_id'),
+  step_id: string('step_id'),
   step_index: integer('step_index'),
   step_name: string('step_name'),
   model_name: string('model_name'),
@@ -1364,100 +1466,127 @@ const canonicalTokenFields = fields({
   cost_micros: integer('cost_micros'),
   currency: string('currency'),
   estimated: boolean('estimated'),
-  created_at: epoch('created_at'),
+  created_at: canonicalEpoch('created_at'),
 });
 const v1TokenPageFields: FieldMap = {
   items: read('usage', arrayOf(v1TokenFields)),
   total: integer('total'),
   has_more: fixed(false),
   aggregate: read('aggregate', objectOf(tokenAggregateFields())),
-  run_aggregates: read('run_aggregates', arrayOf(runAggregateFields())),
+  run_aggregates: read('run_aggregates', arrayOf(runAggregateFields(v1ID))),
 };
 const canonicalTokenPageFields: FieldMap = {
   items: read('usage', arrayOf(canonicalTokenFields)),
   total: integer('total'),
   has_more: boolean('has_more'),
   aggregate: read('aggregate', objectOf(tokenAggregateFields())),
-  run_aggregates: read('run_aggregates', arrayOf(runAggregateFields())),
+  run_aggregates: read(
+    'run_aggregates',
+    arrayOf(runAggregateFields(canonicalID)),
+  ),
 };
 
 const v1MemoryFields = fields({
-  memory_id: id('memory_id'),
-  thread_id: id('thread_id'),
-  run_id: optionalID('run_id'),
-  space_id: id('space_id'),
+  memory_id: v1ID('memory_id'),
+  thread_id: v1ID('thread_id'),
+  run_id: optionalV1ID('run_id'),
+  space_id: v1ID('space_id'),
   scope: string('scope'),
   content: string('content'),
-  metadata: jsonObject('metadata'),
+  metadata: v1JSONObject('metadata'),
   score: number('score'),
   confidence: number('confidence'),
   source_type: string('source_type'),
-  source_id: id('source_id'),
-  correction_of_memory_id: optionalLegacyID('correction_of_memory_id'),
-  corrected_at: optionalLegacyEpoch('corrected_at'),
-  expires_at: optionalLegacyEpoch('expires_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
-  deleted_at: optionalLegacyEpoch('deleted_at'),
+  source_id: string('source_id'),
+  correction_of_memory_id: optionalV1ID('correction_of_memory_id'),
+  corrected_at: optionalV1Epoch('corrected_at'),
+  expires_at: optionalV1Epoch('expires_at'),
+  created_at: v1Epoch('created_at'),
+  updated_at: v1Epoch('updated_at'),
+  deleted_at: optionalV1Epoch('deleted_at'),
 });
 const canonicalMemoryFields = fields({
-  memory_id: id('memory_id'),
-  thread_id: id('thread_id'),
-  run_id: optionalID('run_id'),
+  memory_id: canonicalID('memory_id'),
+  thread_id: canonicalID('thread_id'),
+  run_id: optionalCanonicalID('run_id'),
   space_id: fixed(fixtureSpaceID),
   scope: string('scope'),
   content: string('content'),
-  metadata: jsonObject('metadata'),
+  metadata: canonicalJSONObject('metadata'),
   score: number('score'),
   confidence: number('confidence'),
   source_type: string('source_type'),
-  source_id: id('source_id'),
-  correction_of_memory_id: optionalID('correction_of_memory_id'),
-  corrected_at: optionalEpoch('corrected_at'),
-  expires_at: optionalEpoch('expires_at'),
-  created_at: epoch('created_at'),
-  updated_at: epoch('updated_at'),
-  deleted_at: optionalEpoch('deleted_at'),
+  source_id: string('source_id'),
+  correction_of_memory_id: optionalCanonicalID('correction_of_memory_id'),
+  corrected_at: optionalCanonicalEpoch('corrected_at'),
+  expires_at: optionalCanonicalEpoch('expires_at'),
+  created_at: canonicalEpoch('created_at'),
+  updated_at: canonicalEpoch('updated_at'),
+  deleted_at: optionalCanonicalEpoch('deleted_at'),
 });
 
-const auditBaseFields = (space: FieldRule): FieldMap =>
+interface AuditWireRules {
+  id: (from: string) => ReadRule;
+  optionalID: (from: string) => ReadRule;
+  epoch: (from: string) => ReadRule;
+  jsonArray: (from: string) => ReadRule;
+  optionalString: (from: string) => ReadRule;
+}
+const v1AuditRules: AuditWireRules = {
+  id: v1ID,
+  optionalID: optionalV1ID,
+  epoch: v1Epoch,
+  jsonArray: v1JSONArray,
+  optionalString: optionalV1String,
+};
+const canonicalAuditRules: AuditWireRules = {
+  id: canonicalID,
+  optionalID: optionalCanonicalID,
+  epoch: canonicalEpoch,
+  jsonArray: canonicalJSONArray,
+  optionalString: optionalCanonicalString,
+};
+const auditBaseFields = (rules: AuditWireRules, space: FieldRule): FieldMap =>
   fields({
-    event_id: id('event_id'),
-    thread_id: id('thread_id'),
-    run_id: optionalID('run_id'),
+    event_id: rules.id('event_id'),
+    thread_id: rules.id('thread_id'),
+    run_id: rules.optionalID('run_id'),
     space_id: space,
-    created_at: epoch('created_at'),
+    created_at: rules.epoch('created_at'),
   });
-const memoryAuditFields = (space: FieldRule): FieldMap =>
+const memoryAuditFields = (rules: AuditWireRules, space: FieldRule): FieldMap =>
   fields({
-    ...auditBaseFields(space),
-    memory_id: optionalID('memory_id'),
-    actor_id: optionalID('actor_id'),
+    ...auditBaseFields(rules, space),
+    memory_id: rules.optionalID('memory_id'),
+    actor_id: rules.optionalID('actor_id'),
     event_type: string('event_type'),
     scope: string('scope'),
     source_type: string('source_type'),
-    source_id: id('source_id'),
+    source_id: string('source_id'),
     affected_count: integer('affected_count'),
   });
-const guardrailAuditFields = (space: FieldRule): FieldMap =>
+const guardrailAuditFields = (
+  rules: AuditWireRules,
+  space: FieldRule,
+): FieldMap =>
   fields({
-    ...auditBaseFields(space),
-    actor_id: optionalID('actor_id'),
+    ...auditBaseFields(rules, space),
+    actor_id: rules.optionalID('actor_id'),
     event_type: string('event_type'),
     target_type: string('target_type'),
-    target_id: id('target_id'),
+    target_id: string('target_id'),
     operation: string('operation'),
     source: string('source'),
     action: string('action'),
     fail_mode: string('fail_mode'),
     provider: string('provider'),
     reason_code: string('reason_code'),
-    rule_ids: jsonArray('rule_ids'),
+    rule_ids: rules.jsonArray('rule_ids'),
   });
-const mcpAuditFields = (space: FieldRule): FieldMap =>
+const mcpAuditFields = (rules: AuditWireRules, space: FieldRule): FieldMap =>
   fields({
-    ...auditBaseFields(space),
-    server_id: optionalID('server_id'),
+    ...auditBaseFields(rules, space),
+    server_id: rules.optionalString('server_id'),
     runtime_tool_name: string('runtime_tool_name'),
     event_type: string('event_type'),
     error_code: string('error_code'),
@@ -1467,53 +1596,55 @@ const mcpAuditFields = (space: FieldRule): FieldMap =>
 
 const v1HumanInteractionFields = fields({
   schema: string('schema'),
-  interaction_id: id('interaction_id'),
+  interaction_id: nonEmptyString('interaction_id'),
   kind: string('kind'),
   decision: string('decision'),
-  answer: optionalString('answer'),
-  choice_id: optionalID('choice_id'),
-  comment: optionalString('comment'),
-  submitted_by: optionalID('submitted_by'),
-  submitted_at: optionalEpoch('submitted_at'),
-  source: optionalString('source'),
+  answer: optionalV1String('answer'),
+  choice_id: optionalV1String('choice_id'),
+  comment: optionalV1String('comment'),
+  submitted_by: optionalV1String('submitted_by'),
+  submitted_at: optionalV1Epoch('submitted_at'),
+  source: optionalV1String('source'),
 });
 const canonicalHumanInteractionFields = fields({
   schema: string('schema'),
-  interaction_id: id('interaction_id'),
+  interaction_id: nonEmptyString('interaction_id'),
   kind: string('kind'),
   decision: string('decision'),
-  answer: optionalString('answer'),
-  choice_id: optionalID('choice_id'),
-  comment: optionalString('comment'),
-  submitted_by: optionalID('submitted_by'),
-  submitted_at: optionalEpoch('submitted_at'),
-  source: optionalString('source'),
+  answer: optionalCanonicalString('answer'),
+  choice_id: optionalCanonicalString('choice_id'),
+  comment: optionalCanonicalString('comment'),
+  submitted_by: optionalCanonicalString('submitted_by'),
+  submitted_at: optionalCanonicalEpoch('submitted_at'),
+  source: optionalCanonicalString('source'),
 });
 
 const v1PrivateDropChecks = [
-  jsonObject('data.usage.*.raw_usage'),
-  jsonObject('data.usage.*.metadata'),
+  v1JSONObject('data.usage.*.raw_usage'),
+  v1JSONObject('data.usage.*.metadata'),
 ];
 const v1RunEventDropChecks = [
-  id('data.journal_messages.*.id'),
-  jsonObject('data.journal_messages.*.tool_calls.*.arguments'),
-  jsonObject('data.journal_messages.*.usage'),
+  string('data.journal_messages.*.id'),
+  v1JSONObject('data.journal_messages.*.tool_calls.*.arguments'),
+  v1JSONObject('data.journal_messages.*.usage'),
 ];
-const v1ThreadPrivateDropChecks = [id('data.creator_id')];
+const v1ThreadPrivateDropChecks = [v1ID('data.creator_id')];
 const v1RunPrivateDropChecks = [
-  id('data.creator_id'),
+  v1ID('data.creator_id'),
+  string('data.assistant_id'),
+  string('data.run_kind'),
   string('data.command'),
-  jsonObject('data.input'),
-  jsonObject('data.config'),
-  jsonObject('data.context'),
-  id('data.worker_id'),
+  v1JSONObject('data.input'),
+  v1JSONObject('data.config'),
+  v1JSONObject('data.context'),
+  string('data.worker_id'),
   string('data.error_code'),
   string('data.error_message'),
 ];
 const canonicalThreadShapeChecks = [
-  string('coze.product_status'),
-  string('coze.initial_submission'),
-  read('interrupts', asArray),
+  read('status', exact('busy')),
+  read('coze.initial_submission', asCanonicalInitialSubmission),
+  read('interrupts', asCanonicalObject),
 ];
 
 type ProjectorPair = readonly [
@@ -1613,22 +1744,22 @@ const transportProjectors: Record<TransportFixtureFamily, ProjectorPair> = {
     'memory_audit',
     'data.events.0',
     'events.0',
-    memoryAuditFields(read('space_id', asID)),
-    memoryAuditFields(fixed(fixtureSpaceID)),
+    memoryAuditFields(v1AuditRules, v1ID('space_id')),
+    memoryAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
   guardrail_audit: pagedPair(
     'guardrail_audit',
     'data.events.0',
     'events.0',
-    guardrailAuditFields(read('space_id', asID)),
-    guardrailAuditFields(fixed(fixtureSpaceID)),
+    guardrailAuditFields(v1AuditRules, v1ID('space_id')),
+    guardrailAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
   mcp_runtime_audit: pagedPair(
     'mcp_runtime_audit',
     'data.events.0',
     'events.0',
-    mcpAuditFields(read('space_id', asID)),
-    mcpAuditFields(fixed(fixtureSpaceID)),
+    mcpAuditFields(v1AuditRules, v1ID('space_id')),
+    mcpAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
   human_interaction: [
     createProjector('v1.human_interaction', '', v1HumanInteractionFields),

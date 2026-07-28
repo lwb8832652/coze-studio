@@ -69,11 +69,7 @@ const templateTokens = new Set([
   ts.SyntaxKind.TemplateMiddle,
   ts.SyntaxKind.TemplateTail,
 ]);
-const routeFamily = new RegExp(
-  '(?:/api/|/v\\d+/|task_threads|' +
-    '/(?:threads|runs|messages|suggestions|uploads|artifacts|memories|' +
-    'token_usage|guardrails|mcp)(?:/|$))',
-);
+const absoluteRoutePath = /(?:^|:)\/[a-zA-Z0-9_-]+(?:\/|$)/;
 
 const accessPath = (expression: ts.Expression): string[] | undefined => {
   if (
@@ -129,13 +125,20 @@ const checkModule: NodeCheck = node => {
 };
 
 const checkLiteral: NodeCheck = node => {
+  if (
+    ts.isStringLiteral(node) &&
+    isModuleString(node) &&
+    /^\.\.?\//.test(node.text)
+  ) {
+    return;
+  }
   const value =
     ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
       ? node.text
       : templateTokens.has(node.kind)
         ? (node as ts.TemplateLiteralToken).text
         : '';
-  return routeFamily.test(value) ? `route:${value}` : undefined;
+  return absoluteRoutePath.test(value) ? `route:${value}` : undefined;
 };
 
 const checkSymbol: NodeCheck = node =>
@@ -395,6 +398,9 @@ describe('WorkbenchThreadClient production boundary', () => {
       'const path = `prefix/${id}/task_threads/${threadId}`;',
       'type Route = `/v2/threads/${string}`;',
       'type Route = `${string}/artifacts/${string}`;',
+      "type Route = '/graphql';",
+      "type Route = '/rpc/tools';",
+      "import type {} from '/graphql';",
     ];
     probes.forEach(source =>
       expect(analyzeBoundarySource('probe.ts', source)).not.toEqual([]),
@@ -535,6 +541,10 @@ describe('WorkbenchThreadClient production boundary', () => {
       'has_more: boolean',
       'next_cursor?: string',
     ]);
+    expect(client.shape('WorkbenchCursorOptions')).toEqual([
+      'cursor?: string',
+      'limit?: number',
+    ]);
 
     const messageRequest = client.declaration('ListWorkbenchMessagesRequest');
     expect(messageRequest).toContain('before_seq?: string; after_seq?: never');
@@ -566,6 +576,9 @@ describe('WorkbenchThreadClient production boundary', () => {
     expect(mixedRequests).toEqual([]);
 
     expect(client.declaration('ListWorkbenchRunEventsRequest')).toMatch(
+      /WorkbenchRunRequest.*WorkbenchCursorOptions/s,
+    );
+    expect(client.declaration('SubscribeWorkbenchRunEventsRequest')).toMatch(
       /WorkbenchRunRequest.*WorkbenchCursorOptions/s,
     );
     expect(client.property('WorkbenchThreadClient', 'listMessages')).toContain(
@@ -643,6 +656,8 @@ describe('WorkbenchThreadClient production boundary', () => {
       'values',
     ]);
     expect(thread.metadata).toEqual({ title: 'Prepare launch brief' });
+    expect(thread.status).toBe('busy');
+    expect(thread.interrupts).toEqual({});
     expect(Object.keys(thread.coze).sort()).toEqual([
       'can_edit',
       'initial_submission',
@@ -654,6 +669,22 @@ describe('WorkbenchThreadClient production boundary', () => {
     ]);
     expect(thread.coze).not.toHaveProperty('creator_id');
     expect(thread.coze).not.toHaveProperty('title');
+    expect(thread.coze).toMatchObject({
+      product_status: 'running',
+      initial_submission: null,
+      source: 'web',
+    });
+
+    const submittedThread = structuredClone(thread) as unknown as {
+      coze: { initial_submission: unknown };
+    };
+    submittedThread.coze.initial_submission = {
+      role: 'user',
+      content: 'Prepare the launch brief',
+    };
+    expect(projectCanonicalTransportFixture('thread', submittedThread)).toEqual(
+      pairedTransportFixtures.thread.visible,
+    );
 
     const run = pairedTransportFixtures.run.canonical;
     expect(Object.keys(run).sort()).toEqual([
@@ -670,14 +701,82 @@ describe('WorkbenchThreadClient production boundary', () => {
     expect(Object.keys(run.coze).sort()).toEqual([
       'attempt_kind',
       'durability',
+      'ended_at',
+      'message_id',
       'on_disconnect',
+      'parent_run_id',
       'run_kind',
+      'source_run_id',
       'started_at',
       'stream_modes',
+      'terminal_reason',
     ]);
+    expect(run.assistant_id).toBe('agent');
+    expect(run.coze).toMatchObject({
+      attempt_kind: 'turn',
+      run_kind: 'task',
+      message_id: null,
+      source_run_id: null,
+      parent_run_id: null,
+      terminal_reason: null,
+      ended_at: null,
+    });
     [thread.thread_id, run.run_id, run.thread_id].forEach(value =>
       expect(value).toMatch(/^\d+$/),
     );
+  });
+
+  it('keeps reviewed opaque identifiers as strings', () => {
+    expect(pairedTransportFixtures.todo.visible.id).toBe('todo-1');
+    expect(pairedTransportFixtures.run.v1.data.assistant_id).toBe(
+      'assistant-a',
+    );
+    expect(pairedTransportFixtures.run.visible.assistant_id).toBe('agent');
+    expect(
+      pairedTransportFixtures.artifact_scan_job.canonical.jobs[0].worker_ref,
+    ).toBe('worker-safe-1');
+    expect(pairedTransportFixtures.token_usage.visible.items[0].step_id).toBe(
+      'step-1',
+    );
+    expect(pairedTransportFixtures.memory.visible.source_id).toBe(
+      'message:3001',
+    );
+    expect(pairedTransportFixtures.guardrail_audit.visible.target_id).toBe(
+      'artifact:5001',
+    );
+    expect(pairedTransportFixtures.mcp_runtime_audit.visible.server_id).toBe(
+      'server-main',
+    );
+    expect(pairedTransportFixtures.human_interaction.visible).toMatchObject({
+      interaction_id: 'hi_1',
+      submitted_by: 'user:8601',
+      source: 'web',
+    });
+    expect(
+      pairedTransportFixtures.run_event.v1.data.journal_messages[0].id,
+    ).toBe('journal-1');
+
+    const scan = structuredClone(
+      pairedTransportFixtures.artifact_scan_job.canonical,
+    );
+    setWirePath(scan, { path: ['jobs', 0, 'worker_ref'], value: '' });
+    expect(
+      projectCanonicalTransportFixture('artifact_scan_job', scan),
+    ).toMatchObject({ worker_id: '' });
+
+    const memory = structuredClone(pairedTransportFixtures.memory.canonical);
+    setWirePath(memory, { path: ['memories', 0, 'source_id'], value: '' });
+    expect(projectCanonicalTransportFixture('memory', memory)).toMatchObject({
+      source_id: '',
+    });
+
+    const mcpAudit = structuredClone(
+      pairedTransportFixtures.mcp_runtime_audit.canonical,
+    );
+    setWirePath(mcpAudit, { path: ['events', 0, 'server_id'], value: '' });
+    expect(
+      projectCanonicalTransportFixture('mcp_runtime_audit', mcpAudit),
+    ).toMatchObject({ server_id: '' });
   });
 
   it('projects every V1 and canonical fixture to the same visible model', () => {
@@ -757,6 +856,93 @@ describe('WorkbenchThreadClient production boundary', () => {
       expect(() => projectCanonicalTransportFixture(family, wire)).toThrow(
         field,
       );
+    });
+  });
+
+  it('rejects values encoded for the wrong transport', () => {
+    type WireSide = 'v1' | 'canonical';
+    const cases: Array<
+      [WireSide, TransportFixtureFamily, WirePath, unknown, string]
+    > = [
+      ['canonical', 'message', ['message_id'], 2001, 'message_id'],
+      ['v1', 'message', ['data', 'message_id'], 2001, 'message_id'],
+      ['canonical', 'message', ['message_id'], '0', 'message_id'],
+      [
+        'v1',
+        'message',
+        ['data', 'created_at'],
+        '2026-01-01T00:00:00Z',
+        'created_at',
+      ],
+      ['canonical', 'message', ['created_at'], 1767225600000, 'created_at'],
+      [
+        'v1',
+        'message',
+        ['data', 'metadata'],
+        { channel: 'workbench' },
+        'metadata',
+      ],
+      [
+        'canonical',
+        'message',
+        ['metadata'],
+        '{"channel":"workbench"}',
+        'metadata',
+      ],
+      [
+        'canonical',
+        'message',
+        ['metadata'],
+        { nested: Number.POSITIVE_INFINITY },
+        'metadata',
+      ],
+      ['v1', 'message', ['data', 'metadata'], '{"nested":1e999}', 'metadata'],
+      ['v1', 'message', ['data', 'metadata'], '{invalid', 'metadata'],
+      ['v1', 'todo', ['data', 'id'], 1101, 'id'],
+      [
+        'canonical',
+        'artifact_scan_job',
+        ['jobs', 0, 'worker_ref'],
+        8101,
+        'worker_ref',
+      ],
+      ['canonical', 'token_usage', ['usage', 0, 'step_id'], 8301, 'step_id'],
+      ['canonical', 'memory', ['memories', 0, 'source_id'], 2001, 'source_id'],
+      [
+        'canonical',
+        'mcp_runtime_audit',
+        ['events', 0, 'server_id'],
+        9002,
+        'server_id',
+      ],
+      ['canonical', 'thread', ['coze', 'source'], 'agent', 'source'],
+      [
+        'canonical',
+        'thread',
+        ['coze', 'initial_submission'],
+        'message',
+        'initial_submission',
+      ],
+      ['canonical', 'thread', ['interrupts'], [], 'interrupts'],
+      ['v1', 'run', ['data', 'parent_run_id'], null, 'parent_run_id'],
+      ['v1', 'run', ['data', 'ended_at'], null, 'ended_at'],
+      [
+        'canonical',
+        'human_interaction',
+        ['interaction_id'],
+        '',
+        'interaction_id',
+      ],
+    ];
+
+    cases.forEach(([side, family, path, value, field]) => {
+      const wire = structuredClone(pairedTransportFixtures[family][side]);
+      setWirePath(wire, { path, value });
+      const project =
+        side === 'v1'
+          ? projectV1TransportFixture
+          : projectCanonicalTransportFixture;
+      expect(() => project(family, wire)).toThrow(field);
     });
   });
 

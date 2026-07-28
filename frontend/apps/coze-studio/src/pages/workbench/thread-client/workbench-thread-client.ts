@@ -67,6 +67,7 @@ export interface WorkbenchPageOptions {
 
 export interface WorkbenchCursorOptions {
   cursor?: string;
+  limit?: number;
 }
 
 export interface WorkbenchAbortOptions {
