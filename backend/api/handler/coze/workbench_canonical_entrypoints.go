@@ -36,46 +36,6 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// ListCanonicalThreadArtifacts exposes the gated canonical artifact list contract.
-func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalThreadArtifactContent exposes the gated canonical artifact content contract.
-func GetCanonicalThreadArtifactContent(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GetCanonicalThreadArtifactSignedURL exposes the gated canonical signed URL contract.
-func GetCanonicalThreadArtifactSignedURL(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// DeleteCanonicalThreadArtifact exposes the gated canonical artifact delete contract.
-func DeleteCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// RestoreCanonicalThreadArtifact exposes the gated canonical artifact restore contract.
-func RestoreCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ReviewCanonicalThreadArtifactScan exposes the gated canonical scan review contract.
-func ReviewCanonicalThreadArtifactScan(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalThreadArtifactScanJobs exposes the gated canonical scan job list contract.
-func ListCanonicalThreadArtifactScanJobs(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// RetryCanonicalThreadArtifactScanJob exposes the gated canonical scan job retry contract.
-func RetryCanonicalThreadArtifactScanJob(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // GetCanonicalThreadTokenUsage exposes the gated canonical token usage contract.
 func GetCanonicalThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)

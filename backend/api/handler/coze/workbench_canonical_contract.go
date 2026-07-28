@@ -436,14 +436,14 @@ func canonicalLogLifecycleStage(value string) string {
 	return canonicalLogEnum(value, "none",
 		"created", "pending", "queued", "processing", "running", "completed", "failed", "deleted",
 		"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export",
-		"upload", "uploaded", "scan", "scanned", "approved", "rejected")
+		"upload", "uploaded", "scan", "scanned", "read", "signed", "restored", "reviewed", "retried", "approved", "rejected")
 }
 
 func canonicalResponseBodyKind(value string, status int) string {
 	if status >= hertzconsts.StatusBadRequest {
 		return "error"
 	}
-	return canonicalLogEnum(value, "none", "run", "run_array", "values", "event_page", "message_page", "empty")
+	return canonicalLogEnum(value, "none", "run", "run_array", "values", "event_page", "message_page", "empty", "bytes")
 }
 
 func canonicalLocationKind(value string) string {

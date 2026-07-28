@@ -58,14 +58,14 @@ var canonicalEntrypoints = []struct {
 	{"ListCanonicalThreadUploads", ListCanonicalThreadUploads, false},
 	{"UploadCanonicalThreadFiles", UploadCanonicalThreadFiles, false},
 	{"DeleteCanonicalThreadUpload", DeleteCanonicalThreadUpload, false},
-	{"ListCanonicalThreadArtifacts", ListCanonicalThreadArtifacts, true},
-	{"GetCanonicalThreadArtifactContent", GetCanonicalThreadArtifactContent, true},
-	{"GetCanonicalThreadArtifactSignedURL", GetCanonicalThreadArtifactSignedURL, true},
-	{"DeleteCanonicalThreadArtifact", DeleteCanonicalThreadArtifact, true},
-	{"RestoreCanonicalThreadArtifact", RestoreCanonicalThreadArtifact, true},
-	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan, true},
-	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, true},
-	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, true},
+	{"ListCanonicalThreadArtifacts", ListCanonicalThreadArtifacts, false},
+	{"GetCanonicalThreadArtifactContent", GetCanonicalThreadArtifactContent, false},
+	{"GetCanonicalThreadArtifactSignedURL", GetCanonicalThreadArtifactSignedURL, false},
+	{"DeleteCanonicalThreadArtifact", DeleteCanonicalThreadArtifact, false},
+	{"RestoreCanonicalThreadArtifact", RestoreCanonicalThreadArtifact, false},
+	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan, false},
+	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, false},
+	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, false},
 	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, true},
 	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, true},
 	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, true},
@@ -113,7 +113,7 @@ func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 			stubCount++
 		}
 	}
-	require.Equal(t, 21, stubCount)
+	require.Equal(t, 13, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {

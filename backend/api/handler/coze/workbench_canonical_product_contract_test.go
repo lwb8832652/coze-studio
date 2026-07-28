@@ -165,9 +165,10 @@ func TestCanonicalProductCompletionLogContainsResourceFieldsWithoutPayload(t *te
 }
 
 func TestCanonicalProductCompletionLogAllowsProductLifecycleAndResourceValues(t *testing.T) {
-	for _, value := range []string{"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export", "scan", "uploaded"} {
+	for _, value := range []string{"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export", "scan", "uploaded", "read", "signed", "restored", "reviewed", "retried"} {
 		require.Equal(t, value, canonicalLogLifecycleStage(value))
 	}
+	require.Equal(t, "bytes", canonicalResponseBodyKind("bytes", 200))
 	for _, value := range []string{"artifact_signed_url", "artifact_content", "memory_export", "guardrail_export"} {
 		require.Equal(t, value, canonicalLogResourceType(value))
 	}

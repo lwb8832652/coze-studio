@@ -434,7 +434,7 @@ func canonicalProductIdentifier(value string) string {
 
 func canonicalProductScanStatus(value string) string {
 	switch value {
-	case "pending", "processing", "succeeded", "failed":
+	case "pending", "processing", "succeeded", "failed", "clean", "blocked", "infected", "quarantined":
 		return value
 	default:
 		return "pending"

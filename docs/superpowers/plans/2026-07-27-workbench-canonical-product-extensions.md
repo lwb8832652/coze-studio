@@ -761,20 +761,25 @@ git commit -m "feat: add canonical workbench suggestions"
 **Files:**
 - Create: `backend/api/handler/coze/workbench_canonical_artifact_service.go`
 - Create: `backend/api/handler/coze/workbench_canonical_artifact_service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_product_contract_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_product_projection.go`
 
-- [ ] **Step 1: Write failing table-driven handler tests**
+- [x] **Step 1: Write failing table-driven handler tests**
 
 For list/content/signed URL/delete/restore/review/list jobs/retry jobs, test success, empty list, pagination, malformed IDs, wrong Thread, wrong space, role denial, scan-blocked content, unsupported preview mode, retry conflict and application dependency failure. Signed URL tests must assert the URL is present only in the response and absent from logs and SSE fixtures.
 
-- [ ] **Step 2: Implement list and content reads**
+- [x] **Step 2: Implement list and content reads**
 
 Map `limit/offset` through `canonicalProductPagination`; call `ListArtifacts`, `ReadArtifactContent` and `CreateArtifactSignedURL` with server-derived space/viewer identity. Raw content keeps `Content-Disposition`, `Content-Type`, `X-Content-Type-Options: nosniff` and current scan/size/type checks. Do not send content through a JSON envelope.
 
-- [ ] **Step 3: Implement mutations and scan operations**
+- [x] **Step 3: Implement mutations and scan operations**
 
 Call `DeleteArtifact`, `RestoreArtifact`, `ReviewArtifactScan`, `ListArtifactScanJobs` and `RetryArtifactScanJob` directly. Delete returns `204`; restore/review/retry return the projected resource or operation result. Preserve current conflict and authorization mapping; do not copy retention or scanner state logic into handlers.
 
-- [ ] **Step 4: Run artifact, security and source regressions**
+- [x] **Step 4: Run artifact, security and source regressions**
 
 ```bash
 cd backend
@@ -786,7 +791,7 @@ Expected: PASS with current source content/download/review behavior unchanged.
 - [ ] **Step 5: Commit Artifact support**
 
 ```bash
-git add backend/api/handler/coze/workbench_canonical_artifact_service.go backend/api/handler/coze/workbench_canonical_artifact_service_test.go
+git add backend/api/handler/coze/workbench_canonical_artifact_service.go backend/api/handler/coze/workbench_canonical_artifact_service_test.go backend/api/handler/coze/workbench_canonical_entrypoints.go backend/api/handler/coze/workbench_canonical_entrypoints_test.go backend/api/handler/coze/workbench_canonical_contract.go backend/api/handler/coze/workbench_canonical_product_contract_test.go backend/api/handler/coze/workbench_canonical_product_projection.go docs/superpowers/plans/2026-07-27-workbench-canonical-product-extensions.md
 git commit -m "feat: add canonical workbench artifacts"
 ```
 
