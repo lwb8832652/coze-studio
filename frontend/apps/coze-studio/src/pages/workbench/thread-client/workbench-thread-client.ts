@@ -84,10 +84,22 @@ export interface WorkbenchPage<T> {
   next_cursor?: string;
 }
 
+export interface WorkbenchCursorPage<T> {
+  items: T[];
+  has_more: boolean;
+  next_cursor?: string;
+}
+
+export interface WorkbenchMessageCursorPage {
+  items: WorkbenchMessage[];
+  has_more: boolean;
+  next_before_seq?: string;
+  next_after_seq?: string;
+}
+
 export interface SearchWorkbenchThreadsRequest
   extends WorkbenchScopedRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   status?: string;
 }
@@ -114,11 +126,13 @@ export interface GetWorkbenchThreadRequest
   extends WorkbenchThreadRequest,
     WorkbenchAbortOptions {}
 
-export interface ListWorkbenchMessagesRequest
-  extends WorkbenchThreadRequest,
-    WorkbenchPageOptions,
-    WorkbenchCursorOptions,
-    WorkbenchAbortOptions {}
+export type ListWorkbenchMessagesRequest = WorkbenchThreadRequest &
+  WorkbenchAbortOptions & {
+    limit?: number;
+  } & (
+    | { before_seq?: string; after_seq?: never }
+    | { before_seq?: never; after_seq?: string }
+  );
 
 export interface AppendWorkbenchMessageRequest
   extends WorkbenchThreadRequest,
@@ -141,7 +155,6 @@ export interface GenerateWorkbenchSuggestionsRequest
 export interface ListWorkbenchRunsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   parent_run_id?: string;
   status?: string;
@@ -181,14 +194,13 @@ export interface ResumeWorkbenchRunRequest
   response: HumanInteractionResponse;
 }
 
-export interface RetryWorkbenchRunRequest
+export interface RetryWorkbenchSubagentRunRequest
   extends WorkbenchRunRequest,
     WorkbenchAbortOptions,
     WorkbenchIdempotencyOptions {}
 
 export interface ListWorkbenchRunEventsRequest
   extends WorkbenchRunRequest,
-    WorkbenchPageOptions,
     WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   event_types?: string[];
@@ -212,7 +224,6 @@ export interface RunEventSubscription {
 export interface ListWorkbenchUploadsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {}
 
 export interface UploadWorkbenchFilesRequest
@@ -230,7 +241,6 @@ export interface DeleteWorkbenchUploadRequest
 export interface ListWorkbenchArtifactsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
   deleted_only?: boolean;
@@ -262,7 +272,6 @@ export interface ReviewWorkbenchArtifactScanRequest
 export interface ListWorkbenchArtifactScanJobsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
   artifact_id?: string;
@@ -279,7 +288,6 @@ export interface RetryWorkbenchArtifactScanJobRequest
 export interface GetWorkbenchTokenUsageRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
   include_child_runs?: boolean;
@@ -295,7 +303,6 @@ export interface WorkbenchTokenUsageResult
 export interface ListWorkbenchMemoriesRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
   scope?: string;
@@ -311,9 +318,8 @@ export interface WorkbenchMemoryRequest
   memory_id: string;
 }
 
-export interface WorkbenchMemoryMutation {
+interface WorkbenchMemoryMutationFields {
   run_id?: string;
-  scope?: string;
   content: string;
   metadata?: string;
   score?: number;
@@ -325,9 +331,18 @@ export interface WorkbenchMemoryMutation {
   expires_at?: number;
 }
 
+export interface WorkbenchMemoryUpdate extends WorkbenchMemoryMutationFields {
+  scope: string;
+}
+
+export interface WorkbenchMemoryImportItem
+  extends WorkbenchMemoryMutationFields {
+  scope?: string;
+}
+
 export interface UpdateWorkbenchMemoryRequest
   extends WorkbenchMemoryRequest,
-    WorkbenchMemoryMutation {}
+    WorkbenchMemoryUpdate {}
 
 export interface ClearWorkbenchMemoriesRequest
   extends WorkbenchThreadRequest,
@@ -339,7 +354,7 @@ export interface ClearWorkbenchMemoriesRequest
 export interface ImportWorkbenchMemoriesRequest
   extends WorkbenchThreadRequest,
     WorkbenchAbortOptions {
-  memories: WorkbenchMemoryMutation[];
+  memories: WorkbenchMemoryImportItem[];
 }
 
 export type ExportWorkbenchMemoriesRequest = ListWorkbenchMemoriesRequest;
@@ -347,7 +362,6 @@ export type ExportWorkbenchMemoriesRequest = ListWorkbenchMemoriesRequest;
 export interface ListWorkbenchMemoryAuditEventsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   memory_id?: string;
 }
@@ -355,7 +369,6 @@ export interface ListWorkbenchMemoryAuditEventsRequest
 export interface ListWorkbenchGuardrailAuditEventsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
 }
@@ -366,7 +379,6 @@ export type ExportWorkbenchGuardrailAuditEventsRequest =
 export interface ListWorkbenchMCPRuntimeAuditEventsRequest
   extends WorkbenchThreadRequest,
     WorkbenchPageOptions,
-    WorkbenchCursorOptions,
     WorkbenchAbortOptions {
   run_id?: string;
 }
@@ -384,7 +396,7 @@ export interface WorkbenchThreadClient {
 
   listMessages: (
     request: ListWorkbenchMessagesRequest,
-  ) => Promise<WorkbenchPage<WorkbenchMessage>>;
+  ) => Promise<WorkbenchMessageCursorPage>;
   appendMessage: (
     request: AppendWorkbenchMessageRequest,
   ) => Promise<WorkbenchMessage>;
@@ -401,10 +413,12 @@ export interface WorkbenchThreadClient {
   getRun: (request: GetWorkbenchRunRequest) => Promise<WorkbenchRun>;
   cancelRun: (request: CancelWorkbenchRunRequest) => Promise<void>;
   resumeRun: (request: ResumeWorkbenchRunRequest) => Promise<WorkbenchRun>;
-  retryRun: (request: RetryWorkbenchRunRequest) => Promise<WorkbenchRun>;
+  retrySubagentRun: (
+    request: RetryWorkbenchSubagentRunRequest,
+  ) => Promise<WorkbenchRun>;
   listRunEvents: (
     request: ListWorkbenchRunEventsRequest,
-  ) => Promise<WorkbenchPage<WorkbenchRunEvent>>;
+  ) => Promise<WorkbenchCursorPage<WorkbenchRunEvent>>;
   subscribeRunEvents: (
     request: SubscribeWorkbenchRunEventsRequest,
   ) => RunEventSubscription;

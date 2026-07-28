@@ -27,13 +27,13 @@ export interface WorkbenchThreadValues {
 export interface WorkbenchThread {
   thread_id: string;
   space_id: string;
-  creator_id: string;
   title: string;
   status: string;
   source: string;
   progress: number;
   last_user_message: string;
   last_agent_message: string;
+  can_edit: boolean;
   created_at: number;
   updated_at: number;
   values?: WorkbenchThreadValues;
@@ -57,26 +57,22 @@ export interface WorkbenchSuggestionMessage {
 export interface WorkbenchRun {
   run_id: string;
   thread_id: string;
-  parent_run_id: string;
   space_id: string;
-  creator_id: string;
   assistant_id: string;
-  run_kind: string;
   status: string;
-  command: string;
-  input: string;
-  config: string;
-  context: string;
   metadata: string;
-  stream_mode: string;
   multitask_strategy: string;
+  message_id?: string;
+  attempt_kind: string;
+  source_run_id?: string;
+  parent_run_id?: string;
+  run_kind: string;
+  stream_modes: string[];
   on_disconnect: string;
   durability: string;
-  worker_id: string;
-  error_code: string;
-  error_message: string;
-  started_at: number;
-  ended_at: number;
+  terminal_reason?: string;
+  started_at?: number;
+  ended_at?: number;
   created_at: number;
   updated_at: number;
 }
@@ -113,7 +109,7 @@ export interface WorkbenchArtifact {
   metadata: string;
   created_at: number;
   updated_at: number;
-  deleted_at: number;
+  deleted_at?: number;
 }
 
 export interface WorkbenchArtifactScanJob {
@@ -128,9 +124,9 @@ export interface WorkbenchArtifactScanJob {
   worker_id: string;
   attempt_count: number;
   error_code: string;
-  available_at: number;
-  started_at: number;
-  ended_at: number;
+  available_at?: number;
+  started_at?: number;
+  ended_at?: number;
   created_at: number;
   updated_at: number;
 }
@@ -175,7 +171,7 @@ export interface WorkbenchRunTokenUsageAggregate {
 export interface WorkbenchMemory {
   memory_id: string;
   thread_id: string;
-  run_id: string;
+  run_id?: string;
   space_id: string;
   scope: string;
   content: string;
@@ -184,21 +180,21 @@ export interface WorkbenchMemory {
   confidence: number;
   source_type: string;
   source_id: string;
-  correction_of_memory_id: string;
-  corrected_at: number;
-  expires_at: number;
+  correction_of_memory_id?: string;
+  corrected_at?: number;
+  expires_at?: number;
   created_at: number;
   updated_at: number;
-  deleted_at: number;
+  deleted_at?: number;
 }
 
 export interface WorkbenchMemoryAuditEvent {
   event_id: string;
   thread_id: string;
-  run_id: string;
+  run_id?: string;
   space_id: string;
-  memory_id: string;
-  actor_id: string;
+  memory_id?: string;
+  actor_id?: string;
   event_type: string;
   scope: string;
   source_type: string;
@@ -210,9 +206,9 @@ export interface WorkbenchMemoryAuditEvent {
 export interface WorkbenchGuardrailAuditEvent {
   event_id: string;
   thread_id: string;
-  run_id: string;
+  run_id?: string;
   space_id: string;
-  actor_id: string;
+  actor_id?: string;
   event_type: string;
   target_type: string;
   target_id: string;
@@ -230,8 +226,8 @@ export interface WorkbenchMCPRuntimeAuditEvent {
   event_id: string;
   space_id: string;
   thread_id: string;
-  run_id: string;
-  server_id: string;
+  run_id?: string;
+  server_id?: string;
   runtime_tool_name: string;
   event_type: string;
   error_code: string;
