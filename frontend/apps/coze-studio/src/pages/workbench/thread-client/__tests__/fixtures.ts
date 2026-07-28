@@ -891,7 +891,49 @@ const asSafeInteger = (value: unknown, label: string): number => {
 };
 
 const rfc3339 =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+const isValidRFC3339Calendar = (value: string): boolean => {
+  const match = rfc3339.exec(value);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = Number(match[7] ?? 0);
+  const offsetMinute = Number(match[8] ?? 0);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth[month - 1] &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59
+  );
+};
 
 const asV1Epoch = (value: unknown, label: string): number => {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
@@ -902,7 +944,7 @@ const asV1Epoch = (value: unknown, label: string): number => {
 
 const asCanonicalEpoch = (value: unknown, label: string): number => {
   const milliseconds =
-    typeof value === 'string' && rfc3339.test(value)
+    typeof value === 'string' && isValidRFC3339Calendar(value)
       ? Date.parse(value)
       : Number.NaN;
   if (Number.isSafeInteger(milliseconds) && milliseconds >= 0) {
@@ -1213,6 +1255,15 @@ const canonicalTodoFields = fields({
   status: string('status'),
 });
 
+const threadTitleFromMetadata: WireDecoder = (value, label) => {
+  const metadata = asRecord(value, label);
+  return 'title' in metadata ? asString(metadata.title, `${label}.title`) : '';
+};
+
+const threadValuesFromTodos =
+  (todoFields: FieldMap): WireDecoder =>
+  (value, label) => ({ todos: arrayOf(todoFields)(value, label) });
+
 const v1ThreadFields = fields({
   thread_id: v1ID('thread_id'),
   space_id: v1ID('space_id'),
@@ -1225,15 +1276,12 @@ const v1ThreadFields = fields({
   can_edit: fixed(true),
   created_at: v1Epoch('created_at'),
   updated_at: v1Epoch('updated_at'),
-  values: read(
-    'values',
-    objectOf({ todos: read('todos', arrayOf(v1TodoFields)) }),
-  ),
+  values: optionalRead('values.todos', threadValuesFromTodos(v1TodoFields)),
 });
 const canonicalThreadFields = fields({
   thread_id: canonicalID('thread_id'),
   space_id: fixed(fixtureSpaceID),
-  title: string('metadata.title'),
+  title: read('metadata', threadTitleFromMetadata),
   status: string('coze.product_status'),
   source: read('coze.source', oneOfStrings(['', 'web', 'im', 'api'])),
   progress: number('coze.progress'),
@@ -1242,9 +1290,9 @@ const canonicalThreadFields = fields({
   can_edit: boolean('coze.can_edit'),
   created_at: canonicalEpoch('created_at'),
   updated_at: canonicalEpoch('updated_at'),
-  values: read(
-    'values',
-    objectOf({ todos: read('todos', arrayOf(canonicalTodoFields)) }),
+  values: optionalRead(
+    'values.todos',
+    threadValuesFromTodos(canonicalTodoFields),
   ),
 });
 

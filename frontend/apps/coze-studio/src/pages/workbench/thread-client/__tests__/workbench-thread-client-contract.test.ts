@@ -507,6 +507,21 @@ describe('WorkbenchThreadClient production boundary', () => {
     ]);
   });
 
+  it('exposes only canonical human interaction response members', () => {
+    const source = readProductionSource(productionFiles[0]);
+    const types = inspectTypes('types.ts', source);
+
+    expect(types.shape('HumanInteractionResponse')).toEqual([
+      'schema: string',
+      'interaction_id: string',
+      'kind: string',
+      'decision: string',
+      'answer?: string',
+      'choice_id?: string',
+      'comment?: string',
+    ]);
+  });
+
   it('keeps lifecycle fields optional without presenter defaults', () => {
     const source = readProductionSource(productionFiles[0]);
     const types = inspectTypes('types.ts', source);
@@ -842,6 +857,28 @@ describe('WorkbenchThreadClient production boundary', () => {
     }
   });
 
+  it('normalizes absent canonical title and todos without presenter labels', () => {
+    const v1 = structuredClone(pairedTransportFixtures.thread.v1);
+    const canonical = structuredClone(pairedTransportFixtures.thread.canonical);
+    setWirePath(v1, { path: ['data', 'title'], value: '' });
+    delete (getWirePath(canonical, ['metadata']) as Record<string, unknown>)
+      .title;
+    delete (getWirePath(v1, ['data', 'values']) as Record<string, unknown>)
+      .todos;
+    delete (getWirePath(canonical, ['values']) as Record<string, unknown>)
+      .todos;
+
+    const projections = [
+      projectV1TransportFixture('thread', v1),
+      projectCanonicalTransportFixture('thread', canonical),
+    ] as Array<Record<string, unknown>>;
+    expect(projections[0]).toEqual(projections[1]);
+    projections.forEach(projection => {
+      expect(projection.title).toBe('');
+      expect(projection).not.toHaveProperty('values');
+    });
+  });
+
   it('makes wire mismatches observable while dropping reviewed private data', () => {
     const uploadWire = structuredClone(pairedTransportFixtures.upload.v1);
     const uploadData = uploadWire.data as { success?: boolean };
@@ -896,6 +933,8 @@ describe('WorkbenchThreadClient production boundary', () => {
       ],
       ['thread', ['created_at'], Number.NaN, 'created_at'],
       ['message', ['created_at'], 'not-a-time', 'created_at'],
+      ['message', ['created_at'], '2026-02-30T00:00:00Z', 'created_at'],
+      ['message', ['created_at'], '2025-02-29T12:00:00+08:00', 'created_at'],
       ['message', ['metadata'], '{invalid', 'metadata'],
       ['message', ['metadata'], [], 'metadata'],
       ['guardrail_audit', ['events', 0, 'rule_ids'], {}, 'rule_ids'],
@@ -908,6 +947,18 @@ describe('WorkbenchThreadClient production boundary', () => {
       expect(() => projectCanonicalTransportFixture(family, wire)).toThrow(
         field,
       );
+    });
+  });
+
+  it('accepts a valid RFC3339 leap day with an offset', () => {
+    const wire = structuredClone(pairedTransportFixtures.message.canonical);
+    setWirePath(wire, {
+      path: ['created_at'],
+      value: '2024-02-29T12:34:56+08:00',
+    });
+
+    expect(projectCanonicalTransportFixture('message', wire)).toMatchObject({
+      created_at: Date.UTC(2024, 1, 29, 4, 34, 56),
     });
   });
 

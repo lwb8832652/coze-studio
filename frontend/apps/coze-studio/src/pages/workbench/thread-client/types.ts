@@ -244,9 +244,6 @@ export interface HumanInteractionResponse {
   answer?: string;
   choice_id?: string;
   comment?: string;
-  submitted_by?: string;
-  submitted_at?: number;
-  source?: string;
 }
 
 export interface WorkbenchThreadCreation {
