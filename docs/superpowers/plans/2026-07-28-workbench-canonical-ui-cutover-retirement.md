@@ -282,21 +282,21 @@ git commit -m "feat: define canonical workbench client boundary"
 - Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_thread_service_test.go`
 
-- [ ] **Step 1: Write failing public-projection tests**
+- [x] **Step 1: Write failing public-projection tests**
 
 Assert canonical Thread JSON contains `coze.can_edit=true` only when the authenticated viewer is
 the current Thread owner. Missing or mismatched viewer facts must produce `false`; `creator_id`,
 `owner_id` and other identity fields remain absent. Cover create/get/search projection paths so the
 capability cannot be present on only one handler.
 
-- [ ] **Step 2: Implement the additive capability**
+- [x] **Step 2: Implement the additive capability**
 
 Derive `can_edit` from the server authentication context and current Thread summary after existing
 authorization. Do not accept it from request metadata, query, body or headers. Do not expose the
 creator ID and do not change application/domain/repository contracts. Existing unauthorized paths
 continue to fail closed before returning a Thread.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 cd backend
