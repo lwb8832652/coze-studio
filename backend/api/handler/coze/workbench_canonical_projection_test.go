@@ -169,24 +169,28 @@ func TestCanonicalThreadProjectionCanEditRequiresMatchingAuthenticatedCreator(t 
 		name      string
 		ctx       context.Context
 		creatorID int64
+		metadata  string
 		canEdit   bool
 	}{
 		{
 			name:      "matching authenticated viewer",
 			ctx:       canonicalViewerContext(42),
 			creatorID: 42,
+			metadata:  `{"can_edit":false,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
 			canEdit:   true,
 		},
 		{
 			name:      "missing viewer",
 			ctx:       context.Background(),
 			creatorID: 42,
+			metadata:  `{"can_edit":true,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
 			canEdit:   false,
 		},
 		{
 			name:      "mismatched viewer",
 			ctx:       canonicalViewerContext(7),
 			creatorID: 42,
+			metadata:  `{"can_edit":true,"team":"alpha","creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
 			canEdit:   false,
 		},
 	}
@@ -198,10 +202,11 @@ func TestCanonicalThreadProjectionCanEditRequiresMatchingAuthenticatedCreator(t 
 				ThreadID:  2001,
 				CreatorID: testCase.creatorID,
 				Status:    appagentthread.ThreadStatusCompleted,
-				Metadata:  `{"creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
+				Metadata:  testCase.metadata,
 			})
 
 			require.NoError(t, err)
+			require.Equal(t, "alpha", projected.Metadata["team"])
 			requireCanonicalThreadCanEditJSON(
 				t,
 				canonicalProjectionJSON(t, projected),
@@ -212,11 +217,16 @@ func TestCanonicalThreadProjectionCanEditRequiresMatchingAuthenticatedCreator(t 
 
 	t.Run("snapshot remains viewer independent", func(t *testing.T) {
 		projected, err := projectCanonicalThreadSnapshot(
-			&appagentthread.ThreadSummary{ThreadID: 2001, CreatorID: 42},
+			&appagentthread.ThreadSummary{
+				ThreadID:  2001,
+				CreatorID: 42,
+				Metadata:  `{"can_edit":true,"team":"alpha"}`,
+			},
 			canonicalThreadProjectionSnapshot{},
 		)
 
 		require.NoError(t, err)
+		require.Equal(t, "alpha", projected.Metadata["team"])
 		requireCanonicalThreadCanEditJSON(t, canonicalProjectionJSON(t, projected), false)
 	})
 }
@@ -472,6 +482,7 @@ func TestCanonicalThreadProjectionRedactsMetadata(t *testing.T) {
 				"title":"untrusted title",
 				"business_key":"release-plan",
 				"priority":true,
+				"can_edit":true,
 				"status":"running",
 				"source_run_id":"3000",
 				"appended_message_id":"4000",
@@ -500,6 +511,7 @@ func TestCanonicalThreadProjectionRedactsMetadata(t *testing.T) {
 		"priority":     true,
 	}, projected.Metadata)
 	require.NotContains(t, projected.Metadata, "status")
+	require.NotContains(t, projected.Metadata, "can_edit")
 	require.NotContains(t, projected.Metadata, "source_run_id")
 	require.NotContains(t, projected.Metadata, "appended_message_id")
 	require.Equal(t, map[string]any{"messages": []map[string]any{}}, projected.Values)
@@ -753,7 +765,14 @@ func requireCanonicalThreadCanEditJSON(t *testing.T, encoded string, expected bo
 	require.NoError(t, json.Unmarshal(canEditJSON, &canEdit))
 	require.Equal(t, expected, canEdit)
 
+	metadataJSON, exists := thread["metadata"]
+	require.True(t, exists, "canonical Thread JSON must include metadata")
+	var metadata map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(metadataJSON, &metadata))
+	require.NotContains(t, metadata, "can_edit")
+
 	for _, hidden := range []string{"creator_id", "owner_id", "user_id", "space_id"} {
+		require.NotContains(t, metadata, hidden)
 		require.NotContains(t, encoded, `"`+hidden+`"`)
 	}
 }

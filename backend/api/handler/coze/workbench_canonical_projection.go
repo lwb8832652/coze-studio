@@ -876,7 +876,7 @@ func canonicalProtectedMetadataKey(key string) bool {
 		return true
 	}
 	for _, fragment := range []string{
-		"owner", "creator", "user_id", "space", "runtime", "credential", "secret", "token",
+		"owner", "creator", "user_id", "space", "can_edit", "runtime", "credential", "secret", "token",
 		"api_key", "apikey", "authorization", "password", "legacy_task_id", "worker_id",
 		"lease_owner", "lease_token", "idempotency_key", "checkpoint_bytes", "provider_body",
 		"hidden_config",
