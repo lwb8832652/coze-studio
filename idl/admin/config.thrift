@@ -551,6 +551,116 @@ struct ParserConfig {
 
 
 
+enum ObjectStorageProviderType {
+    QINIU = 1
+    ALIYUN_OSS = 2
+    TENCENT_COS = 3
+    HUAWEI_OBS = 4
+    AWS_S3 = 5
+    MINIO = 6
+    TOS = 7
+}
+
+enum ObjectStorageHealthStatus {
+    UNKNOWN = 1
+    HEALTHY = 2
+    UNHEALTHY = 3
+}
+
+enum ObjectStorageRuntimeSource {
+    DATABASE = 1
+    ENV_RESCUE = 2
+}
+
+struct ObjectStoragePublicConfig {
+    1: optional string bucket
+    2: optional string region
+    3: optional string endpoint
+    4: optional string endpoint_override
+    5: optional bool force_path_style
+    6: optional bool use_ssl
+    7: optional string download_domain
+    8: optional bool use_https
+}
+
+struct ObjectStorageCredentialInput {
+    1: optional string access_key_id
+    2: optional string secret_access_key
+}
+
+struct ObjectStorageHealthView {
+    1: ObjectStorageHealthStatus status
+    2: optional string code
+    3: optional string message
+    4: optional i64 latency_ms
+    5: optional string checked_at
+}
+
+struct ObjectStorageConfigView {
+    1: i64 id (api.js_conv='true', agw.js_conv='str')
+    2: string name
+    3: ObjectStorageProviderType provider_type
+    4: ObjectStoragePublicConfig config
+    5: bool credential_configured
+    6: ObjectStorageHealthView health
+    7: bool desired_active
+    8: bool runtime_active
+    9: bool restart_required
+    10: i64 version (api.js_conv='true', agw.js_conv='str')
+    11: i64 runtime_revision (api.js_conv='true', agw.js_conv='str')
+    12: string created_at
+    13: string updated_at
+}
+
+struct ListObjectStorageConfigsReq {}
+struct ListObjectStorageConfigsResp {
+    1: list<ObjectStorageConfigView> configs
+    2: ObjectStorageRuntimeSource runtime_source
+    3: bool restart_required
+}
+
+struct CreateObjectStorageConfigReq {
+    1: string name
+    2: ObjectStorageProviderType provider_type
+    3: ObjectStoragePublicConfig config
+    4: ObjectStorageCredentialInput credential
+}
+struct CreateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+
+struct UpdateObjectStorageConfigReq {
+    1: i64 id (api.js_conv='true', agw.js_conv='str')
+    2: i64 expected_version (api.js_conv='true', agw.js_conv='str')
+    3: string name
+    4: ObjectStoragePublicConfig config
+    5: optional ObjectStorageCredentialInput credential
+}
+struct UpdateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+
+struct TestObjectStorageConfigReq {
+    1: optional i64 id (api.js_conv='true', agw.js_conv='str')
+    2: optional i64 expected_version (api.js_conv='true', agw.js_conv='str')
+    3: ObjectStorageProviderType provider_type
+    4: ObjectStoragePublicConfig config
+    5: optional ObjectStorageCredentialInput credential
+}
+struct TestObjectStorageConfigResp {
+    1: bool success
+    2: ObjectStorageHealthView health
+}
+
+struct ActivateObjectStorageConfigReq {
+    1: i64 id (api.js_conv='true', agw.js_conv='str')
+    2: i64 expected_version (api.js_conv='true', agw.js_conv='str')
+    3: bool migration_confirmed
+}
+struct ActivateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+
+struct DeleteObjectStorageConfigReq {
+    1: i64 id (api.js_conv='true', agw.js_conv='str')
+    2: i64 expected_version (api.js_conv='true', agw.js_conv='str')
+}
+struct DeleteObjectStorageConfigResp {}
+
  service ConfigService {
     GetBasicConfigurationResp GetBasicConfiguration(1:GetBasicConfigurationReq req)(api.get='/api/admin/config/basic/get', api.category="admin")
     SaveBasicConfigurationResp SaveBasicConfiguration(1:SaveBasicConfigurationReq req)(api.post='/api/admin/config/basic/save', api.category="admin")
@@ -568,4 +678,10 @@ struct ParserConfig {
      GetModelGrantsResp GetModelGrants(1:GetModelGrantsReq req)(api.get='/api/admin/config/model/grants', api.category="admin")
      SaveModelGrantsResp SaveModelGrants(1:SaveModelGrantsReq req)(api.post='/api/admin/config/model/grants', api.category="admin")
      DeleteModelResp DeleteModel(1:DeleteModelReq req)(api.post='/api/admin/config/model/delete', api.category="admin")
+    ListObjectStorageConfigsResp ListObjectStorageConfigs(1:ListObjectStorageConfigsReq req)(api.get='/api/admin/config/object-storage/list', api.category="admin")
+    CreateObjectStorageConfigResp CreateObjectStorageConfig(1:CreateObjectStorageConfigReq req)(api.post='/api/admin/config/object-storage/create', api.category="admin")
+    UpdateObjectStorageConfigResp UpdateObjectStorageConfig(1:UpdateObjectStorageConfigReq req)(api.post='/api/admin/config/object-storage/update', api.category="admin")
+    TestObjectStorageConfigResp TestObjectStorageConfig(1:TestObjectStorageConfigReq req)(api.post='/api/admin/config/object-storage/test', api.category="admin")
+    ActivateObjectStorageConfigResp ActivateObjectStorageConfig(1:ActivateObjectStorageConfigReq req)(api.post='/api/admin/config/object-storage/activate', api.category="admin")
+    DeleteObjectStorageConfigResp DeleteObjectStorageConfig(1:DeleteObjectStorageConfigReq req)(api.post='/api/admin/config/object-storage/delete', api.category="admin")
  }
