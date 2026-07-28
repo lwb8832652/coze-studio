@@ -69,7 +69,11 @@ const templateTokens = new Set([
   ts.SyntaxKind.TemplateMiddle,
   ts.SyntaxKind.TemplateTail,
 ]);
-const absoluteRoutePath = /(?:^|:)\/[a-zA-Z0-9_-]+(?:\/|$)/;
+const routeLikeLiteralPatterns = [
+  /(?:^|:)\/[a-zA-Z0-9_-]+(?=[/?#]|$)/,
+  /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\/[a-zA-Z0-9_-]+(?=[/?#]|$)/i,
+  /^https?:\/\/[^\s/?#]+(?=[/?#]|$)/i,
+] as const;
 
 const accessPath = (expression: ts.Expression): string[] | undefined => {
   if (
@@ -138,7 +142,9 @@ const checkLiteral: NodeCheck = node => {
       : templateTokens.has(node.kind)
         ? (node as ts.TemplateLiteralToken).text
         : '';
-  return absoluteRoutePath.test(value) ? `route:${value}` : undefined;
+  return routeLikeLiteralPatterns.some(pattern => pattern.test(value))
+    ? `route:${value}`
+    : undefined;
 };
 
 const checkSymbol: NodeCheck = node =>
@@ -399,7 +405,11 @@ describe('WorkbenchThreadClient production boundary', () => {
       'type Route = `/v2/threads/${string}`;',
       'type Route = `${string}/artifacts/${string}`;',
       "type Route = '/graphql';",
+      "type Route = '/graphql?op=x';",
+      "type Route = '/graphql#operation';",
+      "type Route = 'GET /graphql';",
       "type Route = '/rpc/tools';",
+      "type Route = 'https://api.example.com/v1';",
       "import type {} from '/graphql';",
     ];
     probes.forEach(source =>
@@ -411,6 +421,12 @@ describe('WorkbenchThreadClient production boundary', () => {
         'interface FetchOptions { XMLHttpRequest?: string }',
       ),
     ).toEqual([]);
+    [
+      "type Note = 'Use /graphql for API calls';",
+      "type RelativePath = 'docs/graphql';",
+    ].forEach(source =>
+      expect(analyzeBoundarySource('safe.ts', source)).toEqual([]),
+    );
   });
 
   it('allows only type-layer top-level syntax in the public boundary', () => {
@@ -749,8 +765,7 @@ describe('WorkbenchThreadClient production boundary', () => {
     );
     expect(pairedTransportFixtures.human_interaction.visible).toMatchObject({
       interaction_id: 'hi_1',
-      submitted_by: 'user:8601',
-      source: 'web',
+      choice_id: 'a',
     });
     expect(
       pairedTransportFixtures.run_event.v1.data.journal_messages[0].id,
@@ -777,6 +792,43 @@ describe('WorkbenchThreadClient production boundary', () => {
     expect(
       projectCanonicalTransportFixture('mcp_runtime_audit', mcpAudit),
     ).toMatchObject({ server_id: '' });
+  });
+
+  it('models only the canonical human interaction resume contract', () => {
+    const fixture = pairedTransportFixtures.human_interaction;
+    const publicKeys = [
+      'choice_id',
+      'comment',
+      'decision',
+      'interaction_id',
+      'kind',
+      'schema',
+    ];
+
+    expect(Object.keys(fixture.v1).sort()).toEqual(publicKeys);
+    expect(Object.keys(fixture.canonical).sort()).toEqual(publicKeys);
+    expect(Object.keys(fixture.visible).sort()).toEqual(publicKeys);
+    expect(fixture.canonical).toMatchObject({
+      schema: 'coze.human_interaction_response.v1',
+      interaction_id: 'hi_1',
+      kind: 'confirmation',
+      decision: 'approved',
+      choice_id: 'a',
+      comment: 'Proceed',
+    });
+
+    const forbiddenFields = [
+      ['submitted_by', 'user:8601'],
+      ['submitted_at', '2026-01-01T00:00:00Z'],
+      ['source', 'web'],
+    ] as const;
+    forbiddenFields.forEach(([field, value]) => {
+      const wire = structuredClone(fixture.canonical);
+      setWirePath(wire, { path: [field], value });
+      expect(() =>
+        projectCanonicalTransportFixture('human_interaction', wire),
+      ).toThrow(field);
+    });
   });
 
   it('projects every V1 and canonical fixture to the same visible model', () => {

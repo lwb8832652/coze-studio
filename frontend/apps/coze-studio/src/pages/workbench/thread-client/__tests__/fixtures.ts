@@ -71,7 +71,6 @@ const opaque = {
   server: 'server-main',
   interaction: 'hi_1',
   choice: 'a',
-  submittedBy: 'user:8601',
   journal: 'journal-1',
 } as const;
 
@@ -776,37 +775,28 @@ export const mcpRuntimeAuditTransportFixture = pairFixture({
 
 export const humanInteractionTransportFixture = pairFixture({
   v1: {
-    schema: 'human_interaction_v1',
+    schema: 'coze.human_interaction_response.v1',
     interaction_id: opaque.interaction,
     kind: 'confirmation',
-    decision: 'approve',
+    decision: 'approved',
     comment: 'Proceed',
     choice_id: opaque.choice,
-    submitted_by: opaque.submittedBy,
-    submitted_at: updatedAt,
-    source: 'web',
   },
   canonical: {
-    schema: 'human_interaction_v1',
+    schema: 'coze.human_interaction_response.v1',
     interaction_id: opaque.interaction,
     kind: 'confirmation',
-    decision: 'approve',
+    decision: 'approved',
     comment: 'Proceed',
     choice_id: opaque.choice,
-    submitted_by: opaque.submittedBy,
-    submitted_at: updatedAtISO,
-    source: 'web',
   },
   visible: {
-    schema: 'human_interaction_v1',
+    schema: 'coze.human_interaction_response.v1',
     interaction_id: opaque.interaction,
     kind: 'confirmation',
-    decision: 'approve',
+    decision: 'approved',
     comment: 'Proceed',
     choice_id: opaque.choice,
-    submitted_by: opaque.submittedBy,
-    submitted_at: updatedAt,
-    source: 'web',
   } satisfies HumanInteractionResponse,
 });
 
@@ -1019,6 +1009,17 @@ const exact =
       throw new TypeError(`${label} must equal ${String(expected)}`);
     }
     return value;
+  };
+
+const exactObjectKeys =
+  (allowed: readonly string[]): WireDecoder =>
+  (value, label) => {
+    const record = asRecord(value, label);
+    const extra = Object.keys(record).find(key => !allowed.includes(key));
+    if (extra) {
+      throw new TypeError(`${label}.${extra} is not allowed`);
+    }
+    return record;
   };
 
 const oneOfStrings =
@@ -1595,29 +1596,32 @@ const mcpAuditFields = (rules: AuditWireRules, space: FieldRule): FieldMap =>
   });
 
 const v1HumanInteractionFields = fields({
-  schema: string('schema'),
+  schema: read('schema', exact('coze.human_interaction_response.v1')),
   interaction_id: nonEmptyString('interaction_id'),
-  kind: string('kind'),
-  decision: string('decision'),
+  kind: read('kind', exact('confirmation')),
+  decision: read('decision', exact('approved')),
   answer: optionalV1String('answer'),
   choice_id: optionalV1String('choice_id'),
   comment: optionalV1String('comment'),
-  submitted_by: optionalV1String('submitted_by'),
-  submitted_at: optionalV1Epoch('submitted_at'),
-  source: optionalV1String('source'),
 });
 const canonicalHumanInteractionFields = fields({
-  schema: string('schema'),
+  schema: read('schema', exact('coze.human_interaction_response.v1')),
   interaction_id: nonEmptyString('interaction_id'),
-  kind: string('kind'),
-  decision: string('decision'),
+  kind: read('kind', exact('confirmation')),
+  decision: read('decision', exact('approved')),
   answer: optionalCanonicalString('answer'),
   choice_id: optionalCanonicalString('choice_id'),
   comment: optionalCanonicalString('comment'),
-  submitted_by: optionalCanonicalString('submitted_by'),
-  submitted_at: optionalCanonicalEpoch('submitted_at'),
-  source: optionalCanonicalString('source'),
 });
+const canonicalHumanInteractionKeys = [
+  'schema',
+  'interaction_id',
+  'kind',
+  'decision',
+  'answer',
+  'choice_id',
+  'comment',
+] as const;
 
 const v1PrivateDropChecks = [
   v1JSONObject('data.usage.*.raw_usage'),
@@ -1767,6 +1771,7 @@ const transportProjectors: Record<TransportFixtureFamily, ProjectorPair> = {
       'human_interaction',
       '',
       canonicalHumanInteractionFields,
+      [read('', exactObjectKeys(canonicalHumanInteractionKeys))],
     ),
   ],
 };
