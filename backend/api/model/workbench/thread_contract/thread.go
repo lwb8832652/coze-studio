@@ -9746,6 +9746,7 @@ type CreateCanonicalRunRequest struct {
 	LangsmithTracer   *string    `thrift:"langsmith_tracer,23,optional" form:"langsmith_tracer" json:"langsmith_tracer,omitempty"`
 	IdempotencyKey    *string    `thrift:"idempotency_key,24,optional" header:"Idempotency-Key" json:"idempotency_key,omitempty"`
 	SpaceID           int64      `thrift:"space_id,25,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
+	Coze              *string    `thrift:"coze,26,optional" form:"coze" json:"coze,omitempty"`
 	Base              *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -9966,6 +9967,15 @@ func (p *CreateCanonicalRunRequest) GetSpaceID() (v int64) {
 	return p.SpaceID
 }
 
+var CreateCanonicalRunRequest_Coze_DEFAULT string
+
+func (p *CreateCanonicalRunRequest) GetCoze() (v string) {
+	if !p.IsSetCoze() {
+		return CreateCanonicalRunRequest_Coze_DEFAULT
+	}
+	return *p.Coze
+}
+
 var CreateCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *CreateCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -10001,6 +10011,7 @@ var fieldIDToName_CreateCanonicalRunRequest = map[int16]string{
 	23:  "langsmith_tracer",
 	24:  "idempotency_key",
 	25:  "space_id",
+	26:  "coze",
 	255: "Base",
 }
 
@@ -10090,6 +10101,10 @@ func (p *CreateCanonicalRunRequest) IsSetLangsmithTracer() bool {
 
 func (p *CreateCanonicalRunRequest) IsSetIdempotencyKey() bool {
 	return p.IdempotencyKey != nil
+}
+
+func (p *CreateCanonicalRunRequest) IsSetCoze() bool {
+	return p.Coze != nil
 }
 
 func (p *CreateCanonicalRunRequest) IsSetBase() bool {
@@ -10318,6 +10333,14 @@ func (p *CreateCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 26:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField26(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -10649,6 +10672,17 @@ func (p *CreateCanonicalRunRequest) ReadField25(iprot thrift.TProtocol) error {
 	p.SpaceID = _field
 	return nil
 }
+func (p *CreateCanonicalRunRequest) ReadField26(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Coze = _field
+	return nil
+}
 func (p *CreateCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -10762,6 +10796,10 @@ func (p *CreateCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField25(oprot); err != nil {
 			fieldId = 25
+			goto WriteFieldError
+		}
+		if err = p.writeField26(oprot); err != nil {
+			fieldId = 26
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -11255,6 +11293,25 @@ WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 25 end error: ", p), err)
 }
 
+func (p *CreateCanonicalRunRequest) writeField26(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCoze() {
+		if err = oprot.WriteFieldBegin("coze", thrift.STRING, 26); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Coze); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 26 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 26 end error: ", p), err)
+}
+
 func (p *CreateCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {
 	if p.IsSetBase() {
 		if err = oprot.WriteFieldBegin("Base", thrift.STRUCT, 255); err != nil {
@@ -11309,6 +11366,7 @@ type WaitCanonicalRunRequest struct {
 	RaiseError        *bool      `thrift:"raise_error,24,optional" form:"raise_error" json:"raise_error,omitempty"`
 	IdempotencyKey    *string    `thrift:"idempotency_key,25,optional" header:"Idempotency-Key" json:"idempotency_key,omitempty"`
 	SpaceID           int64      `thrift:"space_id,26,required" header:"X-Coze-Space-ID,required" json:"space_id,string,required"`
+	Coze              *string    `thrift:"coze,27,optional" form:"coze" json:"coze,omitempty"`
 	Base              *base.Base `thrift:"Base,255,optional" form:"-" json:"-" query:"-"`
 }
 
@@ -11538,6 +11596,15 @@ func (p *WaitCanonicalRunRequest) GetSpaceID() (v int64) {
 	return p.SpaceID
 }
 
+var WaitCanonicalRunRequest_Coze_DEFAULT string
+
+func (p *WaitCanonicalRunRequest) GetCoze() (v string) {
+	if !p.IsSetCoze() {
+		return WaitCanonicalRunRequest_Coze_DEFAULT
+	}
+	return *p.Coze
+}
+
 var WaitCanonicalRunRequest_Base_DEFAULT *base.Base
 
 func (p *WaitCanonicalRunRequest) GetBase() (v *base.Base) {
@@ -11574,6 +11641,7 @@ var fieldIDToName_WaitCanonicalRunRequest = map[int16]string{
 	24:  "raise_error",
 	25:  "idempotency_key",
 	26:  "space_id",
+	27:  "coze",
 	255: "Base",
 }
 
@@ -11667,6 +11735,10 @@ func (p *WaitCanonicalRunRequest) IsSetRaiseError() bool {
 
 func (p *WaitCanonicalRunRequest) IsSetIdempotencyKey() bool {
 	return p.IdempotencyKey != nil
+}
+
+func (p *WaitCanonicalRunRequest) IsSetCoze() bool {
+	return p.Coze != nil
 }
 
 func (p *WaitCanonicalRunRequest) IsSetBase() bool {
@@ -11903,6 +11975,14 @@ func (p *WaitCanonicalRunRequest) Read(iprot thrift.TProtocol) (err error) {
 					goto ReadFieldError
 				}
 				issetSpaceID = true
+			} else if err = iprot.Skip(fieldTypeId); err != nil {
+				goto SkipFieldError
+			}
+		case 27:
+			if fieldTypeId == thrift.STRING {
+				if err = p.ReadField27(iprot); err != nil {
+					goto ReadFieldError
+				}
 			} else if err = iprot.Skip(fieldTypeId); err != nil {
 				goto SkipFieldError
 			}
@@ -12245,6 +12325,17 @@ func (p *WaitCanonicalRunRequest) ReadField26(iprot thrift.TProtocol) error {
 	p.SpaceID = _field
 	return nil
 }
+func (p *WaitCanonicalRunRequest) ReadField27(iprot thrift.TProtocol) error {
+
+	var _field *string
+	if v, err := iprot.ReadString(); err != nil {
+		return err
+	} else {
+		_field = &v
+	}
+	p.Coze = _field
+	return nil
+}
 func (p *WaitCanonicalRunRequest) ReadField255(iprot thrift.TProtocol) error {
 	_field := base.NewBase()
 	if err := _field.Read(iprot); err != nil {
@@ -12362,6 +12453,10 @@ func (p *WaitCanonicalRunRequest) Write(oprot thrift.TProtocol) (err error) {
 		}
 		if err = p.writeField26(oprot); err != nil {
 			fieldId = 26
+			goto WriteFieldError
+		}
+		if err = p.writeField27(oprot); err != nil {
+			fieldId = 27
 			goto WriteFieldError
 		}
 		if err = p.writeField255(oprot); err != nil {
@@ -12872,6 +12967,25 @@ WriteFieldBeginError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 26 begin error: ", p), err)
 WriteFieldEndError:
 	return thrift.PrependError(fmt.Sprintf("%T write field 26 end error: ", p), err)
+}
+
+func (p *WaitCanonicalRunRequest) writeField27(oprot thrift.TProtocol) (err error) {
+	if p.IsSetCoze() {
+		if err = oprot.WriteFieldBegin("coze", thrift.STRING, 27); err != nil {
+			goto WriteFieldBeginError
+		}
+		if err := oprot.WriteString(*p.Coze); err != nil {
+			return err
+		}
+		if err = oprot.WriteFieldEnd(); err != nil {
+			goto WriteFieldEndError
+		}
+	}
+	return nil
+WriteFieldBeginError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 27 begin error: ", p), err)
+WriteFieldEndError:
+	return thrift.PrependError(fmt.Sprintf("%T write field 27 end error: ", p), err)
 }
 
 func (p *WaitCanonicalRunRequest) writeField255(oprot thrift.TProtocol) (err error) {

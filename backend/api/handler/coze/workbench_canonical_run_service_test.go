@@ -92,26 +92,31 @@ func TestCanonicalRunRequestDefaultsAndAllowlist(t *testing.T) {
 
 func TestCanonicalRunRequestRejectsUnsupportedFieldsWithoutSideEffects(t *testing.T) {
 	tests := map[string]string{
-		"unknown field":             `,"future_field":true`,
-		"unknown stream mode":       `,"stream_mode":"debug"`,
-		"checkpoint during":         `,"checkpoint_during":true`,
-		"webhook":                   `,"webhook":"https://example.invalid/hook"`,
-		"on completion":             `,"on_completion":{}`,
-		"after seconds":             `,"after_seconds":1`,
-		"feedback keys":             `,"feedback_keys":[]`,
-		"interrupt before":          `,"interrupt_before":["agent"]`,
-		"interrupt after":           `,"interrupt_after":["agent"]`,
-		"checkpoint":                `,"checkpoint":{}`,
-		"checkpoint id":             `,"checkpoint_id":"1"`,
-		"langsmith tracer":          `,"langsmith_tracer":{}`,
-		"stream resumable":          `,"stream_resumable":true`,
-		"stream subgraphs":          `,"stream_subgraphs":true`,
-		"if not exists":             `,"if_not_exists":"create"`,
-		"multitask strategy":        `,"multitask_strategy":"enqueue"`,
-		"durability":                `,"durability":"sync"`,
-		"unsupported on disconnect": `,"on_disconnect":"detach"`,
-		"body idempotency key":      `,"idempotency_key":"body-key"`,
-		"create route raise error":  `,"raise_error":false`,
+		"unknown field":              `,"future_field":true`,
+		"unknown stream mode":        `,"stream_mode":"debug"`,
+		"checkpoint during":          `,"checkpoint_during":true`,
+		"webhook":                    `,"webhook":"https://example.invalid/hook"`,
+		"on completion":              `,"on_completion":{}`,
+		"after seconds":              `,"after_seconds":1`,
+		"feedback keys":              `,"feedback_keys":[]`,
+		"interrupt before":           `,"interrupt_before":["agent"]`,
+		"interrupt after":            `,"interrupt_after":["agent"]`,
+		"checkpoint":                 `,"checkpoint":{}`,
+		"checkpoint id":              `,"checkpoint_id":"1"`,
+		"langsmith tracer":           `,"langsmith_tracer":{}`,
+		"stream resumable":           `,"stream_resumable":true`,
+		"stream subgraphs":           `,"stream_subgraphs":true`,
+		"if not exists":              `,"if_not_exists":"create"`,
+		"multitask strategy":         `,"multitask_strategy":"enqueue"`,
+		"durability":                 `,"durability":"sync"`,
+		"unsupported on disconnect":  `,"on_disconnect":"detach"`,
+		"body idempotency key":       `,"idempotency_key":"body-key"`,
+		"create route raise error":   `,"raise_error":false`,
+		"null coze extension":        `,"coze":null`,
+		"unknown coze field":         `,"coze":{"future_field":true}`,
+		"null message metadata":      `,"coze":{"message_metadata":null}`,
+		"protected message metadata": `,"coze":{"message_metadata":{"user_id":"2"}}`,
+		"sensitive message metadata": `,"coze":{"message_metadata":{"note":"api_key=top-secret"}}`,
 	}
 
 	for name, extraFields := range tests {
@@ -174,7 +179,7 @@ func TestCanonicalRunRequestOnlyAcceptsSingleUserTurn(t *testing.T) {
 	}
 }
 
-func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testing.T) {
+func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical create run", `{}`)
@@ -184,6 +189,7 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 		"input":{"messages":[{"role":"user","content":"analyze the current turn"}]},
 		"command":{},
 		"metadata":{"source":"workbench_detail_followup"},
+		"coze":{"message_metadata":{"source":"workbench_detail_followup","composer":"detail"}},
 		"config":{"runtime":"eino_adk","mode":"pro"},
 		"context":{"locale":"zh-CN"},
 		"stream_mode":["messages-tuple","updates"],
@@ -222,6 +228,7 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 	require.Len(t, runs, 1)
 	require.Equal(t, runID, messages[0].RunID)
 	require.Equal(t, "analyze the current turn", messages[0].Content)
+	require.JSONEq(t, `{"source":"workbench_detail_followup","composer":"detail"}`, messages[0].Metadata)
 	require.Equal(t, canonicalScopedIdempotencyKey(2, "canonical-create-1"), runs[0].IdempotencyKey)
 	require.Contains(t, runs[0].Input, "analyze the current turn")
 	require.Contains(t, runs[0].Metadata, `"_message":{"message_id":`)
@@ -242,6 +249,184 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 	require.Nil(t, persisted.Coze.SubmissionMessage)
 	require.NotContains(t, string(read.Result().Body()), "_message")
 	require.NotContains(t, string(read.Result().Body()), "_idempotency")
+}
+
+func TestCanonicalCreateRunTopLevelRetryIsMessageLessAndReplaysAcrossWait(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "canonical top-level retry", `{}`)
+	source := createCanonicalRunFixture(t, thread.ThreadID, "original task")
+	failCanonicalRunFixture(t, source, "model_provider_error", "provider failed")
+	h := canonicalRunTestServer()
+	body := fmt.Sprintf(`{
+		"assistant_id":"agent",
+		"input":{"messages":[{"role":"user","content":"retry the current task"}]},
+		"command":{},
+		"metadata":{"source":"task_retry"},
+		"config":{"runtime":"eino_adk","mode":"pro"},
+		"context":{"locale":"zh-CN"},
+		"stream_mode":["messages-tuple","updates"],
+		"on_disconnect":"continue",
+		"coze":{"attempt_kind":"retry","source_run_id":"%d"}
+	}`, source.RunID)
+	path := fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID)
+	header := ut.Header{Key: "Idempotency-Key", Value: "canonical-top-level-retry-1"}
+
+	created := performCanonicalRunJSONRequest(t, h, http.MethodPost, path, body, header)
+	require.Equal(t, http.StatusOK, created.Code, created.Result().Body())
+	var projected canonicalRun
+	require.NoError(t, json.Unmarshal(created.Result().Body(), &projected))
+	require.Equal(t, "retry", projected.Coze.AttemptKind)
+	require.NotNil(t, projected.Coze.SourceRunID)
+	require.Equal(t, strconv.FormatInt(source.RunID, 10), *projected.Coze.SourceRunID)
+	require.Nil(t, projected.Coze.MessageID)
+	require.Nil(t, projected.Coze.SubmissionMessage)
+
+	messages, runs := canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+	retryRunID := mustCanonicalTestID(t, projected.RunID)
+	var retryRun *appagentthread.RunSummary
+	for _, run := range runs {
+		if run != nil && run.RunID == retryRunID {
+			retryRun = run
+			break
+		}
+	}
+	require.NotNil(t, retryRun)
+	require.Contains(t, retryRun.Input, "retry the current task")
+	require.JSONEq(t, `{"locale":"zh-CN"}`, retryRun.Context)
+	require.Contains(t, retryRun.Metadata, `"source":"task_retry"`)
+	require.Contains(t, retryRun.Metadata, `"attempt_kind":"retry"`)
+	require.Contains(t, retryRun.Metadata, `"source_run_id":`+strconv.FormatInt(source.RunID, 10))
+	require.NotContains(t, retryRun.Metadata, `"_message"`)
+	require.Equal(t, canonicalScopedIdempotencyKey(2, "canonical-top-level-retry-1"), retryRun.IdempotencyKey)
+
+	completeCanonicalRunWithPublicState(t, retryRun, `{"custom":{"summary":"retried"}}`)
+	waited := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		fmt.Sprintf("/api/workbench/threads/%d/runs/wait", thread.ThreadID),
+		body,
+		header,
+	)
+	require.Equal(t, http.StatusOK, waited.Code, waited.Result().Body())
+	var values map[string]any
+	require.NoError(t, json.Unmarshal(waited.Result().Body(), &values))
+	require.Equal(t, "retried", values["custom"].(map[string]any)["summary"])
+
+	replayed := performCanonicalRunJSONRequest(t, h, http.MethodPost, path, body, header)
+	require.Equal(t, http.StatusOK, replayed.Code, replayed.Result().Body())
+	var replayedRun canonicalRun
+	require.NoError(t, json.Unmarshal(replayed.Result().Body(), &replayedRun))
+	require.Equal(t, projected.RunID, replayedRun.RunID)
+	require.Nil(t, replayedRun.Coze.MessageID)
+	require.Nil(t, replayedRun.Coze.SubmissionMessage)
+	messages, runs = canonicalThreadMessagesAndRuns(t, thread.ThreadID)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+}
+
+func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	thread := createCanonicalTestThread(t, 1001, "canonical retry validation", `{}`)
+	failed := createCanonicalRunFixture(t, thread.ThreadID, "failed source")
+	failCanonicalRunFixture(t, failed, "runtime_failed", "failed")
+	childResponse, err := appagentthread.SVC.CreateRun(context.Background(), &appagentthread.CreateRunRequest{
+		ThreadID: thread.ThreadID, ParentRunID: failed.RunID,
+		RunKind: appagentthread.RunKindSubagent, Input: `{"messages":[{"role":"user","content":"child"}]}`,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, childResponse)
+	require.NotNil(t, childResponse.Run)
+	otherThread := createCanonicalTestThread(t, 1001, "other retry source", `{}`)
+	crossThread := createCanonicalRunFixture(t, otherThread.ThreadID, "cross thread source")
+	failCanonicalRunFixture(t, crossThread, "runtime_failed", "failed")
+	active := createCanonicalRunFixture(t, thread.ThreadID, "active source")
+	h := canonicalRunTestServer()
+	path := fmt.Sprintf("/api/workbench/threads/%d/runs", thread.ThreadID)
+	baseRuns := len(canonicalRunsForThread(t, thread.ThreadID))
+
+	tests := []struct {
+		name   string
+		coze   string
+		status int
+	}{
+		{name: "missing source", coze: `{"attempt_kind":"retry","source_run_id":"999999"}`, status: http.StatusNotFound},
+		{name: "cross thread source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, crossThread.RunID), status: http.StatusNotFound},
+		{name: "child source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, childResponse.Run.RunID), status: http.StatusUnprocessableEntity},
+		{name: "non failed source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"%d"}`, active.RunID), status: http.StatusConflict},
+		{name: "malformed source", coze: `{"attempt_kind":"retry","source_run_id":"not-an-id"}`, status: http.StatusUnprocessableEntity},
+		{name: "numeric source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":%d}`, failed.RunID), status: http.StatusUnprocessableEntity},
+		{name: "signed source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":"+%d"}`, failed.RunID), status: http.StatusUnprocessableEntity},
+		{name: "whitespace source", coze: fmt.Sprintf(`{"attempt_kind":"retry","source_run_id":" %d"}`, failed.RunID), status: http.StatusUnprocessableEntity},
+		{name: "zero source", coze: `{"attempt_kind":"retry","source_run_id":"0"}`, status: http.StatusUnprocessableEntity},
+		{name: "retry missing source", coze: `{"attempt_kind":"retry"}`, status: http.StatusUnprocessableEntity},
+		{name: "turn carries retry source", coze: fmt.Sprintf(`{"source_run_id":"%d"}`, failed.RunID), status: http.StatusUnprocessableEntity},
+		{name: "unsupported turn marker", coze: `{"attempt_kind":"turn"}`, status: http.StatusUnprocessableEntity},
+		{name: "mixed metadata and retry", coze: fmt.Sprintf(`{"message_metadata":{"source":"followup"},"attempt_kind":"retry","source_run_id":"%d"}`, failed.RunID), status: http.StatusUnprocessableEntity},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"assistant_id":"agent","input":{"messages":[{"role":"user","content":"retry"}]},"coze":%s}`, tt.coze)
+			response := performCanonicalRunJSONRequest(t, h, http.MethodPost, path, body)
+			require.Equal(t, tt.status, response.Code, response.Result().Body())
+			require.Len(t, canonicalRunsForThread(t, thread.ThreadID), baseRuns)
+		})
+	}
+}
+
+func TestCanonicalRunTurnFingerprintIncludesMessageMetadata(t *testing.T) {
+	base := &canonicalRunSubmission{
+		AssistantID:     "agent",
+		MessageContent:  "continue",
+		MessageMetadata: `{"source":"workbench_detail_followup"}`,
+		Metadata:        `{"mode":"pro"}`,
+		Config:          `{"runtime":"eino_adk"}`,
+		Context:         `{"locale":"zh-CN"}`,
+		Options: canonicalRunOptions{
+			StreamModes:       []string{"messages-tuple", "updates"},
+			MultitaskStrategy: "reject",
+			OnDisconnect:      "continue",
+			Durability:        "async",
+		},
+	}
+
+	baseFingerprint := canonicalRunTurnRequestFingerprint(base)
+	changed := *base
+	changed.MessageMetadata = `{"source":"workbench_detail_followup","composer":"detail"}`
+
+	require.NotEmpty(t, baseFingerprint)
+	require.NotEqual(t, baseFingerprint, canonicalRunTurnRequestFingerprint(&changed))
+}
+
+func TestCanonicalRunTopLevelRetryFingerprintScopesSourceAndOperation(t *testing.T) {
+	base := &canonicalRunSubmission{
+		AssistantID:    "agent",
+		MessageContent: "retry the current task",
+		Metadata:       `{"source":"task_retry"}`,
+		Config:         `{"runtime":"eino_adk","mode":"pro"}`,
+		Context:        `{"locale":"zh-CN"}`,
+		Options: canonicalRunOptions{
+			StreamModes:       []string{"messages-tuple", "updates"},
+			MultitaskStrategy: "reject",
+			OnDisconnect:      "continue",
+			Durability:        "async",
+		},
+		TopLevelRetry: &canonicalTopLevelRetrySubmission{SourceRunID: 3001},
+	}
+
+	retryFingerprint := canonicalRunRetryRequestFingerprint(base)
+	changedSource := *base
+	changedSource.TopLevelRetry = &canonicalTopLevelRetrySubmission{SourceRunID: 3002}
+	turn := *base
+	turn.TopLevelRetry = nil
+
+	require.NotEmpty(t, retryFingerprint)
+	require.NotEqual(t, retryFingerprint, canonicalRunRetryRequestFingerprint(&changedSource))
+	require.NotEqual(t, retryFingerprint, canonicalRunTurnRequestFingerprint(&turn))
 }
 
 func TestCanonicalCreateRunRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) {

@@ -97,6 +97,49 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 	require.NotContains(t, body, "tool_arguments")
 }
 
+func TestStreamCanonicalRunTopLevelRetryCreatesNoSecondMessage(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	installAgentThreadTestService(t)
+	source := createCanonicalRunFixture(t, 1, "stream retry source")
+	failCanonicalRunFixture(t, source, "runtime_failed", "failed")
+	installCanonicalRunStreamRecordingWriters(t)
+	h := canonicalRunStreamTestServer(20 * time.Millisecond)
+	body := fmt.Sprintf(`{
+		"assistant_id":"agent",
+		"input":{"messages":[{"role":"user","content":"stream retry"}]},
+		"stream_mode":["events"],
+		"on_disconnect":"continue",
+		"coze":{"attempt_kind":"retry","source_run_id":"%d"}
+	}`, source.RunID)
+
+	response := performCanonicalRunJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/api/workbench/threads/1/runs/stream",
+		body,
+		ut.Header{Key: "Idempotency-Key", Value: "canonical-stream-top-level-retry"},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	messages, runs := canonicalThreadMessagesAndRuns(t, 1)
+	require.Len(t, messages, 1)
+	require.Len(t, runs, 2)
+	var retryRun *appagentthread.RunSummary
+	for _, run := range runs {
+		if run != nil && run.RunID != source.RunID {
+			retryRun = run
+			break
+		}
+	}
+	require.NotNil(t, retryRun)
+	require.Contains(t, retryRun.Input, "stream retry")
+	require.Contains(t, retryRun.Metadata, `"attempt_kind":"retry"`)
+	require.Contains(t, retryRun.Metadata, `"source_run_id":`+strconv.FormatInt(source.RunID, 10))
+	require.NotContains(t, retryRun.Metadata, `"_message"`)
+	require.Equal(t, canonicalRunStreamPath(1, retryRun.RunID), response.Result().Header.Get("Location"))
+}
+
 func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)

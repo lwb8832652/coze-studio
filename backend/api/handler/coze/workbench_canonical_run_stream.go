@@ -67,8 +67,9 @@ func (c canonicalRunEventStreamConfig) normalized() canonicalRunEventStreamConfi
 	return c
 }
 
-// StreamCanonicalRun creates or resumes one persisted Run, validates its public
-// projections, and only then upgrades the response to the canonical SSE stream.
+// StreamCanonicalRun creates an ordinary turn or message-less top-level retry, or
+// resumes one persisted Run. It validates the public projection before upgrading
+// the response to the canonical SSE stream.
 func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.create", "/api/workbench/threads/:thread_id/runs/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
@@ -188,6 +189,10 @@ func createCanonicalStreamRun(
 	}
 
 	requestLog.SubmissionKind = "run_turn"
+	if submission.TopLevelRetry != nil {
+		requestLog.SubmissionKind = "run_retry"
+		requestLog.SourceRunID = submission.TopLevelRetry.SourceRunID
+	}
 	response, public, err := createCanonicalRunBundle(ctx, threadID, submission)
 	if public != nil {
 		return nil, public, nil
@@ -195,21 +200,24 @@ func createCanonicalStreamRun(
 	if err != nil {
 		return nil, nil, err
 	}
-	if response == nil || response.Run == nil || response.Message == nil ||
-		response.Run.ThreadID != threadID || response.Message.ThreadID != threadID ||
-		response.Message.RunID != response.Run.RunID {
+	if !canonicalRunCreationResponseValid(response, threadID, submission) {
 		return nil, nil, fmt.Errorf("agent thread application returned invalid run")
 	}
 	projectedRun, err := projectCanonicalRun(response.Run)
 	if err != nil {
 		return nil, nil, err
 	}
-	projectedMessage, err := projectCanonicalMessage(response.Message)
-	if err != nil {
-		return nil, nil, err
-	}
-	if projectedRun == nil || projectedMessage == nil {
+	if projectedRun == nil {
 		return nil, nil, fmt.Errorf("canonical run stream projection returned empty resource")
+	}
+	if response.Message != nil {
+		projectedMessage, err := projectCanonicalMessage(response.Message)
+		if err != nil {
+			return nil, nil, err
+		}
+		if projectedMessage == nil {
+			return nil, nil, fmt.Errorf("canonical run stream projection returned empty message")
+		}
 	}
 	return response.Run, nil, nil
 }

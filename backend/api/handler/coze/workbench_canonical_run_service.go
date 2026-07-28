@@ -39,6 +39,7 @@ const (
 	canonicalPublicAssistantID              = "agent"
 	canonicalRunIdempotencyOperationInitial = "workbench.thread.initial_run.v1"
 	canonicalRunIdempotencyOperationTurn    = "workbench.run.turn.v1"
+	canonicalRunIdempotencyOperationRetry   = "workbench.run.retry.v1"
 	canonicalRunIdempotencyOperationResume  = "workbench.run.resume.v1"
 	canonicalMaxRequestBytes                = 1 << 20
 	canonicalMaxRunMessageBytes             = 256 << 10
@@ -89,6 +90,13 @@ type canonicalCreateRunRequest struct {
 	Checkpoint        json.RawMessage `json:"checkpoint,omitempty"`
 	CheckpointID      json.RawMessage `json:"checkpoint_id,omitempty"`
 	LangsmithTracer   json.RawMessage `json:"langsmith_tracer,omitempty"`
+	Coze              json.RawMessage `json:"coze,omitempty"`
+}
+
+type canonicalRunRequestCoze struct {
+	MessageMetadata json.RawMessage `json:"message_metadata,omitempty"`
+	AttemptKind     string          `json:"attempt_kind,omitempty"`
+	SourceRunID     json.RawMessage `json:"source_run_id,omitempty"`
 }
 
 type canonicalRunInput struct {
@@ -113,6 +121,7 @@ type canonicalRunSubmission struct {
 	Config                 string
 	Context                string
 	MessageContent         string
+	MessageMetadata        string
 	UploadedFileIDs        []int64
 	Options                canonicalRunOptions
 	RaiseError             *bool
@@ -121,6 +130,11 @@ type canonicalRunSubmission struct {
 	IdempotencyFingerprint string
 	AcceptedHeaderKind     string
 	Resume                 *canonicalResumeSubmission
+	TopLevelRetry          *canonicalTopLevelRetrySubmission
+}
+
+type canonicalTopLevelRetrySubmission struct {
+	SourceRunID int64
 }
 
 type canonicalResumeRunRequest struct {
@@ -162,10 +176,10 @@ type canonicalRunEventPage struct {
 	NextAfterEventID *string              `json:"next_after_event_id,omitempty"`
 }
 
-// CreateCanonicalRun validates one canonical SDK turn, authorizes the session principal
-// against the path Thread, and calls ApplicationService.CreateRun with MessageContent so
-// the User Message and Run are committed by the existing atomic bundle. It returns the
-// reviewed Run projection and never echoes input, command, config, or context.
+// CreateCanonicalRun validates a canonical turn, message-less top-level retry, or
+// resume request. Ordinary turns keep the existing atomic Message + Run bundle;
+// retries create only a Run linked to an authorized failed source. The response is
+// always a reviewed projection and never echoes input, command, config, or context.
 func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.create", "/api/workbench/threads/:thread_id/runs")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
@@ -195,6 +209,10 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	requestLog.SubmissionKind = "run_turn"
+	if submission.TopLevelRetry != nil {
+		requestLog.SubmissionKind = "run_retry"
+		requestLog.SourceRunID = submission.TopLevelRetry.SourceRunID
+	}
 	if submission.Resume != nil {
 		requestLog.SubmissionKind = "run_resume"
 		requestLog.SourceRunID = submission.Resume.SourceRunID
@@ -230,9 +248,7 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, err)
 		return
 	}
-	if response == nil || response.Run == nil || response.Message == nil ||
-		response.Run.ThreadID != threadID || response.Message.ThreadID != threadID ||
-		response.Message.RunID != response.Run.RunID {
+	if !canonicalRunCreationResponseValid(response, threadID, submission) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("agent thread application returned invalid run"))
 		return
 	}
@@ -244,17 +260,19 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, err)
 		return
 	}
-	messageID := strconv.FormatInt(response.Message.MessageID, 10)
-	projected.Coze.MessageID = &messageID
-	submissionMessage, projectionErr := projectCanonicalMessage(response.Message)
-	if projectionErr != nil || submissionMessage == nil {
-		if projectionErr == nil {
-			projectionErr = fmt.Errorf("canonical create projection returned empty submission message")
+	if response.Message != nil {
+		messageID := strconv.FormatInt(response.Message.MessageID, 10)
+		projected.Coze.MessageID = &messageID
+		submissionMessage, projectionErr := projectCanonicalMessage(response.Message)
+		if projectionErr != nil || submissionMessage == nil {
+			if projectionErr == nil {
+				projectionErr = fmt.Errorf("canonical create projection returned empty submission message")
+			}
+			writeCanonicalApplicationError(ctx, c, projectionErr)
+			return
 		}
-		writeCanonicalApplicationError(ctx, c, projectionErr)
-		return
+		projected.Coze.SubmissionMessage = submissionMessage
 	}
-	projected.Coze.SubmissionMessage = submissionMessage
 	requestLog.RunID = response.Run.RunID
 	c.Header("Content-Location", canonicalRunPath(threadID, response.Run.RunID))
 	c.JSON(consts.StatusOK, projected)
@@ -359,10 +377,10 @@ func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// WaitCanonicalRun atomically creates one canonical turn, publishes the stable
-// recovery locations, and waits for the Run to reach a terminal state. Its body is
-// the public state values object itself so fixed LangGraph SDK clients can consume it
-// without a Workbench-specific envelope.
+// WaitCanonicalRun creates a canonical turn, message-less top-level retry, or resume
+// attempt, publishes stable recovery locations, and waits for terminal state. Its
+// body is the public values object itself so fixed LangGraph SDK clients can consume
+// it without a Workbench-specific envelope.
 func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.wait", "/api/workbench/threads/:thread_id/runs/wait")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
@@ -400,6 +418,10 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		run *appagentthread.RunSummary
 		err error
 	)
+	if submission.TopLevelRetry != nil {
+		requestLog.SubmissionKind = "run_retry"
+		requestLog.SourceRunID = submission.TopLevelRetry.SourceRunID
+	}
 	if submission.Resume != nil {
 		requestLog.SubmissionKind = "run_resume"
 		requestLog.SourceRunID = submission.Resume.SourceRunID
@@ -805,12 +827,25 @@ func createCanonicalRunBundle(
 	if err != nil {
 		return nil, nil, err
 	}
-	if response == nil || response.Run == nil || response.Message == nil ||
-		response.Run.ThreadID != threadID || response.Message.ThreadID != threadID ||
-		response.Message.RunID != response.Run.RunID {
+	if !canonicalRunCreationResponseValid(response, threadID, submission) {
 		return nil, nil, fmt.Errorf("agent thread application returned invalid run")
 	}
 	return response, nil, nil
+}
+
+func canonicalRunCreationResponseValid(
+	response *appagentthread.CreateRunResponse,
+	threadID int64,
+	submission *canonicalRunSubmission,
+) bool {
+	if response == nil || response.Run == nil || submission == nil || response.Run.ThreadID != threadID {
+		return false
+	}
+	if submission.TopLevelRetry != nil {
+		return response.Message == nil
+	}
+	return response.Message != nil && response.Message.ThreadID == threadID &&
+		response.Message.RunID == response.Run.RunID
 }
 
 // replayCanonicalRunBundle resolves an existing idempotent Run before checking
@@ -838,6 +873,9 @@ func replayCanonicalRunBundle(
 	}
 	if response == nil || response.Run == nil {
 		return nil, nil
+	}
+	if submission.TopLevelRetry != nil {
+		return &appagentthread.CreateRunResponse{Run: response.Run}, nil
 	}
 	message, err := getCanonicalRunUserMessage(ctx, threadID, response.Run.RunID)
 	if err != nil {
@@ -889,8 +927,7 @@ func resolveCanonicalRunInput(
 		return canonicalInvalidRequest("Run request is required", "missing_request"), nil
 	}
 	if len(submission.UploadedFileIDs) == 0 {
-		submission.Input = `{"uploaded_files":[]}`
-		return nil, nil
+		return nil, setCanonicalResolvedRunInput(submission, []any{})
 	}
 
 	threadResponse, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: threadID})
@@ -937,12 +974,25 @@ func resolveCanonicalRunInput(
 		}
 		selected = append(selected, file)
 	}
-	encoded, err := json.Marshal(map[string]any{"uploaded_files": selected})
+	return nil, setCanonicalResolvedRunInput(submission, selected)
+}
+
+func setCanonicalResolvedRunInput(submission *canonicalRunSubmission, uploadedFiles any) error {
+	if submission == nil {
+		return fmt.Errorf("canonical run submission is required")
+	}
+	payload := map[string]any{"uploaded_files": uploadedFiles}
+	if submission.TopLevelRetry != nil {
+		payload["messages"] = []canonicalRunInputMessage{{
+			Role: "user", Content: submission.MessageContent,
+		}}
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal canonical uploaded files: %w", err)
+		return fmt.Errorf("marshal canonical run input: %w", err)
 	}
 	submission.Input = string(encoded)
-	return nil, nil
+	return nil
 }
 
 func resumeCanonicalHumanInteraction(
@@ -1396,6 +1446,13 @@ func parseCanonicalRunSubmission(
 	if public != nil {
 		return nil, public
 	}
+	if resume != nil && len(bytes.TrimSpace(req.Coze)) > 0 {
+		return nil, canonicalUnsupportedField("coze")
+	}
+	messageMetadata, topLevelRetry, public := canonicalRunCozePayload(req.Coze)
+	if public != nil {
+		return nil, public
+	}
 	messageContent, input := "", ""
 	var uploadedFileIDs []int64
 	if resume == nil {
@@ -1440,19 +1497,104 @@ func parseCanonicalRunSubmission(
 	submission := &canonicalRunSubmission{
 		AssistantID: assistantID, Input: input, Command: command,
 		Metadata: metadata, Config: config, Context: runContext,
-		MessageContent: messageContent, UploadedFileIDs: uploadedFileIDs, Options: options,
+		MessageContent: messageContent, MessageMetadata: messageMetadata,
+		UploadedFileIDs: uploadedFileIDs, Options: options,
 		RaiseError: raiseError, IdempotencyKey: idempotencyKey,
 		AcceptedHeaderKind: headerKind,
-		Resume:             resume,
+		Resume:             resume, TopLevelRetry: topLevelRetry,
 	}
 	if resume != nil {
 		submission.IdempotencyOperation = resume.IdempotencyOperation
 		submission.IdempotencyFingerprint = resume.IdempotencyFingerprint
+	} else if topLevelRetry != nil && idempotencyKey != "" {
+		submission.IdempotencyOperation = canonicalRunIdempotencyOperationRetry
+		submission.IdempotencyFingerprint = canonicalRunRetryRequestFingerprint(submission)
 	} else if idempotencyKey != "" {
 		submission.IdempotencyOperation = canonicalRunIdempotencyOperationTurn
 		submission.IdempotencyFingerprint = canonicalRunTurnRequestFingerprint(submission)
 	}
 	return submission, nil
+}
+
+func canonicalRunCozePayload(
+	raw json.RawMessage,
+) (string, *canonicalTopLevelRetrySubmission, *canonicalError) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", nil, canonicalInvalidRequest("coze must be a JSON object", "invalid_coze")
+	}
+	var extension canonicalRunRequestCoze
+	if public := decodeCanonicalRawJSONObject(raw, &extension, "coze"); public != nil {
+		return "", nil, public
+	}
+
+	messageMetadataProvided := len(bytes.TrimSpace(extension.MessageMetadata)) > 0
+	messageMetadata := ""
+	if messageMetadataProvided {
+		if bytes.Equal(bytes.TrimSpace(extension.MessageMetadata), []byte("null")) {
+			return "", nil, canonicalInvalidRequest(
+				"coze.message_metadata must be a JSON object",
+				"invalid_coze_message_metadata",
+			)
+		}
+		var public *canonicalError
+		messageMetadata, public = canonicalJSONObjectPayload(
+			extension.MessageMetadata,
+			"coze.message_metadata",
+		)
+		if public != nil {
+			return "", nil, public
+		}
+	}
+
+	attemptKind := strings.TrimSpace(extension.AttemptKind)
+	sourceProvided := len(bytes.TrimSpace(extension.SourceRunID)) > 0
+	if attemptKind == "" {
+		if sourceProvided {
+			return "", nil, canonicalUnsupportedField("coze.source_run_id")
+		}
+		return messageMetadata, nil, nil
+	}
+	if attemptKind != "retry" {
+		return "", nil, canonicalInvalidRequest(
+			"coze.attempt_kind is invalid",
+			"invalid_coze_attempt_kind",
+		)
+	}
+	if messageMetadataProvided {
+		return "", nil, canonicalUnsupportedField("coze.message_metadata")
+	}
+	sourceRunID, public := canonicalTopLevelRetrySourceRunID(extension.SourceRunID)
+	if public != nil {
+		return "", nil, public
+	}
+	return "", &canonicalTopLevelRetrySubmission{SourceRunID: sourceRunID}, nil
+}
+
+func canonicalTopLevelRetrySourceRunID(raw json.RawMessage) (int64, *canonicalError) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || trimmed[0] != '"' {
+		return 0, canonicalInvalidRequest(
+			"coze.source_run_id must be a positive decimal string",
+			"invalid_source_run_id",
+		)
+	}
+	var value string
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return 0, canonicalInvalidRequest("coze.source_run_id is invalid", "invalid_source_run_id")
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return 0, canonicalInvalidRequest("coze.source_run_id is invalid", "invalid_source_run_id")
+		}
+	}
+	sourceRunID, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || sourceRunID <= 0 {
+		return 0, canonicalInvalidRequest("coze.source_run_id is invalid", "invalid_source_run_id")
+	}
+	return sourceRunID, nil
 }
 
 func canonicalRequestBodyLimit(c *app.RequestContext, resource string) *canonicalError {
@@ -1596,6 +1738,7 @@ func canonicalRunTurnRequestFingerprint(submission *canonicalRunSubmission) stri
 		Operation         string   `json:"operation"`
 		AssistantID       string   `json:"assistant_id"`
 		MessageContent    string   `json:"message_content"`
+		MessageMetadata   string   `json:"message_metadata"`
 		UploadedFileIDs   []int64  `json:"uploaded_file_ids"`
 		Metadata          string   `json:"metadata"`
 		Config            string   `json:"config"`
@@ -1607,7 +1750,43 @@ func canonicalRunTurnRequestFingerprint(submission *canonicalRunSubmission) stri
 	}{
 		Version: "v1", Operation: canonicalRunIdempotencyOperationTurn,
 		AssistantID: submission.AssistantID, MessageContent: submission.MessageContent,
+		MessageMetadata:   canonicalRunFingerprintJSONObject(submission.MessageMetadata),
 		UploadedFileIDs:   append([]int64{}, submission.UploadedFileIDs...),
+		Metadata:          canonicalRunFingerprintJSONObject(submission.Metadata),
+		Config:            canonicalRunFingerprintJSONObject(submission.Config),
+		Context:           canonicalRunFingerprintJSONObject(submission.Context),
+		StreamModes:       append([]string{}, submission.Options.StreamModes...),
+		MultitaskStrategy: submission.Options.MultitaskStrategy,
+		OnDisconnect:      submission.Options.OnDisconnect, Durability: submission.Options.Durability,
+	}
+	return canonicalRunRequestFingerprint(payload)
+}
+
+func canonicalRunRetryRequestFingerprint(submission *canonicalRunSubmission) string {
+	if submission == nil || submission.TopLevelRetry == nil {
+		return ""
+	}
+	payload := struct {
+		Version           string   `json:"version"`
+		Operation         string   `json:"operation"`
+		SourceRunID       int64    `json:"source_run_id"`
+		AssistantID       string   `json:"assistant_id"`
+		MessageContent    string   `json:"message_content"`
+		UploadedFileIDs   []int64  `json:"uploaded_file_ids"`
+		Command           string   `json:"command"`
+		Metadata          string   `json:"metadata"`
+		Config            string   `json:"config"`
+		Context           string   `json:"context"`
+		StreamModes       []string `json:"stream_modes"`
+		MultitaskStrategy string   `json:"multitask_strategy"`
+		OnDisconnect      string   `json:"on_disconnect"`
+		Durability        string   `json:"durability"`
+	}{
+		Version: "v1", Operation: canonicalRunIdempotencyOperationRetry,
+		SourceRunID: submission.TopLevelRetry.SourceRunID,
+		AssistantID: submission.AssistantID, MessageContent: submission.MessageContent,
+		UploadedFileIDs:   append([]int64{}, submission.UploadedFileIDs...),
+		Command:           canonicalRunFingerprintJSONObject(submission.Command),
 		Metadata:          canonicalRunFingerprintJSONObject(submission.Metadata),
 		Config:            canonicalRunFingerprintJSONObject(submission.Config),
 		Context:           canonicalRunFingerprintJSONObject(submission.Context),
@@ -1956,18 +2135,25 @@ func canonicalApplicationCreateRunRequest(
 	threadID int64,
 	submission *canonicalRunSubmission,
 ) *appagentthread.CreateRunRequest {
-	return &appagentthread.CreateRunRequest{
+	request := &appagentthread.CreateRunRequest{
 		ThreadID: threadID, AssistantID: submission.AssistantID,
 		Command: submission.Command, Input: submission.Input,
 		Config: submission.Config, Context: submission.Context, Metadata: submission.Metadata,
 		StreamMode:        canonicalStoredRunStreamModes(submission.Options.StreamModes),
 		MultitaskStrategy: submission.Options.MultitaskStrategy,
 		OnDisconnect:      submission.Options.OnDisconnect, Durability: submission.Options.Durability,
-		IdempotencyKey: submission.IdempotencyKey, MessageContent: submission.MessageContent,
-		IdempotencyOperation:    submission.IdempotencyOperation,
-		IdempotencyFingerprint:  submission.IdempotencyFingerprint,
-		PersistMessageReference: true,
+		IdempotencyKey:         submission.IdempotencyKey,
+		IdempotencyOperation:   submission.IdempotencyOperation,
+		IdempotencyFingerprint: submission.IdempotencyFingerprint,
 	}
+	if submission.TopLevelRetry != nil {
+		request.TopLevelRetrySourceRunID = submission.TopLevelRetry.SourceRunID
+		return request
+	}
+	request.MessageContent = submission.MessageContent
+	request.MessageMetadata = submission.MessageMetadata
+	request.PersistMessageReference = true
+	return request
 }
 
 func canonicalStoredRunStreamModes(modes []string) string {

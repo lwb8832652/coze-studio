@@ -330,6 +330,8 @@ func TestCanonicalLogEnumsFailClosed(t *testing.T) {
 	require.Equal(t, "values", canonicalResponseBodyKind("values", hertzconsts.StatusOK))
 	require.Equal(t, "error", canonicalResponseBodyKind("values", hertzconsts.StatusBadRequest))
 	require.Equal(t, "none", canonicalResponseBodyKind("request-body", hertzconsts.StatusOK))
+	require.Equal(t, "run_retry", canonicalSubmissionKind("run_retry"))
+	require.Equal(t, "not_applicable", canonicalSubmissionKind("retry-payload"))
 	require.Equal(t, "not_applicable", canonicalRaiseErrorMode(nil))
 	value := true
 	require.Equal(t, "true", canonicalRaiseErrorMode(&value))

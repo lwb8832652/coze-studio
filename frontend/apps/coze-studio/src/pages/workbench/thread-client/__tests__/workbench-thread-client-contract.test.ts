@@ -25,6 +25,7 @@ import {
   unwrapLegacyTaskThreadResponse,
 } from './legacy-task-thread-reference';
 import {
+  canonicalRunSubmissionExtensions,
   pairedTransportFixtures,
   projectCanonicalTransportFixture,
   projectV1TransportFixture,
@@ -39,6 +40,18 @@ const publicBoundaryFileNames = [
 const productionFiles = publicBoundaryFileNames.map(fileName =>
   resolve(__dirname, '..', fileName),
 );
+const repositoryRoot = resolve(__dirname, '../../../../../../../..');
+const canonicalRunContractFiles = {
+  idl: resolve(repositoryRoot, 'idl/workbench/thread.thrift'),
+  go: resolve(
+    repositoryRoot,
+    'backend/api/model/workbench/thread_contract/thread.go',
+  ),
+  typescript: resolve(
+    repositoryRoot,
+    'frontend/packages/arch/api-schema/src/idl/workbench/thread.ts',
+  ),
+} as const;
 
 const readProductionSource = (file: string) => readFileSync(file, 'utf8');
 const parseSource = (fileName: string, source: string) =>
@@ -632,6 +645,55 @@ describe('WorkbenchThreadClient production boundary', () => {
     expect(client).toContain('retrySubagentRun:');
     expect(client).toContain('RetryWorkbenchSubagentRunRequest');
     expect(client).not.toMatch(/retryRun|RetryWorkbenchRunRequest/);
+  });
+
+  it('exposes explicit app-owned turn metadata and top-level retry fields', () => {
+    const source = readProductionSource(productionFiles[1]);
+    const types = inspectTypes('workbench-thread-client.ts', source);
+    expect(types.shape('CreateWorkbenchRunRequest')).toEqual(
+      expect.arrayContaining([
+        "attempt_kind?: 'turn' | 'retry'",
+        'source_run_id?: string',
+        'message_metadata?: string',
+      ]),
+    );
+    expect(canonicalRunSubmissionExtensions).toEqual({
+      turn: {
+        message_metadata: { source: 'workbench_detail_followup' },
+      },
+      retry: {
+        attempt_kind: 'retry',
+        source_run_id: '3001',
+      },
+    });
+    expect(Object.isFrozen(canonicalRunSubmissionExtensions)).toBe(true);
+  });
+
+  it('keeps canonical Run coze fields aligned across IDL and generated outputs', () => {
+    const idl = readProductionSource(canonicalRunContractFiles.idl);
+    const go = readProductionSource(canonicalRunContractFiles.go);
+    const typescript = readProductionSource(
+      canonicalRunContractFiles.typescript,
+    );
+
+    expect(idl).toMatch(
+      /struct CreateCanonicalRunRequest \{[^}]*26: optional string coze \(api\.body="coze", api\.value_type="any"\)/,
+    );
+    expect(idl).toMatch(
+      /struct WaitCanonicalRunRequest \{[^}]*27: optional string coze \(api\.body="coze", api\.value_type="any"\)/,
+    );
+    expect(go).toMatch(
+      /type CreateCanonicalRunRequest struct \{[^}]*Coze\s+\*string\s+`[^`]*json:"coze,omitempty"`/,
+    );
+    expect(go).toMatch(
+      /type WaitCanonicalRunRequest struct \{[^}]*Coze\s+\*string\s+`[^`]*json:"coze,omitempty"`/,
+    );
+    expect(typescript).toMatch(
+      /export interface CreateCanonicalRunRequest \{[^}]*\n  coze\?: any,/,
+    );
+    expect(typescript).toMatch(
+      /export interface WaitCanonicalRunRequest \{[^}]*\n  coze\?: any,/,
+    );
   });
 
   it('keeps one frozen V1/canonical pair per visible resource family', () => {

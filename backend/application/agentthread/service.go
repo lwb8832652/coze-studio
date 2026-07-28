@@ -47,6 +47,9 @@ var (
 	ErrActiveRunExists              = domainservice.ErrActiveRunExists
 	ErrUnsupportedMultitaskStrategy = domainservice.ErrUnsupportedMultitaskStrategy
 	ErrRunIdempotencyConflict       = domainservice.ErrRunIdempotencyConflict
+	ErrTopLevelRetryInvalid         = errors.New("top-level retry is invalid")
+	ErrTopLevelRetrySourceNotFound  = errors.New("top-level retry source is not found")
+	ErrTopLevelRetryConflict        = errors.New("top-level retry source is not retryable")
 )
 
 var ErrArtifactScanReviewDecisionInvalid = errors.New(
@@ -810,7 +813,7 @@ func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunReques
 		return nil, fmt.Errorf("create run request is required")
 	}
 	if req.TopLevelRetrySourceRunID < 0 {
-		return nil, fmt.Errorf("top-level retry source run id is invalid")
+		return nil, fmt.Errorf("%w: source run id is invalid", ErrTopLevelRetryInvalid)
 	}
 	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
 		ThreadID: req.ThreadID,
@@ -926,13 +929,13 @@ func (s *ApplicationService) createTopLevelRetryRun(
 	runConfig string,
 ) (*CreateRunResponse, error) {
 	if req.ParentRunID != 0 || (req.RunKind != "" && req.RunKind != RunKindTask) {
-		return nil, fmt.Errorf("top-level retry must create a top-level task run")
+		return nil, fmt.Errorf("%w: new run must be a top-level task", ErrTopLevelRetryInvalid)
 	}
 	if strings.TrimSpace(req.MessageContent) != "" || strings.TrimSpace(req.MessageMetadata) != "" {
-		return nil, fmt.Errorf("top-level retry cannot create a message")
+		return nil, fmt.Errorf("%w: retry cannot create a message", ErrTopLevelRetryInvalid)
 	}
 	if req.PersistMessageReference {
-		return nil, fmt.Errorf("top-level retry cannot persist a message reference")
+		return nil, fmt.Errorf("%w: retry cannot persist a message reference", ErrTopLevelRetryInvalid)
 	}
 
 	sourceRun, err := s.ThreadSVC.GetRun(ctx, &domainservice.GetRunRequest{
@@ -942,16 +945,16 @@ func (s *ApplicationService) createTopLevelRetryRun(
 		return nil, err
 	}
 	if sourceRun == nil || sourceRun.ID != req.TopLevelRetrySourceRunID {
-		return nil, fmt.Errorf("top-level retry source run is missing")
+		return nil, ErrTopLevelRetrySourceNotFound
 	}
 	if sourceRun.ThreadID != req.ThreadID {
-		return nil, fmt.Errorf("top-level retry source run does not belong to thread")
+		return nil, ErrTopLevelRetrySourceNotFound
 	}
 	if sourceRun.ParentRunID != 0 || sourceRun.RunKind != domainentity.RunKindTask {
-		return nil, fmt.Errorf("top-level retry source must be a top-level task run")
+		return nil, fmt.Errorf("%w: source must be a top-level task", ErrTopLevelRetryInvalid)
 	}
 	if sourceRun.Status != domainentity.RunStatusFailed {
-		return nil, fmt.Errorf("top-level retry source run must be failed")
+		return nil, ErrTopLevelRetryConflict
 	}
 
 	metadata, err := topLevelRetryRunMetadata(req.Metadata, sourceRun.ID)
@@ -989,17 +992,14 @@ func topLevelRetryRunMetadata(metadata string, sourceRunID int64) (string, error
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(metadata), &payload); err != nil {
-		return "", fmt.Errorf("top-level retry metadata must be a JSON object: %w", err)
+		return "", fmt.Errorf("%w: metadata must be a JSON object: %v", ErrTopLevelRetryInvalid, err)
 	}
 	if payload == nil {
-		return "", fmt.Errorf("top-level retry metadata must be a JSON object")
+		return "", fmt.Errorf("%w: metadata must be a JSON object", ErrTopLevelRetryInvalid)
 	}
 	for key := range payload {
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "attempt_kind":
-			return "", fmt.Errorf("top-level retry attempt kind is server-owned")
-		case "source_run_id":
-			return "", fmt.Errorf("top-level retry source run id is server-owned")
+		if topLevelRetryProtectedMetadataKey(key) {
+			return "", fmt.Errorf("%w: metadata contains a server-owned field", ErrTopLevelRetryInvalid)
 		}
 	}
 	payload["attempt_kind"] = json.RawMessage(`"retry"`)
@@ -1009,6 +1009,17 @@ func topLevelRetryRunMetadata(metadata string, sourceRunID int64) (string, error
 		return "", fmt.Errorf("marshal top-level retry metadata: %w", err)
 	}
 	return string(encoded), nil
+}
+
+func topLevelRetryProtectedMetadataKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "appended_message_id", "source_run_id", "attempt_kind",
+		"human_interaction", "checkpoint_resume", "subagent_retry",
+		"_idempotency", "_message":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *ApplicationService) cancelMultitaskInterruptedADKRuns(

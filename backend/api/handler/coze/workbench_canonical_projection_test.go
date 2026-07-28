@@ -139,6 +139,26 @@ func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *te
 	}
 }
 
+func TestCanonicalRunProjectionTopLevelRetryUsesProtectedSourceMarkers(t *testing.T) {
+	projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3002, ThreadID: 2001, RunKind: appagentthread.RunKindTask,
+		Status:   appagentthread.RunStatusPending,
+		Metadata: `{"source":"task_retry","attempt_kind":"retry","source_run_id":3001}`,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, projected)
+	require.Equal(t, "retry", projected.Coze.AttemptKind)
+	require.NotNil(t, projected.Coze.SourceRunID)
+	require.Equal(t, "3001", *projected.Coze.SourceRunID)
+	require.Equal(t, map[string]any{"source": "task_retry"}, projected.Metadata)
+	_, credentialAccepted := canonicalMetadataValue("sk_secret")
+	require.False(t, credentialAccepted)
+	metadata := canonicalProjectionJSON(t, projected.Metadata)
+	require.NotContains(t, metadata, "attempt_kind")
+	require.NotContains(t, metadata, "source_run_id")
+}
+
 // Thread coze fields are compatibility pass-throughs from ThreadSummary; this
 // projection does not enrich them from domain state, queries, or messages.
 func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(t *testing.T) {

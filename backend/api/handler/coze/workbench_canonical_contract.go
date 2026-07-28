@@ -369,7 +369,7 @@ func canonicalHTTPOutcome(status int) string {
 
 func canonicalSubmissionKind(value string) string {
 	switch value {
-	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_resume":
+	case "empty_thread", "initial_run", "deferred_initial_run", "run_turn", "run_retry", "run_resume":
 		return value
 	default:
 		return "not_applicable"
@@ -525,6 +525,30 @@ func mapCanonicalApplicationError(err error) canonicalError {
 			"resource_not_found",
 			"Resource not found",
 			"access_denied",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetrySourceNotFound):
+		return *newCanonicalError(
+			hertzconsts.StatusNotFound,
+			"resource_not_found",
+			"Resource not found",
+			"top_level_retry_source_not_found",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryInvalid):
+		return *newCanonicalError(
+			hertzconsts.StatusUnprocessableEntity,
+			"invalid_retry",
+			"Top-level retry request is invalid",
+			"invalid_top_level_retry",
+			false,
+		)
+	case errors.Is(err, appagentthread.ErrTopLevelRetryConflict):
+		return *newCanonicalError(
+			hertzconsts.StatusConflict,
+			"run_not_retryable",
+			"Run is not retryable",
+			"top_level_retry_source_not_failed",
 			false,
 		)
 	case errors.Is(err, appagentthread.ErrActiveRunExists):

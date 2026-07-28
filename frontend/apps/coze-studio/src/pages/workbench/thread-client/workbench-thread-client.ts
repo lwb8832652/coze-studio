@@ -177,6 +177,9 @@ export interface CreateWorkbenchRunRequest
   durability?: string;
   message_content?: string;
   message_metadata?: string;
+  // The canonical transport omits coze.attempt_kind for an ordinary turn.
+  attempt_kind?: 'turn' | 'retry';
+  source_run_id?: string;
 }
 
 export interface GetWorkbenchRunRequest

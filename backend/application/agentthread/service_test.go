@@ -1489,6 +1489,16 @@ func TestApplicationCreateRunTopLevelRetryRejectsInvalidSubmission(t *testing.T)
 		{name: "caller attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"attempt_kind":"turn"}` }},
 		{name: "caller mixed case attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"Attempt_Kind":"turn"}` }},
 		{name: "caller source run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"source_run_id":7}` }},
+		{name: "caller message reference", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"_message":{"message_id":7}}` }},
+		{name: "caller idempotency state", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"_idempotency":{"operation":"forged"}}` }},
+		{name: "caller resume marker", source: validSource(), mutateReq: func(req *CreateRunRequest) {
+			req.Metadata = `{"human_interaction":{"schema":"coze.human_interaction_resolved.v1"}}`
+		}},
+		{name: "caller checkpoint marker", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"checkpoint_resume":{"source_run_id":7}}` }},
+		{name: "caller subagent marker", source: validSource(), mutateReq: func(req *CreateRunRequest) {
+			req.Metadata = `{"subagent_retry":{"schema":"coze.subagent_retry.metadata.v1"}}`
+		}},
+		{name: "caller appended message", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"appended_message_id":7}` }},
 	}
 
 	for _, tt := range tests {

@@ -428,7 +428,7 @@ the client cutover.
 - Modify: `docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md`
 - Modify: `docs/superpowers/specs/2026-07-26-agent-execution-kernel-v2-production-spec.md`
 
-- [ ] **Step 1: Write failing server and app-owned contract tests**
+- [x] **Step 1: Write failing server and app-owned contract tests**
 
 Freeze the canonical Run request extension as:
 
@@ -469,7 +469,7 @@ Add tests proving:
 - the app-owned request has explicit `attempt_kind?: 'turn' | 'retry'` and `source_run_id?: string`;
 - the IDL and both generated outputs expose optional `coze` on create/stream/wait Run requests.
 
-- [ ] **Step 2: Implement the minimal application contract**
+- [x] **Step 2: Implement the minimal application contract**
 
 Add an explicit top-level retry source field to `ApplicationService.CreateRun`; zero keeps every
 existing caller unchanged. When set, the application layer authorizes and loads the source Run,
@@ -482,7 +482,7 @@ Ordinary turns continue through the existing atomic `CreateRunBundle`; pass the 
 `MessageMetadata` to its Message spec unchanged after JSON validation. Do not add a second
 persistence path or modify legacy TaskThread request semantics.
 
-- [ ] **Step 3: Implement the canonical `coze` request extension**
+- [x] **Step 3: Implement the canonical `coze` request extension**
 
 Parse `coze.message_metadata` for turns and `coze.attempt_kind/source_run_id` for retries. The
 server, not caller metadata, owns retry identity. Include message metadata and retry source/kind in
@@ -494,7 +494,7 @@ Set safe request logs to `submission_kind=run_retry` and the decimal source Run 
 message metadata, content, config or caller metadata. Apply the same submission validation to
 create, stream and wait; all source routes and current UI remain unchanged.
 
-- [ ] **Step 4: Regenerate and verify the public contract**
+- [x] **Step 4: Regenerate and verify the public contract**
 
 Regenerate backend and frontend IDL outputs with the repository-pinned `hz`/`thriftgo` and
 `idl2ts` toolchains:
@@ -531,7 +531,7 @@ rushx test src/pages/workbench/thread-client/__tests__/workbench-thread-client-c
 
 Expected: PASS with the explicit app-owned retry fields and no transport-owned DTOs.
 
-- [ ] **Step 5: Commit the prerequisite contract**
+- [x] **Step 5: Commit the prerequisite contract**
 
 ```bash
 git add \

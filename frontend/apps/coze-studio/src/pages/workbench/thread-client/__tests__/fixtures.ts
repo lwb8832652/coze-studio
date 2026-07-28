@@ -74,6 +74,16 @@ const opaque = {
   journal: 'journal-1',
 } as const;
 
+export const canonicalRunSubmissionExtensions = freezeLegacyTaskThreadInput({
+  turn: {
+    message_metadata: { source: 'workbench_detail_followup' },
+  },
+  retry: {
+    attempt_kind: 'retry',
+    source_run_id: '3001',
+  },
+});
+
 export interface PairedTransportFixture<Legacy, Canonical, Visible> {
   v1: Legacy;
   canonical: Canonical;
