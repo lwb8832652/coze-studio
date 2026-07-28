@@ -73,16 +73,6 @@ var (
 	_ storage.ReadinessChecker = (*tosClient)(nil)
 )
 
-var readinessCheckForTest func(context.Context, string) error
-
-func SetReadinessCheckForTest(check func(context.Context, string) error) func() {
-	previous := readinessCheckForTest
-	readinessCheckForTest = check
-	return func() {
-		readinessCheckForTest = previous
-	}
-}
-
 func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (storage.Storage, error) {
 	t, err := getTosClient(ctx, ak, sk, bucketName, endpoint, region)
 	if err != nil {
@@ -100,14 +90,7 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 		return nil, err
 	}
 	credential = domain.NormalizeCredentialInput(credential)
-	client, err := getTosClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.Endpoint, normalized.Region, false)
-	if err != nil {
-		return nil, err
-	}
-	if readinessCheckForTest != nil {
-		client.readinessCheck = readinessCheckForTest
-	}
-	return client, nil
+	return getTosClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.Endpoint, normalized.Region, false)
 }
 
 func getTosClient(ctx context.Context, ak, sk, bucketName, endpoint, region string) (*tosClient, error) {

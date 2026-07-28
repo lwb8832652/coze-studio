@@ -71,16 +71,6 @@ var (
 	_ storage.ReadinessChecker = (*minioClient)(nil)
 )
 
-var readinessCheckForTest func(context.Context, string) (bool, error)
-
-func SetReadinessCheckForTest(check func(context.Context, string) (bool, error)) func() {
-	previous := readinessCheckForTest
-	readinessCheckForTest = check
-	return func() {
-		readinessCheckForTest = previous
-	}
-}
-
 func New(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool) (storage.Storage, error) {
 	m, err := getMinioClient(ctx, endpoint, accessKeyID, secretAccessKey, bucketName, useSSL)
 	if err != nil {
@@ -99,14 +89,7 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 		return nil, err
 	}
 	credential = domain.NormalizeCredentialInput(credential)
-	client, err := getMinioClientWithOptions(ctx, normalized.Endpoint, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.UseSSL, false)
-	if err != nil {
-		return nil, err
-	}
-	if readinessCheckForTest != nil {
-		client.readinessCheck = readinessCheckForTest
-	}
-	return client, nil
+	return getMinioClientWithOptions(ctx, normalized.Endpoint, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.UseSSL, false)
 }
 
 func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool) (*minioClient, error) {

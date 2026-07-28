@@ -73,16 +73,6 @@ var (
 	_ storage.ReadinessChecker = (*s3Client)(nil)
 )
 
-var readinessCheckForTest func(context.Context, string) error
-
-func SetReadinessCheckForTest(check func(context.Context, string) error) func() {
-	previous := readinessCheckForTest
-	readinessCheckForTest = check
-	return func() {
-		readinessCheckForTest = previous
-	}
-}
-
 func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (storage.Storage, error) {
 	t, err := getS3Client(ctx, ak, sk, bucketName, endpoint, region)
 	if err != nil {
@@ -104,14 +94,7 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 	if endpoint == "" {
 		endpoint = normalized.Endpoint
 	}
-	client, err := getS3ClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, endpoint, normalized.Region, normalized.ForcePathStyle, false, normalized.Region)
-	if err != nil {
-		return nil, err
-	}
-	if readinessCheckForTest != nil {
-		client.readinessCheck = readinessCheckForTest
-	}
-	return client, nil
+	return getS3ClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, endpoint, normalized.Region, normalized.ForcePathStyle, false, normalized.Region)
 }
 
 func getS3Client(ctx context.Context, ak, sk, bucketName, endpoint, region string) (*s3Client, error) {
