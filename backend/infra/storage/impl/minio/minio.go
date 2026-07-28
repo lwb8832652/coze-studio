@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/url"
 	"strings"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/internal/fileutil"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
@@ -71,6 +71,16 @@ var (
 	_ storage.ReadinessChecker = (*minioClient)(nil)
 )
 
+var readinessCheckForTest func(context.Context, string) (bool, error)
+
+func SetReadinessCheckForTest(check func(context.Context, string) (bool, error)) func() {
+	previous := readinessCheckForTest
+	readinessCheckForTest = check
+	return func() {
+		readinessCheckForTest = previous
+	}
+}
+
 func New(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool) (storage.Storage, error) {
 	m, err := getMinioClient(ctx, endpoint, accessKeyID, secretAccessKey, bucketName, useSSL)
 	if err != nil {
@@ -80,7 +90,30 @@ func New(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName
 	return m, nil
 }
 
+func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderMinIO, cfg, domain.ValidationMode{AllowHTTP: true})
+	if err != nil {
+		return nil, err
+	}
+	if err = domain.ValidateCredentialInput(credential); err != nil {
+		return nil, err
+	}
+	credential = domain.NormalizeCredentialInput(credential)
+	client, err := getMinioClientWithOptions(ctx, normalized.Endpoint, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.UseSSL, false)
+	if err != nil {
+		return nil, err
+	}
+	if readinessCheckForTest != nil {
+		client.readinessCheck = readinessCheckForTest
+	}
+	return client, nil
+}
+
 func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool) (*minioClient, error) {
+	return getMinioClientWithOptions(ctx, endpoint, accessKeyID, secretAccessKey, bucketName, useSSL, true)
+}
+
+func getMinioClientWithOptions(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName string, useSSL bool, createBucket bool) (*minioClient, error) {
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
 		Secure: useSSL,
@@ -99,12 +132,13 @@ func getMinioClient(ctx context.Context, endpoint, accessKeyID, secretAccessKey,
 		endpoint:        endpoint,
 	}
 
-	err = m.createBucketIfNeed(ctx, client, bucketName, "cn-north-1")
-	if err != nil {
-		return nil, fmt.Errorf("init minio client failed %v", err)
+	if createBucket {
+		err = m.createBucketIfNeed(ctx, client, bucketName, "cn-north-1")
+		if err != nil {
+			return nil, fmt.Errorf("init minio client failed %v", err)
+		}
 	}
 
-	// m.test()
 	return m, nil
 }
 
@@ -144,62 +178,6 @@ func (m *minioClient) createBucketIfNeed(ctx context.Context, client *minio.Clie
 	}
 
 	return nil
-}
-
-func (m *minioClient) test() {
-	ctx := context.Background()
-	objectName := fmt.Sprintf("test-file-%d.txt", rand.Int())
-
-	err := m.PutObject(ctx, objectName, []byte("hello content"),
-		storage.WithContentType("text/plain"), storage.WithTagging(map[string]string{
-			"uid":             "7543149965070155780",
-			"conversation_id": "7543149965070155781",
-			"type":            "user",
-		}))
-	if err != nil {
-		logs.CtxErrorf(ctx, "upload file failed: %v", err)
-	}
-
-	f, err := m.HeadObject(ctx, objectName, storage.WithGetTagging(true), storage.WithURL(true))
-	if err != nil {
-		logs.CtxErrorf(ctx, "head object failed: %v", err)
-	}
-	if f != nil {
-		logs.CtxInfof(ctx, "head object success, f: %v, tagging: %v", *f, f.Tagging)
-	}
-
-	f, err = m.HeadObject(ctx, "not_exit.txt", storage.WithGetTagging(true))
-	logs.CtxInfof(context.Background(), "HeadObject not exit success, f: %v, err: %v", f, err)
-
-	logs.CtxInfof(ctx, "upload file success")
-
-	files, err := m.ListAllObjects(ctx, "test-file-", storage.WithGetTagging(true), storage.WithURL(true))
-	if err != nil {
-		logs.CtxErrorf(ctx, "list objects failed: %v", err)
-	}
-
-	logs.CtxInfof(ctx, "list objects success, files.len: %v", len(files))
-
-	url, err := m.GetObjectUrl(ctx, objectName)
-	if err != nil {
-		logs.CtxErrorf(ctx, "get file url failed: %v", err)
-	}
-
-	logs.CtxInfof(ctx, "get file url success, url: %s", url)
-
-	content, err := m.GetObject(ctx, objectName)
-	if err != nil {
-		logs.CtxErrorf(ctx, "download file failed: %v", err)
-	}
-
-	logs.CtxInfof(ctx, "download file success, content: %s", string(content))
-
-	err = m.DeleteObject(ctx, objectName)
-	if err != nil {
-		logs.CtxErrorf(ctx, "delete object failed: %v", err)
-	}
-
-	logs.CtxInfof(ctx, "delete object success")
 }
 
 func (m *minioClient) PutObject(ctx context.Context, objectKey string, content []byte, opts ...storage.PutOptFn) error {

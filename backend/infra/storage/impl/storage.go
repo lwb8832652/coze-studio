@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/imagex"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/minio"
@@ -34,9 +35,15 @@ type Storage = storage.Storage
 
 func New(ctx context.Context) (Storage, error) {
 	storageType := os.Getenv(consts.StorageType)
+	var (
+		client   storage.Storage
+		err      error
+		provider domain.ProviderType
+	)
 	switch storageType {
 	case "minio":
-		return minio.New(
+		provider = domain.ProviderMinIO
+		client, err = minio.New(
 			ctx,
 			os.Getenv(consts.MinIOEndpoint),
 			os.Getenv(consts.MinIOAK),
@@ -45,7 +52,8 @@ func New(ctx context.Context) (Storage, error) {
 			envkey.GetBoolD("MINIO_USE_SSL", false),
 		)
 	case "tos":
-		return tos.New(
+		provider = domain.ProviderTOS
+		client, err = tos.New(
 			ctx,
 			os.Getenv(consts.TOSAccessKey),
 			os.Getenv(consts.TOSSecretKey),
@@ -54,7 +62,8 @@ func New(ctx context.Context) (Storage, error) {
 			os.Getenv(consts.TOSRegion),
 		)
 	case "s3":
-		return s3.New(
+		provider = domain.ProviderAWSS3
+		client, err = s3.New(
 			ctx,
 			os.Getenv(consts.S3AccessKey),
 			os.Getenv(consts.S3SecretKey),
@@ -62,9 +71,18 @@ func New(ctx context.Context) (Storage, error) {
 			os.Getenv(consts.S3Endpoint),
 			os.Getenv(consts.S3Region),
 		)
+	default:
+		return nil, fmt.Errorf("unknown storage type: %s", storageType)
 	}
 
-	return nil, fmt.Errorf("unknown storage type: %s", storageType)
+	if err != nil {
+		return nil, err
+	}
+	SetRuntimeDescriptor(domain.RuntimeDescriptor{
+		Source:       domain.RuntimeSourceEnvRescue,
+		ProviderType: provider,
+	})
+	return client, nil
 }
 
 func NewImagex(ctx context.Context) (imagex.ImageX, error) {
