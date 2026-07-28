@@ -34,6 +34,14 @@
 
 身份、空间、角色和系统管理员权限始终由服务端认证上下文及持久化事实决定。
 
+对象存储运行时默认由数据库中的 `object_storage_configs` 主配置驱动。首次启动且
+表为空时，后端会从兼容 env 存储配置导入一条主配置，并用
+`OBJECT_STORAGE_CREDENTIAL_KEY` 加密 AK/SK；`OBJECT_STORAGE_CONFIG_SOURCE=env`
+只作为数据库配置不可用时的 rescue bypass。系统管理页支持七牛、阿里 OSS、腾讯
+COS、华为 OBS、AWS S3、MinIO 和 TOS 的多配置维护、连接测试、激活和删除，密钥
+不回显。切换主配置持久化后，运行中进程可能展示 `restart_required`，以重启后的
+bootstrap 结果作为真正运行时事实。
+
 ### Agent Runtime
 
 Eino ADK 是执行内核，Coze 保存公共 task、event、checkpoint、memory、artifact、
@@ -57,6 +65,7 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 - 任务与 Agent Workbench：唯一事实模型为 TaskThread、Message、Run 和
   RunEvent，详细边界见 `docs/superpowers/context/workbench-chat.md`；
 - 工作空间与系统管理：成员、角色、系统配置、模型和管理员能力；
+- 对象存储控制面：多云配置、加密 credential、主配置切换和 env rescue；
 - Skill 与 MCP：配置、版本、授权、健康状态和运行时装配；
 - AppDev 与 Sandbox：项目文件、构建、预览、Provider 和安全网关；
 - 通知与计划任务：可靠通知、公告、定时执行、幂等和重试；
