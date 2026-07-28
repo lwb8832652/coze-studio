@@ -401,6 +401,140 @@ git add frontend/apps/coze-studio/src/pages/workbench/thread-client
 git commit -m "feat: implement canonical workbench core client"
 ```
 
+### Task 3A: Close Canonical Turn-Metadata And Top-Level Retry Gaps
+
+This task is a hard prerequisite for completing Task 3 and starting Task 4. The current UI has two
+reviewed Run-creation branches that the canonical server cannot yet represent: a normal turn stores
+`message_metadata` on the atomically-created User Message, while a failed top-level retry creates a
+new Run without appending a duplicate User Message. Neither branch may be silently weakened during
+the client cutover.
+
+**Files:**
+- Modify: `idl/workbench/thread.thrift`
+- Modify generated IDL outputs under `backend/api/model/workbench/thread_contract` and
+  `frontend/packages/arch/api-schema/src/idl/workbench`
+- Modify: `backend/application/agentthread/dto.go`
+- Modify: `backend/application/agentthread/service.go`
+- Modify: `backend/application/agentthread/service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_service.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_stream.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_stream_test.go`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/workbench-thread-client.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/fixtures.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts`
+- Modify: `docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md`
+- Modify: `docs/superpowers/specs/2026-07-26-agent-execution-kernel-v2-production-spec.md`
+
+- [ ] **Step 1: Write failing server and app-owned contract tests**
+
+Freeze the canonical Run request extension as:
+
+```json
+{
+  "coze": {
+    "message_metadata": {"source": "workbench_detail_followup"}
+  }
+}
+```
+
+for an ordinary turn, or:
+
+```json
+{
+  "coze": {
+    "attempt_kind": "retry",
+    "source_run_id": "3001"
+  }
+}
+```
+
+for a failed top-level retry. The two forms are mutually exclusive. `message_metadata` must be a
+bounded JSON object and is stored only on the new User Message. A retry requires one normalized User
+Message in `input` as Run input, but it creates no Message row and returns no
+`coze.submission_message`.
+
+Add tests proving:
+
+- an ordinary turn persists the reviewed message metadata in the same atomic Message + Run bundle;
+- a retry binds a failed top-level source Run in the same path Thread, preserves input/config/
+  metadata/options/idempotency, returns `coze.attempt_kind=retry` and `coze.source_run_id`, and does
+  not increase the Message count;
+- retry rejects a missing, cross-Thread, child, non-failed or malformed source Run;
+- retry rejects `message_metadata`, a turn rejects retry-only fields, and client-owned protected Run
+  metadata remains rejected;
+- idempotent replay returns the same retry Run without looking for or creating a User Message;
+- the app-owned request has explicit `attempt_kind?: 'turn' | 'retry'` and `source_run_id?: string`;
+- the IDL and both generated outputs expose optional `coze` on create/stream/wait Run requests.
+
+- [ ] **Step 2: Implement the minimal application contract**
+
+Add an explicit top-level retry source field to `ApplicationService.CreateRun`; zero keeps every
+existing caller unchanged. When set, the application layer authorizes and loads the source Run,
+requires the same Thread, a top-level task Run and failed terminal status, then writes a
+server-owned retry marker/source relation into Run metadata. It must call the existing message-less
+CreateRun path, not `RetrySubagentRun`, and must not create a Message.
+
+Ordinary turns continue through the existing atomic `CreateRunBundle`; pass the reviewed
+`MessageMetadata` to its Message spec unchanged after JSON validation. Do not add a second
+persistence path or modify legacy TaskThread request semantics.
+
+- [ ] **Step 3: Implement the canonical `coze` request extension**
+
+Parse `coze.message_metadata` for turns and `coze.attempt_kind/source_run_id` for retries. The
+server, not caller metadata, owns retry identity. Include message metadata and retry source/kind in
+the idempotency fingerprint. For retry, preserve the normalized single User Message as Run input,
+set Application `MessageContent` empty, allow `CreateRunResponse.Message=nil`, and omit
+`coze.message_id/submission_message`.
+
+Set safe request logs to `submission_kind=run_retry` and the decimal source Run ID. Never log input,
+message metadata, content, config or caller metadata. Apply the same submission validation to
+create, stream and wait; all source routes and current UI remain unchanged.
+
+- [ ] **Step 4: Regenerate and verify the public contract**
+
+Regenerate backend and frontend IDL outputs with the repository-pinned `hz`/`thriftgo` toolchain.
+Verify that only the intended optional `coze` field and generated accessors change; do not hand-edit
+generated files.
+
+Run:
+
+```bash
+cd backend
+GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
+  go test -p 1 -gcflags="all=-l -N" ./application/agentthread ./api/handler/coze \
+  -run 'Canonical.*(MessageMetadata|TopLevelRetry)|ApplicationCreateRun.*(MessageMetadata|TopLevelRetry)' \
+  -count=1
+```
+
+Expected: PASS with a persisted turn Message and a message-less retry Run.
+
+```bash
+cd frontend/apps/coze-studio
+rushx test src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts
+```
+
+Expected: PASS with the explicit app-owned retry fields and no transport-owned DTOs.
+
+- [ ] **Step 5: Commit the prerequisite contract**
+
+```bash
+git add \
+  idl/workbench/thread.thrift \
+  backend/api/model/workbench/thread_contract \
+  backend/application/agentthread \
+  backend/api/handler/coze \
+  frontend/packages/arch/api-schema/src/idl/workbench \
+  frontend/apps/coze-studio/src/pages/workbench/thread-client \
+  docs/superpowers/specs/2026-07-26-workbench-thread-api-contract-design.md \
+  docs/superpowers/specs/2026-07-26-agent-execution-kernel-v2-production-spec.md
+git commit -m "feat: preserve canonical run submission semantics"
+```
+
+After this prerequisite passes its own spec and quality reviews, return to the Task 3 implementer.
+The client must send the new extension, allow message-less retry creation results, and then resolve
+all remaining Task 3 review findings before Task 3 can be marked complete.
+
 ### Task 4: Implement All Canonical Product Operations
 
 **Files:**
