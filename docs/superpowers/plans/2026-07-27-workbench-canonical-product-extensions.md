@@ -607,7 +607,7 @@ Expected: PASS with no sensitive fixture values in output or logs.
 
 - [x] **Step 5a: Harden IDL wire shape and public identifier boundaries**
 
-Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs.
+Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs and required `*_at` times fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs.
 
 - [x] **Step 6: Commit shared helpers**
 

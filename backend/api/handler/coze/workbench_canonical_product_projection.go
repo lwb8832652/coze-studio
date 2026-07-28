@@ -19,6 +19,7 @@ package coze
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
@@ -175,7 +176,11 @@ func projectCanonicalProductUpload(summary *appagentthread.TaskThreadUploadedFil
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductUpload{FileID: fileID, FileName: canonicalCleanString(summary.FileName, 512), VirtualPath: canonicalCleanString(summary.VirtualPath, 4096), ContentType: canonicalCleanString(summary.ContentType, 128), SizeBytes: summary.SizeBytes, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "upload created_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductUpload{FileID: fileID, FileName: canonicalCleanString(summary.FileName, 512), VirtualPath: canonicalCleanString(summary.VirtualPath, 4096), ContentType: canonicalCleanString(summary.ContentType, 128), SizeBytes: summary.SizeBytes, CreatedAt: createdAt}, nil
 }
 
 func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*canonicalProductArtifact, error) {
@@ -199,7 +204,15 @@ func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: canonicalTime(public.CreatedAt), UpdatedAt: canonicalTime(public.UpdatedAt), DeletedAt: canonicalTime(public.DeletedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(public.CreatedAt, "artifact created_at")
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := canonicalProductRequiredTime(public.UpdatedAt, "artifact updated_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: canonicalTime(public.DeletedAt)}, nil
 }
 
 func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScanJobSummary) (*canonicalProductArtifactScanJob, error) {
@@ -226,8 +239,16 @@ func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScan
 	if err != nil {
 		return nil, err
 	}
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "artifact scan job created_at")
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := canonicalProductRequiredTime(summary.UpdatedAt, "artifact scan job updated_at")
+	if err != nil {
+		return nil, err
+	}
 	status := canonicalProductScanStatus(string(summary.Status))
-	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: threadID, RunID: runID, ArtifactID: artifactID, FileID: fileID, Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, WorkerRef: canonicalLogHash(summary.WorkerID), AttemptCount: summary.AttemptCount, AvailableAt: canonicalTime(summary.AvailableAt), StartedAt: canonicalTime(summary.StartedAt), EndedAt: canonicalTime(summary.EndedAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt)}
+	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: threadID, RunID: runID, ArtifactID: artifactID, FileID: fileID, Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, WorkerRef: canonicalLogHash(summary.WorkerID), AttemptCount: summary.AttemptCount, ErrorCode: "none", AvailableAt: canonicalTime(summary.AvailableAt), StartedAt: canonicalTime(summary.StartedAt), EndedAt: canonicalTime(summary.EndedAt), CreatedAt: createdAt, UpdatedAt: updatedAt}
 	if status == "failed" {
 		result.ErrorCode = "scan_failed"
 	}
@@ -251,7 +272,11 @@ func projectCanonicalProductTokenUsage(summary *appagentthread.TokenUsageSummary
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductTokenUsage{UsageID: usageID, ThreadID: threadID, RunID: runID, Source: canonicalProductIdentifier(string(public.Source)), StepID: canonicalProductIdentifier(public.StepID), StepIndex: public.StepIndex, StepName: canonicalCleanString(public.StepName, 512), ModelName: canonicalCleanString(public.ModelName, 512), Provider: canonicalProductIdentifier(public.Provider), InputTokens: public.InputTokens, OutputTokens: public.OutputTokens, TotalTokens: public.TotalTokens, CostMicros: public.CostMicros, Currency: canonicalProductIdentifier(public.Currency), Estimated: public.Estimated, CreatedAt: canonicalTime(public.CreatedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(public.CreatedAt, "token usage created_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductTokenUsage{UsageID: usageID, ThreadID: threadID, RunID: runID, Source: canonicalProductIdentifier(string(public.Source)), StepID: canonicalProductIdentifier(public.StepID), StepIndex: public.StepIndex, StepName: canonicalCleanString(public.StepName, 512), ModelName: canonicalCleanString(public.ModelName, 512), Provider: canonicalProductIdentifier(public.Provider), InputTokens: public.InputTokens, OutputTokens: public.OutputTokens, TotalTokens: public.TotalTokens, CostMicros: public.CostMicros, Currency: canonicalProductIdentifier(public.Currency), Estimated: public.Estimated, CreatedAt: createdAt}, nil
 }
 
 func projectCanonicalProductTokenUsageAggregate(summary *appagentthread.TokenUsageAggregateSummary) canonicalProductTokenUsageAggregate {
@@ -284,7 +309,15 @@ func projectCanonicalProductMemory(summary *appagentthread.MemorySummary) (*cano
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: canonicalTime(summary.CorrectedAt), ExpiresAt: canonicalTime(summary.ExpiresAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt), DeletedAt: canonicalTime(summary.DeletedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "memory created_at")
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := canonicalProductRequiredTime(summary.UpdatedAt, "memory updated_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: canonicalTime(summary.CorrectedAt), ExpiresAt: canonicalTime(summary.ExpiresAt), CreatedAt: createdAt, UpdatedAt: updatedAt, DeletedAt: canonicalTime(summary.DeletedAt)}, nil
 }
 
 func projectCanonicalProductMemoryAudit(summary *appagentthread.MemoryAuditEventSummary) (*canonicalProductMemoryAudit, error) {
@@ -299,7 +332,11 @@ func projectCanonicalProductMemoryAudit(summary *appagentthread.MemoryAuditEvent
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMemoryAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), MemoryID: canonicalOptionalIDString(summary.MemoryID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), Scope: canonicalProductIdentifier(string(summary.Scope)), SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), AffectedCount: summary.AffectedCount, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "memory audit created_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMemoryAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), MemoryID: canonicalOptionalIDString(summary.MemoryID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), Scope: canonicalProductIdentifier(string(summary.Scope)), SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), AffectedCount: summary.AffectedCount, CreatedAt: createdAt}, nil
 }
 
 func projectCanonicalProductGuardrailAudit(summary *appagentthread.GuardrailAuditEventSummary) (*canonicalProductGuardrailAudit, error) {
@@ -314,7 +351,11 @@ func projectCanonicalProductGuardrailAudit(summary *appagentthread.GuardrailAudi
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductGuardrailAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), TargetType: canonicalProductIdentifier(summary.TargetType), TargetID: canonicalProductIdentifier(summary.TargetID), Operation: canonicalProductIdentifier(summary.Operation), Source: canonicalProductIdentifier(summary.Source), Action: canonicalProductIdentifier(summary.Action), FailMode: canonicalProductIdentifier(summary.FailMode), Provider: canonicalProductIdentifier(summary.Provider), ReasonCode: canonicalProductIdentifier(summary.ReasonCode), RuleIDs: canonicalProductRuleIDs(summary.RuleIDs), CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "guardrail audit created_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductGuardrailAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), TargetType: canonicalProductIdentifier(summary.TargetType), TargetID: canonicalProductIdentifier(summary.TargetID), Operation: canonicalProductIdentifier(summary.Operation), Source: canonicalProductIdentifier(summary.Source), Action: canonicalProductIdentifier(summary.Action), FailMode: canonicalProductIdentifier(summary.FailMode), Provider: canonicalProductIdentifier(summary.Provider), ReasonCode: canonicalProductIdentifier(summary.ReasonCode), RuleIDs: canonicalProductRuleIDs(summary.RuleIDs), CreatedAt: createdAt}, nil
 }
 
 func projectCanonicalProductMCPRuntimeAudit(summary *appagentthread.MCPRuntimeAuditEventSummary) (*canonicalProductMCPRuntimeAudit, error) {
@@ -329,7 +370,11 @@ func projectCanonicalProductMCPRuntimeAudit(summary *appagentthread.MCPRuntimeAu
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMCPRuntimeAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ServerID: canonicalOptionalIDString(summary.ServerID), RuntimeToolName: canonicalProductIdentifier(summary.RuntimeToolName), EventType: canonicalProductIdentifier(summary.EventType), ErrorCode: canonicalProductIdentifier(summary.ErrorCode), ElapsedMillis: summary.ElapsedMillis, OutputBytes: summary.OutputBytes, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	createdAt, err := canonicalProductRequiredTime(summary.CreatedAt, "mcp runtime audit created_at")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMCPRuntimeAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ServerID: canonicalOptionalIDString(summary.ServerID), RuntimeToolName: canonicalProductIdentifier(summary.RuntimeToolName), EventType: canonicalProductIdentifier(summary.EventType), ErrorCode: canonicalProductIdentifier(summary.ErrorCode), ElapsedMillis: summary.ElapsedMillis, OutputBytes: summary.OutputBytes, CreatedAt: createdAt}, nil
 }
 
 func canonicalProductRequiredID(value int64, resource string) (string, error) {
@@ -338,6 +383,17 @@ func canonicalProductRequiredID(value int64, resource string) (string, error) {
 		return "", fmt.Errorf("canonical %s projection requires a positive id", resource)
 	}
 	return projected.(string), nil
+}
+
+func canonicalProductRequiredTime(value int64, resource string) (string, error) {
+	projected := canonicalTime(value)
+	if projected == "" {
+		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, projected); err != nil {
+		return "", fmt.Errorf("canonical %s projection requires a valid time", resource)
+	}
+	return projected, nil
 }
 
 func canonicalProductIdentifier(value string) string {

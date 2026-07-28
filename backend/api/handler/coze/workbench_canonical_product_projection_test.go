@@ -18,6 +18,7 @@ package coze
 
 import (
 	"encoding/json"
+	"math"
 	"sort"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity(t *te
 	sensitive := canonicalProductSensitiveMetadata()
 	artifact, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{
 		ArtifactID: 9001, ThreadID: 8001, RunID: 7001, FileID: 6001,
-		Title: "public artifact", Metadata: sensitive, CreatedAt: 1710000000123,
+		Title: "public artifact", Metadata: sensitive, CreatedAt: 1710000000123, UpdatedAt: 1710000001123,
 	})
 	require.NoError(t, err)
 	usage, err := projectCanonicalProductTokenUsage(&appagentthread.TokenUsageSummary{
@@ -70,11 +71,11 @@ func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity(t *te
 	scan, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{
 		JobID: 4001, ThreadID: 8001, RunID: 7001, ArtifactID: 9001, FileID: 6001,
 		WorkerID: "worker-identity-secret", LastError: "provider body secret", Status: appagentthread.ArtifactScanJobStatusFailed,
-		CreatedAt: 1710000000123,
+		CreatedAt: 1710000000123, UpdatedAt: 1710000001123,
 	})
 	require.NoError(t, err)
 	mem, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{
-		MemoryID: 3001, ThreadID: 8001, RunID: 7001, Content: "approved memory", Metadata: sensitive, CreatedAt: 1710000000123,
+		MemoryID: 3001, ThreadID: 8001, RunID: 7001, Content: "approved memory", Metadata: sensitive, CreatedAt: 1710000000123, UpdatedAt: 1710000001123,
 	})
 	require.NoError(t, err)
 	guardrail, err := projectCanonicalProductGuardrailAudit(&appagentthread.GuardrailAuditEventSummary{
@@ -100,24 +101,31 @@ func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity(t *te
 }
 
 func TestCanonicalProductProjectionMatchesIDLWireShapes(t *testing.T) {
-	upload, err := projectCanonicalProductUpload(&appagentthread.TaskThreadUploadedFileSummary{FileID: 1})
+	const createdAt = int64(1710000000123)
+	const updatedAt = int64(1710000001123)
+
+	upload, err := projectCanonicalProductUpload(&appagentthread.TaskThreadUploadedFileSummary{FileID: 1, CreatedAt: createdAt})
 	require.NoError(t, err)
 	requireCanonicalProductWireFields(t, upload, []string{"file_id", "file_name", "virtual_path", "content_type", "size_bytes", "created_at"})
+	requireCanonicalProductRFC3339(t, upload.CreatedAt)
 
-	artifact, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4})
+	artifact, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4, CreatedAt: createdAt, UpdatedAt: updatedAt})
 	require.NoError(t, err)
 	requireCanonicalProductWireFields(t, artifact, []string{"artifact_id", "thread_id", "run_id", "file_id", "title", "artifact_type", "virtual_path", "content_type", "size_bytes", "preview_mode", "metadata", "created_at", "updated_at"})
+	requireCanonicalProductRFC3339(t, artifact.CreatedAt, artifact.UpdatedAt)
 
-	scan, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5})
+	scan, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: createdAt, UpdatedAt: updatedAt})
 	require.NoError(t, err)
 	scanFields := requireCanonicalProductWireFields(t, scan, []string{"job_id", "thread_id", "run_id", "artifact_id", "file_id", "scanner", "status", "worker_ref", "attempt_count", "error_code", "created_at", "updated_at"})
 	require.NotContains(t, scanFields, "lease_expires_at")
 	require.Equal(t, "none", scanFields["worker_ref"])
-	require.Equal(t, "", scanFields["error_code"])
+	require.Equal(t, "none", scanFields["error_code"])
+	requireCanonicalProductRFC3339(t, scan.CreatedAt, scan.UpdatedAt)
 
-	usage, err := projectCanonicalProductTokenUsage(&appagentthread.TokenUsageSummary{UsageID: 1, ThreadID: 2, RunID: 3})
+	usage, err := projectCanonicalProductTokenUsage(&appagentthread.TokenUsageSummary{UsageID: 1, ThreadID: 2, RunID: 3, CreatedAt: createdAt})
 	require.NoError(t, err)
 	requireCanonicalProductWireFields(t, usage, []string{"usage_id", "thread_id", "run_id", "source", "step_id", "step_index", "step_name", "model_name", "provider", "input_tokens", "output_tokens", "total_tokens", "cost_micros", "currency", "estimated", "created_at"})
+	requireCanonicalProductRFC3339(t, usage.CreatedAt)
 
 	aggregate := projectCanonicalProductTokenUsageAggregate(nil)
 	requireCanonicalProductWireFields(t, aggregate, []string{"input_tokens", "output_tokens", "total_tokens", "cost_micros", "call_count", "lead_agent_tokens", "subagent_tokens", "middleware_tokens", "tool_tokens"})
@@ -125,27 +133,81 @@ func TestCanonicalProductProjectionMatchesIDLWireShapes(t *testing.T) {
 	require.NoError(t, err)
 	requireCanonicalProductWireFields(t, runAggregate, []string{"run_id", "aggregate"})
 
-	memory, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, SourceID: "snapshot:501:language"})
+	memory, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, SourceID: "snapshot:501:language", CreatedAt: createdAt, UpdatedAt: updatedAt})
 	require.NoError(t, err)
 	memoryFields := requireCanonicalProductWireFields(t, memory, []string{"memory_id", "thread_id", "scope", "content", "metadata", "score", "confidence", "source_type", "source_id", "created_at", "updated_at"})
 	require.Equal(t, "snapshot:501:language", memoryFields["source_id"])
+	requireCanonicalProductRFC3339(t, memory.CreatedAt, memory.UpdatedAt)
 
-	memoryAudit, err := projectCanonicalProductMemoryAudit(&appagentthread.MemoryAuditEventSummary{EventID: 1, ThreadID: 2, ActorID: 7, SourceID: "snapshot:501:language"})
+	memoryAudit, err := projectCanonicalProductMemoryAudit(&appagentthread.MemoryAuditEventSummary{EventID: 1, ThreadID: 2, ActorID: 7, SourceID: "snapshot:501:language", CreatedAt: createdAt})
 	require.NoError(t, err)
 	memoryAuditFields := requireCanonicalProductWireFields(t, memoryAudit, []string{"event_id", "thread_id", "actor_id", "event_type", "scope", "source_type", "source_id", "affected_count", "created_at"})
 	require.Equal(t, "7", memoryAuditFields["actor_id"])
 	require.Equal(t, "snapshot:501:language", memoryAuditFields["source_id"])
+	requireCanonicalProductRFC3339(t, memoryAudit.CreatedAt)
 
-	guardrail, err := projectCanonicalProductGuardrailAudit(&appagentthread.GuardrailAuditEventSummary{EventID: 1, ThreadID: 2, ActorID: 7, TargetID: "runtime_tool:search_docs", RuleIDs: `["authorization","https://storage.example.test/signed-url-secret","sk-secret-value"]`})
+	guardrail, err := projectCanonicalProductGuardrailAudit(&appagentthread.GuardrailAuditEventSummary{EventID: 1, ThreadID: 2, ActorID: 7, TargetID: "runtime_tool:search_docs", RuleIDs: `["authorization","https://storage.example.test/signed-url-secret","sk-secret-value"]`, CreatedAt: createdAt})
 	require.NoError(t, err)
 	guardrailFields := requireCanonicalProductWireFields(t, guardrail, []string{"event_id", "thread_id", "actor_id", "event_type", "target_type", "target_id", "operation", "source", "action", "fail_mode", "provider", "reason_code", "rule_ids", "created_at"})
 	require.Equal(t, "7", guardrailFields["actor_id"])
 	require.Equal(t, "runtime_tool:search_docs", guardrailFields["target_id"])
 	require.Equal(t, []any{"authorization"}, guardrailFields["rule_ids"])
+	requireCanonicalProductRFC3339(t, guardrail.CreatedAt)
 
-	mcp, err := projectCanonicalProductMCPRuntimeAudit(&appagentthread.MCPRuntimeAuditEventSummary{EventID: 1, ThreadID: 2})
+	mcp, err := projectCanonicalProductMCPRuntimeAudit(&appagentthread.MCPRuntimeAuditEventSummary{EventID: 1, ThreadID: 2, CreatedAt: createdAt})
 	require.NoError(t, err)
 	requireCanonicalProductWireFields(t, mcp, []string{"event_id", "thread_id", "runtime_tool_name", "event_type", "error_code", "elapsed_millis", "output_bytes", "created_at"})
+	requireCanonicalProductRFC3339(t, mcp.CreatedAt)
+}
+
+func TestCanonicalProductProjectionRejectsMissingOrInvalidRequiredTimes(t *testing.T) {
+	const validTime = int64(1710000000123)
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "upload zero", call: func() error {
+			_, err := projectCanonicalProductUpload(&appagentthread.TaskThreadUploadedFileSummary{FileID: 1})
+			return err
+		}},
+		{name: "artifact updated zero", call: func() error {
+			_, err := projectCanonicalProductArtifact(&appagentthread.ArtifactSummary{ArtifactID: 1, ThreadID: 2, RunID: 3, FileID: 4, CreatedAt: validTime})
+			return err
+		}},
+		{name: "scan created negative", call: func() error {
+			_, err := projectCanonicalProductArtifactScanJob(&appagentthread.ArtifactScanJobSummary{JobID: 1, ThreadID: 2, RunID: 3, ArtifactID: 4, FileID: 5, CreatedAt: -1, UpdatedAt: validTime})
+			return err
+		}},
+		{name: "token usage zero", call: func() error {
+			_, err := projectCanonicalProductTokenUsage(&appagentthread.TokenUsageSummary{UsageID: 1, ThreadID: 2, RunID: 3})
+			return err
+		}},
+		{name: "memory updated zero", call: func() error {
+			_, err := projectCanonicalProductMemory(&appagentthread.MemorySummary{MemoryID: 1, ThreadID: 2, CreatedAt: validTime})
+			return err
+		}},
+		{name: "memory audit zero", call: func() error {
+			_, err := projectCanonicalProductMemoryAudit(&appagentthread.MemoryAuditEventSummary{EventID: 1, ThreadID: 2})
+			return err
+		}},
+		{name: "guardrail audit zero", call: func() error {
+			_, err := projectCanonicalProductGuardrailAudit(&appagentthread.GuardrailAuditEventSummary{EventID: 1, ThreadID: 2})
+			return err
+		}},
+		{name: "mcp audit zero", call: func() error {
+			_, err := projectCanonicalProductMCPRuntimeAudit(&appagentthread.MCPRuntimeAuditEventSummary{EventID: 1, ThreadID: 2})
+			return err
+		}},
+		{name: "overflowing rfc3339", call: func() error {
+			_, err := projectCanonicalProductUpload(&appagentthread.TaskThreadUploadedFileSummary{FileID: 1, CreatedAt: math.MaxInt64})
+			return err
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			require.Error(t, test.call())
+		})
+	}
 }
 
 func TestCanonicalProductProjectionRejectsInvalidRequiredIDs(t *testing.T) {
@@ -202,6 +264,14 @@ func requireCanonicalProductWireFields(t *testing.T, value any, want []string) m
 	sort.Strings(want)
 	require.Equal(t, want, got)
 	return fields
+}
+
+func requireCanonicalProductRFC3339(t *testing.T, values ...string) {
+	t.Helper()
+	for _, value := range values {
+		_, err := time.Parse(time.RFC3339Nano, value)
+		require.NoError(t, err)
+	}
 }
 
 func TestCanonicalProductProjectionSupportsUploadsAggregatesAndMemoryAudits(t *testing.T) {
