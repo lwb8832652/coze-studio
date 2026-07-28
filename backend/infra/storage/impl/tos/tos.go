@@ -82,7 +82,7 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderTOS, cfg, domain.ValidationMode{AllowHTTP: true})
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderTOS, cfg, domain.ValidationMode{})
 	if err != nil {
 		return nil, err
 	}

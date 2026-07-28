@@ -81,7 +81,7 @@ func New(ctx context.Context, endpoint, accessKeyID, secretAccessKey, bucketName
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderMinIO, cfg, domain.ValidationMode{AllowHTTP: true})
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderMinIO, cfg, domain.ValidationMode{})
 	if err != nil {
 		return nil, err
 	}

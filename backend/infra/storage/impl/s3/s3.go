@@ -82,7 +82,9 @@ func New(ctx context.Context, ak, sk, bucketName, endpoint, region string) (stor
 }
 
 func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential domain.CredentialInput) (storage.Storage, error) {
-	normalized, err := domain.ValidatePublicConfig(domain.ProviderAWSS3, cfg, domain.ValidationMode{AllowHTTP: true})
+	runtimeConfig := cfg
+	runtimeConfig.Endpoint = ""
+	normalized, err := domain.ValidatePublicConfig(domain.ProviderAWSS3, runtimeConfig, domain.ValidationMode{})
 	if err != nil {
 		return nil, err
 	}
@@ -94,9 +96,6 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 		return nil, domain.ErrConfigInvalid
 	}
 	endpoint := normalized.EndpointOverride
-	if endpoint == "" {
-		endpoint = normalized.Endpoint
-	}
 	return getS3ClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, endpoint, normalized.Region, normalized.ForcePathStyle, false, normalized.Region)
 }
 

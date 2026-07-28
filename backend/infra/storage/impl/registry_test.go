@@ -88,21 +88,21 @@ func TestDefaultRegistryBuildsKnownProvidersAndRejectsDeferredProviders(t *testi
 		{
 			ProviderType: domain.ProviderMinIO,
 			PublicConfig: domain.PublicConfig{
-				Bucket: "coze", Endpoint: "127.0.0.1:1", UseSSL: false,
+				Bucket: "coze", Endpoint: "127.0.0.1:1", UseSSL: true,
 			},
 			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
 		{
 			ProviderType: domain.ProviderAWSS3,
 			PublicConfig: domain.PublicConfig{
-				Bucket: "coze", Region: "us-east-1", Endpoint: "http://127.0.0.1:1", ForcePathStyle: true,
+				Bucket: "coze", Region: "us-east-1",
 			},
 			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
 		{
 			ProviderType: domain.ProviderTOS,
 			PublicConfig: domain.PublicConfig{
-				Bucket: "coze", Region: "cn-beijing", Endpoint: "http://127.0.0.1:1",
+				Bucket: "coze", Region: "cn-beijing", Endpoint: "https://127.0.0.1:1",
 			},
 			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
@@ -166,7 +166,7 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 			name:  "minio",
 			build: miniopkg.NewFromConfig,
 			cfg: domain.PublicConfig{
-				Bucket: "coze", Endpoint: "127.0.0.1:1", UseSSL: false,
+				Bucket: "coze", Endpoint: "127.0.0.1:1", UseSSL: true,
 			},
 			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
@@ -174,7 +174,7 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 			name:  "s3",
 			build: s3pkg.NewFromConfig,
 			cfg: domain.PublicConfig{
-				Bucket: "coze", Region: "us-east-1", Endpoint: "http://127.0.0.1:1", ForcePathStyle: true,
+				Bucket: "coze", Region: "us-east-1",
 			},
 			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
@@ -182,7 +182,7 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 			name:  "tos",
 			build: tospkg.NewFromConfig,
 			cfg: domain.PublicConfig{
-				Bucket: "coze", Region: "cn-beijing", Endpoint: "http://127.0.0.1:1",
+				Bucket: "coze", Region: "cn-beijing", Endpoint: "https://127.0.0.1:1",
 			},
 			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
 		},
@@ -211,6 +211,46 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 			_, err = tc.build(ctx, tc.cfg, domain.CredentialInput{})
 			if !errors.Is(err, domain.ErrConfigInvalid) {
 				t.Fatalf("NewFromConfig(empty credential) error = %v", err)
+			}
+		})
+	}
+}
+
+func TestNewFromConfigRejectsHTTPRuntimeEndpoints(t *testing.T) {
+	ctx := context.Background()
+	credential := domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"}
+	cases := []struct {
+		name  string
+		build func(context.Context, domain.PublicConfig, domain.CredentialInput) (storage.Storage, error)
+		cfg   domain.PublicConfig
+	}{
+		{
+			name:  "minio schemed http",
+			build: miniopkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Endpoint: "http://127.0.0.1:1"},
+		},
+		{
+			name:  "minio raw endpoint without ssl",
+			build: miniopkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Endpoint: "127.0.0.1:1", UseSSL: false},
+		},
+		{
+			name:  "s3 endpoint override http",
+			build: s3pkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Region: "us-east-1", EndpointOverride: "http://127.0.0.1:1"},
+		},
+		{
+			name:  "tos endpoint http",
+			build: tospkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Region: "cn-beijing", Endpoint: "http://127.0.0.1:1"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.build(ctx, tc.cfg, credential)
+			if !errors.Is(err, domain.ErrConfigInvalid) {
+				t.Fatalf("NewFromConfig(http endpoint) error = %v", err)
 			}
 		})
 	}

@@ -22,8 +22,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"testing"
 
+	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
 )
 
@@ -87,6 +89,27 @@ func TestCheckReadinessSuccessUsesOnlyHeadBucket(t *testing.T) {
 
 func TestProductionFileDoesNotExposeReadinessTestHook(t *testing.T) {
 	assertNoReadinessTestHook(t, "s3.go")
+}
+
+func TestNewFromConfigIgnoresGenericEndpointField(t *testing.T) {
+	storageClient, err := NewFromConfig(context.Background(),
+		domain.PublicConfig{Bucket: "coze", Region: "us-east-1", Endpoint: "http://127.0.0.1:1"},
+		domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+	)
+	if err != nil {
+		t.Fatalf("NewFromConfig(generic endpoint) error = %v", err)
+	}
+	client, ok := storageClient.(*s3Client)
+	if !ok {
+		t.Fatalf("NewFromConfig() type = %T, want *s3Client", storageClient)
+	}
+	options := client.client.Options()
+	if options.BaseEndpoint != nil && strings.Contains(*options.BaseEndpoint, "127.0.0.1") {
+		t.Fatalf("BaseEndpoint = %q, want generic endpoint ignored", *options.BaseEndpoint)
+	}
+	if options.EndpointResolver != nil {
+		t.Fatal("EndpointResolver is set from generic endpoint, want nil")
+	}
 }
 
 func assertS3NoWriteCalls(t *testing.T, recorder *s3ReadinessRecorder) {
