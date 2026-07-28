@@ -88,7 +88,7 @@ Thrift/Hz、Eino ADK、MySQL、`@coze-arch/fetch-stream`、Codex in-app browser
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
 - Modify: `backend/api/router/coze/workbench_thread_route_test.go`
 
-- [ ] **Step 1: Record the immutable route inventory**
+- [x] **Step 1: Record the immutable route inventory**
 
 Keep the existing exact 47-route canonical snapshot, 36-route TaskThread V1 snapshot and
 23-route LangGraph Thread snapshot. Add an exact 10-route stateless Run snapshot so all four
@@ -107,7 +107,7 @@ GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
 Expected: PASS while all source routes are still present. Save the exact route counts and current
 HEAD in the Gate A evidence file.
 
-- [ ] **Step 2: Freeze current page-visible V1 behavior**
+- [x] **Step 2: Freeze current page-visible V1 behavior**
 
 Run the current Workbench, Tasks, service, usage, Memory, Artifact and stream tests before any
 transport edit:
@@ -127,7 +127,7 @@ rushx test -- \
 Expected: PASS. Record any pre-existing skipped or substituted scenario; do not silently convert a
 baseline failure into a migration failure.
 
-- [ ] **Step 3: Write the five-part zero-use audit record**
+- [x] **Step 3: Write the five-part zero-use audit record**
 
 The audit document must have separate evidence rows for:
 
@@ -145,7 +145,7 @@ request bodies or user content into the document.
 If access logs or consumer registration cannot be queried, mark item 3 or 4 `BLOCKED` and record
 the exact missing source. Task 14 is then forbidden; Tasks 2-13 may continue.
 
-- [ ] **Step 4: Verify local caller classification**
+- [x] **Step 4: Verify local caller classification**
 
 Use codebase-memory first for `CreateLangGraphStatelessRun`,
 `registerLangGraphCustomRoutes`, `CreateTaskThread` and NewX client call paths, then verify source
@@ -164,7 +164,7 @@ Classify every production hit in the audit. Expected current local callers:
 - route/handler/tests implement all three source families;
 - no production caller invokes local `/api/runs/**`.
 
-- [ ] **Step 5: Capture the old-page browser control**
+- [x] **Step 5: Capture the old-page browser control**
 
 Using the in-app browser and the configured online workspace, record the current URL, account role,
 workspace ID, visible task list/detail state, a newly created clearly named validation Thread, one
@@ -174,7 +174,7 @@ records.
 Expected: the control uses `/api/workbench/task_threads/**`; no conclusion about canonical UI is
 made from this run.
 
-- [ ] **Step 6: Commit the baseline evidence and route snapshot**
+- [x] **Step 6: Commit the baseline evidence and route snapshot**
 
 ```bash
 git add \
