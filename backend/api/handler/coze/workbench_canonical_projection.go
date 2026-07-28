@@ -68,6 +68,7 @@ type canonicalThreadCoze struct {
 	Progress          int32  `json:"progress"`
 	LastUserMessage   string `json:"last_user_message"`
 	LastAgentMessage  string `json:"last_agent_message"`
+	CanEdit           bool   `json:"can_edit"`
 }
 
 type canonicalRun struct {
@@ -180,14 +181,23 @@ func projectCanonicalThread(
 	if err != nil {
 		return nil, err
 	}
-	if complete {
-		return projectCanonicalThreadSnapshot(summary, snapshot)
+	if !complete {
+		snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+		if err != nil {
+			return nil, err
+		}
 	}
-	snapshot, err = loadCanonicalThreadProjectionSnapshot(ctx, summary.ThreadID)
+	projected, err := projectCanonicalThreadSnapshot(summary, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	return projectCanonicalThreadSnapshot(summary, snapshot)
+	projected.Coze.CanEdit = canonicalThreadCanEdit(ctx, summary.CreatorID)
+	return projected, nil
+}
+
+func canonicalThreadCanEdit(ctx context.Context, creatorID int64) bool {
+	viewerID := workbenchViewerIDFromCtx(ctx)
+	return viewerID > 0 && creatorID > 0 && viewerID == creatorID
 }
 
 func canonicalThreadSnapshotFromProductStatus(

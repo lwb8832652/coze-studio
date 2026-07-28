@@ -164,6 +164,63 @@ func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(
 	require.Equal(t, "agent message", projectedThread.Coze.LastAgentMessage)
 }
 
+func TestCanonicalThreadProjectionCanEditRequiresMatchingAuthenticatedCreator(t *testing.T) {
+	testCases := []struct {
+		name      string
+		ctx       context.Context
+		creatorID int64
+		canEdit   bool
+	}{
+		{
+			name:      "matching authenticated viewer",
+			ctx:       canonicalViewerContext(42),
+			creatorID: 42,
+			canEdit:   true,
+		},
+		{
+			name:      "missing viewer",
+			ctx:       context.Background(),
+			creatorID: 42,
+			canEdit:   false,
+		},
+		{
+			name:      "mismatched viewer",
+			ctx:       canonicalViewerContext(7),
+			creatorID: 42,
+			canEdit:   false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			projected, err := projectCanonicalThread(testCase.ctx, &appagentthread.ThreadSummary{
+				ThreadID:  2001,
+				CreatorID: testCase.creatorID,
+				Status:    appagentthread.ThreadStatusCompleted,
+				Metadata:  `{"creator_id":"42","owner_id":"42","user_id":"42","space_id":"1001"}`,
+			})
+
+			require.NoError(t, err)
+			requireCanonicalThreadCanEditJSON(
+				t,
+				canonicalProjectionJSON(t, projected),
+				testCase.canEdit,
+			)
+		})
+	}
+
+	t.Run("snapshot remains viewer independent", func(t *testing.T) {
+		projected, err := projectCanonicalThreadSnapshot(
+			&appagentthread.ThreadSummary{ThreadID: 2001, CreatorID: 42},
+			canonicalThreadProjectionSnapshot{},
+		)
+
+		require.NoError(t, err)
+		requireCanonicalThreadCanEditJSON(t, canonicalProjectionJSON(t, projected), false)
+	})
+}
+
 func TestCanonicalThreadAndRunProjectionRejectsUnknownNonEmptyEnums(t *testing.T) {
 	t.Run("thread source", func(t *testing.T) {
 		for _, source := range []appagentthread.ThreadSource{
@@ -677,4 +734,26 @@ func canonicalProjectionJSON(t *testing.T, value any) string {
 	encoded, err := json.Marshal(value)
 	require.NoError(t, err)
 	return string(encoded)
+}
+
+func requireCanonicalThreadCanEditJSON(t *testing.T, encoded string, expected bool) {
+	t.Helper()
+
+	var thread map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(encoded), &thread))
+	cozeJSON, exists := thread["coze"]
+	require.True(t, exists, "canonical Thread JSON must include coze")
+
+	var coze map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(cozeJSON, &coze))
+	canEditJSON, exists := coze["can_edit"]
+	require.True(t, exists, "canonical Thread JSON must include coze.can_edit")
+
+	var canEdit bool
+	require.NoError(t, json.Unmarshal(canEditJSON, &canEdit))
+	require.Equal(t, expected, canEdit)
+
+	for _, hidden := range []string{"creator_id", "owner_id", "user_id", "space_id"} {
+		require.NotContains(t, encoded, `"`+hidden+`"`)
+	}
 }
