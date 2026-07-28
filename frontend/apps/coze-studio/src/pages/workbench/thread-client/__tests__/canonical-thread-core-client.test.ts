@@ -394,6 +394,26 @@ describe('CanonicalThreadCoreClient request contract', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('caps core page size before calculating the next page offset', async () => {
+    const fetchMock = recordingFetch(
+      jsonResponse([threadTransportFixture.canonical], {
+        headers: { 'X-Pagination-Total': '200' },
+      }),
+    );
+    const client = coreClient(fetchMock);
+
+    await client.searchThreads({
+      space_id: canonicalSpaceID,
+      page: 2,
+      page_size: 1000,
+    });
+
+    expect(requestSnapshot(fetchMock).body).toEqual({
+      limit: 100,
+      offset: 100,
+    });
+  });
+
   it('creates one initial user submission without unsupported create options', async () => {
     const fetchMock = recordingFetch(jsonResponse(makeThreadCreationWire()));
     const client = coreClient(fetchMock);
@@ -706,9 +726,7 @@ describe('CanonicalThreadCoreClient request contract', () => {
 
   it('creates a message-less top-level retry with the reviewed source relation', async () => {
     const content = 'Retry the current task';
-    const fetchMock = recordingFetch(
-      jsonResponse(makeRetryRunCreationWire()),
-    );
+    const fetchMock = recordingFetch(jsonResponse(makeRetryRunCreationWire()));
     const client = coreClient(fetchMock);
 
     await expect(

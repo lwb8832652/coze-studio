@@ -110,7 +110,10 @@ export type {
   WorkbenchClientOutcome,
 } from './canonical-fetch';
 export type {
+  CanonicalThreadClient,
+  CanonicalThreadClientOptions,
   CanonicalThreadCoreClient,
   CanonicalThreadCoreClientOptions,
   CanonicalWorkbenchCoreClient,
+  CanonicalWorkbenchProductClient,
 } from './canonical-thread-client';

@@ -114,7 +114,7 @@ transport edit:
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- \
+rushx test \
   src/pages/workbench/__tests__/workbench.test.tsx \
   src/pages/tasks/__tests__/tasks.test.tsx \
   src/pages/tasks/__tests__/tasks-service.test.ts \
@@ -205,7 +205,7 @@ Run:
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts
+rushx test src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts
 ```
 
 Expected: FAIL because the app-owned boundary does not exist.
@@ -265,7 +265,7 @@ issue network requests.
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts
+rushx test src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts
 ```
 
 Expected: PASS.
@@ -387,11 +387,11 @@ For 400, 401, 403, 404, 409, 413, 422, 429, 500, network reset and abort, assert
 canonical request and no request whose URL starts with `/api/workbench/task_threads`,
 `/api/threads` or `/api/runs`.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts
+rushx test src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts
 ```
 
 Expected: PASS.
@@ -553,31 +553,35 @@ all remaining Task 3 review findings before Task 3 can be marked complete.
 ### Task 4: Implement All Canonical Product Operations
 
 **Files:**
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-fetch.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/adapters/canonical-thread-adapter.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-product-client.test.ts`
 
-- [ ] **Step 1: Write failing snapshots for all 26 product routes**
+- [x] **Step 1: Write failing snapshots for all 26 product routes**
 
 Cover suggestions, compatibility append, three Upload operations, eight Artifact/scan operations,
 token usage, eight Memory operations, and Memory/Guardrail/MCP audit operations. Assert all resource
 requests include the workspace header and never place `space_id`, owner or user ID in body/query.
 
-- [ ] **Step 2: Implement Upload and Artifact transport**
+- [x] **Step 2: Implement Upload and Artifact transport**
 
 Use `FormData` for upload and omit JSON content type. Delete Upload by canonical `file_id`, not old
 filename. Return Artifact content as `Blob` plus content headers. Parse direct signed URL/scan
 responses, but never pass the URL or filename to telemetry. Pure deletes accept only the documented
 empty success response.
 
-- [ ] **Step 3: Implement usage, Memory and audit transport**
+- [x] **Step 3: Implement usage, Memory and audit transport**
 
-Map page/page_size to non-negative integral limit/offset. Preserve abort behavior for usage.
+Map page/page_size to non-negative integral limit/offset. Cap core pages at 100 and product pages
+at 200 before calculating offset, matching the server contracts and preventing skipped records.
+Preserve abort behavior for usage.
 Convert Memory metadata string to a JSON object on write and back to the current page string on
 read. Never synthesize `raw_usage` from internal provider data. Preserve only reviewed public audit
 fields and epoch-millisecond times.
 
-- [ ] **Step 4: Enforce append and suggestion semantics**
+- [x] **Step 4: Enforce append and suggestion semantics**
 
 Suggestions send model/count inputs and let the server load persisted messages. Compatibility
 append sends `append_mode='internal_compat'`; reject user/human roles locally with
@@ -588,7 +592,7 @@ method.
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/workbench/thread-client/__tests__/canonical-thread-product-client.test.ts
+rushx test src/pages/workbench/thread-client/__tests__/canonical-thread-product-client.test.ts
 ```
 
 Expected: PASS for every path/header/body and paired visible-model fixture.
@@ -653,7 +657,7 @@ logger metadata.
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- \
+rushx test \
   src/pages/workbench/thread-client/__tests__/workbench-run-stream.test.ts \
   src/pages/workbench/thread-client/__tests__/client-telemetry.test.ts
 ```
@@ -711,7 +715,7 @@ Run its tests to prove Scheduled Task remains on the generated `workbenchTask` n
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- \
+rushx test \
   src/pages/workbench/thread-client/__tests__/page-service-parity.test.ts \
   src/pages/tasks/__tests__/tasks-service.test.ts \
   src/pages/tasks/__tests__/task-usage-service.test.ts \
@@ -780,7 +784,7 @@ Run:
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/tasks/__tests__/canonical-frontend-contract.test.ts
+rushx test src/pages/tasks/__tests__/canonical-frontend-contract.test.ts
 ```
 
 Expected: FAIL and identify current transport-bound production files.
@@ -801,7 +805,7 @@ suggestions, upload and follow-up calls.
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- \
+rushx test \
   src/pages/tasks/__tests__/canonical-frontend-contract.test.ts \
   src/pages/workbench/__tests__/workbench.test.tsx \
   src/pages/tasks/__tests__/tasks.test.tsx \
@@ -854,7 +858,7 @@ close the previous source and open the new Run source. Guard callbacks with capt
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- \
+rushx test \
   src/pages/tasks/__tests__/task-detail.test.tsx \
   src/pages/tasks/__tests__/task-detail-data-scope.test.tsx \
   src/pages/tasks/__tests__/task-run-actions-hook.test.tsx \
@@ -896,7 +900,7 @@ follow-up, cancel, resume, retry, Artifact, Memory and SSE. Assert all requests 
 
 ```bash
 cd frontend/apps/coze-studio
-rushx test -- src/pages/workbench/thread-client src/pages/workbench src/pages/tasks
+rushx test src/pages/workbench/thread-client src/pages/workbench src/pages/tasks
 rushx lint
 rushx build
 ```

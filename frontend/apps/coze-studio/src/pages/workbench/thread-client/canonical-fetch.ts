@@ -63,8 +63,15 @@ export interface CanonicalJSONRequest {
   method: string;
   spaceId: string;
   json?: unknown;
+  body?: BodyInit;
   idempotencyKey?: string;
   signal?: AbortSignal;
+}
+
+export interface CanonicalBlobResult {
+  blob: Blob;
+  contentType: string | null;
+  contentDisposition: string | null;
 }
 
 interface CanonicalErrorBody {
@@ -362,15 +369,21 @@ export const invalidCanonicalResponse = (
     outcome: 'unknown',
   });
 
-export const fetchCanonicalJSON = async <T = unknown>(
+const fetchCanonicalResponse = async (
   url: string,
   request: CanonicalJSONRequest,
-): Promise<CanonicalJSONResult<T>> => {
+): Promise<Response> => {
   const headers: Record<string, string> = {
     'X-Coze-Space-ID': request.spaceId,
     'x-requested-with': 'XMLHttpRequest',
   };
-  let body: string | undefined;
+  if (request.json !== undefined && request.body !== undefined) {
+    throw invalidCanonicalRequest(
+      'invalid_request_body',
+      'Canonical request cannot contain both JSON and raw body data',
+    );
+  }
+  let body = request.body;
   if (request.json !== undefined) {
     headers['content-type'] = 'application/json';
     body = serializeJSON(request.json);
@@ -423,6 +436,15 @@ export const fetchCanonicalJSON = async <T = unknown>(
     });
   }
 
+  return response;
+};
+
+export const fetchCanonicalJSON = async <T = unknown>(
+  url: string,
+  request: CanonicalJSONRequest,
+): Promise<CanonicalJSONResult<T>> => {
+  const response = await fetchCanonicalResponse(url, request);
+
   const pagination = canonicalPagination(response);
   if (response.status === httpNoContent) {
     return { body: undefined, pagination };
@@ -435,4 +457,34 @@ export const fetchCanonicalJSON = async <T = unknown>(
     );
   }
   return { body: parsed as T, pagination };
+};
+
+export const fetchCanonicalBlob = async (
+  url: string,
+  request: CanonicalJSONRequest,
+): Promise<CanonicalBlobResult> => {
+  const response = await fetchCanonicalResponse(url, request);
+  if (response.status === httpNoContent) {
+    throw invalidCanonicalResponse(
+      'Canonical Blob response body is empty',
+      response.status,
+    );
+  }
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch (error) {
+    if (isAbortFailure(error)) {
+      throw error;
+    }
+    throw invalidCanonicalResponse(
+      'Canonical Blob response could not be read',
+      response.status,
+    );
+  }
+  return {
+    blob,
+    contentType: response.headers.get('content-type'),
+    contentDisposition: response.headers.get('content-disposition'),
+  };
 };

@@ -14,28 +14,72 @@
  * limitations under the License.
  */
 
-/* eslint-disable max-lines -- Task 3 intentionally exposes only the implemented core surface. */
+/* eslint-disable max-lines -- The reviewed canonical surface shares one transport owner. */
 
 import type {
+  AppendWorkbenchMessageRequest,
   CancelWorkbenchRunRequest,
+  ClearWorkbenchMemoriesRequest,
   CreateWorkbenchRunRequest,
   CreateWorkbenchThreadRequest,
+  DeleteWorkbenchUploadRequest,
+  ExportWorkbenchGuardrailAuditEventsRequest,
+  ExportWorkbenchMemoriesRequest,
+  GenerateWorkbenchSuggestionsRequest,
+  GetWorkbenchArtifactContentRequest,
+  GetWorkbenchArtifactSignedURLRequest,
   GetWorkbenchRunRequest,
   GetWorkbenchThreadRequest,
+  GetWorkbenchTokenUsageRequest,
+  ImportWorkbenchMemoriesRequest,
+  ListWorkbenchArtifactsRequest,
+  ListWorkbenchArtifactScanJobsRequest,
+  ListWorkbenchGuardrailAuditEventsRequest,
+  ListWorkbenchMCPRuntimeAuditEventsRequest,
+  ListWorkbenchMemoriesRequest,
+  ListWorkbenchMemoryAuditEventsRequest,
   ListWorkbenchMessagesRequest,
   ListWorkbenchRunEventsRequest,
   ListWorkbenchRunsRequest,
+  ListWorkbenchUploadsRequest,
   ResumeWorkbenchRunRequest,
+  RetryWorkbenchArtifactScanJobRequest,
+  RetryWorkbenchSubagentRunRequest,
+  ReviewWorkbenchArtifactScanRequest,
   SearchWorkbenchThreadsRequest,
+  UpdateWorkbenchMemoryRequest,
+  UploadWorkbenchFilesRequest,
+  WorkbenchArtifactRequest,
+  WorkbenchMemoryImportItem,
+  WorkbenchMemoryRequest,
   WorkbenchThreadClient,
 } from './workbench-thread-client';
 import {
+  fetchCanonicalBlob,
   fetchCanonicalJSON,
   invalidCanonicalRequest,
   invalidCanonicalResponse,
   type CanonicalFetch,
 } from './canonical-fetch';
 import {
+  adaptCanonicalArtifactContent,
+  adaptCanonicalArtifactPage,
+  adaptCanonicalArtifactRestore,
+  adaptCanonicalArtifactScanJobPage,
+  adaptCanonicalArtifactScanRetry,
+  adaptCanonicalArtifactScanReview,
+  adaptCanonicalArtifactSignedURL,
+  adaptCanonicalGuardrailAuditExport,
+  adaptCanonicalGuardrailAuditPage,
+  adaptCanonicalMCPRuntimeAuditPage,
+  adaptCanonicalMemoryAuditPage,
+  adaptCanonicalMemoryClear,
+  adaptCanonicalMemoryExport,
+  adaptCanonicalMemoryImport,
+  adaptCanonicalMemoryPage,
+  adaptCanonicalMemoryRestore,
+  adaptCanonicalMemoryUpdate,
+  adaptCanonicalMessage,
   adaptCanonicalMessagePage,
   adaptCanonicalRun,
   adaptCanonicalRunCreation,
@@ -44,6 +88,10 @@ import {
   adaptCanonicalThread,
   adaptCanonicalThreadCreation,
   adaptCanonicalThreadList,
+  adaptCanonicalSuggestions,
+  adaptCanonicalTokenUsageResult,
+  adaptCanonicalUploadCreation,
+  adaptCanonicalUploadPage,
   assertCanonicalRequestResourceID,
   parseCanonicalWriteJSON,
   parseCanonicalWriteJSONObject,
@@ -65,12 +113,21 @@ export type CanonicalWorkbenchCoreClient = Pick<
   | 'listRunEvents'
 >;
 
+export type CanonicalWorkbenchProductClient = Omit<
+  WorkbenchThreadClient,
+  'subscribeRunEvents'
+>;
+
 export interface CanonicalThreadCoreClientOptions {
   fetch?: CanonicalFetch;
 }
 
+export type CanonicalThreadClientOptions = CanonicalThreadCoreClientOptions;
+
 const canonicalPublicAssistantID = 'agent';
 const defaultPageSize = 20;
+const coreMaximumPageSize = 100;
+const productMaximumPageSize = 200;
 const maxCanonicalPageValue = 2_147_483_647;
 const nonNegativeDecimal = /^(0|[1-9]\d*)$/;
 
@@ -100,9 +157,14 @@ const asPageValue = (
   return candidate;
 };
 
-const offsetPagination = (page?: number, pageSize?: number) => {
+const offsetPagination = (
+  page: number | undefined,
+  pageSize: number | undefined,
+  maximumPageSize: number,
+) => {
   const resolvedPage = asPageValue(page, 1, 'page');
-  const limit = asPageValue(pageSize, defaultPageSize, 'page_size');
+  const requestedLimit = asPageValue(pageSize, defaultPageSize, 'page_size');
+  const limit = Math.min(requestedLimit, maximumPageSize);
   const offset = (resolvedPage - 1) * limit;
   if (!Number.isSafeInteger(offset) || offset > maxCanonicalPageValue) {
     throw invalidCanonicalRequest(
@@ -112,6 +174,12 @@ const offsetPagination = (page?: number, pageSize?: number) => {
   }
   return { limit, offset };
 };
+
+const coreOffsetPagination = (page?: number, pageSize?: number) =>
+  offsetPagination(page, pageSize, coreMaximumPageSize);
+
+const productOffsetPagination = (page?: number, pageSize?: number) =>
+  offsetPagination(page, pageSize, productMaximumPageSize);
 
 const cursorLimit = (value?: number): number =>
   asPageValue(value, defaultPageSize, 'limit');
@@ -305,7 +373,206 @@ const canonicalResumeResponse = (
   };
 };
 
-export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
+const canonicalThreadScope = (request: {
+  space_id: string;
+  thread_id: string;
+}) => ({
+  spaceID: assertCanonicalRequestResourceID(request.space_id, 'space_id'),
+  threadID: assertCanonicalRequestResourceID(request.thread_id, 'thread_id'),
+});
+
+const optionalPositiveInteger = (
+  value: number | undefined,
+  label: string,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  return asPageValue(value, value, label);
+};
+
+const optionalNonNegativeInteger = (
+  value: number | undefined,
+  label: string,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > maxCanonicalPageValue
+  ) {
+    throw invalidCanonicalRequest(
+      'invalid_request_shape',
+      `${label} must be a non-negative integer`,
+    );
+  }
+  return value;
+};
+
+const optionalFiniteNumber = (
+  value: number | undefined,
+  label: string,
+): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isFinite(value)) {
+    throw invalidCanonicalRequest(
+      'invalid_request_shape',
+      `${label} must be a finite number`,
+    );
+  }
+  return value;
+};
+
+const optionalCanonicalTime = (
+  value: number | undefined,
+  label: string,
+): string | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw invalidCanonicalRequest(
+      'invalid_time',
+      `${label} must be a non-negative epoch millisecond integer`,
+    );
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw invalidCanonicalRequest('invalid_time', `${label} is out of range`);
+  }
+  return date.toISOString();
+};
+
+const setOptionalResourceID = (
+  query: URLSearchParams,
+  name: string,
+  value: string | undefined,
+): void => {
+  if (value !== undefined) {
+    query.set(name, assertCanonicalRequestResourceID(value, name));
+  }
+};
+
+const setOptionalString = (
+  query: URLSearchParams,
+  name: string,
+  value: string | undefined,
+): void => {
+  const normalized = optionalTrimmed(value);
+  if (normalized !== undefined) {
+    query.set(name, normalized);
+  }
+};
+
+const setOptionalBoolean = (
+  query: URLSearchParams,
+  name: string,
+  value: boolean | undefined,
+): void => {
+  if (value !== undefined) {
+    query.set(name, String(value));
+  }
+};
+
+const appendOptionalStrings = (
+  query: URLSearchParams,
+  name: string,
+  values: string[] | undefined,
+): void => {
+  values?.forEach((value, index) => {
+    query.append(name, asNonEmptyRequestString(value, `${name}[${index}]`));
+  });
+};
+
+const assertCanonicalEmptySuccess = (
+  body: unknown | undefined,
+  operation: string,
+): void => {
+  if (body !== undefined) {
+    throw invalidCanonicalResponse(
+      `Canonical ${operation} response must not contain a body`,
+    );
+  }
+};
+
+const canonicalArtifactMode = (
+  value: 'preview' | 'download',
+): 'preview' | 'download' => {
+  if (value !== 'preview' && value !== 'download') {
+    throw invalidCanonicalRequest(
+      'invalid_artifact_mode',
+      'mode must be preview or download',
+    );
+  }
+  return value;
+};
+
+const canonicalMemoryMutation = (
+  item: UpdateWorkbenchMemoryRequest | WorkbenchMemoryImportItem,
+) => {
+  const runID =
+    item.run_id === undefined
+      ? undefined
+      : assertCanonicalRequestResourceID(item.run_id, 'run_id');
+  const scope = optionalTrimmed(item.scope);
+  const content = asNonEmptyRequestString(item.content, 'content');
+  const metadata = parseCanonicalWriteJSONObject(item.metadata, 'metadata');
+  const correctionID =
+    item.correction_of_memory_id === undefined
+      ? undefined
+      : assertCanonicalRequestResourceID(
+          item.correction_of_memory_id,
+          'correction_of_memory_id',
+        );
+  const correctedAt = optionalCanonicalTime(item.corrected_at, 'corrected_at');
+  const expiresAt = optionalCanonicalTime(item.expires_at, 'expires_at');
+  const score = optionalFiniteNumber(item.score, 'score');
+  const confidence = optionalFiniteNumber(item.confidence, 'confidence');
+  const sourceType = optionalTrimmed(item.source_type);
+  const sourceID = optionalTrimmed(item.source_id);
+  return {
+    ...(runID === undefined ? {} : { run_id: runID }),
+    ...(scope === undefined ? {} : { scope }),
+    content,
+    ...(metadata === undefined ? {} : { metadata }),
+    ...(score === undefined ? {} : { score }),
+    ...(confidence === undefined ? {} : { confidence }),
+    ...(sourceType === undefined ? {} : { source_type: sourceType }),
+    ...(sourceID === undefined ? {} : { source_id: sourceID }),
+    ...(correctionID === undefined
+      ? {}
+      : { correction_of_memory_id: correctionID }),
+    ...(correctedAt === undefined ? {} : { corrected_at: correctedAt }),
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+  };
+};
+
+const appendMemoryQuery = (
+  query: URLSearchParams,
+  request: {
+    run_id?: string;
+    scope?: string;
+    scopes?: string[];
+    q?: string;
+    include_expired?: boolean;
+    include_deleted?: boolean;
+  },
+): void => {
+  setOptionalResourceID(query, 'run_id', request.run_id);
+  setOptionalString(query, 'scope', request.scope);
+  appendOptionalStrings(query, 'scopes', request.scopes);
+  setOptionalString(query, 'q', request.q);
+  setOptionalBoolean(query, 'include_expired', request.include_expired);
+  setOptionalBoolean(query, 'include_deleted', request.include_deleted);
+};
+
+export class CanonicalThreadCoreClient
+  implements CanonicalWorkbenchProductClient
+{
   readonly contract = 'canonical_v1' as const;
 
   private readonly fetcher: CanonicalFetch | undefined;
@@ -319,7 +586,10 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       request.space_id,
       'space_id',
     );
-    const { limit, offset } = offsetPagination(request.page, request.page_size);
+    const { limit, offset } = coreOffsetPagination(
+      request.page,
+      request.page_size,
+    );
     const status = optionalTrimmed(request.status);
     const result = await fetchCanonicalJSON('/api/workbench/threads/search', {
       fetch: this.fetcher,
@@ -458,7 +728,10 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       request.thread_id,
       'thread_id',
     );
-    const { limit, offset } = offsetPagination(request.page, request.page_size);
+    const { limit, offset } = coreOffsetPagination(
+      request.page,
+      request.page_size,
+    );
     const query = new URLSearchParams();
     if (request.parent_run_id !== undefined) {
       query.set(
@@ -684,4 +957,664 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       runId: runID,
     });
   }
+
+  async appendMessage(request: AppendWorkbenchMessageRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const role = asNonEmptyRequestString(request.role, 'role').toLowerCase();
+    if (role === 'user' || role === 'human') {
+      throw invalidCanonicalRequest(
+        'atomic_run_submission_required',
+        'User messages must be submitted atomically through createRun',
+      );
+    }
+    if (role !== 'assistant' && role !== 'tool') {
+      throw invalidCanonicalRequest(
+        'invalid_message_role',
+        'role must be assistant or tool',
+      );
+    }
+    if (request.run_id === undefined) {
+      throw invalidCanonicalRequest(
+        'invalid_run_id',
+        'run_id is required for compatibility append',
+      );
+    }
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const metadata = parseCanonicalWriteJSONObject(
+      request.metadata,
+      'metadata',
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/messages`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        json: {
+          run_id: runID,
+          role,
+          content: asNonEmptyRequestString(request.content, 'content'),
+          ...(metadata === undefined ? {} : { metadata }),
+          append_mode: 'internal_compat',
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMessage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    });
+  }
+
+  async generateSuggestions(request: GenerateWorkbenchSuggestionsRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const count = optionalNonNegativeInteger(request.n, 'n');
+    const modelName = optionalTrimmed(request.model_name);
+    const modelType = optionalTrimmed(request.model_type);
+    if (modelType !== undefined && !nonNegativeDecimal.test(modelType)) {
+      throw invalidCanonicalRequest(
+        'invalid_model_type',
+        'model_type must be a non-negative decimal string',
+      );
+    }
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/suggestions`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        json: {
+          ...(count === undefined ? {} : { n: count }),
+          ...(modelName === undefined ? {} : { model_name: modelName }),
+          ...(modelType === undefined ? {} : { model_type: modelType }),
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalSuggestions(requiredBody(result.body));
+  }
+
+  async retrySubagentRun(request: RetryWorkbenchSubagentRunRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/runs/${runID}/retry`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        idempotencyKey: request.idempotency_key,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalRun(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async listUploads(request: ListWorkbenchUploadsRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/uploads`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalUploadPage(requiredBody(result.body));
+  }
+
+  async uploadFiles(request: UploadWorkbenchFilesRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    if (!Array.isArray(request.files) || request.files.length === 0) {
+      throw invalidCanonicalRequest(
+        'invalid_upload',
+        'files must contain at least one File',
+      );
+    }
+    const form = new FormData();
+    request.files.forEach((file, index) => {
+      if (!(file instanceof File)) {
+        throw invalidCanonicalRequest(
+          'invalid_upload',
+          `files[${index}] must be a File`,
+        );
+      }
+      form.append('files', file);
+    });
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/uploads`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        body: form,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalUploadCreation(requiredBody(result.body));
+  }
+
+  async deleteUpload(request: DeleteWorkbenchUploadRequest): Promise<void> {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const fileID = assertCanonicalRequestResourceID(request.file_id, 'file_id');
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/uploads/${fileID}`,
+      {
+        fetch: this.fetcher,
+        method: 'DELETE',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    assertCanonicalEmptySuccess(result.body, 'Upload delete');
+  }
+
+  async listArtifacts(request: ListWorkbenchArtifactsRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    setOptionalBoolean(query, 'deleted_only', request.deleted_only);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifacts?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async getArtifactContent(request: GetWorkbenchArtifactContentRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const artifactID = assertCanonicalRequestResourceID(
+      request.artifact_id,
+      'artifact_id',
+    );
+    const mode = canonicalArtifactMode(request.mode);
+    const result = await fetchCanonicalBlob(
+      `/api/workbench/threads/${threadID}/artifacts/${artifactID}/content?mode=${mode}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactContent(result);
+  }
+
+  async getArtifactSignedURL(request: GetWorkbenchArtifactSignedURLRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const artifactID = assertCanonicalRequestResourceID(
+      request.artifact_id,
+      'artifact_id',
+    );
+    const query = new URLSearchParams();
+    query.set('mode', canonicalArtifactMode(request.mode));
+    const ttlSeconds = optionalNonNegativeInteger(
+      request.ttl_seconds,
+      'ttl_seconds',
+    );
+    if (ttlSeconds !== undefined) {
+      query.set('ttl_seconds', String(ttlSeconds));
+    }
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifacts/${artifactID}/signed_url?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactSignedURL(
+      requiredBody(result.body),
+      artifactID,
+    );
+  }
+
+  async deleteArtifact(request: WorkbenchArtifactRequest): Promise<void> {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const artifactID = assertCanonicalRequestResourceID(
+      request.artifact_id,
+      'artifact_id',
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifacts/${artifactID}`,
+      {
+        fetch: this.fetcher,
+        method: 'DELETE',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    assertCanonicalEmptySuccess(result.body, 'Artifact delete');
+  }
+
+  async restoreArtifact(request: WorkbenchArtifactRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const artifactID = assertCanonicalRequestResourceID(
+      request.artifact_id,
+      'artifact_id',
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifacts/${artifactID}/restore`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactRestore(
+      requiredBody(result.body),
+      { spaceId: spaceID, threadId: threadID },
+      artifactID,
+    );
+  }
+
+  async reviewArtifactScan(request: ReviewWorkbenchArtifactScanRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const artifactID = assertCanonicalRequestResourceID(
+      request.artifact_id,
+      'artifact_id',
+    );
+    if (!['release', 'quarantine', 'block'].includes(request.decision)) {
+      throw invalidCanonicalRequest(
+        'invalid_scan_decision',
+        'decision must be release, quarantine, or block',
+      );
+    }
+    const reason = optionalTrimmed(request.reason);
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifacts/${artifactID}/scan_review`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        json: {
+          decision: request.decision,
+          ...(reason === undefined ? {} : { reason }),
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactScanReview(
+      requiredBody(result.body),
+      artifactID,
+    );
+  }
+
+  async listArtifactScanJobs(request: ListWorkbenchArtifactScanJobsRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    setOptionalResourceID(query, 'artifact_id', request.artifact_id);
+    setOptionalString(query, 'status', request.status);
+    setOptionalString(query, 'scanner', request.scanner);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifact_scan_jobs?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactScanJobPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async retryArtifactScanJob(request: RetryWorkbenchArtifactScanJobRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const jobID = assertCanonicalRequestResourceID(request.job_id, 'job_id');
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/artifact_scan_jobs/${jobID}/retry`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalArtifactScanRetry(
+      requiredBody(result.body),
+      { spaceId: spaceID, threadId: threadID },
+      jobID,
+    );
+  }
+
+  async getTokenUsage(request: GetWorkbenchTokenUsageRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    setOptionalBoolean(query, 'include_child_runs', request.include_child_runs);
+    setOptionalString(query, 'source', request.source);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/token_usage?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalTokenUsageResult(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async listMemories(request: ListWorkbenchMemoriesRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    appendMemoryQuery(query, request);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async updateMemory(request: UpdateWorkbenchMemoryRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const memoryID = assertCanonicalRequestResourceID(
+      request.memory_id,
+      'memory_id',
+    );
+    const body = canonicalMemoryMutation(request);
+    if (body.scope === undefined) {
+      throw invalidCanonicalRequest(
+        'missing_memory_scope',
+        'scope is required for Memory update',
+      );
+    }
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/${memoryID}`,
+      {
+        fetch: this.fetcher,
+        method: 'PUT',
+        spaceId: spaceID,
+        json: body,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryUpdate(
+      requiredBody(result.body),
+      { spaceId: spaceID, threadId: threadID },
+      memoryID,
+    );
+  }
+
+  async deleteMemory(request: WorkbenchMemoryRequest): Promise<void> {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const memoryID = assertCanonicalRequestResourceID(
+      request.memory_id,
+      'memory_id',
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/${memoryID}`,
+      {
+        fetch: this.fetcher,
+        method: 'DELETE',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    assertCanonicalEmptySuccess(result.body, 'Memory delete');
+  }
+
+  async restoreMemory(request: WorkbenchMemoryRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const memoryID = assertCanonicalRequestResourceID(
+      request.memory_id,
+      'memory_id',
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/${memoryID}/restore`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryRestore(
+      requiredBody(result.body),
+      { spaceId: spaceID, threadId: threadID },
+      memoryID,
+    );
+  }
+
+  async clearMemories(request: ClearWorkbenchMemoriesRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const runID =
+      request.run_id === undefined
+        ? undefined
+        : assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    const scopes = request.scopes?.map((scope, index) =>
+      asNonEmptyRequestString(scope, `scopes[${index}]`),
+    );
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/clear`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        json: {
+          ...(runID === undefined ? {} : { run_id: runID }),
+          ...(scopes === undefined ? {} : { scopes }),
+        },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryClear(requiredBody(result.body));
+  }
+
+  async exportMemories(request: ExportWorkbenchMemoriesRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    if (request.page !== undefined && request.page !== 1) {
+      throw invalidCanonicalRequest(
+        'invalid_pagination',
+        'Memory export supports only page 1',
+      );
+    }
+    const query = new URLSearchParams();
+    appendMemoryQuery(query, request);
+    const limit = optionalPositiveInteger(request.page_size, 'page_size');
+    if (limit !== undefined) {
+      query.set('limit', String(limit));
+    }
+    const suffix = query.size === 0 ? '' : `?${query.toString()}`;
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/export${suffix}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryExport(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async importMemories(request: ImportWorkbenchMemoriesRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    if (!Array.isArray(request.memories) || request.memories.length === 0) {
+      throw invalidCanonicalRequest(
+        'empty_memory_import',
+        'memories must contain at least one item',
+      );
+    }
+    const memories = request.memories.map(canonicalMemoryMutation);
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/import`,
+      {
+        fetch: this.fetcher,
+        method: 'POST',
+        spaceId: spaceID,
+        json: { memories },
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryImport(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async listMemoryAuditEvents(request: ListWorkbenchMemoryAuditEventsRequest) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'memory_id', request.memory_id);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/memories/audit_events?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMemoryAuditPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async listGuardrailAuditEvents(
+    request: ListWorkbenchGuardrailAuditEventsRequest,
+  ) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/guardrail_audit_events?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalGuardrailAuditPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async exportGuardrailAuditEvents(
+    request: ExportWorkbenchGuardrailAuditEventsRequest,
+  ) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/guardrail_audit_events/export?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalGuardrailAuditExport(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
+
+  async listMCPRuntimeAuditEvents(
+    request: ListWorkbenchMCPRuntimeAuditEventsRequest,
+  ) {
+    const { spaceID, threadID } = canonicalThreadScope(request);
+    const { limit, offset } = productOffsetPagination(
+      request.page,
+      request.page_size,
+    );
+    const query = new URLSearchParams();
+    setOptionalResourceID(query, 'run_id', request.run_id);
+    query.set('limit', String(limit));
+    query.set('offset', String(offset));
+    const result = await fetchCanonicalJSON(
+      `/api/workbench/threads/${threadID}/mcp_runtime_audit_events?${query.toString()}`,
+      {
+        fetch: this.fetcher,
+        method: 'GET',
+        spaceId: spaceID,
+        signal: request.signal,
+      },
+    );
+    return adaptCanonicalMCPRuntimeAuditPage(requiredBody(result.body), {
+      spaceId: spaceID,
+      threadId: threadID,
+    });
+  }
 }
+
+export { CanonicalThreadCoreClient as CanonicalThreadClient };
