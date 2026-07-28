@@ -58,6 +58,12 @@ type Service struct {
 	allowHTTP  bool
 }
 
+var SVC *Service
+
+func SetDefaultService(service *Service) {
+	SVC = service
+}
+
 type CreateRequest struct {
 	Name         string
 	ProviderType domain.ProviderType

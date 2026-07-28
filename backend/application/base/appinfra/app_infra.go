@@ -44,6 +44,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/infra/orm/impl/mysql"
 	infrasandbox "github.com/coze-dev/coze-studio/backend/infra/sandbox"
 	storage "github.com/coze-dev/coze-studio/backend/infra/storage"
+	storageconfig "github.com/coze-dev/coze-studio/backend/infra/storage/config"
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
@@ -83,6 +84,11 @@ func Init(ctx context.Context) (*AppDependencies, error) {
 		return nil, fmt.Errorf("init object storage failed, err=%w", err)
 	}
 	deps.OSS = storageRuntime.Storage
+	applicationobjectstorage.SetDefaultService(applicationobjectstorage.NewService(applicationobjectstorage.ServiceComponents{
+		Repository: storageconfig.NewMySQLRepository(deps.DB),
+		Codec:      storageBootstrapper.Codec,
+		AllowHTTP:  storageBootstrapper.AllowHTTP,
+	}))
 
 	deps.CacheCli = redis.New()
 
