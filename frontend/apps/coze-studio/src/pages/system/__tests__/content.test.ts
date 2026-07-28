@@ -34,6 +34,8 @@ describe('system management content', () => {
       'billing-accounts',
       'billing-ledger',
       'billing-orders',
+      'announcements',
+      'object-storage',
       'settings',
     ]);
     expect(SYSTEM_SECTIONS.map(item => item.title)).toEqual([
@@ -50,6 +52,8 @@ describe('system management content', () => {
       '用户积分',
       '积分记录',
       '订单管理',
+      '公告通知',
+      '对象存储',
       '系统配置',
     ]);
   });
@@ -68,6 +72,7 @@ describe('system management content', () => {
           'billing-accounts',
           'billing-ledger',
           'billing-orders',
+          'announcements',
         ].includes(section.key)
       ) {
         expect(SECTION_CONTENT[section.key].cards).toHaveLength(0);

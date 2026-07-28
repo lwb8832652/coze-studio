@@ -35,10 +35,52 @@ const mockGetSystemAdminStatus = vi.hoisted(() => vi.fn());
 const mockCreateAdminModel = vi.hoisted(() => vi.fn());
 const mockCreateAdminUser = vi.hoisted(() => vi.fn());
 const mockDeleteAdminModel = vi.hoisted(() => vi.fn());
+const mockListObjectStorageConfigs = vi.hoisted(() => vi.fn());
+const mockCreateObjectStorageConfig = vi.hoisted(() => vi.fn());
+const mockUpdateObjectStorageConfig = vi.hoisted(() => vi.fn());
+const mockTestObjectStorageConfig = vi.hoisted(() => vi.fn());
+const mockActivateObjectStorageConfig = vi.hoisted(() => vi.fn());
+const mockDeleteObjectStorageConfig = vi.hoisted(() => vi.fn());
 const mockSaveAdminBasicConfig = vi.hoisted(() => vi.fn());
 const mockIsAdminBasicConfigConflict = vi.hoisted(() => vi.fn());
 const mockResetAdminUserPassword = vi.hoisted(() => vi.fn());
 const mockUpdateAdminUser = vi.hoisted(() => vi.fn());
+const mockObjectStorageProviderType = vi.hoisted(() => ({
+  ALIYUN_OSS: 2,
+  AWS_S3: 5,
+  HUAWEI_OBS: 4,
+  MINIO: 6,
+  QINIU: 1,
+  TENCENT_COS: 3,
+  TOS: 7,
+}));
+const mockObjectStorageHealthStatus = vi.hoisted(() => ({
+  HEALTHY: 2,
+  UNKNOWN: 1,
+  UNHEALTHY: 3,
+}));
+const mockObjectStorageRuntimeSource = vi.hoisted(() => ({
+  DATABASE: 1,
+  ENV_RESCUE: 2,
+}));
+const mockAdminAnnouncementRouteType = vi.hoisted(() => ({
+  None: 0,
+  SystemAnnouncements: 2,
+  WorkspaceHome: 1,
+}));
+const MockAdminAPIError = vi.hoisted(
+  () =>
+    class AdminAPIError extends Error {
+      readonly status: number;
+      readonly errorCode?: string;
+
+      constructor(status: number, message: string, errorCode?: string) {
+        super(message);
+        this.status = status;
+        this.errorCode = errorCode;
+      }
+    },
+);
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
@@ -50,10 +92,20 @@ vi.mock('@coze-foundation/global-adapter', () => ({
 }));
 
 vi.mock('../service', () => ({
+  AdminAPIError: MockAdminAPIError,
+  AdminAnnouncementRouteType: mockAdminAnnouncementRouteType,
+  ObjectStorageHealthStatus: mockObjectStorageHealthStatus,
+  ObjectStorageProviderType: mockObjectStorageProviderType,
+  ObjectStorageRuntimeSource: mockObjectStorageRuntimeSource,
+  activateObjectStorageConfig: mockActivateObjectStorageConfig,
+  cancelAdminAnnouncement: vi.fn(),
   createAdminManagedModel: vi.fn(),
   createAdminModel: mockCreateAdminModel,
+  createAdminAnnouncement: vi.fn(),
   createAdminUser: mockCreateAdminUser,
+  createObjectStorageConfig: mockCreateObjectStorageConfig,
   deleteAdminModel: mockDeleteAdminModel,
+  deleteObjectStorageConfig: mockDeleteObjectStorageConfig,
   getAdminBasicConfig: mockGetAdminBasicConfig,
   getAdminKnowledgeConfig: mockGetAdminKnowledgeConfig,
   getAdminManagedModelDetail: vi.fn(),
@@ -93,18 +145,27 @@ vi.mock('../service', () => ({
       },
     ],
   }),
+  listAdminAnnouncementAuditEvents: vi.fn(),
+  listAdminAnnouncements: vi.fn(),
+  listObjectStorageConfigs: mockListObjectStorageConfigs,
   listAdminUserSpaces: mockListAdminUserSpaces,
   listAdminWorkspaceMembers: mockListAdminWorkspaceMembers,
   listAdminUsers: mockListAdminUsers,
   listAdminWorkspaces: mockListAdminWorkspaces,
   resetAdminUserPassword: mockResetAdminUserPassword,
+  publishAdminAnnouncement: vi.fn(),
+  replayAdminAnnouncements: vi.fn(),
+  scheduleAdminAnnouncement: vi.fn(),
   saveAdminBasicConfig: mockSaveAdminBasicConfig,
   saveAdminManagedModelGrants: vi.fn(),
   sortAdminManagedModels: vi.fn(),
   testAdminManagedModelEndpoint: vi.fn(),
+  testObjectStorageConfig: mockTestObjectStorageConfig,
   updateAdminManagedModel: vi.fn(),
   updateAdminManagedModelStatus: vi.fn(),
+  updateAdminAnnouncement: vi.fn(),
   updateAdminUser: mockUpdateAdminUser,
+  updateObjectStorageConfig: mockUpdateObjectStorageConfig,
 }));
 
 import SystemManagementPage from '../index';
@@ -209,6 +270,69 @@ describe('SystemManagementPage', () => {
           type: 1,
         },
       },
+    });
+    mockListObjectStorageConfigs.mockResolvedValue({
+      configs: [
+        {
+          id: '7',
+          name: '七牛主存储',
+          provider_type: mockObjectStorageProviderType.QINIU,
+          config: {
+            bucket: 'coze-assets',
+            download_domain: 'https://assets.example.test',
+            region: 'z0',
+          },
+          credential_configured: true,
+          health: {
+            status: mockObjectStorageHealthStatus.HEALTHY,
+          },
+          desired_active: false,
+          runtime_active: false,
+          restart_required: false,
+          version: '3',
+          runtime_revision: '',
+          created_at: '2026-07-28T10:00:00Z',
+          updated_at: '2026-07-28T10:10:00Z',
+        },
+      ],
+      runtime_source: mockObjectStorageRuntimeSource.DATABASE,
+      restart_required: false,
+      code: 0,
+      msg: '',
+    });
+    mockCreateObjectStorageConfig.mockResolvedValue({
+      config: {
+        id: '8',
+      },
+      code: 0,
+      msg: '',
+    });
+    mockUpdateObjectStorageConfig.mockResolvedValue({
+      config: {
+        id: '7',
+      },
+      code: 0,
+      msg: '',
+    });
+    mockTestObjectStorageConfig.mockResolvedValue({
+      success: true,
+      health: {
+        status: mockObjectStorageHealthStatus.HEALTHY,
+        latency_ms: 18,
+      },
+      code: 0,
+      msg: '',
+    });
+    mockActivateObjectStorageConfig.mockResolvedValue({
+      config: {
+        id: '7',
+      },
+      code: 0,
+      msg: '',
+    });
+    mockDeleteObjectStorageConfig.mockResolvedValue({
+      code: 0,
+      msg: '',
     });
     mockSaveAdminBasicConfig.mockResolvedValue({ revision: 'rev-8' });
     mockIsAdminBasicConfigConflict.mockImplementation(
@@ -724,5 +848,109 @@ describe('SystemManagementPage', () => {
     expect(container.textContent).toContain('DeepSeek V4 Pro');
     expect(container.textContent).toContain('deepseek-v4-pro');
     expect(container.textContent).toContain('添加模型');
+  });
+
+  it('creates and activates object storage configs from the system section', async () => {
+    mockUseParams.mockReturnValue({ section: 'object-storage' });
+
+    await renderPage();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockListObjectStorageConfigs).toHaveBeenCalled();
+    expect(container.textContent).toContain('对象存储');
+    expect(container.textContent).toContain('七牛主存储');
+    expect(container.textContent).toContain('新增配置');
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="新增对象存储配置"]',
+        )!,
+      );
+    });
+
+    await act(async () => {
+      const providerSelect = container.querySelector<HTMLSelectElement>(
+        'select[aria-label="对象存储云厂商"]',
+      )!;
+      providerSelect.value = String(mockObjectStorageProviderType.MINIO);
+      Simulate.change(providerSelect);
+
+      const nameInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="对象存储配置名称"]',
+      )!;
+      nameInput.value = 'MinIO 备用';
+      Simulate.change(nameInput);
+
+      const bucketInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="对象存储 Bucket"]',
+      )!;
+      bucketInput.value = 'coze';
+      Simulate.change(bucketInput);
+
+      const endpointInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="对象存储 Endpoint"]',
+      )!;
+      endpointInput.value = 'http://minio:9000';
+      Simulate.change(endpointInput);
+
+      const accessKeyInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="对象存储 Access Key ID"]',
+      )!;
+      accessKeyInput.value = 'minio-ak';
+      Simulate.change(accessKeyInput);
+
+      const secretInput = container.querySelector<HTMLInputElement>(
+        'input[aria-label="对象存储 Secret Access Key"]',
+      )!;
+      secretInput.value = 'minio-sk';
+      Simulate.change(secretInput);
+    });
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存对象存储配置"]',
+        )!,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockCreateObjectStorageConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credential: {
+          access_key_id: 'minio-ak',
+          secret_access_key: 'minio-sk',
+        },
+        name: 'MinIO 备用',
+        provider_type: mockObjectStorageProviderType.MINIO,
+      }),
+    );
+    expect(mockCreateObjectStorageConfig.mock.calls[0]?.[0].config).toMatchObject(
+      {
+        bucket: 'coze',
+        endpoint: 'http://minio:9000',
+      },
+    );
+
+    await act(async () => {
+      Simulate.click(
+        container.querySelector<HTMLButtonElement>(
+          'button[aria-label="激活对象存储配置-7"]',
+        )!,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockActivateObjectStorageConfig).toHaveBeenCalledWith({
+      expected_version: '3',
+      id: '7',
+      migration_confirmed: false,
+    });
   });
 });
