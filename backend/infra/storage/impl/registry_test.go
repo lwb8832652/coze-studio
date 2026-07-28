@@ -24,8 +24,12 @@ import (
 
 	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	aliyunosspkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/aliyunoss"
+	huaweiobspkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/huaweiobs"
 	miniopkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/minio"
+	qiniupkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/qiniu"
 	s3pkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/s3"
+	tencentcospkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/tencentcos"
 	tospkg "github.com/coze-dev/coze-studio/backend/infra/storage/impl/tos"
 )
 
@@ -82,9 +86,37 @@ func TestRegistryBuildsSupportedProviderAndRejectsUnknown(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistryBuildsKnownProvidersAndRejectsDeferredProviders(t *testing.T) {
+func TestDefaultRegistryBuildsKnownProviders(t *testing.T) {
 	registry := DefaultRegistry()
 	supported := []BuildInput{
+		{
+			ProviderType: domain.ProviderQiniu,
+			PublicConfig: domain.PublicConfig{
+				Bucket: "coze", DownloadDomain: "cdn.example.com", UseHTTPS: true,
+			},
+			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			ProviderType: domain.ProviderAliyunOSS,
+			PublicConfig: domain.PublicConfig{
+				Bucket: "coze", Region: "cn-hangzhou",
+			},
+			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			ProviderType: domain.ProviderTencentCOS,
+			PublicConfig: domain.PublicConfig{
+				Bucket: "coze-1250000000", Region: "ap-shanghai",
+			},
+			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			ProviderType: domain.ProviderHuaweiOBS,
+			PublicConfig: domain.PublicConfig{
+				Bucket: "coze", Region: "cn-north-4", Endpoint: "https://obs.cn-north-4.myhuaweicloud.com",
+			},
+			Credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
 		{
 			ProviderType: domain.ProviderMinIO,
 			PublicConfig: domain.PublicConfig{
@@ -110,19 +142,6 @@ func TestDefaultRegistryBuildsKnownProvidersAndRejectsDeferredProviders(t *testi
 	for _, input := range supported {
 		if _, err := registry.New(context.Background(), input); err != nil {
 			t.Fatalf("DefaultRegistry().New(%s) error = %v", input.ProviderType, err)
-		}
-	}
-
-	deferred := []domain.ProviderType{
-		domain.ProviderQiniu,
-		domain.ProviderAliyunOSS,
-		domain.ProviderTencentCOS,
-		domain.ProviderHuaweiOBS,
-	}
-	for _, provider := range deferred {
-		_, err := registry.New(context.Background(), BuildInput{ProviderType: provider})
-		if !errors.Is(err, domain.ErrProviderUnsupported) {
-			t.Fatalf("DefaultRegistry().New(%s) error = %v", provider, err)
 		}
 	}
 }
@@ -162,6 +181,38 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 		cfg        domain.PublicConfig
 		credential domain.CredentialInput
 	}{
+		{
+			name:  "qiniu",
+			build: qiniupkg.NewFromConfig,
+			cfg: domain.PublicConfig{
+				Bucket: "coze", DownloadDomain: "cdn.example.com", UseHTTPS: true,
+			},
+			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			name:  "aliyun oss",
+			build: aliyunosspkg.NewFromConfig,
+			cfg: domain.PublicConfig{
+				Bucket: "coze", Region: "cn-hangzhou",
+			},
+			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			name:  "tencent cos",
+			build: tencentcospkg.NewFromConfig,
+			cfg: domain.PublicConfig{
+				Bucket: "coze-1250000000", Region: "ap-shanghai",
+			},
+			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
+		{
+			name:  "huawei obs",
+			build: huaweiobspkg.NewFromConfig,
+			cfg: domain.PublicConfig{
+				Bucket: "coze", Region: "cn-north-4", Endpoint: "https://obs.cn-north-4.myhuaweicloud.com",
+			},
+			credential: domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"},
+		},
 		{
 			name:  "minio",
 			build: miniopkg.NewFromConfig,
@@ -224,6 +275,26 @@ func TestNewFromConfigRejectsHTTPRuntimeEndpoints(t *testing.T) {
 		build func(context.Context, domain.PublicConfig, domain.CredentialInput) (storage.Storage, error)
 		cfg   domain.PublicConfig
 	}{
+		{
+			name:  "qiniu download domain scheme",
+			build: qiniupkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", DownloadDomain: "https://cdn.example.com", UseHTTPS: true},
+		},
+		{
+			name:  "aliyun oss endpoint override http",
+			build: aliyunosspkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Region: "cn-hangzhou", EndpointOverride: "http://127.0.0.1:1"},
+		},
+		{
+			name:  "tencent cos endpoint override http",
+			build: tencentcospkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze-1250000000", Region: "ap-shanghai", EndpointOverride: "http://127.0.0.1:1"},
+		},
+		{
+			name:  "huawei obs endpoint http",
+			build: huaweiobspkg.NewFromConfig,
+			cfg:   domain.PublicConfig{Bucket: "coze", Region: "cn-north-4", Endpoint: "http://127.0.0.1:1"},
+		},
 		{
 			name:  "minio schemed http",
 			build: miniopkg.NewFromConfig,

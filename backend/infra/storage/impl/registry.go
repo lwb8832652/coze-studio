@@ -21,8 +21,12 @@ import (
 
 	domain "github.com/coze-dev/coze-studio/backend/domain/storageconfig"
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/aliyunoss"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/huaweiobs"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/minio"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/qiniu"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/s3"
+	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/tencentcos"
 	"github.com/coze-dev/coze-studio/backend/infra/storage/impl/tos"
 )
 
@@ -55,14 +59,18 @@ func DefaultRegistry() *Registry {
 	registry.Register(domain.ProviderTOS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
 		return tos.NewFromConfig(ctx, input.PublicConfig, input.Credential)
 	})
-	for _, provider := range []domain.ProviderType{
-		domain.ProviderQiniu,
-		domain.ProviderAliyunOSS,
-		domain.ProviderTencentCOS,
-		domain.ProviderHuaweiOBS,
-	} {
-		registry.Register(provider, unsupportedProviderBuilder)
-	}
+	registry.Register(domain.ProviderQiniu, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
+		return qiniu.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+	})
+	registry.Register(domain.ProviderAliyunOSS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
+		return aliyunoss.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+	})
+	registry.Register(domain.ProviderTencentCOS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
+		return tencentcos.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+	})
+	registry.Register(domain.ProviderHuaweiOBS, func(ctx context.Context, input BuildInput) (storage.Storage, error) {
+		return huaweiobs.NewFromConfig(ctx, input.PublicConfig, input.Credential)
+	})
 	return registry
 }
 
