@@ -39,6 +39,11 @@ func (r *minioReadinessRecorder) BucketExists(context.Context, string) (bool, er
 	return r.exists, r.err
 }
 
+func (r *minioReadinessRecorder) GetObjectURL(context.Context, string) (string, error) {
+	r.SignedURLCalls++
+	return "signed-url", nil
+}
+
 func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	recorder := &minioReadinessRecorder{exists: true}
 	client := &minioClient{bucketName: "bucket", readinessCheck: recorder.BucketExists}
@@ -50,7 +55,7 @@ func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("CheckReadiness(canceled) error = %v", err)
 	}
-	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
+	if recorder.SignedURLCalls != 0 || recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
 		t.Fatalf("write calls = %+v, want all 0", recorder.ReadinessRecorder)
 	}
 	if recorder.HeadBucketCalls != 0 {

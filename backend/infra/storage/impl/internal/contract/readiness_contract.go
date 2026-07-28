@@ -21,6 +21,7 @@ import "testing"
 type ReadinessRecorder struct {
 	HeadBucketCalls int
 	ListCalls       int
+	SignedURLCalls  int
 	CreateCalls     int
 	PutCalls        int
 	DeleteCalls     int
@@ -28,8 +29,8 @@ type ReadinessRecorder struct {
 
 func AssertReadinessIsReadOnly(t *testing.T, recorder ReadinessRecorder) {
 	t.Helper()
-	if recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
-		t.Fatalf("readiness performed writes: %+v", recorder)
+	if recorder.SignedURLCalls != 0 || recorder.CreateCalls != 0 || recorder.PutCalls != 0 || recorder.DeleteCalls != 0 {
+		t.Fatalf("readiness used forbidden paths: %+v", recorder)
 	}
 	if recorder.HeadBucketCalls+recorder.ListCalls == 0 {
 		t.Fatalf("readiness did not perform a read-only bucket check: %+v", recorder)
