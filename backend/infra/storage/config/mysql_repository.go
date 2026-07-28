@@ -46,6 +46,10 @@ type UpdateConfigInput struct {
 	RuntimeChanged   bool
 }
 
+type CredentialEncryptor interface {
+	Encrypt(uint64, domain.ProviderType, uint64, domain.CredentialInput) (string, error)
+}
+
 func NewMySQLRepository(db *gorm.DB) *MySQLRepository {
 	return &MySQLRepository{db: db}
 }
@@ -138,6 +142,60 @@ func (r *MySQLRepository) Create(ctx context.Context, config domain.Config) (*do
 		return nil, err
 	}
 	return &created, nil
+}
+
+func (r *MySQLRepository) CreateWithCredential(ctx context.Context, config domain.Config, credential domain.CredentialInput, codec CredentialEncryptor) (*domain.Config, error) {
+	if codec == nil {
+		return nil, domain.ErrCredentialUnavailable
+	}
+	db, err := r.dbFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var created *domain.Config
+	err = db.Transaction(func(tx *gorm.DB) error {
+		input := config
+		input.CredentialSecret = "pending-object-storage-credential"
+		po, err := newObjectStorageConfigPO(input, persistenceNow())
+		if err != nil {
+			return err
+		}
+		if err = assignSQLiteObjectStorageID(tx, po); err != nil {
+			return err
+		}
+		if err = secretWriteDB(tx).Create(po).Error; err != nil {
+			return mapRepositoryError(err)
+		}
+
+		secret, err := codec.Encrypt(po.ID, domain.ProviderType(po.ProviderType), po.Version, credential)
+		if err != nil {
+			return err
+		}
+		result := secretWriteDB(tx).Model(&objectStorageConfigPO{}).
+			Where("id = ?", po.ID).
+			UpdateColumn("credential_secret", secret)
+		if result.Error != nil {
+			return mapRepositoryError(result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return domain.ErrNotFound
+		}
+
+		po, err = findObjectStorageConfig(tx, po.ID, false)
+		if err != nil {
+			return err
+		}
+		output, err := po.toDomain()
+		if err != nil {
+			return err
+		}
+		created = &output
+		return nil
+	}, unitOfWorkTransactionOptions())
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func (r *MySQLRepository) Update(ctx context.Context, input UpdateConfigInput) (*domain.Config, error) {

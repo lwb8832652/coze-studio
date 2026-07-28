@@ -139,6 +139,55 @@ func TestMySQLRepositoryDuplicateNameMapsVersionConflict(t *testing.T) {
 	}
 }
 
+func TestMySQLRepositoryCreateWithCredentialEncryptsWithAssignedID(t *testing.T) {
+	repository, _ := newObjectStorageSQLiteRepository(t)
+	ctx := context.Background()
+	codec := &recordingObjectStorageCredentialCodec{}
+	input := validRepositoryConfig("minio-import")
+	input.CredentialSecret = ""
+	input.Active = true
+
+	created, err := repository.CreateWithCredential(ctx, input, domain.CredentialInput{
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	}, codec)
+	if err != nil {
+		t.Fatalf("CreateWithCredential() error = %v", err)
+	}
+	if created.ID == 0 || codec.id != created.ID {
+		t.Fatalf("created ID = %d codec ID = %d", created.ID, codec.id)
+	}
+	if created.CredentialSecret != "encrypted-with-assigned-id" {
+		t.Fatalf("CredentialSecret = %q", created.CredentialSecret)
+	}
+	if !created.Active {
+		t.Fatal("created config is not active")
+	}
+}
+
+func TestMySQLRepositoryCreateWithCredentialRollsBackOnEncryptError(t *testing.T) {
+	repository, db := newObjectStorageSQLiteRepository(t)
+	ctx := context.Background()
+	codec := &recordingObjectStorageCredentialCodec{err: domain.ErrCredentialUnavailable}
+	input := validRepositoryConfig("minio-import")
+	input.CredentialSecret = ""
+
+	_, err := repository.CreateWithCredential(ctx, input, domain.CredentialInput{
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	}, codec)
+	if !errors.Is(err, domain.ErrCredentialUnavailable) {
+		t.Fatalf("CreateWithCredential() error = %v", err)
+	}
+	var rows int64
+	if countErr := db.Model(&objectStorageConfigPO{}).Count(&rows).Error; countErr != nil {
+		t.Fatalf("count rows error = %v", countErr)
+	}
+	if rows != 0 {
+		t.Fatalf("rows = %d, want rollback", rows)
+	}
+}
+
 func TestMySQLRepositoryGetActiveEmptyPrimary(t *testing.T) {
 	repository, _ := newObjectStorageSQLiteRepository(t)
 	ctx := context.Background()
@@ -259,4 +308,23 @@ func validRepositoryConfig(name string) domain.Config {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
+}
+
+type recordingObjectStorageCredentialCodec struct {
+	id         uint64
+	provider   domain.ProviderType
+	version    uint64
+	credential domain.CredentialInput
+	err        error
+}
+
+func (c *recordingObjectStorageCredentialCodec) Encrypt(id uint64, provider domain.ProviderType, version uint64, input domain.CredentialInput) (string, error) {
+	c.id = id
+	c.provider = provider
+	c.version = version
+	c.credential = input
+	if c.err != nil {
+		return "", c.err
+	}
+	return "encrypted-with-assigned-id", nil
 }
