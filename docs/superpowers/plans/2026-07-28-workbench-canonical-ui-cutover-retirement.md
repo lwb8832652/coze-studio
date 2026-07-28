@@ -418,8 +418,10 @@ the client cutover.
 - Modify: `backend/application/agentthread/service_test.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_service.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_stream.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_service_test.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_stream_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/workbench-thread-client.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/fixtures.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts`
@@ -472,8 +474,9 @@ Add tests proving:
 Add an explicit top-level retry source field to `ApplicationService.CreateRun`; zero keeps every
 existing caller unchanged. When set, the application layer authorizes and loads the source Run,
 requires the same Thread, a top-level task Run and failed terminal status, then writes a
-server-owned retry marker/source relation into Run metadata. It must call the existing message-less
-CreateRun path, not `RetrySubagentRun`, and must not create a Message.
+server-owned `attempt_kind=retry` marker and `source_run_id` relation into Run metadata. Canonical
+projection reads those protected fields into `coze` and removes them from public metadata. It must
+call the existing message-less CreateRun path, not `RetrySubagentRun`, and must not create a Message.
 
 Ordinary turns continue through the existing atomic `CreateRunBundle`; pass the reviewed
 `MessageMetadata` to its Message spec unchanged after JSON validation. Do not add a second
@@ -493,9 +496,21 @@ create, stream and wait; all source routes and current UI remain unchanged.
 
 - [ ] **Step 4: Regenerate and verify the public contract**
 
-Regenerate backend and frontend IDL outputs with the repository-pinned `hz`/`thriftgo` toolchain.
-Verify that only the intended optional `coze` field and generated accessors change; do not hand-edit
-generated files.
+Regenerate backend and frontend IDL outputs with the repository-pinned `hz`/`thriftgo` and
+`idl2ts` toolchains:
+
+```bash
+cd backend
+hz update -idl ../idl/api.thrift -enable_extends
+
+cd ../frontend/packages/arch/api-schema
+rushx update
+```
+
+Use the repository's existing handler exclusion arguments when invoking `hz update`, then run
+`backend/scripts/verify_api_codegen.sh` to prove deterministic output and handwritten-handler
+preservation. Verify that only the intended optional `coze` field and generated accessors change;
+do not hand-edit generated files.
 
 Run:
 
