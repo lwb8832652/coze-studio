@@ -31,6 +31,7 @@ const config = [
       workbenchThread: './idl/workbench/thread.thrift',
       pluginDevelop: './idl/plugin/plugin_develop.thrift',
       playground: './idl/playground/playground.thrift',
+      adminConfig: './idl/admin/config.thrift',
     },
     commonCodePath: path.resolve(__dirname, './src/api/config.ts'), // custom profile
     output: './src', // Product location
