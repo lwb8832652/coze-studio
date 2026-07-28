@@ -1487,6 +1487,7 @@ func TestApplicationCreateRunTopLevelRetryRejectsInvalidSubmission(t *testing.T)
 		{name: "non task retry run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.RunKind = RunKindSubagent }},
 		{name: "invalid metadata", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `[]` }},
 		{name: "caller attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"attempt_kind":"turn"}` }},
+		{name: "caller mixed case attempt kind", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"Attempt_Kind":"turn"}` }},
 		{name: "caller source run", source: validSource(), mutateReq: func(req *CreateRunRequest) { req.Metadata = `{"source_run_id":7}` }},
 	}
 

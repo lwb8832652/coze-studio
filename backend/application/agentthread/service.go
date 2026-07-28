@@ -973,7 +973,9 @@ func (s *ApplicationService) createTopLevelRetryRun(
 	if err != nil {
 		return nil, err
 	}
-	if bundle == nil || bundle.Run == nil || bundle.Message != nil {
+	if bundle == nil || bundle.Run == nil || bundle.Message != nil ||
+		bundle.Run.ThreadID != req.ThreadID || bundle.Run.ParentRunID != 0 ||
+		bundle.Run.RunKind != domainentity.RunKindTask {
 		return nil, fmt.Errorf("agent thread service returned invalid top-level retry bundle")
 	}
 	s.cancelMultitaskInterruptedADKRuns(bundle.InterruptedRuns)
@@ -986,19 +988,22 @@ func topLevelRetryRunMetadata(metadata string, sourceRunID int64) (string, error
 		metadata = `{}`
 	}
 	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(metadata), &payload); err != nil || payload == nil {
+	if err := json.Unmarshal([]byte(metadata), &payload); err != nil {
+		return "", fmt.Errorf("top-level retry metadata must be a JSON object: %w", err)
+	}
+	if payload == nil {
 		return "", fmt.Errorf("top-level retry metadata must be a JSON object")
 	}
-	if _, exists := payload["attempt_kind"]; exists {
-		return "", fmt.Errorf("top-level retry attempt kind is server-owned")
+	for key := range payload {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "attempt_kind":
+			return "", fmt.Errorf("top-level retry attempt kind is server-owned")
+		case "source_run_id":
+			return "", fmt.Errorf("top-level retry source run id is server-owned")
+		}
 	}
-	if _, exists := payload["source_run_id"]; exists {
-		return "", fmt.Errorf("top-level retry source run id is server-owned")
-	}
-	attemptKind, _ := json.Marshal("retry")
-	sourceID, _ := json.Marshal(sourceRunID)
-	payload["attempt_kind"] = attemptKind
-	payload["source_run_id"] = sourceID
+	payload["attempt_kind"] = json.RawMessage(`"retry"`)
+	payload["source_run_id"] = json.RawMessage(strconv.FormatInt(sourceRunID, 10))
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal top-level retry metadata: %w", err)
