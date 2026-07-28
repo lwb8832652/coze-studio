@@ -162,6 +162,19 @@ var langGraphThreadRouteSnapshot = []routeExpectation{
 	{http.MethodPost, "/api/threads/:thread_id/state"},
 }
 
+var langGraphStatelessRunRouteSnapshot = []routeExpectation{
+	{http.MethodPost, "/api/runs"},
+	{http.MethodPost, "/api/runs/stream"},
+	{http.MethodPost, "/api/runs/wait"},
+	{http.MethodGet, "/api/runs/:run_id"},
+	{http.MethodGet, "/api/runs/:run_id/messages"},
+	{http.MethodGet, "/api/runs/:run_id/feedback"},
+	{http.MethodPost, "/api/runs/:run_id/cancel"},
+	{http.MethodGet, "/api/runs/:run_id/stream"},
+	{http.MethodPost, "/api/runs/:run_id/join"},
+	{http.MethodGet, "/api/runs/:run_id/join"},
+}
+
 var retiredChatTaskPaths = []string{
 	"/api/workbench/tasks",
 	"/api/workbench/tasks/1",
@@ -212,6 +225,10 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 
 	t.Run("preserves the LangGraph thread source surface", func(t *testing.T) {
 		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
+	})
+
+	t.Run("preserves the LangGraph stateless run source surface", func(t *testing.T) {
+		requireExactRouteSnapshot(t, h, "/api/runs", langGraphStatelessRunRouteSnapshot)
 	})
 
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
