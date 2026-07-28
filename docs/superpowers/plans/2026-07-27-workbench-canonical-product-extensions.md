@@ -17,7 +17,7 @@
 - `/api/workbench/task_threads` 的 36 条来源路由和 `/api/threads` 的 23 条来源路由必须保持 method/path、请求、响应、SSE 和日志语义不变。
 - `/api/workbench/tasks*` 与 `/api/workbench/chat` 必须继续 `404`，且不能进入 handler chain。
 - `COZE_WORKBENCH_CANONICAL_API_ENABLED` 仍默认关闭；关闭时新增路由统一 `404`。
-- 不修改数据库 migration、Eino ADK、Run/Thread 状态机、worker、checkpoint bytes、对象存储布局或来源接口。
+- 不新增数据库表、业务状态、Eino ADK、Run/Thread 状态机、worker、checkpoint bytes、对象存储布局或来源接口；Task 6 仅为 canonical suggestions 的公开消息查询补充只读组合索引。
 - 不开放 API key、Bearer scope、外部限流或生产网关；本计划仍只使用现有 Web session principal。
 - canonical body 不接受 `space_id`、`user_id`、owner；目标空间只从 `X-Coze-Space-ID` header 读取并由服务端授权。
 - 成功响应无 `{code,msg,data}` envelope；纯删除返回 `204`；所有 ID 输出十进制字符串；时间输出 RFC 3339。
@@ -701,29 +701,46 @@ git commit -m "feat: add canonical workbench uploads"
 **Files:**
 - Create: `backend/api/handler/coze/workbench_canonical_message_product_service.go`
 - Create: `backend/api/handler/coze/workbench_canonical_message_product_service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints_test.go`
+- Modify: `backend/application/agentthread/dto.go`
+- Modify: `backend/application/agentthread/service.go`
+- Modify: `backend/application/agentthread/service_test.go`
+- Modify: `backend/domain/agentthread/repository/repository.go`
+- Modify: `backend/domain/agentthread/repository/mysql.go`
+- Modify: `backend/domain/agentthread/repository/mysql_test.go`
+- Modify: `backend/domain/agentthread/service/service.go`
+- Modify: `backend/domain/agentthread/service/service_impl.go`
+- Modify: `backend/domain/agentthread/service/service_impl_test.go`
+- Create: `docker/atlas/migrations/20260728000100_agent_thread_message_public_role_index.sql`
 
-- [ ] **Step 1: Write failing message and suggestion tests**
+- [x] **Step 1: Write failing message and suggestion tests**
 
 Cover:
 
 ```go
 func TestAppendCanonicalThreadMessageRejectsOrdinaryUserTurnBeforeMutation(t *testing.T)
 func TestAppendCanonicalThreadMessageRequiresInternalCompatModeAndOwnedRun(t *testing.T)
+func TestCanonicalThreadMessageRequestsRejectBodyRouteIdentifiers(t *testing.T)
 func TestAppendCanonicalThreadMessageReturnsPublicMessage(t *testing.T)
+func TestAppendCanonicalThreadMessageAllowsToolWithoutLeakingToolContent(t *testing.T)
 func TestGenerateCanonicalThreadSuggestionsUsesPersistedPublicMessages(t *testing.T)
+func TestGenerateCanonicalThreadSuggestionsKeepsNewestFortyPublicMessages(t *testing.T)
 func TestGenerateCanonicalThreadSuggestionsReturnsEmptyListWhenProviderFails(t *testing.T)
 func TestGenerateCanonicalThreadSuggestionsNeverLogsMessageContent(t *testing.T)
 ```
 
-- [ ] **Step 2: Implement internal append safeguards**
+- [x] **Step 2: Implement internal append safeguards**
 
 Require `append_mode="internal_compat"`, a positive owned `run_id`, and role `assistant` or `tool`. Reject `user`/`human` with `409 atomic_run_submission_required` before `AppendMessage`. This route is not used for ordinary UI turns; `POST /runs` remains the only User Message + Run write boundary.
 
-- [ ] **Step 3: Implement best-effort suggestions from persisted messages**
+- [x] **Step 3: Implement best-effort suggestions from persisted messages**
 
 Authorize the Thread through `agentthread.ApplicationService`, load at most the newest 40 public messages, map only role/content into `application/workbench.SuggestionMessage`, and call `appworkbench.SVC.GenerateSuggestions`. A provider error returns HTTP `200` with an empty array and a bounded failure category in logs. Do not include the error text or message content in logs.
 
-- [ ] **Step 4: Run focused and source tests**
+Implementation note: suggestions use an additive repository/domain/application query that filters `user`/`assistant` roles before applying the newest-40 limit, then returns the result in chronological order through `ProjectPublicMessage`. The query is backed by `idx_agent_thread_messages_thread_role_created(thread_id, role, created_at, id)` so internal tool/system-heavy threads do not degrade into large recent-tail scans.
+
+- [x] **Step 4: Run focused and source tests**
 
 ```bash
 cd backend
@@ -732,10 +749,10 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: PASS; source suggestion behavior remains unchanged.
 
-- [ ] **Step 5: Commit message product support**
+- [x] **Step 5: Commit message product support**
 
 ```bash
-git add backend/api/handler/coze/workbench_canonical_message_product_service.go backend/api/handler/coze/workbench_canonical_message_product_service_test.go
+git add backend/api/handler/coze/workbench_canonical_message_product_service.go backend/api/handler/coze/workbench_canonical_message_product_service_test.go backend/api/handler/coze/workbench_canonical_entrypoints.go backend/api/handler/coze/workbench_canonical_entrypoints_test.go backend/application/agentthread/dto.go backend/application/agentthread/service.go backend/application/agentthread/service_test.go backend/domain/agentthread/repository/repository.go backend/domain/agentthread/repository/mysql.go backend/domain/agentthread/repository/mysql_test.go backend/domain/agentthread/service/service.go backend/domain/agentthread/service/service_impl.go backend/domain/agentthread/service/service_impl_test.go docker/atlas/migrations/20260728000100_agent_thread_message_public_role_index.sql docs/superpowers/plans/2026-07-27-workbench-canonical-product-extensions.md
 git commit -m "feat: add canonical workbench suggestions"
 ```
 

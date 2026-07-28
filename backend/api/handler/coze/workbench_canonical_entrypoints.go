@@ -36,16 +36,6 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// AppendCanonicalThreadMessage exposes the gated canonical message append contract.
-func AppendCanonicalThreadMessage(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// GenerateCanonicalThreadSuggestions exposes the gated canonical suggestion contract.
-func GenerateCanonicalThreadSuggestions(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // ListCanonicalThreadArtifacts exposes the gated canonical artifact list contract.
 func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)

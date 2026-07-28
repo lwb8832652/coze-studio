@@ -95,13 +95,13 @@ const threadLifecycleStatusProjectionSQL = `CASE
 END`
 
 type messagePO struct {
-	ID        int64          `gorm:"column:id;primaryKey"`
-	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_messages_thread_created"`
+	ID        int64          `gorm:"column:id;primaryKey;index:idx_agent_thread_messages_thread_role_created,priority:4"`
+	ThreadID  int64          `gorm:"column:thread_id;index:idx_agent_thread_messages_thread_created;index:idx_agent_thread_messages_thread_role_created,priority:1"`
 	RunID     int64          `gorm:"column:run_id;index:idx_agent_thread_messages_run_created"`
-	Role      string         `gorm:"column:role"`
+	Role      string         `gorm:"column:role;index:idx_agent_thread_messages_thread_role_created,priority:2"`
 	Content   string         `gorm:"column:content"`
 	Metadata  datatypes.JSON `gorm:"column:metadata;type:json"`
-	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_thread_messages_thread_created;index:idx_agent_thread_messages_run_created"`
+	CreatedAt int64          `gorm:"column:created_at;index:idx_agent_thread_messages_thread_created;index:idx_agent_thread_messages_run_created;index:idx_agent_thread_messages_thread_role_created,priority:3"`
 }
 
 type runPO struct {
@@ -788,6 +788,37 @@ func (r *threadRepository) ListMessages(ctx context.Context, req ListMessagesReq
 	}
 
 	return messages, total, nil
+}
+
+func (r *threadRepository) ListRecentMessagesByRoles(
+	ctx context.Context,
+	req ListRecentMessagesByRolesRequest,
+) ([]*entity.Message, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	pos := make([]*messagePO, 0)
+	query := r.db.WithContext(ctx).
+		Model(&messagePO{}).
+		Where("thread_id = ?", req.ThreadID)
+	if len(req.Roles) == 0 {
+		return []*entity.Message{}, nil
+	}
+	query = query.Where("role IN ?", req.Roles)
+	if err := query.
+		Order("created_at DESC, id DESC").
+		Limit(int(limit)).
+		Find(&pos).Error; err != nil {
+		return nil, err
+	}
+
+	messages := make([]*entity.Message, 0, len(pos))
+	for index := len(pos) - 1; index >= 0; index-- {
+		messages = append(messages, pos[index].toEntity())
+	}
+	return messages, nil
 }
 
 func (r *threadRepository) CreateRun(ctx context.Context, run *entity.Run) error {

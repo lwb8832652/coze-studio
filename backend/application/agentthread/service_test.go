@@ -654,6 +654,54 @@ func TestApplicationListMessagesMapsDomainMessages(t *testing.T) {
 	require.Equal(t, MessageRoleAssistant, resp.Messages[1].Role)
 }
 
+func TestApplicationListRecentPublicMessagesUsesOptimizedRoleQueryAndProjects(t *testing.T) {
+	domainSVC := &recordingThreadService{
+		recentMessagesByRoles: []*entity.Message{
+			{
+				ID:       101,
+				ThreadID: 10,
+				RunID:    20,
+				Role:     entity.MessageRoleUser,
+				Content:  "  第一条公开消息  ",
+				Metadata: `{"source":"web","provider_body":{"token":"hidden"}}`,
+			},
+			{
+				ID:       102,
+				ThreadID: 10,
+				RunID:    20,
+				Role:     entity.MessageRoleAssistant,
+				Content:  "第二条公开消息",
+				Metadata: `{"source":"runtime","source_run_id":20}`,
+			},
+		},
+	}
+	app := &ApplicationService{ThreadSVC: domainSVC}
+
+	resp, err := app.ListRecentPublicMessages(context.Background(), &ListRecentPublicMessagesRequest{
+		ThreadID: 10,
+		Limit:    200,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Nil(t, domainSVC.listMessagesReq)
+	require.NotNil(t, domainSVC.recentMessagesByRolesReq)
+	require.Equal(t, int64(10), domainSVC.recentMessagesByRolesReq.ThreadID)
+	require.Equal(t, []entity.MessageRole{
+		entity.MessageRoleUser,
+		entity.MessageRoleAssistant,
+	}, domainSVC.recentMessagesByRolesReq.Roles)
+	require.Equal(t, maxRecentPublicMessagesLimit, domainSVC.recentMessagesByRolesReq.Limit)
+	require.Len(t, resp.Messages, 2)
+	require.Equal(t, int64(101), resp.Messages[0].MessageID)
+	require.Equal(t, MessageRoleUser, resp.Messages[0].Role)
+	require.Equal(t, "第一条公开消息", resp.Messages[0].Content)
+	require.JSONEq(t, `{"source":"web"}`, resp.Messages[0].Metadata)
+	require.Equal(t, int64(102), resp.Messages[1].MessageID)
+	require.Equal(t, MessageRoleAssistant, resp.Messages[1].Role)
+	require.JSONEq(t, `{"source":"runtime","source_run_id":20}`, resp.Messages[1].Metadata)
+}
+
 func TestApplicationMemoryMethodsMapDomainMemories(t *testing.T) {
 	domainSVC := &recordingThreadService{
 		rememberedMemory: &entity.Memory{
@@ -4842,6 +4890,7 @@ type recordingThreadService struct {
 	recordedTokenUsage             *entity.TokenUsage
 	messages                       []*entity.Message
 	messagePages                   map[int32][]*entity.Message
+	recentMessagesByRoles          []*entity.Message
 	runs                           []*entity.Run
 	gotRunsByID                    map[int64]*entity.Run
 	claimedQueuedResumeRuns        []*entity.Run
@@ -4931,6 +4980,7 @@ type recordingThreadService struct {
 	appendReq                      *domainservice.AppendMessageRequest
 	listMessagesReq                *domainservice.ListMessagesRequest
 	listMessagesReqs               []*domainservice.ListMessagesRequest
+	recentMessagesByRolesReq       *domainservice.ListRecentMessagesByRolesRequest
 	getID                          int64
 	getRunID                       int64
 	completeRunErr                 error
@@ -5375,6 +5425,18 @@ func (s *recordingThreadService) ListMessages(ctx context.Context, req *domainse
 		}
 	}
 	return s.messages, s.messageTotal, nil
+}
+
+func (s *recordingThreadService) ListRecentMessagesByRoles(
+	ctx context.Context,
+	req *domainservice.ListRecentMessagesByRolesRequest,
+) ([]*entity.Message, error) {
+	if req != nil {
+		copied := *req
+		copied.Roles = append([]entity.MessageRole(nil), req.Roles...)
+		s.recentMessagesByRolesReq = &copied
+	}
+	return s.recentMessagesByRoles, nil
 }
 
 func (s *recordingThreadService) CreateRun(ctx context.Context, req *domainservice.CreateRunRequest) (*entity.Run, error) {

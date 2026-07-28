@@ -548,6 +548,15 @@ type ListMessagesResponse struct {
 	Total    int64
 }
 
+type ListRecentPublicMessagesRequest struct {
+	ThreadID int64
+	Limit    int32
+}
+
+type ListRecentPublicMessagesResponse struct {
+	Messages []*PublicMessage
+}
+
 type CreateRunRequest struct {
 	ThreadID                int64
 	ParentRunID             int64

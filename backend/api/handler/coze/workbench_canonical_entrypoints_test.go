@@ -53,8 +53,8 @@ var canonicalEntrypoints = []struct {
 	{"ResumeCanonicalRun", ResumeCanonicalRun, false},
 	{"ListCanonicalRunEvents", ListCanonicalRunEvents, false},
 	{"ListCanonicalRunMessages", ListCanonicalRunMessages, false},
-	{"AppendCanonicalThreadMessage", AppendCanonicalThreadMessage, true},
-	{"GenerateCanonicalThreadSuggestions", GenerateCanonicalThreadSuggestions, true},
+	{"AppendCanonicalThreadMessage", AppendCanonicalThreadMessage, false},
+	{"GenerateCanonicalThreadSuggestions", GenerateCanonicalThreadSuggestions, false},
 	{"ListCanonicalThreadUploads", ListCanonicalThreadUploads, false},
 	{"UploadCanonicalThreadFiles", UploadCanonicalThreadFiles, false},
 	{"DeleteCanonicalThreadUpload", DeleteCanonicalThreadUpload, false},
@@ -113,7 +113,7 @@ func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 			stubCount++
 		}
 	}
-	require.Equal(t, 23, stubCount)
+	require.Equal(t, 21, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {
