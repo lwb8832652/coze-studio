@@ -617,6 +617,10 @@ struct ListObjectStorageConfigsResp {
     1: list<ObjectStorageConfigView> configs
     2: ObjectStorageRuntimeSource runtime_source
     3: bool restart_required
+
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
 }
 
 struct CreateObjectStorageConfigReq {
@@ -625,7 +629,13 @@ struct CreateObjectStorageConfigReq {
     3: ObjectStoragePublicConfig config
     4: ObjectStorageCredentialInput credential
 }
-struct CreateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+struct CreateObjectStorageConfigResp {
+    1: ObjectStorageConfigView config
+
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
+}
 
 struct UpdateObjectStorageConfigReq {
     1: i64 id (api.js_conv='true', agw.js_conv='str')
@@ -634,7 +644,13 @@ struct UpdateObjectStorageConfigReq {
     4: ObjectStoragePublicConfig config
     5: optional ObjectStorageCredentialInput credential
 }
-struct UpdateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+struct UpdateObjectStorageConfigResp {
+    1: ObjectStorageConfigView config
+
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
+}
 
 struct TestObjectStorageConfigReq {
     1: optional i64 id (api.js_conv='true', agw.js_conv='str')
@@ -646,6 +662,10 @@ struct TestObjectStorageConfigReq {
 struct TestObjectStorageConfigResp {
     1: bool success
     2: ObjectStorageHealthView health
+
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
 }
 
 struct ActivateObjectStorageConfigReq {
@@ -653,13 +673,23 @@ struct ActivateObjectStorageConfigReq {
     2: i64 expected_version (api.js_conv='true', agw.js_conv='str')
     3: bool migration_confirmed
 }
-struct ActivateObjectStorageConfigResp { 1: ObjectStorageConfigView config }
+struct ActivateObjectStorageConfigResp {
+    1: ObjectStorageConfigView config
+
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
+}
 
 struct DeleteObjectStorageConfigReq {
     1: i64 id (api.js_conv='true', agw.js_conv='str')
     2: i64 expected_version (api.js_conv='true', agw.js_conv='str')
 }
-struct DeleteObjectStorageConfigResp {}
+struct DeleteObjectStorageConfigResp {
+    253: required i64 code
+    254: required string msg
+    255: required base.BaseResp BaseResp (api.none="true")
+}
 
  service ConfigService {
     GetBasicConfigurationResp GetBasicConfiguration(1:GetBasicConfigurationReq req)(api.get='/api/admin/config/basic/get', api.category="admin")

@@ -40,6 +40,42 @@ describe('admin object storage api contract source', () => {
     }
   });
 
+  it('declares exact object storage management routes', () => {
+    const source = readContract();
+    for (const route of [
+      "api.get='/api/admin/config/object-storage/list'",
+      "api.post='/api/admin/config/object-storage/create'",
+      "api.post='/api/admin/config/object-storage/update'",
+      "api.post='/api/admin/config/object-storage/test'",
+      "api.post='/api/admin/config/object-storage/activate'",
+      "api.post='/api/admin/config/object-storage/delete'",
+    ]) {
+      expect(source).toContain(route);
+    }
+  });
+
+  it('uses the standard ConfigService response envelope', () => {
+    const source = readContract();
+    for (const response of [
+      'ListObjectStorageConfigsResp',
+      'CreateObjectStorageConfigResp',
+      'UpdateObjectStorageConfigResp',
+      'TestObjectStorageConfigResp',
+      'ActivateObjectStorageConfigResp',
+      'DeleteObjectStorageConfigResp',
+    ]) {
+      const body = source.match(
+        new RegExp(`struct\\s+${response}\\s*\\{(?<body>[\\s\\S]*?)\\n\\}`),
+      )?.groups?.body;
+      expect(body).toBeDefined();
+      expect(body).toContain('253: required i64 code');
+      expect(body).toContain('254: required string msg');
+      expect(body).toContain(
+        '255: required base.BaseResp BaseResp (api.none="true")',
+      );
+    }
+  });
+
   it('models credentials as write-only values', () => {
     const source = readContract();
     const view = source.match(
