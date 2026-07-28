@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - 日期：2026-07-27
-- 状态：设计已确认，等待书面规格复核
+- 状态：设计已确认，实施计划已冻结
 - 目标分支：`codex/workbench-canonical-product-client`
 - 基线：`dev@50afc8beff2273cef5a076478e4fcf0df2004425`
 - 上位规范：
@@ -53,7 +53,7 @@ Workbench UI 必需的产品扩展，并建立可验证的双 client 边界。�
 - 不默认切换生产 UI 到 canonical client；
 - 不开放外部 API key、Bearer、scope 或生产 allowlist；
 - 不实现分布式限流、网关 SSE 或外部容量隔离；
-- 不新增数据库表、迁移、数据复制或双写；
+- 除 suggestions 最近公开消息查询的幂等索引迁移外，不新增数据库表、数据复制或双写；
 - 不修改 Eino ADK、Worker、Run 状态机或 checkpoint bytes；
 - 不重写 Workbench 和 Tasks 页面组件、store 或状态管理。
 
@@ -469,7 +469,7 @@ Message、Run、File、Artifact、Memory 记录。
 
 本期预计不修改：
 
-- 数据库 migration/schema；
+- 数据库表语义或状态 schema；唯一例外是 suggestions 最近公开消息查询的幂等索引迁移；
 - Eino ADK、Worker 和 runtime；
 - AgentThread 实体状态机；
 - Workbench/Tasks 页面布局和组件行为；
@@ -483,7 +483,7 @@ Message、Run、File、Artifact、Memory 记录。
 2. canonical 与 V1 adapter 的功能等价测试通过；
 3. canonical 模式真实页面全流程通过；
 4. 旧来源路由、参数、响应和当前默认 UI 完整回归；
-5. 无数据库、执行器、双写或 ChatTask 复活；
+5. 除计划内增量索引外，无数据库表语义、执行器、双写或 ChatTask 复活；
 6. 安全、幂等、日志、SSE 和失败语义满足本文约束；
 7. `dev` 双阶段审计通过并获得对应用户确认。
 

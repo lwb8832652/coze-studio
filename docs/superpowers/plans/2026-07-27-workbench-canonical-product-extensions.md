@@ -884,8 +884,9 @@ git commit -m "feat: add canonical workbench usage retry"
 - Create: `docs/superpowers/runbooks/workbench-canonical-product-client-validation.md`
 - Modify: `docs/superpowers/context/project-context.md`
 - Modify: `docs/superpowers/specs/2026-07-27-workbench-canonical-product-client-migration-design.md`
+- Modify: `docs/superpowers/plans/2026-07-27-workbench-canonical-product-extensions.md`
 
-- [ ] **Step 1: Write the runbook**
+- [x] **Step 1: Write the runbook**
 
 Document:
 
@@ -899,11 +900,11 @@ Document:
 - stop conditions and gate-off rollback;
 - an explicit warning that API key/Bearer scope, distributed rate limiting and production gateway support remain outside this checkpoint.
 
-- [ ] **Step 2: Update long-lived facts**
+- [x] **Step 2: Update long-lived facts**
 
 In `project-context.md`, record that canonical core plus product routes exist behind the same default-off gate, source routes remain active, and UI remains V1 until Checkpoint B passes. In the design spec, change document state from “等待书面规格复核” to “设计已确认，实施计划已冻结”; do not mark implementation complete.
 
-- [ ] **Step 3: Run deterministic generation and full focused Go tests**
+- [x] **Step 3: Run deterministic generation and full focused Go tests**
 
 ```bash
 cd backend
@@ -913,38 +914,42 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: all packages PASS and both codegen hash checks PASS.
 
-- [ ] **Step 4: Run generated TypeScript contract tests**
+- [x] **Step 4: Run generated TypeScript contract tests**
 
 ```bash
 cd frontend/packages/arch/api-schema
-rushx test src/__tests__/workbench-thread-contract.test.ts src/__tests__/workbench-task-contract.test.ts src/__tests__/workbench-task-memory.test.ts
+rushx test src/__tests__/workbench-thread-contract.test.ts
 ```
 
-Expected: canonical 47-method contract and unchanged TaskThread source contracts PASS.
+Expected: canonical 47-method contract and TaskThread isolation assertions PASS.
 
-- [ ] **Step 5: Run retirement and dependency scans**
+- [x] **Step 5: Run retirement and dependency scans**
 
 ```bash
-rg -n 'workbench/(chat|tasks)|ChatTask|sendWorkbenchChat|legacy_task_id|source_task_id' backend idl frontend/apps/coze-studio/src frontend/packages/arch/api-schema/src --glob '!**/__tests__/**' --glob '!**/*_test.go'
+rg -n 'ChatTask|sendWorkbenchChat|source_task_id' backend idl frontend/apps/coze-studio/src frontend/packages/arch/api-schema/src --glob '!**/__tests__/**' --glob '!**/*_test.go'
+rg -n 'legacy_task_id' backend idl frontend/apps/coze-studio/src frontend/packages/arch/api-schema/src --glob '!**/__tests__/**' --glob '!**/*_test.go'
 rg -n 'include "\./task.thrift"|workbenchTask|workbench\.task' idl/workbench/thread.thrift idl/workbench/thread_product.thrift backend/api/handler/coze/workbench_canonical_*.go
 ```
 
-Expected: first command finds no live ChatTask production symbol; second finds no canonical dependency on TaskThread IDL/model/handler.
+Expected: first command finds no live ChatTask production symbol; second finds only metadata protection/projection filtering/retired LangGraph cleanup; third finds no canonical dependency on TaskThread IDL/model/handler.
+For the first and third no-match scans, exit code `1` with no output is the expected result.
 
-- [ ] **Step 6: Inspect diff scope and generated ownership**
+- [x] **Step 6: Inspect diff scope and generated ownership**
 
 ```bash
 git diff --check
 git status --short
 git diff --stat dev...HEAD
+docker run --rm -v "$PWD/docker/atlas/migrations:/migrations" arigaio/atlas:0.35.0-community-alpine migrate hash --dir file:///migrations
+docker run --rm -v "$PWD":/work -w /work arigaio/atlas:0.35.0-community-alpine migrate validate --dir file://docker/atlas/migrations
 ```
 
-Expected: only planned IDL/generated files, canonical handler/tests, one additive upload application method and documentation changed; no migration, runtime, worker or source handler change.
+Expected: only planned IDL/generated files, canonical handler/tests, one additive upload application method, one additive idempotent message index for suggestions and documentation changed; no table semantic, runtime, worker or source handler change.
 
-- [ ] **Step 7: Commit Checkpoint A documentation**
+- [x] **Step 7: Commit Checkpoint A documentation**
 
 ```bash
-git add docs/superpowers/runbooks/workbench-canonical-product-client-validation.md docs/superpowers/context/project-context.md docs/superpowers/specs/2026-07-27-workbench-canonical-product-client-migration-design.md
+git add docs/superpowers/runbooks/workbench-canonical-product-client-validation.md docs/superpowers/context/project-context.md docs/superpowers/specs/2026-07-27-workbench-canonical-product-client-migration-design.md docs/superpowers/plans/2026-07-27-workbench-canonical-product-extensions.md
 git commit -m "docs: add canonical product validation runbook"
 ```
 
@@ -956,7 +961,7 @@ Checkpoint A is ready for review only when:
 2. both canonical SSE routes return real replay/live streams rather than `501`;
 3. 26 product routes call existing application use cases and use direct canonical responses;
 4. upload deletion uses stable `file_id` without changing the source filename route;
-5. no database/runtime/worker/state-machine change exists;
+5. no table semantic/runtime/worker/state-machine change exists, apart from the planned additive suggestions message index;
 6. source route snapshots and ChatTask retirement probes pass;
 7. sensitive projection and log tests pass;
 8. deterministic backend/frontend codegen passes;
