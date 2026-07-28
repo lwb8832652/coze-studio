@@ -134,13 +134,8 @@ func (c *CredentialCodec) Decrypt(id uint64, provider domain.ProviderType, versi
 	if c == nil {
 		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
 	}
-	var parsed credentialEnvelope
-	decoder := json.NewDecoder(strings.NewReader(envelope))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&parsed); err != nil {
-		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	parsed, err := decodeCredentialEnvelope(envelope)
+	if err != nil {
 		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
 	}
 	if parsed.Version != credentialEnvelopeVersion {
@@ -171,6 +166,63 @@ func (c *CredentialCodec) Decrypt(id uint64, provider domain.ProviderType, versi
 		return domain.CredentialInput{}, domain.ErrCredentialUnavailable
 	}
 	return output, nil
+}
+
+func decodeCredentialEnvelope(envelope string) (credentialEnvelope, error) {
+	decoder := json.NewDecoder(strings.NewReader(envelope))
+	start, err := decoder.Token()
+	if err != nil {
+		return credentialEnvelope{}, err
+	}
+	delimiter, ok := start.(json.Delim)
+	if !ok || delimiter != '{' {
+		return credentialEnvelope{}, domain.ErrCredentialUnavailable
+	}
+
+	seen := map[string]struct{}{}
+	var parsed credentialEnvelope
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return credentialEnvelope{}, err
+		}
+		field, ok := token.(string)
+		if !ok {
+			return credentialEnvelope{}, domain.ErrCredentialUnavailable
+		}
+		if _, exists := seen[field]; exists {
+			return credentialEnvelope{}, domain.ErrCredentialUnavailable
+		}
+		seen[field] = struct{}{}
+
+		var value string
+		if err := decoder.Decode(&value); err != nil {
+			return credentialEnvelope{}, err
+		}
+		switch field {
+		case "version":
+			parsed.Version = value
+		case "nonce":
+			parsed.Nonce = value
+		case "ciphertext":
+			parsed.Ciphertext = value
+		default:
+			return credentialEnvelope{}, domain.ErrCredentialUnavailable
+		}
+	}
+
+	end, err := decoder.Token()
+	if err != nil {
+		return credentialEnvelope{}, err
+	}
+	delimiter, ok = end.(json.Delim)
+	if !ok || delimiter != '}' {
+		return credentialEnvelope{}, domain.ErrCredentialUnavailable
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return credentialEnvelope{}, domain.ErrCredentialUnavailable
+	}
+	return parsed, nil
 }
 
 func credentialAAD(id uint64, provider domain.ProviderType, version uint64) []byte {

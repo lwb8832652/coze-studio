@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -217,6 +218,26 @@ func TestCredentialCodecDecryptRejectsUnknownEnvelopeFieldsWithoutLeaking(t *tes
 		t.Fatalf("Decrypt(injected envelope) error = %v", err)
 	} else if errorContainsAny(err, "ak-leak-marker") {
 		t.Fatalf("Decrypt(injected envelope) leaked marker in error: %v", err)
+	}
+}
+
+func TestCredentialCodecDecryptRejectsDuplicateEnvelopeFieldsWithoutLeaking(t *testing.T) {
+	codec := testCredentialCodec(t, fixedNonceReader([]byte{1}))
+	envelope, err := codec.Encrypt(1, domain.ProviderMinIO, 1, domain.CredentialInput{AccessKeyID: "ak", SecretAccessKey: "sk"})
+	if err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+	var parsed credentialEnvelope
+	if err = json.Unmarshal([]byte(envelope), &parsed); err != nil {
+		t.Fatalf("Unmarshal(envelope) error = %v", err)
+	}
+	duplicateEnvelope := `{"version":"v1","nonce":"ak-leak-marker","nonce":` +
+		strconv.Quote(parsed.Nonce) + `,"ciphertext":` + strconv.Quote(parsed.Ciphertext) + `}`
+
+	if _, err = codec.Decrypt(1, domain.ProviderMinIO, 1, duplicateEnvelope); !errors.Is(err, domain.ErrCredentialUnavailable) {
+		t.Fatalf("Decrypt(duplicate envelope) error = %v", err)
+	} else if errorContainsAny(err, "ak-leak-marker") {
+		t.Fatalf("Decrypt(duplicate envelope) leaked marker in error: %v", err)
 	}
 }
 
