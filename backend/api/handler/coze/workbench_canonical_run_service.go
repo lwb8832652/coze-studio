@@ -246,6 +246,15 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	}
 	messageID := strconv.FormatInt(response.Message.MessageID, 10)
 	projected.Coze.MessageID = &messageID
+	submissionMessage, projectionErr := projectCanonicalMessage(response.Message)
+	if projectionErr != nil || submissionMessage == nil {
+		if projectionErr == nil {
+			projectionErr = fmt.Errorf("canonical create projection returned empty submission message")
+		}
+		writeCanonicalApplicationError(ctx, c, projectionErr)
+		return
+	}
+	projected.Coze.SubmissionMessage = submissionMessage
 	requestLog.RunID = response.Run.RunID
 	c.Header("Content-Location", canonicalRunPath(threadID, response.Run.RunID))
 	c.JSON(consts.StatusOK, projected)

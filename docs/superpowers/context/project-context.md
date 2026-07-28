@@ -62,6 +62,21 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 - 通知与计划任务：可靠通知、公告、定时执行、幂等和重试；
 - 计费与配额：服务端事实、审计和安全边界。
 
+## Workbench Canonical API
+
+`/api/workbench/threads` 已包含 canonical Thread/Run core 路由和当前 Workbench
+所需的产品扩展路由，二者共用 `COZE_WORKBENCH_CANONICAL_API_ENABLED` 默认关闭
+gate、session principal 和 `X-Coze-Space-ID` workspace 校验。canonical handler
+只做严格 HTTP 合同、公开投影、错误映射和结构化日志，继续调用现有
+`agentthread.ApplicationService`，不建立第二套状态机、数据库或执行器。
+Checkpoint A 复用现有持久化表；唯一数据库变更是 suggestions 最近公开消息查询
+所需的幂等索引 `idx_agent_thread_messages_thread_role_created`，不改变记录语义。
+
+当前来源路由 `/api/workbench/task_threads` 与兼容 `/api/threads` 仍保持可用；
+当前生产 UI 仍走 V1 来源 client。只有 Checkpoint B 的双 client、adapter、页面回归
+和审计通过后，才允许切换 UI 默认 client。ChatTask 路由、IDL、client、application
+和 domain 已退役，不作为 fallback 恢复。
+
 ## 事实来源
 
 1. 当前源码、IDL、迁移和运行时行为；
@@ -90,6 +105,8 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 - dev 集成审计：`docs/superpowers/runbooks/dev-integration-audit.md`
 - Sandbox：`docs/superpowers/runbooks/sandbox-control-plane-operations.md`
 - Guardrail：`docs/superpowers/runbooks/guardrail-audit-operations.md`
+- Workbench canonical product client：
+  `docs/superpowers/runbooks/workbench-canonical-product-client-validation.md`
 - Agent Runtime：`docs/superpowers/specs/2026-06-28-eino-agent-runtime-guidance.md`
 
 ## 更新规则

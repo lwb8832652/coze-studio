@@ -339,6 +339,30 @@ func TestListMessagesNormalizesPaging(t *testing.T) {
 	require.Equal(t, int32(50), repo.lastMessageListReq.PageSize)
 }
 
+func TestListRecentMessagesByRolesDelegatesOptimizedRepositoryQuery(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.messages[10] = []*entity.Message{
+		{ID: 1, ThreadID: 10, Role: entity.MessageRoleUser, Content: "old", CreatedAt: 100},
+		{ID: 2, ThreadID: 10, Role: entity.MessageRoleSystem, Content: "system", CreatedAt: 200},
+		{ID: 3, ThreadID: 10, Role: entity.MessageRoleAssistant, Content: "new", CreatedAt: 300},
+	}
+	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 1001}})
+
+	messages, err := svc.ListRecentMessagesByRoles(context.Background(), &ListRecentMessagesByRolesRequest{
+		ThreadID: 10,
+		Roles:    []entity.MessageRole{entity.MessageRoleUser, entity.MessageRoleAssistant},
+		Limit:    2,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, int64(1), messages[0].ID)
+	require.Equal(t, int64(3), messages[1].ID)
+	require.Equal(t, int64(10), repo.lastRecentMessagesByRolesReq.ThreadID)
+	require.Equal(t, []entity.MessageRole{entity.MessageRoleUser, entity.MessageRoleAssistant}, repo.lastRecentMessagesByRolesReq.Roles)
+	require.Equal(t, int32(2), repo.lastRecentMessagesByRolesReq.Limit)
+}
+
 func TestCreateRunRequiresExistingThreadAndInput(t *testing.T) {
 	repo := newMemoryRepo()
 	svc := NewService(&Components{Repo: repo, IDGen: fixedIDGen{next: 2001}})
@@ -2175,6 +2199,7 @@ type memoryRepo struct {
 	lastUpdateThreadMetadataReq        repository.UpdateThreadMetadataRequest
 	lastDeleteThreadReq                repository.DeleteThreadRequest
 	lastMessageListReq                 repository.ListMessagesRequest
+	lastRecentMessagesByRolesReq       repository.ListRecentMessagesByRolesRequest
 	lastRunListReq                     repository.ListRunsRequest
 	lastRunEventListReq                repository.ListRunEventsRequest
 	lastCheckpointListReq              repository.ListCheckpointsRequest
@@ -2406,6 +2431,40 @@ func (r *memoryRepo) ListMessages(ctx context.Context, req repository.ListMessag
 		end = len(messages)
 	}
 	return messages[start:end], total, nil
+}
+
+func (r *memoryRepo) ListRecentMessagesByRoles(
+	ctx context.Context,
+	req repository.ListRecentMessagesByRolesRequest,
+) ([]*entity.Message, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastRecentMessagesByRolesReq = req
+
+	roleSet := make(map[entity.MessageRole]bool, len(req.Roles))
+	for _, role := range req.Roles {
+		roleSet[role] = true
+	}
+	messages := make([]*entity.Message, 0, len(r.messages[req.ThreadID]))
+	for _, message := range r.messages[req.ThreadID] {
+		if !roleSet[message.Role] {
+			continue
+		}
+		messages = append(messages, cloneMessage(message))
+	}
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].CreatedAt == messages[j].CreatedAt {
+			return messages[i].ID > messages[j].ID
+		}
+		return messages[i].CreatedAt > messages[j].CreatedAt
+	})
+	if req.Limit > 0 && len(messages) > int(req.Limit) {
+		messages = messages[:int(req.Limit)]
+	}
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return messages, nil
 }
 
 func (r *memoryRepo) CreateRun(ctx context.Context, run *entity.Run) error {

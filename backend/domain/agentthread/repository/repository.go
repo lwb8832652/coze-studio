@@ -43,6 +43,7 @@ type ThreadRepository interface {
 	ListThreads(ctx context.Context, req ListThreadsRequest) ([]*entity.Thread, int64, error)
 	CreateMessage(ctx context.Context, message *entity.Message) error
 	ListMessages(ctx context.Context, req ListMessagesRequest) ([]*entity.Message, int64, error)
+	ListRecentMessagesByRoles(ctx context.Context, req ListRecentMessagesByRolesRequest) ([]*entity.Message, error)
 	CreateRun(ctx context.Context, run *entity.Run) error
 	CreateRunBundle(ctx context.Context, req CreateRunBundleRequest) (*CreateRunBundleResult, error)
 	GetRun(ctx context.Context, id int64) (*entity.Run, error)
@@ -168,6 +169,12 @@ type ListMessagesRequest struct {
 	ThreadID int64
 	Page     int32
 	PageSize int32
+}
+
+type ListRecentMessagesByRolesRequest struct {
+	ThreadID int64
+	Roles    []entity.MessageRole
+	Limit    int32
 }
 
 type ListRunsRequest struct {

@@ -1,15 +1,18 @@
 namespace go workbench.thread_contract
 
 include "../base.thrift"
+include "./thread_product.thrift"
 
 struct CanonicalRouteRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
+    2: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
 struct CanonicalRunRouteRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
+    3: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -59,8 +62,19 @@ struct CanonicalThreadUpdateStateResult {
     2: required CanonicalCheckpoint configurable
 }
 
+struct CanonicalMessage {
+    1: required string message_id
+    2: required string thread_id
+    3: required string run_id
+    4: required string role
+    5: required string content
+    6: required string metadata (api.value_type="any")
+    7: required string created_at
+    8: optional string seq
+}
+
 struct CanonicalMessagePage {
-    1: required string data (api.value_type="any")
+    1: required list<CanonicalMessage> data
     2: required bool has_more
     3: optional string next_before_seq
     4: optional string next_after_seq
@@ -102,6 +116,7 @@ struct CreateCanonicalThreadRequest {
     4: optional string ttl (api.body="ttl", api.value_type="any")
     5: optional string supersteps (api.body="supersteps", api.value_type="any")
     6: optional string coze (api.body="coze", api.value_type="any")
+    7: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -116,12 +131,14 @@ struct SearchCanonicalThreadsRequest {
     8: optional bool values (api.body="values")
     9: optional list<string> select (api.body="select")
     10: optional bool extract (api.body="extract")
+    11: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
 struct GetCanonicalThreadRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: optional list<string> include (api.query="include")
+    3: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -130,6 +147,7 @@ struct PatchCanonicalThreadRequest {
     2: optional string prefer (api.header="Prefer")
     3: optional string metadata (api.body="metadata", api.value_type="any")
     4: optional string ttl (api.body="ttl", api.value_type="any")
+    5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -138,6 +156,7 @@ struct GetCanonicalThreadStateRequest {
     2: optional string checkpoint (api.query="checkpoint")
     3: optional string checkpoint_id (api.query="checkpoint_id")
     4: optional bool subgraphs (api.query="subgraphs")
+    5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -147,6 +166,7 @@ struct UpdateCanonicalThreadStateRequest {
     3: optional string as_node (api.body="as_node")
     4: optional string checkpoint (api.body="checkpoint", api.value_type="any")
     5: optional string checkpoint_id (api.body="checkpoint_id")
+    6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -156,6 +176,7 @@ struct GetCanonicalThreadHistoryRequest {
     3: optional string before (api.query="before")
     4: optional string checkpoint (api.query="checkpoint")
     5: optional string checkpoint_id (api.query="checkpoint_id")
+    6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -165,6 +186,7 @@ struct PostCanonicalThreadHistoryRequest {
     3: optional string before (api.body="before")
     4: optional string checkpoint (api.body="checkpoint", api.value_type="any")
     5: optional string checkpoint_id (api.body="checkpoint_id")
+    6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -173,6 +195,7 @@ struct ListCanonicalThreadMessagesRequest {
     2: optional string before_seq (api.query="before_seq")
     3: optional string after_seq (api.query="after_seq")
     4: optional i32 limit (api.query="limit")
+    5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -183,6 +206,7 @@ struct ListCanonicalRunsRequest {
     4: optional i32 offset (api.query="offset")
     5: optional string parent_run_id (api.query="parent_run_id")
     6: optional list<string> select (api.query="select")
+    7: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -211,6 +235,7 @@ struct CreateCanonicalRunRequest {
     22: optional string checkpoint_id (api.body="checkpoint_id", api.value_type="any")
     23: optional string langsmith_tracer (api.body="langsmith_tracer", api.value_type="any")
     24: optional string idempotency_key (api.header="Idempotency-Key")
+    25: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -240,6 +265,7 @@ struct WaitCanonicalRunRequest {
     23: optional string langsmith_tracer (api.body="langsmith_tracer", api.value_type="any")
     24: optional bool raise_error (api.body="raise_error")
     25: optional string idempotency_key (api.header="Idempotency-Key")
+    26: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -250,6 +276,7 @@ struct ReconnectCanonicalRunStreamRequest {
     4: optional string cancel_on_disconnect (api.query="cancel_on_disconnect")
     5: optional string last_event_id (api.header="Last-Event-ID")
     6: optional list<string> stream_mode (api.query="stream_mode")
+    7: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -257,6 +284,7 @@ struct JoinCanonicalRunRequest {
     1: required i64 thread_id (api.path="thread_id", agw.js_conv="str", api.js_conv="true")
     2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
     3: optional string cancel_on_disconnect (api.query="cancel_on_disconnect")
+    4: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -265,6 +293,7 @@ struct CancelCanonicalRunRequest {
     2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
     3: optional string action (api.query="action")
     4: optional string wait (api.query="wait")
+    5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -273,6 +302,7 @@ struct ResumeCanonicalRunRequest {
     2: required i64 run_id (api.path="run_id", agw.js_conv="str", api.js_conv="true")
     3: optional string interrupt_id (api.body="interrupt_id")
     4: optional string response (api.body="response", api.value_type="any")
+    5: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -282,6 +312,7 @@ struct ListCanonicalRunEventsRequest {
     3: optional string after_event_id (api.query="after_event_id")
     4: optional list<string> event_types (api.query="event_types")
     5: optional i32 limit (api.query="limit")
+    6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -291,6 +322,7 @@ struct ListCanonicalRunMessagesRequest {
     3: optional string before_seq (api.query="before_seq")
     4: optional string after_seq (api.query="after_seq")
     5: optional i32 limit (api.query="limit")
+    6: required i64 space_id (api.header="X-Coze-Space-ID", agw.js_conv="str", api.js_conv="true")
     255: optional base.Base Base (api.none="true")
 }
 
@@ -316,4 +348,30 @@ service WorkbenchCanonicalThreadService {
     CanonicalRun ResumeCanonicalRun(1: ResumeCanonicalRunRequest req) (api.post="/api/workbench/threads/:thread_id/runs/:run_id/resume")
     CanonicalRunEventPage ListCanonicalRunEvents(1: ListCanonicalRunEventsRequest req) (api.get="/api/workbench/threads/:thread_id/runs/:run_id/events")
     CanonicalMessagePage ListCanonicalRunMessages(1: ListCanonicalRunMessagesRequest req) (api.get="/api/workbench/threads/:thread_id/runs/:run_id/messages")
+    CanonicalMessage AppendCanonicalThreadMessage(1: thread_product.AppendCanonicalThreadMessageRequest req) (api.post="/api/workbench/threads/:thread_id/messages")
+    thread_product.CanonicalSuggestionResponse GenerateCanonicalThreadSuggestions(1: thread_product.GenerateCanonicalThreadSuggestionsRequest req) (api.post="/api/workbench/threads/:thread_id/suggestions")
+    thread_product.CanonicalUploadListResponse ListCanonicalThreadUploads(1: thread_product.CanonicalProductThreadRequest req) (api.get="/api/workbench/threads/:thread_id/uploads")
+    thread_product.CanonicalUploadResponse UploadCanonicalThreadFiles(1: thread_product.UploadCanonicalThreadFilesRequest req) (api.post="/api/workbench/threads/:thread_id/uploads")
+    thread_product.CanonicalProductEmptyResponse DeleteCanonicalThreadUpload(1: thread_product.DeleteCanonicalThreadUploadRequest req) (api.delete="/api/workbench/threads/:thread_id/uploads/:file_id")
+    thread_product.CanonicalArtifactListResponse ListCanonicalThreadArtifacts(1: thread_product.ListCanonicalThreadArtifactsRequest req) (api.get="/api/workbench/threads/:thread_id/artifacts")
+    thread_product.CanonicalArtifactContentResponse GetCanonicalThreadArtifactContent(1: thread_product.GetCanonicalThreadArtifactContentRequest req) (api.get="/api/workbench/threads/:thread_id/artifacts/:artifact_id/content")
+    thread_product.CanonicalArtifactSignedURLResponse GetCanonicalThreadArtifactSignedURL(1: thread_product.GetCanonicalThreadArtifactSignedURLRequest req) (api.get="/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url")
+    thread_product.CanonicalProductEmptyResponse DeleteCanonicalThreadArtifact(1: thread_product.CanonicalArtifactRouteRequest req) (api.delete="/api/workbench/threads/:thread_id/artifacts/:artifact_id")
+    thread_product.CanonicalArtifactRestoreResponse RestoreCanonicalThreadArtifact(1: thread_product.CanonicalArtifactRouteRequest req) (api.post="/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore")
+    thread_product.CanonicalArtifactScanReviewResponse ReviewCanonicalThreadArtifactScan(1: thread_product.ReviewCanonicalThreadArtifactScanRequest req) (api.post="/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review")
+    thread_product.CanonicalArtifactScanJobListResponse ListCanonicalThreadArtifactScanJobs(1: thread_product.ListCanonicalThreadArtifactScanJobsRequest req) (api.get="/api/workbench/threads/:thread_id/artifact_scan_jobs")
+    thread_product.CanonicalArtifactScanJobRetryResponse RetryCanonicalThreadArtifactScanJob(1: thread_product.RetryCanonicalThreadArtifactScanJobRequest req) (api.post="/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry")
+    thread_product.CanonicalTokenUsageResponse GetCanonicalThreadTokenUsage(1: thread_product.GetCanonicalThreadTokenUsageRequest req) (api.get="/api/workbench/threads/:thread_id/token_usage")
+    thread_product.CanonicalMemoryListResponse ListCanonicalThreadMemories(1: thread_product.ListCanonicalThreadMemoriesRequest req) (api.get="/api/workbench/threads/:thread_id/memories")
+    thread_product.CanonicalMemoryUpdateResponse UpdateCanonicalThreadMemory(1: thread_product.UpdateCanonicalThreadMemoryRequest req) (api.put="/api/workbench/threads/:thread_id/memories/:memory_id")
+    thread_product.CanonicalProductEmptyResponse DeleteCanonicalThreadMemory(1: thread_product.CanonicalMemoryRouteRequest req) (api.delete="/api/workbench/threads/:thread_id/memories/:memory_id")
+    thread_product.CanonicalMemoryRestoreResponse RestoreCanonicalThreadMemory(1: thread_product.CanonicalMemoryRouteRequest req) (api.post="/api/workbench/threads/:thread_id/memories/:memory_id/restore")
+    thread_product.CanonicalMemoryClearResponse ClearCanonicalThreadMemories(1: thread_product.ClearCanonicalThreadMemoriesRequest req) (api.post="/api/workbench/threads/:thread_id/memories/clear")
+    thread_product.CanonicalMemoryExportResponse ExportCanonicalThreadMemories(1: thread_product.ExportCanonicalThreadMemoriesRequest req) (api.get="/api/workbench/threads/:thread_id/memories/export")
+    thread_product.CanonicalMemoryImportResponse ImportCanonicalThreadMemories(1: thread_product.ImportCanonicalThreadMemoriesRequest req) (api.post="/api/workbench/threads/:thread_id/memories/import")
+    thread_product.CanonicalMemoryAuditEventListResponse ListCanonicalThreadMemoryAuditEvents(1: thread_product.ListCanonicalThreadMemoryAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/memories/audit_events")
+    thread_product.CanonicalGuardrailAuditEventListResponse ListCanonicalThreadGuardrailAuditEvents(1: thread_product.ListCanonicalThreadGuardrailAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/guardrail_audit_events")
+    thread_product.CanonicalGuardrailAuditExportResponse ExportCanonicalThreadGuardrailAuditEvents(1: thread_product.ExportCanonicalThreadGuardrailAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/guardrail_audit_events/export")
+    thread_product.CanonicalMCPRuntimeAuditEventListResponse ListCanonicalThreadMCPRuntimeAuditEvents(1: thread_product.ListCanonicalThreadMCPRuntimeAuditEventsRequest req) (api.get="/api/workbench/threads/:thread_id/mcp_runtime_audit_events")
+    CanonicalRun RetryCanonicalSubagentRun(1: thread_product.RetryCanonicalSubagentRunRequest req) (api.post="/api/workbench/threads/:thread_id/runs/:run_id/retry")
 }

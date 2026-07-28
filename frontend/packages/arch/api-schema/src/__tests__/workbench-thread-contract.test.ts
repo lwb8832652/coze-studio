@@ -17,13 +17,33 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 
-import * as threadSchema from '../idl/workbench/thread';
+import * as api from '../idl/workbench/thread';
 
 const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
   'utf8',
 );
+const generatedProductSource = readFileSync(
+  new URL('../idl/workbench/thread_product.ts', import.meta.url),
+  'utf8',
+);
+const threadSourceFile = ts.createSourceFile(
+  'thread.ts',
+  generatedSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const threadProductSourceFile = ts.createSourceFile(
+  'thread_product.ts',
+  generatedProductSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const generatedSourceFiles = [threadSourceFile, threadProductSourceFile];
 
 const canonicalAPIFunctions = [
   'CreateCanonicalThread',
@@ -49,6 +69,35 @@ const canonicalAPIFunctions = [
   'ListCanonicalRunMessages',
 ] as const;
 
+const productMethods = [
+  'AppendCanonicalThreadMessage',
+  'GenerateCanonicalThreadSuggestions',
+  'ListCanonicalThreadUploads',
+  'UploadCanonicalThreadFiles',
+  'DeleteCanonicalThreadUpload',
+  'ListCanonicalThreadArtifacts',
+  'GetCanonicalThreadArtifactContent',
+  'GetCanonicalThreadArtifactSignedURL',
+  'DeleteCanonicalThreadArtifact',
+  'RestoreCanonicalThreadArtifact',
+  'ReviewCanonicalThreadArtifactScan',
+  'ListCanonicalThreadArtifactScanJobs',
+  'RetryCanonicalThreadArtifactScanJob',
+  'GetCanonicalThreadTokenUsage',
+  'ListCanonicalThreadMemories',
+  'UpdateCanonicalThreadMemory',
+  'DeleteCanonicalThreadMemory',
+  'RestoreCanonicalThreadMemory',
+  'ClearCanonicalThreadMemories',
+  'ExportCanonicalThreadMemories',
+  'ImportCanonicalThreadMemories',
+  'ListCanonicalThreadMemoryAuditEvents',
+  'ListCanonicalThreadGuardrailAuditEvents',
+  'ExportCanonicalThreadGuardrailAuditEvents',
+  'ListCanonicalThreadMCPRuntimeAuditEvents',
+  'RetryCanonicalSubagentRun',
+] as const;
+
 interface CanonicalAPIExpectation {
   name: string;
   url: string;
@@ -63,6 +112,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     method: 'POST',
     reqMapping: {
       body: ['thread_id', 'metadata', 'if_exists', 'ttl', 'supersteps', 'coze'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -82,13 +132,18 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
         'select',
         'extract',
       ],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
     name: 'GetCanonicalThread',
     url: '/api/workbench/threads/:thread_id',
     method: 'GET',
-    reqMapping: { path: ['thread_id'], query: ['include'] },
+    reqMapping: {
+      path: ['thread_id'],
+      query: ['include'],
+      header: ['X-Coze-Space-ID'],
+    },
   },
   {
     name: 'PatchCanonicalThread',
@@ -96,7 +151,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     method: 'PATCH',
     reqMapping: {
       path: ['thread_id'],
-      header: ['Prefer'],
+      header: ['Prefer', 'X-Coze-Space-ID'],
       body: ['metadata', 'ttl'],
     },
   },
@@ -104,7 +159,10 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     name: 'DeleteCanonicalThread',
     url: '/api/workbench/threads/:thread_id',
     method: 'DELETE',
-    reqMapping: { path: ['thread_id'] },
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+    },
   },
   {
     name: 'GetCanonicalThreadState',
@@ -113,6 +171,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       query: ['checkpoint', 'checkpoint_id', 'subgraphs'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -122,6 +181,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       body: ['values', 'as_node', 'checkpoint', 'checkpoint_id'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -131,6 +191,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       query: ['limit', 'before', 'checkpoint', 'checkpoint_id'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -140,6 +201,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       body: ['limit', 'before', 'checkpoint', 'checkpoint_id'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -149,6 +211,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       query: ['before_seq', 'after_seq', 'limit'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -158,6 +221,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id'],
       query: ['status', 'limit', 'offset', 'parent_run_id', 'select'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -179,7 +243,10 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     name: 'GetCanonicalRun',
     url: '/api/workbench/threads/:thread_id/runs/:run_id',
     method: 'GET',
-    reqMapping: { path: ['thread_id', 'run_id'] },
+    reqMapping: {
+      path: ['thread_id', 'run_id'],
+      header: ['X-Coze-Space-ID'],
+    },
   },
   {
     name: 'ReconnectCanonicalRunStream',
@@ -188,7 +255,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       query: ['after_event_id', 'cancel_on_disconnect', 'stream_mode'],
-      header: ['Last-Event-ID'],
+      header: ['Last-Event-ID', 'X-Coze-Space-ID'],
     },
   },
   {
@@ -198,6 +265,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       query: ['cancel_on_disconnect'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -207,6 +275,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       query: ['action', 'wait'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -216,6 +285,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       body: ['interrupt_id', 'response'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -225,6 +295,7 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       query: ['after_event_id', 'event_types', 'limit'],
+      header: ['X-Coze-Space-ID'],
     },
   },
   {
@@ -234,6 +305,290 @@ const canonicalAPIConfigs: CanonicalAPIExpectation[] = [
     reqMapping: {
       path: ['thread_id', 'run_id'],
       query: ['before_seq', 'after_seq', 'limit'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+];
+
+const productAPIConfigs: CanonicalAPIExpectation[] = [
+  {
+    name: 'AppendCanonicalThreadMessage',
+    url: '/api/workbench/threads/:thread_id/messages',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      body: ['run_id', 'role', 'content', 'metadata', 'append_mode'],
+    },
+  },
+  {
+    name: 'GenerateCanonicalThreadSuggestions',
+    url: '/api/workbench/threads/:thread_id/suggestions',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      body: ['n', 'model_name', 'model_type'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadUploads',
+    url: '/api/workbench/threads/:thread_id/uploads',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'UploadCanonicalThreadFiles',
+    url: '/api/workbench/threads/:thread_id/uploads',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'DeleteCanonicalThreadUpload',
+    url: '/api/workbench/threads/:thread_id/uploads/:file_id',
+    method: 'DELETE',
+    reqMapping: {
+      path: ['thread_id', 'file_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadArtifacts',
+    url: '/api/workbench/threads/:thread_id/artifacts',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'deleted_only', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'GetCanonicalThreadArtifactContent',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id/content',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['mode'],
+    },
+  },
+  {
+    name: 'GetCanonicalThreadArtifactSignedURL',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['mode', 'ttl_seconds'],
+    },
+  },
+  {
+    name: 'DeleteCanonicalThreadArtifact',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id',
+    method: 'DELETE',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'RestoreCanonicalThreadArtifact',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'ReviewCanonicalThreadArtifactScan',
+    url: '/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'artifact_id'],
+      header: ['X-Coze-Space-ID'],
+      body: ['decision', 'reason'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadArtifactScanJobs',
+    url: '/api/workbench/threads/:thread_id/artifact_scan_jobs',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'artifact_id', 'status', 'scanner', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'RetryCanonicalThreadArtifactScanJob',
+    url: '/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'job_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'GetCanonicalThreadTokenUsage',
+    url: '/api/workbench/threads/:thread_id/token_usage',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'include_child_runs', 'source', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadMemories',
+    url: '/api/workbench/threads/:thread_id/memories',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: [
+        'run_id',
+        'scope',
+        'scopes',
+        'q',
+        'include_expired',
+        'include_deleted',
+        'limit',
+        'offset',
+      ],
+    },
+  },
+  {
+    name: 'UpdateCanonicalThreadMemory',
+    url: '/api/workbench/threads/:thread_id/memories/:memory_id',
+    method: 'PUT',
+    reqMapping: {
+      path: ['thread_id', 'memory_id'],
+      header: ['X-Coze-Space-ID'],
+      body: [
+        'run_id',
+        'scope',
+        'content',
+        'metadata',
+        'score',
+        'confidence',
+        'source_type',
+        'source_id',
+        'correction_of_memory_id',
+        'corrected_at',
+        'expires_at',
+      ],
+    },
+  },
+  {
+    name: 'DeleteCanonicalThreadMemory',
+    url: '/api/workbench/threads/:thread_id/memories/:memory_id',
+    method: 'DELETE',
+    reqMapping: {
+      path: ['thread_id', 'memory_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'RestoreCanonicalThreadMemory',
+    url: '/api/workbench/threads/:thread_id/memories/:memory_id/restore',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'memory_id'],
+      header: ['X-Coze-Space-ID'],
+    },
+  },
+  {
+    name: 'ClearCanonicalThreadMemories',
+    url: '/api/workbench/threads/:thread_id/memories/clear',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      body: ['run_id', 'scopes'],
+    },
+  },
+  {
+    name: 'ExportCanonicalThreadMemories',
+    url: '/api/workbench/threads/:thread_id/memories/export',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: [
+        'run_id',
+        'scope',
+        'scopes',
+        'q',
+        'include_expired',
+        'include_deleted',
+        'limit',
+      ],
+    },
+  },
+  {
+    name: 'ImportCanonicalThreadMemories',
+    url: '/api/workbench/threads/:thread_id/memories/import',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      body: ['memories'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadMemoryAuditEvents',
+    url: '/api/workbench/threads/:thread_id/memories/audit_events',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['memory_id', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadGuardrailAuditEvents',
+    url: '/api/workbench/threads/:thread_id/guardrail_audit_events',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'ExportCanonicalThreadGuardrailAuditEvents',
+    url: '/api/workbench/threads/:thread_id/guardrail_audit_events/export',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'ListCanonicalThreadMCPRuntimeAuditEvents',
+    url: '/api/workbench/threads/:thread_id/mcp_runtime_audit_events',
+    method: 'GET',
+    reqMapping: {
+      path: ['thread_id'],
+      header: ['X-Coze-Space-ID'],
+      query: ['run_id', 'limit', 'offset'],
+    },
+  },
+  {
+    name: 'RetryCanonicalSubagentRun',
+    url: '/api/workbench/threads/:thread_id/runs/:run_id/retry',
+    method: 'POST',
+    reqMapping: {
+      path: ['thread_id', 'run_id'],
+      header: ['X-Coze-Space-ID', 'Idempotency-Key'],
     },
   },
 ];
@@ -272,6 +627,90 @@ function interfaceSource(name: string): string {
   return match?.[1] ?? '';
 }
 
+function apiTypeArguments(name: string): {
+  request: string;
+  response: string;
+} {
+  const declaration = threadSourceFile.statements
+    .filter(ts.isVariableStatement)
+    .filter(statement =>
+      statement.modifiers?.some(
+        modifier => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      ),
+    )
+    .flatMap(statement => [...statement.declarationList.declarations])
+    .find(
+      candidate =>
+        ts.isIdentifier(candidate.name) && candidate.name.text === name,
+    );
+  expect(declaration, `${name} must be generated`).toBeDefined();
+
+  const initializer = declaration?.initializer;
+  expect(
+    initializer && ts.isCallExpression(initializer),
+    `${name} must initialize with a createAPI call`,
+  ).toBe(true);
+  if (!initializer || !ts.isCallExpression(initializer)) {
+    return { request: '', response: '' };
+  }
+
+  expect(
+    ts.isIdentifier(initializer.expression) &&
+      initializer.expression.text === 'createAPI',
+    `${name} must call createAPI`,
+  ).toBe(true);
+
+  const typeArguments = initializer.typeArguments ?? [];
+  expect(
+    typeArguments,
+    `${name} must declare request and response types`,
+  ).toHaveLength(2);
+
+  return {
+    request:
+      typeArguments[0]?.getText(threadSourceFile).replace(/\s+/g, '') ?? '',
+    response:
+      typeArguments[1]?.getText(threadSourceFile).replace(/\s+/g, '') ?? '',
+  };
+}
+
+function taskContractImportSpecifiers(sourceFile: ts.SourceFile): string[] {
+  return sourceFile.statements
+    .filter(ts.isImportDeclaration)
+    .map(statement => statement.moduleSpecifier)
+    .filter(ts.isStringLiteral)
+    .map(moduleSpecifier => moduleSpecifier.text)
+    .filter(
+      moduleSpecifier =>
+        moduleSpecifier === './task' ||
+        moduleSpecifier.includes('workbench/task'),
+    );
+}
+
+function taskThreadIdentifiers(sourceFile: ts.SourceFile): string[] {
+  const identifiers = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && node.text.includes('TaskThread')) {
+      identifiers.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return [...identifiers];
+}
+
+function assertNoTaskThreadContracts(sourceFile: ts.SourceFile): void {
+  expect(
+    taskContractImportSpecifiers(sourceFile),
+    `${sourceFile.fileName} must not import task contracts`,
+  ).toEqual([]);
+  expect(
+    taskThreadIdentifiers(sourceFile),
+    `${sourceFile.fileName} must not reference TaskThread identifiers`,
+  ).toEqual([]);
+}
+
 function apiConfig(name: string): {
   url: string;
   method: string;
@@ -294,7 +733,7 @@ function apiConfig(name: string): {
 describe('canonical Workbench thread generated contract', () => {
   it('keeps public thread and run IDs as TypeScript strings', () => {
     expect(interfaceSource('CanonicalRouteRequest').trim()).toBe(
-      'thread_id: string',
+      ['thread_id: string,', '"X-Coze-Space-ID": string,'].join('\n  '),
     );
     expect(interfaceSource('CanonicalRouteRequest')).not.toMatch(
       /thread_id\?:\s*string[,;]/,
@@ -306,7 +745,32 @@ describe('canonical Workbench thread generated contract', () => {
     expect(interfaceSource('CanonicalRun')).toMatch(/run_id:\s*string[,;]/);
   });
 
-  it('exports exactly the 21 canonical createAPI functions', () => {
+  it('generates the typed canonical message projection', () => {
+    expect(interfaceSource('CanonicalMessage').trim()).toBe(
+      [
+        'message_id: string,',
+        'thread_id: string,',
+        'run_id: string,',
+        'role: string,',
+        'content: string,',
+        'metadata: any,',
+        'created_at: string,',
+        'seq?: string,',
+      ].join('\n  '),
+    );
+    expect(interfaceSource('CanonicalMessagePage')).toMatch(
+      /data:\s*CanonicalMessage\[\][,;]/,
+    );
+    expect(interfaceSource('CanonicalMessagePage')).not.toMatch(
+      /data:\s*any[,;]/,
+    );
+    expect(apiTypeArguments('AppendCanonicalThreadMessage')).toEqual({
+      request: 'thread_product.AppendCanonicalThreadMessageRequest',
+      response: 'CanonicalMessage',
+    });
+  });
+
+  it('exports exactly the 47 canonical createAPI functions', () => {
     const generatedAPIFunctions = Array.from(
       generatedSource.matchAll(
         /export const (\w+) = \/\*#__PURE__\*\/createAPI</g,
@@ -314,9 +778,41 @@ describe('canonical Workbench thread generated contract', () => {
       match => match[1],
     );
 
-    expect(generatedAPIFunctions).toEqual(canonicalAPIFunctions);
+    expect(generatedAPIFunctions).toEqual([
+      ...canonicalAPIFunctions,
+      ...productMethods,
+    ]);
     for (const functionName of canonicalAPIFunctions) {
-      expect(threadSchema[functionName]).toBeTypeOf('function');
+      expect(api[functionName]).toBeTypeOf('function');
+    }
+    for (const method of productMethods) {
+      expect(api[method]).toBeTypeOf('function');
+    }
+  });
+
+  it('binds stable upload IDs to the canonical upload delete method', () => {
+    const config = apiConfig('DeleteCanonicalThreadUpload');
+
+    expect({ url: config.url, method: config.method }).toEqual({
+      url: '/api/workbench/threads/:thread_id/uploads/:file_id',
+      method: 'DELETE',
+    });
+  });
+
+  it('does not import or reference legacy task generated contracts', () => {
+    for (const sourceFile of generatedSourceFiles) {
+      assertNoTaskThreadContracts(sourceFile);
+    }
+    expect(interfaceSource('CanonicalThreadState')).toMatch(
+      /\btasks:\s*any[,;]/,
+    );
+  });
+
+  it('maps the workspace header on every canonical core request', () => {
+    for (const name of canonicalAPIFunctions) {
+      expect(apiConfig(name).reqMapping?.header ?? [], name).toContain(
+        'X-Coze-Space-ID',
+      );
     }
   });
 
@@ -324,34 +820,42 @@ describe('canonical Workbench thread generated contract', () => {
     const runMapping = {
       path: ['thread_id'],
       body: [...canonicalRunBody],
-      header: ['Idempotency-Key'],
+      header: ['Idempotency-Key', 'X-Coze-Space-ID'],
     };
     const waitMapping = {
       ...runMapping,
       body: [...canonicalRunBody, 'raise_error'],
     };
 
-    const expectedConfigs = canonicalAPIConfigs.map(expected => ({
-      ...expected,
-      reqMapping:
-        expected.name === 'CreateCanonicalRun' ||
-        expected.name === 'StreamCanonicalRun'
-          ? runMapping
-          : expected.name === 'WaitCanonicalRun'
-            ? waitMapping
-            : expected.reqMapping,
-    }));
-    const actualConfigs = canonicalAPIFunctions.map(name => {
-      const actual = apiConfig(name);
-      return {
-        name: actual.name,
-        url: actual.url,
-        method: actual.method,
-        reqMapping: actual.reqMapping,
-      };
-    });
+    const expectedConfigs = [
+      ...canonicalAPIConfigs.map(expected => ({
+        ...expected,
+        reqMapping:
+          expected.name === 'CreateCanonicalRun' ||
+          expected.name === 'StreamCanonicalRun'
+            ? runMapping
+            : expected.name === 'WaitCanonicalRun'
+              ? waitMapping
+              : expected.reqMapping,
+      })),
+      ...productAPIConfigs,
+    ];
+    const actualConfigs = [...canonicalAPIFunctions, ...productMethods].map(
+      name => {
+        const actual = apiConfig(name);
+        return {
+          name: actual.name,
+          url: actual.url,
+          method: actual.method,
+          reqMapping: actual.reqMapping,
+        };
+      },
+    );
 
     expect(actualConfigs).toEqual(expectedConfigs);
+    for (const config of actualConfigs) {
+      expect(config.reqMapping?.header).toContain('X-Coze-Space-ID');
+    }
 
     expect(apiConfig('StreamCanonicalRun').reqMapping).toEqual(
       apiConfig('CreateCanonicalRun').reqMapping,

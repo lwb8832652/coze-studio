@@ -2553,6 +2553,45 @@
       ]
     },
     {
+      "id": "http.workbench.canonical_product_contract",
+      "label": "Canonical product IDL wire validation, projection and safe logging",
+      "layer": "http_handler",
+      "kind": "capability",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_contract.go",
+          "symbol": "canonicalProductPagination",
+          "locator": "func canonicalProductPagination(c *app.RequestContext) (canonicalProductPage, *canonicalError)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection.go",
+          "symbol": "projectCanonicalProductArtifact",
+          "locator": "func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*canonicalProductArtifact, error)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection.go",
+          "symbol": "canonicalProductRequiredID",
+          "locator": "func canonicalProductRequiredID(value int64, resource string) (string, error)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_contract_test.go",
+          "locator": "func TestCanonicalProductCompletionLogContainsResourceFieldsWithoutPayload"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection_test.go",
+          "locator": "func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection_test.go",
+          "locator": "func TestCanonicalProductProjectionMatchesIDLWireShapes"
+        }
+      ]
+    },
+    {
       "id": "http.workbench.canonical_run",
       "label": "Feature-gated canonical Run HTTP handlers",
       "layer": "http_handler",
@@ -2595,28 +2634,63 @@
       ]
     },
     {
-      "id": "http.workbench.canonical_run_stream_stub",
-      "label": "Canonical Run SSE HTTP 501 stubs",
-      "layer": "http_handler",
+      "id": "http.workbench.canonical_run_stream",
+      "label": "Feature-gated canonical Run SSE handlers",
+      "layer": "http_sse",
       "kind": "capability",
-      "production_status": "stub",
+      "production_status": "current",
       "runtime_scope": "transport_contract",
       "source_anchors": [
         {
-          "path": "backend/api/handler/coze/workbench_canonical_entrypoints.go",
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
           "symbol": "StreamCanonicalRun",
           "locator": "func StreamCanonicalRun(ctx context.Context, c *app.RequestContext)"
         },
         {
-          "path": "backend/api/handler/coze/workbench_canonical_entrypoints.go",
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
           "symbol": "ReconnectCanonicalRunStream",
           "locator": "func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "symbol": "streamCanonicalRunEvents",
+          "locator": "func streamCanonicalRunEvents("
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "symbol": "writeCanonicalRunStreamEvent",
+          "locator": "func writeCanonicalRunStreamEvent("
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "symbol": "cancelCanonicalRunAfterStreamDisconnect",
+          "locator": "func cancelCanonicalRunAfterStreamDisconnect(ctx context.Context, runID int64)"
         }
       ],
       "evidence": [
         {
-          "path": "backend/api/handler/coze/workbench_canonical_entrypoints_test.go",
-          "locator": "func TestCanonicalUnimplementedEntrypointEnabledFailsClosed"
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestCanonicalRunStreamCancelCancelsOnlyAfterConfirmedDisconnect"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue"
         }
       ]
     },
@@ -3035,7 +3109,11 @@
       "from": "application.create_run",
       "to": "domain.create_run_bundle",
       "relation": "delegates_to",
-      "chain_ids": ["run.atomic_create", "entry.workbench_canonical_run_http"],
+      "chain_ids": [
+        "run.atomic_create",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3049,7 +3127,11 @@
       "from": "domain.create_run_bundle",
       "to": "repository.create_run_bundle",
       "relation": "persists_via",
-      "chain_ids": ["run.atomic_create", "entry.workbench_canonical_run_http"],
+      "chain_ids": [
+        "run.atomic_create",
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4395,7 +4477,10 @@
       "from": "application.get_run_by_idempotency_key",
       "to": "domain.run_idempotency_contract",
       "relation": "calls",
-      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "chain_ids": [
+        "entry.workbench_canonical_run_http",
+        "entry.workbench_canonical_run_stream"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4447,16 +4532,102 @@
       ]
     },
     {
-      "id": "edge.canonical_contract_routes_run_stream_stub",
+      "id": "edge.canonical_contract_routes_run_stream",
       "from": "contract.workbench_canonical_thread.thrift",
-      "to": "http.workbench.canonical_run_stream_stub",
+      "to": "http.workbench.canonical_run_stream",
       "relation": "routes_to",
-      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
       "confidence": "extracted",
       "evidence": [
         {
           "path": "backend/api/router/coze/api.go",
           "locator": "_runs0.POST(\"/stream\", append(_streamcanonicalrunMw(), coze.StreamCanonicalRun)...)"
+        },
+        {
+          "path": "backend/api/router/coze/api.go",
+          "locator": "_run_id0.GET(\"/stream\", append(_reconnectcanonicalrunstreamMw(), coze.ReconnectCanonicalRunStream)...)"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_calls_app_create_run",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "application.create_run",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "response, public, err := createCanonicalRunBundle(ctx, threadID, submission)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "response, err := appagentthread.SVC.CreateRun(ctx, canonicalApplicationCreateRunRequest(threadID, submission))"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_replays_by_idempotency",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "application.get_run_by_idempotency_key",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "response, public, err := createCanonicalRunBundle(ctx, threadID, submission)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "response, err := appagentthread.SVC.GetRunByIdempotencyKey("
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_calls_app_query",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "application.canonical_thread_contract",
+      "relation": "delegates_to",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "response, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_calls_cancel",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "application.cancel_run",
+      "relation": "cancels",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "if _, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{"
+        }
+      ]
+    },
+    {
+      "id": "edge.canonical_run_stream_calls_resume",
+      "from": "http.workbench.canonical_run_stream",
+      "to": "application.resume_human",
+      "relation": "resumes",
+      "chain_ids": ["entry.workbench_canonical_run_stream"],
+      "confidence": "extracted",
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "run, public, err := resumeCanonicalHumanInteraction(ctx, threadID, submission.Resume, submission.IdempotencyKey)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "locator": "resumed, err := appagentthread.SVC.ResumeHumanInteraction(accessCtx, &appagentthread.ResumeHumanInteractionRequest{"
         }
       ]
     }
@@ -5246,7 +5417,7 @@
     },
     {
       "id": "entry.workbench_canonical_run_http",
-      "name": "Feature-gated canonical non-SSE Run HTTP contract",
+      "name": "Feature-gated canonical Run HTTP contract",
       "entry": "contract.workbench_canonical_thread.thrift",
       "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
@@ -5268,8 +5439,7 @@
         "edge.canonical_idempotency_race_validates_fingerprint",
         "edge.canonical_run_handler_calls_app_query",
         "edge.canonical_run_handler_calls_cancel",
-        "edge.canonical_run_handler_calls_resume",
-        "edge.canonical_contract_routes_run_stream_stub"
+        "edge.canonical_run_handler_calls_resume"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -5289,6 +5459,52 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
           "locator": "func TestCanonicalWaitCancellationHonorsEndpointDisconnectMode"
+        }
+      ]
+    },
+    {
+      "id": "entry.workbench_canonical_run_stream",
+      "name": "Feature-gated canonical Run create and reconnect SSE contract",
+      "entry": "contract.workbench_canonical_thread.thrift",
+      "terminal": "repository.create_run_bundle",
+      "ordered_node_ids": [
+        "contract.workbench_canonical_thread.thrift",
+        "http.workbench.canonical_run_stream",
+        "application.create_run",
+        "domain.create_run_bundle",
+        "repository.create_run_bundle"
+      ],
+      "ordered_edge_ids": [
+        "edge.canonical_contract_routes_run_stream",
+        "edge.canonical_run_stream_calls_app_create_run",
+        "edge.create_run_app_delegates_domain",
+        "edge.create_run_domain_persists_bundle"
+      ],
+      "required_side_edge_ids": [
+        "edge.canonical_run_stream_replays_by_idempotency",
+        "edge.canonical_idempotency_lookup_validates_fingerprint",
+        "edge.canonical_run_stream_calls_app_query",
+        "edge.canonical_run_stream_calls_cancel",
+        "edge.canonical_run_stream_calls_resume"
+      ],
+      "production_status": "current",
+      "canonical_executor": false,
+      "test_evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestReconnectCanonicalRunStreamUsesLastEventIDHeader"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue"
         }
       ]
     }
@@ -5669,7 +5885,7 @@
         "Workbench canonical Thread Thrift contract",
         "Feature-gated canonical Thread HTTP handlers",
         "Feature-gated canonical Run HTTP handlers",
-        "Canonical Run SSE HTTP 501 stubs",
+        "Feature-gated canonical Run SSE handlers",
         "COZE_WORKBENCH_CANONICAL_API_ENABLED",
         "canonical_public_state",
         "delegates_to",
@@ -5677,13 +5893,14 @@
       ],
       "smoke_node_ids": [
         "http.workbench.canonical_thread",
-        "http.workbench.canonical_run"
+        "http.workbench.canonical_run",
+        "http.workbench.canonical_run_stream"
       ],
       "required_node_ids": [
         "contract.workbench_canonical_thread.thrift",
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
-        "http.workbench.canonical_run_stream_stub",
+        "http.workbench.canonical_run_stream",
         "application.canonical_thread_contract",
         "application.create_run",
         "application.cancel_run",
@@ -5707,7 +5924,12 @@
         "edge.canonical_run_handler_calls_app_query",
         "edge.canonical_run_handler_calls_cancel",
         "edge.canonical_run_handler_calls_resume",
-        "edge.canonical_contract_routes_run_stream_stub"
+        "edge.canonical_contract_routes_run_stream",
+        "edge.canonical_run_stream_calls_app_create_run",
+        "edge.canonical_run_stream_replays_by_idempotency",
+        "edge.canonical_run_stream_calls_app_query",
+        "edge.canonical_run_stream_calls_cancel",
+        "edge.canonical_run_stream_calls_resume"
       ]
     }
   ]

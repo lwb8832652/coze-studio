@@ -506,6 +506,12 @@ type ListMessagesRequest struct {
 	PageSize int32
 }
 
+type ListRecentMessagesByRolesRequest struct {
+	ThreadID int64
+	Roles    []entity.MessageRole
+	Limit    int32
+}
+
 type ThreadService interface {
 	CreateThread(ctx context.Context, req *CreateThreadRequest) (*entity.Thread, error)
 	CreateThreadRunMessage(ctx context.Context, req *CreateThreadRunMessageRequest) (*CreateThreadRunMessageResult, error)
@@ -516,6 +522,7 @@ type ThreadService interface {
 	ListThreads(ctx context.Context, req *ListThreadsRequest) ([]*entity.Thread, int64, error)
 	AppendMessage(ctx context.Context, req *AppendMessageRequest) (*entity.Message, error)
 	ListMessages(ctx context.Context, req *ListMessagesRequest) ([]*entity.Message, int64, error)
+	ListRecentMessagesByRoles(ctx context.Context, req *ListRecentMessagesByRolesRequest) ([]*entity.Message, error)
 	CreateRun(ctx context.Context, req *CreateRunRequest) (*entity.Run, error)
 	CreateRunBundle(ctx context.Context, req *CreateRunBundleRequest) (*CreateRunBundleResult, error)
 	GetRun(ctx context.Context, req *GetRunRequest) (*entity.Run, error)

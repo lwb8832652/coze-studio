@@ -186,10 +186,36 @@ wait/join 只在 Run 终态返回 `200 values`，不再复用旧事件流的 30 
 生产网关仍必须在读取或缓冲 body 前执行同等或更严格的请求体限制，handler 限制是第二道
 契约防线。
 
-canonical create-stream 和 reconnect-stream 两个 SSE handler 仍是 feature gate 后的
-`501` 占位；其余 canonical 路由也继续由默认关闭的 feature gate 隔离，因此当前还没有
-切换生产流量。现有 Workbench UI 继续使用 `/api/workbench/task_threads`，`/api/threads`
-兼容入口也未修改；两条来源合同在完整联调、灰度和观察期结束前都不得删除。
+canonical create-stream 和 reconnect-stream 两个 SSE handler 已在默认关闭的 feature
+gate 后完成实现。create-stream 在读取请求体前完成 path Thread/space 授权，再严格解析
+submission；随后复用现有原子 Run/Message 创建和 human resume 用例，按 principal 隔离
+幂等键，并在 Run 与 User Message 的公共投影通过后返回精确 `Content-Location` 与指向
+既有 Run GET stream 的 `Location`，写入 metadata、回放持久化事件并跟随 live 事件。
+reconnect-stream 分别校验 query `after_event_id` 和 `Last-Event-ID`，同时存在时使用较大值，
+支持受控 `stream_mode` 覆盖；`cancel_on_disconnect` 只接受固定 SDK 的精确 `1|0` 和显式
+小写 `true|false`，大小写变体、空白包裹及其他值严格拒绝。`messages-tuple` 只作为
+请求 mode，匹配 `message.*`、`llm.*` 及同类公开事件，wire event 固定为 `messages`，data
+为二元数组。两条路径均按 `event_id` 顺序输出审核后的公共事件，终态前执行最后一次
+event flush，且只在 SSE writer 明确确认断连且请求选择 cancel 时取消 Run；reconnect 的
+显式 `true|1` 覆盖 Run 持久化的默认断线策略，`false|0` 不取消。context 结束、流超时和正常
+终态都不会触发取消。执行图用独立 canonical Run SSE chain 记录创建、幂等回放、事件查询、
+human resume 与断线取消的应用层依赖，不把 SSE handler 伪装成非流式 handler 的调用方。
+
+canonical product resources 共用严格的十进制路径 ID、1 MiB JSON body ceiling、exact
+offset pagination 与公开投影 helper。手写 wire projection 必须与 `thread_product.thrift` 的
+required/optional presence 一致，所有必填实体 ID 均 fail closed；公开资源将 ID 和时间规范化为
+字符串/RFC3339，optional 时间只省略零值，任何非零非法时间均 fail closed；Artifact 和 token usage
+先经过 application public projection。非数字
+`source_id`/`target_id` 仅在符合公开标识符与敏感值边界时保留；scan worker 只保留稳定哈希引用，
+不公开租约或原始错误。完成日志只记录审核后的资源、分页和生命周期字段。普通 Run 创建响应可附带
+同一原子 bundle 已提交的 User Message 投影；幂等 POST replay 仍是 create 响应，保留同一公开
+`submission_message`，后续 list/get/read 投影不保留该一次性字段。Thread 的 `Source`、`Progress`
+与最后消息字段仅兼容透传现有 `ThreadSummary`，不在此层补充数据来源；UI 继续保留 messages/title/status
+fallback。
+
+canonical feature gate 仍默认关闭，因此当前没有切换生产流量。现有 Workbench UI 继续
+使用 `/api/workbench/task_threads`，`/api/threads` 兼容入口也未修改；两条来源合同在完整
+联调、灰度和观察期结束前都不得删除。
 
 ### MySQL 队列与 lease
 

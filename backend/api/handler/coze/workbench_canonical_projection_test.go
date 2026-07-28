@@ -19,7 +19,9 @@ package coze
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/bytedance/mockey"
 	"github.com/stretchr/testify/require"
@@ -134,6 +136,103 @@ func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *te
 
 		require.NoError(t, err)
 		require.Equal(t, canonicalPublicAssistantID, projected.AssistantID)
+	}
+}
+
+// Thread coze fields are compatibility pass-throughs from ThreadSummary; this
+// projection does not enrich them from domain state, queries, or messages.
+func TestCanonicalCoreCozeExtensionsProjectRunAndPassThroughThreadSummaryFields(t *testing.T) {
+	parentRunID := int64(2000)
+	projectedRun, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, ParentRunID: parentRunID, RunKind: appagentthread.RunKindSubagent,
+		Status: appagentthread.RunStatusSucceeded, StartedAt: 1710000000123, EndedAt: 1710000001123,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "2000", *projectedRun.Coze.ParentRunID)
+	require.Equal(t, "subagent", projectedRun.Coze.RunKind)
+	require.NotNil(t, projectedRun.Coze.StartedAt)
+	require.NotNil(t, projectedRun.Coze.EndedAt)
+
+	projectedThread, err := projectCanonicalThreadSnapshot(&appagentthread.ThreadSummary{
+		ThreadID: 2001, Status: appagentthread.ThreadStatusCompleted, Source: appagentthread.ThreadSourceAPI,
+		Progress: 80, LastUserMessage: " user message ", LastAgentMessage: " agent message ",
+	}, canonicalThreadProjectionSnapshot{LatestRun: &appagentthread.RunSummary{Status: appagentthread.RunStatusSucceeded}})
+	require.NoError(t, err)
+	require.Equal(t, "api", projectedThread.Coze.Source)
+	require.Equal(t, int32(80), projectedThread.Coze.Progress)
+	require.Equal(t, "user message", projectedThread.Coze.LastUserMessage)
+	require.Equal(t, "agent message", projectedThread.Coze.LastAgentMessage)
+}
+
+func TestCanonicalThreadAndRunProjectionRejectsUnknownNonEmptyEnums(t *testing.T) {
+	t.Run("thread source", func(t *testing.T) {
+		for _, source := range []appagentthread.ThreadSource{
+			appagentthread.ThreadSourceWeb,
+			appagentthread.ThreadSourceIM,
+			appagentthread.ThreadSourceAPI,
+			"",
+		} {
+			projected, err := projectCanonicalThreadSnapshot(
+				&appagentthread.ThreadSummary{ThreadID: 2001, Source: source},
+				canonicalThreadProjectionSnapshot{},
+			)
+			require.NoError(t, err)
+			require.Equal(t, string(source), projected.Coze.Source)
+		}
+		_, err := projectCanonicalThreadSnapshot(
+			&appagentthread.ThreadSummary{ThreadID: 2001, Source: appagentthread.ThreadSource("future_source")},
+			canonicalThreadProjectionSnapshot{},
+		)
+		require.ErrorContains(t, err, "unsupported canonical thread source")
+	})
+
+	t.Run("run kind", func(t *testing.T) {
+		projected, err := projectCanonicalRun(&appagentthread.RunSummary{
+			RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "task", projected.Coze.RunKind)
+		_, err = projectCanonicalRun(&appagentthread.RunSummary{
+			RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+			RunKind: appagentthread.RunKind("future_kind"),
+		})
+		require.ErrorContains(t, err, "unsupported canonical run kind")
+	})
+}
+
+func TestCanonicalRunOptionalTimesFailClosed(t *testing.T) {
+	const validTime = int64(1710000000123)
+
+	zero, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+	})
+	require.NoError(t, err)
+	require.Nil(t, zero.Coze.StartedAt)
+	require.Nil(t, zero.Coze.EndedAt)
+
+	valid, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending,
+		StartedAt: validTime, EndedAt: validTime,
+	})
+	require.NoError(t, err)
+	for _, value := range []*string{valid.Coze.StartedAt, valid.Coze.EndedAt} {
+		require.NotNil(t, value)
+		_, parseErr := time.Parse(time.RFC3339Nano, *value)
+		require.NoError(t, parseErr)
+	}
+
+	for _, test := range []struct {
+		name string
+		run  *appagentthread.RunSummary
+	}{
+		{name: "started negative", run: &appagentthread.RunSummary{RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending, StartedAt: -1}},
+		{name: "ended overflowing", run: &appagentthread.RunSummary{RunID: 3001, ThreadID: 2001, Status: appagentthread.RunStatusPending, EndedAt: math.MaxInt64}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			_, projectionErr := projectCanonicalRun(test.run)
+			require.Error(t, projectionErr)
+		})
 	}
 }
 

@@ -58,6 +58,40 @@ var canonicalThreadRoutes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/threads/:thread_id/runs/:run_id/messages"},
 }
 
+var canonicalProductRoutes = []routeExpectation{
+	{http.MethodPost, "/api/workbench/threads/:thread_id/messages"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/suggestions"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/uploads"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/uploads"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/uploads/:file_id"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/content"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/artifacts/:artifact_id"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/artifact_scan_jobs"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/token_usage"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories"},
+	{http.MethodPut, "/api/workbench/threads/:thread_id/memories/:memory_id"},
+	{http.MethodDelete, "/api/workbench/threads/:thread_id/memories/:memory_id"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/:memory_id/restore"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/clear"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories/export"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/memories/import"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/memories/audit_events"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/guardrail_audit_events"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/guardrail_audit_events/export"},
+	{http.MethodGet, "/api/workbench/threads/:thread_id/mcp_runtime_audit_events"},
+	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/retry"},
+}
+
+func canonicalRouteSnapshot() []routeExpectation {
+	result := append([]routeExpectation{}, canonicalThreadRoutes...)
+	return append(result, canonicalProductRoutes...)
+}
+
 var forbiddenCanonicalThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/stream"},
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/join"},
@@ -153,10 +187,8 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	Register(h)
 	RegisterCustomRoutes(h)
 
-	registeredRoutes := registeredRouteSet(h)
-
 	t.Run("registers the canonical route surface", func(t *testing.T) {
-		requireRegisteredRoutes(t, registeredRoutes, canonicalThreadRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/threads", canonicalRouteSnapshot())
 	})
 
 	t.Run("excludes forbidden canonical POST variants", func(t *testing.T) {
@@ -211,29 +243,6 @@ func requireUnreachableRoute(
 		method,
 		path,
 	)
-}
-
-func registeredRouteSet(h *server.Hertz) map[routeExpectation]struct{} {
-	routes := make(map[routeExpectation]struct{}, len(h.Routes()))
-	for _, route := range h.Routes() {
-		routes[routeExpectation{method: route.Method, path: route.Path}] = struct{}{}
-	}
-	return routes
-}
-
-func requireRegisteredRoutes(
-	t *testing.T,
-	registeredRoutes map[routeExpectation]struct{},
-	expectedRoutes []routeExpectation,
-) {
-	t.Helper()
-	for _, route := range expectedRoutes {
-		route := route
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			_, ok := registeredRoutes[route]
-			require.True(t, ok, "canonical route is not registered: %s %s", route.method, route.path)
-		})
-	}
 }
 
 func requireExactRouteSnapshot(

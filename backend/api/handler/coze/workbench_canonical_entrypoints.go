@@ -35,13 +35,3 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 		errorClass: "canonical_not_implemented",
 	})
 }
-
-// StreamCanonicalRun exposes the gated canonical run-create stream contract.
-func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ReconnectCanonicalRunStream exposes the gated canonical reconnect contract.
-func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}

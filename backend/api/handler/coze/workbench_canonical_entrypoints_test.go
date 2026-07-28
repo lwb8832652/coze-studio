@@ -44,19 +44,46 @@ var canonicalEntrypoints = []struct {
 	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages, false},
 	{"ListCanonicalRuns", ListCanonicalRuns, false},
 	{"CreateCanonicalRun", CreateCanonicalRun, false},
-	{"StreamCanonicalRun", StreamCanonicalRun, true},
+	{"StreamCanonicalRun", StreamCanonicalRun, false},
 	{"WaitCanonicalRun", WaitCanonicalRun, false},
 	{"GetCanonicalRun", GetCanonicalRun, false},
-	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, true},
+	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, false},
 	{"JoinCanonicalRun", JoinCanonicalRun, false},
 	{"CancelCanonicalRun", CancelCanonicalRun, false},
 	{"ResumeCanonicalRun", ResumeCanonicalRun, false},
 	{"ListCanonicalRunEvents", ListCanonicalRunEvents, false},
 	{"ListCanonicalRunMessages", ListCanonicalRunMessages, false},
+	{"AppendCanonicalThreadMessage", AppendCanonicalThreadMessage, false},
+	{"GenerateCanonicalThreadSuggestions", GenerateCanonicalThreadSuggestions, false},
+	{"ListCanonicalThreadUploads", ListCanonicalThreadUploads, false},
+	{"UploadCanonicalThreadFiles", UploadCanonicalThreadFiles, false},
+	{"DeleteCanonicalThreadUpload", DeleteCanonicalThreadUpload, false},
+	{"ListCanonicalThreadArtifacts", ListCanonicalThreadArtifacts, false},
+	{"GetCanonicalThreadArtifactContent", GetCanonicalThreadArtifactContent, false},
+	{"GetCanonicalThreadArtifactSignedURL", GetCanonicalThreadArtifactSignedURL, false},
+	{"DeleteCanonicalThreadArtifact", DeleteCanonicalThreadArtifact, false},
+	{"RestoreCanonicalThreadArtifact", RestoreCanonicalThreadArtifact, false},
+	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan, false},
+	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, false},
+	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, false},
+	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, false},
+	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, false},
+	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, false},
+	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory, false},
+	{"RestoreCanonicalThreadMemory", RestoreCanonicalThreadMemory, false},
+	{"ClearCanonicalThreadMemories", ClearCanonicalThreadMemories, false},
+	{"ExportCanonicalThreadMemories", ExportCanonicalThreadMemories, false},
+	{"ImportCanonicalThreadMemories", ImportCanonicalThreadMemories, false},
+	{"ListCanonicalThreadMemoryAuditEvents", ListCanonicalThreadMemoryAuditEvents, false},
+	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents, false},
+	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents, false},
+	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents, false},
+	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun, false},
 }
 
 func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "")
+	require.Len(t, canonicalEntrypoints, 47)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		entrypoint := entrypoint
@@ -79,6 +106,14 @@ func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
 
 func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 	t.Setenv(canonicalAPIEnabledEnv, "true")
+
+	stubCount := 0
+	for _, entrypoint := range canonicalEntrypoints {
+		if entrypoint.stub {
+			stubCount++
+		}
+	}
+	require.Equal(t, 0, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {

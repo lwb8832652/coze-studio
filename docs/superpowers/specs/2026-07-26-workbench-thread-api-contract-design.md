@@ -756,8 +756,11 @@ data: [{"type":"AIMessageChunk","content":"完成"},{"run_id":"3001","node":"age
 
 - `GET .../{run_id}/stream` 接受 `Last-Event-ID`；可以同时接受明确的
   `after_event_id`，两者都合法时取较大值。
-- `GET .../{run_id}/stream` 接受 SDK 的 `stream_mode` 和默认
-  `cancel_on_disconnect=0` query；非零取消语义未完成前返回 `422`。
+- `GET .../{run_id}/stream` 接受 SDK 的 `stream_mode`；`cancel_on_disconnect` 只兼容固定
+  JavaScript SDK 的精确 `1|0` 和显式小写 `true|false`，大小写变体、空白包裹及其他值
+  返回 `422`。`true|1` 是本次连接的明确取消策略，只有
+  writer 确认客户端断开时才取消，并覆盖 Run 持久化的 `on_disconnect=continue` 默认值；
+  `false|0` 或省略不取消。
 - cursor 必须以 64 位十进制整数解析；前端使用 `BigInt` 或字符串整数比较器。
 - 服务端先回放 cursor 之后的持久化公开事件，再进入实时订阅，二者之间不得丢事件。
 - 客户端按 `event_id` 去重；未知 `event` 记录安全遥测后继续，不能终止整个流。

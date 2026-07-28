@@ -749,6 +749,59 @@ func (s *ApplicationService) ListMessages(ctx context.Context, req *ListMessages
 	return resp, nil
 }
 
+const (
+	defaultRecentPublicMessagesLimit int32 = 40
+	maxRecentPublicMessagesLimit     int32 = 100
+)
+
+func (s *ApplicationService) ListRecentPublicMessages(
+	ctx context.Context,
+	req *ListRecentPublicMessagesRequest,
+) (*ListRecentPublicMessagesResponse, error) {
+	if err := s.requireThreadSVC(); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("list recent public messages request is required")
+	}
+	if err := s.authorizeThreadAccessFromContext(ctx, ThreadAccessRequest{
+		ThreadID: req.ThreadID,
+	}); err != nil {
+		return nil, err
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = defaultRecentPublicMessagesLimit
+	}
+	if limit > maxRecentPublicMessagesLimit {
+		limit = maxRecentPublicMessagesLimit
+	}
+
+	messages, err := s.ThreadSVC.ListRecentMessagesByRoles(ctx, &domainservice.ListRecentMessagesByRolesRequest{
+		ThreadID: req.ThreadID,
+		Roles: []domainentity.MessageRole{
+			domainentity.MessageRoleUser,
+			domainentity.MessageRoleAssistant,
+		},
+		Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &ListRecentPublicMessagesResponse{
+		Messages: make([]*PublicMessage, 0, len(messages)),
+	}
+	for _, message := range messages {
+		if projected := ProjectPublicMessage(DomainMessageToSummary(message)); projected != nil {
+			resp.Messages = append(resp.Messages, projected)
+		}
+	}
+
+	return resp, nil
+}
+
 func (s *ApplicationService) CreateRun(ctx context.Context, req *CreateRunRequest) (*CreateRunResponse, error) {
 	if err := s.requireThreadSVC(); err != nil {
 		return nil, err
