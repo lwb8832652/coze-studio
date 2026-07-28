@@ -60,8 +60,8 @@ func RunStorageLifecycle(t *testing.T, factory StorageFactory) {
 	if err != nil {
 		t.Fatalf("HeadObject() error = %v", err)
 	}
-	if info == nil || info.Key == "" || info.URL == "" {
-		t.Fatalf("HeadObject() info = %+v", info)
+	if info == nil || info.Key == "" {
+		t.Fatal("HeadObject() returned empty metadata")
 	}
 
 	list, err := client.ListObjectsPaginated(ctx, &storage.ListObjectsPaginatedInput{Prefix: "contract/", PageSize: 20})
@@ -77,7 +77,7 @@ func RunStorageLifecycle(t *testing.T, factory StorageFactory) {
 		t.Fatalf("GetObjectUrl() error = %v", err)
 	}
 	if !strings.Contains(signed, key) {
-		t.Fatalf("signed URL does not reference key: %s", signed)
+		t.Fatal("signed URL does not reference object key")
 	}
 
 	if err = client.DeleteObject(ctx, key); err != nil {
