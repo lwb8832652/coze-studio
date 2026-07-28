@@ -199,13 +199,12 @@ func (r *MySQLRepository) UpdateHealth(ctx context.Context, id uint64, health do
 	}
 	result := db.Model(&objectStorageConfigPO{}).
 		Where("id = ?", id).
-		Updates(map[string]any{
+		UpdateColumns(map[string]any{
 			"health_status":          string(health.Status),
 			"last_health_code":       health.Code,
 			"last_health_message":    health.Message,
 			"last_health_latency_ms": health.LatencyMS,
 			"last_health_at":         healthTime(health.CheckedAt),
-			"updated_at":             persistenceNow(),
 		})
 	if result.Error != nil {
 		return mapRepositoryError(result.Error)

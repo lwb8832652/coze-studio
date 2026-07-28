@@ -153,7 +153,11 @@ func TestMySQLRepositoryGetActiveEmptyPrimary(t *testing.T) {
 func TestMySQLRepositoryUpdateHealthDoesNotBumpVersion(t *testing.T) {
 	repository, _ := newObjectStorageSQLiteRepository(t)
 	ctx := context.Background()
-	created, err := repository.Create(ctx, validRepositoryConfig("minio-a"))
+	input := validRepositoryConfig("minio-a")
+	initialUpdatedAt := time.Date(2026, 7, 28, 9, 0, 0, 123000000, time.UTC)
+	input.CreatedAt = initialUpdatedAt
+	input.UpdatedAt = initialUpdatedAt
+	created, err := repository.Create(ctx, input)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -174,6 +178,9 @@ func TestMySQLRepositoryUpdateHealthDoesNotBumpVersion(t *testing.T) {
 	}
 	if after.Version != created.Version {
 		t.Fatalf("version bumped from %d to %d", created.Version, after.Version)
+	}
+	if !after.UpdatedAt.Equal(created.UpdatedAt) {
+		t.Fatalf("updated_at changed from %s to %s", created.UpdatedAt.Format(time.RFC3339Nano), after.UpdatedAt.Format(time.RFC3339Nano))
 	}
 	if after.Health.Status != domain.HealthHealthy || after.Health.Code != "OK" ||
 		after.Health.Message != "connected" || after.Health.LatencyMS != 37 ||
