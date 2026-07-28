@@ -1,11 +1,24 @@
 # Workbench Canonical Cutover Gate A
 
-## 基线标识
+## Provenance
 
 - 分支：`codex/workbench-canonical-ui-cutover-retirement`
-- Gate A 源码 HEAD：`3b060204c039d9cc775ec16298d4296964beee73`
+- Production source baseline SHA：
+  `3b060204c039d9cc775ec16298d4296964beee73`。该 revision 只作为生产源码基线，
+  不包含后来新增的 10-route exact snapshot，也未被用于声称运行后来新增的测试。
+- Initial snapshot lineage：`4b15aefc8588de54bb65162c64f223507902c28d`。
+- Browser-evidence lineage：`8690807429a9c4bf9e18d07d21dc26140d8c9957`。
+- Exact snapshot/request-resolution test implementation SHA：
+  `1d52b7adf719947f1a4898c9fbc3bc4ddcd63f80`。
+- 本 evidence 文件的 current revision 不写入自引用 SHA，机械获取命令为：
+
+```bash
+git log -1 --format=%H -- \
+  docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-a.md
+```
+
 - 固定审计窗口：`2026-06-28T00:00:00+08:00` 至
-  `2026-07-28T21:12:34+08:00`
+  `2026-07-28T21:41:32+08:00`
 - 本次只冻结测试与证据，不修改业务代码、route registration、前端 transport、
   generated files 或数据库状态。
 
@@ -36,15 +49,34 @@ POST /api/runs/:run_id/join
 GET  /api/runs/:run_id/join
 ```
 
-### TDD 记录
+### Snapshot TDD Lineage
 
 1. RED：先把 `/api/runs/:run_id/feedback` 的预期 method 故意写成 `POST`，运行
    `TestRegisterIncludesLangGraphRunRoutes`。命令退出 `1`，精确 diff 报告 expected
    `POST`、actual `GET`。
 2. GREEN：修正为 `GET` 后运行同一测试。命令退出 `0`：
    `ok github.com/coze-dev/coze-studio/backend/api/router/coze 1.295s`。
+3. 该初始 snapshot 随 lineage commit `4b15aefc8588de54bb65162c64f223507902c28d`
+   提交；production source baseline `3b060204...` 不包含此测试实现。
+
+### Request-resolution TDD
+
+tests-only revision `1d52b7adf719947f1a4898c9fbc3bc4ddcd63f80` 删除 canonical
+测试中三个重复 source-family snapshot 调用，保留三个既定顶层测试作为唯一入口；
+同时增加 middleware 记录 `RequestContext.FullPath()` 的 concrete request coverage。
+
+1. RED：把 `POST /api/threads/search` 的 expected template 故意写为
+   `/api/threads/:thread_id`。测试退出 `1`，报告 actual 为 `/api/threads/search`。
+2. GREEN：修正 expected template 后，同一测试退出 `0`：
+   `ok github.com/coze-dev/coze-studio/backend/api/router/coze 1.350s`。
+3. 提交后在 clean tests-only SHA 上 fresh 复验该测试：退出 `0`，
+   `ok github.com/coze-dev/coze-studio/backend/api/router/coze 1.226s`。
 
 ### 最终后端复验
+
+以下命令在 clean worktree、HEAD
+`1d52b7adf719947f1a4898c9fbc3bc4ddcd63f80` 上执行，验证结果绑定到该
+tests-only revision：
 
 ```bash
 cd backend
@@ -54,8 +86,8 @@ GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
   -count=1
 ```
 
-在 Gate A 截止前的最新结果：退出码 `0`，
-`ok github.com/coze-dev/coze-studio/backend/api/router/coze 1.403s`。
+结果：退出码 `0`，
+`ok github.com/coze-dev/coze-studio/backend/api/router/coze 0.898s`。
 
 ## Page-visible V1 Baseline
 
@@ -104,50 +136,46 @@ rushx test \
 
 ## Old-page Browser Control
 
-使用已配置且已登录的 in-app browser，只创建一条验证 Thread 和一个 Run；没有
-删除或批量更新在线记录。
+使用已配置且已登录的 in-app browser。初始控制只创建一条验证 Thread 和一个
+Run；后续证据修复均复用该记录，没有新增、删除或批量更新在线记录。持久化证据
+只保留脱敏标签和规范化路径，不记录 credential、cookie、header、body 或用户内容。
 
 | 项 | 实际取得的信息 |
 | --- | --- |
-| URL | 刷新后仍为 `http://localhost:8080/space/7666420680379858944/tasks/7667558479128690688` |
-| Account / role | 账号身份已验证为 `刘文波`（`@840582614`）；显式角色子项为 **`BLOCKED`**。实际检查位置是详情页左侧账号菜单：展开后只有姓名、账号 ID、API 授权、模型管理、MCP 配置、IM 机器人、账号设置、积分与订阅、系统管理和退出登录，没有 role/permission 字段。“系统管理”只是菜单入口，不能作为角色名。browser network inventory 能看到 `/api/admin/auth/status`，但不提供响应体；尝试在同一已登录 in-app browser 中只读打开该已观察 endpoint 时被客户端以 `ERR_BLOCKED_BY_CLIENT` 阻止，因此无法取得明确角色值 |
-| Workspace | 个人空间 ID `7666420680379858944` |
-| 初始可见状态 | Task list 可见多条现有任务及状态；新建后 task detail 可见 |
-| Validation Thread | 验证标记 `GATE-A-BASELINE-20260728-2040`；Thread/task ID `7667558479128690688`；完成后页面标题为 `GATE Baseline Validation Confirmed` |
-| Validation Run | 页面显示一个 Run 已完成、`已完成 1 个步骤`，token usage 显示 `14.7K`；未在证据中记录请求体或用户内容 |
-| Refresh | 原控制完成后刷新一次；本次证据修复又对同一 Thread 做一次只读 reload。修复后的刷新 URL、Thread 标题和完成状态仍在，没有创建新 Thread/Run |
+| URL | 刷新后仍为规范化详情 URL `http://localhost:8080/space/{workspace_id}/tasks/{thread_id}`；动态 ID 已移除 |
+| Account / role | 稳定脱敏标签 `gate-a-authenticated-account` 已验证为登录态；个人姓名与账号 ID 已移除。显式角色子项为 **`BLOCKED`**：实际检查详情页左侧账号菜单，未见 role/permission 字段；“系统管理”只是菜单入口，不能作为角色名。browser inventory 能看到 `/api/admin/auth/status`，但不提供响应体；同一已登录 browser 只读打开该 endpoint 时被客户端以 `ERR_BLOCKED_BY_CLIENT` 阻止 |
+| Workspace | 脱敏空间标识 `7666...8944`；完整值只在受控 browser session 中核验，不写入持久化 evidence |
+| 初始可见状态 | Task list 可见多条现有任务及状态；验证详情页可见 |
+| Validation Thread | 稳定脱敏标签 `gate-a-validation-thread`；Thread ID、在线标题和用户内容均已移除 |
+| Validation Run | 复用已有 Run；页面显示已完成一个步骤，未记录 Run ID、请求体或用户内容 |
+| Refresh | 原控制与后续 evidence 修复均只读 reload 同一 Thread；最新代理观测后的刷新 URL、完成状态仍在，没有创建新 Thread/Run |
 | Console | 本次账号菜单检查在 `2026-07-28T13:08:12.139Z` 记录一条 Tooltip/Dropdown React state-update error；`2026-07-28T13:10:22Z` 的网络证据刷新后只有 Zustand devtools 与 React Router future flag warnings，没有新增 error |
-| Request paths | **`VERIFIED_BROWSER`**：使用 in-app browser `pageAssets` network inventory 读取真实 resource URL 和触发类型。列表、详情、Run 数据与 reload 均观察到 `/api/workbench/task_threads/**`；精确路径见下节 |
+| Request paths | **`VERIFIED_BROWSER`**：in-app browser `pageAssets` inventory 记录真实 URL；临时 loopback reverse proxy 仅记录 method 与 URL，补齐真实 HTTP method。列表、详情、Run 数据与 reload 均命中 `/api/workbench/task_threads/**`；规范化 method/path/query 见下节 |
 
 ### Actual Browser Request Paths
 
-以下结论只来自本次 in-app browser 的 network resource inventory，不使用源码推断。
-inventory 将普通调用标记为 `xmlhttprequest`，将 event stream 标记为 `other`。
-
-- 刷新已有详情后的 inventory `ec2d4016-43b9-44cd-b0b6-b8d295cd1bc0` 实际记录：
+以下结论只来自本次 in-app browser network observation 与 loopback request
+interception，不使用源码推断。动态标识已规范化：
 
 ```text
-/api/workbench/task_threads?space_id=7666420680379858944&page=1&page_size=20
-/api/workbench/task_threads/7667558479128690688
-/api/workbench/task_threads/7667558479128690688/messages?page=1&page_size=50
-/api/workbench/task_threads/7667558479128690688/runs?parent_run_id=0&page=1&page_size=1
-/api/workbench/task_threads/7667558479128690688/artifacts?page=1&page_size=50&space_id=7666420680379858944
-/api/workbench/task_threads/7667558479128690688/run_events?page=1&page_size=100
-/api/workbench/task_threads/7667558479128690688/runs?page=1&page_size=20
-/api/workbench/task_threads/7667558479128690688/runs?parent_run_id=7667558479128707072&page=1&page_size=20
-/api/workbench/task_threads/7667558479128690688/token_usage?page=1&page_size=50
+GET  /api/workbench/task_threads?space_id={workspace_id}&page=1&page_size=20
+GET  /api/workbench/task_threads/{thread_id}
+GET  /api/workbench/task_threads/{thread_id}/messages?page=1&page_size=50
+GET  /api/workbench/task_threads/{thread_id}/runs?parent_run_id=0&page=1&page_size=1
+GET  /api/workbench/task_threads/{thread_id}/artifacts?page=1&page_size=50&space_id={workspace_id}
+GET  /api/workbench/task_threads/{thread_id}/run_events?page=1&page_size=100
+GET  /api/workbench/task_threads/{thread_id}/runs?page=1&page_size=20
+GET  /api/workbench/task_threads/{thread_id}/runs?parent_run_id={run_id}&page=1&page_size=20
+GET  /api/workbench/task_threads/{thread_id}/token_usage?page=1&page_size=50
+POST /api/workbench/task_threads/{thread_id}/suggestions
+GET  /api/workbench/task_threads/{thread_id}/run_events/stream
 ```
 
-- 点击“返回全部任务”后，inventory `d251260b-2d2f-4dea-8ef4-d49551ef945f`
-  新观察到列表路径
-  `/api/workbench/task_threads?space_id=7666420680379858944`。
-- 从列表重新打开已有验证 Thread 后，inventory
-  `ea1837e1-3010-4335-b6b1-f270afcf50ed` 再次观察到详情、messages、runs、
-  artifacts、run events 和 token usage 路径；同时记录到
-  `/api/workbench/task_threads/7667558479128690688/suggestions` 与
-  `/api/workbench/task_threads/7667558479128690688/run_events/stream`。
-- 因此，本次实际 browser control 的列表、详情、Run 读取和刷新都命中
-  `/api/workbench/task_threads/**`。该控制仅冻结旧页面行为，不据此判断 canonical UI。
+- 详情页 bootstrap 与 reload 都实际记录到 paginated list、detail、messages、runs、
+  artifacts、run events、token usage、suggestions 与 stream。
+- 对同一详情执行 reload 后，loopback interceptor 再次记录上述方法/路径，证明
+  列表、详情、Run 读取和刷新均命中 `/api/workbench/task_threads/**`。
+- 该控制仅冻结旧页面行为，不据此判断 canonical UI。
 
 ## Gate Decision
 
