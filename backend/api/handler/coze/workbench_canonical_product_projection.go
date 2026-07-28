@@ -19,6 +19,7 @@ package coze
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
@@ -442,9 +443,17 @@ func canonicalProductScanStatus(value string) string {
 }
 
 func canonicalProductRuleIDs(raw string) []string {
-	var values []string
-	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return []string{}
+	}
+	var values []string
+	if strings.HasPrefix(raw, "[") {
+		if err := json.Unmarshal([]byte(raw), &values); err != nil {
+			return []string{}
+		}
+	} else {
+		values = strings.Split(raw, ",")
 	}
 	result := make([]string, 0, len(values))
 	for _, value := range values {

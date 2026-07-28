@@ -67,17 +67,17 @@ var canonicalEntrypoints = []struct {
 	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, false},
 	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, false},
 	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, true},
-	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, true},
-	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, true},
-	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory, true},
-	{"RestoreCanonicalThreadMemory", RestoreCanonicalThreadMemory, true},
-	{"ClearCanonicalThreadMemories", ClearCanonicalThreadMemories, true},
-	{"ExportCanonicalThreadMemories", ExportCanonicalThreadMemories, true},
-	{"ImportCanonicalThreadMemories", ImportCanonicalThreadMemories, true},
-	{"ListCanonicalThreadMemoryAuditEvents", ListCanonicalThreadMemoryAuditEvents, true},
-	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents, true},
-	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents, true},
-	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents, true},
+	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, false},
+	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, false},
+	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory, false},
+	{"RestoreCanonicalThreadMemory", RestoreCanonicalThreadMemory, false},
+	{"ClearCanonicalThreadMemories", ClearCanonicalThreadMemories, false},
+	{"ExportCanonicalThreadMemories", ExportCanonicalThreadMemories, false},
+	{"ImportCanonicalThreadMemories", ImportCanonicalThreadMemories, false},
+	{"ListCanonicalThreadMemoryAuditEvents", ListCanonicalThreadMemoryAuditEvents, false},
+	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents, false},
+	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents, false},
+	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents, false},
 	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun, true},
 }
 
@@ -113,7 +113,7 @@ func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 			stubCount++
 		}
 	}
-	require.Equal(t, 13, stubCount)
+	require.Equal(t, 2, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {

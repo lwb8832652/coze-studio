@@ -436,7 +436,7 @@ func canonicalLogLifecycleStage(value string) string {
 	return canonicalLogEnum(value, "none",
 		"created", "pending", "queued", "processing", "running", "completed", "failed", "deleted",
 		"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export",
-		"upload", "uploaded", "scan", "scanned", "read", "signed", "restored", "reviewed", "retried", "approved", "rejected")
+		"upload", "uploaded", "scan", "scanned", "read", "signed", "updated", "restored", "reviewed", "retried", "approved", "rejected")
 }
 
 func canonicalResponseBodyKind(value string, status int) string {

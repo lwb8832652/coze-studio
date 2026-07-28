@@ -800,24 +800,28 @@ git commit -m "feat: add canonical workbench artifacts"
 **Files:**
 - Create: `backend/api/handler/coze/workbench_canonical_memory_audit_service.go`
 - Create: `backend/api/handler/coze/workbench_canonical_memory_audit_service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_product_projection.go`
 
-- [ ] **Step 1: Write failing read contract tests**
+- [x] **Step 1: Write failing read contract tests**
 
 Cover Memory list/export/audit, Guardrail list/export and MCP list with empty/paged results, filter validation, cross-Thread resource IDs, export permission denial and sensitive metadata fixtures. Assert IDs are strings, times are RFC 3339 and no tool/provider body is exposed.
 
-- [ ] **Step 2: Implement read and export handlers**
+- [x] **Step 2: Implement read and export handlers**
 
 Map filters directly to `ListMemories`, `ExportMemories`, `ListMemoryAuditEvents`, `ListGuardrailAuditEvents`, `ExportGuardrailAuditEvents` and `ListMCPRuntimeAuditEvents`. Use viewer ID from session only. Export objects retain their schema name and counts, convert exported time to RFC 3339, and use the same safe projections as list responses.
 
-- [ ] **Step 3: Write failing Memory mutation tests**
+- [x] **Step 3: Write failing Memory mutation tests**
 
 Cover update/delete/restore/clear/import success, invalid scope, invalid JSON metadata, import limit, duplicate import behavior, audit failure, transaction failure, unauthorized resource and no second write after an error. Delete returns `204`; each other operation returns a direct resource or summary.
 
-- [ ] **Step 4: Implement Memory mutations through existing use cases**
+- [x] **Step 4: Implement Memory mutations through existing use cases**
 
 Call `UpdateMemory`, `DeleteMemory`, `RestoreMemory`, `ClearMemories` and `ImportMemories` with server-derived actor/viewer IDs. Parse canonical JSON metadata into the current validated JSON string expected by the application service. Keep current import count and item-size limits; no handler-owned transaction or audit write is allowed.
 
-- [ ] **Step 5: Run Memory/Audit and source regressions**
+- [x] **Step 5: Run Memory/Audit and source regressions**
 
 ```bash
 cd backend
@@ -826,7 +830,7 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: PASS; source route requests, envelopes and audit behavior remain unchanged.
 
-- [ ] **Step 6: Commit Memory and Audit support**
+- [x] **Step 6: Commit Memory and Audit support**
 
 ```bash
 git add backend/api/handler/coze/workbench_canonical_memory_audit_service.go backend/api/handler/coze/workbench_canonical_memory_audit_service_test.go

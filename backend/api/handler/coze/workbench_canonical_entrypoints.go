@@ -41,61 +41,6 @@ func GetCanonicalThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)
 }
 
-// ListCanonicalThreadMemories exposes the gated canonical memory list contract.
-func ListCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// UpdateCanonicalThreadMemory exposes the gated canonical memory update contract.
-func UpdateCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// DeleteCanonicalThreadMemory exposes the gated canonical memory delete contract.
-func DeleteCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// RestoreCanonicalThreadMemory exposes the gated canonical memory restore contract.
-func RestoreCanonicalThreadMemory(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ClearCanonicalThreadMemories exposes the gated canonical memory clear contract.
-func ClearCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ExportCanonicalThreadMemories exposes the gated canonical memory export contract.
-func ExportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ImportCanonicalThreadMemories exposes the gated canonical memory import contract.
-func ImportCanonicalThreadMemories(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalThreadMemoryAuditEvents exposes the gated canonical memory audit contract.
-func ListCanonicalThreadMemoryAuditEvents(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalThreadGuardrailAuditEvents exposes the gated canonical guardrail audit contract.
-func ListCanonicalThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ExportCanonicalThreadGuardrailAuditEvents exposes the gated canonical guardrail export contract.
-func ExportCanonicalThreadGuardrailAuditEvents(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// ListCanonicalThreadMCPRuntimeAuditEvents exposes the gated canonical MCP audit contract.
-func ListCanonicalThreadMCPRuntimeAuditEvents(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // RetryCanonicalSubagentRun exposes the gated canonical subagent retry contract.
 func RetryCanonicalSubagentRun(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)
