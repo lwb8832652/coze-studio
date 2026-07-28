@@ -35,13 +35,3 @@ func serveCanonicalEntrypoint(ctx context.Context, c *app.RequestContext) {
 		errorClass: "canonical_not_implemented",
 	})
 }
-
-// GetCanonicalThreadTokenUsage exposes the gated canonical token usage contract.
-func GetCanonicalThreadTokenUsage(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// RetryCanonicalSubagentRun exposes the gated canonical subagent retry contract.
-func RetryCanonicalSubagentRun(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}

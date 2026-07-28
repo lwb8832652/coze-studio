@@ -842,24 +842,27 @@ git commit -m "feat: add canonical workbench memory audits"
 **Files:**
 - Create: `backend/api/handler/coze/workbench_canonical_usage_retry_service.go`
 - Create: `backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints_test.go`
 
-- [ ] **Step 1: Write failing usage tests**
+- [x] **Step 1: Write failing usage tests**
 
 Cover Thread aggregate, one Run, child Run inclusion, source filter, pagination, wrong Thread/Run pair, empty usage and provider-raw fixture redaction. The JSON scan must prove `raw_usage` and raw metadata keys do not exist.
 
-- [ ] **Step 2: Implement usage reads**
+- [x] **Step 2: Implement usage reads**
 
 Validate an optional `run_id` belongs to the path Thread. Call `GetRunTokenUsage` when present and `GetThreadTokenUsage` otherwise. Return projected rows, aggregate, run aggregates, total, `has_more` and cursor. Do not add provider usage data to metadata or logs.
 
-- [ ] **Step 3: Write failing retry tests**
+- [x] **Step 3: Write failing retry tests**
 
 Cover positive owned subagent Run, top-level Run rejection, non-failed Run conflict, cross-Thread denial, idempotent replay with the same key, conflicting payload/key and no mutation on failed authorization.
 
-- [ ] **Step 4: Implement retry through `RetrySubagentRun`**
+- [x] **Step 4: Implement retry through `RetrySubagentRun`**
 
 Parse `Idempotency-Key` with the same canonical validation and principal scoping used by Run creation. Call `RetrySubagentRun` exactly once and return `projectCanonicalRun`. Never reinterpret a top-level retry as a child retry; top-level retry continues to use `POST /runs`.
 
-- [ ] **Step 5: Run usage/retry and source regressions**
+- [x] **Step 5: Run usage/retry and source regressions**
 
 ```bash
 cd backend
@@ -868,10 +871,10 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: PASS with one persisted retry attempt per idempotency key.
 
-- [ ] **Step 6: Commit usage and retry support**
+- [x] **Step 6: Commit usage and retry support**
 
 ```bash
-git add backend/api/handler/coze/workbench_canonical_usage_retry_service.go backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go
+git add backend/api/handler/coze/workbench_canonical_usage_retry_service.go backend/api/handler/coze/workbench_canonical_usage_retry_service_test.go backend/api/handler/coze/workbench_canonical_contract.go backend/api/handler/coze/workbench_canonical_entrypoints.go backend/api/handler/coze/workbench_canonical_entrypoints_test.go
 git commit -m "feat: add canonical workbench usage retry"
 ```
 

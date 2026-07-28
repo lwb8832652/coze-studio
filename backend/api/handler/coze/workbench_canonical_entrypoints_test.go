@@ -66,7 +66,7 @@ var canonicalEntrypoints = []struct {
 	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan, false},
 	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, false},
 	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, false},
-	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, true},
+	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, false},
 	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, false},
 	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, false},
 	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory, false},
@@ -78,7 +78,7 @@ var canonicalEntrypoints = []struct {
 	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents, false},
 	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents, false},
 	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents, false},
-	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun, true},
+	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun, false},
 }
 
 func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
@@ -113,7 +113,7 @@ func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
 			stubCount++
 		}
 	}
-	require.Equal(t, 2, stubCount)
+	require.Equal(t, 0, stubCount)
 
 	for _, entrypoint := range canonicalEntrypoints {
 		if !entrypoint.stub {

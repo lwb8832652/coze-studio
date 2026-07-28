@@ -400,7 +400,7 @@ func canonicalLogHashValue(value string) string {
 func canonicalLogResourceType(value string) string {
 	return canonicalLogEnum(value, "none",
 		"upload", "artifact", "artifact_content", "artifact_signed_url", "artifact_scan_job", "artifact_scan_review",
-		"token_usage", "token_usage_aggregate", "run_token_usage_aggregate",
+		"token_usage", "token_usage_aggregate", "run_token_usage_aggregate", "subagent_retry",
 		"memory", "memory_audit", "memory_import", "memory_export",
 		"guardrail_audit", "guardrail_export", "mcp_runtime_audit")
 }
