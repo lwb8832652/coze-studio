@@ -621,10 +621,12 @@ git commit -m "feat: add canonical product projections"
 **Files:**
 - Modify: `backend/application/agentthread/upload_file.go`
 - Modify: `backend/application/agentthread/upload_file_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_entrypoints_test.go`
 - Create: `backend/api/handler/coze/workbench_canonical_upload_service.go`
 - Create: `backend/api/handler/coze/workbench_canonical_upload_service_test.go`
 
-- [ ] **Step 1: Write failing application tests for file-ID deletion**
+- [x] **Step 1: Write failing application tests for file-ID deletion**
 
 Add `DeleteTaskThreadUploadFileByIDRequest` and tests proving that the new use case:
 
@@ -644,7 +646,7 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: FAIL because the ID-based application method does not exist.
 
-- [ ] **Step 2: Implement the narrow application orchestration**
+- [x] **Step 2: Implement the narrow application orchestration**
 
 Add these DTOs and method in `upload_file.go`:
 
@@ -662,13 +664,13 @@ func (s *ApplicationService) DeleteTaskThreadUploadFileByID(
 ) (*DeleteTaskThreadUploadFileResponse, error)
 ```
 
-Validate positive scope and ID, call `ListTaskThreadUploadFiles`, find the matching summary, then call the existing `DeleteTaskThreadUploadFile` with that summary's filename. Do not add a repository method, migration, second delete policy or object-storage branch.
+Validate positive scope and ID, call `ListTaskThreadUploadFiles`, find the matching summary, then call the existing `DeleteTaskThreadUploadFile` with that summary's filename. Do not add a repository method, migration, second delete policy or delete-time object-storage branch. Upload registration failure performs a best-effort cleanup of only the object written by the current request.
 
-- [ ] **Step 3: Write failing upload handler tests**
+- [x] **Step 3: Write failing upload handler tests**
 
 Cover gate-off `404`, unauthenticated, wrong workspace, malformed IDs, empty multipart, file-count/size bounds, partial skipped filenames, list response, stable-ID delete, delete idempotency and safe completion logs. Assert canonical never accepts filename in the path.
 
-- [ ] **Step 4: Implement the three upload handlers**
+- [x] **Step 4: Implement the three upload handlers**
 
 Every handler starts with `beginCanonicalRequestLog`, `requireCanonicalAPI`, `requireCanonicalAgentThreadService`, `canonicalPathID`, `canonicalSpaceID` and `workbenchThreadAccessContext`. Upload accepts `files` or singular `file`, applies the existing 10-file/50 MiB each/100 MiB total bounds before calling `UploadTaskThreadFiles`, and returns:
 
@@ -678,7 +680,7 @@ Every handler starts with `beginCanonicalRequestLog`, `requireCanonicalAPI`, `re
 
 List returns named array/total/has_more. Delete calls `DeleteTaskThreadUploadFileByID`; success returns `204`, while an absent or unauthorized resource uses the same canonical not-found response.
 
-- [ ] **Step 5: Run upload and source regressions**
+- [x] **Step 5: Run upload and source regressions**
 
 ```bash
 cd backend
@@ -687,10 +689,10 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: PASS; old filename route tests remain unchanged.
 
-- [ ] **Step 6: Commit upload support**
+- [x] **Step 6: Commit upload support**
 
 ```bash
-git add backend/application/agentthread/upload_file.go backend/application/agentthread/upload_file_test.go backend/api/handler/coze/workbench_canonical_upload_service.go backend/api/handler/coze/workbench_canonical_upload_service_test.go
+git add backend/application/agentthread/upload_file.go backend/application/agentthread/upload_file_test.go backend/api/handler/coze/workbench_canonical_entrypoints.go backend/api/handler/coze/workbench_canonical_entrypoints_test.go backend/api/handler/coze/workbench_canonical_upload_service.go backend/api/handler/coze/workbench_canonical_upload_service_test.go docs/superpowers/plans/2026-07-27-workbench-canonical-product-extensions.md
 git commit -m "feat: add canonical workbench uploads"
 ```
 

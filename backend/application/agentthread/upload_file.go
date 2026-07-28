@@ -80,6 +80,13 @@ type DeleteTaskThreadUploadFileRequest struct {
 	FileName string
 }
 
+type DeleteTaskThreadUploadFileByIDRequest struct {
+	SpaceID  int64
+	UserID   int64
+	ThreadID int64
+	FileID   int64
+}
+
 type DeleteTaskThreadUploadFileResponse struct {
 	File    *TaskThreadUploadedFileSummary
 	Deleted bool
@@ -177,11 +184,24 @@ func (s *ApplicationService) UploadTaskThreadFiles(
 			},
 		)
 		if err != nil {
+			cleanupTaskThreadUploadObject(ctx, s.ArtifactObjectStorage, objectKey)
 			return nil, err
 		}
 		resp.Files = append(resp.Files, taskThreadUploadedFileSummary(registered))
 	}
 	return resp, nil
+}
+
+func cleanupTaskThreadUploadObject(
+	ctx context.Context,
+	objectStorage ArtifactObjectStorage,
+	objectKey string,
+) {
+	deleter, ok := objectStorage.(ArtifactObjectDeleter)
+	if objectStorage == nil || !ok || strings.TrimSpace(objectKey) == "" {
+		return
+	}
+	_ = deleter.DeleteObject(ctx, objectKey)
 }
 
 func (s *ApplicationService) ListTaskThreadUploadFiles(
@@ -241,6 +261,57 @@ func (s *ApplicationService) DeleteTaskThreadUploadFile(
 		resp.File = taskThreadUploadedFileSummary(file)
 	}
 	return resp, nil
+}
+
+func (s *ApplicationService) DeleteTaskThreadUploadFileByID(
+	ctx context.Context,
+	req *DeleteTaskThreadUploadFileByIDRequest,
+) (*DeleteTaskThreadUploadFileResponse, error) {
+	if s == nil || s.UploadFileSVC == nil {
+		return nil, fmt.Errorf("agent upload file service is not initialized")
+	}
+	if req == nil {
+		return nil, fmt.Errorf("delete task thread upload file by id request is required")
+	}
+	if req.SpaceID <= 0 || req.UserID <= 0 || req.ThreadID <= 0 || req.FileID <= 0 {
+		return nil, fmt.Errorf("%w: delete task thread upload file by id scope is invalid", domainservice.ErrInvalidArgument)
+	}
+
+	listResp, err := s.ListTaskThreadUploadFiles(
+		ctx,
+		&ListTaskThreadUploadFilesRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   req.UserID,
+			ThreadID: req.ThreadID,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var match *TaskThreadUploadedFileSummary
+	for _, file := range listResp.Files {
+		if file == nil || file.FileID != req.FileID {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("%w: duplicate upload file id", domainservice.ErrInvalidArgument)
+		}
+		match = file
+	}
+	if match == nil {
+		return &DeleteTaskThreadUploadFileResponse{Deleted: false}, nil
+	}
+
+	return s.DeleteTaskThreadUploadFile(
+		ctx,
+		&DeleteTaskThreadUploadFileRequest{
+			SpaceID:  req.SpaceID,
+			UserID:   req.UserID,
+			ThreadID: req.ThreadID,
+			FileName: match.FileName,
+		},
+	)
 }
 
 func uniqueUploadFileName(fileName string, used map[string]bool) string {

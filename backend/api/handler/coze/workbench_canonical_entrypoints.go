@@ -46,21 +46,6 @@ func GenerateCanonicalThreadSuggestions(ctx context.Context, c *app.RequestConte
 	serveCanonicalEntrypoint(ctx, c)
 }
 
-// ListCanonicalThreadUploads exposes the gated canonical upload list contract.
-func ListCanonicalThreadUploads(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// UploadCanonicalThreadFiles exposes the gated canonical upload contract.
-func UploadCanonicalThreadFiles(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
-// DeleteCanonicalThreadUpload exposes the gated canonical upload delete contract.
-func DeleteCanonicalThreadUpload(ctx context.Context, c *app.RequestContext) {
-	serveCanonicalEntrypoint(ctx, c)
-}
-
 // ListCanonicalThreadArtifacts exposes the gated canonical artifact list contract.
 func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalEntrypoint(ctx, c)
