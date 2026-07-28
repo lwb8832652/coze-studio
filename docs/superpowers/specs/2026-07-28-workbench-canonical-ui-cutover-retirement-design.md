@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - 日期：2026-07-28
-- 状态：设计已确认，待书面复核
+- 状态：设计已确认，待实施
 - 目标分支：`codex/workbench-canonical-ui-cutover-retirement`
 - 基线：`dev@1b663df3449f3bd2849b37b33ae2755c109269cd`
 - 上位合同：
@@ -203,7 +203,7 @@ workspace authorization、严格 JSON、大小限制、公开投影、错误映�
 - 在零使用审计通过后删除 `/api/runs/**` 注册；
 - 删除只服务这两套旧合同的 handler、binding、projection、测试和路由注册函数；
 - 用调用图核对 `langgraph_run_service.go`、`langgraph_thread_service.go` 和
-  `backend/api/model/langgraph`，整文件无调用时删除，仍被 canonical 或其他业务使用
+  `backend/api/model/agent/langgraph`，整文件无调用时删除，仍被 canonical 或其他业务使用
   的通用代码按现有所有权移动或保留；
 - 把两套路由快照测试改为负向不可达测试。
 
