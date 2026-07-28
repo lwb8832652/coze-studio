@@ -2553,6 +2553,36 @@
       ]
     },
     {
+      "id": "http.workbench.canonical_product_contract",
+      "label": "Canonical product validation and public projection helpers",
+      "layer": "http_handler",
+      "kind": "capability",
+      "production_status": "current",
+      "runtime_scope": "transport_contract",
+      "source_anchors": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_contract.go",
+          "symbol": "canonicalProductPagination",
+          "locator": "func canonicalProductPagination(c *app.RequestContext) (canonicalProductPage, *canonicalError)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection.go",
+          "symbol": "projectCanonicalProductArtifact",
+          "locator": "func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*canonicalProductArtifact, error)"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_contract_test.go",
+          "locator": "func TestCanonicalProductCompletionLogContainsResourceFieldsWithoutPayload"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection_test.go",
+          "locator": "func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity"
+        }
+      ]
+    },
+    {
       "id": "http.workbench.canonical_run",
       "label": "Feature-gated canonical Run HTTP handlers",
       "layer": "http_handler",

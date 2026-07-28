@@ -69,6 +69,11 @@ type canonicalRequestLog struct {
 	RunID              int64
 	SourceRunID        int64
 	AfterEventID       int64
+	ResourceType       string
+	ResourceID         string
+	Limit              int32
+	Offset             int32
+	LifecycleStage     string
 	StartedAt          time.Time
 }
 
@@ -313,12 +318,14 @@ func logCanonicalRequestCompleted(
 	}
 	outcome = canonicalLogOutcome(outcome)
 	logs.CtxInfof(ctx,
-		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s principal_id_hash=%s thread_id=%d run_id=%d source_run_id=%d after_event_id=%d response_body_kind=%s location_kind=%s content_location_present=%t response_projection_version=%s stream_modes=%s raise_error_mode=%s failure_projection=%s idempotency_key_hash=%s",
+		"event_name=workbench.api.request.completed client_contract=%s trace_id=%s operation=%s route_template=%s http_method=%s http_status=%d duration_ms=%d outcome=%s submission_kind=%s principal_id_hash=%s thread_id=%d run_id=%d source_run_id=%d after_event_id=%d resource_type=%s resource_id=%s limit=%d offset=%d lifecycle_stage=%s response_body_kind=%s location_kind=%s content_location_present=%t response_projection_version=%s stream_modes=%s raise_error_mode=%s failure_projection=%s idempotency_key_hash=%s",
 		canonicalContractVersion, canonicalTraceID(ctx), info.Operation, info.RouteTemplate,
 		string(c.Method()), c.Response.StatusCode(), duration, outcome,
 		canonicalSubmissionKind(info.SubmissionKind),
 		canonicalLogHash(strconv.FormatInt(workbenchViewerIDFromCtx(ctx), 10)),
 		info.ThreadID, info.RunID, info.SourceRunID, info.AfterEventID,
+		canonicalLogResourceType(info.ResourceType), canonicalLogResourceID(info.ResourceID),
+		canonicalLogPageValue(info.Limit), canonicalLogPageValue(info.Offset), canonicalLogLifecycleStage(info.LifecycleStage),
 		canonicalResponseBodyKind(info.ResponseBodyKind, c.Response.StatusCode()),
 		canonicalLocationKind(info.LocationKind),
 		len(c.Response.Header.Peek("Content-Location")) > 0,
@@ -388,6 +395,41 @@ func canonicalLogHashValue(value string) string {
 		}
 	}
 	return value
+}
+
+func canonicalLogResourceType(value string) string {
+	return canonicalLogEnum(value, "none", "upload", "artifact", "artifact_scan_job", "token_usage", "memory", "memory_audit", "guardrail_audit", "mcp_runtime_audit")
+}
+
+func canonicalLogResourceID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	allDigits := true
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
+			return strconv.FormatInt(parsed, 10)
+		}
+	}
+	return canonicalLogHash(value)
+}
+
+func canonicalLogPageValue(value int32) int32 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func canonicalLogLifecycleStage(value string) string {
+	return canonicalLogEnum(value, "none", "created", "pending", "queued", "processing", "running", "completed", "failed", "deleted")
 }
 
 func canonicalResponseBodyKind(value string, status int) string {

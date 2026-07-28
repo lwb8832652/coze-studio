@@ -64,6 +64,10 @@ type canonicalThread struct {
 type canonicalThreadCoze struct {
 	ProductStatus     string `json:"product_status"`
 	InitialSubmission any    `json:"initial_submission"`
+	Source            string `json:"source"`
+	Progress          int32  `json:"progress"`
+	LastUserMessage   string `json:"last_user_message"`
+	LastAgentMessage  string `json:"last_agent_message"`
 }
 
 type canonicalRun struct {
@@ -79,13 +83,18 @@ type canonicalRun struct {
 }
 
 type canonicalRunCoze struct {
-	MessageID      *string  `json:"message_id"`
-	AttemptKind    string   `json:"attempt_kind"`
-	SourceRunID    *string  `json:"source_run_id"`
-	StreamModes    []string `json:"stream_modes"`
-	OnDisconnect   string   `json:"on_disconnect"`
-	Durability     string   `json:"durability"`
-	TerminalReason *string  `json:"terminal_reason"`
+	MessageID         *string           `json:"message_id"`
+	SubmissionMessage *canonicalMessage `json:"submission_message,omitempty"`
+	AttemptKind       string            `json:"attempt_kind"`
+	SourceRunID       *string           `json:"source_run_id"`
+	ParentRunID       *string           `json:"parent_run_id"`
+	RunKind           string            `json:"run_kind"`
+	StreamModes       []string          `json:"stream_modes"`
+	OnDisconnect      string            `json:"on_disconnect"`
+	Durability        string            `json:"durability"`
+	TerminalReason    *string           `json:"terminal_reason"`
+	StartedAt         *string           `json:"started_at"`
+	EndedAt           *string           `json:"ended_at"`
 }
 
 type canonicalMessage struct {
@@ -236,6 +245,14 @@ func projectCanonicalThreadSnapshot(
 		Interrupts: interrupts,
 		Coze: canonicalThreadCoze{
 			ProductStatus: productStatus,
+			Source:        canonicalCleanString(string(summary.Source), 128),
+			Progress:      summary.Progress,
+			LastUserMessage: canonicalCleanString(
+				summary.LastUserMessage, canonicalMaxPublicValueRunes,
+			),
+			LastAgentMessage: canonicalCleanString(
+				summary.LastAgentMessage, canonicalMaxPublicValueRunes,
+			),
 		},
 	}, nil
 }
@@ -280,10 +297,14 @@ func projectCanonicalRun(summary *appagentthread.RunSummary) (*canonicalRun, err
 			MessageID:      messageID,
 			AttemptKind:    canonicalRunAttemptKind(public.RunKind, rawMetadata),
 			SourceRunID:    sourceRunID,
+			ParentRunID:    canonicalOptionalTimeID(public.ParentRunID),
+			RunKind:        canonicalRunKind(public.RunKind),
 			StreamModes:    canonicalRunStreamModes(public.StreamMode),
 			OnDisconnect:   canonicalRunOnDisconnect(public.OnDisconnect),
 			Durability:     canonicalRunDurability(public.Durability),
 			TerminalReason: terminalReason,
+			StartedAt:      canonicalOptionalTime(public.StartedAt),
+			EndedAt:        canonicalOptionalTime(public.EndedAt),
 		},
 	}, nil
 }
@@ -674,6 +695,31 @@ func canonicalRunDurability(string) string {
 	return "async"
 }
 
+func canonicalRunKind(kind appagentthread.RunKind) string {
+	switch kind {
+	case appagentthread.RunKindSubagent:
+		return "subagent"
+	default:
+		return "task"
+	}
+}
+
+func canonicalOptionalTimeID(value int64) *string {
+	if value <= 0 {
+		return nil
+	}
+	formatted := strconv.FormatInt(value, 10)
+	return &formatted
+}
+
+func canonicalOptionalTime(value int64) *string {
+	formatted := canonicalTime(value)
+	if formatted == "" {
+		return nil
+	}
+	return &formatted
+}
+
 func canonicalMetadataFromJSON(raw, title string) map[string]any {
 	return canonicalMetadataFromMap(canonicalJSONObject(raw), title)
 }
@@ -904,6 +950,7 @@ func canonicalUnsafePublicField(key string) bool {
 		"raw_provider", "tool_arguments", "tool_args", "tool_result", "hidden_config", "legacy_task_id",
 		"worker_id", "lease_owner", "lease_token", "idempotency_key", "error_chain", "stack_trace",
 		"traceback", "api_key", "credential", "secret", "access_token", "authorization", "password",
+		"raw_usage", "signed_url", "download_url", "object_url",
 	} {
 		if strings.Contains(normalized, fragment) {
 			return true

@@ -205,12 +205,15 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 	runID := mustCanonicalTestID(t, created.RunID)
 	require.Equal(t, fmt.Sprintf("/threads/%d/runs/%d", thread.ThreadID, runID), response.Result().Header.Get("Content-Location"))
 	require.NotNil(t, created.Coze.MessageID)
+	require.NotNil(t, created.Coze.SubmissionMessage)
+	require.Equal(t, "analyze the current turn", created.Coze.SubmissionMessage.Content)
+	require.Equal(t, "user", created.Coze.SubmissionMessage.Role)
 	require.Equal(t, "turn", created.Coze.AttemptKind)
 	require.Equal(t, []string{"messages-tuple", "updates"}, created.Coze.StreamModes)
 	require.Equal(t, "continue", created.Coze.OnDisconnect)
 
 	responseBody := string(response.Result().Body())
-	for _, forbidden := range []string{"analyze the current turn", `"input"`, `"command"`, `"config"`, `"context"`, "canonical-create-1"} {
+	for _, forbidden := range []string{`"input"`, `"command"`, `"config"`, `"context"`, "canonical-create-1"} {
 		require.NotContains(t, responseBody, forbidden)
 	}
 
@@ -236,6 +239,7 @@ func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency(t *testin
 	var persisted canonicalRun
 	require.NoError(t, json.Unmarshal(read.Result().Body(), &persisted))
 	require.Equal(t, created.Coze.MessageID, persisted.Coze.MessageID)
+	require.Nil(t, persisted.Coze.SubmissionMessage)
 	require.NotContains(t, string(read.Result().Body()), "_message")
 	require.NotContains(t, string(read.Result().Body()), "_idempotency")
 }

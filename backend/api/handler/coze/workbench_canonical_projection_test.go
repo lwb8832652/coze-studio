@@ -137,6 +137,29 @@ func TestCanonicalRunProjectionMapsInternalAssistantSelectorsToPublicAlias(t *te
 	}
 }
 
+func TestCanonicalCoreCozeExtensionsProjectPublicRunAndThreadFields(t *testing.T) {
+	parentRunID := int64(2000)
+	projectedRun, err := projectCanonicalRun(&appagentthread.RunSummary{
+		RunID: 3001, ThreadID: 2001, ParentRunID: parentRunID, RunKind: appagentthread.RunKindSubagent,
+		Status: appagentthread.RunStatusSucceeded, StartedAt: 1710000000123, EndedAt: 1710000001123,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "2000", *projectedRun.Coze.ParentRunID)
+	require.Equal(t, "subagent", projectedRun.Coze.RunKind)
+	require.NotNil(t, projectedRun.Coze.StartedAt)
+	require.NotNil(t, projectedRun.Coze.EndedAt)
+
+	projectedThread, err := projectCanonicalThreadSnapshot(&appagentthread.ThreadSummary{
+		ThreadID: 2001, Status: appagentthread.ThreadStatusCompleted, Source: appagentthread.ThreadSourceAPI,
+		Progress: 80, LastUserMessage: " user message ", LastAgentMessage: " agent message ",
+	}, canonicalThreadProjectionSnapshot{LatestRun: &appagentthread.RunSummary{Status: appagentthread.RunStatusSucceeded}})
+	require.NoError(t, err)
+	require.Equal(t, "api", projectedThread.Coze.Source)
+	require.Equal(t, int32(80), projectedThread.Coze.Progress)
+	require.Equal(t, "user message", projectedThread.Coze.LastUserMessage)
+	require.Equal(t, "agent message", projectedThread.Coze.LastAgentMessage)
+}
+
 func TestCanonicalThreadStatusProjection(t *testing.T) {
 	safeInterrupts := map[string]any{
 		"interrupt-1": []map[string]any{{

@@ -510,8 +510,10 @@ git commit -m "feat: complete canonical workbench run streams"
 - Modify: `backend/api/handler/coze/workbench_canonical_contract.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_service.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_run_service_test.go`
 
-- [ ] **Step 1: Write failing validation and redaction tests**
+- [x] **Step 1: Write failing validation and redaction tests**
 
 Add table tests for:
 
@@ -527,7 +529,7 @@ func TestCanonicalProductCompletionLogContainsResourceFieldsWithoutPayload(t *te
 
 Use fixtures containing `authorization`, `api_key`, `tool_arguments`, `provider_body`, `worker_id`, `lease_token`, `raw_usage` and a signed URL. Assert none appears in response JSON or captured logs.
 
-- [ ] **Step 2: Implement one pagination contract**
+- [x] **Step 2: Implement one pagination contract**
 
 `canonicalProductPagination` accepts `limit` and `offset`, defaults to `50/0`, caps limit at `200`, rejects non-integral page offsets, and returns both application paging and public paging:
 
@@ -553,7 +555,7 @@ func (p canonicalProductPage) nextCursor(total int64) *string {
 
 The handler passes `Page` and `Limit` to current application DTOs. It never silently rounds an arbitrary offset.
 
-- [ ] **Step 3: Implement public resource projections**
+- [x] **Step 3: Implement public resource projections**
 
 Use `ProjectPublicArtifact`, `ProjectPublicTokenUsage`, `canonicalEntityMetadataFromJSON`, `canonicalSanitizeMap`, `canonicalCleanString` and `canonicalTime`. Do not duplicate their redaction rules. Scan jobs expose a hashed `worker_ref` and stable `error_code`, not raw worker IDs or raw `LastError`. Token usage never defines `raw_usage` or raw metadata fields in its canonical struct.
 
@@ -587,11 +589,11 @@ type canonicalRunCoze struct {
 
 Populate these only from existing public application projections. In create-run responses attach the already committed User Message; list/get responses leave `submission_message` absent. This is additive JSON inside the existing `coze` extension and does not change core SDK fields.
 
-- [ ] **Step 4: Extend structured completion logging safely**
+- [x] **Step 4: Extend structured completion logging safely**
 
 Add `ResourceType`, `ResourceID`, `Limit`, `Offset` and `LifecycleStage` to `canonicalRequestLog`. Normalize enums and hash arbitrary resource IDs before logging unless they are already positive numeric IDs. Keep all existing fields and event name unchanged. Product handlers set only identifiers relevant to their operation; signed URL handlers log the artifact ID and result category, never the URL.
 
-- [ ] **Step 5: Run shared contract tests**
+- [x] **Step 5: Run shared contract tests**
 
 ```bash
 cd backend
@@ -600,7 +602,7 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 
 Expected: PASS with no sensitive fixture values in output or logs.
 
-- [ ] **Step 6: Commit shared helpers**
+- [x] **Step 6: Commit shared helpers**
 
 ```bash
 git add backend/api/handler/coze/workbench_canonical_contract.go backend/api/handler/coze/workbench_canonical_projection.go backend/api/handler/coze/workbench_canonical_product_contract.go backend/api/handler/coze/workbench_canonical_product_projection.go backend/api/handler/coze/*canonical*test.go
