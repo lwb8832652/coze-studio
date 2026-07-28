@@ -95,17 +95,16 @@ const requestSnapshot = (
     throw new Error(`Missing fetch call ${index}`);
   }
   const [input, init] = call;
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers).forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
   const snapshot: RequestSnapshot = {
     url: String(input),
     method: init?.method,
     credentials: init?.credentials,
     signal: init?.signal,
-    headers: Object.fromEntries(
-      [...new Headers(init?.headers).entries()].map(([key, value]) => [
-        key.toLowerCase(),
-        value,
-      ]),
-    ),
+    headers,
   };
   if (typeof init?.body === 'string') {
     snapshot.body = JSON.parse(init.body) as unknown;
@@ -194,6 +193,17 @@ const makeRunCreationWire = (content: string) => {
   message.content = content;
   coze.message_id = '2001';
   coze.submission_message = message;
+  return run;
+};
+
+const makeRetryRunCreationWire = () => {
+  const run = cloneRunWire();
+  run.run_id = '3002';
+  const coze = childRecord(run, 'coze');
+  coze.message_id = null;
+  coze.attempt_kind = 'retry';
+  coze.source_run_id = canonicalRunID;
+  delete coze.submission_message;
   return run;
 };
 
@@ -658,6 +668,9 @@ describe('CanonicalThreadCoreClient request contract', () => {
         config: { runtime: 'eino_adk', mode: 'pro' },
         context: { locale: 'en-US' },
         metadata: { source: 'workbench_detail_followup' },
+        coze: {
+          message_metadata: { source: 'composer' },
+        },
         stream_mode: ['messages-tuple', 'updates'],
         multitask_strategy: 'reject',
         on_disconnect: 'continue',
@@ -689,6 +702,60 @@ describe('CanonicalThreadCoreClient request contract', () => {
         uploaded_files: [],
       },
     });
+  });
+
+  it('creates a message-less top-level retry with the reviewed source relation', async () => {
+    const content = 'Retry the current task';
+    const fetchMock = recordingFetch(
+      jsonResponse(makeRetryRunCreationWire()),
+    );
+    const client = coreClient(fetchMock);
+
+    await expect(
+      client.createRun({
+        space_id: canonicalSpaceID,
+        thread_id: canonicalThreadID,
+        input: '{"uploaded_files":[]}',
+        message_content: content,
+        metadata: '{"source":"task_retry"}',
+        attempt_kind: 'retry',
+        source_run_id: canonicalRunID,
+        idempotency_key: 'retry-key',
+      }),
+    ).resolves.toEqual({
+      run: {
+        ...runTransportFixture.visible,
+        run_id: '3002',
+        attempt_kind: 'retry',
+        source_run_id: canonicalRunID,
+      },
+    });
+
+    expect(requestSnapshot(fetchMock)).toEqual({
+      url: '/api/workbench/threads/1001/runs',
+      method: 'POST',
+      credentials: 'same-origin',
+      signal: undefined,
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'retry-key',
+        'x-coze-space-id': canonicalSpaceID,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: {
+        assistant_id: 'agent',
+        input: {
+          messages: [{ role: 'user', content }],
+          uploaded_files: [],
+        },
+        metadata: { source: 'task_retry' },
+        coze: {
+          attempt_kind: 'retry',
+          source_run_id: canonicalRunID,
+        },
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('gets and cancels the addressed Run on canonical routes', async () => {
@@ -834,11 +901,31 @@ describe('CanonicalThreadCoreClient strict local and response validation', () =>
     },
   );
 
+  it('uses the stable unsupported error for malformed createThread command JSON', async () => {
+    const fetchMock = recordingFetch(jsonResponse(makeThreadCreationWire()));
+    const client = coreClient(fetchMock);
+
+    const error = await expectClientError(
+      client.createThread({
+        space_id: canonicalSpaceID,
+        message: 'Create safely',
+        command: '{invalid',
+      }),
+    );
+
+    expect(error).toMatchObject({
+      status: undefined,
+      code: 'unsupported_create_option',
+      retryable: false,
+      outcome: 'unknown',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['create config', 'createThread', 'config'],
     ['create context', 'createThread', 'context'],
     ['create metadata', 'createThread', 'metadata'],
-    ['create command', 'createThread', 'command'],
     ['run input', 'createRun', 'input'],
     ['run config', 'createRun', 'config'],
     ['run context', 'createRun', 'context'],
@@ -873,6 +960,164 @@ describe('CanonicalThreadCoreClient strict local and response validation', () =>
         outcome: 'unknown',
       });
       expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['createThread', 'createRun'] as const)(
+    'rejects a non-public assistant alias in %s before fetch',
+    async operation => {
+      const fetchMock = recordingFetch(jsonResponse(makeThreadCreationWire()));
+      const client = coreClient(fetchMock);
+      const promise =
+        operation === 'createThread'
+          ? client.createThread({
+              space_id: canonicalSpaceID,
+              message: 'Create safely',
+              assistant_id: 'assistant-a',
+            })
+          : client.createRun({
+              space_id: canonicalSpaceID,
+              thread_id: canonicalThreadID,
+              input: '{"uploaded_files":[]}',
+              message_content: 'Continue safely',
+              assistant_id: 'assistant-a',
+            });
+
+      const error = await expectClientError(promise);
+      expect(error).toMatchObject({
+        status: undefined,
+        code: 'invalid_assistant_id',
+        retryable: false,
+        outcome: 'unknown',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'retry without a source',
+      { attempt_kind: 'retry' as const },
+      'invalid_retry',
+    ],
+    [
+      'turn with a retry source',
+      { attempt_kind: 'turn' as const, source_run_id: canonicalRunID },
+      'invalid_retry',
+    ],
+    [
+      'retry with Message metadata',
+      {
+        attempt_kind: 'retry' as const,
+        source_run_id: canonicalRunID,
+        message_metadata: '{"source":"composer"}',
+      },
+      'invalid_retry',
+    ],
+    [
+      'retry with a malformed source',
+      { attempt_kind: 'retry' as const, source_run_id: 'source-opaque' },
+      'invalid_resource_id',
+    ],
+    [
+      'unknown attempt kind',
+      { attempt_kind: 'resume' as 'turn' },
+      'invalid_retry',
+    ],
+  ] as const)(
+    'rejects invalid top-level retry form: %s',
+    async (_name, extension, code) => {
+      const fetchMock = recordingFetch(jsonResponse(makeRunCreationWire('x')));
+      const client = coreClient(fetchMock);
+
+      const error = await expectClientError(
+        client.createRun({
+          space_id: canonicalSpaceID,
+          thread_id: canonicalThreadID,
+          input: '{"uploaded_files":[]}',
+          message_content: 'Continue safely',
+          ...extension,
+        }),
+      );
+
+      expect(error).toMatchObject({ code, outcome: 'unknown' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects non-object Message metadata before fetch', async () => {
+    const fetchMock = recordingFetch(jsonResponse(makeRunCreationWire('x')));
+    const client = coreClient(fetchMock);
+
+    const error = await expectClientError(
+      client.createRun({
+        space_id: canonicalSpaceID,
+        thread_id: canonicalThreadID,
+        input: '{"uploaded_files":[]}',
+        message_content: 'Continue safely',
+        message_metadata: '[]',
+      }),
+    );
+
+    expect(error).toMatchObject({
+      code: 'invalid_request_shape',
+      outcome: 'unknown',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'non-task retry',
+      (run: Record<string, unknown>) => {
+        childRecord(run, 'coze').run_kind = 'subagent';
+      },
+    ],
+    [
+      'child retry',
+      (run: Record<string, unknown>) => {
+        childRecord(run, 'coze').parent_run_id = '2999';
+      },
+    ],
+    [
+      'retry with a Message',
+      (run: Record<string, unknown>) => {
+        const coze = childRecord(run, 'coze');
+        coze.message_id = '2001';
+        coze.submission_message = cloneMessageWire();
+      },
+    ],
+    [
+      'retry without source',
+      (run: Record<string, unknown>) => {
+        childRecord(run, 'coze').source_run_id = null;
+      },
+    ],
+  ] as const)(
+    'rejects malformed message-less creation response: %s',
+    async (_name, mutate) => {
+      const run = makeRetryRunCreationWire();
+      mutate(run);
+      const fetchMock = recordingFetch(jsonResponse(run));
+      const client = coreClient(fetchMock);
+
+      const error = await expectClientError(
+        client.createRun({
+          space_id: canonicalSpaceID,
+          thread_id: canonicalThreadID,
+          input: '{"uploaded_files":[]}',
+          message_content: 'Retry safely',
+          attempt_kind: 'retry',
+          source_run_id: canonicalRunID,
+        }),
+      );
+
+      expect(error).toMatchObject({
+        status: 200,
+        code: 'invalid_response',
+        outcome: 'unknown',
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     },
   );
 

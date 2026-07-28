@@ -326,7 +326,7 @@ git commit -m "feat: expose canonical thread edit capability"
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/index.ts`
 
-- [ ] **Step 1: Write failing request snapshots**
+- [x] **Step 1: Write failing request snapshots**
 
 Freeze method, path, query, body and headers for:
 
@@ -348,7 +348,7 @@ Every request sets `X-Coze-Space-ID`, `x-requested-with: XMLHttpRequest` and
 `credentials: same-origin`. JSON writes set `content-type: application/json`. Idempotent writes
 put the original key in `Idempotency-Key`, never in two places.
 
-- [ ] **Step 2: Implement the single fetch boundary**
+- [x] **Step 2: Implement the single fetch boundary**
 
 `fetchCanonicalJSON` handles direct success bodies, `204`, pagination headers and canonical
 `detail/code/retryable/trace_id` errors. Define `WorkbenchClientError` with HTTP status, stable code,
@@ -357,7 +357,7 @@ trace ID, retryable flag and outcome `rejected | failed | unknown`.
 Network failure before an HTTP response is `unknown`. No catch block may call a source contract.
 Reject malformed JSON, unknown response shape, unsafe integer conversion and non-finite time.
 
-- [ ] **Step 3: Implement strict core adapters**
+- [x] **Step 3: Implement strict core adapters**
 
 Adapters must:
 
@@ -371,7 +371,7 @@ Adapters must:
 - map `coze.initial_submission` and `coze.submission_message` to current create results;
 - reject malformed resources instead of returning partial objects.
 
-- [ ] **Step 4: Implement atomic create semantics**
+- [x] **Step 4: Implement atomic create semantics**
 
 No-attachment create sends one User Message in `coze.initial_run`. Attachment create sends
 `coze.deferred_initial_run`; after canonical upload succeeds, `createRun` sends exactly one User
@@ -381,7 +381,7 @@ Parse current JSON-string config/context/metadata locally before a write. Invali
 HTTP request. Preserve `multitask_strategy`, `on_disconnect`, `durability`, stream modes and the
 original idempotency key.
 
-- [ ] **Step 5: Prove there is no fallback path**
+- [x] **Step 5: Prove there is no fallback path**
 
 For 400, 401, 403, 404, 409, 413, 422, 429, 500, network reset and abort, assert exactly one
 canonical request and no request whose URL starts with `/api/workbench/task_threads`,

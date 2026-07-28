@@ -556,7 +556,56 @@ export const adaptCanonicalRunCreation = (
   const run = adaptCanonicalRun(value, scope);
   const wire = asRecord(value, 'canonical Run');
   const coze = asRecord(wire.coze, 'canonical Run.coze');
-  if (!Object.prototype.hasOwnProperty.call(coze, 'submission_message')) {
+  const hasSubmissionMessage = Object.prototype.hasOwnProperty.call(
+    coze,
+    'submission_message',
+  );
+  if (run.run_kind !== 'task') {
+    return responseFailure(
+      'canonical Run.coze.run_kind',
+      'task for Run creation',
+    );
+  }
+  if (run.parent_run_id !== undefined) {
+    return responseFailure(
+      'canonical Run.coze.parent_run_id',
+      'null for Run creation',
+    );
+  }
+  if (run.attempt_kind === 'retry') {
+    if (hasSubmissionMessage) {
+      return responseFailure(
+        'canonical Run.coze.submission_message',
+        'omitted for top-level retry creation',
+      );
+    }
+    if (run.message_id !== undefined) {
+      return responseFailure(
+        'canonical Run.coze.message_id',
+        'null for top-level retry creation',
+      );
+    }
+    if (run.source_run_id === undefined) {
+      return responseFailure(
+        'canonical Run.coze.source_run_id',
+        'present for top-level retry creation',
+      );
+    }
+    return { run };
+  }
+  if (run.attempt_kind !== 'turn') {
+    return responseFailure(
+      'canonical Run.coze.attempt_kind',
+      'turn or retry for Run creation',
+    );
+  }
+  if (run.source_run_id !== undefined) {
+    return responseFailure(
+      'canonical Run.coze.source_run_id',
+      'null for turn creation',
+    );
+  }
+  if (!hasSubmissionMessage) {
     return responseFailure(
       'canonical Run.coze.submission_message',
       'present for Run creation',

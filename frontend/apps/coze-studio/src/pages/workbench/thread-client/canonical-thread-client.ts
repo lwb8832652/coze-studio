@@ -121,8 +121,16 @@ const optionalTrimmed = (value: string | undefined): string | undefined => {
   return trimmed ? trimmed : undefined;
 };
 
-const requestAssistantID = (value: string | undefined): string =>
-  optionalTrimmed(value) ?? canonicalPublicAssistantID;
+const requestAssistantID = (value: string | undefined): string => {
+  const assistantID = optionalTrimmed(value) ?? canonicalPublicAssistantID;
+  if (assistantID !== canonicalPublicAssistantID) {
+    throw invalidCanonicalRequest(
+      'invalid_assistant_id',
+      'assistant_id must use the public alias agent',
+    );
+  }
+  return assistantID;
+};
 
 const unsupportedThreadCreateOptions = (
   request: CreateWorkbenchThreadRequest,
@@ -213,6 +221,50 @@ const canonicalStreamMode = (
   return parsed.map(mode => (mode as string).trim());
 };
 
+const canonicalRunCozeExtension = (
+  request: CreateWorkbenchRunRequest,
+  messageMetadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const attemptKind = optionalTrimmed(request.attempt_kind) ?? 'turn';
+  const sourceRunID = optionalTrimmed(request.source_run_id);
+  if (attemptKind === 'retry') {
+    if (messageMetadata !== undefined) {
+      throw invalidCanonicalRequest(
+        'invalid_retry',
+        'Top-level retry cannot create Message metadata',
+      );
+    }
+    if (sourceRunID === undefined) {
+      throw invalidCanonicalRequest(
+        'invalid_retry',
+        'Top-level retry requires source_run_id',
+      );
+    }
+    return {
+      attempt_kind: 'retry',
+      source_run_id: assertCanonicalRequestResourceID(
+        sourceRunID,
+        'source_run_id',
+      ),
+    };
+  }
+  if (attemptKind !== 'turn') {
+    throw invalidCanonicalRequest(
+      'invalid_retry',
+      'attempt_kind must be turn or retry',
+    );
+  }
+  if (sourceRunID !== undefined) {
+    throw invalidCanonicalRequest(
+      'invalid_retry',
+      'source_run_id is only valid for top-level retry',
+    );
+  }
+  return messageMetadata === undefined
+    ? undefined
+    : { message_metadata: messageMetadata };
+};
+
 const canonicalResumeResponse = (
   response: ResumeWorkbenchRunRequest['response'],
 ) => {
@@ -292,19 +344,19 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       request.space_id,
       'space_id',
     );
+    unsupportedThreadCreateOptions(request);
+    const assistantID = requestAssistantID(request.assistant_id);
     const config = parseCanonicalWriteJSONObject(request.config, 'config');
     const context = parseCanonicalWriteJSONObject(request.context, 'context');
     const metadata = parseCanonicalWriteJSONObject(
       request.metadata,
       'metadata',
     );
-    parseCanonicalWriteJSON(request.command, 'command');
-    unsupportedThreadCreateOptions(request);
 
     const message = asNonEmptyRequestString(request.message, 'message');
     const title = optionalTrimmed(request.title);
     const initialRun = {
-      assistant_id: requestAssistantID(request.assistant_id),
+      assistant_id: assistantID,
       input: { messages: [{ role: 'user', content: message }] },
       ...(config === undefined ? {} : { config }),
       ...(context === undefined ? {} : { context }),
@@ -448,6 +500,7 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       request.thread_id,
       'thread_id',
     );
+    const assistantID = requestAssistantID(request.assistant_id);
     const input = parseRequiredCanonicalWriteJSONObject(request.input, 'input');
     const command = parseCanonicalWriteJSONObject(request.command, 'command');
     const config = parseCanonicalWriteJSONObject(request.config, 'config');
@@ -456,14 +509,18 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       request.metadata,
       'metadata',
     );
-    parseCanonicalWriteJSON(request.message_metadata, 'message_metadata');
+    const messageMetadata = parseCanonicalWriteJSONObject(
+      request.message_metadata,
+      'message_metadata',
+    );
+    const coze = canonicalRunCozeExtension(request, messageMetadata);
     const messageContent = asNonEmptyRequestString(
       request.message_content,
       'message_content',
     );
     const streamMode = canonicalStreamMode(request.stream_mode);
     const body = {
-      assistant_id: requestAssistantID(request.assistant_id),
+      assistant_id: assistantID,
       input: {
         messages: [{ role: 'user', content: messageContent }],
         uploaded_files: canonicalUploadedFiles(input),
@@ -472,6 +529,7 @@ export class CanonicalThreadCoreClient implements CanonicalWorkbenchCoreClient {
       ...(config === undefined ? {} : { config }),
       ...(context === undefined ? {} : { context }),
       ...(metadata === undefined ? {} : { metadata }),
+      ...(coze === undefined ? {} : { coze }),
       ...(streamMode === undefined ? {} : { stream_mode: streamMode }),
       ...(optionalTrimmed(request.multitask_strategy) === undefined
         ? {}
