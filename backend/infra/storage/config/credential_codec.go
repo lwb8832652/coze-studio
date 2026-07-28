@@ -19,10 +19,10 @@ package config
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,10 +37,9 @@ const (
 )
 
 type CredentialCodec struct {
-	key         []byte
-	nonce       io.Reader
-	nonceMutex  sync.Mutex
-	nonceSerial uint64
+	key        []byte
+	nonce      io.Reader
+	nonceMutex sync.Mutex
 }
 
 type credentialEnvelope struct {
@@ -84,6 +83,9 @@ func NewCredentialCodec(key []byte, nonceSource io.Reader) (*CredentialCodec, er
 	if nonceSource == nil {
 		nonceSource = rand.Reader
 	}
+	if nilReader(nonceSource) {
+		return nil, domain.ErrCredentialUnavailable
+	}
 	return &CredentialCodec{
 		key:   copiedKey,
 		nonce: nonceSource,
@@ -111,11 +113,7 @@ func (c *CredentialCodec) Encrypt(id uint64, provider domain.ProviderType, versi
 	}
 
 	c.nonceMutex.Lock()
-	nonceReader := &serialNonceReader{source: c.nonce, serial: c.nonceSerial}
-	nonce, ciphertext, err := secureaead.Seal(c.key, credentialAAD(id, provider, version), plaintext, nonceReader)
-	if err == nil {
-		c.nonceSerial++
-	}
+	nonce, ciphertext, err := secureaead.Seal(c.key, credentialAAD(id, provider, version), plaintext, c.nonce)
 	c.nonceMutex.Unlock()
 	if err != nil {
 		return "", domain.ErrCredentialUnavailable
@@ -183,20 +181,12 @@ func credentialAAD(id uint64, provider domain.ProviderType, version uint64) []by
 	return []byte(builder.String())
 }
 
-type serialNonceReader struct {
-	source io.Reader
-	serial uint64
-}
-
-func (r *serialNonceReader) Read(p []byte) (int, error) {
-	n, err := io.ReadFull(r.source, p)
-	if err != nil {
-		return n, err
+func nilReader(reader io.Reader) bool {
+	value := reflect.ValueOf(reader)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
-	var serial [8]byte
-	binary.BigEndian.PutUint64(serial[:], r.serial)
-	for i := range p {
-		p[i] ^= serial[i%len(serial)]
-	}
-	return n, nil
 }
