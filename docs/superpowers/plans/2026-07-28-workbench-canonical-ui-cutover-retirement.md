@@ -195,7 +195,7 @@ git commit -m "test: freeze workbench source contract baseline"
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/legacy-task-thread-reference.ts`
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts`
 
-- [ ] **Step 1: Write the failing transport-isolation test**
+- [x] **Step 1: Write the failing transport-isolation test**
 
 The test must reject `@coze-studio/api-schema`, `workbenchTask`, `workbenchThread`, route strings and
 browser transport construction from `types.ts`, `workbench-thread-client.ts` and `index.ts`.
@@ -210,7 +210,7 @@ rushx test -- src/pages/workbench/thread-client/__tests__/workbench-thread-clien
 
 Expected: FAIL because the app-owned boundary does not exist.
 
-- [ ] **Step 2: Define normalized resources**
+- [x] **Step 2: Define normalized resources**
 
 Use string IDs, snake_case visible field names and epoch-millisecond times to preserve current
 rendering. Define `WorkbenchThread`, `WorkbenchTodo`, `WorkbenchMessage`, `WorkbenchRun`,
@@ -223,7 +223,7 @@ Keep `worker_id` only on the page-facing Artifact scan job; canonical maps its s
 into that field. Do not put worker identity on `WorkbenchRun`. Keep JSON-valued page fields as
 strings where existing render helpers expect strings.
 
-- [ ] **Step 3: Define one workspace-scoped request convention**
+- [x] **Step 3: Define one workspace-scoped request convention**
 
 Every client call requires `space_id` at the app boundary. Thread calls add `thread_id`; Run calls
 add `run_id`. Define page, cursor, abort and idempotency options once:
@@ -243,7 +243,7 @@ export interface WorkbenchPage<T> {
 `space_id` is never copied into canonical JSON/query. The transport uses it only in
 `X-Coze-Space-ID` and injects it into app-owned view models after a successful response.
 
-- [ ] **Step 4: Define the complete production interface**
+- [x] **Step 4: Define the complete production interface**
 
 `WorkbenchThreadClient` must expose the current page operations: search/create/get Thread,
 list/append Message compatibility, suggestions, list/create/get/cancel/resume/retry Run, list and
@@ -254,14 +254,14 @@ families. `readonly contract` is exactly `'canonical_v1'`.
 `RunEventSubscription` is `{ close(): void; closed: Promise<void> }`. Subscription input requires
 space, Thread and Run IDs, optional cursor, an `AbortSignal`, and callbacks for event/end/error.
 
-- [ ] **Step 5: Add paired transport fixtures without a production V1 client**
+- [x] **Step 5: Add paired transport fixtures without a production V1 client**
 
 For each resource family, create one frozen V1 response fixture and one canonical response fixture
 representing the same visible data. `legacy-task-thread-reference.ts` is test-only: it may unwrap
 old envelopes and freeze old wire inputs, but it cannot be exported from production `index.ts` or
 issue network requests.
 
-- [ ] **Step 6: Make the boundary test pass and commit**
+- [x] **Step 6: Make the boundary test pass and commit**
 
 ```bash
 cd frontend/apps/coze-studio
