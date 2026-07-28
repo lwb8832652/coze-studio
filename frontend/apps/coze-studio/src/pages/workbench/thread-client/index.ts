@@ -101,3 +101,16 @@ export type {
   WorkbenchThreadRequest,
   WorkbenchTokenUsageResult,
 } from './workbench-thread-client';
+export type {
+  CanonicalFetch,
+  CanonicalJSONRequest,
+  CanonicalJSONResult,
+  CanonicalPagination,
+  WorkbenchClientError,
+  WorkbenchClientOutcome,
+} from './canonical-fetch';
+export type {
+  CanonicalThreadCoreClient,
+  CanonicalThreadCoreClientOptions,
+  CanonicalWorkbenchCoreClient,
+} from './canonical-thread-client';
