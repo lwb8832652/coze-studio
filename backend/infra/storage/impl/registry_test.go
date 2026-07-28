@@ -207,6 +207,11 @@ func TestNewFromConfigDoesNotCreateBucketsAndValidatesConfig(t *testing.T) {
 			if !errors.Is(err, domain.ErrConfigInvalid) {
 				t.Fatalf("NewFromConfig(invalid credential) error = %v", err)
 			}
+
+			_, err = tc.build(ctx, tc.cfg, domain.CredentialInput{})
+			if !errors.Is(err, domain.ErrConfigInvalid) {
+				t.Fatalf("NewFromConfig(empty credential) error = %v", err)
+			}
 		})
 	}
 }

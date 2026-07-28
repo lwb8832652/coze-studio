@@ -86,10 +86,13 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 	if err != nil {
 		return nil, err
 	}
+	credential = domain.NormalizeCredentialInput(credential)
 	if err = domain.ValidateCredentialInput(credential); err != nil {
 		return nil, err
 	}
-	credential = domain.NormalizeCredentialInput(credential)
+	if !domain.HasCredentialPair(credential) {
+		return nil, domain.ErrConfigInvalid
+	}
 	return getTosClientWithOptions(ctx, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.Endpoint, normalized.Region, false)
 }
 
@@ -403,8 +406,8 @@ func (t *tosClient) ListAllObjects(ctx context.Context, prefix string, opts ...s
 		}
 
 		for _, object := range output.Files {
-			logs.CtxDebugf(ctx, "key = %s, lastModified = %s, eTag = %s, size = %d, tagging = %v, url = %s",
-				object.Key, object.LastModified, object.ETag, object.Size, object.Tagging, object.URL)
+			logs.CtxDebugf(ctx, "key = %s, lastModified = %s, eTag = %s, size = %d, tagging = %v",
+				object.Key, object.LastModified, object.ETag, object.Size, object.Tagging)
 			files = append(files, object)
 		}
 

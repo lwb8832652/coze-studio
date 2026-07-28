@@ -22,6 +22,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/coze-dev/coze-studio/backend/infra/storage"
@@ -87,6 +89,20 @@ func TestCheckReadinessSuccessUsesOnlyHeadBucket(t *testing.T) {
 
 func TestProductionFileDoesNotExposeReadinessTestHook(t *testing.T) {
 	assertNoReadinessTestHook(t, "tos.go")
+}
+
+func TestLoggingDoesNotIncludeSignedURL(t *testing.T) {
+	source, err := os.ReadFile("tos.go")
+	if err != nil {
+		t.Fatalf("ReadFile(tos.go) error = %v", err)
+	}
+	content := string(source)
+	if strings.Contains(content, "url = %s") {
+		t.Fatal("tos.go debug logs include signed URL format")
+	}
+	if strings.Contains(content, "object.URL") {
+		t.Fatal("tos.go debug logs include object.URL")
+	}
 }
 
 func assertTOSNoWriteCalls(t *testing.T, recorder *tosReadinessRecorder) {

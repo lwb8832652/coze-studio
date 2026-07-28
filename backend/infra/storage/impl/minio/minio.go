@@ -85,10 +85,13 @@ func NewFromConfig(ctx context.Context, cfg domain.PublicConfig, credential doma
 	if err != nil {
 		return nil, err
 	}
+	credential = domain.NormalizeCredentialInput(credential)
 	if err = domain.ValidateCredentialInput(credential); err != nil {
 		return nil, err
 	}
-	credential = domain.NormalizeCredentialInput(credential)
+	if !domain.HasCredentialPair(credential) {
+		return nil, domain.ErrConfigInvalid
+	}
 	return getMinioClientWithOptions(ctx, normalized.Endpoint, credential.AccessKeyID, credential.SecretAccessKey, normalized.Bucket, normalized.UseSSL, false)
 }
 
