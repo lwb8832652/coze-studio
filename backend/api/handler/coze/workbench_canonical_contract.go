@@ -398,7 +398,11 @@ func canonicalLogHashValue(value string) string {
 }
 
 func canonicalLogResourceType(value string) string {
-	return canonicalLogEnum(value, "none", "upload", "artifact", "artifact_scan_job", "token_usage", "memory", "memory_audit", "guardrail_audit", "mcp_runtime_audit")
+	return canonicalLogEnum(value, "none",
+		"upload", "artifact", "artifact_content", "artifact_signed_url", "artifact_scan_job", "artifact_scan_review",
+		"token_usage", "token_usage_aggregate", "run_token_usage_aggregate",
+		"memory", "memory_audit", "memory_import", "memory_export",
+		"guardrail_audit", "guardrail_export", "mcp_runtime_audit")
 }
 
 func canonicalLogResourceID(value string) string {
@@ -429,7 +433,10 @@ func canonicalLogPageValue(value int32) int32 {
 }
 
 func canonicalLogLifecycleStage(value string) string {
-	return canonicalLogEnum(value, "none", "created", "pending", "queued", "processing", "running", "completed", "failed", "deleted")
+	return canonicalLogEnum(value, "none",
+		"created", "pending", "queued", "processing", "running", "completed", "failed", "deleted",
+		"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export",
+		"upload", "uploaded", "scan", "scanned", "approved", "rejected")
 }
 
 func canonicalResponseBodyKind(value string, status int) string {

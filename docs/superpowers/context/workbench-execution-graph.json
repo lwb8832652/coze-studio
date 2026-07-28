@@ -2554,7 +2554,7 @@
     },
     {
       "id": "http.workbench.canonical_product_contract",
-      "label": "Canonical product validation and public projection helpers",
+      "label": "Canonical product IDL wire validation, projection and safe logging",
       "layer": "http_handler",
       "kind": "capability",
       "production_status": "current",
@@ -2569,6 +2569,11 @@
           "path": "backend/api/handler/coze/workbench_canonical_product_projection.go",
           "symbol": "projectCanonicalProductArtifact",
           "locator": "func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*canonicalProductArtifact, error)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection.go",
+          "symbol": "canonicalProductRequiredID",
+          "locator": "func canonicalProductRequiredID(value int64, resource string) (string, error)"
         }
       ],
       "evidence": [
@@ -2579,6 +2584,10 @@
         {
           "path": "backend/api/handler/coze/workbench_canonical_product_projection_test.go",
           "locator": "func TestCanonicalProductProjectionRemovesRawUsageSecretsAndWorkerIdentity"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_product_projection_test.go",
+          "locator": "func TestCanonicalProductProjectionMatchesIDLWireShapes"
         }
       ]
     },

@@ -63,7 +63,9 @@ func TestCanonicalProductPaginationAcceptsIntegralOffsetPages(t *testing.T) {
 func TestCanonicalProductPaginationRejectsNegativeOrMisalignedOffset(t *testing.T) {
 	for _, query := range []string{
 		"?limit=0", "?limit=-1", "?limit=not-a-number", "?limit=2147483648",
-		"?offset=-1", "?offset=not-a-number", "?offset=2147483648", "?limit=20&offset=21",
+		"?limit=+1", "?limit=-0", "?limit=1.0",
+		"?offset=-1", "?offset=+1", "?offset=-0", "?offset=1.0", "?offset=not-a-number", "?offset=2147483648",
+		"?limit=20&offset=21", "?limit=1&offset=2147483647",
 	} {
 		query := query
 		t.Run(query, func(t *testing.T) {
@@ -132,21 +134,41 @@ func TestCanonicalProductCompletionLogContainsResourceFieldsWithoutPayload(t *te
 	logCanonicalRequestCompleted(context.Background(), &c, canonicalRequestLog{
 		Operation:      "artifact.list",
 		RouteTemplate:  "/api/workbench/artifacts",
-		ResourceType:   "artifact",
-		ResourceID:     "9001",
+		ResourceType:   "artifact_signed_url",
+		ResourceID:     "https://storage.example.test/download?signature=signed-url-secret",
 		Limit:          50,
 		Offset:         100,
-		LifecycleStage: "completed",
+		LifecycleStage: "review",
 	}, "success")
 
 	actual := output.String()
 	for _, expected := range []string{
-		"event_name=workbench.api.request.completed", "resource_type=artifact", "resource_id=9001",
-		"limit=50", "offset=100", "lifecycle_stage=completed",
+		"event_name=workbench.api.request.completed", "resource_type=artifact_signed_url",
+		"resource_id=" + canonicalLogHash("https://storage.example.test/download?signature=signed-url-secret"),
+		"limit=50", "offset=100", "lifecycle_stage=review",
 	} {
 		require.Contains(t, actual, expected)
 	}
-	for _, sensitive := range canonicalProductSensitiveSentinels() {
+	for _, sensitive := range append(canonicalProductSensitiveSentinels(), "signed-url-secret", "storage.example.test", "signature=") {
 		require.NotContains(t, actual, sensitive)
+	}
+
+	output.Reset()
+	logCanonicalRequestCompleted(context.Background(), &c, canonicalRequestLog{
+		Operation:      "artifact.get",
+		RouteTemplate:  "/api/workbench/artifacts/9001",
+		ResourceType:   "artifact",
+		ResourceID:     "0009001",
+		LifecycleStage: "completed",
+	}, "success")
+	require.Contains(t, output.String(), "resource_id=9001")
+}
+
+func TestCanonicalProductCompletionLogAllowsProductLifecycleAndResourceValues(t *testing.T) {
+	for _, value := range []string{"create", "stream", "reconnect", "disconnect", "cancel", "review", "restore", "retry", "import", "export", "scan", "uploaded"} {
+		require.Equal(t, value, canonicalLogLifecycleStage(value))
+	}
+	for _, value := range []string{"artifact_signed_url", "artifact_content", "memory_export", "guardrail_export"} {
+		require.Equal(t, value, canonicalLogResourceType(value))
 	}
 }

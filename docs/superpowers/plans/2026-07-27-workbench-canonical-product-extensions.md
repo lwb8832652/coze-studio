@@ -512,6 +512,9 @@ git commit -m "feat: complete canonical workbench run streams"
 - Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_service.go`
 - Modify: `backend/api/handler/coze/workbench_canonical_run_service_test.go`
+- Modify: `docs/superpowers/context/workbench-execution-chain.md`
+- Modify: `docs/superpowers/context/workbench-execution-graph.json`
+- Modify: `scripts/workbench-execution-graph/contract.mjs`
 
 - [x] **Step 1: Write failing validation and redaction tests**
 
@@ -601,6 +604,10 @@ GOCACHE=/private/tmp/coze-workbench-product-go-cache go test -p 1 -gcflags="all=
 ```
 
 Expected: PASS with no sensitive fixture values in output or logs.
+
+- [x] **Step 5a: Harden IDL wire shape and public identifier boundaries**
+
+Product wire structs now match `thread_product.thrift` required/optional presence exactly. Required entity IDs fail closed, scan jobs omit lease and worker internals while always emitting safe `worker_ref`/`error_code`, and bounded nonnumeric public identifiers remain available only when they are not sensitive values or URLs.
 
 - [x] **Step 6: Commit shared helpers**
 

@@ -202,10 +202,12 @@ event flush，且只在 SSE writer 明确确认断连且请求选择 cancel 时�
 human resume 与断线取消的应用层依赖，不把 SSE handler 伪装成非流式 handler 的调用方。
 
 canonical product resources 共用严格的十进制路径 ID、1 MiB JSON body ceiling、exact
-offset pagination 与公开投影 helper。公开资源将 ID 和时间规范化为字符串/RFC3339，Artifact
-和 token usage 先经过 application public projection；scan worker 只保留稳定哈希引用，完成
-日志只记录审核后的资源、分页和生命周期字段。普通 Run 创建响应可附带同一原子 bundle 已提交的
-User Message 投影；后续 list/get/read 投影不保留该一次性字段。
+offset pagination 与公开投影 helper。手写 wire projection 必须与 `thread_product.thrift` 的
+required/optional presence 一致，所有必填实体 ID 均 fail closed；公开资源将 ID 和时间规范化为
+字符串/RFC3339，Artifact 和 token usage 先经过 application public projection。非数字
+`source_id`/`target_id` 仅在符合公开标识符与敏感值边界时保留；scan worker 只保留稳定哈希引用，
+不公开租约或原始错误。完成日志只记录审核后的资源、分页和生命周期字段。普通 Run 创建响应可附带
+同一原子 bundle 已提交的 User Message 投影；后续 list/get/read 投影不保留该一次性字段。
 
 canonical feature gate 仍默认关闭，因此当前没有切换生产流量。现有 Workbench UI 继续
 使用 `/api/workbench/task_threads`，`/api/threads` 兼容入口也未修改；两条来源合同在完整

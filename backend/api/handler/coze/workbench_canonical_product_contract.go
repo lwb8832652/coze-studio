@@ -52,7 +52,11 @@ func canonicalProductPagination(c *app.RequestContext) (canonicalProductPage, *c
 	if offset%limit != 0 {
 		return canonicalProductPage{}, canonicalProductPaginationError("offset")
 	}
-	return canonicalProductPage{Limit: limit, Offset: offset, Page: offset/limit + 1}, nil
+	page := int64(offset)/int64(limit) + 1
+	if page > int64(^uint32(0)>>1) {
+		return canonicalProductPage{}, canonicalProductPaginationError("offset")
+	}
+	return canonicalProductPage{Limit: limit, Offset: offset, Page: int32(page)}, nil
 }
 
 func canonicalProductPageValue(c *app.RequestContext, name string, defaultValue int32) (int32, *canonicalError) {
@@ -65,6 +69,11 @@ func canonicalProductPageValue(c *app.RequestContext, name string, defaultValue 
 	}
 	if raw == "" || strings.TrimSpace(raw) != raw {
 		return 0, canonicalProductPaginationError(name)
+	}
+	for _, character := range raw {
+		if character < '0' || character > '9' {
+			return 0, canonicalProductPaginationError(name)
+		}
 	}
 	value, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil || value < 0 || (name == "limit" && value == 0) {

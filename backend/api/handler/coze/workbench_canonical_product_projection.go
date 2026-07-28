@@ -19,8 +19,6 @@ package coze
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
 	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
@@ -28,65 +26,64 @@ import (
 type canonicalProductUpload struct {
 	FileID      string `json:"file_id"`
 	FileName    string `json:"file_name"`
-	VirtualPath string `json:"virtual_path,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
+	VirtualPath string `json:"virtual_path"`
+	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
-	CreatedAt   string `json:"created_at,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type canonicalProductArtifact struct {
 	ArtifactID   string         `json:"artifact_id"`
-	ThreadID     string         `json:"thread_id,omitempty"`
-	RunID        string         `json:"run_id,omitempty"`
-	FileID       string         `json:"file_id,omitempty"`
+	ThreadID     string         `json:"thread_id"`
+	RunID        string         `json:"run_id"`
+	FileID       string         `json:"file_id"`
 	Title        string         `json:"title"`
-	ArtifactType string         `json:"artifact_type,omitempty"`
-	VirtualPath  string         `json:"virtual_path,omitempty"`
-	ContentType  string         `json:"content_type,omitempty"`
+	ArtifactType string         `json:"artifact_type"`
+	VirtualPath  string         `json:"virtual_path"`
+	ContentType  string         `json:"content_type"`
 	SizeBytes    int64          `json:"size_bytes"`
-	PreviewMode  string         `json:"preview_mode,omitempty"`
+	PreviewMode  string         `json:"preview_mode"`
 	Metadata     map[string]any `json:"metadata"`
-	CreatedAt    string         `json:"created_at,omitempty"`
-	UpdatedAt    string         `json:"updated_at,omitempty"`
+	CreatedAt    string         `json:"created_at"`
+	UpdatedAt    string         `json:"updated_at"`
 	DeletedAt    string         `json:"deleted_at,omitempty"`
 }
 
 type canonicalProductArtifactScanJob struct {
-	JobID          string `json:"job_id"`
-	ThreadID       string `json:"thread_id,omitempty"`
-	RunID          string `json:"run_id,omitempty"`
-	ArtifactID     string `json:"artifact_id,omitempty"`
-	FileID         string `json:"file_id,omitempty"`
-	Scanner        string `json:"scanner,omitempty"`
-	Status         string `json:"status"`
-	WorkerRef      string `json:"worker_ref,omitempty"`
-	AttemptCount   int32  `json:"attempt_count"`
-	ErrorCode      string `json:"error_code,omitempty"`
-	AvailableAt    string `json:"available_at,omitempty"`
-	LeaseExpiresAt string `json:"lease_expires_at,omitempty"`
-	StartedAt      string `json:"started_at,omitempty"`
-	EndedAt        string `json:"ended_at,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
-	UpdatedAt      string `json:"updated_at,omitempty"`
+	JobID        string `json:"job_id"`
+	ThreadID     string `json:"thread_id"`
+	RunID        string `json:"run_id"`
+	ArtifactID   string `json:"artifact_id"`
+	FileID       string `json:"file_id"`
+	Scanner      string `json:"scanner"`
+	Status       string `json:"status"`
+	WorkerRef    string `json:"worker_ref"`
+	AttemptCount int32  `json:"attempt_count"`
+	ErrorCode    string `json:"error_code"`
+	AvailableAt  string `json:"available_at,omitempty"`
+	StartedAt    string `json:"started_at,omitempty"`
+	EndedAt      string `json:"ended_at,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type canonicalProductTokenUsage struct {
 	UsageID      string `json:"usage_id"`
-	ThreadID     string `json:"thread_id,omitempty"`
-	RunID        string `json:"run_id,omitempty"`
+	ThreadID     string `json:"thread_id"`
+	RunID        string `json:"run_id"`
 	Source       string `json:"source"`
-	StepID       string `json:"step_id,omitempty"`
-	StepIndex    int32  `json:"step_index,omitempty"`
-	StepName     string `json:"step_name,omitempty"`
-	ModelName    string `json:"model_name,omitempty"`
-	Provider     string `json:"provider,omitempty"`
+	StepID       string `json:"step_id"`
+	StepIndex    int32  `json:"step_index"`
+	StepName     string `json:"step_name"`
+	ModelName    string `json:"model_name"`
+	Provider     string `json:"provider"`
 	InputTokens  int64  `json:"input_tokens"`
 	OutputTokens int64  `json:"output_tokens"`
 	TotalTokens  int64  `json:"total_tokens"`
-	CostMicros   int64  `json:"cost_micros,omitempty"`
-	Currency     string `json:"currency,omitempty"`
+	CostMicros   int64  `json:"cost_micros"`
+	Currency     string `json:"currency"`
 	Estimated    bool   `json:"estimated"`
-	CreatedAt    string `json:"created_at,omitempty"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type canonicalProductTokenUsageAggregate struct {
@@ -108,64 +105,66 @@ type canonicalProductRunTokenUsageAggregate struct {
 
 type canonicalProductMemory struct {
 	MemoryID             string         `json:"memory_id"`
-	ThreadID             string         `json:"thread_id,omitempty"`
+	ThreadID             string         `json:"thread_id"`
 	RunID                string         `json:"run_id,omitempty"`
-	Scope                string         `json:"scope,omitempty"`
+	Scope                string         `json:"scope"`
 	Content              string         `json:"content"`
 	Metadata             map[string]any `json:"metadata"`
-	Score                float64        `json:"score,omitempty"`
-	Confidence           float64        `json:"confidence,omitempty"`
-	SourceType           string         `json:"source_type,omitempty"`
-	SourceID             string         `json:"source_id,omitempty"`
+	Score                float64        `json:"score"`
+	Confidence           float64        `json:"confidence"`
+	SourceType           string         `json:"source_type"`
+	SourceID             string         `json:"source_id"`
 	CorrectionOfMemoryID string         `json:"correction_of_memory_id,omitempty"`
 	CorrectedAt          string         `json:"corrected_at,omitempty"`
 	ExpiresAt            string         `json:"expires_at,omitempty"`
-	CreatedAt            string         `json:"created_at,omitempty"`
-	UpdatedAt            string         `json:"updated_at,omitempty"`
+	CreatedAt            string         `json:"created_at"`
+	UpdatedAt            string         `json:"updated_at"`
 	DeletedAt            string         `json:"deleted_at,omitempty"`
 }
 
 type canonicalProductMemoryAudit struct {
 	EventID       string `json:"event_id"`
-	ThreadID      string `json:"thread_id,omitempty"`
+	ThreadID      string `json:"thread_id"`
 	RunID         string `json:"run_id,omitempty"`
 	MemoryID      string `json:"memory_id,omitempty"`
-	EventType     string `json:"event_type,omitempty"`
-	Scope         string `json:"scope,omitempty"`
-	SourceType    string `json:"source_type,omitempty"`
-	SourceID      string `json:"source_id,omitempty"`
+	ActorID       string `json:"actor_id,omitempty"`
+	EventType     string `json:"event_type"`
+	Scope         string `json:"scope"`
+	SourceType    string `json:"source_type"`
+	SourceID      string `json:"source_id"`
 	AffectedCount int64  `json:"affected_count"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	CreatedAt     string `json:"created_at"`
 }
 
 type canonicalProductGuardrailAudit struct {
 	EventID    string   `json:"event_id"`
-	ThreadID   string   `json:"thread_id,omitempty"`
+	ThreadID   string   `json:"thread_id"`
 	RunID      string   `json:"run_id,omitempty"`
-	EventType  string   `json:"event_type,omitempty"`
-	TargetType string   `json:"target_type,omitempty"`
-	TargetID   string   `json:"target_id,omitempty"`
-	Operation  string   `json:"operation,omitempty"`
-	Source     string   `json:"source,omitempty"`
-	Action     string   `json:"action,omitempty"`
-	FailMode   string   `json:"fail_mode,omitempty"`
-	Provider   string   `json:"provider,omitempty"`
-	ReasonCode string   `json:"reason_code,omitempty"`
+	ActorID    string   `json:"actor_id,omitempty"`
+	EventType  string   `json:"event_type"`
+	TargetType string   `json:"target_type"`
+	TargetID   string   `json:"target_id"`
+	Operation  string   `json:"operation"`
+	Source     string   `json:"source"`
+	Action     string   `json:"action"`
+	FailMode   string   `json:"fail_mode"`
+	Provider   string   `json:"provider"`
+	ReasonCode string   `json:"reason_code"`
 	RuleIDs    []string `json:"rule_ids"`
-	CreatedAt  string   `json:"created_at,omitempty"`
+	CreatedAt  string   `json:"created_at"`
 }
 
 type canonicalProductMCPRuntimeAudit struct {
 	EventID         string `json:"event_id"`
-	ThreadID        string `json:"thread_id,omitempty"`
+	ThreadID        string `json:"thread_id"`
 	RunID           string `json:"run_id,omitempty"`
 	ServerID        string `json:"server_id,omitempty"`
-	RuntimeToolName string `json:"runtime_tool_name,omitempty"`
-	EventType       string `json:"event_type,omitempty"`
-	ErrorCode       string `json:"error_code,omitempty"`
+	RuntimeToolName string `json:"runtime_tool_name"`
+	EventType       string `json:"event_type"`
+	ErrorCode       string `json:"error_code"`
 	ElapsedMillis   int64  `json:"elapsed_millis"`
 	OutputBytes     int64  `json:"output_bytes"`
-	CreatedAt       string `json:"created_at,omitempty"`
+	CreatedAt       string `json:"created_at"`
 }
 
 func projectCanonicalProductUpload(summary *appagentthread.TaskThreadUploadedFileSummary) (*canonicalProductUpload, error) {
@@ -188,7 +187,19 @@ func projectCanonicalProductArtifact(summary *appagentthread.ArtifactSummary) (*
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: canonicalOptionalIDString(public.ThreadID), RunID: canonicalOptionalIDString(public.RunID), FileID: canonicalOptionalIDString(public.FileID), Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: canonicalTime(public.CreatedAt), UpdatedAt: canonicalTime(public.UpdatedAt), DeletedAt: canonicalTime(public.DeletedAt)}, nil
+	threadID, err := canonicalProductRequiredID(public.ThreadID, "artifact thread")
+	if err != nil {
+		return nil, err
+	}
+	runID, err := canonicalProductRequiredID(public.RunID, "artifact run")
+	if err != nil {
+		return nil, err
+	}
+	fileID, err := canonicalProductRequiredID(public.FileID, "artifact file")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductArtifact{ArtifactID: artifactID, ThreadID: threadID, RunID: runID, FileID: fileID, Title: canonicalCleanString(public.Title, 512), ArtifactType: canonicalProductIdentifier(public.ArtifactType), VirtualPath: canonicalCleanString(public.VirtualPath, 4096), ContentType: canonicalCleanString(public.ContentType, 128), SizeBytes: public.SizeBytes, PreviewMode: canonicalProductIdentifier(string(public.PreviewMode)), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(public.Metadata, "")), CreatedAt: canonicalTime(public.CreatedAt), UpdatedAt: canonicalTime(public.UpdatedAt), DeletedAt: canonicalTime(public.DeletedAt)}, nil
 }
 
 func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScanJobSummary) (*canonicalProductArtifactScanJob, error) {
@@ -199,11 +210,24 @@ func projectCanonicalProductArtifactScanJob(summary *appagentthread.ArtifactScan
 	if err != nil {
 		return nil, err
 	}
-	status := canonicalProductScanStatus(string(summary.Status))
-	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: canonicalOptionalIDString(summary.ThreadID), RunID: canonicalOptionalIDString(summary.RunID), ArtifactID: canonicalOptionalIDString(summary.ArtifactID), FileID: canonicalOptionalIDString(summary.FileID), Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, AttemptCount: summary.AttemptCount, AvailableAt: canonicalTime(summary.AvailableAt), LeaseExpiresAt: canonicalTime(summary.LeaseExpiresAt), StartedAt: canonicalTime(summary.StartedAt), EndedAt: canonicalTime(summary.EndedAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt)}
-	if strings.TrimSpace(summary.WorkerID) != "" {
-		result.WorkerRef = canonicalLogHash(summary.WorkerID)
+	threadID, err := canonicalProductRequiredID(summary.ThreadID, "artifact scan job thread")
+	if err != nil {
+		return nil, err
 	}
+	runID, err := canonicalProductRequiredID(summary.RunID, "artifact scan job run")
+	if err != nil {
+		return nil, err
+	}
+	artifactID, err := canonicalProductRequiredID(summary.ArtifactID, "artifact scan job artifact")
+	if err != nil {
+		return nil, err
+	}
+	fileID, err := canonicalProductRequiredID(summary.FileID, "artifact scan job file")
+	if err != nil {
+		return nil, err
+	}
+	status := canonicalProductScanStatus(string(summary.Status))
+	result := &canonicalProductArtifactScanJob{JobID: jobID, ThreadID: threadID, RunID: runID, ArtifactID: artifactID, FileID: fileID, Scanner: canonicalProductIdentifier(summary.Scanner), Status: status, WorkerRef: canonicalLogHash(summary.WorkerID), AttemptCount: summary.AttemptCount, AvailableAt: canonicalTime(summary.AvailableAt), StartedAt: canonicalTime(summary.StartedAt), EndedAt: canonicalTime(summary.EndedAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt)}
 	if status == "failed" {
 		result.ErrorCode = "scan_failed"
 	}
@@ -219,7 +243,15 @@ func projectCanonicalProductTokenUsage(summary *appagentthread.TokenUsageSummary
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductTokenUsage{UsageID: usageID, ThreadID: canonicalOptionalIDString(public.ThreadID), RunID: canonicalOptionalIDString(public.RunID), Source: canonicalProductIdentifier(string(public.Source)), StepID: canonicalProductIdentifier(public.StepID), StepIndex: public.StepIndex, StepName: canonicalCleanString(public.StepName, 512), ModelName: canonicalCleanString(public.ModelName, 512), Provider: canonicalProductIdentifier(public.Provider), InputTokens: public.InputTokens, OutputTokens: public.OutputTokens, TotalTokens: public.TotalTokens, CostMicros: public.CostMicros, Currency: canonicalProductIdentifier(public.Currency), Estimated: public.Estimated, CreatedAt: canonicalTime(public.CreatedAt)}, nil
+	threadID, err := canonicalProductRequiredID(public.ThreadID, "token usage thread")
+	if err != nil {
+		return nil, err
+	}
+	runID, err := canonicalProductRequiredID(public.RunID, "token usage run")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductTokenUsage{UsageID: usageID, ThreadID: threadID, RunID: runID, Source: canonicalProductIdentifier(string(public.Source)), StepID: canonicalProductIdentifier(public.StepID), StepIndex: public.StepIndex, StepName: canonicalCleanString(public.StepName, 512), ModelName: canonicalCleanString(public.ModelName, 512), Provider: canonicalProductIdentifier(public.Provider), InputTokens: public.InputTokens, OutputTokens: public.OutputTokens, TotalTokens: public.TotalTokens, CostMicros: public.CostMicros, Currency: canonicalProductIdentifier(public.Currency), Estimated: public.Estimated, CreatedAt: canonicalTime(public.CreatedAt)}, nil
 }
 
 func projectCanonicalProductTokenUsageAggregate(summary *appagentthread.TokenUsageAggregateSummary) canonicalProductTokenUsageAggregate {
@@ -248,7 +280,11 @@ func projectCanonicalProductMemory(summary *appagentthread.MemorySummary) (*cano
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: canonicalOptionalIDString(summary.ThreadID), RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductOptionalDecimalID(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: canonicalTime(summary.CorrectedAt), ExpiresAt: canonicalTime(summary.ExpiresAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt), DeletedAt: canonicalTime(summary.DeletedAt)}, nil
+	threadID, err := canonicalProductRequiredID(summary.ThreadID, "memory thread")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMemory{MemoryID: memoryID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), Scope: canonicalProductIdentifier(string(summary.Scope)), Content: canonicalCleanString(summary.Content, canonicalMaxPublicValueRunes), Metadata: canonicalSanitizeMap(canonicalEntityMetadataFromJSON(summary.Metadata, "")), Score: summary.Score, Confidence: summary.Confidence, SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), CorrectionOfMemoryID: canonicalOptionalIDString(summary.CorrectionOfMemoryID), CorrectedAt: canonicalTime(summary.CorrectedAt), ExpiresAt: canonicalTime(summary.ExpiresAt), CreatedAt: canonicalTime(summary.CreatedAt), UpdatedAt: canonicalTime(summary.UpdatedAt), DeletedAt: canonicalTime(summary.DeletedAt)}, nil
 }
 
 func projectCanonicalProductMemoryAudit(summary *appagentthread.MemoryAuditEventSummary) (*canonicalProductMemoryAudit, error) {
@@ -259,7 +295,11 @@ func projectCanonicalProductMemoryAudit(summary *appagentthread.MemoryAuditEvent
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMemoryAudit{EventID: eventID, ThreadID: canonicalOptionalIDString(summary.ThreadID), RunID: canonicalOptionalIDString(summary.RunID), MemoryID: canonicalOptionalIDString(summary.MemoryID), EventType: canonicalProductIdentifier(summary.EventType), Scope: canonicalProductIdentifier(string(summary.Scope)), SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductOptionalDecimalID(summary.SourceID), AffectedCount: summary.AffectedCount, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	threadID, err := canonicalProductRequiredID(summary.ThreadID, "memory audit thread")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMemoryAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), MemoryID: canonicalOptionalIDString(summary.MemoryID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), Scope: canonicalProductIdentifier(string(summary.Scope)), SourceType: canonicalProductIdentifier(summary.SourceType), SourceID: canonicalProductIdentifier(summary.SourceID), AffectedCount: summary.AffectedCount, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
 }
 
 func projectCanonicalProductGuardrailAudit(summary *appagentthread.GuardrailAuditEventSummary) (*canonicalProductGuardrailAudit, error) {
@@ -270,7 +310,11 @@ func projectCanonicalProductGuardrailAudit(summary *appagentthread.GuardrailAudi
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductGuardrailAudit{EventID: eventID, ThreadID: canonicalOptionalIDString(summary.ThreadID), RunID: canonicalOptionalIDString(summary.RunID), EventType: canonicalProductIdentifier(summary.EventType), TargetType: canonicalProductIdentifier(summary.TargetType), TargetID: canonicalProductOptionalDecimalID(summary.TargetID), Operation: canonicalProductIdentifier(summary.Operation), Source: canonicalProductIdentifier(summary.Source), Action: canonicalProductIdentifier(summary.Action), FailMode: canonicalProductIdentifier(summary.FailMode), Provider: canonicalProductIdentifier(summary.Provider), ReasonCode: canonicalProductIdentifier(summary.ReasonCode), RuleIDs: canonicalProductRuleIDs(summary.RuleIDs), CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	threadID, err := canonicalProductRequiredID(summary.ThreadID, "guardrail audit thread")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductGuardrailAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ActorID: canonicalOptionalIDString(summary.ActorID), EventType: canonicalProductIdentifier(summary.EventType), TargetType: canonicalProductIdentifier(summary.TargetType), TargetID: canonicalProductIdentifier(summary.TargetID), Operation: canonicalProductIdentifier(summary.Operation), Source: canonicalProductIdentifier(summary.Source), Action: canonicalProductIdentifier(summary.Action), FailMode: canonicalProductIdentifier(summary.FailMode), Provider: canonicalProductIdentifier(summary.Provider), ReasonCode: canonicalProductIdentifier(summary.ReasonCode), RuleIDs: canonicalProductRuleIDs(summary.RuleIDs), CreatedAt: canonicalTime(summary.CreatedAt)}, nil
 }
 
 func projectCanonicalProductMCPRuntimeAudit(summary *appagentthread.MCPRuntimeAuditEventSummary) (*canonicalProductMCPRuntimeAudit, error) {
@@ -281,36 +325,24 @@ func projectCanonicalProductMCPRuntimeAudit(summary *appagentthread.MCPRuntimeAu
 	if err != nil {
 		return nil, err
 	}
-	return &canonicalProductMCPRuntimeAudit{EventID: eventID, ThreadID: canonicalOptionalIDString(summary.ThreadID), RunID: canonicalOptionalIDString(summary.RunID), ServerID: canonicalOptionalIDString(summary.ServerID), RuntimeToolName: canonicalProductIdentifier(summary.RuntimeToolName), EventType: canonicalProductIdentifier(summary.EventType), ErrorCode: canonicalProductIdentifier(summary.ErrorCode), ElapsedMillis: summary.ElapsedMillis, OutputBytes: summary.OutputBytes, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
+	threadID, err := canonicalProductRequiredID(summary.ThreadID, "mcp runtime audit thread")
+	if err != nil {
+		return nil, err
+	}
+	return &canonicalProductMCPRuntimeAudit{EventID: eventID, ThreadID: threadID, RunID: canonicalOptionalIDString(summary.RunID), ServerID: canonicalOptionalIDString(summary.ServerID), RuntimeToolName: canonicalProductIdentifier(summary.RuntimeToolName), EventType: canonicalProductIdentifier(summary.EventType), ErrorCode: canonicalProductIdentifier(summary.ErrorCode), ElapsedMillis: summary.ElapsedMillis, OutputBytes: summary.OutputBytes, CreatedAt: canonicalTime(summary.CreatedAt)}, nil
 }
 
 func canonicalProductRequiredID(value int64, resource string) (string, error) {
-	if value <= 0 {
+	projected, ok := canonicalPositiveInt64ID(value)
+	if !ok {
 		return "", fmt.Errorf("canonical %s projection requires a positive id", resource)
 	}
-	return strconv.FormatInt(value, 10), nil
-}
-
-func canonicalProductOptionalDecimalID(value string) string {
-	value = canonicalCleanString(value, 128)
-	if value == "" {
-		return ""
-	}
-	for _, character := range value {
-		if character < '0' || character > '9' {
-			return ""
-		}
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return ""
-	}
-	return canonicalOptionalIDString(parsed)
+	return projected.(string), nil
 }
 
 func canonicalProductIdentifier(value string) string {
 	value = canonicalCleanString(value, 128)
-	if value == "" || canonicalUnsafePublicField(value) || !canonicalIdentifierPattern.MatchString(value) {
+	if value == "" || !canonicalIdentifierPattern.MatchString(value) || canonicalSensitiveValuePattern.MatchString(value) {
 		return ""
 	}
 	return value
