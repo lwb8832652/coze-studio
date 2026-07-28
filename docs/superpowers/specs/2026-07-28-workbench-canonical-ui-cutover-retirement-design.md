@@ -17,14 +17,16 @@ V1、来源路由不删除”的阶段性约束，但不改变已经冻结的 ca
 
 用户已确认本期采用同周期迁移和退役：先完成 canonical 全链路验证，再删除两套
 Thread 来源合同，随后在旧路由确实不可达的状态下重新验证。无状态
-`/api/runs/**` 不在删除范围内。
+`/api/runs/**` 没有仓库内业务调用方，也进入零使用审计；确认没有外部流量后同步
+删除。
 
 ## 2. 目标
 
 本期结束后，Thread-bound Workbench 能力只通过
 `/api/workbench/threads/**` 提供。Workbench/Tasks UI、仓库内 NewX parity client、
 测试和当前文档都改用 canonical 合同。旧路由、旧前端 transport、IDL 方法和
-不再使用的 handler 一并删除。
+不再使用的 handler 一并删除。最终不保留没有明确调用方、所有者和产品用途的
+LangGraph 兼容 route。
 
 底层仍只有一套 `TaskThread -> Message -> Run -> RunEvent` 数据和执行链。此次工作
 不改数据库表名、领域模型、Eino ADK、Worker、checkpoint 存储或 Artifact/Memory
@@ -39,7 +41,7 @@ Thread 来源合同，随后在旧路由确实不可达的状态下重新验证�
 | `/api/workbench/task_threads/**` | 36 个方法与路径组合 | 当前 Workbench UI 产品合同 | 完整删除 |
 | `/api/threads/**` | 23 个方法与路径组合 | 旧 LangGraph 形状的 Thread-bound 合同 | 完整删除 |
 | `/api/workbench/threads/**` | 21 个 core + 26 个 product 路由 | canonical 主合同 | 成为唯一 Thread-bound 合同 |
-| `/api/runs/**` | 10 个 stateless Run 路由 | 无状态执行能力 | 保留，行为不变 |
+| `/api/runs/**` | 10 个 stateless Run 路由 | 无仓库内业务调用方的一次性执行兼容能力 | 零使用审计后删除 |
 | `/api/workbench/tasks*`、`/api/workbench/chat` | 已退役 | ChatTask 旧合同 | 继续保持 `404` |
 
 `/api/workbench/task_threads/**` 包含 Thread 列表、创建、详情、Message、Run、
@@ -48,7 +50,8 @@ Audit。删除前必须证明这些产品能力已逐项由 canonical 页面链�
 
 `/api/threads/**` 包含 Thread CRUD、state/history、checkpoint readiness、Thread-bound
 Run、wait、stream、join、cancel、Message 和 Event。它与 `/api/runs/**` 在同一手写
-LangGraph handler 区域中注册，但两者的退役决策不同，实施时不能整文件误删。
+LangGraph handler 区域中注册。两组路由都通过删除门禁后，可以清理整个旧
+LangGraph HTTP adapter；被其他模块使用的通用 helper 仍需按调用图保留。
 
 ### 3.2 当前调用方
 
@@ -60,6 +63,8 @@ LangGraph handler 区域中注册，但两者的退役决策不同，实施时�
   DeerFlow gateway，不是本项目来源路由，不能因本次退役机械替换。
 - 当前生产源码未发现其他本项目 `/api/threads/**` 调用方。历史设计文档中的示例
   不构成运行时调用，但需要更新现状说明或保留明确的历史标记。
+- 当前生产源码也未发现 `/api/runs/**` 调用方。搜索结果只有路由注册、handler、
+  测试和历史文档，因此仓库内零调用条件已经满足；仓库外流量仍需访问日志证明。
 
 ### 3.3 共同主链
 
@@ -80,9 +85,6 @@ Workbench / Tasks UI
 
 NewX parity client
   -> /api/workbench/threads/**
-
-/api/runs/**
-  -> existing stateless LangGraph handlers (unchanged)
 ```
 
 最终生产代码不保留 `TaskThreadV1Client`、client selector、读写 fallback、shadow
@@ -128,11 +130,23 @@ request 或双 SSE。canonical 请求失败时直接向页面返回原始失败�
 仓库内 NewX parity client 必须改用 canonical path、header、SSE mode 和直接响应，
 并继续通过现有登录 session 鉴权。它不能新增旧路由 fallback。
 
-### 5.3 保留的 stateless Run
+### 5.3 Stateless Run 零使用审计与退役
 
-`/api/runs/**` 保持当前 10 个路由、handler 和测试。拆除 Thread-bound LangGraph
-函数时，应保留 stateless Run 共用的解析、SSE 和公开投影 helper。最终负向路由
-测试必须同时证明 `/api/threads/**` 为 `404`、`/api/runs/**` 仍可匹配。
+`/api/runs/**` 是 2026-06-17 引入的 LangGraph 一次性执行兼容入口。所谓 stateless
+只表示客户端不预先管理 Thread，服务端仍会创建 backing Thread 和持久化 Run。它
+不属于当前 Workbench 页面链路，canonical 也没有承诺同形状的 stateless API。
+
+删除前必须同时满足：
+
+1. 生产源码除 route/handler 外没有调用方，当前审计已满足；
+2. 前端、内部工具、IM、计划任务、生成 client 和运维脚本没有调用方；
+3. 网关或服务访问日志中 10 个 `/api/runs/**` 路由没有有效业务流量；
+4. 没有登记的外部 SDK 客户、公开文档承诺或具名业务所有者；
+5. 相关能力不在当前发布验收矩阵中，也没有 canonical 迁移需求。
+
+五项满足后，删除全部 10 个路由、stateless handler、专用 binding、测试和只被它们
+使用的 helper。如果访问日志发现调用方，应先识别所有者并决定迁移到
+Thread-bound canonical Run 或明确保留；不能把“源码没有引用”当作外部零流量。
 
 ## 6. 前端设计
 
@@ -183,13 +197,15 @@ workspace authorization、严格 JSON、大小限制、公开投影、错误映�
 - 只删除无调用的 HTTP projection/helper。canonical 共用的 application、domain、
   repository、entity 和业务校验继续保留。
 
-### 7.3 删除 LangGraph Thread-bound 合同
+### 7.3 删除 LangGraph Thread 与无状态 Run 合同
 
 - 从 `registerLangGraphCustomRoutes` 删除 `/api/threads/**` 注册；
-- 删除只服务 Thread-bound 旧合同的 handler、binding 和测试；
-- 拆分 `langgraph_run_service.go` 时保留 `/api/runs/**` 使用的 stateless 实现和共用
-  helper；
-- 把来源路由快照测试改为负向不可达测试，并保留 stateless route presence 测试。
+- 在零使用审计通过后删除 `/api/runs/**` 注册；
+- 删除只服务这两套旧合同的 handler、binding、projection、测试和路由注册函数；
+- 用调用图核对 `langgraph_run_service.go`、`langgraph_thread_service.go` 和
+  `backend/api/model/langgraph`，整文件无调用时删除，仍被 canonical 或其他业务使用
+  的通用代码按现有所有权移动或保留；
+- 把两套路由快照测试改为负向不可达测试。
 
 ## 8. 数据、安全与日志
 
@@ -211,6 +227,7 @@ workspace authorization、严格 JSON、大小限制、公开投影、错误映�
 4. 使用同一线上 workspace 分别验证旧页面链路和 canonical 页面链路。
 5. 核对 canonical 模式没有 `/api/workbench/task_threads`、`/api/threads`、fallback、
    双写或第二条 SSE。
+6. 完成 `/api/runs/**` 的源码、调用图、生成 client、运维脚本和访问日志审计。
 
 Gate A 任一项失败，停止删除并修复。失败期间旧来源路由保持原样。
 
@@ -219,11 +236,13 @@ Gate A 任一项失败，停止删除并修复。失败期间旧来源路由保�
 Gate A 全部通过后再执行删除：
 
 1. 切为 canonical-only 前端并迁移 NewX parity client。
-2. 删除两套来源 route、IDL 方法、生成 client、handler、fixture 和兼容测试。
-3. 验证 36 个 TaskThread V1 路由和 23 个 LangGraph Thread 路由全部 `404`。
-4. 验证 47 个 canonical 路由仍注册，10 个 `/api/runs/**` 路由仍注册。
-5. 重跑 codegen、Go 测试、前端合同/页面测试、lint 和 release build。
-6. 在 canonical-only 最终产物上重复线上页面回归，检查请求日志和控制台。
+2. 删除两套 Thread 来源 route、IDL 方法、生成 client、handler、fixture 和兼容测试。
+3. `/api/runs/**` 零使用审计通过时，删除其 10 个路由及专用实现。
+4. 验证 36 个 TaskThread V1 路由、23 个 LangGraph Thread 路由，以及已确认无用的
+   10 个 stateless Run 路由全部 `404`。
+5. 验证 47 个 canonical 路由仍注册。
+6. 重跑 codegen、Go 测试、前端合同/页面测试、lint 和 release build。
+7. 在 canonical-only 最终产物上重复线上页面回归，检查请求日志和控制台。
 
 Gate B 通过前不得合入 `dev`。删除后发现任何页面、权限、Run 状态、SSE、Upload、
 Artifact、Memory 或 Audit 回归，应在功能分支恢复到 Gate A 的已验证提交并修复，
@@ -267,8 +286,9 @@ Artifact、Memory 或 Audit 回归，应在功能分支恢复到 Gate A 的已�
 5. `/api/workbench/task_threads/**` 的 36 个旧路由全部不可达。
 6. `/api/threads/**` 的 23 个旧路由全部不可达。
 7. `/api/workbench/threads/**` 的 47 个路由保持可用。
-8. `/api/runs/**` 的 10 个 stateless 路由保持可用。
-9. TaskThread application/domain/repository、数据库和 Eino ADK 主链未被删除或复制。
-10. ChatTask 旧路由继续为 `404`，没有重新引入 fallback。
-11. codegen、相关 Go/TypeScript 测试、lint、build、合同扫描和 diff 审计全部通过。
-12. 按仓库 `dev` 双重集成审计执行，合入本地 `dev` 和推送远程分别取得确认。
+8. `/api/runs/**` 通过零使用审计后，其 10 个 stateless 路由全部不可达。
+9. 旧 LangGraph HTTP adapter 没有无调用残留；保留代码都有当前调用方和明确所有者。
+10. TaskThread application/domain/repository、数据库和 Eino ADK 主链未被删除或复制。
+11. ChatTask 旧路由继续为 `404`，没有重新引入 fallback。
+12. codegen、相关 Go/TypeScript 测试、lint、build、合同扫描和 diff 审计全部通过。
+13. 按仓库 `dev` 双重集成审计执行，合入本地 `dev` 和推送远程分别取得确认。
