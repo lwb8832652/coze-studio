@@ -85,8 +85,10 @@ func TestBootstrapLoadsDatabaseActiveConfig(t *testing.T) {
 		result.RuntimeDescriptor.ProviderType != domain.ProviderQiniu {
 		t.Fatalf("runtime descriptor = %+v", result.RuntimeDescriptor)
 	}
-	if h.registry.input.Credential.AccessKeyID != "ak" || h.codec.decryptID != 7 {
-		t.Fatalf("registry input = %+v codec decrypt id=%d", h.registry.input, h.codec.decryptID)
+	if h.registry.input.Credential.AccessKeyID != "ak" ||
+		h.codec.decryptID != 7 ||
+		h.codec.decryptVersion != storageconfig.CredentialAADVersion {
+		t.Fatalf("registry input = %+v codec decrypt id=%d version=%d", h.registry.input, h.codec.decryptID, h.codec.decryptVersion)
 	}
 }
 
@@ -224,6 +226,7 @@ func (r *fakeBootstrapRepository) CreateWithCredential(_ context.Context, config
 type fakeBootstrapCodec struct {
 	encryptID         uint64
 	decryptID         uint64
+	decryptVersion    uint64
 	decryptCredential domain.CredentialInput
 }
 
@@ -232,8 +235,9 @@ func (c *fakeBootstrapCodec) Encrypt(id uint64, _ domain.ProviderType, _ uint64,
 	return "encrypted", nil
 }
 
-func (c *fakeBootstrapCodec) Decrypt(id uint64, _ domain.ProviderType, _ uint64, _ string) (domain.CredentialInput, error) {
+func (c *fakeBootstrapCodec) Decrypt(id uint64, _ domain.ProviderType, version uint64, _ string) (domain.CredentialInput, error) {
 	c.decryptID = id
+	c.decryptVersion = version
 	return c.decryptCredential, nil
 }
 

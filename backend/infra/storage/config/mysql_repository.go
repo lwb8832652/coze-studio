@@ -167,7 +167,7 @@ func (r *MySQLRepository) CreateWithCredential(ctx context.Context, config domai
 			return mapRepositoryError(err)
 		}
 
-		secret, err := codec.Encrypt(po.ID, domain.ProviderType(po.ProviderType), po.Version, credential)
+		secret, err := codec.Encrypt(po.ID, domain.ProviderType(po.ProviderType), CredentialAADVersion, credential)
 		if err != nil {
 			return err
 		}

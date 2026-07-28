@@ -157,6 +157,9 @@ func TestMySQLRepositoryCreateWithCredentialEncryptsWithAssignedID(t *testing.T)
 	if created.ID == 0 || codec.id != created.ID {
 		t.Fatalf("created ID = %d codec ID = %d", created.ID, codec.id)
 	}
+	if codec.version != CredentialAADVersion {
+		t.Fatalf("credential AAD version = %d, want %d", codec.version, CredentialAADVersion)
+	}
 	if created.CredentialSecret != "encrypted-with-assigned-id" {
 		t.Fatalf("CredentialSecret = %q", created.CredentialSecret)
 	}

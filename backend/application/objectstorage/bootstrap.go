@@ -32,7 +32,7 @@ import (
 	"github.com/coze-dev/coze-studio/backend/types/consts"
 )
 
-type Repository interface {
+type BootstrapRepository interface {
 	Count(context.Context) (int64, error)
 	GetActive(context.Context) (*domain.Config, error)
 	CreateWithCredential(context.Context, domain.Config, domain.CredentialInput, storageconfig.CredentialEncryptor) (*domain.Config, error)
@@ -48,7 +48,7 @@ type ProviderRegistry interface {
 }
 
 type Bootstrapper struct {
-	Repository Repository
+	Repository BootstrapRepository
 	Codec      CredentialCodec
 	Registry   ProviderRegistry
 	Getenv     func(string) string
@@ -153,7 +153,7 @@ func (b *Bootstrapper) bootstrapDatabase(ctx context.Context) (*BootstrapResult,
 		if active == nil {
 			return nil, domain.ErrPrimaryConfigMissing
 		}
-		credential, err = codec.Decrypt(active.ID, active.ProviderType, active.Version, active.CredentialSecret)
+		credential, err = codec.Decrypt(active.ID, active.ProviderType, storageconfig.CredentialAADVersion, active.CredentialSecret)
 		if err != nil {
 			return nil, err
 		}

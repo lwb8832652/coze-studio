@@ -33,6 +33,7 @@ import (
 
 const (
 	ObjectStorageCredentialKeyEnv = "OBJECT_STORAGE_CREDENTIAL_KEY"
+	CredentialAADVersion          = uint64(1)
 	credentialEnvelopeVersion     = "v1"
 )
 
