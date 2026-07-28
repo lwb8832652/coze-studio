@@ -18,7 +18,9 @@ package contract
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +29,8 @@ import (
 
 type StorageFactory func(t *testing.T) storage.Storage
 
+var storageLifecycleSequence atomic.Uint64
+
 func RunStorageLifecycle(t *testing.T, factory StorageFactory) {
 	t.Helper()
 
@@ -34,7 +38,7 @@ func RunStorageLifecycle(t *testing.T, factory StorageFactory) {
 	defer cancel()
 
 	client := factory(t)
-	key := "contract/object-storage-lifecycle.txt"
+	key := fmt.Sprintf("contract/object-storage-lifecycle-%d-%d.txt", time.Now().UnixNano(), storageLifecycleSequence.Add(1))
 	body := []byte("object storage contract body")
 	uploaded := false
 	defer func() {

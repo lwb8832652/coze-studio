@@ -40,11 +40,6 @@ func (r *s3ReadinessRecorder) HeadBucket(context.Context, string) error {
 	return r.err
 }
 
-func (r *s3ReadinessRecorder) GetObjectURL(context.Context, string) (string, error) {
-	r.SignedURLCalls++
-	return "signed-url", nil
-}
-
 func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	recorder := &s3ReadinessRecorder{}
 	client := &s3Client{bucketName: "bucket", readinessCheck: recorder.HeadBucket}

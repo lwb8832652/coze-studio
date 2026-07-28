@@ -66,8 +66,29 @@ func TestRunStorageLifecycleDoesNotPrintSignedURLSecret(t *testing.T) {
 	}
 }
 
+func TestRunStorageLifecycleUsesUniqueObjectKey(t *testing.T) {
+	fake := newContractFakeStorage()
+
+	RunStorageLifecycle(t, func(t *testing.T) storage.Storage {
+		t.Helper()
+		return fake
+	})
+	RunStorageLifecycle(t, func(t *testing.T) storage.Storage {
+		t.Helper()
+		return fake
+	})
+
+	if len(fake.putKeys) != 2 {
+		t.Fatalf("PutObject calls = %d, want 2", len(fake.putKeys))
+	}
+	if fake.putKeys[0] == fake.putKeys[1] {
+		t.Fatal("RunStorageLifecycle reused object key")
+	}
+}
+
 type contractFakeStorage struct {
 	key         string
+	putKeys     []string
 	body        []byte
 	headURL     string
 	signedURL   string
@@ -77,8 +98,7 @@ type contractFakeStorage struct {
 
 func newContractFakeStorage() *contractFakeStorage {
 	return &contractFakeStorage{
-		headURL:   "https://signed.example.com/contract/object-storage-lifecycle.txt",
-		signedURL: "https://signed.example.com/contract/object-storage-lifecycle.txt",
+		headURL: "https://signed.example.com/contract/object-storage-lifecycle.txt",
 	}
 }
 
@@ -87,6 +107,7 @@ func (f *contractFakeStorage) PutObject(ctx context.Context, objectKey string, c
 		return err
 	}
 	f.key = objectKey
+	f.putKeys = append(f.putKeys, objectKey)
 	f.body = bytes.Clone(content)
 	f.deleted = false
 	return nil
@@ -121,6 +142,9 @@ func (f *contractFakeStorage) DeleteObject(ctx context.Context, objectKey string
 func (f *contractFakeStorage) GetObjectUrl(ctx context.Context, objectKey string, opts ...storage.GetOptFn) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if f.signedURL == "" {
+		return "https://signed.example.com/" + objectKey, nil
 	}
 	return f.signedURL, nil
 }

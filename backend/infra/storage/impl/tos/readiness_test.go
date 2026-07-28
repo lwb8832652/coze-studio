@@ -40,11 +40,6 @@ func (r *tosReadinessRecorder) HeadBucket(context.Context, string) error {
 	return r.err
 }
 
-func (r *tosReadinessRecorder) GetObjectURL(context.Context, string) (string, error) {
-	r.SignedURLCalls++
-	return "signed-url", nil
-}
-
 func TestCheckReadinessCanceledContextDoesNotCallSDK(t *testing.T) {
 	recorder := &tosReadinessRecorder{}
 	client := &tosClient{bucketName: "bucket", readinessCheck: recorder.HeadBucket}
