@@ -46,6 +46,8 @@ func ErrorCodeOf(err error) string {
 		return "OBJECT_STORAGE_CREDENTIAL_UNAVAILABLE"
 	case errors.Is(err, ErrProviderUnsupported):
 		return "OBJECT_STORAGE_PROVIDER_UNSUPPORTED"
+	case errors.Is(err, ErrPrimaryConfigMissing):
+		return "OBJECT_STORAGE_PRIMARY_CONFIG_MISSING"
 	case errors.Is(err, ErrMigrationConfirmation):
 		return "OBJECT_STORAGE_MIGRATION_CONFIRMATION_REQUIRED"
 	default:

@@ -81,3 +81,25 @@ func TestValidateCredentialsRequiresPair(t *testing.T) {
 		t.Fatalf("pair error = %v", err)
 	}
 }
+
+func TestErrorCodeOfMapsAllDomainErrors(t *testing.T) {
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{err: ErrConfigInvalid, want: "OBJECT_STORAGE_CONFIG_INVALID"},
+		{err: ErrNotFound, want: "OBJECT_STORAGE_NOT_FOUND"},
+		{err: ErrVersionConflict, want: "OBJECT_STORAGE_VERSION_CONFLICT"},
+		{err: ErrConnectionFailed, want: "OBJECT_STORAGE_CONNECTION_FAILED"},
+		{err: ErrActiveDeleteForbidden, want: "OBJECT_STORAGE_ACTIVE_DELETE_FORBIDDEN"},
+		{err: ErrCredentialUnavailable, want: "OBJECT_STORAGE_CREDENTIAL_UNAVAILABLE"},
+		{err: ErrProviderUnsupported, want: "OBJECT_STORAGE_PROVIDER_UNSUPPORTED"},
+		{err: ErrPrimaryConfigMissing, want: "OBJECT_STORAGE_PRIMARY_CONFIG_MISSING"},
+		{err: ErrMigrationConfirmation, want: "OBJECT_STORAGE_MIGRATION_CONFIRMATION_REQUIRED"},
+	}
+	for _, test := range tests {
+		if got := ErrorCodeOf(test.err); got != test.want {
+			t.Fatalf("ErrorCodeOf(%v) = %q, want %q", test.err, got, test.want)
+		}
+	}
+}
