@@ -219,8 +219,9 @@ rendering. Define `WorkbenchThread`, `WorkbenchTodo`, `WorkbenchMessage`, `Workb
 audit events and `HumanInteractionResponse`.
 
 Do not expose provider payload, raw usage, tool arguments/results, checkpoint bytes or credentials.
-Keep `worker_id` only as a page-facing compatibility field; canonical maps safe `worker_ref` into
-it. Keep JSON-valued page fields as strings where existing render helpers expect strings.
+Keep `worker_id` only on the page-facing Artifact scan job; canonical maps its safe `worker_ref`
+into that field. Do not put worker identity on `WorkbenchRun`. Keep JSON-valued page fields as
+strings where existing render helpers expect strings.
 
 - [ ] **Step 3: Define one workspace-scoped request convention**
 
@@ -274,6 +275,48 @@ git add frontend/apps/coze-studio/src/pages/workbench/thread-client
 git commit -m "feat: define canonical workbench client boundary"
 ```
 
+### Task 2A: Add The Server-Reviewed Canonical Edit Capability
+
+**Files:**
+- Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_projection_test.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_thread_service_test.go`
+
+- [ ] **Step 1: Write failing public-projection tests**
+
+Assert canonical Thread JSON contains `coze.can_edit=true` only when the authenticated viewer is
+the current Thread owner. Missing or mismatched viewer facts must produce `false`; `creator_id`,
+`owner_id` and other identity fields remain absent. Cover create/get/search projection paths so the
+capability cannot be present on only one handler.
+
+- [ ] **Step 2: Implement the additive capability**
+
+Derive `can_edit` from the server authentication context and current Thread summary after existing
+authorization. Do not accept it from request metadata, query, body or headers. Do not expose the
+creator ID and do not change application/domain/repository contracts. Existing unauthorized paths
+continue to fail closed before returning a Thread.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+cd backend
+GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
+  go test -p 1 -gcflags="all=-l -N" ./api/handler/coze \
+  -run '^(TestCanonicalThread.*CanEdit|TestCreateCanonicalThread|TestGetCanonicalThread|TestSearchCanonicalThreads)$' \
+  -count=1
+```
+
+Use the exact discovered test names when existing handlers use more specific names. Expected:
+PASS, with `coze.can_edit` present and identity fields still redacted.
+
+```bash
+git add \
+  backend/api/handler/coze/workbench_canonical_projection.go \
+  backend/api/handler/coze/workbench_canonical_projection_test.go \
+  backend/api/handler/coze/workbench_canonical_thread_service_test.go
+git commit -m "feat: expose canonical thread edit capability"
+```
+
 ### Task 3: Implement Canonical Fetch, Errors And Core Operations
 
 **Files:**
@@ -322,7 +365,9 @@ Adapters must:
 - preserve all IDs as decimal strings;
 - stringify reviewed metadata/payload objects only where current page helpers expect strings;
 - map Thread title/source/progress/last-message metadata to the current view model;
-- map parent Run, kind, start/end and terminal reason metadata;
+- map server-reviewed `coze.can_edit` and never reconstruct `creator_id`;
+- map only the public Run fields: parent/source Run, attempt/run kind, stream modes,
+  disconnect/durability, optional start/end and terminal reason metadata;
 - map `coze.initial_submission` and `coze.submission_message` to current create results;
 - reject malformed resources instead of returning partial objects.
 

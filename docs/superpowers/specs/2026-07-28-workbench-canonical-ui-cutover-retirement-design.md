@@ -113,6 +113,13 @@ request 或双 SSE。canonical 请求失败时直接向页面返回原始失败�
 页面操作顺序、文案、状态机、列表排序和展示模型保持不变。transport 的 RFC 3339
 时间、直接响应、字符串 ID 和 canonical error 只在 client/adapter 边界转换。
 
+Canonical Thread 公开投影补充服务端审核后的 `coze.can_edit`。该值由认证 principal、
+Thread 所有权和现有 authorizer 事实计算，不返回或复原 `creator_id`。当前 owner-only
+授权下，成功访问自己的 Thread 时为 `true`；缺失认证或事实不一致时 fail closed。
+这是向后兼容的响应字段加法，不改变 TaskThread V1、数据库、领域模型或旧页面行为。
+前端 app-owned model 使用 `can_edit` 保持现有只读语义，禁止从 metadata、资源 ID 或
+菜单能力推断所有者。
+
 ### 5.2 旧 LangGraph Thread 合同
 
 `/api/threads/**` 与 canonical 不是字节兼容关系，迁移按功能语义执行：
@@ -163,6 +170,12 @@ transport DTO，也不读取合同模式。
 - direct response、RFC 3339 时间、分页 header 和 canonical error 转换；
 - 每个 Run 独立的 SSE cursor 与生命周期；
 - 只记录合同名、操作、资源 ID、耗时、结果和 trace reference 的脱敏日志。
+
+Thread 标题从公开 `metadata.title` 投影；Run 只使用公开 `assistant_id`、`status`、
+`metadata`、`multitask_strategy` 与 `coze` 中的 attempt/source/parent/run kind、
+`stream_modes`、disconnect、durability、terminal reason 和可选生命周期时间。客户端
+不得为兼容旧 DTO 伪造 `creator_id`、command/input/config/context、worker identity 或
+原始错误字段。`worker_ref -> worker_id` 兼容映射仅适用于 Artifact scan job。
 
 现有 `pages/workbench/service.ts`、`pages/tasks/service.ts` 和 Memory/usage helper 保留
 页面需要的导出名称，但内部只委托 canonical client。兼容 presenter 只负责把
