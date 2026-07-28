@@ -18,6 +18,7 @@ package storageconfig
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -101,5 +102,106 @@ func TestErrorCodeOfMapsAllDomainErrors(t *testing.T) {
 		if got := ErrorCodeOf(test.err); got != test.want {
 			t.Fatalf("ErrorCodeOf(%v) = %q, want %q", test.err, got, test.want)
 		}
+	}
+}
+
+func TestNormalizeNameTrimsAndRejectsInvalidNames(t *testing.T) {
+	normalized, err := NormalizeName("  primary storage  ")
+	if err != nil {
+		t.Fatalf("NormalizeName() error = %v", err)
+	}
+	if normalized != "primary storage" {
+		t.Fatalf("NormalizeName() = %q, want %q", normalized, "primary storage")
+	}
+
+	if _, err := NormalizeName(" \t\n "); !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("empty name error = %v, want ErrConfigInvalid", err)
+	}
+	if _, err := NormalizeName(strings.Repeat("界", 129)); !errors.Is(err, ErrConfigInvalid) {
+		t.Fatalf("too long name error = %v, want ErrConfigInvalid", err)
+	}
+}
+
+func TestValidateCredentialInputTreatsWhitespaceOnlyAsEmpty(t *testing.T) {
+	normalized := NormalizeCredentialInput(CredentialInput{AccessKeyID: " ak ", SecretAccessKey: " sk "})
+	if normalized.AccessKeyID != "ak" || normalized.SecretAccessKey != "sk" {
+		t.Fatalf("NormalizeCredentialInput() = %+v, want trimmed AK/SK", normalized)
+	}
+	if err := ValidateCredentialInput(CredentialInput{AccessKeyID: " ak ", SecretAccessKey: " sk "}); err != nil {
+		t.Fatalf("trimmed pair error = %v", err)
+	}
+	if err := ValidateCredentialInput(CredentialInput{AccessKeyID: "", SecretAccessKey: " \t\n "}); err != nil {
+		t.Fatalf("whitespace-only single side error = %v, want nil", err)
+	}
+	if HasCredentialPair(CredentialInput{AccessKeyID: " ak ", SecretAccessKey: " \t\n "}) {
+		t.Fatal("HasCredentialPair() = true, want false for whitespace-only secret")
+	}
+}
+
+func TestValidatePublicConfigNormalizesMinIOEndpointSchemes(t *testing.T) {
+	httpConfig, err := ValidatePublicConfig(ProviderMinIO, PublicConfig{Bucket: "coze", Endpoint: "http://minio:9000"}, ValidationMode{AllowHTTP: true})
+	if err != nil {
+		t.Fatalf("http MinIO config error = %v", err)
+	}
+	if httpConfig.Endpoint != "minio:9000" || httpConfig.UseSSL {
+		t.Fatalf("http MinIO config = %+v, want Endpoint minio:9000 and UseSSL false", httpConfig)
+	}
+
+	httpsConfig, err := ValidatePublicConfig(ProviderMinIO, PublicConfig{Bucket: "coze", Endpoint: "https://minio.example.com"}, ValidationMode{})
+	if err != nil {
+		t.Fatalf("https MinIO config error = %v", err)
+	}
+	if httpsConfig.Endpoint != "minio.example.com" || !httpsConfig.UseSSL {
+		t.Fatalf("https MinIO config = %+v, want Endpoint minio.example.com and UseSSL true", httpsConfig)
+	}
+}
+
+func TestRuntimeFieldsEqualIgnoresControlPlaneState(t *testing.T) {
+	left := Config{
+		ID:               1,
+		Name:             "left",
+		ProviderType:     ProviderAWSS3,
+		PublicConfig:     PublicConfig{Bucket: "coze", Region: "us-east-1"},
+		CredentialSecret: "secret-a",
+		Active:           true,
+		Version:          1,
+		RuntimeRevision:  11,
+	}
+	right := left
+	right.ID = 2
+	right.Name = "right"
+	right.Active = false
+	right.Version = 2
+	right.RuntimeRevision = 12
+	if !RuntimeFieldsEqual(left, right) {
+		t.Fatal("RuntimeFieldsEqual() = false, want true when only control-plane state changes")
+	}
+
+	right = left
+	right.PublicConfig.Region = "us-west-2"
+	if RuntimeFieldsEqual(left, right) {
+		t.Fatal("RuntimeFieldsEqual() = true, want false when public config changes")
+	}
+
+	right = left
+	right.CredentialSecret = "secret-b"
+	if RuntimeFieldsEqual(left, right) {
+		t.Fatal("RuntimeFieldsEqual() = true, want false when credential secret changes")
+	}
+}
+
+func TestRestartRequiredComparesDatabaseRuntimeDescriptor(t *testing.T) {
+	desired := &Config{ID: 7, ProviderType: ProviderAWSS3, RuntimeRevision: 42}
+	if RestartRequired(RuntimeDescriptor{Source: RuntimeSourceDatabase, ConfigID: 7, ProviderType: ProviderAWSS3, RuntimeRevision: 42}, desired) {
+		t.Fatal("RestartRequired() = true, want false for matching database runtime")
+	}
+	if !RestartRequired(RuntimeDescriptor{Source: RuntimeSourceDatabase, ConfigID: 7, ProviderType: ProviderAWSS3, RuntimeRevision: 43}, desired) {
+		t.Fatal("RestartRequired() = false, want true for revision mismatch")
+	}
+	if !RestartRequired(RuntimeDescriptor{Source: RuntimeSourceDatabase, ConfigID: 7, ProviderType: ProviderAWSS3, RuntimeRevision: 42}, nil) {
+		t.Fatal("RestartRequired() = false, want true for missing desired config")
+	}
+	if !RestartRequired(RuntimeDescriptor{Source: RuntimeSourceEnvRescue, ConfigID: 7, ProviderType: ProviderAWSS3, RuntimeRevision: 42}, desired) {
+		t.Fatal("RestartRequired() = false, want true for env rescue runtime with database desired config")
 	}
 }

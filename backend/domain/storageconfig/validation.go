@@ -122,8 +122,7 @@ func ValidatePublicConfig(provider ProviderType, input PublicConfig, mode Valida
 }
 
 func ValidateCredentialInput(input CredentialInput) error {
-	input.AccessKeyID = strings.TrimSpace(input.AccessKeyID)
-	input.SecretAccessKey = strings.TrimSpace(input.SecretAccessKey)
+	input = NormalizeCredentialInput(input)
 	if input.AccessKeyID == "" && input.SecretAccessKey == "" {
 		return nil
 	}
@@ -133,19 +132,29 @@ func ValidateCredentialInput(input CredentialInput) error {
 	return nil
 }
 
+func NormalizeCredentialInput(input CredentialInput) CredentialInput {
+	return CredentialInput{
+		AccessKeyID:     strings.TrimSpace(input.AccessKeyID),
+		SecretAccessKey: strings.TrimSpace(input.SecretAccessKey),
+	}
+}
+
 func HasCredentialPair(input CredentialInput) bool {
-	return strings.TrimSpace(input.AccessKeyID) != "" && strings.TrimSpace(input.SecretAccessKey) != ""
+	input = NormalizeCredentialInput(input)
+	return input.AccessKeyID != "" && input.SecretAccessKey != ""
 }
 
 func RuntimeFieldsEqual(left, right Config) bool {
 	return left.ProviderType == right.ProviderType &&
 		left.PublicConfig == right.PublicConfig &&
-		left.CredentialSecret == right.CredentialSecret &&
-		left.Active == right.Active
+		left.CredentialSecret == right.CredentialSecret
 }
 
 func RestartRequired(runtime RuntimeDescriptor, desired *Config) bool {
 	if desired == nil {
+		return true
+	}
+	if runtime.Source != RuntimeSourceDatabase {
 		return true
 	}
 	return runtime.ConfigID != desired.ID ||
