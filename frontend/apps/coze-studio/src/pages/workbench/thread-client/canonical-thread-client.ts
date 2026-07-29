@@ -1020,10 +1020,14 @@ export class CanonicalThreadCoreClient
         signal: request.signal,
       },
     );
-    return adaptCanonicalMessagePage(requiredBody(result.body), {
-      spaceId: spaceID,
-      threadId: threadID,
-    });
+    return adaptCanonicalMessagePage(
+      requiredBody(result.body),
+      {
+        spaceId: spaceID,
+        threadId: threadID,
+      },
+      result.pagination,
+    );
   }
 
   async listRuns(request: ListWorkbenchRunsRequest) {
@@ -1258,11 +1262,15 @@ export class CanonicalThreadCoreClient
         signal: request.signal,
       },
     );
-    return adaptCanonicalRunEventPage(requiredBody(result.body), {
-      spaceId: spaceID,
-      threadId: threadID,
-      runId: runID,
-    });
+    return adaptCanonicalRunEventPage(
+      requiredBody(result.body),
+      {
+        spaceId: spaceID,
+        threadId: threadID,
+        runId: runID,
+      },
+      result.pagination,
+    );
   }
 
   subscribeRunEvents(request: SubscribeWorkbenchRunEventsRequest) {
@@ -1340,7 +1348,10 @@ export class CanonicalThreadCoreClient
           );
         }
       },
-      streamParser: frame => canonicalRunStreamMessage(frame, scope),
+      streamParser: frame =>
+        frame.type === 'event'
+          ? canonicalRunStreamMessage(frame, scope)
+          : undefined,
       onMessage: ({ message }) => lifecycle.handleMessage(message),
       onAllSuccess: () => {
         lifecycle.finish(

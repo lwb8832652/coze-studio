@@ -87,12 +87,14 @@ export interface WorkbenchPage<T> {
 
 export interface WorkbenchCursorPage<T> {
   items: T[];
+  total: number;
   has_more: boolean;
   next_cursor?: string;
 }
 
 export interface WorkbenchMessageCursorPage {
   items: WorkbenchMessage[];
+  total: number;
   has_more: boolean;
   next_before_seq?: string;
   next_after_seq?: string;

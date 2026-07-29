@@ -723,6 +723,7 @@ func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("agent thread application returned empty event page"))
 		return
 	}
+	setCanonicalPaginationTotal(c, response.Total)
 	page := canonicalRunEventPage{Data: []*canonicalRunEvent{}, HasMore: response.HasMore}
 	for _, event := range response.Events {
 		if event == nil || event.ThreadID != threadID || event.RunID != runID {

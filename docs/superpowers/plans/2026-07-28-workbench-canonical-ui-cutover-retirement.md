@@ -683,21 +683,23 @@ git commit -m "feat: add canonical run stream client"
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-usage-service.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/tasks-service.test.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-usage-service.test.ts`
+- Modify: canonical Message/Run Event query and handler layers under `backend/domain/agentthread`,
+  `backend/application/agentthread` and `backend/api/handler/coze`
 
-- [ ] **Step 1: Write failing page-facing parity tests**
+- [x] **Step 1: Write failing page-facing parity tests**
 
 Inject a recording canonical client and call every existing Workbench/Tasks service export. Assert
 callers still receive current `{code: 0, msg: 'success', data}` structures, suggestion's current
 shape, Artifact Blob/header result and abort naming. Assert Runtime Doctor, Skill install and model/
 Knowledge/Database/Workflow services still use their existing non-Thread owners.
 
-- [ ] **Step 2: Implement named response presenters**
+- [x] **Step 2: Implement named response presenters**
 
 `legacy-page-response.ts` is page-shape compatibility only and cannot issue HTTP. Add named
 presenters for Thread list/create/get, Message, Run/Event, Upload, Artifact/scan, usage, Memory and
 audit families. Do not assemble anonymous envelopes throughout components.
 
-- [ ] **Step 3: Replace service transport ownership**
+- [x] **Step 3: Replace service transport ownership**
 
 Replace generated `workbenchTask` Thread calls and manual TaskThread fetches with the singleton
 `CanonicalThreadClient`. Keep current export names to avoid page workflow changes. Every call must
@@ -706,12 +708,12 @@ receive current route/store `space_id`; presenter output must keep existing opti
 `task-memory-service.ts` and `task-usage-service.ts` become thin canonical delegates. Preserve
 `AbortError` behavior and current user-facing safe error messages.
 
-- [ ] **Step 4: Prove Task Center remains separate**
+- [x] **Step 4: Prove Task Center remains separate**
 
 Do not modify `frontend/apps/coze-studio/src/pages/task-center/service.ts` transport ownership.
 Run its tests to prove Scheduled Task remains on the generated `workbenchTask` namespace.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```bash
 cd frontend/apps/coze-studio
@@ -724,6 +726,10 @@ rushx test \
 ```
 
 Expected: PASS; page exports are structurally unchanged and Task Center remains functional.
+
+Implementation note: the legacy page contract exposes exact Message and Run Event totals. The
+canonical cursor responses now carry the same filtered total through an `X-Pagination-Total`
+header computed by the existing query path, avoiding extra client-side pagination requests.
 
 ```bash
 git add \

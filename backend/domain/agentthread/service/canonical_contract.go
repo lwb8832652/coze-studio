@@ -85,7 +85,7 @@ type ListCheckpointsBeforeRequest struct {
 type CanonicalQueryService interface {
 	SearchThreads(context.Context, *SearchThreadsRequest) ([]*entity.Thread, int64, error)
 	SearchRuns(context.Context, *SearchRunsRequest) ([]*entity.Run, int64, error)
-	ListRunEventsByCursor(context.Context, *ListRunEventsByCursorRequest) ([]*entity.RunEvent, bool, error)
+	ListRunEventsByCursor(context.Context, *ListRunEventsByCursorRequest) ([]*entity.RunEvent, int64, bool, error)
 	ListCheckpointsBefore(context.Context, *ListCheckpointsBeforeRequest) ([]*entity.Checkpoint, bool, error)
 }
 
@@ -208,26 +208,26 @@ func (s *threadService) SearchRuns(
 func (s *threadService) ListRunEventsByCursor(
 	ctx context.Context,
 	req *ListRunEventsByCursorRequest,
-) ([]*entity.RunEvent, bool, error) {
+) ([]*entity.RunEvent, int64, bool, error) {
 	repo, err := s.requireCanonicalQueryRepo()
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	if req == nil {
-		return nil, false, InvalidArgumentErrorf("list run events by cursor request is required")
+		return nil, 0, false, InvalidArgumentErrorf("list run events by cursor request is required")
 	}
 	if req.ThreadID <= 0 || req.RunID <= 0 {
-		return nil, false, InvalidArgumentErrorf("thread id and run id are required")
+		return nil, 0, false, InvalidArgumentErrorf("thread id and run id are required")
 	}
 	if req.AfterEventID < 0 {
-		return nil, false, InvalidArgumentErrorf("after event id cannot be negative")
+		return nil, 0, false, InvalidArgumentErrorf("after event id cannot be negative")
 	}
 	eventTypes := make([]string, 0, len(req.EventTypes))
 	seen := make(map[string]struct{}, len(req.EventTypes))
 	for _, raw := range req.EventTypes {
 		eventType := strings.TrimSpace(raw)
 		if eventType == "" {
-			return nil, false, InvalidArgumentErrorf("event type cannot be empty")
+			return nil, 0, false, InvalidArgumentErrorf("event type cannot be empty")
 		}
 		if _, ok := seen[eventType]; ok {
 			continue
@@ -237,7 +237,7 @@ func (s *threadService) ListRunEventsByCursor(
 	}
 	limit, err := normalizeCanonicalLimit(req.Limit, 100)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	return repo.ListRunEventsByCursor(ctx, repository.ListRunEventsByCursorRequest{
 		ThreadID: req.ThreadID, RunID: req.RunID, AfterEventID: req.AfterEventID,

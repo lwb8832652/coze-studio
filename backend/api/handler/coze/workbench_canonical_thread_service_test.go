@@ -874,6 +874,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 	path := "/api/workbench/threads/" + strconv.FormatInt(created.Thread.ThreadID, 10) + "/messages"
 	firstResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?limit=100", nil)
 	require.Equal(t, http.StatusOK, firstResponse.Code)
+	require.Equal(t, "126", firstResponse.Result().Header.Get("X-Pagination-Total"))
 	var firstPage struct {
 		Data          []*canonicalMessage `json:"data"`
 		HasMore       bool                `json:"has_more"`
@@ -891,6 +892,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 
 	secondResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?after_seq=100&limit=100", nil)
 	require.Equal(t, http.StatusOK, secondResponse.Code)
+	require.Equal(t, "126", secondResponse.Result().Header.Get("X-Pagination-Total"))
 	var secondPage struct {
 		Data         []*canonicalMessage `json:"data"`
 		HasMore      bool                `json:"has_more"`
@@ -906,6 +908,7 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 
 	beforeResponse := ut.PerformRequest(h.Engine, http.MethodGet, path+"?before_seq=101&limit=2", nil)
 	require.Equal(t, http.StatusOK, beforeResponse.Code)
+	require.Equal(t, "126", beforeResponse.Result().Header.Get("X-Pagination-Total"))
 	var beforePage struct {
 		Data          []*canonicalMessage `json:"data"`
 		HasMore       bool                `json:"has_more"`

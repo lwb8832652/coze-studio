@@ -747,6 +747,7 @@ func ListCanonicalThreadMessages(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, err)
 		return
 	}
+	setCanonicalPaginationTotal(c, int64(len(messages)))
 	c.JSON(consts.StatusOK, pageCanonicalMessages(messages, before, after, limit))
 }
 

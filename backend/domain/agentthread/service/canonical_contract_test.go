@@ -157,6 +157,7 @@ func TestCanonicalQueryMethodsMapRunEventAndCheckpointContracts(t *testing.T) {
 	repo.searchRuns = []*entity.Run{{ID: 30, ThreadID: 10}}
 	repo.searchRunsTotal = 1
 	repo.events = []*entity.RunEvent{{ID: 40, ThreadID: 10, RunID: 30}}
+	repo.eventsTotal = 3
 	repo.eventsHasMore = true
 	repo.checkpoints = []*entity.Checkpoint{{ID: 50, ThreadID: 10, RunID: 30}}
 	repo.checkpointsHasMore = true
@@ -176,11 +177,12 @@ func TestCanonicalQueryMethodsMapRunEventAndCheckpointContracts(t *testing.T) {
 		Page: repository.CanonicalPage{Offset: 7, Limit: 3},
 	}, repo.searchRunsReq)
 
-	events, hasMore, err := svc.ListRunEventsByCursor(context.Background(), &ListRunEventsByCursorRequest{
+	events, total, hasMore, err := svc.ListRunEventsByCursor(context.Background(), &ListRunEventsByCursorRequest{
 		ThreadID: 10, RunID: 30, AfterEventID: 20,
 		EventTypes: []string{" message ", "status"}, Limit: 2,
 	})
 	require.NoError(t, err)
+	require.Equal(t, int64(3), total)
 	require.True(t, hasMore)
 	require.Equal(t, int64(40), events[0].ID)
 	require.Equal(t, []string{"message", "status"}, repo.eventsReq.EventTypes)
@@ -213,7 +215,7 @@ func TestCanonicalQueryMethodsRejectInvalidCursorsAndPages(t *testing.T) {
 		{
 			name: "negative event cursor",
 			call: func(svc *threadService) error {
-				_, _, err := svc.ListRunEventsByCursor(context.Background(), &ListRunEventsByCursorRequest{
+				_, _, _, err := svc.ListRunEventsByCursor(context.Background(), &ListRunEventsByCursorRequest{
 					ThreadID: 10, RunID: 20, AfterEventID: -1,
 				})
 				return err
@@ -471,6 +473,7 @@ type canonicalQueryMemoryRepo struct {
 	searchRunsTotal         int64
 	searchRunsReq           repository.SearchRunsRequest
 	events                  []*entity.RunEvent
+	eventsTotal             int64
 	eventsHasMore           bool
 	eventsReq               repository.ListRunEventsByCursorRequest
 	checkpoints             []*entity.Checkpoint
@@ -513,9 +516,9 @@ func (r *canonicalQueryMemoryRepo) SearchRuns(
 func (r *canonicalQueryMemoryRepo) ListRunEventsByCursor(
 	_ context.Context,
 	req repository.ListRunEventsByCursorRequest,
-) ([]*entity.RunEvent, bool, error) {
+) ([]*entity.RunEvent, int64, bool, error) {
 	r.eventsReq = req
-	return r.events, r.eventsHasMore, nil
+	return r.events, r.eventsTotal, r.eventsHasMore, nil
 }
 
 func (r *canonicalQueryMemoryRepo) ListCheckpointsBefore(

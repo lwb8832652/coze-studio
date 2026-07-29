@@ -576,12 +576,14 @@ describe('WorkbenchThreadClient production boundary', () => {
 
     expect(client.shape('WorkbenchMessageCursorPage')).toEqual([
       'items: WorkbenchMessage[]',
+      'total: number',
       'has_more: boolean',
       'next_before_seq?: string',
       'next_after_seq?: string',
     ]);
     expect(client.shape('WorkbenchCursorPage')).toEqual([
       'items: T[]',
+      'total: number',
       'has_more: boolean',
       'next_cursor?: string',
     ]);

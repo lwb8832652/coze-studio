@@ -287,10 +287,7 @@ func canonicalRunJoinPath(threadID, runID int64) string {
 }
 
 func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, limit int) {
-	if total < 0 {
-		total = 0
-	}
-	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
+	setCanonicalPaginationTotal(c, total)
 	c.Response.Header.Del("X-Pagination-Next")
 	if offset < 0 || limit <= 0 {
 		return
@@ -301,6 +298,13 @@ func setCanonicalPaginationHeaders(c *app.RequestContext, total int64, offset, l
 		return
 	}
 	c.Header("X-Pagination-Next", strconv.FormatInt(current+int64(limit), 10))
+}
+
+func setCanonicalPaginationTotal(c *app.RequestContext, total int64) {
+	if total < 0 {
+		total = 0
+	}
+	c.Header("X-Pagination-Total", strconv.FormatInt(total, 10))
 }
 
 func logCanonicalRequestCompleted(

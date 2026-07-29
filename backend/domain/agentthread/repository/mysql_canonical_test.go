@@ -576,7 +576,7 @@ func TestCanonicalListRunEventsByCursorFiltersTypeAndReportsHasMore(t *testing.T
 		require.NoError(t, repo.CreateRunEvent(context.Background(), event))
 	}
 
-	events, hasMore, err := repo.ListRunEventsByCursor(context.Background(), ListRunEventsByCursorRequest{
+	events, total, hasMore, err := repo.ListRunEventsByCursor(context.Background(), ListRunEventsByCursorRequest{
 		ThreadID:     10,
 		RunID:        20,
 		AfterEventID: 2,
@@ -585,6 +585,7 @@ func TestCanonicalListRunEventsByCursorFiltersTypeAndReportsHasMore(t *testing.T
 	})
 
 	require.NoError(t, err)
+	require.Equal(t, int64(4), total)
 	require.True(t, hasMore)
 	require.Equal(t, []int64{3, 4}, runEventIDs(events))
 }

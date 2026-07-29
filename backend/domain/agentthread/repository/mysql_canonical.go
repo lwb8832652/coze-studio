@@ -142,7 +142,7 @@ func (r *threadRepository) SearchRuns(
 func (r *threadRepository) ListRunEventsByCursor(
 	ctx context.Context,
 	req ListRunEventsByCursorRequest,
-) ([]*entity.RunEvent, bool, error) {
+) ([]*entity.RunEvent, int64, bool, error) {
 	limit := normalizeCanonicalCursorLimit(req.Limit, 100)
 	query := r.db.WithContext(ctx).
 		Model(&runEventPO{}).
@@ -150,16 +150,20 @@ func (r *threadRepository) ListRunEventsByCursor(
 	if req.RunID > 0 {
 		query = query.Where("run_id = ?", req.RunID)
 	}
-	if req.AfterEventID > 0 {
-		query = query.Where("id > ?", req.AfterEventID)
-	}
 	if len(req.EventTypes) > 0 {
 		query = query.Where("event_type IN ?", req.EventTypes)
 	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, false, err
+	}
 
+	if req.AfterEventID > 0 {
+		query = query.Where("id > ?", req.AfterEventID)
+	}
 	pos := make([]*runEventPO, 0, limit+1)
 	if err := query.Order("id ASC").Limit(int(limit + 1)).Find(&pos).Error; err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	hasMore := len(pos) > int(limit)
 	if hasMore {
@@ -169,7 +173,7 @@ func (r *threadRepository) ListRunEventsByCursor(
 	for _, po := range pos {
 		events = append(events, po.toEntity())
 	}
-	return events, hasMore, nil
+	return events, total, hasMore, nil
 }
 
 func (r *threadRepository) ListCheckpointsBefore(

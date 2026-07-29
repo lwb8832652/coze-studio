@@ -444,13 +444,20 @@ const getSingleCurrency = (currencies: string[] = []) => {
   return currencies[0];
 };
 
-export const fetchTaskThreadSubagentRuns = async (
-  threadId: string,
-  lifecycleByChildRunID: Map<string, TaskThreadSubagentLifecycle>,
-  timelineByChildRunID: Map<string, TaskDetailSubagentTimelineItem[]>,
-): Promise<TaskDetailSubagentRun[]> => {
+export const fetchTaskThreadSubagentRuns = async ({
+  lifecycleByChildRunID,
+  spaceId,
+  threadId,
+  timelineByChildRunID,
+}: {
+  threadId: string;
+  lifecycleByChildRunID: Map<string, TaskThreadSubagentLifecycle>;
+  timelineByChildRunID: Map<string, TaskDetailSubagentTimelineItem[]>;
+  spaceId?: string;
+}): Promise<TaskDetailSubagentRun[]> => {
   const topLevelRunsResponse = await listTaskThreadRuns({
     thread_id: threadId,
+    space_id: spaceId,
     page: 1,
     page_size: 20,
   });
@@ -470,6 +477,7 @@ export const fetchTaskThreadSubagentRuns = async (
     parentRuns.map(run =>
       listTaskThreadRuns({
         thread_id: threadId,
+        space_id: spaceId,
         parent_run_id: run.run_id,
         page: 1,
         page_size: 20,
@@ -489,6 +497,7 @@ export const fetchTaskThreadSubagentRuns = async (
     parentRuns.map(run =>
       getTaskThreadTokenUsage({
         thread_id: threadId,
+        space_id: spaceId,
         run_id: run.run_id,
         include_child_runs: true,
         page: 1,

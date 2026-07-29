@@ -548,12 +548,17 @@ describe('CanonicalThreadCoreClient request contract', () => {
     'lists the canonical Message page using %s',
     async (cursorName, cursorValue) => {
       const fetchMock = recordingFetch(
-        jsonResponse({
-          data: [messageTransportFixture.canonical],
-          has_more: true,
-          next_before_seq: '1',
-          next_after_seq: '2',
-        }),
+        jsonResponse(
+          {
+            data: [messageTransportFixture.canonical],
+            has_more: true,
+            next_before_seq: '1',
+            next_after_seq: '2',
+          },
+          {
+            headers: { 'X-Pagination-Total': '21' },
+          },
+        ),
       );
       const client = coreClient(fetchMock);
 
@@ -566,6 +571,7 @@ describe('CanonicalThreadCoreClient request contract', () => {
         }),
       ).resolves.toEqual({
         items: [messageTransportFixture.visible],
+        total: 21,
         has_more: true,
         next_before_seq: '1',
         next_after_seq: '2',
@@ -858,7 +864,11 @@ describe('CanonicalThreadCoreClient request contract', () => {
     const page = cloneEventPageWire();
     page.has_more = true;
     page.next_after_event_id = '5001';
-    const fetchMock = recordingFetch(jsonResponse(page));
+    const fetchMock = recordingFetch(
+      jsonResponse(page, {
+        headers: { 'X-Pagination-Total': '2' },
+      }),
+    );
     const client = coreClient(fetchMock);
 
     await expect(
@@ -872,6 +882,7 @@ describe('CanonicalThreadCoreClient request contract', () => {
       }),
     ).resolves.toEqual({
       items: [runEventTransportFixture.visible],
+      total: 2,
       has_more: true,
       next_cursor: '5001',
     });
@@ -1212,7 +1223,10 @@ describe('CanonicalThreadCoreClient strict local and response validation', () =>
     const message = cloneMessageWire();
     message.created_at = '2024-02-29T12:34:56+08:00';
     const fetchMock = recordingFetch(
-      jsonResponse({ data: [message], has_more: false }),
+      jsonResponse(
+        { data: [message], has_more: false },
+        { headers: { 'X-Pagination-Total': '1' } },
+      ),
     );
     const client = coreClient(fetchMock);
 

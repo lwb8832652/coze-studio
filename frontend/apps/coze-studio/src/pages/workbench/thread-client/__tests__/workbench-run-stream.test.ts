@@ -62,10 +62,7 @@ const streamHarness = () => {
   };
 };
 
-const emitFrame = (
-  config: StreamConfig,
-  frame: { event: string; id?: string; data: string },
-) => {
+const emitFrame = (config: StreamConfig, frame: unknown) => {
   const message = config.streamParser?.(frame as never, {
     terminate: vi.fn(),
     onParseError: vi.fn(),
@@ -76,9 +73,10 @@ const emitFrame = (
 };
 
 const eventFrame = (
-  eventID = runEventTransportFixture.visible.event_id,
+  eventID: string = runEventTransportFixture.visible.event_id,
   overrides: Record<string, unknown> = {},
 ) => ({
+  type: 'event',
   event: 'events',
   id: eventID,
   data: JSON.stringify({
@@ -143,6 +141,15 @@ describe('canonical Run event stream', () => {
       expect(config.signal).not.toBe(controller.signal);
 
       emitFrame(harness.config(), {
+        type: 'reconnect-interval',
+        value: 1000,
+      });
+      expect(callbacks.onEvent).not.toHaveBeenCalled();
+      expect(callbacks.onEnd).not.toHaveBeenCalled();
+      expect(callbacks.onError).not.toHaveBeenCalled();
+
+      emitFrame(harness.config(), {
+        type: 'event',
         event: 'metadata',
         data: JSON.stringify({
           run_id: runID,
@@ -267,6 +274,7 @@ describe('canonical Run event stream', () => {
     });
 
     emitFrame(harness.config(), {
+      type: 'event',
       event: 'end',
       data: JSON.stringify({
         thread_id: threadID,
@@ -304,6 +312,7 @@ describe('canonical Run event stream', () => {
     });
 
     emitFrame(harness.config(), {
+      type: 'event',
       event: 'end',
       data: JSON.stringify({
         thread_id: threadID,
@@ -313,6 +322,7 @@ describe('canonical Run event stream', () => {
       }),
     });
     emitFrame(harness.config(), {
+      type: 'event',
       event: 'end',
       data: JSON.stringify({ thread_id: threadID, run_id: runID }),
     });

@@ -1053,6 +1053,7 @@ func TestCanonicalRunEventsUseCursorFilterAndSafeProjection(t *testing.T) {
 	)
 
 	require.Equal(t, http.StatusOK, response.Code, response.Result().Body())
+	require.Equal(t, "2", response.Result().Header.Get("X-Pagination-Total"))
 	var page struct {
 		Data             []*canonicalRunEvent `json:"data"`
 		HasMore          bool                 `json:"has_more"`

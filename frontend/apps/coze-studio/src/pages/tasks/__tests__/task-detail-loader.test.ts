@@ -16,20 +16,25 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isTaskThreadDetailReadOnly } from '../task-thread-detail-model';
 import {
   fetchTaskDetail,
   mergeJournalTaskThreadEvents,
 } from '../task-detail-loader';
 
 const mockGetTaskThread = vi.hoisted(() => vi.fn());
+const mockListTaskThreadArtifacts = vi.hoisted(() => vi.fn());
+const mockListTaskThreadMessages = vi.hoisted(() => vi.fn());
+const mockListTaskThreadRunEvents = vi.hoisted(() => vi.fn());
+const mockListTaskThreadRuns = vi.hoisted(() => vi.fn());
 
 vi.mock('../service', () => ({
   getTaskThread: mockGetTaskThread,
   getTaskThreadTokenUsage: vi.fn(),
-  listTaskThreadArtifacts: vi.fn(),
-  listTaskThreadMessages: vi.fn(),
-  listTaskThreadRunEvents: vi.fn(),
-  listTaskThreadRuns: vi.fn(),
+  listTaskThreadArtifacts: mockListTaskThreadArtifacts,
+  listTaskThreadMessages: mockListTaskThreadMessages,
+  listTaskThreadRunEvents: mockListTaskThreadRunEvents,
+  listTaskThreadRuns: mockListTaskThreadRuns,
 }));
 
 describe('fetchTaskDetail', () => {
@@ -40,6 +45,26 @@ describe('fetchTaskDetail', () => {
       data: undefined,
       code: 0,
       msg: '',
+    });
+    mockListTaskThreadArtifacts.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: { artifacts: [], total: 0 },
+    });
+    mockListTaskThreadMessages.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: { messages: [], total: 0 },
+    });
+    mockListTaskThreadRunEvents.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: { events: [], total: 0 },
+    });
+    mockListTaskThreadRuns.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: { runs: [], total: 0 },
     });
   });
 
@@ -53,7 +78,106 @@ describe('fetchTaskDetail', () => {
     });
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'missing-thread',
+      space_id: 'space-1',
     });
+  });
+
+  it('maps canonical can_edit without requiring creator_id', async () => {
+    mockGetTaskThread.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: {
+        thread_id: '1001',
+        space_id: '9001',
+        title: 'Canonical task',
+        status: 'running',
+        source: 'web',
+        progress: 40,
+        last_user_message: 'Prepare the brief',
+        last_agent_message: 'Working',
+        can_edit: false,
+        created_at: 1767225600000,
+        updated_at: 1767225660000,
+      },
+    });
+
+    const detail = await fetchTaskDetail({ id: '1001', spaceId: '9001' });
+
+    expect(detail.task).toMatchObject({
+      id: '1001',
+      can_edit: false,
+    });
+    expect(detail.task).not.toHaveProperty('creator_id');
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: '1001',
+      space_id: '9001',
+    });
+    expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
+      thread_id: '1001',
+      space_id: '9001',
+      page: 1,
+      page_size: 50,
+    });
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: '1001',
+      space_id: '9001',
+      page: 1,
+      page_size: 100,
+    });
+    expect(mockListTaskThreadArtifacts).toHaveBeenCalledWith({
+      thread_id: '1001',
+      space_id: '9001',
+      page: 1,
+      page_size: 50,
+    });
+    expect(mockListTaskThreadRuns.mock.calls).toEqual([
+      [
+        {
+          thread_id: '1001',
+          space_id: '9001',
+          parent_run_id: '0',
+          page: 1,
+          page_size: 1,
+        },
+      ],
+      [
+        {
+          thread_id: '1001',
+          space_id: '9001',
+          page: 1,
+          page_size: 20,
+        },
+      ],
+    ]);
+  });
+});
+
+describe('isTaskThreadDetailReadOnly', () => {
+  it('uses canonical can_edit before legacy creator inference', () => {
+    const canonicalTask = {
+      id: '1001',
+      space_id: '9001',
+      creator_id: 'current-user',
+      can_edit: false,
+      title: 'Canonical task',
+      status: 3,
+      progress: 40,
+      created_at: 1767225600000,
+      updated_at: 1767225660000,
+    };
+
+    expect(
+      isTaskThreadDetailReadOnly({
+        task: canonicalTask,
+        userID: 'current-user',
+      }),
+    ).toBe(true);
+    expect(
+      isTaskThreadDetailReadOnly({
+        task: { ...canonicalTask, can_edit: true, creator_id: 'other-user' },
+        userID: 'current-user',
+      }),
+    ).toBe(false);
   });
 });
 

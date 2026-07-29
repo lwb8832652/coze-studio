@@ -177,7 +177,10 @@ export const workbenchClientIdentifiers = (
 };
 
 const defaultTelemetry: WorkbenchClientTelemetry = event => {
-  reporter.event(event);
+  reporter.event({
+    eventName: event.eventName,
+    meta: { ...event.meta },
+  });
 };
 
 const safeDuration = (startedAt: number, now: () => number): number => {

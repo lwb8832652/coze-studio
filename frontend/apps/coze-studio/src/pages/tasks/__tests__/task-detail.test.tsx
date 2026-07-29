@@ -1239,9 +1239,13 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      space_id: 'space-1',
+    });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -1997,9 +2001,13 @@ describe('TaskDetailPage', () => {
       await Promise.resolve();
     });
 
-    expect(mockGetTaskThread).toHaveBeenCalledWith({ thread_id: 'thread-1' });
+    expect(mockGetTaskThread).toHaveBeenCalledWith({
+      thread_id: 'thread-1',
+      space_id: 'space-1',
+    });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
@@ -2727,14 +2735,17 @@ describe('TaskDetailPage', () => {
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -2804,9 +2815,11 @@ describe('TaskDetailPage', () => {
 
     expect(mockGetTaskThread).toHaveBeenCalledWith({
       thread_id: 'thread-running',
+      space_id: 'space-1',
     });
     expect(mockListTaskThreadMessages).toHaveBeenCalledWith({
       thread_id: 'thread-running',
+      space_id: 'space-1',
       page: 1,
       page_size: 50,
     });
@@ -6745,11 +6758,13 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRuns).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 20,
     });
     expect(mockListTaskThreadRuns).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       parent_run_id: 'run-parent-1',
       page: 1,
       page_size: 20,
@@ -6759,6 +6774,7 @@ describe('TaskDetailPage', () => {
     );
     expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith({
       thread_id: 'thread-subagent-1',
+      space_id: 'space-1',
       run_id: 'run-parent-1',
       include_child_runs: true,
       page: 1,
@@ -7006,6 +7022,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-only-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });
@@ -8676,6 +8693,7 @@ describe('TaskDetailPage', () => {
 
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: 'thread-retry-1',
+      space_id: 'space-1',
       page: 1,
       page_size: 100,
     });

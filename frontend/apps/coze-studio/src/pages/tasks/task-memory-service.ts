@@ -14,6 +14,19 @@
  * limitations under the License.
  */
 
+import {
+  presentTaskThreadMemoryAuditListResponse,
+  presentTaskThreadMemoryClearResponse,
+  presentTaskThreadMemoryDeleteResponse,
+  presentTaskThreadMemoryListResponse,
+  presentTaskThreadMemoryRestoreResponse,
+  presentTaskThreadMemoryUpdateResponse,
+} from '../workbench/thread-client/legacy-page-response';
+import {
+  canonicalThreadClient,
+  resolvePageServiceSpaceID,
+} from '../workbench/thread-client/canonical-thread-client-singleton';
+
 export interface TaskThreadMemory {
   memory_id: string;
   thread_id: string;
@@ -70,6 +83,7 @@ export interface ListTaskThreadMemoryAuditEventsResponse {
 export interface UpdateTaskThreadMemoryResponse {
   data?: {
     memory?: TaskThreadMemory;
+    updated: boolean;
   };
   code: number;
   msg: string;
@@ -85,328 +99,171 @@ export interface RestoreTaskThreadMemoryResponse {
 }
 
 export interface DeleteTaskThreadMemoryResponse {
-  data?: {
-    deleted: boolean;
-  };
   code: number;
   msg: string;
 }
 
 export interface ClearTaskThreadMemoriesResponse {
   data?: {
-    cleared_count: number;
+    deleted: number;
   };
   code: number;
   msg: string;
 }
 
-export const listTaskThreadMemories = async ({
-  include_expired: includeExpired,
-  page,
-  page_size: pageSize,
-  q,
-  run_id: runID,
-  scope,
-  scopes,
-  thread_id: threadID,
-  include_deleted: includeDeleted,
-}: {
-  thread_id: string;
-  run_id?: string;
-  scope?: string;
-  scopes?: string[];
-  q?: string;
-  include_expired?: boolean;
-  include_deleted?: boolean;
-  page?: number;
-  page_size?: number;
-}): Promise<ListTaskThreadMemoriesResponse> => {
-  const params = new URLSearchParams();
-  if (q?.trim()) {
-    params.set('q', q.trim());
-  }
-  if (runID) {
-    params.set('run_id', runID);
-  }
-  if (scope) {
-    params.set('scope', scope);
-  }
-  for (const item of scopes ?? []) {
-    if (item) {
-      params.append('scopes', item);
-    }
-  }
-  if (includeExpired) {
-    params.set('include_expired', 'true');
-  }
-  if (includeDeleted) {
-    params.set('include_deleted', 'true');
-  }
-  if (page) {
-    params.set('page', String(page));
-  }
-  if (pageSize) {
-    params.set('page_size', String(pageSize));
-  }
+interface PageScopedRequest {
+  space_id?: string;
+}
 
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/memories${query ? `?${query}` : ''}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'GET',
-    },
-  );
+const pageResponse = <Response>(value: unknown): Response => value as Response;
 
-  if (!response.ok) {
-    throw new Error('读取任务记忆失败');
+const memoryRequestError = (message: string, cause: unknown): never => {
+  if (
+    cause &&
+    typeof cause === 'object' &&
+    'name' in cause &&
+    cause.name === 'AbortError'
+  ) {
+    throw cause;
   }
-
-  const payload = (await response.json()) as ListTaskThreadMemoriesResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '读取任务记忆失败');
-  }
-
-  return payload;
+  const error = new Error(message);
+  (error as Error & { cause?: unknown }).cause = cause;
+  throw error;
 };
 
-export const listTaskThreadMemoryAuditEvents = async ({
-  memory_id: memoryID,
-  page,
-  page_size: pageSize,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  memory_id?: string;
-  page?: number;
-  page_size?: number;
-}): Promise<ListTaskThreadMemoryAuditEventsResponse> => {
-  const params = new URLSearchParams();
-  if (memoryID) {
-    params.set('memory_id', memoryID);
+export const listTaskThreadMemories = async (
+  request: {
+    thread_id: string;
+    run_id?: string;
+    scope?: string;
+    scopes?: string[];
+    q?: string;
+    include_expired?: boolean;
+    include_deleted?: boolean;
+    page?: number;
+    page_size?: number;
+  } & PageScopedRequest,
+): Promise<ListTaskThreadMemoriesResponse> => {
+  try {
+    return pageResponse(
+      presentTaskThreadMemoryListResponse(
+        await canonicalThreadClient.listMemories({
+          ...request,
+          space_id: resolvePageServiceSpaceID(request.space_id),
+        }),
+      ),
+    );
+  } catch (error) {
+    return memoryRequestError('读取任务记忆失败', error);
   }
-  if (page) {
-    params.set('page', String(page));
-  }
-  if (pageSize) {
-    params.set('page_size', String(pageSize));
-  }
-
-  const query = params.toString();
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/memories/audit_events${query ? `?${query}` : ''}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'GET',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('读取记忆审计失败');
-  }
-
-  const payload =
-    (await response.json()) as ListTaskThreadMemoryAuditEventsResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '读取记忆审计失败');
-  }
-
-  return payload;
 };
 
-export const updateTaskThreadMemory = async ({
-  confidence,
-  content,
-  corrected_at: correctedAt,
-  correction_of_memory_id: correctionOfMemoryID,
-  expires_at: expiresAt,
-  memory_id: memoryID,
-  metadata,
-  run_id: runID,
-  scope,
-  score,
-  source_id: sourceID,
-  source_type: sourceType,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  memory_id: string;
-  run_id?: string;
-  scope: string;
-  content: string;
-  metadata?: string;
-  score?: number;
-  confidence?: number;
-  source_type?: string;
-  source_id?: string;
-  correction_of_memory_id?: string;
-  corrected_at?: number;
-  expires_at?: number;
-}): Promise<UpdateTaskThreadMemoryResponse> => {
-  const body: Record<string, string | number> = {};
-  if (confidence !== undefined) {
-    body.confidence = confidence;
+export const listTaskThreadMemoryAuditEvents = async (
+  request: {
+    thread_id: string;
+    memory_id?: string;
+    page?: number;
+    page_size?: number;
+  } & PageScopedRequest,
+): Promise<ListTaskThreadMemoryAuditEventsResponse> => {
+  try {
+    return pageResponse(
+      presentTaskThreadMemoryAuditListResponse(
+        await canonicalThreadClient.listMemoryAuditEvents({
+          ...request,
+          space_id: resolvePageServiceSpaceID(request.space_id),
+        }),
+      ),
+    );
+  } catch (error) {
+    return memoryRequestError('读取记忆审计失败', error);
   }
-  body.content = content;
-  if (correctionOfMemoryID) {
-    body.correction_of_memory_id = correctionOfMemoryID;
-  }
-  if (correctedAt) {
-    body.corrected_at = correctedAt;
-  }
-  if (expiresAt) {
-    body.expires_at = expiresAt;
-  }
-  if (metadata !== undefined) {
-    body.metadata = metadata;
-  }
-  if (runID) {
-    body.run_id = runID;
-  }
-  body.scope = scope;
-  if (score !== undefined) {
-    body.score = score;
-  }
-  if (sourceID) {
-    body.source_id = sourceID;
-  }
-  if (sourceType) {
-    body.source_type = sourceType;
-  }
-
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/memories/${encodeURIComponent(memoryID)}`,
-    {
-      body: JSON.stringify(body),
-      headers: {
-        'content-type': 'application/json',
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'PUT',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('更新任务记忆失败');
-  }
-
-  const payload = (await response.json()) as UpdateTaskThreadMemoryResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '更新任务记忆失败');
-  }
-
-  return payload;
 };
 
-export const restoreTaskThreadMemory = async ({
-  memory_id: memoryID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  memory_id: string;
-}): Promise<RestoreTaskThreadMemoryResponse> => {
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/memories/${encodeURIComponent(memoryID)}/restore`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'POST',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('恢复任务记忆失败');
+export const updateTaskThreadMemory = async (
+  request: {
+    thread_id: string;
+    memory_id: string;
+    run_id?: string;
+    scope: string;
+    content: string;
+    metadata?: string;
+    score?: number;
+    confidence?: number;
+    source_type?: string;
+    source_id?: string;
+    correction_of_memory_id?: string;
+    corrected_at?: number;
+    expires_at?: number;
+  } & PageScopedRequest,
+): Promise<UpdateTaskThreadMemoryResponse> => {
+  try {
+    return pageResponse(
+      presentTaskThreadMemoryUpdateResponse(
+        await canonicalThreadClient.updateMemory({
+          ...request,
+          space_id: resolvePageServiceSpaceID(request.space_id),
+        }),
+      ),
+    );
+  } catch (error) {
+    return memoryRequestError('更新任务记忆失败', error);
   }
-
-  const payload = (await response.json()) as RestoreTaskThreadMemoryResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '恢复任务记忆失败');
-  }
-
-  return payload;
 };
 
-export const deleteTaskThreadMemory = async ({
-  memory_id: memoryID,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  memory_id: string;
-}): Promise<DeleteTaskThreadMemoryResponse> => {
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(
-      threadID,
-    )}/memories/${encodeURIComponent(memoryID)}`,
-    {
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'DELETE',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('删除任务记忆失败');
+export const restoreTaskThreadMemory = async (
+  request: {
+    thread_id: string;
+    memory_id: string;
+  } & PageScopedRequest,
+): Promise<RestoreTaskThreadMemoryResponse> => {
+  try {
+    return pageResponse(
+      presentTaskThreadMemoryRestoreResponse(
+        await canonicalThreadClient.restoreMemory({
+          ...request,
+          space_id: resolvePageServiceSpaceID(request.space_id),
+        }),
+      ),
+    );
+  } catch (error) {
+    return memoryRequestError('恢复任务记忆失败', error);
   }
-
-  const payload = (await response.json()) as DeleteTaskThreadMemoryResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '删除任务记忆失败');
-  }
-
-  return payload;
 };
 
-export const clearTaskThreadMemories = async ({
-  run_id: runID,
-  scopes,
-  thread_id: threadID,
-}: {
-  thread_id: string;
-  run_id?: string;
-  scopes?: string[];
-}): Promise<ClearTaskThreadMemoriesResponse> => {
-  const body: Record<string, string | string[]> = {};
-  if (runID) {
-    body.run_id = runID;
-  }
-  if (scopes?.length) {
-    body.scopes = scopes;
-  }
+export const deleteTaskThreadMemory = async (
+  request: {
+    thread_id: string;
+    memory_id: string;
+  } & PageScopedRequest,
+): Promise<DeleteTaskThreadMemoryResponse> => {
+  try {
+    await canonicalThreadClient.deleteMemory({
+      ...request,
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    });
 
-  const response = await fetch(
-    `/api/workbench/task_threads/${encodeURIComponent(threadID)}/memories/clear`,
-    {
-      body: JSON.stringify(body),
-      headers: {
-        'content-type': 'application/json',
-        'x-requested-with': 'XMLHttpRequest',
-      },
-      method: 'POST',
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('清空任务记忆失败');
+    return presentTaskThreadMemoryDeleteResponse();
+  } catch (error) {
+    return memoryRequestError('删除任务记忆失败', error);
   }
+};
 
-  const payload = (await response.json()) as ClearTaskThreadMemoriesResponse;
-  if (typeof payload.code === 'number' && payload.code !== 0) {
-    throw new Error(payload.msg || '清空任务记忆失败');
+export const clearTaskThreadMemories = async (
+  request: {
+    thread_id: string;
+    run_id?: string;
+    scopes?: string[];
+  } & PageScopedRequest,
+): Promise<ClearTaskThreadMemoriesResponse> => {
+  try {
+    return presentTaskThreadMemoryClearResponse(
+      await canonicalThreadClient.clearMemories({
+        ...request,
+        space_id: resolvePageServiceSpaceID(request.space_id),
+      }),
+    );
+  } catch (error) {
+    return memoryRequestError('清空任务记忆失败', error);
   }
-
-  return payload;
 };

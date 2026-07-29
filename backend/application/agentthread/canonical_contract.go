@@ -75,6 +75,7 @@ type ListRunEventsByCursorRequest struct {
 
 type ListRunEventsByCursorResponse struct {
 	Events  []*RunEventSummary
+	Total   int64
 	HasMore bool
 }
 
@@ -219,7 +220,7 @@ func (s *ApplicationService) ListRunEventsByCursor(
 	}); err != nil {
 		return nil, err
 	}
-	events, hasMore, err := querySVC.ListRunEventsByCursor(
+	events, total, hasMore, err := querySVC.ListRunEventsByCursor(
 		ctx,
 		&domainservice.ListRunEventsByCursorRequest{
 			ThreadID: req.ThreadID, RunID: req.RunID, AfterEventID: req.AfterEventID,
@@ -230,7 +231,7 @@ func (s *ApplicationService) ListRunEventsByCursor(
 		return nil, err
 	}
 	resp := &ListRunEventsByCursorResponse{
-		Events: make([]*RunEventSummary, 0, len(events)), HasMore: hasMore,
+		Events: make([]*RunEventSummary, 0, len(events)), Total: total, HasMore: hasMore,
 	}
 	for _, event := range events {
 		resp.Events = append(resp.Events, DomainRunEventToSummary(event))

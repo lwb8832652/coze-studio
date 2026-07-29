@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 
-import { workbenchTask } from '@coze-studio/api-schema';
+import { type workbenchTask } from '@coze-studio/api-schema';
+
+import { presentTaskThreadTokenUsageResponse } from '../workbench/thread-client/legacy-page-response';
+import {
+  canonicalThreadClient,
+  resolvePageServiceSpaceID,
+} from '../workbench/thread-client/canonical-thread-client-singleton';
 
 const createTaskUsageAbortError = () => {
   if (typeof DOMException !== 'undefined') {
@@ -26,44 +32,22 @@ const createTaskUsageAbortError = () => {
   return error;
 };
 
-export const getTaskThreadTokenUsage = (
-  request: workbenchTask.GetTaskThreadTokenUsageRequest,
+export const getTaskThreadTokenUsage = async (
+  request: workbenchTask.GetTaskThreadTokenUsageRequest & {
+    space_id?: string;
+  },
   options?: { signal?: AbortSignal },
 ): Promise<workbenchTask.GetTaskThreadTokenUsageResponse> => {
-  const api = workbenchTask.GetTaskThreadTokenUsage.withAbort();
   const signal = options?.signal;
-
-  if (!signal) {
-    return api(request);
-  }
-  if (signal.aborted) {
-    return Promise.reject(createTaskUsageAbortError());
+  if (signal?.aborted) {
+    throw createTaskUsageAbortError();
   }
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (
-      callback: (
-        value: workbenchTask.GetTaskThreadTokenUsageResponse | unknown,
-      ) => void,
-      value: workbenchTask.GetTaskThreadTokenUsageResponse | unknown,
-    ) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener('abort', handleAbort);
-      callback(value);
-    };
-    const handleAbort = () => {
-      api.abort();
-      finish(reject, createTaskUsageAbortError());
-    };
-
-    signal.addEventListener('abort', handleAbort, { once: true });
-    void api(request).then(
-      response => finish(resolve, response),
-      error => finish(reject, error),
-    );
-  });
+  return presentTaskThreadTokenUsageResponse(
+    await canonicalThreadClient.getTokenUsage({
+      ...request,
+      ...(signal === undefined ? {} : { signal }),
+      space_id: resolvePageServiceSpaceID(request.space_id),
+    }),
+  ) as unknown as workbenchTask.GetTaskThreadTokenUsageResponse;
 };

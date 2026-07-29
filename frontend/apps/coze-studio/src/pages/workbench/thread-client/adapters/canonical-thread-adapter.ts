@@ -742,6 +742,7 @@ export const adaptCanonicalRunList = (
 export const adaptCanonicalMessagePage = (
   value: unknown,
   scope: AdapterScope,
+  pagination: CanonicalPagination,
 ): WorkbenchMessageCursorPage => {
   const label = 'canonical Message page';
   const page = asRecord(value, label);
@@ -758,6 +759,7 @@ export const adaptCanonicalMessagePage = (
     items: asArray(required(page, 'data', label), `${label}.data`).map(item =>
       adaptCanonicalMessage(item, scope),
     ),
+    total: requirePaginationTotal(pagination),
     has_more: asBoolean(required(page, 'has_more', label), `${label}.has_more`),
     ...(nextBefore === undefined ? {} : { next_before_seq: nextBefore }),
     ...(nextAfter === undefined ? {} : { next_after_seq: nextAfter }),
@@ -767,6 +769,7 @@ export const adaptCanonicalMessagePage = (
 export const adaptCanonicalRunEventPage = (
   value: unknown,
   scope: AdapterScope,
+  pagination: CanonicalPagination,
 ): WorkbenchCursorPage<WorkbenchRunEvent> => {
   const label = 'canonical Run event page';
   const page = asRecord(value, label);
@@ -777,6 +780,7 @@ export const adaptCanonicalRunEventPage = (
     items: asArray(required(page, 'data', label), `${label}.data`).map(item =>
       adaptCanonicalRunEvent(item, scope),
     ),
+    total: requirePaginationTotal(pagination),
     has_more: asBoolean(required(page, 'has_more', label), `${label}.has_more`),
     ...(next === undefined ? {} : { next_cursor: next }),
   };

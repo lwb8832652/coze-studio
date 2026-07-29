@@ -49,11 +49,13 @@ export type {
 export type { TaskDetailTokenUsage } from './task-detail-token-usage';
 export type { TaskTokenUsageViewMode } from './task-detail-token-usage';
 
-type TaskThread = workbenchTask.TaskThread;
+type TaskThread = workbenchTask.TaskThread & { can_edit?: boolean };
 type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
 type TaskThreadMessage = workbenchTask.TaskThreadMessage;
 type TaskThreadRun = workbenchTask.TaskThreadRun;
 type TaskThreadTodo = workbenchTask.TaskThreadTodo;
+
+const COMPLETED_TASK_PROGRESS = 100;
 
 export interface TaskDetail {
   task?: TaskThreadDetailModel;
@@ -156,13 +158,16 @@ const mapTaskThreadToDetailModel = (
   const status = latestRunStatus ?? mapTaskThreadStatus(thread.status);
   const progress =
     status === TaskThreadDetailStatus.Succeeded
-      ? 100
+      ? COMPLETED_TASK_PROGRESS
       : Math.max(thread.progress, 0);
 
   return {
     id: thread.thread_id,
     space_id: thread.space_id,
-    creator_id: thread.creator_id,
+    ...(thread.creator_id ? { creator_id: thread.creator_id } : {}),
+    ...(typeof thread.can_edit === 'boolean'
+      ? { can_edit: thread.can_edit }
+      : {}),
     title: thread.title,
     status,
     progress,
@@ -195,7 +200,8 @@ const parseJSONObject = (
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
-  } catch {
+  } catch (error) {
+    void error;
     return undefined;
   }
 
@@ -217,11 +223,15 @@ const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
   };
 };
 
+// eslint-disable-next-line complexity -- Keeps one coherent detail snapshot across parallel page reads.
 const fetchTaskThreadDetail = async (
   id: string,
   { spaceId }: { spaceId?: string } = {},
 ): Promise<TaskDetail | undefined> => {
-  const threadResponse = await getTaskThread({ thread_id: id });
+  const threadResponse = await getTaskThread({
+    thread_id: id,
+    space_id: spaceId,
+  });
   const thread = threadResponse.data;
 
   if (!thread) {
@@ -237,17 +247,20 @@ const fetchTaskThreadDetail = async (
   ] = await Promise.all([
     listTaskThreadMessages({
       thread_id: threadID,
+      space_id: spaceId,
       page: 1,
       page_size: 50,
     }),
     listTaskThreadRuns({
       thread_id: threadID,
+      space_id: spaceId,
       parent_run_id: '0',
       page: 1,
       page_size: 1,
     }),
     listTaskThreadRunEvents({
       thread_id: threadID,
+      space_id: spaceId,
       page: 1,
       page_size: 100,
     }),
@@ -262,11 +275,12 @@ const fetchTaskThreadDetail = async (
   const latestTopLevelRun: TaskThreadRun | undefined =
     topLevelRunsResponse.data?.runs?.[0];
   const suggestionModel = getLatestRunSuggestionModel(latestTopLevelRun);
-  const subagentRuns = await fetchTaskThreadSubagentRuns(
-    threadID,
-    getSubagentLifecycleByChildRunID(rawRunEvents),
-    getSubagentTimelineByChildRunID(rawRunEvents),
-  );
+  const subagentRuns = await fetchTaskThreadSubagentRuns({
+    threadId: threadID,
+    lifecycleByChildRunID: getSubagentLifecycleByChildRunID(rawRunEvents),
+    timelineByChildRunID: getSubagentTimelineByChildRunID(rawRunEvents),
+    spaceId,
+  });
 
   return {
     threadId: thread.thread_id,
