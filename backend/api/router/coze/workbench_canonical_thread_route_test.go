@@ -97,7 +97,7 @@ var forbiddenCanonicalThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/workbench/threads/:thread_id/runs/:run_id/join"},
 }
 
-var workbenchTaskThreadRouteSnapshot = []routeExpectation{
+var retiredTaskThreadV1Routes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/task_threads"},
 	{http.MethodPost, "/api/workbench/task_threads"},
 	{http.MethodGet, "/api/workbench/task_threads/:thread_id"},
@@ -182,7 +182,7 @@ var retiredLangGraphThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/threads/:thread_id/state"},
 }
 
-var langGraphStatelessRunRouteSnapshot = []routeExpectation{
+var retainedLangGraphStatelessRunRoutes = []routeExpectation{
 	{http.MethodPost, "/api/runs"},
 	{http.MethodPost, "/api/runs/stream"},
 	{http.MethodPost, "/api/runs/wait"},
@@ -239,6 +239,7 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 
 	t.Run("keeps all retired LangGraph thread method and path pairs unreachable", func(t *testing.T) {
 		require.Len(t, retiredLangGraphThreadRoutes, 23)
+		requireExactRouteSnapshot(t, h, "/api/threads", nil)
 		for _, route := range retiredLangGraphThreadRoutes {
 			route := route
 			t.Run(route.method+" "+route.path, func(t *testing.T) {
@@ -253,14 +254,15 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("keeps the stateless LangGraph run route surface", func(t *testing.T) {
-		require.Len(t, langGraphStatelessRunRouteSnapshot, 10)
-		requireExactRouteSnapshot(t, h, "/api/runs", langGraphStatelessRunRouteSnapshot)
+	t.Run("retains stateless LangGraph runs while the zero-use gate is blocked", func(t *testing.T) {
+		require.Len(t, retainedLangGraphStatelessRunRoutes, 10)
+		requireExactRouteSnapshot(t, h, "/api/runs", retainedLangGraphStatelessRunRoutes)
 	})
 
 	t.Run("keeps all TaskThread V1 method and path pairs unreachable", func(t *testing.T) {
-		require.Len(t, workbenchTaskThreadRouteSnapshot, 36)
-		for _, route := range workbenchTaskThreadRouteSnapshot {
+		require.Len(t, retiredTaskThreadV1Routes, 36)
+		requireExactRouteSnapshot(t, h, "/api/workbench/task_threads", nil)
+		for _, route := range retiredTaskThreadV1Routes {
 			route := route
 			t.Run(route.method+" "+route.path, func(t *testing.T) {
 				requireUnreachableRoute(
@@ -290,6 +292,8 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	})
 
 	t.Run("keeps retired ChatTask paths unreachable", func(t *testing.T) {
+		requireExactRouteSnapshot(t, h, "/api/workbench/tasks", nil)
+		requireExactRouteSnapshot(t, h, "/api/workbench/chat", nil)
 		for _, path := range retiredChatTaskPaths {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				requireUnreachableRoute(t, h, handlerBoundary, method, path)

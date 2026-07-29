@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
@@ -56,6 +56,25 @@ const taskSourceFile = ts.createSourceFile(
   ts.ScriptKind.TS,
 );
 const generatedSourceFiles = [threadSourceFile, threadProductSourceFile];
+const generatedWorkbenchDirectory = new URL(
+  '../idl/workbench/',
+  import.meta.url,
+);
+const allGeneratedWorkbenchSourceFiles = readdirSync(
+  generatedWorkbenchDirectory,
+  { withFileTypes: true },
+)
+  .filter(entry => entry.isFile() && entry.name.endsWith('.ts'))
+  .sort((left, right) => left.name.localeCompare(right.name))
+  .map(entry =>
+    ts.createSourceFile(
+      entry.name,
+      readFileSync(new URL(entry.name, generatedWorkbenchDirectory), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    ),
+  );
 
 const canonicalAPIFunctions = [
   'CreateCanonicalThread',
@@ -812,6 +831,50 @@ function taskThreadIdentifiers(sourceFile: ts.SourceFile): string[] {
   return [...identifiers];
 }
 
+const retiredChatTaskIdentifierPrefixes = [
+  'CancelTask',
+  'ChatTask',
+  'GetTask',
+  'ListTaskEvents',
+  'ListTasks',
+  'RetryTask',
+  'TaskEvent',
+  'TaskStatus',
+  'WorkbenchChat',
+] as const;
+
+function retiredChatTaskIdentifiers(sourceFile: ts.SourceFile): string[] {
+  const identifiers = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isIdentifier(node) &&
+      retiredChatTaskIdentifierPrefixes.some(prefix =>
+        node.text.startsWith(prefix),
+      )
+    ) {
+      identifiers.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return [...identifiers];
+}
+
+const retiredWorkbenchRoutePatterns = [
+  /\/api\/workbench\/task_threads\b/g,
+  /\/api\/workbench\/tasks\b/g,
+  /\/api\/workbench\/chat\b/g,
+  /\/api\/threads\b/g,
+  /\/api\/runs\b/g,
+];
+
+function retiredWorkbenchRouteFindings(sourceFile: ts.SourceFile): string[] {
+  return retiredWorkbenchRoutePatterns.flatMap(pattern =>
+    Array.from(sourceFile.text.matchAll(pattern), match => match[0]),
+  );
+}
+
 function assertNoTaskThreadContracts(sourceFile: ts.SourceFile): void {
   expect(
     taskContractImportSpecifiers(sourceFile),
@@ -900,6 +963,23 @@ describe('Scheduled Task generated contract', () => {
       }),
     ).toEqual(scheduledTaskAPIConfigs);
     expect(generatedTaskSource).not.toContain('/api/workbench/task_threads');
+  });
+
+  it('keeps retired TaskThread and ChatTask contracts out of generated modules', () => {
+    for (const sourceFile of allGeneratedWorkbenchSourceFiles) {
+      expect(taskThreadIdentifiers(sourceFile), sourceFile.fileName).toEqual(
+        [],
+      );
+      expect(
+        retiredChatTaskIdentifiers(sourceFile),
+        sourceFile.fileName,
+      ).toEqual([]);
+      expect(
+        retiredWorkbenchRouteFindings(sourceFile),
+        sourceFile.fileName,
+      ).toEqual([]);
+    }
+    expect(scheduledTaskAPIFunctions).toHaveLength(11);
   });
 });
 
