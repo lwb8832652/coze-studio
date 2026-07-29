@@ -1111,11 +1111,14 @@ pre-existing verification risk rather than a Task 11 regression.
 - Modify: `backend/scripts/verify_api_codegen.sh`
 - Modify/regenerate: `frontend/packages/arch/api-schema/src/idl/workbench/task.ts`
 - Modify: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
+- Modify: `frontend/packages/arch/api-schema/__tests__/workbench-task-contract.test.ts`
+- Delete: `frontend/packages/arch/api-schema/__tests__/workbench-task-memory.test.ts`
 - Delete: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/legacy-task-thread-reference.ts`
 - Remove V1-only fixtures from: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/fixtures.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-thread-client-contract.test.ts`
 
-- [ ] **Step 1: Make route-absence and Scheduled Task preservation tests fail**
+- [x] **Step 1: Make route-absence and Scheduled Task preservation tests fail**
 
 Change the router contract to require all 36 TaskThread method/path pairs absent while all 47
 canonical routes and all Scheduled Task routes remain exactly registered. Extend API schema tests to
@@ -1123,13 +1126,13 @@ require Scheduled Task exports and reject TaskThread DTO/method exports.
 
 Run focused tests and confirm failure before deletion.
 
-- [ ] **Step 2: Remove only TaskThread IDL ownership**
+- [x] **Step 2: Remove only TaskThread IDL ownership**
 
 From `idl/workbench/task.thrift`, delete TaskThread DTOs from the current TaskThread section and
 delete the TaskThread service methods after `ListScheduledTaskExecutions`. Preserve Scheduled Task
 enums, DTOs, methods, namespace and route annotations byte-for-byte except generator formatting.
 
-- [ ] **Step 3: Regenerate backend and frontend contracts**
+- [x] **Step 3: Regenerate backend and frontend contracts**
 
 Run the pinned backend generator:
 
@@ -1170,7 +1173,7 @@ cd frontend/packages/arch/api-schema
 rushx update
 ```
 
-- [ ] **Step 4: Remove custom routes and extract live shared helpers**
+- [x] **Step 4: Remove custom routes and extract live shared helpers**
 
 Delete only the `/workbench/task_threads/:thread_id` custom group from
 `registerWorkbenchCustomRoutes`; keep IM and MCP routes.
@@ -1192,13 +1195,13 @@ Delete the handwritten V1-only `backend/api/model/workbench/thread/thread.go` af
 is empty, and remove that path from `handwritten_generated_excludes` in
 `backend/scripts/verify_api_codegen.sh`. Do not move any other V1 projection or envelope helper.
 
-- [ ] **Step 5: Delete V1 handler and frontend reference artifacts**
+- [x] **Step 5: Delete V1 handler and frontend reference artifacts**
 
 Delete the old handler/test after graph/source caller checks show only V1 routes/tests. Remove the
 test-only V1 reference and paired V1 fixtures after Gate A evidence is committed. Production
 canonical tests become the regression source.
 
-- [ ] **Step 6: Verify generated and route contracts**
+- [x] **Step 6: Verify generated and route contracts**
 
 ```bash
 cd backend
@@ -1216,7 +1219,7 @@ rushx test src/__tests__/workbench-thread-contract.test.ts
 Expected: 36 V1 routes absent, 47 canonical routes present, Scheduled Task routes/types present,
 codegen deterministic.
 
-- [ ] **Step 7: Commit the V1 contract retirement**
+- [x] **Step 7: Commit the V1 contract retirement**
 
 ```bash
 git add -A \
@@ -1229,6 +1232,13 @@ git add -A \
   frontend/apps/coze-studio/src/pages/workbench/thread-client
 git commit -m "refactor: retire task thread v1 api"
 ```
+
+Completed in `73a333e88`. Backend codegen was deterministic, the focused handler/router suite
+passed, the API schema package passed all 16 tests, and the Workbench thread-client suite passed all
+141 tests. Both independent specification and quality reviews passed after removing one unused
+authorization helper and two stale V1 fixture fields. The 36 V1 routes and generated symbols are
+absent; all 47 canonical routes, 11 Scheduled Task routes, 23 `/api/threads/**` routes and 10
+`/api/runs/**` routes remain. No application, domain, repository or persistence code changed.
 
 ### Task 13: Retire The Local LangGraph Thread Contract
 
