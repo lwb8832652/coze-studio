@@ -899,23 +899,31 @@ git commit -m "refactor: bind task stream to canonical run"
 
 **Files:**
 - Create: `frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts`
+- Modify: `backend/api/handler/coze/workbench_canonical_projection.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_thread_service.go`
+- Modify: `backend/api/handler/coze/workbench_canonical_thread_service_test.go`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-detail-loader.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-detail-subagents.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts`
+- Modify: corresponding `src/pages/tasks/__tests__` files
 - Modify: `docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-a.md`
 - Modify: `docs/superpowers/evidence/2026-07-28-workbench-source-contract-usage-audit.md`
 
-- [ ] **Step 1: Compare paired visible outcomes**
+- [x] **Step 1: Compare paired visible outcomes**
 
 For every resource family, run the test-only V1 reference fixture and canonical adapter fixture into
 the same presenter. Compare page-visible fields, IDs, ordering, pagination, terminal statuses,
 errors, abort behavior and Stream events. Transport-only differences are allowed; visible behavior
 differences fail.
 
-- [ ] **Step 2: Prove the canonical branch has one request source**
+- [x] **Step 2: Prove the canonical branch has one request source**
 
 Mock browser transport at the page level for create without files, deferred create/upload/run,
 follow-up, cancel, resume, retry, Artifact, Memory and SSE. Assert all requests begin with
 `/api/workbench/threads` and each user action has the expected write count.
 
-- [ ] **Step 3: Run Gate A automation**
+- [x] **Step 3: Run Gate A automation**
 
 ```bash
 cd frontend/apps/coze-studio
@@ -934,7 +942,7 @@ GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
 
 Expected: PASS while source routes still exist.
 
-- [ ] **Step 4: Run canonical page regression against the same online workspace**
+- [x] **Step 4: Run canonical page regression against the same online workspace**
 
 Start the feature-branch backend with `COZE_WORKBENCH_CANONICAL_API_ENABLED=true` and the frontend
 on unused local ports. This is the final use of the migration gate before Task 11 removes it. Use the
@@ -950,20 +958,25 @@ Expected in the feature branch:
 - current visible behavior matches the control;
 - no new console error and no sensitive client log value.
 
-- [ ] **Step 5: Apply the Gate A stop rule**
+- [x] **Step 5: Apply the Gate A stop rule**
 
 Gate A is PASS only if Steps 1-4 pass and the `/api/runs/**` audit document has explicit status for
 all five items. A blocked external-log item does not block UI migration, but it blocks Task 14.
 Any product parity failure blocks Tasks 10-14.
 
-- [ ] **Step 6: Commit Gate A evidence**
+- [x] **Step 6: Commit Gate A evidence**
 
 ```bash
 git add \
+  backend/api/handler/coze/workbench_canonical_projection.go \
+  backend/api/handler/coze/workbench_canonical_thread_service.go \
+  backend/api/handler/coze/workbench_canonical_thread_service_test.go \
+  frontend/apps/coze-studio/src/pages/tasks \
   frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/client-equivalence.test.ts \
   docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-a.md \
-  docs/superpowers/evidence/2026-07-28-workbench-source-contract-usage-audit.md
-git commit -m "test: verify canonical workbench cutover parity"
+  docs/superpowers/evidence/2026-07-28-workbench-source-contract-usage-audit.md \
+  docs/superpowers/plans/2026-07-28-workbench-canonical-ui-cutover-retirement.md
+git commit -m "fix: close canonical workbench parity gaps"
 ```
 
 ### Task 10: Migrate The Internal NewX Parity Client

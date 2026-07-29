@@ -261,7 +261,7 @@ describe('useTaskRunActions task request generation', () => {
     expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
   });
 
-  it('commits the new top-level Run returned by a subagent retry before refresh', async () => {
+  it('keeps a top-level subagent retry worker isolated from the primary Run stream', async () => {
     const applyTaskDetail = vi.fn();
     const commitTopLevelRun = vi.fn();
     const retryRun = createRun('run-subagent-retry');
@@ -280,10 +280,7 @@ describe('useTaskRunActions task request generation', () => {
       space_id: 'space-1',
       thread_id: 'task-old',
     });
-    expect(commitTopLevelRun).toHaveBeenCalledWith(retryRun);
-    expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
-      mockFetchTaskDetail.mock.invocationCallOrder[0],
-    );
+    expect(commitTopLevelRun).not.toHaveBeenCalled();
 
     await act(async () => {
       await currentActions.handleRetrySubagentRun('run-child-old');
@@ -291,7 +288,7 @@ describe('useTaskRunActions task request generation', () => {
 
     expect(mockRetryTaskThreadSubagentRun).toHaveBeenCalledTimes(1);
     expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
-    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+    expect(commitTopLevelRun).not.toHaveBeenCalled();
   });
 
   it('does not commit a child Run returned by a subagent retry', async () => {

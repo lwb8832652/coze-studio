@@ -193,6 +193,7 @@ export const useTaskThreadRunEventStream = ({
 
       if (TERMINAL_RUN_EVENT_TYPES.has(runEvent.event_type)) {
         terminalEventSeen = true;
+        close();
       }
     };
     subscriptionRef.current = canonicalThreadClient.subscribeRunEvents({

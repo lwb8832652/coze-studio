@@ -147,7 +147,7 @@ describe('fetchTaskDetail', () => {
           space_id: '9001',
           parent_run_id: '0',
           page: 1,
-          page_size: 1,
+          page_size: 20,
         },
       ],
       [
@@ -161,7 +161,7 @@ describe('fetchTaskDetail', () => {
     ]);
   });
 
-  it('loads events from the same top-level Run selected for the detail snapshot', async () => {
+  it('loads events from the primary top-level Run instead of a subagent retry worker', async () => {
     mockGetTaskThread.mockResolvedValue({
       code: 0,
       msg: 'success',
@@ -186,22 +186,116 @@ describe('fetchTaskDetail', () => {
             request.parent_run_id === '0'
               ? [
                   {
+                    run_id: '3001',
+                    thread_id: '1001',
+                    space_id: '9001',
+                    status: 'pending',
+                    metadata:
+                      '{"source":"subagent_retry","source_run_id":"2101"}',
+                    run_kind: 'task',
+                    created_at: 1767225700000,
+                    updated_at: 1767225700000,
+                  },
+                  {
                     run_id: '2001',
                     thread_id: '1001',
                     space_id: '9001',
                     status: 'running',
+                    metadata: '{}',
+                    run_kind: 'task',
                     created_at: 1767225600000,
                     updated_at: 1767225660000,
                   },
                 ]
               : [],
-          total: request.parent_run_id === '0' ? 1 : 0,
+          total: request.parent_run_id === '0' ? 2 : 0,
         },
       }),
     );
 
-    await fetchTaskDetail({ id: '1001', spaceId: '9001' });
+    const detail = await fetchTaskDetail({ id: '1001', spaceId: '9001' });
 
+    expect(detail.latestTaskRunID).toBe('2001');
+    expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
+      thread_id: '1001',
+      run_id: '2001',
+      space_id: '9001',
+      page: 1,
+      page_size: 100,
+    });
+  });
+
+  it('paginates past a full page of subagent retry workers to find the primary Run', async () => {
+    mockGetTaskThread.mockResolvedValue({
+      code: 0,
+      msg: 'success',
+      data: {
+        thread_id: '1001',
+        space_id: '9001',
+        title: 'Canonical task',
+        status: 'running',
+        source: 'web',
+        progress: 40,
+        can_edit: true,
+        created_at: 1767225600000,
+        updated_at: 1767225660000,
+      },
+    });
+    const retryWorkers = Array.from({ length: 20 }, (_, index) => ({
+      run_id: String(4000 + index),
+      thread_id: '1001',
+      space_id: '9001',
+      status: 'pending',
+      metadata: JSON.stringify({
+        source: 'subagent_retry',
+        source_run_id: '2101',
+      }),
+      run_kind: 'task',
+      created_at: 1767225800000 - index,
+      updated_at: 1767225800000 - index,
+    }));
+    mockListTaskThreadRuns.mockImplementation(request => {
+      if (request.parent_run_id !== '0') {
+        return Promise.resolve({
+          code: 0,
+          msg: 'success',
+          data: { runs: [], total: 0 },
+        });
+      }
+      return Promise.resolve({
+        code: 0,
+        msg: 'success',
+        data: {
+          runs:
+            request.page === 1
+              ? retryWorkers
+              : [
+                  {
+                    run_id: '2001',
+                    thread_id: '1001',
+                    space_id: '9001',
+                    status: 'running',
+                    metadata: '{}',
+                    run_kind: 'task',
+                    created_at: 1767225600000,
+                    updated_at: 1767225660000,
+                  },
+                ],
+          total: 21,
+        },
+      });
+    });
+
+    const detail = await fetchTaskDetail({ id: '1001', spaceId: '9001' });
+
+    expect(detail.latestTaskRunID).toBe('2001');
+    expect(mockListTaskThreadRuns).toHaveBeenCalledWith({
+      thread_id: '1001',
+      space_id: '9001',
+      parent_run_id: '0',
+      page: 2,
+      page_size: 20,
+    });
     expect(mockListTaskThreadRunEvents).toHaveBeenCalledWith({
       thread_id: '1001',
       run_id: '2001',

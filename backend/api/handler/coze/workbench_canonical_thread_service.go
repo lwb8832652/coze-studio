@@ -1081,6 +1081,21 @@ func loadCanonicalThreadMessagesWithBudget(
 	if err != nil {
 		return nil, err
 	}
+	type visibleAssistantKey struct {
+		runID   int64
+		content string
+	}
+	persistedAssistantContents := make(map[visibleAssistantKey]struct{}, len(messages))
+	for _, message := range messages {
+		if message == nil || message.ThreadID != threadID ||
+			message.RunID <= 0 || message.Role != appagentthread.MessageRoleAssistant {
+			continue
+		}
+		content := canonicalCleanString(message.Content, canonicalMaxPublicValueRunes)
+		if content != "" {
+			persistedAssistantContents[visibleAssistantKey{runID: message.RunID, content: content}] = struct{}{}
+		}
+	}
 	events, err := loadAllCanonicalThreadRunEvents(ctx, threadID, budget)
 	if err != nil {
 		return nil, err
@@ -1099,30 +1114,33 @@ func loadCanonicalThreadMessagesWithBudget(
 		if content == "" {
 			continue
 		}
+		// Canonical Message omits event-only details, so prefer the durable reply
+		// when both sources collapse to the same visible assistant content.
+		if message.Role == appagentthread.MessageRoleAssistant && strings.HasPrefix(message.ID, "event-") {
+			key := visibleAssistantKey{runID: message.RunID, content: content}
+			if _, duplicated := persistedAssistantContents[key]; duplicated {
+				continue
+			}
+		}
 		projected = append(projected, &canonicalMessage{
 			MessageID: canonicalCleanString(message.ID, 128),
 			ThreadID:  strconv.FormatInt(message.ThreadID, 10),
 			RunID:     strconv.FormatInt(message.RunID, 10),
 			Role:      string(message.Role), Content: content, Metadata: map[string]any{},
-			CreatedAt: canonicalTime(message.CreatedAt), sortCreatedAt: message.CreatedAt,
+			CreatedAt: canonicalTime(message.CreatedAt),
 		})
 	}
-	sort.SliceStable(projected, func(left, right int) bool {
-		leftTime, rightTime := projected[left].sortCreatedAt, projected[right].sortCreatedAt
-		if leftTime != rightTime {
-			return leftTime < rightTime
-		}
-		leftKind, leftID := canonicalMessageSourceOrder(projected[left].MessageID)
-		rightKind, rightID := canonicalMessageSourceOrder(projected[right].MessageID)
-		if leftKind != rightKind {
-			return leftKind < rightKind
-		}
-		if leftID != rightID {
-			return leftID < rightID
-		}
-		return projected[left].MessageID < projected[right].MessageID
-	})
+	seenMessageIDs := make(map[string]struct{}, len(projected))
 	for index := range projected {
+		messageID, err := canonicalMessageContractID(projected[index].MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if _, duplicated := seenMessageIDs[messageID]; duplicated {
+			return nil, errors.New("canonical message projection requires unique message ids")
+		}
+		seenMessageIDs[messageID] = struct{}{}
+		projected[index].MessageID = messageID
 		projected[index].Seq = strconv.Itoa(index + 1)
 	}
 	return projected, nil
@@ -1259,17 +1277,28 @@ func canonicalRunEventJournalSourceBytes(event *appagentthread.RunEventSummary) 
 	return len(event.EventType) + len(event.Payload)
 }
 
-func canonicalMessageSourceOrder(id string) (int, int64) {
+// Journal-only fallback messages use namespaced internal IDs. The public
+// canonical contract exposes the globally allocated numeric source ID instead.
+func canonicalMessageContractID(id string) (string, error) {
+	id = strings.TrimSpace(id)
 	if value, err := strconv.ParseInt(id, 10, 64); err == nil && value > 0 {
-		return 0, value
+		return strconv.FormatInt(value, 10), nil
 	}
-	if strings.HasPrefix(id, "run-") {
-		return 1, canonicalNumericIDFragment(id)
+
+	var sourceID string
+	switch {
+	case strings.HasPrefix(id, "run-") && strings.HasSuffix(id, "-input-human"):
+		sourceID = strings.TrimSuffix(strings.TrimPrefix(id, "run-"), "-input-human")
+	case strings.HasPrefix(id, "event-"):
+		sourceID = strings.TrimPrefix(id, "event-")
+	default:
+		return "", errors.New("canonical message projection requires a positive decimal message id")
 	}
-	if strings.HasPrefix(id, "event-") {
-		return 2, canonicalNumericIDFragment(id)
+	value, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil || value <= 0 {
+		return "", errors.New("canonical message projection requires a positive decimal message id")
 	}
-	return 3, canonicalNumericIDFragment(id)
+	return strconv.FormatInt(value, 10), nil
 }
 
 func canonicalNumericIDFragment(value string) int64 {

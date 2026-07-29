@@ -9187,19 +9187,19 @@ describe('TaskDetailPage', () => {
       code: 0,
       msg: '',
     });
-    mockListTaskThreadRuns.mockImplementation(({ page_size }) =>
-      Promise.resolve({
+    mockListTaskThreadRuns.mockImplementation(({ parent_run_id }) => {
+      const isPrimaryRunLookup = parent_run_id === '0';
+      return Promise.resolve({
         data: {
-          runs:
-            page_size === 1
-              ? [latestRunResponses.shift() ?? makeTopLevelRun('succeeded')]
-              : [],
-          total: page_size === 1 ? 1 : 0,
+          runs: isPrimaryRunLookup
+            ? [latestRunResponses.shift() ?? makeTopLevelRun('succeeded')]
+            : [],
+          total: isPrimaryRunLookup ? 1 : 0,
         },
         code: 0,
         msg: '',
-      }),
-    );
+      });
+    });
     mockListTaskThreadMessages
       .mockResolvedValueOnce({
         data: {

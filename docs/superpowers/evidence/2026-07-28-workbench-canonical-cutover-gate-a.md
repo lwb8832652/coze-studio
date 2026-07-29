@@ -18,9 +18,10 @@ git log -1 --format=%H -- \
 ```
 
 - 固定审计窗口：`2026-06-28T00:00:00+08:00` 至
-  `2026-07-28T21:41:32+08:00`
-- 本次只冻结测试与证据，不修改业务代码、route registration、前端 transport、
-  generated files 或数据库状态。
+  `2026-07-29T16:47:51+08:00`
+- 前述 snapshot/request-resolution lineage 只冻结测试与证据；后文 Gate A candidate
+  regression 还包含通过 TDD 关闭的公开投影与 Run 生命周期缺陷。整个 Gate A 不修改
+  route registration、generated files 或数据库状态。
 
 ## Immutable Route Inventory
 
@@ -177,7 +178,138 @@ GET  /api/workbench/task_threads/{thread_id}/run_events/stream
   列表、详情、Run 读取和刷新均命中 `/api/workbench/task_threads/**`。
 - 该控制仅冻结旧页面行为，不据此判断 canonical UI。
 
-## Gate Decision
+## Canonical Candidate Regression
+
+### Candidate And Environment
+
+- 候选分支：`codex/workbench-canonical-ui-cutover-retirement`。
+- 候选 lineage：已提交基线为 `e432cab196ef2250aed27059a1b374a7f62e377a`；
+  本节同时覆盖随后提交的 equivalence test、三项 canonical public projection 修复和
+  三项前端 Run 生命周期修复。
+  evidence 文件不写自引用最终 SHA，使用本文件开头命令机械获取。
+- 后端：feature worktree，`127.0.0.1:18888`，显式启用最后一次迁移 gate，使用本机
+  ignored debug 环境连接已配置在线数据库；测试环境跳过 vector store 初始化。
+- 前端：同一 feature worktree，`127.0.0.1:18080`，只代理上述 feature backend。
+- 账号与空间：复用 Old-page Browser Control 的同一登录会话和同一在线空间；空间只
+  持久化为 `7666...8944`，不记录 session、cookie 或完整动态 ID。
+- 原 `dev` 对照服务和 `*:8888` 后端未被 feature server 覆盖或修改。
+
+### Paired Contract And Automation
+
+`client-equivalence.test.ts` 覆盖 14 组 V1/canonical 资源对、页面可见字段、顺序、
+状态、分页、错误、流事件和完整 canonical workflow。测试同时断言：
+
+- 页面请求只使用 `/api/workbench/threads/**`；
+- 无文件创建、延迟创建/上传/启动、追问、取消、恢复、重试、Artifact、Memory 和
+  SSE 的写次数符合预期；
+- 一个 Run 只有一个 SSE source，不存在 fallback、shadow request 或第二条 stream；
+- 生产代码不包含旧 route 字符串。
+
+Gate A fresh automation：
+
+| 命令 | 结果 |
+| --- | --- |
+| `rushx test src/pages/tasks/__tests__/task-run-actions-hook.test.tsx src/pages/tasks/__tests__/task-run-event-stream.test.tsx src/pages/tasks/__tests__/task-detail-loader.test.ts` | PASS，3/3 files，26/26 tests；修复前新增断言稳定产生 5 个失败 |
+| `rushx test src/pages/workbench/thread-client src/pages/workbench src/pages/tasks` | PASS，42/42 files，429/429 tests；equivalence 5/5 |
+| `rushx lint` | PASS，退出码 0 |
+| `rushx build` | PASS，退出码 0；仅有既有 Browserslist/package-type warning |
+| `go test -p 1 -gcflags="all=-l -N" ./api/handler/coze ./api/router/coze ./application/agentthread ./application/workbench -count=1` | PASS；使用允许 loopback httptest 的本机执行环境 |
+
+### Browser Matrix
+
+以下均为本轮 in-app browser 实际观测；动态 ID 已规范化。测试创建两条带 Gate A
+标签的 Thread，没有删除、批量更新或改写既有在线记录。
+
+| 场景 | 结果 | 证据摘要 |
+| --- | --- | --- |
+| 列表、详情、状态与历史数据 | PASS | canonical 搜索和详情可见；旧 Thread 可正常解码，标题、消息、执行流程与输入区一致 |
+| 无附件首次提交 | PASS | 创建、stream、终态与自动标题成功；Agent 回复只显示一次 |
+| 同 Thread 追问 | PASS | 原子 Run 提交、单 stream、终态与刷新后持久化成功 |
+| 单附件首次提交 | PASS | 选择安全文本 fixture 后完成延迟 Thread、上传和 Run；页面显示两步执行流程与终态 |
+| 取消 | PARTIAL / RACE | 页面两次实际发出停止操作，但在线模型均在取消持久化前自然完成；不声称得到 canceled 终态。取消 route、写次数和错误投影由 deterministic tests 覆盖 |
+| 恢复与重试 | AUTOMATED SUBSTITUTE | 本轮没有可安全构造的 interrupted/failed Run；canonical resume/retry 合同和页面 action 由定向测试覆盖 |
+| Artifact | PASS EMPTY | 详情显示 `产物 0`，产物抽屉、当前/已移除范围、扫描队列和空态正常加载 |
+| Token usage | PASS | 弹层显示对话总量、输入、输出和当前回复聚合；刷新后总量仍可见 |
+| Runtime doctor | PASS | Eino ADK、模型、Web Fetch/Search、Skill 状态可见；Sandbox 未启用和 MCP unknown 是环境诊断，不是 transport 错误 |
+| Memory 与安全审计 | PASS EMPTY | Memory、Guardrail、MCP audit 使用 canonical 子资源并显示 0 条空态；刷新、筛选和导入/导出入口存在 |
+| 刷新持久化 | PASS | 详情 reload 后标题、两条验证回复、输入区和 usage 均恢复；无重复 Agent 回复 |
+
+### Canonical Request And Log Ownership
+
+浏览器行为对应的服务端 structured log 只出现 canonical contract。实际观测并规范化
+的 Thread workflow 路径包括：
+
+```text
+POST /api/workbench/threads/search
+POST /api/workbench/threads
+GET  /api/workbench/threads/{thread_id}
+GET  /api/workbench/threads/{thread_id}/messages
+GET  /api/workbench/threads/{thread_id}/runs
+POST /api/workbench/threads/{thread_id}/runs
+GET  /api/workbench/threads/{thread_id}/runs/{run_id}/events
+GET  /api/workbench/threads/{thread_id}/runs/{run_id}/stream
+GET  /api/workbench/threads/{thread_id}/artifacts
+GET  /api/workbench/threads/{thread_id}/token_usage
+GET  /api/workbench/threads/{thread_id}/memories
+GET  /api/workbench/threads/{thread_id}/guardrail_audit_events
+GET  /api/workbench/threads/{thread_id}/mcp_runtime_audit_events
+POST /api/workbench/threads/{thread_id}/suggestions
+```
+
+附件场景还实际完成 canonical upload workflow。日志使用 operation、route template、
+status、duration、脱敏 principal hash、Thread/Run ID 和公开资源类型；未观察到消息正文、
+附件名、signed URL、credential、tool 参数/结果或 checkpoint bytes。候选页未出现
+`/api/workbench/task_threads/**`、本地 `/api/threads/**` 或 `/api/runs/**` 请求。
+
+同一 Run 的服务端记录只有一条 `run.stream.reconnect`，配合页面级 write-count 测试，
+未发现 duplicate write 或第二条 SSE。
+
+### Defects Found And Closed Before Gate Decision
+
+1. 旧数据 journal fallback 使用内部字符串 ID，违反 canonical `Message.message_id` 必须
+   为正十进制字符串的公开合同。先新增失败测试，再将 fallback 投影为 source Run/Event
+   数字 ID，同时拒绝非法值和归一化后重复 ID。
+2. 隐藏 tool/reasoning 细节后，event-derived assistant 与持久化 assistant 可能投影为
+   两条相同公开消息。先新增失败测试，再只在 canonical message projection 中优先保留
+   durable assistant；events endpoint 保持不变。
+3. 完整 handler package 回归进一步证明：同一毫秒内的 user fallback 与 durable
+   assistant 会被 handler 的第二次 source-kind 排序反转。应用层 journal 已提供稳定的
+   会话顺序，因此删除冗余二次排序，保留 user-before-assistant 的既有语义。
+4. 子智能体重试返回的内部 worker 虽然是 top-level `run_kind=task`，但不代表新的主
+   Task Run。前端不再把 `source=subagent_retry` 的返回值提交给主 SSE，正常顶层任务
+   retry 仍按既有语义切换主 Run。
+5. 详情刷新原先会把最新的子智能体重试 worker 当成主 Run。主 Run 查询现在按审核后的
+   `source=subagent_retry` metadata 排除内部 worker；若第一页全是 retry worker，则按
+   canonical `total` 继续读取后续有界分页，直到找到主 Run 或数据耗尽。测试同时固定
+   normal retry 仍可被选中，并覆盖 20 个 retry worker 占满第一页的场景。
+6. SSE 收到 `run.completed`、`run.failed`、`run.canceled/cancelled` 或
+   `run.interrupted` 后原先等待额外 `onEnd` 才关闭。现在先提交终态事件，再立即 abort
+   并关闭唯一 subscription；重复 terminal/end 回调均不再产生第二次关闭或写入。
+
+六项修复后，既有在线 Thread 可正常打开且 Agent 回复只显示一次；对应前后端定向测试、
+42-file 前端回归和四 package 后端 Gate A 回归均通过。
+
+### Console Residual
+
+- 修复上述 decoder/duplicate 问题后，没有 canonical HTTP、SSE、React render crash、
+  unhandled rejection 或敏感日志错误。
+- 打开 Token 用量弹层时记录一条 Semi Tooltip 的 React development warning，浏览器
+  以 `error` level 收集。stack 指向未被本分支修改的
+  `task-usage-popover.tsx`；`origin/dev...HEAD` 和 working-tree diff 对该文件均为空。
+  Old-page control 已记录同类 Tooltip/Dropdown state-update error，因此本项作为既有
+  UI library residual，不归因为 canonical transport；Gate B 仍会复核。
+- 其余为 Zustand devtools extension 和 React Router future flag warning。
+
+## Final Gate A Decision
+
+- Steps 1-4：PASS；取消/恢复/重试中不可稳定构造的终态已由具名 deterministic test
+  替代，没有虚构页面结果。
+- 页面可见 parity、canonical-only request ownership、单写和单 SSE：PASS。
+- 四组 source routes 在 Gate A 时仍存在，满足可回退的比较边界。
+- 五项 `/api/runs/**` audit 均有显式状态，但第 3、4 项仍为 `BLOCKED`。
+- **Gate A：PASS。Tasks 10-13 可继续；Task 14 仍禁止执行。**
+
+## Baseline Gate Decision
 
 - 本地四族 route inventory 已冻结，七个目标前端 baseline 通过等价定向命令。
 - Browser request-path 子项已由真实 network inventory 补齐；显式 account-role

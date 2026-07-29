@@ -129,7 +129,7 @@ const mapSubagentRunStatus = (
   }
 };
 
-const getSubagentRetrySourceRunID = (run: TaskThreadRun) => {
+export const getSubagentRetrySourceRunID = (run: TaskThreadRun) => {
   const metadata = parseJSONObject(run.metadata);
   if (getPayloadString(metadata, 'source') !== 'subagent_retry') {
     return '';

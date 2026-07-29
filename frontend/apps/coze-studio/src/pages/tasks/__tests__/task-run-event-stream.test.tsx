@@ -186,7 +186,7 @@ describe('useTaskThreadRunEventStream canonical lifecycle', () => {
     expect(maxOpenSources).toBe(1);
   });
 
-  it('waits for canonical end after one terminal event and ignores duplicate terminal callbacks', () => {
+  it('closes on the first terminal event and ignores duplicate terminal callbacks', () => {
     renderHarness();
     const source = capturedSources[0];
 
@@ -201,8 +201,8 @@ describe('useTaskThreadRunEventStream canonical lifecycle', () => {
       );
     });
 
-    expect(source.close).not.toHaveBeenCalled();
-    expect(source.request.signal.aborted).toBe(false);
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(source.request.signal.aborted).toBe(true);
     expect(renderedEvents.map(event => event.id)).toEqual(['event-terminal']);
 
     act(() => {
@@ -216,8 +216,8 @@ describe('useTaskThreadRunEventStream canonical lifecycle', () => {
       );
     });
 
-    expect(source.close).not.toHaveBeenCalled();
-    expect(source.request.signal.aborted).toBe(false);
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(source.request.signal.aborted).toBe(true);
     expect(renderedEvents.map(event => event.id)).toEqual(['event-terminal']);
 
     act(() => source.request.onEnd());

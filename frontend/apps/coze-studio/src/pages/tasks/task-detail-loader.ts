@@ -32,6 +32,7 @@ import {
   fetchTaskThreadSubagentRuns,
   getRunLifecycleByRunID,
   getSubagentLifecycleByChildRunID,
+  getSubagentRetrySourceRunID,
   getSubagentTimelineByChildRunID,
   type TaskDetailSubagentRun,
 } from './task-detail-subagents';
@@ -63,6 +64,7 @@ type TaskThreadRun = WorkbenchRun & { config?: string };
 type TaskThreadTodo = WorkbenchTodo;
 
 const COMPLETED_TASK_PROGRESS = 100;
+const PRIMARY_RUN_PAGE_SIZE = 20;
 
 export interface TaskDetail {
   task?: TaskThreadDetailModel;
@@ -241,6 +243,41 @@ const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
   };
 };
 
+const findLatestPrimaryTaskRun = async ({
+  firstPage,
+  spaceId,
+  threadId,
+}: {
+  firstPage: Awaited<ReturnType<typeof listTaskThreadRuns>>;
+  spaceId: string;
+  threadId: string;
+}): Promise<TaskThreadRun | undefined> => {
+  let page = 1;
+  let response = firstPage;
+
+  for (;;) {
+    const runs = response.data?.runs ?? [];
+    const primaryRun = runs.find(run => !getSubagentRetrySourceRunID(run));
+    if (primaryRun) {
+      return primaryRun;
+    }
+
+    const total = response.data?.total ?? 0;
+    if (!runs.length || page * PRIMARY_RUN_PAGE_SIZE >= total) {
+      return undefined;
+    }
+
+    page += 1;
+    response = await listTaskThreadRuns({
+      thread_id: threadId,
+      space_id: spaceId,
+      parent_run_id: '0',
+      page,
+      page_size: PRIMARY_RUN_PAGE_SIZE,
+    });
+  }
+};
+
 // eslint-disable-next-line complexity -- Keeps one coherent detail snapshot across parallel page reads.
 const fetchTaskThreadDetail = async (
   id: string,
@@ -270,7 +307,7 @@ const fetchTaskThreadDetail = async (
       space_id: spaceId,
       parent_run_id: '0',
       page: 1,
-      page_size: 1,
+      page_size: PRIMARY_RUN_PAGE_SIZE,
     }),
     listTaskThreadArtifacts({
       thread_id: threadID,
@@ -279,8 +316,11 @@ const fetchTaskThreadDetail = async (
       page_size: 50,
     }),
   ]);
-  const latestTopLevelRun: TaskThreadRun | undefined =
-    topLevelRunsResponse.data?.runs?.[0];
+  const latestTopLevelRun = await findLatestPrimaryTaskRun({
+    firstPage: topLevelRunsResponse,
+    spaceId,
+    threadId: threadID,
+  });
   const runEventsResponse = latestTopLevelRun
     ? await listTaskThreadRunEvents({
         thread_id: threadID,

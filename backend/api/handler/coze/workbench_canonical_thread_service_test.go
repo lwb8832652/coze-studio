@@ -923,6 +923,106 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 	require.Equal(t, "99", *beforePage.NextBeforeSeq)
 }
 
+func TestListCanonicalThreadMessagesProjectsLegacyJournalIDsAsDecimalStrings(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "legacy journal", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"legacy input"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	eventResponse, err := appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"legacy output"}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, eventResponse)
+	require.NotNil(t, eventResponse.Event)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, strconv.FormatInt(runResponse.Run.RunID, 10), page.Data[0].MessageID)
+	require.Equal(t, strconv.FormatInt(eventResponse.Event.EventID, 10), page.Data[1].MessageID)
+	for _, message := range page.Data {
+		messageID, parseErr := strconv.ParseInt(message.MessageID, 10, 64)
+		require.NoError(t, parseErr)
+		require.Positive(t, messageID)
+	}
+	require.NotContains(t, string(response.Result().Body()), `"message_id":"run-`)
+	require.NotContains(t, string(response.Result().Body()), `"message_id":"event-`)
+}
+
+func TestListCanonicalThreadMessagesPrefersPersistedAssistantOverVisibleEventDuplicate(t *testing.T) {
+	t.Setenv(canonicalAPIEnabledEnv, "true")
+	h := authenticatedAgentThreadTestServer()
+	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
+	installAgentThreadTestService(t)
+
+	thread := createCanonicalTestThread(t, 1001, "deduplicated journal", `{}`)
+	runResponse, err := appagentthread.SVC.CreateRun(
+		context.Background(),
+		&appagentthread.CreateRunRequest{
+			ThreadID: thread.ThreadID,
+			Input:    `{"messages":[{"role":"user","content":"deduplicate input"}]}`,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, runResponse)
+	require.NotNil(t, runResponse.Run)
+	_, err = appagentthread.SVC.AppendRunEvent(
+		context.Background(),
+		&appagentthread.AppendRunEventRequest{
+			ThreadID:  thread.ThreadID,
+			RunID:     runResponse.Run.RunID,
+			EventType: "message.completed",
+			Payload:   `{"role":"assistant","content":"deduplicated output","tool_calls":[{"id":"call-1","name":"catalog","arguments":{}}]}`,
+		},
+	)
+	require.NoError(t, err)
+	persisted, err := appagentthread.SVC.AppendMessage(
+		context.Background(),
+		&appagentthread.AppendMessageRequest{
+			ThreadID: thread.ThreadID,
+			RunID:    runResponse.Run.RunID,
+			Role:     appagentthread.MessageRoleAssistant,
+			Content:  "deduplicated output",
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	require.NotNil(t, persisted.Message)
+
+	path := "/api/workbench/threads/" + strconv.FormatInt(thread.ThreadID, 10) + "/messages"
+	response := performCanonicalThreadJSONRequest(t, h, http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var page canonicalMessagePage
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &page))
+	require.Len(t, page.Data, 2)
+	require.Equal(t, appagentthread.MessageRoleUser, appagentthread.MessageRole(page.Data[0].Role))
+	require.Equal(t, appagentthread.MessageRoleAssistant, appagentthread.MessageRole(page.Data[1].Role))
+	require.Equal(t, "deduplicated output", page.Data[1].Content)
+	require.Equal(t, strconv.FormatInt(persisted.Message.MessageID, 10), page.Data[1].MessageID)
+	require.Equal(t, 1, strings.Count(string(response.Result().Body()), "deduplicated output"))
+}
+
 func performCanonicalThreadJSONRequest(
 	t *testing.T,
 	h *server.Hertz,

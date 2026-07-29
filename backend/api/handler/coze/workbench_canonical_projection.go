@@ -107,8 +107,6 @@ type canonicalMessage struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt string         `json:"created_at"`
 	Seq       string         `json:"seq,omitempty"`
-
-	sortCreatedAt int64
 }
 
 type canonicalRunEvent struct {

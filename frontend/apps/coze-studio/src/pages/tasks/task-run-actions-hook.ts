@@ -343,16 +343,13 @@ export const useTaskRunActions = <TaskRequestToken,>({
     try {
       if (!successfulMutationKeysRef.current.has(mutationKey)) {
         try {
-          const response = await retryTaskThreadSubagentRun({
+          await retryTaskThreadSubagentRun({
             thread_id: submittedTaskDetailId,
             run_id: runId,
             space_id: submittedSpaceID,
           });
           if (!isCurrentTaskRequest(request)) {
             return;
-          }
-          if (response.data && isTopLevelRun(response.data)) {
-            commitTopLevelRun?.(response.data);
           }
         } catch (err) {
           if (isCurrentTaskRequest(request)) {

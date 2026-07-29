@@ -3,7 +3,7 @@
 ## 审计边界
 
 - 固定窗口：`2026-06-28T00:00:00+08:00` 至
-  `2026-07-28T21:41:32+08:00`。
+  `2026-07-29T16:47:51+08:00`。
 - Production source baseline SHA：
   `3b060204c039d9cc775ec16298d4296964beee73`。production-hit 查询直接针对该
   Git object 执行，不依赖当前工作树内容。
@@ -33,6 +33,24 @@ git log -1 --format=%H -- \
 
 第 3、4 项保持 `BLOCKED`。因此不得把“本地生产调用方为 0”扩写为“无外部
 使用”，并且 **Task 14 禁止执行**；Tasks 2-13 可继续。
+
+## Gate A Candidate Source Status
+
+Gate A 候选工作树重新执行 production string scan 后，当前状态为：
+
+- `frontend/apps/coze-studio/src/pages/workbench` 与 `src/pages/tasks` 已没有
+  `/api/workbench/task_threads/**`、本地 `/api/threads/**` 或 `/api/runs/**` production
+  route string；页面只通过 app-owned canonical client 请求
+  `/api/workbench/threads/**`。
+- TaskThread V1 IDL、generated schema 和后端 handler/router 仍按 Gate A 规则保留，
+  等 Gate B 的 Task 12 才物理删除。
+- `backend/internal/deerflowparity/newx_client.go` 仍是待迁移的本地 source consumer；
+  Task 10 必须先迁到 canonical。`deerflow_client.go` 仍明确属于外部 DeerFlow dialect。
+- 本地 stateless `/api/runs/**` 仍只有服务端实现/测试，没有新发现 production client。
+  这不改变外部日志与消费者登记均不可查询的事实。
+
+因此 Gate A 的 UI migration 可以通过，但第 3、4 项没有被后续浏览器流量替代或补齐；
+**Task 14 继续保持 BLOCKED，十条 `/api/runs/**` route 必须保留。**
 
 ## 本地调用方分类
 
