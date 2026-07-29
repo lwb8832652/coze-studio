@@ -15,16 +15,18 @@
       "frontend/apps/coze-studio/package.json",
       "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
       "frontend/packages/arch/api-schema/src/idl/workbench/thread.ts",
+      "frontend/packages/arch/fetch-stream/package.json",
       "docs/superpowers/context/workbench-chat.md",
       "idl/workbench/task.thrift",
       "idl/workbench/thread.thrift",
+      "idl/workbench/thread_product.thrift",
       "backend/api/router/coze/api.go",
-      "backend/api/router/coze/custom_routes.go",
       "backend/api/router/coze/workbench_canonical_thread_route_test.go",
       "backend/api/handler/coze/workbench_canonical_*.go",
-      "backend/api/handler/coze/workbench_thread_service*.go",
       "backend/api/handler/coze/langgraph_run_service*.go",
       "backend/api/model/workbench/task/task.go",
+      "backend/api/model/workbench/thread_contract/**",
+      "backend/api/model/workbench/thread_product_contract/**",
       "backend/application/application.go",
       "backend/application/agentthread/**",
       "backend/domain/agentthread/**",
@@ -81,290 +83,82 @@
     },
     {
       "id": "frontend.api.create_thread",
-      "label": "Generated CreateTaskThread client",
+      "label": "canonicalThreadClient.createThread",
       "layer": "frontend_transport",
-      "kind": "api_client",
+      "kind": "api_client_method",
       "production_status": "current",
       "source_anchors": [
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
           "symbol": "createTaskThread",
-          "locator": "export const createTaskThread = workbenchTask.CreateTaskThread;"
+          "locator": "await canonicalThreadClient.createThread({"
         },
         {
-          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
-          "symbol": "CreateTaskThread",
-          "locator": "export const CreateTaskThread ="
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.createThread",
+          "locator": "async createThread(request: CreateWorkbenchThreadRequest) {"
         }
       ],
       "evidence": [
         {
-          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
-          "locator": "it('navigates to the task execution page after send returns a task'"
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts",
+          "locator": "it('creates one initial user submission without unsupported create options'"
         }
       ]
     },
     {
       "id": "frontend.api.upload_files",
-      "label": "uploadTaskThreadFiles",
+      "label": "canonicalThreadClient.uploadFiles",
       "layer": "frontend_transport",
-      "kind": "function",
+      "kind": "api_client_method",
       "production_status": "current",
       "source_anchors": [
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
           "symbol": "uploadTaskThreadFiles",
-          "locator": "export const uploadTaskThreadFiles = async ({"
+          "locator": "await canonicalThreadClient.uploadFiles({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.uploadFiles",
+          "locator": "async uploadFiles(request: UploadWorkbenchFilesRequest) {"
         }
       ],
       "evidence": [
         {
-          "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
-          "locator": "it('uploads selected files before starting a new canonical task run'"
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/page-service-parity.test.ts",
+          "locator": "delegates Workbench Thread writes and uploads while preserving envelopes"
         }
       ]
     },
     {
       "id": "frontend.api.create_run",
-      "label": "Generated CreateTaskThreadRun client",
+      "label": "canonicalThreadClient.createRun",
       "layer": "frontend_transport",
-      "kind": "api_client",
+      "kind": "api_client_method",
       "production_status": "current",
       "source_anchors": [
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
           "symbol": "createTaskThreadRun",
-          "locator": "export const createTaskThreadRun = workbenchTask.CreateTaskThreadRun;"
+          "locator": "await canonicalThreadClient.createRun({"
         },
         {
-          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
-          "symbol": "CreateTaskThreadRun",
-          "locator": "export const CreateTaskThreadRun ="
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.createRun",
+          "locator": "async createRun(request: CreateWorkbenchRunRequest) {"
         }
       ],
       "evidence": [
         {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
-          "locator": "it('submits only the current turn and lets the server rebuild thread history'"
-        }
-      ]
-    },
-    {
-      "id": "frontend.events.event_source",
-      "label": "TaskDetail Event Projection",
-      "layer": "frontend_projection",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
-          "symbol": "useTaskThreadRunEventStream",
-          "locator": "const eventSource = new EventSource("
-        }
-      ],
-      "evidence": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
-          "locator": "it('streams canonical thread run events into the execution flow'"
-        }
-      ]
-    },
-    {
-      "id": "contract.workbench_task.thrift",
-      "label": "WorkbenchTaskService Thrift contract",
-      "layer": "transport_contract",
-      "kind": "service_contract",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "idl/workbench/task.thrift",
-          "symbol": "WorkbenchTaskService",
-          "locator": "service WorkbenchTaskService {"
-        },
-        {
-          "path": "backend/api/model/workbench/task/task.go",
-          "symbol": "CreateTaskThreadRequest",
-          "locator": "type CreateTaskThreadRequest struct {"
-        },
-        {
-          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
-          "symbol": "CreateTaskThread",
-          "locator": "export const CreateTaskThread ="
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/model/workbench/task/task.go",
-          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.create_thread",
-      "label": "Hertz CreateTaskThread handler",
-      "layer": "http_handler",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "CreateTaskThread",
-          "locator": "func CreateTaskThread(ctx context.Context, c *app.RequestContext)"
-        },
-        {
-          "path": "backend/api/router/coze/api.go",
-          "symbol": "RegisterWorkBenchRoutes",
-          "locator": "_workbench.POST(\"/task_threads\","
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestCreateTaskThreadHandlerCreatesThreadRunAndInitialMessage"
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.create_run",
-      "label": "Hertz CreateTaskThreadRun handler",
-      "layer": "http_handler",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "CreateTaskThreadRun",
-          "locator": "func CreateTaskThreadRun(ctx context.Context, c *app.RequestContext)"
-        },
-        {
-          "path": "backend/api/router/coze/api.go",
-          "symbol": "RegisterWorkBenchRoutes",
-          "locator": "_thread_id.POST(\"/runs\","
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestCreateTaskThreadRunHandlerCreatesPendingRun"
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.stream_events",
-      "label": "Hertz StreamTaskThreadRunEvents handler",
-      "layer": "http_sse",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "StreamTaskThreadRunEvents",
-          "locator": "func StreamTaskThreadRunEvents(ctx context.Context, c *app.RequestContext)"
-        },
-        {
-          "path": "backend/api/router/coze/custom_routes.go",
-          "symbol": "registerWorkBenchCustomRoutes",
-          "locator": "thread.GET(\"/run_events/stream\", handler.StreamTaskThreadRunEvents)"
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.cancel_run",
-      "label": "Hertz CancelTaskThreadRun handler",
-      "layer": "http_handler",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "CancelTaskThreadRun",
-          "locator": "func CancelTaskThreadRun(ctx context.Context, c *app.RequestContext)"
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestCancelTaskThreadRunHandlerTransitionsRun"
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.resume_run",
-      "label": "Hertz ResumeTaskThreadRun handler",
-      "layer": "http_handler",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "ResumeTaskThreadRun",
-          "locator": "func ResumeTaskThreadRun(ctx context.Context, c *app.RequestContext)"
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestResumeTaskThreadRunHandlerCreatesQueuedResumeRun"
-        }
-      ]
-    },
-    {
-      "id": "http.workbench.retry_subagent",
-      "label": "Hertz RetryTaskThreadSubagentRun handler",
-      "layer": "http_handler",
-      "kind": "function",
-      "production_status": "current",
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "symbol": "RetryTaskThreadSubagentRun",
-          "locator": "func RetryTaskThreadSubagentRun(ctx context.Context, c *app.RequestContext)"
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestRetryTaskThreadSubagentRunHandlerCreatesQueuedRetryRun"
-        }
-      ]
-    },
-    {
-      "id": "compat.langgraph.create_run",
-      "label": "LangGraph-compatible Run API adapter",
-      "layer": "compatibility_api",
-      "kind": "function",
-      "production_status": "current",
-      "runtime_scope": "compatibility_contract",
-      "package": "internal/http-adapter",
-      "version": "repository",
-      "version_source": {
-        "type": "text_pattern",
-        "path": "backend/api/handler/coze/langgraph_run_service.go",
-        "pattern": "func CreateLangGraphRun"
-      },
-      "source_anchors": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "symbol": "CreateLangGraphRun",
-          "locator": "func CreateLangGraphRun(ctx context.Context, c *app.RequestContext)"
-        }
-      ],
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK"
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/canonical-thread-core-client.test.ts",
+          "locator": "it('creates one atomic follow-up and keeps only uploaded file_id references'"
         }
       ]
     },
     {
       "id": "compat.langgraph.stateless_run",
-      "label": "LangGraph stateless createLangGraphStatelessRun",
+      "label": "Retained stateless /api/runs adapter (zero-use gate blocked)",
       "layer": "compatibility_api",
       "kind": "function",
       "production_status": "current",
@@ -381,7 +175,8 @@
           "path": "backend/api/handler/coze/langgraph_run_service_test.go",
           "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
         }
-      ]
+      ],
+      "retention_status": "retained_zero_use_gate_blocked"
     },
     {
       "id": "compat.langgraph.stateless_backing_thread",
@@ -1576,29 +1371,6 @@
       ]
     },
     {
-      "id": "framework.browser_eventsource",
-      "label": "Browser EventSource",
-      "layer": "framework",
-      "kind": "platform_api",
-      "production_status": "current",
-      "runtime_scope": "ui_only",
-      "package": "browser:EventSource",
-      "version": "platform",
-      "version_source": { "type": "platform", "name": "browser" },
-      "source_anchors": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
-          "locator": "const eventSource = new EventSource("
-        }
-      ],
-      "evidence": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx",
-          "locator": "it('streams canonical thread run events into the execution flow'"
-        }
-      ]
-    },
-    {
       "id": "framework.thriftgo",
       "label": "Thriftgo generated contract",
       "layer": "framework",
@@ -1609,20 +1381,20 @@
       "version": "0.4.5",
       "version_source": {
         "type": "text_pattern",
-        "path": "backend/api/model/workbench/task/task.go",
+        "path": "backend/api/model/workbench/thread_contract/thread.go",
         "pattern": "Code generated by thriftgo \\(([^)]+)\\)",
         "group": 1
       },
       "source_anchors": [
         {
-          "path": "backend/api/model/workbench/task/task.go",
+          "path": "backend/api/model/workbench/thread_contract/thread.go",
           "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
         }
       ],
       "evidence": [
         {
-          "path": "idl/workbench/task.thrift",
-          "locator": "service WorkbenchTaskService {"
+          "path": "idl/workbench/thread.thrift",
+          "locator": "service WorkbenchCanonicalThreadService {"
         }
       ]
     },
@@ -1642,14 +1414,14 @@
       },
       "source_anchors": [
         {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
           "locator": "\"github.com/cloudwego/hertz/pkg/protocol/sse\""
         }
       ],
       "evidence": [
         {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents"
         }
       ]
     },
@@ -1662,7 +1434,10 @@
       "runtime_scope": "canonical_runtime",
       "package": "go",
       "version": "1.24.0",
-      "version_source": { "type": "go_directive", "path": "backend/go.mod" },
+      "version_source": {
+        "type": "go_directive",
+        "path": "backend/go.mod"
+      },
       "source_anchors": [
         {
           "path": "backend/application/agentthread/worker.go",
@@ -2071,14 +1846,14 @@
       },
       "source_anchors": [
         {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "payload, err := sonic.Marshal(taskThreadRunEventToAPI(event))"
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))"
         }
       ],
       "evidence": [
         {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestCanonicalRunStreamMessagesTupleUsesMessagesEvents"
         }
       ]
     },
@@ -2499,7 +2274,7 @@
     },
     {
       "id": "contract.workbench_canonical_thread.thrift",
-      "label": "Workbench canonical Thread Thrift contract",
+      "label": "Canonical Workbench Thread and product Thrift contract",
       "layer": "transport_contract",
       "kind": "service_contract",
       "production_status": "current",
@@ -2510,6 +2285,11 @@
           "locator": "service WorkbenchCanonicalThreadService {"
         },
         {
+          "path": "idl/workbench/thread_product.thrift",
+          "symbol": "CanonicalArtifact",
+          "locator": "struct CanonicalArtifact {"
+        },
+        {
           "path": "frontend/packages/arch/api-schema/src/idl/workbench/thread.ts",
           "symbol": "CreateCanonicalThread",
           "locator": "export const CreateCanonicalThread ="
@@ -2518,13 +2298,13 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
-          "locator": "func TestWorkbenchCanonicalThreadRoutes"
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
         }
       ]
     },
     {
       "id": "http.workbench.canonical_thread",
-      "label": "Feature-gated canonical Thread HTTP handlers",
+      "label": "Always-on canonical Thread HTTP handlers",
       "layer": "http_handler",
       "kind": "capability",
       "production_status": "current",
@@ -2593,7 +2373,7 @@
     },
     {
       "id": "http.workbench.canonical_run",
-      "label": "Feature-gated canonical Run HTTP handlers",
+      "label": "Always-on canonical Run HTTP handlers",
       "layer": "http_handler",
       "kind": "capability",
       "production_status": "current",
@@ -2606,36 +2386,34 @@
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
-          "symbol": "ListCanonicalRunEvents",
-          "locator": "func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext)"
+          "symbol": "CancelCanonicalRun",
+          "locator": "func CancelCanonicalRun(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_service.go",
+          "symbol": "ResumeCanonicalRun",
+          "locator": "func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext)"
+        },
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service.go",
+          "symbol": "RetryCanonicalSubagentRun",
+          "locator": "func RetryCanonicalSubagentRun(ctx context.Context, c *app.RequestContext)"
         }
       ],
       "evidence": [
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
-          "locator": "func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency"
-        },
-        {
-          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
-          "locator": "func TestCanonicalCreateRunCommandResumeUsesSameApplicationUseCase"
-        },
-        {
-          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
-          "locator": "func TestCanonicalWaitCancellationHonorsEndpointDisconnectMode"
+          "locator": "func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
           "locator": "func TestCanonicalCancelRunIsIdempotentForTerminalRuns"
-        },
-        {
-          "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
-          "locator": "func TestCanonicalRunMessagesEnforceJournalBudgets"
         }
       ]
     },
     {
       "id": "http.workbench.canonical_run_stream",
-      "label": "Feature-gated canonical Run SSE handlers",
+      "label": "Always-on canonical Run SSE handlers",
       "layer": "http_sse",
       "kind": "capability",
       "production_status": "current",
@@ -2781,6 +2559,143 @@
           "locator": "func TestCanonicalPublicStateCheckpointDoesNotModifyEinoResumeCheckpoint"
         }
       ]
+    },
+    {
+      "id": "frontend.client.singleton",
+      "label": "canonicalThreadClient singleton",
+      "layer": "frontend_transport",
+      "kind": "singleton",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client-singleton.ts",
+          "symbol": "canonicalThreadClient",
+          "locator": "export const canonicalThreadClient: WorkbenchThreadClient ="
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts",
+          "locator": "constructs exactly one production canonical client with no runtime selector"
+        }
+      ]
+    },
+    {
+      "id": "frontend.events.run_subscription",
+      "label": "canonicalThreadClient.subscribeRunEvents projection",
+      "layer": "frontend_projection",
+      "kind": "event_subscription",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "symbol": "useTaskThreadRunEventStream",
+          "locator": "subscriptionRef.current = canonicalThreadClient.subscribeRunEvents({"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "symbol": "CanonicalThreadCoreClient.subscribeRunEvents",
+          "locator": "subscribeRunEvents(request: SubscribeWorkbenchRunEventsRequest) {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-run-stream.test.ts",
+          "locator": "it('uses one scoped fetch stream, ignores metadata, and stores only a parsed event cursor'"
+        }
+      ]
+    },
+    {
+      "id": "contract.workbench_scheduled_task.thrift",
+      "label": "Scheduled Task-only WorkbenchTaskService contract",
+      "layer": "transport_contract",
+      "kind": "service_contract",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "idl/workbench/task.thrift",
+          "symbol": "WorkbenchTaskService",
+          "locator": "service WorkbenchTaskService {"
+        },
+        {
+          "path": "frontend/packages/arch/api-schema/src/idl/workbench/task.ts",
+          "symbol": "CreateScheduledTask",
+          "locator": "export const CreateScheduledTask ="
+        },
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "symbol": "CreateScheduledTaskRequest",
+          "locator": "type CreateScheduledTaskRequest struct {"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "keeps the Scheduled Task route surface"
+        }
+      ]
+    },
+    {
+      "id": "contract.workbench.route_surface",
+      "label": "Workbench route surface 47/36/23/11/10",
+      "layer": "transport_contract",
+      "kind": "route_snapshot",
+      "production_status": "current",
+      "source_anchors": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "symbol": "canonicalThreadRoutes",
+          "locator": "var canonicalThreadRoutes = []routeExpectation{"
+        },
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "symbol": "retiredTaskThreadV1Routes",
+          "locator": "var retiredTaskThreadV1Routes = []routeExpectation{"
+        },
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "symbol": "retiredLangGraphThreadRoutes",
+          "locator": "var retiredLangGraphThreadRoutes = []routeExpectation{"
+        },
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "symbol": "retainedLangGraphStatelessRunRoutes",
+          "locator": "var retainedLangGraphStatelessRunRoutes = []routeExpectation{"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "func TestWorkbenchCanonicalThreadRoutes"
+        }
+      ]
+    },
+    {
+      "id": "framework.fetch_stream",
+      "label": "Workbench fetch-stream transport",
+      "layer": "framework",
+      "kind": "framework",
+      "production_status": "current",
+      "runtime_scope": "ui_only",
+      "package": "@coze-arch/fetch-stream",
+      "version": "workspace:*",
+      "version_source": {
+        "type": "json_dependency",
+        "path": "frontend/apps/coze-studio/package.json",
+        "name": "@coze-arch/fetch-stream"
+      },
+      "source_anchors": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "import { fetchStream } from '@coze-arch/fetch-stream';"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-run-stream.test.ts",
+          "locator": "it('uses one scoped fetch stream, ignores metadata, and stores only a parsed event cursor'"
+        }
+      ]
     }
   ],
   "edges": [
@@ -2799,42 +2714,6 @@
         {
           "path": "frontend/apps/coze-studio/src/pages/workbench/index.tsx",
           "locator": "const response = await createTaskThread({"
-        }
-      ]
-    },
-    {
-      "id": "edge.create_thread_routes_handler",
-      "from": "frontend.api.create_thread",
-      "to": "http.workbench.create_thread",
-      "relation": "routes_to",
-      "chain_ids": [
-        "entry.workbench_immediate",
-        "entry.workbench_deferred",
-        "framework.canonical_stack"
-      ],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "idl/workbench/task.thrift",
-          "locator": "CreateTaskThreadResponse CreateTaskThread(1: CreateTaskThreadRequest request)("
-        }
-      ]
-    },
-    {
-      "id": "edge.create_thread_handler_calls_app",
-      "from": "http.workbench.create_thread",
-      "to": "application.create_task_thread",
-      "relation": "calls",
-      "chain_ids": [
-        "entry.workbench_immediate",
-        "entry.workbench_deferred",
-        "framework.canonical_stack"
-      ],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.CreateTaskThread(ctx, &appagentthread.CreateTaskThreadRequest{"
         }
       ]
     },
@@ -2895,20 +2774,6 @@
       ]
     },
     {
-      "id": "edge.create_run_routes_handler",
-      "from": "frontend.api.create_run",
-      "to": "http.workbench.create_run",
-      "relation": "routes_to",
-      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "idl/workbench/task.thrift",
-          "locator": "CreateTaskThreadRunResponse CreateTaskThreadRun(1: CreateTaskThreadRunRequest request)("
-        }
-      ]
-    },
-    {
       "id": "edge.followup_calls_upload",
       "from": "frontend.task_detail.send_follow_up",
       "to": "frontend.api.upload_files",
@@ -2923,25 +2788,14 @@
       ]
     },
     {
-      "id": "edge.langgraph_calls_app_create_run",
-      "from": "compat.langgraph.create_run",
-      "to": "application.create_run",
-      "relation": "delegates_to",
-      "chain_ids": ["entry.langgraph_compat", "boundary.runtime_compatibility"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, createReq)"
-        }
-      ]
-    },
-    {
       "id": "edge.langgraph_stateless_calls_backing_thread",
       "from": "compat.langgraph.stateless_run",
       "to": "compat.langgraph.stateless_backing_thread",
       "relation": "calls",
-      "chain_ids": ["entry.langgraph_stateless"],
+      "chain_ids": [
+        "entry.langgraph_stateless",
+        "boundary.runtime_compatibility"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -2955,7 +2809,10 @@
       "from": "compat.langgraph.stateless_backing_thread",
       "to": "application.create_thread",
       "relation": "delegates_to",
-      "chain_ids": ["entry.langgraph_stateless"],
+      "chain_ids": [
+        "entry.langgraph_stateless",
+        "boundary.runtime_compatibility"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -2969,7 +2826,10 @@
       "from": "application.create_thread",
       "to": "application.create_run",
       "relation": "precedes",
-      "chain_ids": ["entry.langgraph_stateless"],
+      "chain_ids": [
+        "entry.langgraph_stateless",
+        "boundary.runtime_compatibility"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -3087,20 +2947,6 @@
         {
           "path": "backend/application/imchannel/agent_runner.go",
           "locator": "response, err := r.client.CreateRun(ctx, &agentthread.CreateRunRequest{"
-        }
-      ]
-    },
-    {
-      "id": "edge.create_run_handler_calls_app",
-      "from": "http.workbench.create_run",
-      "to": "application.create_run",
-      "relation": "calls",
-      "chain_ids": ["run.atomic_create"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, &appagentthread.CreateRunRequest{"
         }
       ]
     },
@@ -3331,48 +3177,6 @@
       ]
     },
     {
-      "id": "edge.repo_event_streams_http",
-      "from": "repository.create_run_event",
-      "to": "http.workbench.stream_events",
-      "relation": "streams_to",
-      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{"
-        }
-      ]
-    },
-    {
-      "id": "edge.http_streams_eventsource",
-      "from": "http.workbench.stream_events",
-      "to": "frontend.events.event_source",
-      "relation": "streams_to",
-      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
-          "locator": "const eventSource = new EventSource("
-        }
-      ]
-    },
-    {
-      "id": "edge.cancel_handler_calls_app",
-      "from": "http.workbench.cancel_run",
-      "to": "application.cancel_run",
-      "relation": "cancels",
-      "chain_ids": ["control.cancel"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{"
-        }
-      ]
-    },
-    {
       "id": "edge.cancel_app_requests_domain",
       "from": "application.cancel_run",
       "to": "domain.request_cancellation",
@@ -3401,20 +3205,6 @@
       ]
     },
     {
-      "id": "edge.resume_handler_calls_app",
-      "from": "http.workbench.resume_run",
-      "to": "application.resume_human",
-      "relation": "resumes",
-      "chain_ids": ["control.human_resume"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.ResumeHumanInteraction(ctx, &appagentthread.ResumeHumanInteractionRequest{"
-        }
-      ]
-    },
-    {
       "id": "edge.resume_app_creates_bundle",
       "from": "application.resume_human",
       "to": "domain.create_run_bundle",
@@ -3425,20 +3215,6 @@
         {
           "path": "backend/application/agentthread/human_interaction_resume.go",
           "locator": "bundle, err := s.ThreadSVC.CreateRunBundle(ctx, &domainservice.CreateRunBundleRequest{"
-        }
-      ]
-    },
-    {
-      "id": "edge.retry_handler_calls_app",
-      "from": "http.workbench.retry_subagent",
-      "to": "application.retry_subagent",
-      "relation": "retries",
-      "chain_ids": ["control.subagent_retry"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "resp, err := appagentthread.SVC.RetrySubagentRun(ctx, &appagentthread.RetrySubagentRunRequest{"
         }
       ]
     },
@@ -3667,48 +3443,6 @@
       ]
     },
     {
-      "id": "edge.eventsource_uses_platform",
-      "from": "frontend.events.event_source",
-      "to": "framework.browser_eventsource",
-      "relation": "implemented_with",
-      "chain_ids": ["framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
-          "locator": "const eventSource = new EventSource("
-        }
-      ]
-    },
-    {
-      "id": "edge.contract_uses_thriftgo",
-      "from": "contract.workbench_task.thrift",
-      "to": "framework.thriftgo",
-      "relation": "implemented_with",
-      "chain_ids": ["framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/model/workbench/task/task.go",
-          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
-        }
-      ]
-    },
-    {
-      "id": "edge.http_uses_hertz",
-      "from": "http.workbench.stream_events",
-      "to": "framework.hertz",
-      "relation": "implemented_with",
-      "chain_ids": ["framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "\"github.com/cloudwego/hertz/pkg/protocol/sse\""
-        }
-      ]
-    },
-    {
       "id": "edge.worker_uses_go",
       "from": "worker.run_once",
       "to": "framework.go",
@@ -3744,7 +3478,10 @@
       "chain_ids": ["framework.canonical_stack"],
       "confidence": "extracted",
       "evidence": [
-        { "path": "backend/go.mod", "locator": "gorm.io/driver/mysql v1.5.7" }
+        {
+          "path": "backend/go.mod",
+          "locator": "gorm.io/driver/mysql v1.5.7"
+        }
       ]
     },
     {
@@ -3755,7 +3492,10 @@
       "chain_ids": ["framework.canonical_stack"],
       "confidence": "extracted",
       "evidence": [
-        { "path": "docker/docker-compose.yml", "locator": "image: mysql:8.4.5" }
+        {
+          "path": "docker/docker-compose.yml",
+          "locator": "image: mysql:8.4.5"
+        }
       ]
     },
     {
@@ -3909,20 +3649,6 @@
         {
           "path": "backend/application/agentthread/runtime_prometheus_metrics.go",
           "locator": "type RuntimeWorkerTickMetricsObservation struct"
-        }
-      ]
-    },
-    {
-      "id": "edge.sonic_encodes_sse",
-      "from": "http.workbench.stream_events",
-      "to": "framework.sonic",
-      "relation": "implemented_with",
-      "chain_ids": ["framework.canonical_stack"],
-      "confidence": "extracted",
-      "evidence": [
-        {
-          "path": "backend/api/handler/coze/workbench_thread_service.go",
-          "locator": "payload, err := sonic.Marshal(taskThreadRunEventToAPI(event))"
         }
       ]
     },
@@ -4407,7 +4133,12 @@
       "from": "http.workbench.canonical_thread",
       "to": "application.create_task_thread",
       "relation": "delegates_to",
-      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "chain_ids": [
+        "entry.workbench_canonical_thread_http",
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4426,7 +4157,7 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/api.go",
-          "locator": "_thread_id0.POST(\"/runs\", append(_createcanonicalrunMw(), coze.CreateCanonicalRun)...)"
+          "locator": "_thread_id.POST(\"/runs\", append(_createcanonicalrunMw(), coze.CreateCanonicalRun)...)"
         }
       ]
     },
@@ -4435,7 +4166,7 @@
       "from": "http.workbench.canonical_run",
       "to": "application.create_run",
       "relation": "delegates_to",
-      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "chain_ids": ["entry.workbench_canonical_run_http", "run.atomic_create"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4508,7 +4239,7 @@
       "from": "http.workbench.canonical_run",
       "to": "application.cancel_run",
       "relation": "cancels",
-      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "chain_ids": ["entry.workbench_canonical_run_http", "control.cancel"],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4522,7 +4253,10 @@
       "from": "http.workbench.canonical_run",
       "to": "application.resume_human",
       "relation": "resumes",
-      "chain_ids": ["entry.workbench_canonical_run_http"],
+      "chain_ids": [
+        "entry.workbench_canonical_run_http",
+        "control.human_resume"
+      ],
       "confidence": "extracted",
       "evidence": [
         {
@@ -4541,11 +4275,11 @@
       "evidence": [
         {
           "path": "backend/api/router/coze/api.go",
-          "locator": "_runs0.POST(\"/stream\", append(_streamcanonicalrunMw(), coze.StreamCanonicalRun)...)"
+          "locator": "_runs.POST(\"/stream\", append(_streamcanonicalrunMw(), coze.StreamCanonicalRun)...)"
         },
         {
           "path": "backend/api/router/coze/api.go",
-          "locator": "_run_id0.GET(\"/stream\", append(_reconnectcanonicalrunstreamMw(), coze.ReconnectCanonicalRunStream)...)"
+          "locator": "_run_id.GET(\"/stream\", append(_reconnectcanonicalrunstreamMw(), coze.ReconnectCanonicalRunStream)...)"
         }
       ]
     },
@@ -4630,26 +4364,272 @@
           "locator": "resumed, err := appagentthread.SVC.ResumeHumanInteraction(accessCtx, &appagentthread.ResumeHumanInteractionRequest{"
         }
       ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.create_thread_uses_singleton",
+      "from": "frontend.api.create_thread",
+      "relation": "implemented_with",
+      "to": "frontend.client.singleton",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "locator": "await canonicalThreadClient.createThread({"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.upload_uses_singleton",
+      "from": "frontend.api.upload_files",
+      "relation": "implemented_with",
+      "to": "frontend.client.singleton",
+      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "locator": "await canonicalThreadClient.uploadFiles({"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.create_run_uses_singleton",
+      "from": "frontend.api.create_run",
+      "relation": "implemented_with",
+      "to": "frontend.client.singleton",
+      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/service.ts",
+          "locator": "await canonicalThreadClient.createRun({"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.run_subscription_uses_singleton",
+      "from": "frontend.events.run_subscription",
+      "relation": "implemented_with",
+      "to": "frontend.client.singleton",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts",
+          "locator": "subscriptionRef.current = canonicalThreadClient.subscribeRunEvents({"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.canonical_create_thread_routes_handler",
+      "from": "frontend.api.create_thread",
+      "relation": "routes_to",
+      "to": "http.workbench.canonical_thread",
+      "chain_ids": [
+        "entry.workbench_immediate",
+        "entry.workbench_deferred",
+        "framework.canonical_stack"
+      ],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "fetchCanonicalJSON('/api/workbench/threads', {"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.canonical_create_run_routes_handler",
+      "from": "frontend.api.create_run",
+      "relation": "routes_to",
+      "to": "http.workbench.canonical_run",
+      "chain_ids": ["entry.workbench_deferred", "entry.task_detail_followup"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "`/api/workbench/threads/${threadID}/runs`,"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.repo_event_streams_canonical",
+      "from": "repository.create_run_event",
+      "relation": "streams_to",
+      "to": "http.workbench.canonical_run_stream",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "response, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.canonical_stream_to_subscription",
+      "from": "http.workbench.canonical_run_stream",
+      "relation": "streams_to",
+      "to": "frontend.events.run_subscription",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "const url = `/api/workbench/threads/${threadID}/runs/${runID}/stream?${query.toString()}`;"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.run_subscription_uses_fetch_stream",
+      "from": "frontend.events.run_subscription",
+      "relation": "implemented_with",
+      "to": "framework.fetch_stream",
+      "chain_ids": ["run.event_projection", "framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/canonical-thread-client.ts",
+          "locator": "this.streamer = options.stream ?? fetchStream;"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.canonical_run_handler_calls_retry",
+      "from": "http.workbench.canonical_run",
+      "relation": "retries",
+      "to": "application.retry_subagent",
+      "chain_ids": ["control.subagent_retry"],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_usage_retry_service.go",
+          "locator": "resp, err := appagentthread.SVC.RetrySubagentRun(ctx, &appagentthread.RetrySubagentRunRequest{"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.canonical_route_surface_maps_contract",
+      "from": "contract.workbench.route_surface",
+      "relation": "maps_to",
+      "to": "contract.workbench_canonical_thread.thrift",
+      "chain_ids": ["entry.workbench_canonical_thread_http"],
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "require.Len(t, canonicalRouteSnapshot(), 47)"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.scheduled_route_surface_maps_contract",
+      "from": "contract.workbench.route_surface",
+      "relation": "maps_to",
+      "to": "contract.workbench_scheduled_task.thrift",
+      "chain_ids": ["entry.scheduled_task"],
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "len(scheduledTaskRoutes)+len(scheduledTaskTargetRoutes)+len(scheduledTaskCronPresetRoutes)"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.stateless_route_surface_maps_adapter",
+      "from": "contract.workbench.route_surface",
+      "relation": "maps_to",
+      "to": "compat.langgraph.stateless_run",
+      "chain_ids": ["entry.langgraph_stateless"],
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "retains stateless LangGraph runs while the zero-use gate is blocked"
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.contract_uses_thriftgo",
+      "from": "contract.workbench_canonical_thread.thrift",
+      "relation": "implemented_with",
+      "to": "framework.thriftgo",
+      "chain_ids": ["framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "backend/api/model/workbench/thread_contract/thread.go",
+          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.scheduled_contract_uses_thriftgo",
+      "from": "contract.workbench_scheduled_task.thrift",
+      "relation": "implemented_with",
+      "to": "framework.thriftgo",
+      "chain_ids": ["entry.scheduled_task"],
+      "evidence": [
+        {
+          "path": "backend/api/model/workbench/task/task.go",
+          "locator": "// Code generated by thriftgo (0.4.5). DO NOT EDIT."
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.http_uses_hertz",
+      "from": "http.workbench.canonical_run_stream",
+      "relation": "implemented_with",
+      "to": "framework.hertz",
+      "chain_ids": ["framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "\"github.com/cloudwego/hertz/pkg/protocol/sse\""
+        }
+      ]
+    },
+    {
+      "confidence": "extracted",
+      "id": "edge.sonic_encodes_sse",
+      "from": "http.workbench.canonical_run_stream",
+      "relation": "implemented_with",
+      "to": "framework.sonic",
+      "chain_ids": ["framework.canonical_stack"],
+      "evidence": [
+        {
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream.go",
+          "locator": "payload, err := sonic.Marshal(langGraphPublicRunMessageEventPayload(projected, true))"
+        }
+      ]
     }
   ],
   "chains": [
     {
       "id": "entry.workbench_immediate",
-      "name": "Workbench immediate thread and run creation",
+      "name": "Workbench immediate canonical submission",
       "entry": "frontend.workbench.handle_send",
       "terminal": "repository.create_thread_bundle",
       "ordered_node_ids": [
         "frontend.workbench.handle_send",
         "frontend.api.create_thread",
-        "http.workbench.create_thread",
+        "http.workbench.canonical_thread",
         "application.create_task_thread",
         "domain.create_thread_atomic",
         "repository.create_thread_bundle"
       ],
       "ordered_edge_ids": [
         "edge.workbench_calls_create_thread",
-        "edge.create_thread_routes_handler",
-        "edge.create_thread_handler_calls_app",
+        "edge.canonical_create_thread_routes_handler",
+        "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.create_thread_app_delegates_domain",
         "edge.create_thread_domain_persists_bundle"
       ],
@@ -4660,29 +4640,30 @@
           "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
           "locator": "it('navigates to the task execution page after send returns a task'"
         }
-      ]
+      ],
+      "required_side_edge_ids": ["edge.create_thread_uses_singleton"]
     },
     {
       "id": "entry.workbench_deferred",
-      "name": "Workbench deferred thread, upload, then run creation",
+      "name": "Workbench deferred canonical file submission",
       "entry": "frontend.workbench.handle_send",
-      "terminal": "http.workbench.create_run",
+      "terminal": "http.workbench.canonical_run",
       "ordered_node_ids": [
         "frontend.workbench.handle_send",
         "frontend.api.create_thread",
-        "http.workbench.create_thread",
+        "http.workbench.canonical_thread",
         "application.create_task_thread",
         "frontend.api.upload_files",
         "frontend.api.create_run",
-        "http.workbench.create_run"
+        "http.workbench.canonical_run"
       ],
       "ordered_edge_ids": [
         "edge.workbench_calls_create_thread",
-        "edge.create_thread_routes_handler",
-        "edge.create_thread_handler_calls_app",
+        "edge.canonical_create_thread_routes_handler",
+        "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.deferred_thread_precedes_upload",
         "edge.upload_precedes_create_run",
-        "edge.create_run_routes_handler"
+        "edge.canonical_create_run_routes_handler"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -4705,23 +4686,28 @@
           "path": "frontend/apps/coze-studio/src/pages/workbench/__tests__/workbench.test.tsx",
           "locator": "it('uploads selected files before starting a new canonical task run'"
         }
+      ],
+      "required_side_edge_ids": [
+        "edge.create_thread_uses_singleton",
+        "edge.upload_uses_singleton",
+        "edge.create_run_uses_singleton"
       ]
     },
     {
       "id": "entry.task_detail_followup",
-      "name": "TaskDetail follow-up upload then run creation",
+      "name": "Task detail canonical follow-up",
       "entry": "frontend.task_detail.send_follow_up",
-      "terminal": "http.workbench.create_run",
+      "terminal": "http.workbench.canonical_run",
       "ordered_node_ids": [
         "frontend.task_detail.send_follow_up",
         "frontend.api.upload_files",
         "frontend.api.create_run",
-        "http.workbench.create_run"
+        "http.workbench.canonical_run"
       ],
       "ordered_edge_ids": [
         "edge.followup_calls_upload",
         "edge.upload_precedes_create_run",
-        "edge.create_run_routes_handler"
+        "edge.canonical_create_run_routes_handler"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -4740,30 +4726,15 @@
           "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/task-follow-up.test.ts",
           "locator": "it('uploads files before creating a thread run'"
         }
-      ]
-    },
-    {
-      "id": "entry.langgraph_compat",
-      "name": "LangGraph-compatible HTTP adapter",
-      "entry": "compat.langgraph.create_run",
-      "terminal": "application.create_run",
-      "ordered_node_ids": [
-        "compat.langgraph.create_run",
-        "application.create_run"
       ],
-      "ordered_edge_ids": ["edge.langgraph_calls_app_create_run"],
-      "production_status": "current",
-      "canonical_executor": false,
-      "test_evidence": [
-        {
-          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
-          "locator": "func TestLangGraphRunCreateCanonicalizesDeerFlowContextForEinoADK"
-        }
+      "required_side_edge_ids": [
+        "edge.upload_uses_singleton",
+        "edge.create_run_uses_singleton"
       ]
     },
     {
       "id": "entry.langgraph_stateless",
-      "name": "LangGraph stateless backing thread and Run creation",
+      "name": "Retained stateless /api/runs backing Thread creation (zero-use gate blocked)",
       "entry": "compat.langgraph.stateless_run",
       "terminal": "application.create_run",
       "ordered_node_ids": [
@@ -4784,7 +4755,8 @@
           "path": "backend/api/handler/coze/langgraph_run_service_test.go",
           "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
         }
-      ]
+      ],
+      "required_side_edge_ids": ["edge.stateless_route_surface_maps_adapter"]
     },
     {
       "id": "entry.scheduled_task",
@@ -4802,7 +4774,9 @@
       ],
       "required_side_edge_ids": [
         "edge.scheduled_execute_routes_existing",
-        "edge.scheduled_existing_calls_create_run"
+        "edge.scheduled_existing_calls_create_run",
+        "edge.scheduled_route_surface_maps_contract",
+        "edge.scheduled_contract_uses_thriftgo"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -4841,17 +4815,17 @@
     },
     {
       "id": "run.atomic_create",
-      "name": "Atomic pending Run bundle creation",
-      "entry": "http.workbench.create_run",
+      "name": "Canonical Run atomic creation",
+      "entry": "http.workbench.canonical_run",
       "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
-        "http.workbench.create_run",
+        "http.workbench.canonical_run",
         "application.create_run",
         "domain.create_run_bundle",
         "repository.create_run_bundle"
       ],
       "ordered_edge_ids": [
-        "edge.create_run_handler_calls_app",
+        "edge.canonical_run_handler_calls_app_create_run",
         "edge.create_run_app_delegates_domain",
         "edge.create_run_domain_persists_bundle"
       ],
@@ -4924,9 +4898,9 @@
     },
     {
       "id": "run.event_projection",
-      "name": "Eino event persistence and frontend SSE projection",
+      "name": "Canonical Run event persistence and fetch-stream projection",
       "entry": "runtime.adk_executor.execute",
-      "terminal": "frontend.events.event_source",
+      "terminal": "frontend.events.run_subscription",
       "ordered_node_ids": [
         "runtime.adk_executor.execute",
         "runtime.map_adk_event",
@@ -4934,8 +4908,8 @@
         "application.append_run_event",
         "domain.append_run_event",
         "repository.create_run_event",
-        "http.workbench.stream_events",
-        "frontend.events.event_source"
+        "http.workbench.canonical_run_stream",
+        "frontend.events.run_subscription"
       ],
       "ordered_edge_ids": [
         "edge.adk_maps_events",
@@ -4943,31 +4917,39 @@
         "edge.sink_calls_append_event",
         "edge.app_event_delegates_domain",
         "edge.domain_event_persists_repo",
-        "edge.repo_event_streams_http",
-        "edge.http_streams_eventsource"
+        "edge.repo_event_streams_canonical",
+        "edge.canonical_stream_to_subscription"
       ],
       "production_status": "current",
       "canonical_executor": false,
       "test_evidence": [
         {
-          "path": "backend/api/handler/coze/workbench_thread_service_test.go",
-          "locator": "func TestStreamTaskThreadRunEventsWritesEventsAndDone"
+          "path": "backend/api/handler/coze/workbench_canonical_run_stream_test.go",
+          "locator": "func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/workbench/thread-client/__tests__/workbench-run-stream.test.ts",
+          "locator": "it('reconnects with the greatest confirmed decimal cursor in a new subscription'"
         }
+      ],
+      "required_side_edge_ids": [
+        "edge.run_subscription_uses_singleton",
+        "edge.run_subscription_uses_fetch_stream"
       ]
     },
     {
       "id": "control.cancel",
       "name": "Persisted Run cancellation and active ADK signal",
-      "entry": "http.workbench.cancel_run",
+      "entry": "http.workbench.canonical_run",
       "terminal": "runtime.cancel_registry",
       "ordered_node_ids": [
-        "http.workbench.cancel_run",
+        "http.workbench.canonical_run",
         "application.cancel_run",
         "domain.request_cancellation",
         "runtime.cancel_registry"
       ],
       "ordered_edge_ids": [
-        "edge.cancel_handler_calls_app",
+        "edge.canonical_run_handler_calls_cancel",
         "edge.cancel_app_requests_domain",
         "edge.cancel_app_signals_adk"
       ],
@@ -4983,15 +4965,15 @@
     {
       "id": "control.human_resume",
       "name": "Human interaction resume bundle",
-      "entry": "http.workbench.resume_run",
+      "entry": "http.workbench.canonical_run",
       "terminal": "domain.create_run_bundle",
       "ordered_node_ids": [
-        "http.workbench.resume_run",
+        "http.workbench.canonical_run",
         "application.resume_human",
         "domain.create_run_bundle"
       ],
       "ordered_edge_ids": [
-        "edge.resume_handler_calls_app",
+        "edge.canonical_run_handler_calls_resume",
         "edge.resume_app_creates_bundle"
       ],
       "production_status": "current",
@@ -5006,15 +4988,15 @@
     {
       "id": "control.subagent_retry",
       "name": "Subagent retry command bundle",
-      "entry": "http.workbench.retry_subagent",
+      "entry": "http.workbench.canonical_run",
       "terminal": "domain.create_run_bundle",
       "ordered_node_ids": [
-        "http.workbench.retry_subagent",
+        "http.workbench.canonical_run",
         "application.retry_subagent",
         "domain.create_run_bundle"
       ],
       "ordered_edge_ids": [
-        "edge.retry_handler_calls_app",
+        "edge.canonical_run_handler_calls_retry",
         "edge.retry_app_creates_bundle"
       ],
       "production_status": "current",
@@ -5183,13 +5165,13 @@
     },
     {
       "id": "framework.canonical_stack",
-      "name": "Current Workbench production framework path",
+      "name": "Current canonical Workbench production framework path",
       "entry": "frontend.workbench.handle_send",
-      "terminal": "frontend.events.event_source",
+      "terminal": "frontend.events.run_subscription",
       "ordered_node_ids": [
         "frontend.workbench.handle_send",
         "frontend.api.create_thread",
-        "http.workbench.create_thread",
+        "http.workbench.canonical_thread",
         "application.create_task_thread",
         "domain.create_thread_atomic",
         "repository.create_thread_bundle",
@@ -5201,13 +5183,13 @@
         "application.append_run_event",
         "domain.append_run_event",
         "repository.create_run_event",
-        "http.workbench.stream_events",
-        "frontend.events.event_source"
+        "http.workbench.canonical_run_stream",
+        "frontend.events.run_subscription"
       ],
       "ordered_edge_ids": [
         "edge.workbench_calls_create_thread",
-        "edge.create_thread_routes_handler",
-        "edge.create_thread_handler_calls_app",
+        "edge.canonical_create_thread_routes_handler",
+        "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.create_thread_app_delegates_domain",
         "edge.create_thread_domain_persists_bundle",
         "edge.persisted_bundle_precedes_worker",
@@ -5218,13 +5200,12 @@
         "edge.sink_calls_append_event",
         "edge.app_event_delegates_domain",
         "edge.domain_event_persists_repo",
-        "edge.repo_event_streams_http",
-        "edge.http_streams_eventsource"
+        "edge.repo_event_streams_canonical",
+        "edge.canonical_stream_to_subscription"
       ],
       "required_side_edge_ids": [
         "edge.ui_uses_react",
         "edge.ui_uses_router",
-        "edge.eventsource_uses_platform",
         "edge.contract_uses_thriftgo",
         "edge.http_uses_hertz",
         "edge.worker_uses_go",
@@ -5245,7 +5226,10 @@
         "edge.sonic_encodes_sse",
         "edge.cron_configures_scheduled",
         "edge.feishu_sdk_routes_event",
-        "edge.artifact_uses_object_storage"
+        "edge.artifact_uses_object_storage",
+        "edge.create_thread_uses_singleton",
+        "edge.run_subscription_uses_singleton",
+        "edge.run_subscription_uses_fetch_stream"
       ],
       "production_status": "current",
       "canonical_executor": true,
@@ -5253,6 +5237,10 @@
         {
           "path": "backend/application/agentthread/adk_contract_test.go",
           "locator": "func TestADKParity"
+        },
+        {
+          "path": "frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts",
+          "locator": "constructs exactly one production canonical client with no runtime selector"
         }
       ]
     },
@@ -5350,18 +5338,22 @@
     },
     {
       "id": "boundary.runtime_compatibility",
-      "name": "Runtime compatibility boundaries converge on Eino ADK",
-      "entry": "compat.langgraph.create_run",
+      "name": "Retained compatibility boundaries converge on Eino ADK",
+      "entry": "compat.langgraph.stateless_run",
       "terminal": "runtime.adk_executor.execute",
       "ordered_node_ids": [
-        "compat.langgraph.create_run",
+        "compat.langgraph.stateless_run",
+        "compat.langgraph.stateless_backing_thread",
+        "application.create_thread",
         "application.create_run",
         "runtime.new_run_policy",
         "runtime.selector.execute",
         "runtime.adk_executor.execute"
       ],
       "ordered_edge_ids": [
-        "edge.langgraph_calls_app_create_run",
+        "edge.langgraph_stateless_calls_backing_thread",
+        "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run",
         "edge.app_run_calls_new_run_policy",
         "edge.new_run_policy_precedes_selector",
         "edge.selector_executes_adk"
@@ -5375,6 +5367,10 @@
       "canonical_executor": false,
       "test_evidence": [
         {
+          "path": "backend/api/handler/coze/langgraph_run_service_test.go",
+          "locator": "func TestLangGraphStatelessRunCreateHandlerCreatesBackingThreadAndRun"
+        },
+        {
           "path": "backend/application/agentthread/runtime_selector_test.go",
           "locator": "func TestRuntimeSelectorUsesCanonicalEinoRuntimeMarker"
         }
@@ -5382,7 +5378,7 @@
     },
     {
       "id": "entry.workbench_canonical_thread_http",
-      "name": "Feature-gated canonical Thread HTTP contract",
+      "name": "Always-on canonical Thread HTTP contract",
       "entry": "contract.workbench_canonical_thread.thrift",
       "terminal": "repository.canonical_thread_contract",
       "ordered_node_ids": [
@@ -5400,7 +5396,8 @@
       ],
       "required_side_edge_ids": [
         "edge.canonical_thread_create_calls_create_thread",
-        "edge.canonical_thread_submission_calls_create_task_thread"
+        "edge.canonical_thread_submission_calls_create_task_thread",
+        "edge.canonical_route_surface_maps_contract"
       ],
       "production_status": "current",
       "canonical_executor": false,
@@ -5417,7 +5414,7 @@
     },
     {
       "id": "entry.workbench_canonical_run_http",
-      "name": "Feature-gated canonical Run HTTP contract",
+      "name": "Always-on canonical Run HTTP contract",
       "entry": "contract.workbench_canonical_thread.thrift",
       "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
@@ -5446,7 +5443,7 @@
       "test_evidence": [
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
-          "locator": "func TestCanonicalCreateRunUsesAtomicMessageBundleAndHeaderIdempotency"
+          "locator": "func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency"
         },
         {
           "path": "backend/api/handler/coze/workbench_canonical_run_service_test.go",
@@ -5464,7 +5461,7 @@
     },
     {
       "id": "entry.workbench_canonical_run_stream",
-      "name": "Feature-gated canonical Run create and reconnect SSE contract",
+      "name": "Always-on canonical Run SSE contract",
       "entry": "contract.workbench_canonical_thread.thrift",
       "terminal": "repository.create_run_bundle",
       "ordered_node_ids": [
@@ -5538,11 +5535,11 @@
       "id": "exclude.langgraph_sdk",
       "term": "LangGraph SDK",
       "status": "not_used",
-      "reason": "LangGraph endpoints are compatibility adapters that delegate to agentthread; no LangGraph runtime executes Runs.",
+      "reason": "Only stateless /api/runs compatibility routes remain; they delegate to agentthread and no LangGraph runtime executes Runs.",
       "evidence": [
         {
           "path": "backend/api/handler/coze/langgraph_run_service.go",
-          "locator": "resp, err := appagentthread.SVC.CreateRun(ctx, createReq)"
+          "locator": "return appagentthread.SVC.CreateRun(ctx, createReq)"
         }
       ]
     },
@@ -5593,6 +5590,30 @@
           "locator": "\"test\": \"vitest --run --passWithNoTests\""
         }
       ]
+    },
+    {
+      "id": "exclude.taskthread_v1_routes",
+      "term": "TaskThread V1 HTTP routes",
+      "status": "retired",
+      "reason": "All 36 /api/workbench/task_threads method/path pairs are unreachable and cannot be restored as a UI fallback.",
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "keeps all TaskThread V1 method and path pairs unreachable"
+        }
+      ]
+    },
+    {
+      "id": "exclude.langgraph_thread_routes",
+      "term": "Local LangGraph Thread HTTP routes",
+      "status": "retired",
+      "reason": "All 23 /api/threads method/path pairs are unreachable; only the separately tracked stateless /api/runs surface is retained.",
+      "evidence": [
+        {
+          "path": "backend/api/router/coze/workbench_canonical_thread_route_test.go",
+          "locator": "keeps all retired LangGraph thread method and path pairs unreachable"
+        }
+      ]
     }
   ],
   "required_queries": [
@@ -5623,7 +5644,8 @@
         "framework.sonic",
         "framework.prometheus",
         "framework.robfig_cron",
-        "framework.feishu_sdk"
+        "framework.feishu_sdk",
+        "framework.fetch_stream"
       ],
       "required_edge_ids": [
         "edge.ui_uses_react",
@@ -5632,12 +5654,13 @@
         "edge.worker_uses_go",
         "edge.repo_uses_gorm",
         "edge.repo_uses_mysql_server",
-        "edge.adk_uses_eino"
+        "edge.adk_uses_eino",
+        "edge.run_subscription_uses_fetch_stream"
       ]
     },
     {
       "id": "query.frontend_to_eino",
-      "question": "Workbench 前端消息如何进入 Eino ADK？",
+      "question": "Workbench 前端如何通过唯一 canonical client 和 always-on HTTP 进入 Eino ADK？",
       "expanded_terms": [
         "Workbench Immediate Submit",
         "calls",
@@ -5651,7 +5674,9 @@
       "smoke_node_ids": ["frontend.workbench.handle_send"],
       "required_node_ids": [
         "frontend.workbench.handle_send",
-        "http.workbench.create_thread",
+        "frontend.client.singleton",
+        "frontend.api.create_thread",
+        "http.workbench.canonical_thread",
         "application.create_task_thread",
         "repository.create_thread_bundle",
         "worker.process_pending",
@@ -5660,7 +5685,9 @@
       ],
       "required_edge_ids": [
         "edge.workbench_calls_create_thread",
-        "edge.create_thread_handler_calls_app",
+        "edge.create_thread_uses_singleton",
+        "edge.canonical_create_thread_routes_handler",
+        "edge.canonical_thread_submission_calls_create_task_thread",
         "edge.persisted_bundle_precedes_worker",
         "edge.worker_executes_selector",
         "edge.selector_executes_adk"
@@ -5800,9 +5827,9 @@
     },
     {
       "id": "query.integration_ingress",
-      "question": "LangGraph、Scheduled 和飞书如何创建或复用 TaskThread 并进入共享 Run 主链？",
+      "question": "保留的 stateless LangGraph、Scheduled 和飞书如何创建或复用 Thread 并进入共享 Run 主链？",
       "expanded_terms": [
-        "LangGraph stateless createLangGraphStatelessRun",
+        "Retained stateless /api/runs adapter (zero-use gate blocked)",
         "Scheduled AgentTaskExecutor.Execute",
         "Feishu RuntimeManager.processEvent",
         "calls",
@@ -5816,7 +5843,6 @@
         "integration.feishu.process_event"
       ],
       "required_node_ids": [
-        "compat.langgraph.create_run",
         "compat.langgraph.stateless_run",
         "compat.langgraph.stateless_backing_thread",
         "integration.scheduled.execute",
@@ -5830,7 +5856,6 @@
         "application.create_run"
       ],
       "required_edge_ids": [
-        "edge.langgraph_calls_app_create_run",
         "edge.langgraph_stateless_calls_backing_thread",
         "edge.langgraph_backing_calls_create_thread",
         "edge.langgraph_stateless_thread_precedes_run",
@@ -5846,10 +5871,9 @@
     },
     {
       "id": "query.runtime_boundaries",
-      "question": "LangGraph、DeerFlow 和 legacy 是否是当前并行生产运行时？",
+      "question": "保留的 stateless LangGraph、DeerFlow 配置语义和 legacy 是否形成并行生产运行时？",
       "expanded_terms": [
-        "LangGraph-compatible Run API adapter",
-        "LangGraph stateless createLangGraphStatelessRun",
+        "Retained stateless /api/runs adapter (zero-use gate blocked)",
         "normalizeNewDeerFlowRunConfig new-run policy",
         "compatibility_contract",
         "historical_compatibility",
@@ -5858,9 +5882,8 @@
         "excludes",
         "eino_adk"
       ],
-      "smoke_node_ids": ["compat.langgraph.create_run"],
+      "smoke_node_ids": ["compat.langgraph.stateless_run"],
       "required_node_ids": [
-        "compat.langgraph.create_run",
         "compat.langgraph.stateless_run",
         "compat.langgraph.stateless_backing_thread",
         "compat.deerflow_config",
@@ -5870,9 +5893,9 @@
         "runtime.adk_executor.execute"
       ],
       "required_edge_ids": [
-        "edge.langgraph_calls_app_create_run",
         "edge.langgraph_stateless_calls_backing_thread",
         "edge.langgraph_backing_calls_create_thread",
+        "edge.langgraph_stateless_thread_precedes_run",
         "edge.deerflow_configures_eino",
         "edge.legacy_is_historical_only",
         "edge.legacy_excluded_from_new_runs"
@@ -5880,24 +5903,34 @@
     },
     {
       "id": "query.canonical_thread_http",
-      "question": "Canonical Workbench Thread 哪些 HTTP 能力已真实接入，Run 和当前 UI 处于什么阶段？",
+      "question": "Workbench canonical UI、47 条 HTTP 路由和五组保留/退役边界如何对齐？",
       "expanded_terms": [
-        "Workbench canonical Thread Thrift contract",
-        "Feature-gated canonical Thread HTTP handlers",
-        "Feature-gated canonical Run HTTP handlers",
-        "Feature-gated canonical Run SSE handlers",
-        "COZE_WORKBENCH_CANONICAL_API_ENABLED",
-        "canonical_public_state",
+        "Workbench route surface 47/36/23/11/10",
+        "canonicalThreadClient singleton",
+        "Canonical Workbench Thread and product Thrift contract",
+        "Always-on canonical Thread HTTP handlers",
+        "Always-on canonical Run HTTP handlers",
+        "Always-on canonical Run SSE handlers",
         "delegates_to",
-        "persists_via"
+        "persists_via",
+        "maps_to"
       ],
       "smoke_node_ids": [
+        "contract.workbench.route_surface",
+        "frontend.client.singleton",
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
         "http.workbench.canonical_run_stream"
       ],
       "required_node_ids": [
+        "contract.workbench.route_surface",
+        "frontend.client.singleton",
+        "frontend.api.create_thread",
+        "frontend.api.create_run",
+        "frontend.events.run_subscription",
         "contract.workbench_canonical_thread.thrift",
+        "contract.workbench_scheduled_task.thrift",
+        "compat.langgraph.stateless_run",
         "http.workbench.canonical_thread",
         "http.workbench.canonical_run",
         "http.workbench.canonical_run_stream",
@@ -5911,12 +5944,19 @@
         "repository.create_run_bundle"
       ],
       "required_edge_ids": [
+        "edge.canonical_route_surface_maps_contract",
+        "edge.scheduled_route_surface_maps_contract",
+        "edge.stateless_route_surface_maps_adapter",
+        "edge.create_thread_uses_singleton",
+        "edge.canonical_create_thread_routes_handler",
         "edge.canonical_contract_routes_thread",
         "edge.canonical_thread_handler_calls_app_contract",
         "edge.canonical_app_delegates_domain_contract",
         "edge.canonical_domain_persists_repo_contract",
         "edge.canonical_thread_create_calls_create_thread",
         "edge.canonical_thread_submission_calls_create_task_thread",
+        "edge.create_run_uses_singleton",
+        "edge.canonical_create_run_routes_handler",
         "edge.canonical_contract_routes_run",
         "edge.canonical_run_handler_calls_app_create_run",
         "edge.create_run_app_delegates_domain",
@@ -5929,7 +5969,8 @@
         "edge.canonical_run_stream_replays_by_idempotency",
         "edge.canonical_run_stream_calls_app_query",
         "edge.canonical_run_stream_calls_cancel",
-        "edge.canonical_run_stream_calls_resume"
+        "edge.canonical_run_stream_calls_resume",
+        "edge.canonical_stream_to_subscription"
       ]
     }
   ]

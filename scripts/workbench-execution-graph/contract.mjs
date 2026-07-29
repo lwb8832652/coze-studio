@@ -26,15 +26,17 @@ const CANONICAL_CONTRACT_PATH =
   'docs/superpowers/context/workbench-execution-graph.json';
 const WORKBENCH_PROFILE = 'workbench_execution_v1';
 const WORKBENCH_PROFILE_STRUCTURE_DIGEST =
-  '082bdeff4a010ce3db214e6249955dd8d6d59d518da71b9ad6496de795f51e48';
+  '2dabe0e07a562c2cc18755d27a1a9ef6e1eba292f51221c7ddb7686e6123b50c';
 const REQUIRED_CHAIN_IDS = [
   'entry.workbench_immediate',
   'entry.workbench_deferred',
   'entry.task_detail_followup',
-  'entry.langgraph_compat',
   'entry.langgraph_stateless',
   'entry.scheduled_task',
   'entry.feishu_message',
+  'entry.workbench_canonical_thread_http',
+  'entry.workbench_canonical_run_http',
+  'entry.workbench_canonical_run_stream',
   'run.atomic_create',
   'run.pending_worker_execute',
   'run.event_projection',
@@ -63,6 +65,7 @@ const REQUIRED_QUERY_IDS = [
   'query.data_capabilities',
   'query.integration_ingress',
   'query.runtime_boundaries',
+  'query.canonical_thread_http',
 ];
 const REQUIRED_EXCLUSION_IDS = [
   'exclude.k2',
@@ -72,9 +75,22 @@ const REQUIRED_EXCLUSION_IDS = [
   'exclude.legacy_new_run',
   'exclude.external_queue',
   'exclude.build_tools',
+  'exclude.taskthread_v1_routes',
+  'exclude.langgraph_thread_routes',
 ];
 const REQUIRED_NODE_IDS = [
-  'compat.langgraph.create_run',
+  'frontend.client.singleton',
+  'frontend.api.create_thread',
+  'frontend.api.upload_files',
+  'frontend.api.create_run',
+  'frontend.events.run_subscription',
+  'contract.workbench.route_surface',
+  'contract.workbench_canonical_thread.thrift',
+  'contract.workbench_scheduled_task.thrift',
+  'http.workbench.canonical_thread',
+  'http.workbench.canonical_run',
+  'http.workbench.canonical_run_stream',
+  'framework.fetch_stream',
   'compat.langgraph.stateless_run',
   'compat.langgraph.stateless_backing_thread',
   'compat.deerflow_config',
@@ -93,7 +109,19 @@ const REQUIRED_NODE_IDS = [
   'historical.legacy_runtime',
 ];
 const REQUIRED_EDGE_IDS = [
-  'edge.langgraph_calls_app_create_run',
+  'edge.create_thread_uses_singleton',
+  'edge.create_run_uses_singleton',
+  'edge.run_subscription_uses_singleton',
+  'edge.canonical_create_thread_routes_handler',
+  'edge.canonical_thread_submission_calls_create_task_thread',
+  'edge.canonical_create_run_routes_handler',
+  'edge.canonical_run_handler_calls_app_create_run',
+  'edge.repo_event_streams_canonical',
+  'edge.canonical_stream_to_subscription',
+  'edge.run_subscription_uses_fetch_stream',
+  'edge.canonical_route_surface_maps_contract',
+  'edge.scheduled_route_surface_maps_contract',
+  'edge.stateless_route_surface_maps_adapter',
   'edge.langgraph_stateless_calls_backing_thread',
   'edge.langgraph_backing_calls_create_thread',
   'edge.langgraph_stateless_thread_precedes_run',
@@ -113,10 +141,70 @@ const REQUIRED_EDGE_IDS = [
   'edge.legacy_excluded_from_new_runs',
 ];
 const REQUIRED_EDGE_SHAPES = {
-  'edge.langgraph_calls_app_create_run': [
-    'compat.langgraph.create_run',
+  'edge.create_thread_uses_singleton': [
+    'frontend.api.create_thread',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.create_run_uses_singleton': [
+    'frontend.api.create_run',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.run_subscription_uses_singleton': [
+    'frontend.events.run_subscription',
+    'implemented_with',
+    'frontend.client.singleton',
+  ],
+  'edge.canonical_create_thread_routes_handler': [
+    'frontend.api.create_thread',
+    'routes_to',
+    'http.workbench.canonical_thread',
+  ],
+  'edge.canonical_thread_submission_calls_create_task_thread': [
+    'http.workbench.canonical_thread',
+    'delegates_to',
+    'application.create_task_thread',
+  ],
+  'edge.canonical_create_run_routes_handler': [
+    'frontend.api.create_run',
+    'routes_to',
+    'http.workbench.canonical_run',
+  ],
+  'edge.canonical_run_handler_calls_app_create_run': [
+    'http.workbench.canonical_run',
     'delegates_to',
     'application.create_run',
+  ],
+  'edge.repo_event_streams_canonical': [
+    'repository.create_run_event',
+    'streams_to',
+    'http.workbench.canonical_run_stream',
+  ],
+  'edge.canonical_stream_to_subscription': [
+    'http.workbench.canonical_run_stream',
+    'streams_to',
+    'frontend.events.run_subscription',
+  ],
+  'edge.run_subscription_uses_fetch_stream': [
+    'frontend.events.run_subscription',
+    'implemented_with',
+    'framework.fetch_stream',
+  ],
+  'edge.canonical_route_surface_maps_contract': [
+    'contract.workbench.route_surface',
+    'maps_to',
+    'contract.workbench_canonical_thread.thrift',
+  ],
+  'edge.scheduled_route_surface_maps_contract': [
+    'contract.workbench.route_surface',
+    'maps_to',
+    'contract.workbench_scheduled_task.thrift',
+  ],
+  'edge.stateless_route_surface_maps_adapter': [
+    'contract.workbench.route_surface',
+    'maps_to',
+    'compat.langgraph.stateless_run',
   ],
   'edge.langgraph_stateless_calls_backing_thread': [
     'compat.langgraph.stateless_run',

@@ -1503,16 +1503,19 @@ specification and quality reviews found no Critical or Important issue.
 - Modify: `docs/superpowers/context/workbench-execution-chain.md`
 - Modify: `docs/superpowers/context/workbench-execution-graph.json`
 - Modify: `docs/superpowers/runbooks/workbench-canonical-product-client-validation.md`
-- Modify: `scripts/workbench-execution-graph.mjs`
+- Modify: `docs/superpowers/runbooks/workbench-execution-graph.md`
 - Modify: `scripts/workbench-execution-graph.test.mjs`
+- Modify: `scripts/workbench-execution-graph/contract.mjs`
+- Modify: `backend/api/handler/coze/passport_service.go`
+- Create: `backend/api/handler/coze/passport_service_test.go`
 
-- [ ] **Step 1: Start the final feature branch against the configured online database**
+- [x] **Step 1: Start the final feature branch against the configured online database**
 
 Use ignored local environment files/symlinks; do not print or commit secrets. Start backend and
 frontend on unused ports and record process IDs/URLs in local task notes. Verify backend health and
 authenticated workspace access before page tests.
 
-- [ ] **Step 2: Execute the canonical-only page matrix**
+- [x] **Step 2: Execute the canonical-only page matrix**
 
 Using the in-app browser, verify:
 
@@ -1530,22 +1533,23 @@ Using the in-app browser, verify:
 Record which scenarios were page-observed and which used deterministic tests. Capture console and
 network summaries without cookies, bodies, signed URLs or content.
 
-- [ ] **Step 3: Probe final route registration**
+- [x] **Step 3: Probe final route registration**
 
 Through the authenticated local backend, verify all 47 canonical method/path templates are
 registered. Probe representative methods from all 36 TaskThread and 23 LangGraph Thread templates
-and assert 404/route absence. When Task 14 passed, probe all 10 stateless templates likewise.
+and assert 404/route absence. Because Task 14's five-part zero-use gate remained blocked, verify
+that all 10 stateless templates are still registered and explicitly record that retained boundary.
 
 Do not treat a handler validation error as route absence; the router snapshot is the authoritative
 all-method proof.
 
-- [ ] **Step 4: Verify request and log ownership**
+- [x] **Step 4: Verify request and log ownership**
 
 The browser network log must contain only `/api/workbench/threads/**` for Thread workflows. Server
 logs must show canonical operation names, authenticated IDs and outcomes without content-bearing
 values. Confirm no duplicate write and no second stream.
 
-- [ ] **Step 5: Rewrite current context and runbook**
+- [x] **Step 5: Rewrite current context and runbook**
 
 Update current facts to state canonical is primary/always-on, UI is canonical-only, source contracts
 are retired, Scheduled Task is preserved and stateless Run status follows the audit result. Remove
@@ -1555,7 +1559,7 @@ Update execution-chain and machine graph nodes/queries to point at the canonical
 remove deleted source paths. Keep historical specs/plans as historical records rather than rewriting
 their original decisions.
 
-- [ ] **Step 6: Verify the execution graph**
+- [x] **Step 6: Verify the execution graph**
 
 ```bash
 node scripts/workbench-execution-graph.mjs verify
@@ -1566,7 +1570,7 @@ node --test scripts/workbench-execution-graph.test.mjs
 
 Expected: PASS with no deleted source path required by the current machine contract.
 
-- [ ] **Step 7: Perform final scope and diff audit**
+- [x] **Step 7: Perform final scope and diff audit**
 
 ```bash
 git diff --check dev...HEAD
@@ -1578,20 +1582,47 @@ Expected scope: frontend canonical client/page delegation, canonical gate remova
 old HTTP contract deletion, generated code/tests and current documentation. No DB migration,
 application/domain/repository/Eino behavior rewrite, Task Center regression or unrelated refactor.
 
-- [ ] **Step 8: Commit Gate B evidence and current facts**
+- [x] **Step 8: Commit the security fix, Gate B evidence and current facts**
 
 ```bash
+git add \
+  backend/api/handler/coze/passport_service.go \
+  backend/api/handler/coze/passport_service_test.go
+git commit -m "fix: stop logging login session keys"
+
 git add \
   docs/superpowers/evidence/2026-07-28-workbench-canonical-cutover-gate-b.md \
   docs/superpowers/context/project-context.md \
   docs/superpowers/context/workbench-chat.md \
   docs/superpowers/context/workbench-execution-chain.md \
   docs/superpowers/context/workbench-execution-graph.json \
+  docs/superpowers/plans/2026-07-28-workbench-canonical-ui-cutover-retirement.md \
   docs/superpowers/runbooks/workbench-canonical-product-client-validation.md \
-  scripts/workbench-execution-graph.mjs \
-  scripts/workbench-execution-graph.test.mjs
+  docs/superpowers/runbooks/workbench-execution-graph.md \
+  scripts/workbench-execution-graph.test.mjs \
+  scripts/workbench-execution-graph/contract.mjs
 git commit -m "docs: record canonical workbench cutover"
 ```
+
+Task 16 completion note (2026-07-30): the feature frontend and backend ran against the configured
+remote MySQL environment on ports 8080 and 8888. In-app browser coverage observed login,
+workspace isolation, list/detail, no-file and multi-file submission, streaming, refresh,
+follow-up, suggestions, cancel, empty Artifact/Memory/audit states and token usage; scenarios that
+could not be safely constructed online are named deterministic substitutes in the Gate B evidence.
+The exact route result is 47 canonical present, 36 TaskThread V1 absent, 23 local LangGraph Thread
+absent, 11 Scheduled Task present and 10 stateless Run retained because its zero-use gate remains
+blocked.
+
+Fresh verification passed for 42 frontend files / 429 tests, 3 generated-schema files / 13 tests,
+the two focused Go packages, the strengthened login session-log regression, execution-graph
+verification, Graphify build/derived verification and 53 graph tests. The current context,
+canonical validation runbook and execution-graph operations runbook now use the singleton
+canonical client, canonical SSE and `@coze-arch/fetch-stream`; no browser `EventSource` or source
+route fallback remains in the current workflow. Independent specification and quality reviews
+found no Critical issue. Their valid findings were closed by completing the two-commit staging
+plan, strengthening cookie-policy assertions and removing stale EventSource runbook guidance. The
+security fix is commit `2c713b4a`; the Gate B evidence commit is mechanically discoverable from
+the evidence file and intentionally does not self-reference.
 
 ### Task 17: Run The Required `dev` Integration Gates
 
