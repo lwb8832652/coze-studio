@@ -1378,7 +1378,7 @@ Skip this commit when the audit is not PASS.
 - Modify: `frontend/packages/arch/api-schema/src/__tests__/workbench-thread-contract.test.ts`
 - Modify: `backend/api/router/coze/workbench_canonical_thread_route_test.go`
 
-- [ ] **Step 1: Add final source-contract assertions**
+- [x] **Step 1: Add final source-contract assertions**
 
 Require:
 
@@ -1391,7 +1391,7 @@ Require:
 - ChatTask routes and symbols remain retired;
 - external DeerFlow route strings remain only in their explicit external owner.
 
-- [ ] **Step 2: Run frontend verification from fresh output**
+- [x] **Step 2: Run frontend verification from fresh output**
 
 ```bash
 cd frontend/packages/arch/api-schema
@@ -1408,7 +1408,7 @@ rushx build
 
 Expected: PASS with no mode environment variable and one canonical bundle path.
 
-- [ ] **Step 3: Run backend codegen and focused verification**
+- [x] **Step 3: Run backend codegen and focused verification**
 
 ```bash
 cd backend
@@ -1428,7 +1428,7 @@ go vet ./api/handler/coze ./api/router/coze ./internal/deerflowparity
 
 Expected: codegen deterministic, `gofmt -l` has no output, tests/vet PASS.
 
-- [ ] **Step 4: Run the repository-wide backend safety pass**
+- [x] **Step 4: Run the repository-wide backend safety pass**
 
 ```bash
 cd backend
@@ -1444,7 +1444,7 @@ APP_ENV=debug make build_server
 Expected: PASS. If an unrelated pre-existing failure appears, record exact package/test and prove it
 also fails on the unchanged baseline before classifying it as external.
 
-- [ ] **Step 5: Run deterministic source scans**
+- [x] **Step 5: Run deterministic source scans**
 
 ```bash
 rg -n '/api/workbench/task_threads|COZE_WORKBENCH_CANONICAL_API_ENABLED|WORKBENCH_THREAD_CLIENT_MODE|TaskThreadV1Client' \
@@ -1461,7 +1461,7 @@ rg -n '/api/threads(?:/|\")|/api/runs(?:/|\")' backend/api frontend/apps/coze-st
 Expected: no output when Task 14 passed; otherwise only the explicitly retained stateless Run
 owner is allowed and listed in the audit.
 
-- [ ] **Step 6: Commit final contract tests**
+- [x] **Step 6: Commit final contract tests**
 
 ```bash
 git add \
@@ -1470,6 +1470,29 @@ git add \
   backend/api/router/coze/workbench_canonical_thread_route_test.go
 git commit -m "test: enforce canonical-only workbench contract"
 ```
+
+Completed in `0b0abbe3`. The final contract tests scan the full frontend production source with
+AST-aware canonical/Core client construction checks, all seven generated Workbench schema modules,
+the complete backend production source owner set for external `/api/threads/**` strings, and exact
+empty route-prefix snapshots for retired TaskThread, LangGraph Thread and ChatTask families. Task 14
+remains blocked, so the exact ten-route `/api/runs/**` snapshot is intentionally retained.
+
+Fresh frontend evidence: API schema `17/17`, focused canonical contract `4/4`, ESLint and production
+build passed. The full app report was `886/899` with 13 failures in five `pages/system` files; a
+normalized comparison against detached `8f2471cc` was identical. `rushx update` succeeded but
+reproduced the repository's known 19-file generator-only license/header churn, so those unrelated
+generated rewrites were restored and no generated contract content changed.
+
+Fresh backend evidence: codegen SHA verification passed for 58 files, `gofmt -l` was empty, vet and
+the planned five-package focused suite passed, and `APP_ENV=debug make build_server` exited zero.
+The final repository-wide Go run exited one only for
+`application::TestAppDevProviderDocumentationMatchesProductionWiring` and five
+`domain/user/service` membership/outbox fixture tests. A second full run on the feature branch and
+an unchanged detached-baseline full run produced the same two-package, six-test set exactly. One
+intermediate full run observed a non-repeating canonical message-sequence assertion; it disappeared
+in the final full run and the planned focused suite passed. Production legacy scans returned no old
+TaskThread/selector/flag match; only the Task 14-retained stateless Run owner remains. Independent
+specification and quality reviews found no Critical or Important issue.
 
 ### Task 16: Run Gate B Browser Regression And Update Current Project Truth
 
