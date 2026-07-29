@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
 import * as api from '../idl/workbench/thread';
+import * as scheduledTaskAPI from '../idl/workbench/task';
 
 const generatedSource = readFileSync(
   new URL('../idl/workbench/thread.ts', import.meta.url),
@@ -27,6 +28,10 @@ const generatedSource = readFileSync(
 );
 const generatedProductSource = readFileSync(
   new URL('../idl/workbench/thread_product.ts', import.meta.url),
+  'utf8',
+);
+const generatedTaskSource = readFileSync(
+  new URL('../idl/workbench/task.ts', import.meta.url),
   'utf8',
 );
 const threadSourceFile = ts.createSourceFile(
@@ -39,6 +44,13 @@ const threadSourceFile = ts.createSourceFile(
 const threadProductSourceFile = ts.createSourceFile(
   'thread_product.ts',
   generatedProductSource,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS,
+);
+const taskSourceFile = ts.createSourceFile(
+  'task.ts',
+  generatedTaskSource,
   ts.ScriptTarget.Latest,
   true,
   ts.ScriptKind.TS,
@@ -96,6 +108,106 @@ const productMethods = [
   'ExportCanonicalThreadGuardrailAuditEvents',
   'ListCanonicalThreadMCPRuntimeAuditEvents',
   'RetryCanonicalSubagentRun',
+] as const;
+
+const scheduledTaskAPIFunctions = [
+  'CreateScheduledTask',
+  'ListScheduledTasks',
+  'ListScheduledTaskTargets',
+  'ListScheduledTaskCronPresets',
+  'GetScheduledTask',
+  'UpdateScheduledTask',
+  'DeleteScheduledTask',
+  'EnableScheduledTask',
+  'DisableScheduledTask',
+  'ExecuteScheduledTask',
+  'ListScheduledTaskExecutions',
+] as const;
+
+const scheduledTaskContractTypes = [
+  'ScheduledTaskTargetType',
+  'ScheduledTaskScheduleType',
+  'ScheduledTaskStatus',
+  'ScheduledTaskExecutionStatus',
+  'ScheduledTask',
+  'ScheduledTaskExecution',
+  'ScheduledTaskTarget',
+  'ScheduledTaskCronPreset',
+  'CreateScheduledTaskRequest',
+  'UpdateScheduledTaskRequest',
+  'GetScheduledTaskRequest',
+  'ScheduledTaskActionRequest',
+  'ListScheduledTasksRequest',
+  'ListScheduledTaskExecutionsRequest',
+  'ListScheduledTaskTargetsRequest',
+  'ListScheduledTaskCronPresetsRequest',
+  'ScheduledTaskResponse',
+  'ScheduledTaskExecutionResponse',
+  'ListScheduledTasksData',
+  'ListScheduledTasksResponse',
+  'ListScheduledTaskExecutionsData',
+  'ListScheduledTaskExecutionsResponse',
+  'ListScheduledTaskTargetsData',
+  'ListScheduledTaskTargetsResponse',
+  'ListScheduledTaskCronPresetsResponse',
+] as const;
+
+const scheduledTaskAPIConfigs = [
+  {
+    name: 'CreateScheduledTask',
+    url: '/api/workbench/scheduled_tasks',
+    method: 'POST',
+  },
+  {
+    name: 'ListScheduledTasks',
+    url: '/api/workbench/scheduled_tasks',
+    method: 'GET',
+  },
+  {
+    name: 'ListScheduledTaskTargets',
+    url: '/api/workbench/scheduled_task_targets',
+    method: 'GET',
+  },
+  {
+    name: 'ListScheduledTaskCronPresets',
+    url: '/api/workbench/scheduled_task_cron_presets',
+    method: 'GET',
+  },
+  {
+    name: 'GetScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id',
+    method: 'GET',
+  },
+  {
+    name: 'UpdateScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id',
+    method: 'PUT',
+  },
+  {
+    name: 'DeleteScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id',
+    method: 'DELETE',
+  },
+  {
+    name: 'EnableScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id/enable',
+    method: 'POST',
+  },
+  {
+    name: 'DisableScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id/disable',
+    method: 'POST',
+  },
+  {
+    name: 'ExecuteScheduledTask',
+    url: '/api/workbench/scheduled_tasks/:task_id/execute',
+    method: 'POST',
+  },
+  {
+    name: 'ListScheduledTaskExecutions',
+    url: '/api/workbench/scheduled_tasks/:task_id/executions',
+    method: 'GET',
+  },
 ] as const;
 
 interface CanonicalAPIExpectation {
@@ -711,24 +823,85 @@ function assertNoTaskThreadContracts(sourceFile: ts.SourceFile): void {
   ).toEqual([]);
 }
 
+function exportedInterfaceAndEnumNames(sourceFile: ts.SourceFile): string[] {
+  return sourceFile.statements.flatMap(statement => {
+    if (
+      !ts.isInterfaceDeclaration(statement) &&
+      !ts.isEnumDeclaration(statement)
+    ) {
+      return [];
+    }
+    if (
+      !statement.modifiers?.some(
+        modifier => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      )
+    ) {
+      return [];
+    }
+    return [statement.name.text];
+  });
+}
+
+function apiConfigFromSource(
+  source: string,
+  name: string,
+): {
+  url: string;
+  method: string;
+  name: string;
+  reqMapping?: Record<string, string[]>;
+} {
+  const declarationStart = source.indexOf(`export const ${name} =`);
+  expect(declarationStart, `${name} must be generated`).toBeGreaterThanOrEqual(
+    0,
+  );
+
+  const objectStart = source.indexOf('>({', declarationStart) + 2;
+  const objectEnd = source.indexOf('\n});', objectStart);
+  expect(objectStart, `${name} config must start`).toBeGreaterThanOrEqual(2);
+  expect(objectEnd, `${name} config must end`).toBeGreaterThan(objectStart);
+
+  return JSON.parse(source.slice(objectStart, objectEnd + 2));
+}
+
 function apiConfig(name: string): {
   url: string;
   method: string;
   name: string;
   reqMapping?: Record<string, string[]>;
 } {
-  const declarationStart = generatedSource.indexOf(`export const ${name} =`);
-  expect(declarationStart, `${name} must be generated`).toBeGreaterThanOrEqual(
-    0,
-  );
-
-  const objectStart = generatedSource.indexOf('>({', declarationStart) + 2;
-  const objectEnd = generatedSource.indexOf('\n});', objectStart);
-  expect(objectStart, `${name} config must start`).toBeGreaterThanOrEqual(2);
-  expect(objectEnd, `${name} config must end`).toBeGreaterThan(objectStart);
-
-  return JSON.parse(generatedSource.slice(objectStart, objectEnd + 2));
+  return apiConfigFromSource(generatedSource, name);
 }
+
+describe('Scheduled Task generated contract', () => {
+  it('keeps exactly the Scheduled Task DTO and enum exports', () => {
+    expect(exportedInterfaceAndEnumNames(taskSourceFile)).toEqual(
+      scheduledTaskContractTypes,
+    );
+    expect(taskThreadIdentifiers(taskSourceFile)).toEqual([]);
+  });
+
+  it('keeps exactly the Scheduled Task methods and routes', () => {
+    const generatedAPIFunctions = Array.from(
+      generatedTaskSource.matchAll(
+        /export const (\w+) = \/\*#__PURE__\*\/createAPI/g,
+      ),
+      match => match[1],
+    );
+    expect(generatedAPIFunctions).toEqual(scheduledTaskAPIFunctions);
+
+    for (const functionName of scheduledTaskAPIFunctions) {
+      expect(scheduledTaskAPI[functionName]).toBeTypeOf('function');
+    }
+    expect(
+      scheduledTaskAPIFunctions.map(name => {
+        const config = apiConfigFromSource(generatedTaskSource, name);
+        return { name: config.name, url: config.url, method: config.method };
+      }),
+    ).toEqual(scheduledTaskAPIConfigs);
+    expect(generatedTaskSource).not.toContain('/api/workbench/task_threads');
+  });
+});
 
 describe('canonical Workbench thread generated contract', () => {
   it('keeps public thread and run IDs as TypeScript strings', () => {
@@ -819,12 +992,12 @@ describe('canonical Workbench thread generated contract', () => {
   it('freezes every canonical method, path, and request mapping', () => {
     const runMapping = {
       path: ['thread_id'],
-      body: [...canonicalRunBody],
+      body: [...canonicalRunBody, 'coze'],
       header: ['Idempotency-Key', 'X-Coze-Space-ID'],
     };
     const waitMapping = {
       ...runMapping,
-      body: [...canonicalRunBody, 'raise_error'],
+      body: [...canonicalRunBody, 'raise_error', 'coze'],
     };
 
     const expectedConfigs = [

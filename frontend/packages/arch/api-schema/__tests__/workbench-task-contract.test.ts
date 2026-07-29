@@ -48,54 +48,6 @@ describe('workbench task api contract source', () => {
     }
   });
 
-  it('declares task-thread run clients in thrift before generated clients use them', () => {
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- Static fixture path.
-    const source = readFileSync(taskThriftPath, 'utf8');
-    const requiredMethods = [
-      'ListTaskThreads',
-      'GetTaskThread',
-      'ListTaskThreadMessages',
-      'AppendTaskThreadMessage',
-      'ListTaskThreadRuns',
-      'ListTaskThreadRunEvents',
-      'GetTaskThreadTokenUsage',
-      'ListTaskThreadArtifacts',
-      'GetTaskThreadArtifactSignedURL',
-      'CreateTaskThreadRun',
-      'ResumeTaskThreadRun',
-      'CancelTaskThreadRun',
-      'RetryTaskThreadSubagentRun',
-    ];
-
-    for (const method of requiredMethods) {
-      expect(source).toContain(`${method}(`);
-    }
-  });
-
-  it('maps parent_run_id as a query parameter for child run listing', () => {
-    expect(workbenchTask.ListTaskThreadRuns.meta).toMatchObject({
-      method: 'GET',
-      reqMapping: {
-        path: ['thread_id'],
-        query: ['parent_run_id', 'status', 'page', 'page_size'],
-      },
-      url: '/api/workbench/task_threads/:thread_id/runs',
-    });
-  });
-
-  it('maps the atomic follow-up message fields only on run creation', () => {
-    expect(workbenchTask.CreateTaskThreadRun.meta.reqMapping).toMatchObject({
-      path: ['thread_id'],
-      body: expect.arrayContaining(['message_content', 'message_metadata']),
-    });
-    expect(workbenchTask.CreateTaskThread.meta.reqMapping.body).not.toContain(
-      'message_content',
-    );
-    expect(workbenchTask.CreateTaskThread.meta.reqMapping.body).not.toContain(
-      'message_metadata',
-    );
-  });
-
   it('maps scheduled task list filters and task actions', () => {
     expect(workbenchTask.ListScheduledTasks.meta).toMatchObject({
       method: 'GET',

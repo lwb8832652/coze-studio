@@ -578,7 +578,7 @@ func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
 		writeCanonicalApplicationError(ctx, c, fmt.Errorf("agent thread application returned invalid canceled run"))
 		return
 	}
-	if wait && !isTaskThreadRunTerminal(response.Run.Status) {
+	if wait && !isWorkbenchRunTerminal(response.Run.Status) {
 		if _, err := waitCanonicalRunTerminal(ctx, threadID, response.Run, false); err != nil {
 			writeCanonicalApplicationError(ctx, c, err)
 			return
@@ -1063,7 +1063,7 @@ func waitCanonicalRunTerminal(
 	run *appagentthread.RunSummary,
 	cancelOnDisconnect bool,
 ) (*appagentthread.RunSummary, error) {
-	if run == nil || isTaskThreadRunTerminal(run.Status) {
+	if run == nil || isWorkbenchRunTerminal(run.Status) {
 		return run, nil
 	}
 	ticker := time.NewTicker(time.Duration(defaultRunEventStreamIntervalMs) * time.Millisecond)
@@ -1085,7 +1085,7 @@ func waitCanonicalRunTerminal(
 				return run, nil
 			}
 			run = current
-			if isTaskThreadRunTerminal(run.Status) {
+			if isWorkbenchRunTerminal(run.Status) {
 				return run, nil
 			}
 		}

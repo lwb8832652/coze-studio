@@ -32,10 +32,31 @@ import type {
   WorkbenchTokenUsageAggregate,
   WorkbenchUpload,
 } from '../types';
-import {
-  freezeLegacyTaskThreadInput,
-  type DeepReadonly,
-} from './legacy-task-thread-reference';
+
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+      : T;
+
+const deepFreeze = (value: unknown): void => {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) {
+    return;
+  }
+
+  for (const child of Object.values(value)) {
+    deepFreeze(child);
+  }
+
+  Object.freeze(value);
+};
+
+const freezeFixture = <T>(value: T): DeepReadonly<T> => {
+  deepFreeze(value);
+  return value as DeepReadonly<T>;
+};
 
 const createdAt = 1767225600000;
 const updatedAt = 1767225660000;
@@ -63,7 +84,6 @@ const ids = {
 const opaque = {
   todo: 'todo-1',
   assistant: 'agent',
-  legacyAssistant: 'assistant-a',
   worker: 'worker-safe-1',
   step: 'step-1',
   source: 'message:3001',
@@ -71,10 +91,9 @@ const opaque = {
   server: 'server-main',
   interaction: 'hi_1',
   choice: 'a',
-  journal: 'journal-1',
 } as const;
 
-export const canonicalRunSubmissionExtensions = freezeLegacyTaskThreadInput({
+export const canonicalRunSubmissionExtensions = freezeFixture({
   turn: {
     message_metadata: { source: 'workbench_detail_followup' },
   },
@@ -84,40 +103,17 @@ export const canonicalRunSubmissionExtensions = freezeLegacyTaskThreadInput({
   },
 });
 
-export interface PairedTransportFixture<Legacy, Canonical, Visible> {
-  v1: Legacy;
+export interface CanonicalTransportFixture<Canonical, Visible> {
   canonical: Canonical;
   visible: Visible;
 }
 
-const pairFixture = <Legacy, Canonical, Visible>(
-  fixture: PairedTransportFixture<Legacy, Canonical, Visible>,
-): DeepReadonly<PairedTransportFixture<Legacy, Canonical, Visible>> =>
-  freezeLegacyTaskThreadInput(fixture);
+const canonicalFixture = <Canonical, Visible>(
+  fixture: CanonicalTransportFixture<Canonical, Visible>,
+): DeepReadonly<CanonicalTransportFixture<Canonical, Visible>> =>
+  freezeFixture(fixture);
 
-export const threadTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      thread_id: ids.thread,
-      space_id: ids.space,
-      creator_id: ids.actor,
-      title: 'Prepare launch brief',
-      status: 'running',
-      source: 'web',
-      progress: 40,
-      last_user_message: 'Prepare the launch brief',
-      last_agent_message: 'Drafting the brief',
-      created_at: createdAt,
-      updated_at: updatedAt,
-      values: {
-        todos: [
-          { id: opaque.todo, title: 'Draft outline', status: 'completed' },
-        ],
-      },
-    },
-  },
+export const threadTransportFixture = canonicalFixture({
   canonical: {
     thread_id: ids.thread,
     created_at: createdAtISO,
@@ -156,12 +152,7 @@ export const threadTransportFixture = pairFixture({
   } satisfies WorkbenchThread,
 });
 
-export const todoTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: { id: opaque.todo, title: 'Draft outline', status: 'completed' },
-  },
+export const todoTransportFixture = canonicalFixture({
   canonical: {
     values: {
       todos: [{ id: opaque.todo, title: 'Draft outline', status: 'completed' }],
@@ -174,20 +165,7 @@ export const todoTransportFixture = pairFixture({
   } satisfies WorkbenchTodo,
 });
 
-export const messageTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      message_id: ids.message,
-      thread_id: ids.thread,
-      run_id: ids.run,
-      role: 'assistant',
-      content: 'Drafting the brief',
-      metadata: '{"channel":"workbench"}',
-      created_at: updatedAt,
-    },
-  },
+export const messageTransportFixture = canonicalFixture({
   canonical: {
     message_id: ids.message,
     thread_id: ids.thread,
@@ -209,37 +187,7 @@ export const messageTransportFixture = pairFixture({
   } satisfies WorkbenchMessage,
 });
 
-export const runTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      run_id: ids.run,
-      thread_id: ids.thread,
-      parent_run_id: '',
-      space_id: ids.space,
-      creator_id: ids.actor,
-      assistant_id: opaque.legacyAssistant,
-      run_kind: 'agent',
-      status: 'running',
-      command: '',
-      input: '{"message":"Prepare the launch brief"}',
-      config: '{"model_name":"gpt-test"}',
-      context: '{}',
-      metadata: '{"mode":"agent"}',
-      stream_mode: 'events',
-      multitask_strategy: 'reject',
-      on_disconnect: 'continue',
-      durability: 'async',
-      worker_id: opaque.worker,
-      error_code: '',
-      error_message: '',
-      started_at: createdAt,
-      ended_at: 0,
-      created_at: createdAt,
-      updated_at: updatedAt,
-    },
-  },
+export const runTransportFixture = canonicalFixture({
   canonical: {
     run_id: ids.run,
     thread_id: ids.thread,
@@ -282,31 +230,7 @@ export const runTransportFixture = pairFixture({
   } satisfies WorkbenchRun,
 });
 
-export const runEventTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      events: [
-        {
-          event_id: ids.runEvent,
-          thread_id: ids.thread,
-          run_id: ids.run,
-          event_type: 'run.started',
-          payload: '{"phase":"started"}',
-          created_at: createdAt,
-        },
-      ],
-      total: 1,
-      journal_messages: [
-        {
-          id: opaque.journal,
-          tool_calls: [{ arguments: '{"must":"be dropped"}' }],
-          usage: '{"must":"be dropped"}',
-        },
-      ],
-    },
-  },
+export const runEventTransportFixture = canonicalFixture({
   canonical: {
     data: [
       {
@@ -330,27 +254,7 @@ export const runEventTransportFixture = pairFixture({
   } satisfies WorkbenchRunEvent,
 });
 
-export const uploadTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      success: true,
-      files: [
-        {
-          file_id: ids.file,
-          filename: 'brief.md',
-          path: `/uploads/${ids.file}`,
-          virtual_path: '/brief.md',
-          content_type: 'text/markdown',
-          size: 128,
-          created_at: createdAt,
-        },
-      ],
-      message: 'uploaded',
-      skipped_files: [],
-    },
-  },
+export const uploadTransportFixture = canonicalFixture({
   canonical: {
     uploads: [
       {
@@ -374,32 +278,7 @@ export const uploadTransportFixture = pairFixture({
   } satisfies WorkbenchUpload,
 });
 
-export const artifactTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      artifacts: [
-        {
-          artifact_id: ids.artifact,
-          thread_id: ids.thread,
-          run_id: ids.run,
-          file_id: ids.file,
-          title: 'Launch brief',
-          artifact_type: 'document',
-          virtual_path: '/brief.md',
-          content_type: 'text/markdown',
-          size_bytes: 128,
-          preview_mode: 'text',
-          metadata: '{"scan_status":"clean"}',
-          created_at: createdAt,
-          updated_at: updatedAt,
-          deleted_at: deletedAt,
-        },
-      ],
-      total: 1,
-    },
-  },
+export const artifactTransportFixture = canonicalFixture({
   canonical: {
     artifacts: [
       {
@@ -440,34 +319,7 @@ export const artifactTransportFixture = pairFixture({
   } satisfies WorkbenchArtifact,
 });
 
-export const artifactScanJobTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      jobs: [
-        {
-          job_id: ids.scanJob,
-          thread_id: ids.thread,
-          run_id: ids.run,
-          space_id: ids.space,
-          artifact_id: ids.artifact,
-          file_id: ids.file,
-          scanner: 'default',
-          status: 'succeeded',
-          worker_id: opaque.worker,
-          attempt_count: 1,
-          last_error: '',
-          available_at: createdAt,
-          started_at: createdAt,
-          ended_at: updatedAt,
-          created_at: createdAt,
-          updated_at: updatedAt,
-        },
-      ],
-      total: 1,
-    },
-  },
+export const artifactScanJobTransportFixture = canonicalFixture({
   canonical: {
     jobs: [
       {
@@ -543,23 +395,7 @@ const visibleTokenUsage = {
   created_at: createdAt,
 } satisfies WorkbenchTokenUsage;
 
-export const tokenUsageTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: {
-      usage: [
-        {
-          ...visibleTokenUsage,
-          raw_usage: '{"must":"be dropped"}',
-          metadata: '{"must":"be dropped"}',
-        },
-      ],
-      total: 1,
-      aggregate: tokenAggregate,
-      run_aggregates: [{ run_id: ids.run, aggregate: tokenAggregate }],
-    },
-  },
+export const tokenUsageTransportFixture = canonicalFixture({
   canonical: {
     usage: [
       {
@@ -615,12 +451,7 @@ const visibleMemory = {
   deleted_at: deletedAt,
 } satisfies WorkbenchMemory;
 
-export const memoryTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: { memories: [visibleMemory], total: 1 },
-  },
+export const memoryTransportFixture = canonicalFixture({
   canonical: {
     memories: [
       {
@@ -663,12 +494,7 @@ const visibleMemoryAudit = {
   created_at: updatedAt,
 } satisfies WorkbenchMemoryAuditEvent;
 
-export const memoryAuditTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: { events: [visibleMemoryAudit], total: 1 },
-  },
+export const memoryAuditTransportFixture = canonicalFixture({
   canonical: {
     events: [
       {
@@ -710,12 +536,7 @@ const visibleGuardrailAudit = {
   created_at: updatedAt,
 } satisfies WorkbenchGuardrailAuditEvent;
 
-export const guardrailAuditTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: { events: [visibleGuardrailAudit], total: 1 },
-  },
+export const guardrailAuditTransportFixture = canonicalFixture({
   canonical: {
     events: [
       {
@@ -756,12 +577,7 @@ const visibleMCPAudit = {
   created_at: updatedAt,
 } satisfies WorkbenchMCPRuntimeAuditEvent;
 
-export const mcpRuntimeAuditTransportFixture = pairFixture({
-  v1: {
-    code: 0,
-    msg: 'success',
-    data: { events: [visibleMCPAudit], total: 1 },
-  },
+export const mcpRuntimeAuditTransportFixture = canonicalFixture({
   canonical: {
     events: [
       {
@@ -783,15 +599,7 @@ export const mcpRuntimeAuditTransportFixture = pairFixture({
   visible: visibleMCPAudit,
 });
 
-export const humanInteractionTransportFixture = pairFixture({
-  v1: {
-    schema: 'coze.human_interaction_response.v1',
-    interaction_id: opaque.interaction,
-    kind: 'confirmation',
-    decision: 'approved',
-    comment: 'Proceed',
-    choice_id: opaque.choice,
-  },
+export const humanInteractionTransportFixture = canonicalFixture({
   canonical: {
     schema: 'coze.human_interaction_response.v1',
     interaction_id: opaque.interaction,
@@ -810,7 +618,7 @@ export const humanInteractionTransportFixture = pairFixture({
   } satisfies HumanInteractionResponse,
 });
 
-export const pairedTransportFixtures = freezeLegacyTaskThreadInput({
+export const canonicalTransportFixtures = freezeFixture({
   thread: threadTransportFixture,
   todo: todoTransportFixture,
   message: messageTransportFixture,
@@ -827,7 +635,7 @@ export const pairedTransportFixtures = freezeLegacyTaskThreadInput({
   human_interaction: humanInteractionTransportFixture,
 });
 
-export type TransportFixtureFamily = keyof typeof pairedTransportFixtures;
+export type TransportFixtureFamily = keyof typeof canonicalTransportFixtures;
 
 type WireRecord = Record<string, unknown>;
 type WireDecoder = (value: unknown, label: string) => unknown;
@@ -945,13 +753,6 @@ const isValidRFC3339Calendar = (value: string): boolean => {
   );
 };
 
-const asV1Epoch = (value: unknown, label: string): number => {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return value;
-  }
-  throw new TypeError(`${label} must be non-negative safe epoch milliseconds`);
-};
-
 const asCanonicalEpoch = (value: unknown, label: string): number => {
   const milliseconds =
     typeof value === 'string' && isValidRFC3339Calendar(value)
@@ -961,17 +762,6 @@ const asCanonicalEpoch = (value: unknown, label: string): number => {
     return milliseconds;
   }
   throw new TypeError(`${label} must be a valid RFC3339 string`);
-};
-
-const parseV1JSON = (value: unknown, label: string): unknown => {
-  if (typeof value !== 'string') {
-    throw new TypeError(`${label} must be a JSON string`);
-  }
-  try {
-    return JSON.parse(value) as unknown;
-  } catch (error) {
-    throw new TypeError(`${label} must contain valid JSON: ${String(error)}`);
-  }
 };
 
 const assertJSONValue = (
@@ -1017,14 +807,8 @@ const serializeJSON = (value: unknown, label: string): string => {
   return serialized;
 };
 
-const asV1JSONObject = (value: unknown, label: string): string =>
-  serializeJSON(asRecord(parseV1JSON(value, label), label), label);
-
 const asCanonicalJSONObject = (value: unknown, label: string): string =>
   serializeJSON(asRecord(value, label), label);
-
-const asV1JSONArray = (value: unknown, label: string): string =>
-  serializeJSON(asArray(parseV1JSON(value, label), label), label);
 
 const asCanonicalJSONArray = (value: unknown, label: string): string =>
   serializeJSON(asArray(value, label), label);
@@ -1049,10 +833,6 @@ const asStringArray = (value: unknown, label: string): string[] =>
   asArray(value, label).map((item, index) =>
     asString(item, `${label}[${index}]`),
   );
-
-const asSingletonStringArray = (value: unknown, label: string): string[] => [
-  asString(value, label),
-];
 
 const exact =
   (expected: unknown): WireDecoder =>
@@ -1101,31 +881,21 @@ const optionalRead = (
 const fixed = (constant: unknown): FieldRule => ({ constant });
 const fields = <Schema extends FieldMap>(schema: Schema): Schema => schema;
 
-const v1ID = (from: string): ReadRule => read(from, asResourceID);
 const canonicalID = (from: string): ReadRule => read(from, asResourceID);
 const string = (from: string): ReadRule => read(from, asString);
 const nonEmptyString = (from: string): ReadRule => read(from, asNonEmptyString);
 const boolean = (from: string): ReadRule => read(from, asBoolean);
 const number = (from: string): ReadRule => read(from, asFiniteNumber);
 const integer = (from: string): ReadRule => read(from, asSafeInteger);
-const v1Epoch = (from: string): ReadRule => read(from, asV1Epoch);
 const canonicalEpoch = (from: string): ReadRule => read(from, asCanonicalEpoch);
-const v1JSONObject = (from: string): ReadRule => read(from, asV1JSONObject);
 const canonicalJSONObject = (from: string): ReadRule =>
   read(from, asCanonicalJSONObject);
-const v1JSONArray = (from: string): ReadRule => read(from, asV1JSONArray);
 const canonicalJSONArray = (from: string): ReadRule =>
   read(from, asCanonicalJSONArray);
-const optionalV1ID = (from: string): ReadRule =>
-  optionalRead(from, asResourceID, { omit: value => value === '' });
 const optionalCanonicalID = (from: string): ReadRule =>
   optionalRead(from, asResourceID, { omit: value => value === null });
-const optionalV1String = (from: string): ReadRule =>
-  optionalRead(from, asString);
 const optionalCanonicalString = (from: string): ReadRule =>
   optionalRead(from, asString, { omit: value => value === null });
-const optionalV1Epoch = (from: string): ReadRule =>
-  optionalRead(from, asV1Epoch, { omit: value => value === 0 });
 const optionalCanonicalEpoch = (from: string): ReadRule =>
   optionalRead(from, asCanonicalEpoch, { omit: value => value === null });
 
@@ -1243,22 +1013,10 @@ const createProjector =
     return projectFields(asRecord(roots[0], label), schema, label);
   };
 
-const v1Projector = (...[family, root, schema, checks = []]: ProjectorArgs) =>
-  createProjector(`v1.${family}`, root, schema, [
-    read('code', exact(0)),
-    string('msg'),
-    ...checks,
-  ]);
-
 const canonicalProjector = (
   ...[family, root, schema, checks = []]: ProjectorArgs
 ) => createProjector(`canonical.${family}`, root, schema, checks);
 
-const v1TodoFields = fields({
-  id: string('id'),
-  title: string('title'),
-  status: string('status'),
-});
 const canonicalTodoFields = fields({
   id: string('id'),
   title: string('title'),
@@ -1274,20 +1032,6 @@ const threadValuesFromTodos =
   (todoFields: FieldMap): WireDecoder =>
   (value, label) => ({ todos: arrayOf(todoFields)(value, label) });
 
-const v1ThreadFields = fields({
-  thread_id: v1ID('thread_id'),
-  space_id: v1ID('space_id'),
-  title: string('title'),
-  status: string('status'),
-  source: string('source'),
-  progress: number('progress'),
-  last_user_message: string('last_user_message'),
-  last_agent_message: string('last_agent_message'),
-  can_edit: fixed(true),
-  created_at: v1Epoch('created_at'),
-  updated_at: v1Epoch('updated_at'),
-  values: optionalRead('values.todos', threadValuesFromTodos(v1TodoFields)),
-});
 const canonicalThreadFields = fields({
   thread_id: canonicalID('thread_id'),
   space_id: fixed(fixtureSpaceID),
@@ -1306,15 +1050,6 @@ const canonicalThreadFields = fields({
   ),
 });
 
-const v1MessageFields = fields({
-  message_id: v1ID('message_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: v1ID('run_id'),
-  role: string('role'),
-  content: string('content'),
-  metadata: v1JSONObject('metadata'),
-  created_at: v1Epoch('created_at'),
-});
 const canonicalMessageFields = fields({
   message_id: canonicalID('message_id'),
   thread_id: canonicalID('thread_id'),
@@ -1325,25 +1060,6 @@ const canonicalMessageFields = fields({
   created_at: canonicalEpoch('created_at'),
 });
 
-const v1RunFields = fields({
-  run_id: v1ID('run_id'),
-  thread_id: v1ID('thread_id'),
-  space_id: v1ID('space_id'),
-  assistant_id: fixed('agent'),
-  status: string('status'),
-  metadata: v1JSONObject('metadata'),
-  multitask_strategy: string('multitask_strategy'),
-  attempt_kind: fixed('turn'),
-  parent_run_id: optionalV1ID('parent_run_id'),
-  run_kind: fixed('task'),
-  stream_modes: read('stream_mode', asSingletonStringArray),
-  on_disconnect: string('on_disconnect'),
-  durability: string('durability'),
-  started_at: optionalV1Epoch('started_at'),
-  ended_at: optionalV1Epoch('ended_at'),
-  created_at: v1Epoch('created_at'),
-  updated_at: v1Epoch('updated_at'),
-});
 const canonicalRunFields = fields({
   run_id: canonicalID('run_id'),
   thread_id: canonicalID('thread_id'),
@@ -1367,14 +1083,6 @@ const canonicalRunFields = fields({
   updated_at: canonicalEpoch('updated_at'),
 });
 
-const v1RunEventFields = fields({
-  event_id: v1ID('event_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: v1ID('run_id'),
-  event_type: string('event_type'),
-  payload: v1JSONObject('payload'),
-  created_at: v1Epoch('created_at'),
-});
 const canonicalRunEventFields = fields({
   event_id: canonicalID('event_id'),
   thread_id: canonicalID('thread_id'),
@@ -1384,14 +1092,6 @@ const canonicalRunEventFields = fields({
   created_at: canonicalEpoch('created_at'),
 });
 
-const v1UploadFields = fields({
-  file_id: v1ID('file_id'),
-  file_name: string('filename'),
-  virtual_path: string('virtual_path'),
-  content_type: string('content_type'),
-  size_bytes: integer('size'),
-  created_at: v1Epoch('created_at'),
-});
 const canonicalUploadFields = fields({
   file_id: canonicalID('file_id'),
   file_name: string('file_name'),
@@ -1401,22 +1101,6 @@ const canonicalUploadFields = fields({
   created_at: canonicalEpoch('created_at'),
 });
 
-const v1ArtifactFields = fields({
-  artifact_id: v1ID('artifact_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: v1ID('run_id'),
-  file_id: v1ID('file_id'),
-  title: string('title'),
-  artifact_type: string('artifact_type'),
-  virtual_path: string('virtual_path'),
-  content_type: string('content_type'),
-  size_bytes: integer('size_bytes'),
-  preview_mode: string('preview_mode'),
-  metadata: v1JSONObject('metadata'),
-  created_at: v1Epoch('created_at'),
-  updated_at: v1Epoch('updated_at'),
-  deleted_at: optionalV1Epoch('deleted_at'),
-});
 const canonicalArtifactFields = fields({
   artifact_id: canonicalID('artifact_id'),
   thread_id: canonicalID('thread_id'),
@@ -1434,24 +1118,6 @@ const canonicalArtifactFields = fields({
   deleted_at: optionalCanonicalEpoch('deleted_at'),
 });
 
-const v1ScanFields = fields({
-  job_id: v1ID('job_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: v1ID('run_id'),
-  space_id: v1ID('space_id'),
-  artifact_id: v1ID('artifact_id'),
-  file_id: v1ID('file_id'),
-  scanner: string('scanner'),
-  status: string('status'),
-  worker_id: string('worker_id'),
-  attempt_count: integer('attempt_count'),
-  error_code: string('last_error'),
-  available_at: optionalV1Epoch('available_at'),
-  started_at: optionalV1Epoch('started_at'),
-  ended_at: optionalV1Epoch('ended_at'),
-  created_at: v1Epoch('created_at'),
-  updated_at: v1Epoch('updated_at'),
-});
 const canonicalScanFields = fields({
   job_id: canonicalID('job_id'),
   thread_id: canonicalID('thread_id'),
@@ -1489,25 +1155,6 @@ const runAggregateFields = (resourceID: (from: string) => ReadRule): FieldMap =>
     aggregate: read('aggregate', objectOf(tokenAggregateFields())),
   });
 
-const v1TokenFields = fields({
-  usage_id: v1ID('usage_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: v1ID('run_id'),
-  space_id: v1ID('space_id'),
-  source: string('source'),
-  step_id: string('step_id'),
-  step_index: integer('step_index'),
-  step_name: string('step_name'),
-  model_name: string('model_name'),
-  provider: string('provider'),
-  input_tokens: integer('input_tokens'),
-  output_tokens: integer('output_tokens'),
-  total_tokens: integer('total_tokens'),
-  cost_micros: integer('cost_micros'),
-  currency: string('currency'),
-  estimated: boolean('estimated'),
-  created_at: v1Epoch('created_at'),
-});
 const canonicalTokenFields = fields({
   usage_id: canonicalID('usage_id'),
   thread_id: canonicalID('thread_id'),
@@ -1527,13 +1174,6 @@ const canonicalTokenFields = fields({
   estimated: boolean('estimated'),
   created_at: canonicalEpoch('created_at'),
 });
-const v1TokenPageFields: FieldMap = {
-  items: read('usage', arrayOf(v1TokenFields)),
-  total: integer('total'),
-  has_more: fixed(false),
-  aggregate: read('aggregate', objectOf(tokenAggregateFields())),
-  run_aggregates: read('run_aggregates', arrayOf(runAggregateFields(v1ID))),
-};
 const canonicalTokenPageFields: FieldMap = {
   items: read('usage', arrayOf(canonicalTokenFields)),
   total: integer('total'),
@@ -1545,25 +1185,6 @@ const canonicalTokenPageFields: FieldMap = {
   ),
 };
 
-const v1MemoryFields = fields({
-  memory_id: v1ID('memory_id'),
-  thread_id: v1ID('thread_id'),
-  run_id: optionalV1ID('run_id'),
-  space_id: v1ID('space_id'),
-  scope: string('scope'),
-  content: string('content'),
-  metadata: v1JSONObject('metadata'),
-  score: number('score'),
-  confidence: number('confidence'),
-  source_type: string('source_type'),
-  source_id: string('source_id'),
-  correction_of_memory_id: optionalV1ID('correction_of_memory_id'),
-  corrected_at: optionalV1Epoch('corrected_at'),
-  expires_at: optionalV1Epoch('expires_at'),
-  created_at: v1Epoch('created_at'),
-  updated_at: v1Epoch('updated_at'),
-  deleted_at: optionalV1Epoch('deleted_at'),
-});
 const canonicalMemoryFields = fields({
   memory_id: canonicalID('memory_id'),
   thread_id: canonicalID('thread_id'),
@@ -1591,13 +1212,6 @@ interface AuditWireRules {
   jsonArray: (from: string) => ReadRule;
   optionalString: (from: string) => ReadRule;
 }
-const v1AuditRules: AuditWireRules = {
-  id: v1ID,
-  optionalID: optionalV1ID,
-  epoch: v1Epoch,
-  jsonArray: v1JSONArray,
-  optionalString: optionalV1String,
-};
 const canonicalAuditRules: AuditWireRules = {
   id: canonicalID,
   optionalID: optionalCanonicalID,
@@ -1653,15 +1267,6 @@ const mcpAuditFields = (rules: AuditWireRules, space: FieldRule): FieldMap =>
     output_bytes: integer('output_bytes'),
   });
 
-const v1HumanInteractionFields = fields({
-  schema: read('schema', exact('coze.human_interaction_response.v1')),
-  interaction_id: nonEmptyString('interaction_id'),
-  kind: read('kind', exact('confirmation')),
-  decision: read('decision', exact('approved')),
-  answer: optionalV1String('answer'),
-  choice_id: optionalV1String('choice_id'),
-  comment: optionalV1String('comment'),
-});
 const canonicalHumanInteractionFields = fields({
   schema: read('schema', exact('coze.human_interaction_response.v1')),
   interaction_id: nonEmptyString('interaction_id'),
@@ -1681,165 +1286,82 @@ const canonicalHumanInteractionKeys = [
   'comment',
 ] as const;
 
-const v1PrivateDropChecks = [
-  v1JSONObject('data.usage.*.raw_usage'),
-  v1JSONObject('data.usage.*.metadata'),
-];
-const v1RunEventDropChecks = [
-  string('data.journal_messages.*.id'),
-  v1JSONObject('data.journal_messages.*.tool_calls.*.arguments'),
-  v1JSONObject('data.journal_messages.*.usage'),
-];
-const v1ThreadPrivateDropChecks = [v1ID('data.creator_id')];
-const v1RunPrivateDropChecks = [
-  v1ID('data.creator_id'),
-  string('data.assistant_id'),
-  string('data.run_kind'),
-  string('data.command'),
-  v1JSONObject('data.input'),
-  v1JSONObject('data.config'),
-  v1JSONObject('data.context'),
-  string('data.worker_id'),
-  string('data.error_code'),
-  string('data.error_message'),
-];
 const canonicalThreadShapeChecks = [
   read('status', exact('busy')),
   read('coze.initial_submission', asCanonicalInitialSubmission),
   read('interrupts', asCanonicalObject),
 ];
 
-type ProjectorPair = readonly [
-  v1: TransportFixtureProjector,
-  canonical: TransportFixtureProjector,
-];
-
-const v1TotalCheck = [integer('data.total')];
 const canonicalPageChecks = [integer('total'), boolean('has_more')];
-type PagedPairArgs = [
+const pagedCanonicalProjector = (
   family: string,
-  v1Root: string,
-  canonicalRoot: string,
-  v1Fields: FieldMap,
-  canonicalFields: FieldMap,
-];
-const pagedPair = (
-  ...[family, v1Root, canonicalRoot, v1Fields, canonicalFields]: PagedPairArgs
-): ProjectorPair => [
-  v1Projector(family, v1Root, v1Fields, v1TotalCheck),
-  canonicalProjector(
-    family,
-    canonicalRoot,
-    canonicalFields,
-    canonicalPageChecks,
-  ),
-];
+  root: string,
+  schema: FieldMap,
+): TransportFixtureProjector =>
+  canonicalProjector(family, root, schema, canonicalPageChecks);
 
-const transportProjectors: Record<TransportFixtureFamily, ProjectorPair> = {
-  thread: [
-    v1Projector('thread', 'data', v1ThreadFields, v1ThreadPrivateDropChecks),
-    canonicalProjector(
-      'thread',
-      '',
-      canonicalThreadFields,
-      canonicalThreadShapeChecks,
-    ),
-  ],
-  todo: [
-    v1Projector('todo', 'data', v1TodoFields),
-    canonicalProjector('todo', 'values.todos.0', canonicalTodoFields),
-  ],
-  message: [
-    v1Projector('message', 'data', v1MessageFields),
-    canonicalProjector('message', '', canonicalMessageFields),
-  ],
-  run: [
-    v1Projector('run', 'data', v1RunFields, v1RunPrivateDropChecks),
-    canonicalProjector('run', '', canonicalRunFields),
-  ],
-  run_event: [
-    v1Projector('run_event', 'data.events.0', v1RunEventFields, [
-      ...v1TotalCheck,
-      ...v1RunEventDropChecks,
-    ]),
-    canonicalProjector('run_event', 'data.0', canonicalRunEventFields, [
-      boolean('has_more'),
-    ]),
-  ],
-  upload: [
-    v1Projector('upload', 'data.files.0', v1UploadFields, [
-      read('data.success', exact(true)),
-      string('data.message'),
-      read('data.skipped_files', asArray),
-      string('data.files.0.path'),
-    ]),
-    canonicalProjector('upload', 'uploads.0', canonicalUploadFields, [
-      read('skipped_files', asArray),
-    ]),
-  ],
-  artifact: pagedPair(
+const transportProjectors: Record<
+  TransportFixtureFamily,
+  TransportFixtureProjector
+> = {
+  thread: canonicalProjector(
+    'thread',
+    '',
+    canonicalThreadFields,
+    canonicalThreadShapeChecks,
+  ),
+  todo: canonicalProjector('todo', 'values.todos.0', canonicalTodoFields),
+  message: canonicalProjector('message', '', canonicalMessageFields),
+  run: canonicalProjector('run', '', canonicalRunFields),
+  run_event: canonicalProjector(
+    'run_event',
+    'data.0',
+    canonicalRunEventFields,
+    [boolean('has_more')],
+  ),
+  upload: canonicalProjector('upload', 'uploads.0', canonicalUploadFields, [
+    read('skipped_files', asArray),
+  ]),
+  artifact: pagedCanonicalProjector(
     'artifact',
-    'data.artifacts.0',
     'artifacts.0',
-    v1ArtifactFields,
     canonicalArtifactFields,
   ),
-  artifact_scan_job: pagedPair(
+  artifact_scan_job: pagedCanonicalProjector(
     'artifact_scan_job',
-    'data.jobs.0',
     'jobs.0',
-    v1ScanFields,
     canonicalScanFields,
   ),
-  token_usage: [
-    v1Projector('token_usage', 'data', v1TokenPageFields, v1PrivateDropChecks),
-    canonicalProjector('token_usage', '', canonicalTokenPageFields),
-  ],
-  memory: pagedPair(
+  token_usage: canonicalProjector('token_usage', '', canonicalTokenPageFields),
+  memory: pagedCanonicalProjector(
     'memory',
-    'data.memories.0',
     'memories.0',
-    v1MemoryFields,
     canonicalMemoryFields,
   ),
-  memory_audit: pagedPair(
+  memory_audit: pagedCanonicalProjector(
     'memory_audit',
-    'data.events.0',
     'events.0',
-    memoryAuditFields(v1AuditRules, v1ID('space_id')),
     memoryAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
-  guardrail_audit: pagedPair(
+  guardrail_audit: pagedCanonicalProjector(
     'guardrail_audit',
-    'data.events.0',
     'events.0',
-    guardrailAuditFields(v1AuditRules, v1ID('space_id')),
     guardrailAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
-  mcp_runtime_audit: pagedPair(
+  mcp_runtime_audit: pagedCanonicalProjector(
     'mcp_runtime_audit',
-    'data.events.0',
     'events.0',
-    mcpAuditFields(v1AuditRules, v1ID('space_id')),
     mcpAuditFields(canonicalAuditRules, fixed(fixtureSpaceID)),
   ),
-  human_interaction: [
-    createProjector('v1.human_interaction', '', v1HumanInteractionFields),
-    canonicalProjector(
-      'human_interaction',
-      '',
-      canonicalHumanInteractionFields,
-      [read('', exactObjectKeys(canonicalHumanInteractionKeys))],
-    ),
-  ],
+  human_interaction: canonicalProjector(
+    'human_interaction',
+    '',
+    canonicalHumanInteractionFields,
+    [read('', exactObjectKeys(canonicalHumanInteractionKeys))],
+  ),
 };
-
-export const projectV1TransportFixture = (
-  family: TransportFixtureFamily,
-  wire: unknown,
-): unknown => transportProjectors[family][0](wire);
 
 export const projectCanonicalTransportFixture = (
   family: TransportFixtureFamily,
   wire: unknown,
-): unknown => transportProjectors[family][1](wire);
+): unknown => transportProjectors[family](wire);

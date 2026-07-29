@@ -21,14 +21,9 @@ import { describe, expect, it } from 'vitest';
 import * as ts from 'typescript';
 
 import {
-  legacyTaskThreadReference,
-  unwrapLegacyTaskThreadResponse,
-} from './legacy-task-thread-reference';
-import {
+  canonicalTransportFixtures,
   canonicalRunSubmissionExtensions,
-  pairedTransportFixtures,
   projectCanonicalTransportFixture,
-  projectV1TransportFixture,
   type TransportFixtureFamily,
 } from './fixtures';
 
@@ -698,8 +693,8 @@ describe('WorkbenchThreadClient production boundary', () => {
     );
   });
 
-  it('keeps one frozen V1/canonical pair per visible resource family', () => {
-    expect(Object.keys(pairedTransportFixtures)).toEqual(
+  it('keeps one frozen canonical fixture per visible resource family', () => {
+    expect(Object.keys(canonicalTransportFixtures)).toEqual(
       (
         'thread todo message run run_event upload artifact artifact_scan_job ' +
         'token_usage memory memory_audit guardrail_audit mcp_runtime_audit ' +
@@ -707,39 +702,16 @@ describe('WorkbenchThreadClient production boundary', () => {
       ).split(' '),
     );
 
-    for (const fixture of Object.values(pairedTransportFixtures)) {
+    for (const fixture of Object.values(canonicalTransportFixtures)) {
       expect(
-        [fixture.v1, fixture.canonical, fixture.visible].every(Object.isFrozen),
+        [fixture.canonical, fixture.visible].every(Object.isFrozen),
       ).toBe(true);
       expect(JSON.stringify(fixture.canonical)).not.toContain('"space_id"');
     }
   });
 
-  it('uses the exact V1 upload response shape before normalization', () => {
-    expect(pairedTransportFixtures.upload.v1.data).toMatchObject({
-      success: true,
-      message: 'uploaded',
-      skipped_files: [],
-    });
-    expect(pairedTransportFixtures.upload.v1.data.files[0]).toEqual({
-      file_id: '6001',
-      filename: 'brief.md',
-      path: '/uploads/6001',
-      virtual_path: '/brief.md',
-      content_type: 'text/markdown',
-      size: 128,
-      created_at: 1767225600000,
-    });
-    expect(pairedTransportFixtures.upload.v1.data.files[0]).not.toHaveProperty(
-      'file_name',
-    );
-    expect(pairedTransportFixtures.upload.v1.data.files[0]).not.toHaveProperty(
-      'size_bytes',
-    );
-  });
-
   it('uses the reviewed canonical Thread and Run wire shapes', () => {
-    const thread = pairedTransportFixtures.thread.canonical;
+    const thread = canonicalTransportFixtures.thread.canonical;
     expect(Object.keys(thread).sort()).toEqual([
       'coze',
       'created_at',
@@ -778,10 +750,10 @@ describe('WorkbenchThreadClient production boundary', () => {
       content: 'Prepare the launch brief',
     };
     expect(projectCanonicalTransportFixture('thread', submittedThread)).toEqual(
-      pairedTransportFixtures.thread.visible,
+      canonicalTransportFixtures.thread.visible,
     );
 
-    const run = pairedTransportFixtures.run.canonical;
+    const run = canonicalTransportFixtures.run.canonical;
     expect(Object.keys(run).sort()).toEqual([
       'assistant_id',
       'coze',
@@ -822,50 +794,44 @@ describe('WorkbenchThreadClient production boundary', () => {
   });
 
   it('keeps reviewed opaque identifiers as strings', () => {
-    expect(pairedTransportFixtures.todo.visible.id).toBe('todo-1');
-    expect(pairedTransportFixtures.run.v1.data.assistant_id).toBe(
-      'assistant-a',
-    );
-    expect(pairedTransportFixtures.run.visible.assistant_id).toBe('agent');
+    expect(canonicalTransportFixtures.todo.visible.id).toBe('todo-1');
+    expect(canonicalTransportFixtures.run.visible.assistant_id).toBe('agent');
     expect(
-      pairedTransportFixtures.artifact_scan_job.canonical.jobs[0].worker_ref,
+      canonicalTransportFixtures.artifact_scan_job.canonical.jobs[0].worker_ref,
     ).toBe('worker-safe-1');
-    expect(pairedTransportFixtures.token_usage.visible.items[0].step_id).toBe(
+    expect(canonicalTransportFixtures.token_usage.visible.items[0].step_id).toBe(
       'step-1',
     );
-    expect(pairedTransportFixtures.memory.visible.source_id).toBe(
+    expect(canonicalTransportFixtures.memory.visible.source_id).toBe(
       'message:3001',
     );
-    expect(pairedTransportFixtures.guardrail_audit.visible.target_id).toBe(
+    expect(canonicalTransportFixtures.guardrail_audit.visible.target_id).toBe(
       'artifact:5001',
     );
-    expect(pairedTransportFixtures.mcp_runtime_audit.visible.server_id).toBe(
+    expect(canonicalTransportFixtures.mcp_runtime_audit.visible.server_id).toBe(
       'server-main',
     );
-    expect(pairedTransportFixtures.human_interaction.visible).toMatchObject({
+    expect(canonicalTransportFixtures.human_interaction.visible).toMatchObject({
       interaction_id: 'hi_1',
       choice_id: 'a',
     });
-    expect(
-      pairedTransportFixtures.run_event.v1.data.journal_messages[0].id,
-    ).toBe('journal-1');
 
     const scan = structuredClone(
-      pairedTransportFixtures.artifact_scan_job.canonical,
+      canonicalTransportFixtures.artifact_scan_job.canonical,
     );
     setWirePath(scan, { path: ['jobs', 0, 'worker_ref'], value: '' });
     expect(
       projectCanonicalTransportFixture('artifact_scan_job', scan),
     ).toMatchObject({ worker_id: '' });
 
-    const memory = structuredClone(pairedTransportFixtures.memory.canonical);
+    const memory = structuredClone(canonicalTransportFixtures.memory.canonical);
     setWirePath(memory, { path: ['memories', 0, 'source_id'], value: '' });
     expect(projectCanonicalTransportFixture('memory', memory)).toMatchObject({
       source_id: '',
     });
 
     const mcpAudit = structuredClone(
-      pairedTransportFixtures.mcp_runtime_audit.canonical,
+      canonicalTransportFixtures.mcp_runtime_audit.canonical,
     );
     setWirePath(mcpAudit, { path: ['events', 0, 'server_id'], value: '' });
     expect(
@@ -874,7 +840,7 @@ describe('WorkbenchThreadClient production boundary', () => {
   });
 
   it('models only the canonical human interaction resume contract', () => {
-    const fixture = pairedTransportFixtures.human_interaction;
+    const fixture = canonicalTransportFixtures.human_interaction;
     const publicKeys = [
       'choice_id',
       'comment',
@@ -884,7 +850,6 @@ describe('WorkbenchThreadClient production boundary', () => {
       'schema',
     ];
 
-    expect(Object.keys(fixture.v1).sort()).toEqual(publicKeys);
     expect(Object.keys(fixture.canonical).sort()).toEqual(publicKeys);
     expect(Object.keys(fixture.visible).sort()).toEqual(publicKeys);
     expect(fixture.canonical).toMatchObject({
@@ -910,78 +875,39 @@ describe('WorkbenchThreadClient production boundary', () => {
     });
   });
 
-  it('projects every V1 and canonical fixture to the same visible model', () => {
-    for (const [family, fixture] of Object.entries(pairedTransportFixtures)) {
+  it('projects every canonical fixture to its visible model', () => {
+    for (const [family, fixture] of Object.entries(canonicalTransportFixtures)) {
       const fixtureFamily = family as TransportFixtureFamily;
 
-      expect([
-        projectV1TransportFixture(fixtureFamily, fixture.v1),
+      expect(
         projectCanonicalTransportFixture(fixtureFamily, fixture.canonical),
-      ]).toEqual([fixture.visible, fixture.visible]);
+      ).toEqual(fixture.visible);
     }
   });
 
   it('normalizes absent canonical title and todos without presenter labels', () => {
-    const v1 = structuredClone(pairedTransportFixtures.thread.v1);
-    const canonical = structuredClone(pairedTransportFixtures.thread.canonical);
-    setWirePath(v1, { path: ['data', 'title'], value: '' });
+    const canonical = structuredClone(canonicalTransportFixtures.thread.canonical);
     delete (getWirePath(canonical, ['metadata']) as Record<string, unknown>)
       .title;
-    delete (getWirePath(v1, ['data', 'values']) as Record<string, unknown>)
-      .todos;
     delete (getWirePath(canonical, ['values']) as Record<string, unknown>)
       .todos;
 
-    const projections = [
-      projectV1TransportFixture('thread', v1),
-      projectCanonicalTransportFixture('thread', canonical),
-    ] as Array<Record<string, unknown>>;
-    expect(projections[0]).toEqual(projections[1]);
-    projections.forEach(projection => {
-      expect(projection.title).toBe('');
-      expect(projection).not.toHaveProperty('values');
-    });
+    const projection = projectCanonicalTransportFixture(
+      'thread',
+      canonical,
+    ) as Record<string, unknown>;
+    expect(projection.title).toBe('');
+    expect(projection).not.toHaveProperty('values');
   });
 
-  it('makes wire mismatches observable while dropping reviewed private data', () => {
-    const uploadWire = structuredClone(pairedTransportFixtures.upload.v1);
-    const uploadData = uploadWire.data as { success?: boolean };
-    delete uploadData.success;
-    expect(() => projectV1TransportFixture('upload', uploadWire)).toThrow(
-      'success',
-    );
-
+  it('makes canonical wire mismatches observable', () => {
     const tokenWire = structuredClone(
-      pairedTransportFixtures.token_usage.canonical,
+      canonicalTransportFixtures.token_usage.canonical,
     ) as { aggregate: { total_tokens: number } };
     tokenWire.aggregate.total_tokens += 1;
     expect(
       projectCanonicalTransportFixture('token_usage', tokenWire),
-    ).not.toEqual(pairedTransportFixtures.token_usage.visible);
-
-    const privateWire = structuredClone(
-      pairedTransportFixtures.token_usage.v1,
-    ) as unknown as { data: { usage: Array<{ raw_usage?: string }> } };
-    delete privateWire.data.usage[0].raw_usage;
-    expect(() => projectV1TransportFixture('token_usage', privateWire)).toThrow(
-      'raw_usage',
-    );
-
-    const projections = [
-      projectV1TransportFixture('thread', pairedTransportFixtures.thread.v1),
-      projectV1TransportFixture('run', pairedTransportFixtures.run.v1),
-      projectV1TransportFixture(
-        'token_usage',
-        pairedTransportFixtures.token_usage.v1,
-      ),
-      projectV1TransportFixture(
-        'run_event',
-        pairedTransportFixtures.run_event.v1,
-      ),
-    ];
-    expect(JSON.stringify(projections)).not.toMatch(
-      /creator_id|worker_id|error_message|raw_usage|must be dropped|journal_messages|tool_calls/,
-    );
+    ).not.toEqual(canonicalTransportFixtures.token_usage.visible);
   });
 
   it('rejects malformed IDs, numbers, dates, and JSON shapes', () => {
@@ -1006,7 +932,7 @@ describe('WorkbenchThreadClient production boundary', () => {
     ];
 
     cases.forEach(([family, path, value, field]) => {
-      const wire = structuredClone(pairedTransportFixtures[family].canonical);
+      const wire = structuredClone(canonicalTransportFixtures[family].canonical);
       setWirePath(wire, { path, value });
       expect(() => projectCanonicalTransportFixture(family, wire)).toThrow(
         field,
@@ -1015,7 +941,7 @@ describe('WorkbenchThreadClient production boundary', () => {
   });
 
   it('accepts a valid RFC3339 leap day with an offset', () => {
-    const wire = structuredClone(pairedTransportFixtures.message.canonical);
+    const wire = structuredClone(canonicalTransportFixtures.message.canonical);
     setWirePath(wire, {
       path: ['created_at'],
       value: '2024-02-29T12:34:56+08:00',
@@ -1026,90 +952,53 @@ describe('WorkbenchThreadClient production boundary', () => {
     });
   });
 
-  it('rejects values encoded for the wrong transport', () => {
-    type WireSide = 'v1' | 'canonical';
+  it('rejects values encoded outside the canonical transport', () => {
     const cases: Array<
-      [WireSide, TransportFixtureFamily, WirePath, unknown, string]
+      [TransportFixtureFamily, WirePath, unknown, string]
     > = [
-      ['canonical', 'message', ['message_id'], 2001, 'message_id'],
-      ['v1', 'message', ['data', 'message_id'], 2001, 'message_id'],
-      ['canonical', 'message', ['message_id'], '0', 'message_id'],
+      ['message', ['message_id'], 2001, 'message_id'],
+      ['message', ['message_id'], '0', 'message_id'],
+      ['message', ['created_at'], 1767225600000, 'created_at'],
+      ['message', ['metadata'], '{"channel":"workbench"}', 'metadata'],
       [
-        'v1',
-        'message',
-        ['data', 'created_at'],
-        '2026-01-01T00:00:00Z',
-        'created_at',
-      ],
-      ['canonical', 'message', ['created_at'], 1767225600000, 'created_at'],
-      [
-        'v1',
-        'message',
-        ['data', 'metadata'],
-        { channel: 'workbench' },
-        'metadata',
-      ],
-      [
-        'canonical',
-        'message',
-        ['metadata'],
-        '{"channel":"workbench"}',
-        'metadata',
-      ],
-      [
-        'canonical',
         'message',
         ['metadata'],
         { nested: Number.POSITIVE_INFINITY },
         'metadata',
       ],
-      ['v1', 'message', ['data', 'metadata'], '{"nested":1e999}', 'metadata'],
-      ['v1', 'message', ['data', 'metadata'], '{invalid', 'metadata'],
-      ['v1', 'todo', ['data', 'id'], 1101, 'id'],
       [
-        'canonical',
         'artifact_scan_job',
         ['jobs', 0, 'worker_ref'],
         8101,
         'worker_ref',
       ],
-      ['canonical', 'token_usage', ['usage', 0, 'step_id'], 8301, 'step_id'],
-      ['canonical', 'memory', ['memories', 0, 'source_id'], 2001, 'source_id'],
+      ['token_usage', ['usage', 0, 'step_id'], 8301, 'step_id'],
+      ['memory', ['memories', 0, 'source_id'], 2001, 'source_id'],
       [
-        'canonical',
         'mcp_runtime_audit',
         ['events', 0, 'server_id'],
         9002,
         'server_id',
       ],
-      ['canonical', 'thread', ['coze', 'source'], 'agent', 'source'],
+      ['thread', ['coze', 'source'], 'agent', 'source'],
       [
-        'canonical',
         'thread',
         ['coze', 'initial_submission'],
         'message',
         'initial_submission',
       ],
-      ['canonical', 'thread', ['interrupts'], [], 'interrupts'],
-      ['v1', 'run', ['data', 'parent_run_id'], null, 'parent_run_id'],
-      ['v1', 'run', ['data', 'ended_at'], null, 'ended_at'],
-      [
-        'canonical',
-        'human_interaction',
-        ['interaction_id'],
-        '',
-        'interaction_id',
-      ],
+      ['thread', ['interrupts'], [], 'interrupts'],
+      ['human_interaction', ['interaction_id'], '', 'interaction_id'],
     ];
 
-    cases.forEach(([side, family, path, value, field]) => {
-      const wire = structuredClone(pairedTransportFixtures[family][side]);
+    cases.forEach(([family, path, value, field]) => {
+      const wire = structuredClone(
+        canonicalTransportFixtures[family].canonical,
+      );
       setWirePath(wire, { path, value });
-      const project =
-        side === 'v1'
-          ? projectV1TransportFixture
-          : projectCanonicalTransportFixture;
-      expect(() => project(family, wire)).toThrow(field);
+      expect(() => projectCanonicalTransportFixture(family, wire)).toThrow(
+        field,
+      );
     });
   });
 
@@ -1138,7 +1027,7 @@ describe('WorkbenchThreadClient production boundary', () => {
     ];
 
     cases.forEach(([family, path, fields]) => {
-      const wire = structuredClone(pairedTransportFixtures[family].canonical);
+      const wire = structuredClone(canonicalTransportFixtures[family].canonical);
       const resource = getWirePath(wire, path) as Record<string, unknown>;
       fields.forEach(field => delete resource[field]);
 
@@ -1150,14 +1039,4 @@ describe('WorkbenchThreadClient production boundary', () => {
     });
   });
 
-  it('keeps the legacy envelope helper test-only and side-effect free', () => {
-    expect(legacyTaskThreadReference.envelope).toBe('code_msg_data');
-    expect(
-      unwrapLegacyTaskThreadResponse({
-        code: 0,
-        msg: 'success',
-        data: { thread_id: '1001' },
-      }),
-    ).toEqual({ thread_id: '1001' });
-  });
 });

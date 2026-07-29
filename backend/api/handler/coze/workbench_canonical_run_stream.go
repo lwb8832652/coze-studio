@@ -354,7 +354,7 @@ func streamCanonicalRunEvents(
 	}
 	config = config.normalized()
 	trackedWriter := newDisconnectTrackingRunEventStreamWriter(writer)
-	terminalObserved := isTaskThreadRunTerminal(run.Status)
+	terminalObserved := isWorkbenchRunTerminal(run.Status)
 	defer func() {
 		if !config.CancelOnDisconnect || !trackedWriter.disconnected || terminalObserved {
 			return
@@ -362,7 +362,7 @@ func streamCanonicalRunEvents(
 		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), runStreamDisconnectCancelTimeout)
 		defer cancel()
 		current, err := getCanonicalAuthorizedRun(cancelCtx, run.ThreadID, run.RunID)
-		if err != nil || current == nil || isTaskThreadRunTerminal(current.Status) {
+		if err != nil || current == nil || isWorkbenchRunTerminal(current.Status) {
 			if err != nil {
 				logCanonicalRunStreamFailure(cancelCtx, "disconnect_state", run, err)
 			}
@@ -533,7 +533,7 @@ func cancelCanonicalRunAfterStreamDisconnect(ctx context.Context, runID int64) {
 		return
 	}
 	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: runID})
-	if err != nil || current == nil || current.Run == nil || isTaskThreadRunTerminal(current.Run.Status) {
+	if err != nil || current == nil || current.Run == nil || isWorkbenchRunTerminal(current.Run.Status) {
 		if err != nil {
 			logCanonicalRunStreamFailure(ctx, "disconnect_cancel", &appagentthread.RunSummary{RunID: runID}, err)
 		}
@@ -567,7 +567,7 @@ func finishCanonicalRunStreamWhenTerminal(
 		writeLangGraphRunStreamError(ctx, writer, err)
 		return false, true
 	}
-	if !isTaskThreadRunTerminal(current.Status) {
+	if !isWorkbenchRunTerminal(current.Status) {
 		return false, false
 	}
 	// Run status and its terminal event commit together. Flushing after the

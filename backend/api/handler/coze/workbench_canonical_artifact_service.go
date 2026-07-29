@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -175,9 +176,21 @@ func GetCanonicalThreadArtifactContent(ctx context.Context, c *app.RequestContex
 	requestLog.LifecycleStage = "read"
 	c.SetStatusCode(consts.StatusOK)
 	c.SetContentType(resp.ContentType)
-	c.Response.Header.Set("Content-Disposition", taskThreadArtifactContentDisposition(resp.FileName, resp.Attachment))
+	c.Response.Header.Set("Content-Disposition", canonicalArtifactContentDisposition(resp.FileName, resp.Attachment))
 	c.Response.Header.Set("X-Content-Type-Options", "nosniff")
 	c.Response.SetBodyRaw(resp.Content)
+}
+
+func canonicalArtifactContentDisposition(fileName string, attachment bool) string {
+	disposition := "inline"
+	if attachment {
+		disposition = "attachment"
+	}
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		fileName = "artifact"
+	}
+	return disposition + "; filename*=UTF-8''" + url.PathEscape(fileName)
 }
 
 // GetCanonicalThreadArtifactSignedURL serves GET /api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url.

@@ -71,21 +71,16 @@ import {
   presentTaskThreadUploadResponse,
 } from '../legacy-page-response';
 import {
-  freezeLegacyTaskThreadInput,
-  unwrapLegacyTaskThreadResponse,
-} from './legacy-task-thread-reference';
-import {
   artifactScanJobTransportFixture,
   artifactTransportFixture,
+  canonicalTransportFixtures,
   guardrailAuditTransportFixture,
   humanInteractionTransportFixture,
   mcpRuntimeAuditTransportFixture,
   memoryAuditTransportFixture,
   memoryTransportFixture,
   messageTransportFixture,
-  pairedTransportFixtures,
   projectCanonicalTransportFixture,
-  projectV1TransportFixture,
   runEventTransportFixture,
   runTransportFixture,
   threadTransportFixture,
@@ -308,18 +303,14 @@ const emitStreamFrame = (config: StreamConfig, frame: unknown) => {
   }
 };
 
-describe('Gate A client equivalence', () => {
-  it('presents every paired V1 and canonical resource identically', () => {
-    for (const [family, fixture] of Object.entries(pairedTransportFixtures)) {
+describe('canonical client equivalence', () => {
+  it('presents every canonical resource as its reviewed visible fixture', () => {
+    for (const [family, fixture] of Object.entries(
+      canonicalTransportFixtures,
+    )) {
       const fixtureFamily = family as TransportFixtureFamily;
       const expected = presentVisibleFixture(fixtureFamily, fixture.visible);
 
-      expect(
-        presentVisibleFixture(
-          fixtureFamily,
-          projectV1TransportFixture(fixtureFamily, fixture.v1),
-        ),
-      ).toEqual(expected);
       expect(
         presentVisibleFixture(
           fixtureFamily,
@@ -341,19 +332,16 @@ describe('Gate A client equivalence', () => {
       spaceID,
       { total: 42, next: '2' },
     );
-    const firstV1 = projectV1TransportFixture(
-      'thread',
-      threadTransportFixture.v1,
-    ) as WorkbenchThread;
-    const secondV1 = {
-      ...firstV1,
+    const firstVisible = threadTransportFixture.visible;
+    const secondVisible = {
+      ...firstVisible,
       thread_id: '1002',
       last_user_message: 'Second task',
     };
 
     expect(presentTaskThreadListResponse(canonicalPage)).toEqual(
       presentTaskThreadListResponse({
-        items: [secondV1, firstV1],
+        items: [secondVisible, firstVisible],
         total: 42,
         has_more: true,
         next_cursor: '2',
@@ -366,25 +354,21 @@ describe('Gate A client equivalence', () => {
       'canceled',
       'interrupted',
     ]) {
-      const v1 = structuredClone(runTransportFixture.v1);
-      v1.data.status = status;
       const canonical = cloneRecord(runTransportFixture.canonical);
       canonical.status = status;
       expect(
         presentTaskThreadRunResponse(adaptCanonicalRun(canonical, scope)),
       ).toEqual(
-        presentTaskThreadRunResponse(
-          projectV1TransportFixture('run', v1) as WorkbenchRun,
-        ),
+        presentTaskThreadRunResponse({
+          ...runTransportFixture.visible,
+          status,
+        }),
       );
     }
   });
 
-  it('keeps visible errors and AbortError ownership equivalent', async () => {
+  it('keeps visible errors and AbortError ownership stable', async () => {
     const errorMessage = 'Run is active';
-    const referenceError = Promise.resolve().then(() =>
-      unwrapLegacyTaskThreadResponse({ code: 409, msg: errorMessage }),
-    );
     const canonicalError = new CanonicalThreadCoreClient({
       fetch: vi.fn(() =>
         Promise.resolve(
@@ -401,7 +385,6 @@ describe('Gate A client equivalence', () => {
       ) as CanonicalFetch,
     }).getThread({ space_id: spaceID, thread_id: threadID });
 
-    await expect(referenceError).rejects.toThrow(errorMessage);
     await expect(canonicalError).rejects.toThrow(errorMessage);
 
     const abortError = new DOMException('Request aborted', 'AbortError');
@@ -412,9 +395,7 @@ describe('Gate A client equivalence', () => {
       thread_id: threadID,
       signal: new AbortController().signal,
     });
-    const referenceAbort = Promise.reject(abortError);
 
-    await expect(referenceAbort).rejects.toBe(abortError);
     await expect(canonicalAbort).rejects.toBe(abortError);
   });
 
@@ -604,10 +585,7 @@ describe('Gate A client equivalence', () => {
     expect(responses).toHaveLength(0);
   });
 
-  it('keeps the frozen V1 reference immutable during equivalence checks', () => {
-    expect(() =>
-      freezeLegacyTaskThreadInput(pairedTransportFixtures),
-    ).not.toThrow();
-    expect(Object.isFrozen(pairedTransportFixtures)).toBe(true);
+  it('keeps canonical transport fixtures immutable', () => {
+    expect(Object.isFrozen(canonicalTransportFixtures)).toBe(true);
   });
 });

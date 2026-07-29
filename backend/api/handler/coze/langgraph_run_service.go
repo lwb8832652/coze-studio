@@ -70,7 +70,7 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}
 	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	} else if msg != "" {
 		invalidParamRequestResponse(c, msg)
@@ -84,7 +84,7 @@ func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}
 	resp, err := appagentthread.SVC.CreateRun(ctx, createReq)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -106,7 +106,7 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 	}
 	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	} else if msg != "" {
 		invalidParamRequestResponse(c, msg)
@@ -115,7 +115,7 @@ func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -145,7 +145,7 @@ func WaitLangGraphRun(ctx context.Context, c *app.RequestContext) {
 	}
 	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	} else if msg != "" {
 		invalidParamRequestResponse(c, msg)
@@ -154,7 +154,7 @@ func WaitLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if resp == nil || resp.Run == nil {
@@ -169,12 +169,12 @@ func WaitLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		TimeoutMs:  req.TimeoutMs,
 	}, resp.Run)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	state, err := langGraphRunWaitResponse(ctx, joined)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -197,7 +197,7 @@ func CreateLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := createLangGraphStatelessRun(ctx, req)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -220,7 +220,7 @@ func CreateLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContex
 
 	resp, err := createLangGraphStatelessRun(ctx, statelessCreateRunRequest(req))
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -251,7 +251,7 @@ func WaitLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := createLangGraphStatelessRun(ctx, statelessCreateRunRequest(req))
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if resp == nil || resp.Run == nil {
@@ -265,12 +265,12 @@ func WaitLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		TimeoutMs:  req.TimeoutMs,
 	}, resp.Run)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	state, err := langGraphRunWaitResponse(ctx, joined)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -308,7 +308,7 @@ func ListLangGraphRuns(ctx context.Context, c *app.RequestContext) {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -327,7 +327,7 @@ func GetLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if resp == nil || resp.Run == nil || resp.Run.ThreadID != req.ThreadID {
@@ -350,7 +350,7 @@ func ListLangGraphRunMessages(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -360,7 +360,7 @@ func ListLangGraphRunMessages(ctx context.Context, c *app.RequestContext) {
 
 	page, err := buildLangGraphRunMessagesPage(ctx, run, req)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -379,7 +379,7 @@ func ListLangGraphRunEvents(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -389,7 +389,7 @@ func ListLangGraphRunEvents(ctx context.Context, c *app.RequestContext) {
 
 	events, err := buildLangGraphRunEventsList(ctx, req)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -408,7 +408,7 @@ func ListLangGraphThreadMessages(ctx context.Context, c *app.RequestContext) {
 
 	messages, err := buildLangGraphThreadMessagesList(ctx, req)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -427,7 +427,7 @@ func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
@@ -440,7 +440,7 @@ func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
 		From:  current.Run.Status,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -467,7 +467,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
@@ -485,7 +485,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 			From:  current.Run.Status,
 		})
 		if err != nil {
-			workbenchThreadErrorResponse(ctx, c, err)
+			langGraphErrorResponse(ctx, c, err)
 			return
 		}
 		if resp != nil && resp.Run != nil {
@@ -499,7 +499,7 @@ func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
 				TimeoutMs:  req.TimeoutMs,
 			}, current.Run)
 			if err != nil {
-				workbenchThreadErrorResponse(ctx, c, err)
+				langGraphErrorResponse(ctx, c, err)
 				return
 			}
 			c.Status(consts.StatusNoContent)
@@ -530,7 +530,7 @@ func JoinLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -540,7 +540,7 @@ func JoinLangGraphRun(ctx context.Context, c *app.RequestContext) {
 
 	joined, err := waitLangGraphRunTerminal(ctx, req, run)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -567,7 +567,7 @@ func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -598,7 +598,7 @@ func GetLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -621,7 +621,7 @@ func ListLangGraphStatelessRunMessages(ctx context.Context, c *app.RequestContex
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -637,7 +637,7 @@ func ListLangGraphStatelessRunMessages(ctx context.Context, c *app.RequestContex
 		AfterSeq:  req.AfterSeq,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -656,7 +656,7 @@ func ListLangGraphStatelessRunFeedback(ctx context.Context, c *app.RequestContex
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -679,7 +679,7 @@ func CancelLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	current, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if current == nil {
@@ -692,7 +692,7 @@ func CancelLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 		From:  current.Status,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -719,7 +719,7 @@ func StreamLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -750,7 +750,7 @@ func JoinLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -760,7 +760,7 @@ func JoinLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 
 	joined, err := waitLangGraphStatelessRunTerminal(ctx, req, run)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -787,7 +787,7 @@ func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext)
 
 	run, err := getLangGraphRunSummary(ctx, req.RunID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if run == nil {
@@ -1353,7 +1353,7 @@ func buildLangGraphRunEventsList(
 				continue
 			}
 		}
-		result = append(result, taskThreadRunEventToAPI(event))
+		result = append(result, projectLangGraphPublicRunEvent(event))
 		if int32(len(result)) >= limit {
 			break
 		}
@@ -1530,7 +1530,7 @@ func waitLangGraphRunTerminal(
 	req langgraphapi.JoinRunRequest,
 	run *appagentthread.RunSummary,
 ) (*appagentthread.RunSummary, error) {
-	if run == nil || isTaskThreadRunTerminal(run.Status) {
+	if run == nil || isWorkbenchRunTerminal(run.Status) {
 		return run, nil
 	}
 
@@ -1556,7 +1556,7 @@ func waitLangGraphRunTerminal(
 				return run, nil
 			}
 			run = current
-			if isTaskThreadRunTerminal(run.Status) {
+			if isWorkbenchRunTerminal(run.Status) {
 				return run, nil
 			}
 		}
@@ -1583,7 +1583,7 @@ func waitLangGraphStatelessRunTerminal(
 	req langgraphapi.StatelessJoinRunRequest,
 	run *appagentthread.RunSummary,
 ) (*appagentthread.RunSummary, error) {
-	if run == nil || isTaskThreadRunTerminal(run.Status) {
+	if run == nil || isWorkbenchRunTerminal(run.Status) {
 		return run, nil
 	}
 
@@ -1609,7 +1609,7 @@ func waitLangGraphStatelessRunTerminal(
 				return run, nil
 			}
 			run = current
-			if isTaskThreadRunTerminal(run.Status) {
+			if isWorkbenchRunTerminal(run.Status) {
 				return run, nil
 			}
 		}
@@ -1878,7 +1878,7 @@ func writeEndWhenLangGraphRunTerminal(ctx context.Context, writer langGraphRunSt
 		writeLangGraphRunStreamError(ctx, writer, err)
 		return true
 	}
-	if resp == nil || resp.Run == nil || !isTaskThreadRunTerminal(resp.Run.Status) {
+	if resp == nil || resp.Run == nil || !isWorkbenchRunTerminal(resp.Run.Status) {
 		return false
 	}
 

@@ -77,7 +77,7 @@ func CreateLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		Metadata: metadataJSON,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -96,7 +96,7 @@ func GetLangGraphThread(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -115,7 +115,7 @@ func PatchLangGraphThread(ctx context.Context, c *app.RequestContext) {
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if threadResp == nil || threadResp.Thread == nil {
@@ -140,7 +140,7 @@ func PatchLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		Metadata: metadataJSON,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if updateResp == nil || !updateResp.Updated || updateResp.Thread == nil {
@@ -167,7 +167,7 @@ func DeleteLangGraphThread(ctx context.Context, c *app.RequestContext) {
 		ThreadID: req.ThreadID,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if deleteResp == nil || !deleteResp.Deleted {
@@ -223,7 +223,7 @@ func SearchLangGraphThreads(ctx context.Context, c *app.RequestContext) {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -242,7 +242,7 @@ func GetLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if threadResp == nil || threadResp.Thread == nil {
@@ -252,7 +252,7 @@ func GetLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 
 	state, err := buildLangGraphThreadState(ctx, threadResp.Thread)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -271,7 +271,7 @@ func PostLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 
 	threadResp, err := appagentthread.SVC.GetThread(ctx, &appagentthread.GetThreadRequest{ThreadID: req.ThreadID})
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if threadResp == nil || threadResp.Thread == nil {
@@ -281,7 +281,7 @@ func PostLangGraphThreadState(ctx context.Context, c *app.RequestContext) {
 
 	state, err := buildLangGraphThreadStateUpdate(ctx, threadResp.Thread, &req)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -300,7 +300,7 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 
 	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if thread == nil {
@@ -310,7 +310,7 @@ func GetLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 
 	history, err := buildLangGraphThreadHistory(ctx, thread, req.Limit, req.Offset)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -329,7 +329,7 @@ func PostLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 
 	thread, err := getLangGraphHistoryThread(ctx, req.ThreadID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if thread == nil {
@@ -339,7 +339,7 @@ func PostLangGraphThreadHistory(ctx context.Context, c *app.RequestContext) {
 
 	history, err := buildLangGraphThreadHistoryEntries(ctx, thread, req.Limit, req.Before)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 
@@ -358,7 +358,7 @@ func GetLangGraphCheckpointResumeReadiness(ctx context.Context, c *app.RequestCo
 
 	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, req.ThreadID, req.CheckpointID)
 	if err != nil {
-		workbenchThreadErrorResponse(ctx, c, err)
+		langGraphErrorResponse(ctx, c, err)
 		return
 	}
 	if readiness == nil {

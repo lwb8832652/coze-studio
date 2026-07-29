@@ -112,18 +112,6 @@ func registerWorkbenchCustomRoutes(api *route.RouterGroup) {
 	mcpServer.POST("/discover", handler.DiscoverMCPToolServer)
 	mcpServer.GET("/export", handler.ExportMCPToolServer)
 	mcpServer.GET("/audit_events", handler.ListMCPToolAuditEvents)
-
-	thread := workbench.Group("/task_threads/:thread_id")
-	thread.GET("/uploads", handler.ListTaskThreadUploadFiles)
-	thread.POST("/uploads", handler.UploadTaskThreadFiles)
-	thread.DELETE("/uploads/:filename", handler.DeleteTaskThreadUploadFile)
-	thread.GET("/run_events/stream", handler.StreamTaskThreadRunEvents)
-	thread.GET("/artifact_scan_jobs", handler.ListTaskThreadArtifactScanJobs)
-	thread.POST("/artifact_scan_jobs/:job_id/retry", handler.RetryTaskThreadArtifactScanJob)
-	thread.POST("/artifacts/:artifact_id/scan_review", handler.ReviewTaskThreadArtifactScan)
-	thread.GET("/artifacts/:artifact_id/content", handler.GetTaskThreadArtifactContent)
-	thread.DELETE("/artifacts/:artifact_id", handler.DeleteTaskThreadArtifact)
-	thread.POST("/artifacts/:artifact_id/restore", handler.RestoreTaskThreadArtifact)
 }
 
 func registerWorkspaceCustomRoutes(api *route.RouterGroup) {

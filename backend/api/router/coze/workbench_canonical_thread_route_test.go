@@ -136,6 +136,26 @@ var workbenchTaskThreadRouteSnapshot = []routeExpectation{
 	{http.MethodDelete, "/api/workbench/task_threads/:thread_id/uploads/:filename"},
 }
 
+var scheduledTaskRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_tasks"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPut, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodDelete, "/api/workbench/scheduled_tasks/:task_id"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/enable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/disable"},
+	{http.MethodPost, "/api/workbench/scheduled_tasks/:task_id/execute"},
+	{http.MethodGet, "/api/workbench/scheduled_tasks/:task_id/executions"},
+}
+
+var scheduledTaskTargetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_targets"},
+}
+
+var scheduledTaskCronPresetRoutes = []routeExpectation{
+	{http.MethodGet, "/api/workbench/scheduled_task_cron_presets"},
+}
+
 var langGraphThreadRouteSnapshot = []routeExpectation{
 	{http.MethodPost, "/api/threads"},
 	{http.MethodPost, "/api/threads/search"},
@@ -201,7 +221,36 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	RegisterCustomRoutes(h)
 
 	t.Run("registers the canonical route surface", func(t *testing.T) {
+		require.Len(t, canonicalRouteSnapshot(), 47)
 		requireExactRouteSnapshot(t, h, "/api/workbench/threads", canonicalRouteSnapshot())
+	})
+
+	t.Run("keeps the Scheduled Task route surface", func(t *testing.T) {
+		require.Len(t, scheduledTaskRoutes, 9)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_tasks", scheduledTaskRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_targets", scheduledTaskTargetRoutes)
+		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_cron_presets", scheduledTaskCronPresetRoutes)
+	})
+
+	t.Run("keeps LangGraph compatibility routes", func(t *testing.T) {
+		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
+		requireExactRouteSnapshot(t, h, "/api/runs", langGraphStatelessRunRouteSnapshot)
+	})
+
+	t.Run("keeps all TaskThread V1 method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, workbenchTaskThreadRouteSnapshot, 36)
+		for _, route := range workbenchTaskThreadRouteSnapshot {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
 	})
 
 	t.Run("excludes forbidden canonical POST variants", func(t *testing.T) {
@@ -227,6 +276,51 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 		}
 		require.Zero(t, handlerBoundary.matchedHandlerCount)
 	})
+}
+
+func TestWorkbenchCompatibilityRouteResolution(t *testing.T) {
+	tests := []struct {
+		name         string
+		method       string
+		requestPath  string
+		wantTemplate string
+	}{
+		{
+			name:         "LangGraph thread search stays on the static route",
+			method:       http.MethodPost,
+			requestPath:  "/api/threads/search",
+			wantTemplate: "/api/threads/search",
+		},
+		{
+			name:         "stateless run stream stays on the static route",
+			method:       http.MethodPost,
+			requestPath:  "/api/runs/stream",
+			wantTemplate: "/api/runs/stream",
+		},
+		{
+			name:         "stateless run wait stays on the static route",
+			method:       http.MethodPost,
+			requestPath:  "/api/runs/wait",
+			wantTemplate: "/api/runs/wait",
+		},
+	}
+
+	h := server.Default()
+	matchedTemplate := ""
+	h.Use(func(_ context.Context, c *app.RequestContext) {
+		matchedTemplate = c.FullPath()
+		c.Abort()
+	})
+	Register(h)
+	RegisterCustomRoutes(h)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			matchedTemplate = ""
+			ut.PerformRequest(h.Engine, test.method, test.requestPath, nil)
+			require.Equal(t, test.wantTemplate, matchedTemplate)
+		})
+	}
 }
 
 func requireUnreachableRoute(
@@ -279,6 +373,16 @@ func sortedRouteExpectations(routes []routeExpectation) []routeExpectation {
 }
 
 func concreteRoutePath(path string) string {
-	path = strings.ReplaceAll(path, ":thread_id", "1")
-	return strings.ReplaceAll(path, ":run_id", "2")
+	replacements := map[string]string{
+		":thread_id":   "1",
+		":run_id":      "2",
+		":artifact_id": "3",
+		":job_id":      "4",
+		":memory_id":   "5",
+		":filename":    "file.txt",
+	}
+	for parameter, value := range replacements {
+		path = strings.ReplaceAll(path, parameter, value)
+	}
+	return path
 }
