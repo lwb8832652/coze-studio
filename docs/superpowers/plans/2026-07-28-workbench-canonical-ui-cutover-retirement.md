@@ -987,7 +987,7 @@ git commit -m "fix: close canonical workbench parity gaps"
 - Preserve: `backend/internal/deerflowparity/deerflow_client.go`
 - Preserve: `backend/application/skill/builtin_deerflow/**`
 
-- [ ] **Step 1: Write failing canonical NewX snapshots**
+- [x] **Step 1: Write failing canonical NewX snapshots**
 
 For NewX only, require `/api/workbench/threads/**`, `X-Coze-Space-ID`, direct canonical response
 shapes, `events` SSE mode and no fallback. Cover create, start, get, cancel, stream/reconnect,
@@ -996,14 +996,14 @@ state/history, Run messages/events and human-interaction resume.
 Keep existing DeerFlow tests asserting external `/api/threads/**` and CSRF behavior. This proves the
 reference client was not rewritten.
 
-- [ ] **Step 2: Give NewX an explicit workspace source**
+- [x] **Step 2: Give NewX an explicit workspace source**
 
 On successful Thread creation, store the validated `ThreadOptions.SpaceID` in a concurrency-safe
 Thread-to-workspace map owned by `NewXClient`. Every subsequent NewX request resolves that map and fails
 closed if scope is unknown; it never reads workspace from response metadata or accepts a caller
 owner/user ID.
 
-- [ ] **Step 3: Implement NewX-specific canonical helpers**
+- [x] **Step 3: Implement NewX-specific canonical helpers**
 
 Do not change the shared DeerFlow route helpers to canonical. Add NewX-specific request/projection
 functions for the canonical direct response, pagination headers and SSE frames. Map canonical
@@ -1013,7 +1013,7 @@ status/event shapes into the existing parity `RunHandle`, `MessagePage`, state/h
 Resume must use `POST /api/workbench/threads/:thread_id/runs/:run_id/resume`; pending interaction
 lookup must use canonical Run events. No call may use TaskThread `run_events` or old resume.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```bash
 cd backend
