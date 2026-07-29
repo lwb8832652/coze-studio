@@ -16,12 +16,10 @@
 
 import { useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { HumanInteractionResponse } from '../workbench/thread-client';
 import { Button, TextArea } from '@coze-arch/coze-design';
 
 import type { PendingHumanInteraction } from './task-human-interaction';
-
-type HumanInteractionResponse = workbenchTask.HumanInteractionResponse;
 
 const RESPONSE_SCHEMA = 'coze.human_interaction_response.v1';
 
@@ -41,7 +39,6 @@ const buildClarificationResponse = ({
     interaction_id: pending.interactionId,
     kind: 'clarification',
     decision: 'answered',
-    source: 'task_detail',
   };
   if (compact(answer)) {
     response.answer = compact(answer);
@@ -67,7 +64,6 @@ const buildConfirmationResponse = ({
     interaction_id: pending.interactionId,
     kind: 'confirmation',
     decision,
-    source: 'task_detail',
   };
   if (compact(comment)) {
     response.comment = compact(comment);

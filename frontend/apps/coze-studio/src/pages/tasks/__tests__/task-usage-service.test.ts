@@ -80,7 +80,18 @@ beforeEach(() => {
 });
 
 describe('task usage canonical client cancellation boundary', () => {
-  it('passes an external AbortSignal and store space to the canonical client', async () => {
+  it('rejects a request without an explicit route workspace', async () => {
+    await expect(
+      getTaskThreadTokenUsage({
+        thread_id: 'thread-missing-space',
+      } as Parameters<typeof getTaskThreadTokenUsage>[0]),
+    ).rejects.toThrow('workspace');
+
+    expect(canonicalGetTokenUsage).not.toHaveBeenCalled();
+    expect(spaceStore.getSpaceId).not.toHaveBeenCalled();
+  });
+
+  it('passes an external AbortSignal and explicit space to the canonical client', async () => {
     canonicalGetTokenUsage.mockImplementation(
       ({ signal }: { signal?: AbortSignal }) =>
         new Promise((resolve, reject) => {
@@ -98,6 +109,7 @@ describe('task usage canonical client cancellation boundary', () => {
     const controller = new AbortController();
     const request = getTaskThreadTokenUsage(
       {
+        space_id: 'space-route',
         thread_id: 'thread-abort',
         page: 1,
         page_size: 50,
@@ -109,7 +121,7 @@ describe('task usage canonical client cancellation boundary', () => {
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' });
     expect(canonicalGetTokenUsage).toHaveBeenCalledWith({
-      space_id: 'store-space',
+      space_id: 'space-route',
       thread_id: 'thread-abort',
       page: 1,
       page_size: 50,
@@ -146,7 +158,7 @@ describe('task usage canonical client cancellation boundary', () => {
 
     await expect(
       getTaskThreadTokenUsage(
-        { thread_id: 'thread-pre-abort' },
+        { space_id: 'space-route', thread_id: 'thread-pre-abort' },
         { signal: controller.signal },
       ),
     ).rejects.toMatchObject({ name: 'AbortError' });

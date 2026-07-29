@@ -24,6 +24,11 @@ import { createRoot, type Root } from 'react-dom/client';
 
 import { useTaskDetailActions } from '../task-detail-hooks';
 import type { WorkbenchComposerSubmitPayload } from '../../workbench/components/types';
+import type {
+  HumanInteractionResponse,
+  WorkbenchRun,
+} from '../../workbench/thread-client';
+import type { PendingHumanInteraction } from '../task-human-interaction';
 
 const mockSendFollowUpMessage = vi.hoisted(() => vi.fn());
 const mockCreateFollowUpIdempotencyKey = vi.hoisted(() => vi.fn());
@@ -76,11 +81,52 @@ const createDeferred = <T,>() => {
   return { promise, reject, resolve };
 };
 
+const createRun = (runId: string): WorkbenchRun => ({
+  run_id: runId,
+  thread_id: 'task-1',
+  space_id: 'space-1',
+  assistant_id: 'agent',
+  status: 'running',
+  metadata: '',
+  multitask_strategy: '',
+  attempt_kind: 'resume',
+  run_kind: 'task',
+  stream_modes: ['events'],
+  on_disconnect: 'continue',
+  durability: 'async',
+  created_at: 1,
+  updated_at: 1,
+});
+
+const pendingHumanInteraction = {
+  interruptId: 'interrupt-1',
+  interactionId: 'interaction-1',
+  sourceRunId: 'run-interrupted',
+  kind: 'confirmation',
+  prompt: {
+    schema: 'coze.human_interaction.v1',
+    interaction_id: 'interaction-1',
+    kind: 'confirmation',
+  },
+  event: {},
+} as PendingHumanInteraction;
+
+const humanResponse: HumanInteractionResponse = {
+  schema: 'coze.human_interaction_response.v1',
+  interaction_id: 'interaction-1',
+  kind: 'confirmation',
+  decision: 'approve',
+};
+
 const HookHarness = ({
   applyTaskDetail,
+  commitTopLevelRun = vi.fn(),
+  pendingInteraction,
   taskDetailId,
 }: {
   applyTaskDetail: ReturnType<typeof vi.fn>;
+  commitTopLevelRun?: ReturnType<typeof vi.fn>;
+  pendingInteraction?: PendingHumanInteraction;
   taskDetailId: string;
 }) => {
   currentActions = useTaskDetailActions({
@@ -88,6 +134,8 @@ const HookHarness = ({
     artifacts: [],
     events: [],
     messages: [],
+    commitTopLevelRun,
+    pendingHumanInteraction: pendingInteraction,
     spaceID: 'space-1',
     subagentRuns: [],
     taskDetailId,
@@ -358,10 +406,20 @@ describe('useTaskDetailActions follow-up request scope', () => {
   });
 
   it('keeps the successful reset when detail refresh fails', async () => {
+    const committedRun = createRun('run-follow-up');
+    const commitTopLevelRun = vi.fn();
+    mockSendFollowUpMessage.mockResolvedValue({
+      kind: 'thread',
+      run: committedRun,
+    });
     mockFetchTaskDetail.mockRejectedValue(new Error('刷新失败'));
     const applyTaskDetail = vi.fn();
     renderHookHarness(
-      <HookHarness applyTaskDetail={applyTaskDetail} taskDetailId="task-1" />,
+      <HookHarness
+        applyTaskDetail={applyTaskDetail}
+        commitTopLevelRun={commitTopLevelRun}
+        taskDetailId="task-1"
+      />,
     );
     act(() => currentActions.setFollowUpValue('已经发送的消息'));
 
@@ -375,5 +433,55 @@ describe('useTaskDetailActions follow-up request scope', () => {
       '消息已发送但刷新失败，可重试刷新',
     );
     expect(currentActions.followUpLoading).toBe(false);
+    expect(mockSendFollowUpMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spaceId: 'space-1',
+        threadId: 'task-1',
+      }),
+    );
+    expect(commitTopLevelRun).toHaveBeenCalledWith(committedRun);
+    expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFetchTaskDetail.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('commits a resumed top-level Run before refresh and does not repeat the successful write', async () => {
+    const committedRun = createRun('run-resume-new');
+    const commitTopLevelRun = vi.fn();
+    mockResumeTaskThreadRun.mockResolvedValue({ data: committedRun });
+    mockFetchTaskDetail.mockRejectedValue(new Error('刷新失败'));
+    renderHookHarness(
+      <HookHarness
+        applyTaskDetail={vi.fn()}
+        commitTopLevelRun={commitTopLevelRun}
+        pendingInteraction={pendingHumanInteraction}
+        taskDetailId="task-1"
+      />,
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    expect(mockResumeTaskThreadRun).toHaveBeenCalledWith({
+      interrupt_id: 'interrupt-1',
+      response: humanResponse,
+      run_id: 'run-interrupted',
+      space_id: 'space-1',
+      thread_id: 'task-1',
+    });
+    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+    expect(commitTopLevelRun).toHaveBeenCalledWith(committedRun);
+    expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFetchTaskDetail.mock.invocationCallOrder[0],
+    );
+
+    await act(async () => {
+      await currentActions.handleHumanInteractionSubmit(humanResponse);
+    });
+
+    expect(mockResumeTaskThreadRun).toHaveBeenCalledTimes(1);
+    expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
+    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
   });
 });

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchMessage } from '../workbench/thread-client';
 import {
   IconCozCode,
   IconCozDocument,
@@ -25,7 +25,7 @@ import { Popover } from '@coze-arch/coze-design';
 import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import { getTaskInputText, getTaskResultText } from './helpers';
 
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadMessage = WorkbenchMessage;
 type TaskExportFormat = 'markdown' | 'json';
 type TaskExportMessageType = 'human' | 'ai';
 
@@ -78,20 +78,24 @@ const getRoleType = (role: string): TaskExportMessageType | undefined => {
 };
 
 const getExportableMessages = (messages: TaskThreadMessage[]) =>
-  messages
-    .map(message => {
-      const type = getRoleType(message.role);
+  messages.flatMap<ExportableTaskMessage>(message => {
+    const content = stripInternalExportMarkers(message.content);
+    const roleTitle = getRoleTitle(message.role);
+    const type = getRoleType(message.role);
 
-      return {
-        content: stripInternalExportMarkers(message.content),
-        id: message.message_id || undefined,
-        roleTitle: getRoleTitle(message.role),
+    if (!content || !roleTitle || !type) {
+      return [];
+    }
+
+    return [
+      {
+        content,
+        ...(message.message_id ? { id: message.message_id } : {}),
+        roleTitle,
         type,
-      };
-    })
-    .filter((message): message is ExportableTaskMessage =>
-      Boolean(message.type && message.roleTitle && message.content),
-    );
+      },
+    ];
+  });
 
 const getFallbackMessages = (task: TaskThreadDetailModel) => {
   const userText = stripInternalExportMarkers(

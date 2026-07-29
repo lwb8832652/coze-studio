@@ -18,7 +18,7 @@ import {
   ListWorkspaceModels,
   WorkspaceModelScope,
 } from '@coze-studio/api-schema/workbench-model';
-import { workbench, type workbenchTask } from '@coze-studio/api-schema';
+import { workbench } from '@coze-studio/api-schema';
 import {
   DeveloperApi,
   KnowledgeApi,
@@ -27,6 +27,15 @@ import {
 } from '@coze-arch/bot-api';
 
 import {
+  type AppendWorkbenchMessageRequest,
+  type CreateWorkbenchRunRequest,
+  type CreateWorkbenchThreadRequest,
+  type WorkbenchMessage,
+  type WorkbenchRun,
+  type WorkbenchThreadCreation,
+} from './thread-client';
+import {
+  type LegacyPageResponse,
   presentTaskThreadCreateResponse,
   presentTaskThreadMessageResponse,
   presentTaskThreadRunCreateResponse,
@@ -38,6 +47,28 @@ import {
 } from './thread-client/canonical-thread-client-singleton';
 import { type WorkbenchLLMModel } from './components/types';
 
+interface PageScopedRequest {
+  space_id?: string;
+}
+
+type OptionalPageSpace<Request extends { space_id: string }> = Omit<
+  Request,
+  'space_id'
+> &
+  PageScopedRequest;
+
+type CreateTaskThreadRequest = OptionalPageSpace<CreateWorkbenchThreadRequest>;
+type AppendTaskThreadMessageRequest = OptionalPageSpace<
+  AppendWorkbenchMessageRequest
+>;
+type CreateTaskThreadRunRequest = OptionalPageSpace<CreateWorkbenchRunRequest>;
+type CreateTaskThreadResponse = LegacyPageResponse<WorkbenchThreadCreation>;
+type AppendTaskThreadMessageResponse = LegacyPageResponse<WorkbenchMessage>;
+interface CreateTaskThreadRunResponse
+  extends LegacyPageResponse<WorkbenchRun> {
+  message?: WorkbenchMessage;
+}
+
 export interface WorkbenchReferenceResource {
   id: string;
   name: string;
@@ -45,36 +76,34 @@ export interface WorkbenchReferenceResource {
 }
 
 export const createTaskThread = async (
-  request: workbenchTask.CreateTaskThreadRequest,
-): Promise<workbenchTask.CreateTaskThreadResponse> =>
+  request: CreateTaskThreadRequest,
+): Promise<CreateTaskThreadResponse> =>
   presentTaskThreadCreateResponse(
     await canonicalThreadClient.createThread({
       ...request,
       space_id: resolvePageServiceSpaceID(request.space_id),
     }),
-  ) as unknown as workbenchTask.CreateTaskThreadResponse;
+  );
 
 export const appendTaskThreadMessage = async (
-  request: workbenchTask.AppendTaskThreadMessageRequest & {
-    space_id?: string;
-  },
-): Promise<workbenchTask.AppendTaskThreadMessageResponse> =>
+  request: AppendTaskThreadMessageRequest,
+): Promise<AppendTaskThreadMessageResponse> =>
   presentTaskThreadMessageResponse(
     await canonicalThreadClient.appendMessage({
       ...request,
       space_id: resolvePageServiceSpaceID(request.space_id),
     }),
-  ) as unknown as workbenchTask.AppendTaskThreadMessageResponse;
+  );
 
 export const createTaskThreadRun = async (
-  request: workbenchTask.CreateTaskThreadRunRequest & { space_id?: string },
-): Promise<workbenchTask.CreateTaskThreadRunResponse> =>
+  request: CreateTaskThreadRunRequest,
+): Promise<CreateTaskThreadRunResponse> =>
   presentTaskThreadRunCreateResponse(
     await canonicalThreadClient.createRun({
       ...request,
       space_id: resolvePageServiceSpaceID(request.space_id),
     }),
-  ) as unknown as workbenchTask.CreateTaskThreadRunResponse;
+  );
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 
 export interface TaskThreadUploadedFile {

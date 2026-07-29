@@ -20,8 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
+import type { WorkbenchRun } from '../../workbench/thread-client';
 import { useTaskDetailActions, useTaskDetailData } from '../task-detail-hooks';
 import type { WorkbenchComposerSubmitPayload } from '../../workbench/components/types';
+import { TaskThreadDetailStatus } from '../task-thread-detail-model';
 
 const mockFetchTaskDetail = vi.hoisted(() => vi.fn());
 const mockListTaskThreadArtifacts = vi.hoisted(() => vi.fn());
@@ -90,20 +92,24 @@ const createDeferred = <T,>() => {
   return { promise, resolve };
 };
 
-const createDetail = (id: string) =>
+const createDetail = (id: string, spaceID = 'space-1') => {
+  const scopedID = spaceID === 'space-1' ? id : `${id}-${spaceID}`;
+
+  return (
   ({
     threadId: id,
     task: {
       id,
+      space_id: spaceID,
       title: `任务 ${id}`,
       input: '{}',
       status: 3,
       progress: 100,
     },
-    events: [{ id: `event-${id}`, event_type: 'start', payload: '{}' }],
+    events: [{ id: `event-${scopedID}`, event_type: 'start', payload: '{}' }],
     messages: [
       {
-        message_id: `message-${id}`,
+        message_id: `message-${scopedID}`,
         thread_id: id,
         run_id: `run-${id}`,
         role: 'assistant',
@@ -114,7 +120,7 @@ const createDetail = (id: string) =>
     ],
     artifacts: [
       {
-        artifact_id: `artifact-${id}`,
+        artifact_id: `artifact-${scopedID}`,
         thread_id: id,
         run_id: `run-${id}`,
         name: `产物 ${id}`,
@@ -125,7 +131,26 @@ const createDetail = (id: string) =>
     subagentRuns: [],
     todos: [],
     tokenUsageByRunID: {},
-  }) as never;
+  }) as never
+  );
+};
+
+const createRun = (runID: string, createdAt: number): WorkbenchRun => ({
+  run_id: runID,
+  thread_id: 'thread-1',
+  space_id: 'space-1',
+  assistant_id: 'agent',
+  status: 'running',
+  metadata: '',
+  multitask_strategy: '',
+  attempt_kind: 'turn',
+  run_kind: 'task',
+  stream_modes: ['events'],
+  on_disconnect: 'continue',
+  durability: 'async',
+  created_at: createdAt,
+  updated_at: createdAt,
+});
 
 const submitPayload = {
   message: '并发追问',
@@ -135,9 +160,15 @@ const submitPayload = {
   },
 } as WorkbenchComposerSubmitPayload;
 
-const HookHarness = ({ taskDetailId }: { taskDetailId: string }) => {
+const HookHarness = ({
+  spaceID,
+  taskDetailId,
+}: {
+  spaceID: string;
+  taskDetailId: string;
+}) => {
   currentData = useTaskDetailData({
-    spaceID: 'space-1',
+    spaceID,
     taskDetailId,
   });
   currentActions = useTaskDetailActions({
@@ -147,7 +178,7 @@ const HookHarness = ({ taskDetailId }: { taskDetailId: string }) => {
     events: currentData.events,
     messages: currentData.messages,
     pendingHumanInteraction: undefined,
-    spaceID: 'space-1',
+    spaceID,
     subagentRuns: currentData.subagentRuns,
     task: currentData.task,
     taskDetailId,
@@ -159,25 +190,39 @@ const HookHarness = ({ taskDetailId }: { taskDetailId: string }) => {
   return null;
 };
 
-const renderHarness = (taskDetailId = 'thread-old') => {
+const renderHarness = (taskDetailId = 'thread-old', spaceID = 'space-1') => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push({ container, root });
-  act(() => root.render(<HookHarness taskDetailId={taskDetailId} />));
+  act(() => root.render(<HookHarness spaceID={spaceID} taskDetailId={taskDetailId} />));
 
   return {
     root,
     rerender: (nextTaskDetailId: string) =>
-      act(() => root.render(<HookHarness taskDetailId={nextTaskDetailId} />)),
+      act(() =>
+        root.render(
+          <HookHarness spaceID={spaceID} taskDetailId={nextTaskDetailId} />,
+        ),
+      ),
+    rerenderScope: (nextTaskDetailId: string, nextSpaceID: string) =>
+      act(() =>
+        root.render(
+          <HookHarness
+            spaceID={nextSpaceID}
+            taskDetailId={nextTaskDetailId}
+          />,
+        ),
+      ),
   };
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockStreamProps.current = undefined;
-  mockFetchTaskDetail.mockImplementation(({ id }: { id: string }) =>
-    Promise.resolve(createDetail(id)),
+  mockFetchTaskDetail.mockImplementation(
+    ({ id, spaceId }: { id: string; spaceId?: string }) =>
+      Promise.resolve(createDetail(id, spaceId)),
   );
   mockListTaskThreadArtifacts.mockResolvedValue({ data: { artifacts: [] } });
   mockSendFollowUpMessage.mockResolvedValue({});
@@ -191,6 +236,101 @@ afterEach(() => {
 });
 
 describe('task detail scoped writes', () => {
+  it('keeps a newly committed Run when an older captured detail response arrives', async () => {
+    mockFetchTaskDetail.mockResolvedValueOnce({
+      ...createDetail('thread-1'),
+      task: {
+        ...createDetail('thread-1').task,
+        error: 'previous failure',
+        status: TaskThreadDetailStatus.Failed,
+      },
+      latestTaskRunCreatedAt: 10,
+      latestTaskRunID: 'run-old',
+    });
+    renderHarness('thread-1');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const requestToken = currentData.captureTaskDetailRequestToken();
+    act(() => currentData.commitTopLevelRun(createRun('run-new', 20)));
+    act(() => {
+      currentData.applyTaskDetail(
+        {
+          ...createDetail('thread-1'),
+          events: [
+            {
+              id: 'event-stale',
+              event_type: 'run.failed',
+              payload: '{}',
+            },
+          ],
+          task: {
+            ...createDetail('thread-1').task,
+            error: 'stale failure',
+            status: TaskThreadDetailStatus.Failed,
+          },
+          latestTaskRunCreatedAt: 10,
+          latestTaskRunID: 'run-old',
+        },
+        'thread-1',
+        requestToken,
+      );
+    });
+
+    expect(currentData.latestTaskRunID).toBe('run-new');
+    expect(currentData.task?.status).toBe(TaskThreadDetailStatus.Running);
+    expect(currentData.task?.error).toBe('');
+    expect(currentData.events.map(event => event.id)).not.toContain(
+      'event-stale',
+    );
+  });
+
+  it('keeps the larger numeric Run ID when creation timestamps tie', async () => {
+    mockFetchTaskDetail.mockResolvedValueOnce({
+      ...createDetail('thread-1'),
+      latestTaskRunCreatedAt: 20,
+      latestTaskRunID: '200',
+    });
+    renderHarness('thread-1');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const requestToken = currentData.captureTaskDetailRequestToken();
+    act(() => {
+      currentData.applyTaskDetail(
+        {
+          ...createDetail('thread-1'),
+          events: [
+            {
+              id: 'event-older-tie',
+              event_type: 'run.failed',
+              payload: '{}',
+            },
+          ],
+          task: {
+            ...createDetail('thread-1').task,
+            error: 'older tied Run',
+            status: TaskThreadDetailStatus.Failed,
+          },
+          latestTaskRunCreatedAt: 20,
+          latestTaskRunID: '100',
+        },
+        'thread-1',
+        requestToken,
+      );
+    });
+
+    expect(currentData.latestTaskRunID).toBe('200');
+    expect(currentData.task?.status).toBe(TaskThreadDetailStatus.Running);
+    expect(currentData.events.map(event => event.id)).not.toContain(
+      'event-older-tie',
+    );
+  });
+
   it('preserves concurrent SSE fields during optimistic follow-up merge', async () => {
     const sendDeferred = createDeferred<unknown>();
     const refreshDeferred = createDeferred<unknown>();
@@ -221,7 +361,12 @@ describe('task detail scoped writes', () => {
     await act(async () => {
       sendDeferred.resolve({
         kind: 'thread',
-        run: { run_id: 'run-follow-up', status: 'running' },
+        run: {
+          run_id: 'run-follow-up',
+          space_id: 'space-1',
+          status: 'running',
+          thread_id: 'thread-1',
+        },
         message: {
           message_id: 'message-follow-up',
           thread_id: 'thread-1',
@@ -284,6 +429,74 @@ describe('task detail scoped writes', () => {
     );
     expect(currentData.artifacts.map(item => item.artifact_id)).toContain(
       'artifact-thread-new',
+    );
+  });
+
+  it('ignores a late artifact refresh after the workspace changes for the same thread', async () => {
+    const artifactDeferred = createDeferred<{
+      data: { artifacts: Array<{ artifact_id: string }> };
+    }>();
+    mockListTaskThreadArtifacts.mockReturnValue(artifactDeferred.promise);
+    const { rerenderScope } = renderHarness('thread-shared', 'space-1');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let pendingRefresh!: Promise<void>;
+    await act(async () => {
+      pendingRefresh = currentData.refreshArtifacts();
+      await Promise.resolve();
+    });
+    rerenderScope('thread-shared', 'space-2');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      artifactDeferred.resolve({
+        data: { artifacts: [{ artifact_id: 'artifact-late-space-1' }] },
+      });
+      await pendingRefresh;
+    });
+
+    expect(currentData.artifacts.map(item => item.artifact_id)).not.toContain(
+      'artifact-late-space-1',
+    );
+    expect(currentData.artifacts.map(item => item.artifact_id)).toContain(
+      'artifact-thread-shared-space-2',
+    );
+  });
+
+  it('ignores an empty detail snapshot captured in the previous workspace', async () => {
+    const { rerenderScope } = renderHarness('thread-shared', 'space-1');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const staleRequestToken = currentData.captureTaskDetailRequestToken();
+
+    rerenderScope('thread-shared', 'space-2');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      currentData.applyTaskDetail(
+        {
+          threadId: 'thread-shared',
+          task: undefined,
+          events: [],
+        },
+        'thread-shared',
+        staleRequestToken,
+      );
+    });
+
+    expect(currentData.task?.space_id).toBe('space-2');
+    expect(currentData.events.map(event => event.id)).toContain(
+      'event-thread-shared-space-2',
     );
   });
 });

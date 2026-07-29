@@ -16,7 +16,7 @@
 
 /* eslint-disable @coze-arch/max-line-per-function -- Run actions keep shared confirmation and cancellation state in one hook. */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import {
   createDefaultWorkbenchResourceSelection,
@@ -25,6 +25,7 @@ import {
   stringifyWorkbenchRunConfig,
   type WorkbenchComposerSubmitPayload,
 } from '../workbench/components/types';
+import type { WorkbenchRun } from '../workbench/thread-client';
 import type { TaskThreadDetailModel } from './task-thread-detail-model';
 import type { TaskRunActionLoading } from './task-run-action-bar';
 import { fetchTaskDetail, type TaskDetail } from './task-detail-loader';
@@ -62,9 +63,16 @@ const getTaskRetryMetadata = ({
     requested_at: Date.now(),
   });
 
-export const useTaskRunActions = ({
+const isTopLevelRun = (run: WorkbenchRun): boolean =>
+  !run.parent_run_id || run.parent_run_id === '0';
+
+const createTaskRunScopeKey = (spaceID?: string, taskDetailId?: string) =>
+  JSON.stringify([spaceID ?? '', taskDetailId ?? '']);
+
+export const useTaskRunActions = <TaskRequestToken,>({
   applyTaskDetail,
   captureTaskDetailRequestToken,
+  commitTopLevelRun,
   spaceID,
   task,
   taskDetailId,
@@ -72,9 +80,10 @@ export const useTaskRunActions = ({
   applyTaskDetail: (
     detail: TaskDetail,
     taskDetailId?: string,
-    requestToken?: object,
+    requestToken?: TaskRequestToken,
   ) => void;
-  captureTaskDetailRequestToken?: () => object;
+  captureTaskDetailRequestToken?: () => TaskRequestToken;
+  commitTopLevelRun?: (run: WorkbenchRun) => void;
   spaceID?: string;
   task?: TaskThreadDetailModel;
   taskDetailId?: string;
@@ -85,7 +94,8 @@ export const useTaskRunActions = ({
   const [retryingSubagentRunId, setRetryingSubagentRunId] = useState('');
   const [subagentRetryError, setSubagentRetryError] = useState('');
   const mountedRef = useRef(true);
-  const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const taskScopeKey = createTaskRunScopeKey(spaceID, taskDetailId);
+  const scopedTaskScopeKeyRef = useRef(taskScopeKey);
   const taskRequestGenerationRef = useRef(0);
   const actionGenerationRef = useRef(0);
   const operationGenerationRef = useRef({
@@ -97,8 +107,12 @@ export const useTaskRunActions = ({
   const successfulMutationKeysRef = useRef(new Set<string>());
   const [taskRunActionsDisabled, setTaskRunActionsDisabled] = useState(false);
 
-  if (scopedTaskDetailIdRef.current !== taskDetailId) {
-    scopedTaskDetailIdRef.current = taskDetailId;
+  useLayoutEffect(() => {
+    if (scopedTaskScopeKeyRef.current === taskScopeKey) {
+      return;
+    }
+
+    scopedTaskScopeKeyRef.current = taskScopeKey;
     taskRequestGenerationRef.current += 1;
     actionGenerationRef.current += 1;
     operationGenerationRef.current.cancel += 1;
@@ -106,7 +120,7 @@ export const useTaskRunActions = ({
     operationGenerationRef.current.subagent += 1;
     activeOperationRef.current = '';
     successfulMutationKeysRef.current.clear();
-  }
+  }, [taskScopeKey]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -126,48 +140,50 @@ export const useTaskRunActions = ({
     setTaskRunActionsDisabled(false);
     activeOperationRef.current = '';
     successfulMutationKeysRef.current.clear();
-  }, [taskDetailId]);
+  }, [taskScopeKey]);
 
   const captureTaskRequest = (
-    submittedTaskDetailId: string,
+    submittedTaskScopeKey: string,
     operation: 'cancel' | 'retry' | 'subagent',
   ) => ({
     actionGeneration: ++actionGenerationRef.current,
     generation: taskRequestGenerationRef.current,
     operation,
     operationGeneration: ++operationGenerationRef.current[operation],
-    taskDetailId: submittedTaskDetailId,
+    taskScopeKey: submittedTaskScopeKey,
   });
   const isCurrentTaskRequest = ({
     actionGeneration,
     generation,
     operation,
     operationGeneration,
-    taskDetailId: submittedTaskDetailId,
+    taskScopeKey: submittedTaskScopeKey,
   }: {
     actionGeneration: number;
     generation: number;
     operation: 'cancel' | 'retry' | 'subagent';
     operationGeneration: number;
-    taskDetailId: string;
+    taskScopeKey: string;
   }) =>
     mountedRef.current &&
     actionGenerationRef.current === actionGeneration &&
     taskRequestGenerationRef.current === generation &&
     operationGenerationRef.current[operation] === operationGeneration &&
-    scopedTaskDetailIdRef.current === submittedTaskDetailId;
+    scopedTaskScopeKeyRef.current === submittedTaskScopeKey;
 
   const handleCancelTaskRun = async (runId: string) => {
     if (!runId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId) {
+    if (!spaceID || !taskDetailId) {
       setTaskRunActionError('缺少任务运行上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const mutationKey = `cancel:${submittedTaskDetailId}:${runId}`;
-    const request = captureTaskRequest(submittedTaskDetailId, 'cancel');
+    const submittedSpaceID = spaceID;
+    const submittedTaskScopeKey = taskScopeKey;
+    const mutationKey = `cancel:${submittedTaskScopeKey}:${runId}`;
+    const request = captureTaskRequest(submittedTaskScopeKey, 'cancel');
 
     activeOperationRef.current = 'cancel';
     setTaskRunActionsDisabled(true);
@@ -179,6 +195,7 @@ export const useTaskRunActions = ({
           await cancelTaskThreadRun({
             thread_id: submittedTaskDetailId,
             run_id: runId,
+            space_id: submittedSpaceID,
           });
         } catch (err) {
           if (isCurrentTaskRequest(request)) {
@@ -198,7 +215,7 @@ export const useTaskRunActions = ({
       try {
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
-          spaceId: spaceID,
+          spaceId: submittedSpaceID,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -221,13 +238,15 @@ export const useTaskRunActions = ({
     if (!sourceRunId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId || !task) {
+    if (!spaceID || !taskDetailId || !task) {
       setTaskRunActionError('缺少任务重试上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const mutationKey = `retry:${submittedTaskDetailId}:${sourceRunId}`;
-    const request = captureTaskRequest(submittedTaskDetailId, 'retry');
+    const submittedSpaceID = spaceID;
+    const submittedTaskScopeKey = taskScopeKey;
+    const mutationKey = `retry:${submittedTaskScopeKey}:${sourceRunId}`;
+    const request = captureTaskRequest(submittedTaskScopeKey, 'retry');
 
     const message = getTaskInputText(task.input) || task.title;
     const retryPayload = getTaskRetryPayload(message);
@@ -239,8 +258,12 @@ export const useTaskRunActions = ({
     try {
       if (!successfulMutationKeysRef.current.has(mutationKey)) {
         try {
-          await createTaskThreadRun({
+          const response = await createTaskThreadRun({
             thread_id: submittedTaskDetailId,
+            space_id: submittedSpaceID,
+            attempt_kind: 'retry',
+            message_content: message,
+            source_run_id: sourceRunId,
             input: JSON.stringify({
               messages: [
                 {
@@ -254,8 +277,14 @@ export const useTaskRunActions = ({
               sourceRunId,
               threadId: task.id,
             }),
-            idempotency_key: `${submittedTaskDetailId}:${sourceRunId}:task_retry`,
+            idempotency_key: `${submittedSpaceID}:${submittedTaskDetailId}:${sourceRunId}:task_retry`,
           });
+          if (!isCurrentTaskRequest(request)) {
+            return;
+          }
+          if (response.data && isTopLevelRun(response.data)) {
+            commitTopLevelRun?.(response.data);
+          }
         } catch (err) {
           if (isCurrentTaskRequest(request)) {
             setTaskRunActionError(
@@ -274,7 +303,7 @@ export const useTaskRunActions = ({
       try {
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
-          spaceId: spaceID,
+          spaceId: submittedSpaceID,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -297,13 +326,15 @@ export const useTaskRunActions = ({
     if (!runId || activeOperationRef.current) {
       return;
     }
-    if (!taskDetailId) {
+    if (!spaceID || !taskDetailId) {
       setSubagentRetryError('缺少任务恢复上下文，请刷新后重试');
       return;
     }
     const submittedTaskDetailId = taskDetailId;
-    const mutationKey = `subagent:${submittedTaskDetailId}:${runId}`;
-    const request = captureTaskRequest(submittedTaskDetailId, 'subagent');
+    const submittedSpaceID = spaceID;
+    const submittedTaskScopeKey = taskScopeKey;
+    const mutationKey = `subagent:${submittedTaskScopeKey}:${runId}`;
+    const request = captureTaskRequest(submittedTaskScopeKey, 'subagent');
 
     activeOperationRef.current = 'subagent';
     setTaskRunActionsDisabled(true);
@@ -312,10 +343,17 @@ export const useTaskRunActions = ({
     try {
       if (!successfulMutationKeysRef.current.has(mutationKey)) {
         try {
-          await retryTaskThreadSubagentRun({
+          const response = await retryTaskThreadSubagentRun({
             thread_id: submittedTaskDetailId,
             run_id: runId,
+            space_id: submittedSpaceID,
           });
+          if (!isCurrentTaskRequest(request)) {
+            return;
+          }
+          if (response.data && isTopLevelRun(response.data)) {
+            commitTopLevelRun?.(response.data);
+          }
         } catch (err) {
           if (isCurrentTaskRequest(request)) {
             setSubagentRetryError(
@@ -336,7 +374,7 @@ export const useTaskRunActions = ({
       try {
         const detail = await fetchTaskDetail({
           id: submittedTaskDetailId,
-          spaceId: spaceID,
+          spaceId: submittedSpaceID,
         });
         if (isCurrentTaskRequest(request)) {
           applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);

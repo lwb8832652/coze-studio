@@ -20,6 +20,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 
+import type { WorkbenchRun } from '../../workbench/thread-client';
+
 const mockCancelTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockCreateTaskThreadRun = vi.hoisted(() => vi.fn());
 const mockFetchTaskDetail = vi.hoisted(() => vi.fn());
@@ -62,16 +64,42 @@ const createTask = (id: string) =>
     title: `任务 ${id}`,
   }) as NonNullable<Parameters<typeof useTaskRunActions>[0]['task']>;
 
+const createRun = (
+  runId: string,
+  parentRunId = '',
+): WorkbenchRun => ({
+  run_id: runId,
+  thread_id: 'task-old',
+  space_id: 'space-1',
+  assistant_id: 'agent',
+  status: 'queued',
+  metadata: '',
+  multitask_strategy: '',
+  attempt_kind: 'retry',
+  parent_run_id: parentRunId,
+  run_kind: parentRunId ? 'subagent' : 'task',
+  stream_modes: ['events'],
+  on_disconnect: 'continue',
+  durability: 'async',
+  created_at: 1,
+  updated_at: 1,
+});
+
 const HookHarness = ({
   applyTaskDetail,
+  commitTopLevelRun,
+  spaceID,
   taskDetailId,
 }: {
   applyTaskDetail: ReturnType<typeof vi.fn>;
+  commitTopLevelRun: ReturnType<typeof vi.fn>;
+  spaceID: string;
   taskDetailId: string;
 }) => {
   currentActions = useTaskRunActions({
     applyTaskDetail,
-    spaceID: 'space-1',
+    commitTopLevelRun,
+    spaceID,
     task: createTask(taskDetailId),
     taskDetailId,
   });
@@ -82,6 +110,13 @@ const HookHarness = ({
 const renderHarness = (
   applyTaskDetail: ReturnType<typeof vi.fn>,
   taskDetailId = 'task-old',
+  {
+    commitTopLevelRun = vi.fn(),
+    spaceID = 'space-1',
+  }: {
+    commitTopLevelRun?: ReturnType<typeof vi.fn>;
+    spaceID?: string;
+  } = {},
 ) => {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -91,6 +126,8 @@ const renderHarness = (
     root.render(
       <HookHarness
         applyTaskDetail={applyTaskDetail}
+        commitTopLevelRun={commitTopLevelRun}
+        spaceID={spaceID}
         taskDetailId={taskDetailId}
       />,
     );
@@ -104,6 +141,19 @@ const renderHarness = (
         root.render(
           <HookHarness
             applyTaskDetail={applyTaskDetail}
+            commitTopLevelRun={commitTopLevelRun}
+            spaceID={spaceID}
+            taskDetailId={nextTaskDetailId}
+          />,
+        );
+      }),
+    switchScope: (nextTaskDetailId: string, nextSpaceID: string) =>
+      act(() => {
+        root.render(
+          <HookHarness
+            applyTaskDetail={applyTaskDetail}
+            commitTopLevelRun={commitTopLevelRun}
+            spaceID={nextSpaceID}
             taskDetailId={nextTaskDetailId}
           />,
         );
@@ -173,6 +223,90 @@ describe('useTaskRunActions task request generation', () => {
     expect(mockCancelTaskThreadRun).toHaveBeenCalledTimes(1);
     expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
     expect(applyTaskDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits the returned top-level retry Run before refresh and retains it when refresh fails', async () => {
+    const applyTaskDetail = vi.fn();
+    const commitTopLevelRun = vi.fn();
+    const retryRun = createRun('run-retry-new');
+    mockCreateTaskThreadRun.mockResolvedValue({ data: retryRun });
+    mockFetchTaskDetail.mockRejectedValue(new Error('刷新超时'));
+    renderHarness(applyTaskDetail, 'task-old', { commitTopLevelRun });
+
+    await act(async () => {
+      await currentActions.handleRetryTaskRun('run-old');
+    });
+
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt_kind: 'retry',
+        message_content: '重试 task-old',
+        space_id: 'space-1',
+        source_run_id: 'run-old',
+        thread_id: 'task-old',
+      }),
+    );
+    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+    expect(commitTopLevelRun).toHaveBeenCalledWith(retryRun);
+    expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFetchTaskDetail.mock.invocationCallOrder[0],
+    );
+
+    await act(async () => {
+      await currentActions.handleRetryTaskRun('run-old');
+    });
+
+    expect(mockCreateTaskThreadRun).toHaveBeenCalledTimes(1);
+    expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
+    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits the new top-level Run returned by a subagent retry before refresh', async () => {
+    const applyTaskDetail = vi.fn();
+    const commitTopLevelRun = vi.fn();
+    const retryRun = createRun('run-subagent-retry');
+    mockRetryTaskThreadSubagentRun.mockResolvedValue({
+      data: retryRun,
+    });
+    mockFetchTaskDetail.mockRejectedValue(new Error('刷新超时'));
+    renderHarness(applyTaskDetail, 'task-old', { commitTopLevelRun });
+
+    await act(async () => {
+      await currentActions.handleRetrySubagentRun('run-child-old');
+    });
+
+    expect(mockRetryTaskThreadSubagentRun).toHaveBeenCalledWith({
+      run_id: 'run-child-old',
+      space_id: 'space-1',
+      thread_id: 'task-old',
+    });
+    expect(commitTopLevelRun).toHaveBeenCalledWith(retryRun);
+    expect(commitTopLevelRun.mock.invocationCallOrder[0]).toBeLessThan(
+      mockFetchTaskDetail.mock.invocationCallOrder[0],
+    );
+
+    await act(async () => {
+      await currentActions.handleRetrySubagentRun('run-child-old');
+    });
+
+    expect(mockRetryTaskThreadSubagentRun).toHaveBeenCalledTimes(1);
+    expect(mockFetchTaskDetail).toHaveBeenCalledTimes(2);
+    expect(commitTopLevelRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not commit a child Run returned by a subagent retry', async () => {
+    const applyTaskDetail = vi.fn();
+    const commitTopLevelRun = vi.fn();
+    mockRetryTaskThreadSubagentRun.mockResolvedValue({
+      data: createRun('run-child-retry', 'run-parent'),
+    });
+    renderHarness(applyTaskDetail, 'task-old', { commitTopLevelRun });
+
+    await act(async () => {
+      await currentActions.handleRetrySubagentRun('run-child-old');
+    });
+
+    expect(commitTopLevelRun).not.toHaveBeenCalled();
   });
 
   it('ignores a late cancel refresh after the route task changes', async () => {
@@ -254,6 +388,29 @@ describe('useTaskRunActions task request generation', () => {
 
     expect(applyTaskDetail).not.toHaveBeenCalled();
     expect(currentActions.subagentRetryError).toBe('');
+  });
+
+  it('ignores a late action refresh after the workspace changes for the same thread', async () => {
+    const refreshDeferred = createDeferred<unknown>();
+    const applyTaskDetail = vi.fn();
+    mockFetchTaskDetail.mockReturnValue(refreshDeferred.promise);
+    const { switchScope } = renderHarness(applyTaskDetail);
+
+    let pendingAction!: Promise<void>;
+    await act(async () => {
+      pendingAction = currentActions.handleCancelTaskRun('run-old');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    switchScope('task-old', 'space-2');
+    await act(async () => {
+      refreshDeferred.resolve({ task: { id: 'task-old' } });
+      await pendingAction;
+    });
+
+    expect(applyTaskDetail).not.toHaveBeenCalled();
+    expect(currentActions.taskRunActionError).toBe('');
   });
 
   it('does not refresh or update after unmounting a pending action', async () => {

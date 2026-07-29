@@ -511,7 +511,7 @@ describe('page service canonical delegation parity', () => {
     expect(sourceFetch).not.toHaveBeenCalled();
   });
 
-  it('delegates core Tasks services and resolves store space on every call', async () => {
+  it('delegates core Tasks services and preserves the store fallback bridge', async () => {
     const listResponse = await taskService.listTaskThreads({
       space_id: 'explicit-space',
       page: 1,
@@ -523,38 +523,44 @@ describe('page service canonical delegation parity', () => {
     });
     const firstThreadResponse = await taskService.getTaskThread({
       thread_id: thread.thread_id,
-    });
+    } as Parameters<typeof taskService.getTaskThread>[0]);
     spaceStore.currentSpaceID = 'store-space-2';
     const secondThreadResponse = await taskService.getTaskThread({
       thread_id: thread.thread_id,
-    });
+    } as Parameters<typeof taskService.getTaskThread>[0]);
     const messageResponse = await taskService.listTaskThreadMessages({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       page: 1,
       page_size: 50,
     });
     const suggestionResponse = await taskService.generateTaskThreadSuggestions({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       messages: [{ role: 'user', content: 'Next?' }],
       n: 1,
     });
     const runsResponse = await taskService.listTaskThreadRuns({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       parent_run_id: '0',
       page: 1,
       page_size: 1,
     });
     const appendResponse = await taskService.appendTaskThreadMessage({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       run_id: run.run_id,
       role: 'assistant',
       content: 'Next step prepared',
     });
     const createRunResponse = await taskService.createTaskThreadRun({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       input: '{"message":"Next?"}',
     });
     const resumeResponse = await taskService.resumeTaskThreadRun({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       run_id: run.run_id,
       interrupt_id: '10001',
@@ -566,10 +572,12 @@ describe('page service canonical delegation parity', () => {
       },
     });
     const cancelResponse = await taskService.cancelTaskThreadRun({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       run_id: run.run_id,
     });
     const retryResponse = await taskService.retryTaskThreadSubagentRun({
+      space_id: 'store-space-2',
       thread_id: thread.thread_id,
       run_id: run.run_id,
     });
@@ -658,6 +666,7 @@ describe('page service canonical delegation parity', () => {
     });
 
     const response = await taskService.listTaskThreadMessages({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       page: 2,
       page_size: 50,
@@ -681,6 +690,7 @@ describe('page service canonical delegation parity', () => {
     });
 
     const response = await taskService.listTaskThreadMessages({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       page: 1,
       page_size: 50,
@@ -692,6 +702,7 @@ describe('page service canonical delegation parity', () => {
 
   it('bridges missing run_id before listing events and preserves optional journal shape', async () => {
     const response = await taskService.listTaskThreadRunEvents({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       page: 1,
       page_size: 100,
@@ -719,6 +730,7 @@ describe('page service canonical delegation parity', () => {
     });
     recordingCanonicalClient.listRunEvents.mockClear();
     const emptyResponse = await taskService.listTaskThreadRunEvents({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       page: 1,
       page_size: 100,
@@ -730,6 +742,7 @@ describe('page service canonical delegation parity', () => {
 
     recordingCanonicalClient.listRuns.mockClear();
     const explicitRunResponse = await taskService.listTaskThreadRunEvents({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       run_id: run.run_id,
       page: 1,
@@ -757,6 +770,7 @@ describe('page service canonical delegation parity', () => {
     });
 
     const response = await taskService.listTaskThreadRunEvents({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       run_id: run.run_id,
       page: 1,
@@ -782,6 +796,7 @@ describe('page service canonical delegation parity', () => {
       });
 
     const response = await taskService.listTaskThreadRunEvents({
+      space_id: 'store-space-1',
       thread_id: thread.thread_id,
       run_id: run.run_id,
       page: 2,
@@ -946,27 +961,32 @@ describe('page service canonical delegation parity', () => {
         page_size: 20,
       }),
       taskService.listTaskThreadGuardrailAuditEvents({
+        space_id: 'store-space-1',
         thread_id: thread.thread_id,
         run_id: run.run_id,
         page: 1,
         page_size: 20,
       }),
       taskService.listTaskThreadMCPRuntimeAuditEvents({
+        space_id: 'store-space-1',
         thread_id: thread.thread_id,
         run_id: run.run_id,
         page: 1,
         page_size: 20,
       }),
       taskService.exportTaskThreadMemories({
+        space_id: 'store-space-1',
         thread_id: thread.thread_id,
         limit: 100,
       }),
       taskService.exportTaskThreadGuardrailAuditEvents({
+        space_id: 'store-space-1',
         thread_id: thread.thread_id,
         page: 2,
         page_size: 10,
       }),
       taskService.importTaskThreadMemories({
+        space_id: 'store-space-1',
         thread_id: thread.thread_id,
         memories: [{ content: memory.content, scope: memory.scope }],
       }),

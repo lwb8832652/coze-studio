@@ -14,7 +14,13 @@
  * limitations under the License.
  */
 
-import { type workbenchTask } from '@coze-studio/api-schema';
+import type {
+  WorkbenchArtifact,
+  WorkbenchMessage,
+  WorkbenchRun,
+  WorkbenchThread,
+  WorkbenchTodo,
+} from '../workbench/thread-client';
 
 import {
   TaskThreadDetailStatus,
@@ -24,6 +30,7 @@ import {
 import type { TaskDetailTokenUsage } from './task-detail-token-usage';
 import {
   fetchTaskThreadSubagentRuns,
+  getRunLifecycleByRunID,
   getSubagentLifecycleByChildRunID,
   getSubagentTimelineByChildRunID,
   type TaskDetailSubagentRun,
@@ -49,11 +56,11 @@ export type {
 export type { TaskDetailTokenUsage } from './task-detail-token-usage';
 export type { TaskTokenUsageViewMode } from './task-detail-token-usage';
 
-type TaskThread = workbenchTask.TaskThread & { can_edit?: boolean };
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
-type TaskThreadRun = workbenchTask.TaskThreadRun;
-type TaskThreadTodo = workbenchTask.TaskThreadTodo;
+type TaskThread = WorkbenchThread & { creator_id?: string };
+type TaskThreadArtifact = WorkbenchArtifact;
+type TaskThreadMessage = WorkbenchMessage;
+type TaskThreadRun = WorkbenchRun & { config?: string };
+type TaskThreadTodo = WorkbenchTodo;
 
 const COMPLETED_TASK_PROGRESS = 100;
 
@@ -61,6 +68,7 @@ export interface TaskDetail {
   task?: TaskThreadDetailModel;
   events: TaskThreadDetailEvent[];
   artifacts?: TaskThreadArtifact[];
+  latestTaskRunCreatedAt?: number;
   latestTaskRunID?: string;
   latestTaskRunStatus?: string;
   messages?: TaskThreadMessage[];
@@ -98,9 +106,9 @@ const mapTaskThreadStatus = (status: string) => {
   }
 };
 
-const mapTaskThreadRunStatus = (status?: string) => {
+const mapTaskThreadRunStatus = (run?: TaskThreadRun) => {
   switch (
-    String(status ?? '')
+    String(run?.status ?? '')
       .trim()
       .toLowerCase()
   ) {
@@ -109,12 +117,22 @@ const mapTaskThreadRunStatus = (status?: string) => {
       return TaskThreadDetailStatus.Queued;
     case 'running':
       return TaskThreadDetailStatus.Running;
+    case 'success':
     case 'succeeded':
       return TaskThreadDetailStatus.Succeeded;
+    case 'error':
     case 'failed':
       return TaskThreadDetailStatus.Failed;
     case 'canceled':
       return TaskThreadDetailStatus.Canceled;
+    case 'interrupted':
+      return ['canceled', 'cancelled'].includes(
+        String(run?.terminal_reason ?? '')
+          .trim()
+          .toLowerCase(),
+      )
+        ? TaskThreadDetailStatus.Canceled
+        : undefined;
     default:
       return undefined;
   }
@@ -154,7 +172,7 @@ const mapTaskThreadToDetailModel = (
   const assistantMessage =
     getLatestThreadMessageContent(messages, 'assistant') ||
     thread.last_agent_message;
-  const latestRunStatus = mapTaskThreadRunStatus(latestRun?.status);
+  const latestRunStatus = mapTaskThreadRunStatus(latestRun);
   const status = latestRunStatus ?? mapTaskThreadStatus(thread.status);
   const progress =
     status === TaskThreadDetailStatus.Succeeded
@@ -226,7 +244,7 @@ const getLatestRunSuggestionModel = (run?: TaskThreadRun) => {
 // eslint-disable-next-line complexity -- Keeps one coherent detail snapshot across parallel page reads.
 const fetchTaskThreadDetail = async (
   id: string,
-  { spaceId }: { spaceId?: string } = {},
+  { spaceId }: { spaceId: string },
 ): Promise<TaskDetail | undefined> => {
   const threadResponse = await getTaskThread({
     thread_id: id,
@@ -239,12 +257,8 @@ const fetchTaskThreadDetail = async (
   }
 
   const threadID = thread.thread_id;
-  const [
-    messagesResponse,
-    topLevelRunsResponse,
-    runEventsResponse,
-    artifactsResponse,
-  ] = await Promise.all([
+  const [messagesResponse, topLevelRunsResponse, artifactsResponse] =
+    await Promise.all([
     listTaskThreadMessages({
       thread_id: threadID,
       space_id: spaceId,
@@ -258,12 +272,6 @@ const fetchTaskThreadDetail = async (
       page: 1,
       page_size: 1,
     }),
-    listTaskThreadRunEvents({
-      thread_id: threadID,
-      space_id: spaceId,
-      page: 1,
-      page_size: 100,
-    }),
     listTaskThreadArtifacts({
       thread_id: threadID,
       space_id: spaceId,
@@ -271,13 +279,24 @@ const fetchTaskThreadDetail = async (
       page_size: 50,
     }),
   ]);
-  const rawRunEvents = runEventsResponse.data?.events ?? [];
   const latestTopLevelRun: TaskThreadRun | undefined =
     topLevelRunsResponse.data?.runs?.[0];
+  const runEventsResponse = latestTopLevelRun
+    ? await listTaskThreadRunEvents({
+        thread_id: threadID,
+        run_id: latestTopLevelRun.run_id,
+        space_id: spaceId,
+        page: 1,
+        page_size: 100,
+      })
+    : undefined;
+  const rawRunEvents = runEventsResponse?.data?.events ?? [];
   const suggestionModel = getLatestRunSuggestionModel(latestTopLevelRun);
   const subagentRuns = await fetchTaskThreadSubagentRuns({
+    eventSourceRunId: latestTopLevelRun?.run_id,
     threadId: threadID,
     lifecycleByChildRunID: getSubagentLifecycleByChildRunID(rawRunEvents),
+    runLifecycleByRunID: getRunLifecycleByRunID(rawRunEvents),
     timelineByChildRunID: getSubagentTimelineByChildRunID(rawRunEvents),
     spaceId,
   });
@@ -292,10 +311,8 @@ const fetchTaskThreadDetail = async (
       latestTopLevelRun,
     ),
     artifacts: artifactsResponse.data?.artifacts ?? [],
-    events: mergeJournalTaskThreadEvents({
-      journalMessages: runEventsResponse.data?.journal_messages,
-      runEvents: rawRunEvents,
-    }),
+    events: mergeJournalTaskThreadEvents({ runEvents: rawRunEvents }),
+    latestTaskRunCreatedAt: latestTopLevelRun?.created_at,
     latestTaskRunID: latestTopLevelRun?.run_id ?? '',
     latestTaskRunStatus: latestTopLevelRun?.status ?? '',
     suggestionModelName: suggestionModel.suggestionModelName,
@@ -309,7 +326,7 @@ export const fetchTaskDetail = async ({
   spaceId,
 }: {
   id: string;
-  spaceId?: string;
+  spaceId: string;
 }): Promise<TaskDetail> => {
   const threadDetail = await fetchTaskThreadDetail(id, { spaceId });
 

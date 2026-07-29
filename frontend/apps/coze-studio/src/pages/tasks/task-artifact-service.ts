@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-import { type workbenchTask } from '@coze-studio/api-schema';
+import type {
+  WorkbenchArtifact,
+  WorkbenchArtifactScanJob,
+} from '../workbench/thread-client';
 
 import {
   presentTaskThreadArtifactContentResponse,
@@ -50,26 +53,9 @@ export interface TaskThreadArtifactSignedURLResponse {
   reason?: string;
 }
 
-export interface TaskThreadArtifactScanJob {
-  job_id: string;
-  thread_id: string;
-  run_id: string;
-  space_id: string;
-  user_id: string;
-  artifact_id: string;
-  file_id: string;
-  scanner: string;
-  status: string;
-  worker_id: string;
-  attempt_count: number;
-  last_error: string;
-  available_at: number;
-  lease_expires_at: number;
-  started_at: number;
-  ended_at: number;
-  created_at: number;
-  updated_at: number;
-}
+export type TaskThreadArtifactScanJob = WorkbenchArtifactScanJob & {
+  last_error?: string;
+};
 
 export interface ListTaskThreadArtifactScanJobsResponse {
   data?: {
@@ -106,6 +92,24 @@ export interface RestoreTaskThreadArtifactResponse {
   data?: {
     artifact_id: string;
     restored: boolean;
+  };
+  code: number;
+  msg: string;
+}
+
+interface ListTaskThreadArtifactsRequest {
+  thread_id: string;
+  run_id?: string;
+  space_id?: string;
+  deleted_only?: boolean;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ListTaskThreadArtifactsResponse {
+  data?: {
+    artifacts: WorkbenchArtifact[];
+    total: number;
   };
   code: number;
   msg: string;
@@ -170,8 +174,8 @@ const artifactErrorCode = (error: unknown): string | undefined => {
 };
 
 export const listTaskThreadArtifacts = async (
-  request: workbenchTask.ListTaskThreadArtifactsRequest,
-): Promise<workbenchTask.ListTaskThreadArtifactsResponse> =>
+  request: ListTaskThreadArtifactsRequest,
+): Promise<ListTaskThreadArtifactsResponse> =>
   pageResponse(
     presentTaskThreadArtifactListResponse(
       await canonicalThreadClient.listArtifacts({

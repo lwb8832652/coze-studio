@@ -19,7 +19,6 @@ import './newx-task-ui.less';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
 import {
   IconCozAsynchronousTask,
   IconCozFilter,
@@ -34,9 +33,10 @@ import {
 } from './task-thread-events';
 import { getTaskThreadDisplayTitle } from './task-display-title';
 import { listTaskThreads } from './service';
+import type { WorkbenchThread } from '../workbench/thread-client';
 import { formatUpdatedTime, type TaskStatusFilter } from './helpers';
 
-type TaskThread = workbenchTask.TaskThread;
+type TaskThread = WorkbenchThread;
 
 const getTaskThreadDescription = (task: TaskThread) =>
   task.last_user_message || task.last_agent_message || task.title;

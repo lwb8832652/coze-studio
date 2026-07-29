@@ -14,12 +14,34 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchRunEvent } from '../workbench/thread-client';
 
 import type { TaskThreadDetailEvent } from './task-thread-detail-model';
 
-type TaskThreadRunEvent = workbenchTask.TaskThreadRunEvent;
-type TaskThreadRunJournalMessage = workbenchTask.TaskThreadRunJournalMessage;
+type TaskThreadRunEvent = WorkbenchRunEvent;
+
+interface TaskThreadRunJournalToolCall {
+  id: string;
+  name: string;
+  type: string;
+  arguments: string;
+}
+
+interface TaskThreadRunJournalMessage {
+  id: string;
+  thread_id: string;
+  run_id: string;
+  role: string;
+  type: string;
+  content: string;
+  name: string;
+  tool_call_id: string;
+  tool_calls: TaskThreadRunJournalToolCall[];
+  additional_kwargs: string;
+  created_at: number;
+  source_event_id: string;
+  usage: string;
+}
 
 const parseJSONObject = (
   value?: string,

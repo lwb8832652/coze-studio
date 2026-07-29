@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchTodo } from '../workbench/thread-client';
 import {
   IconCozArrowDown,
   IconCozListDisorder,
@@ -29,7 +29,7 @@ import type {
 import { projectTaskExecutionEvents } from './task-event-projection';
 import { isTaskTerminalStatus } from './helpers';
 
-type TaskThreadTodo = workbenchTask.TaskThreadTodo;
+type TaskThreadTodo = WorkbenchTodo;
 
 const parseTaskThreadEventPayload = (
   payload?: string,

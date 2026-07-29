@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
-import { type workbenchTask } from '@coze-studio/api-schema';
-
+import type {
+  GetWorkbenchTokenUsageRequest,
+  WorkbenchRunTokenUsageAggregate,
+  WorkbenchTokenUsage,
+  WorkbenchTokenUsageAggregate,
+} from '../workbench/thread-client';
 import { presentTaskThreadTokenUsageResponse } from '../workbench/thread-client/legacy-page-response';
 import {
   canonicalThreadClient,
-  resolvePageServiceSpaceID,
 } from '../workbench/thread-client/canonical-thread-client-singleton';
 
 const createTaskUsageAbortError = () => {
@@ -32,22 +35,40 @@ const createTaskUsageAbortError = () => {
   return error;
 };
 
+type GetTaskThreadTokenUsageRequest = Omit<
+  GetWorkbenchTokenUsageRequest,
+  'signal'
+>;
+
+export interface GetTaskThreadTokenUsageResponse {
+  data?: {
+    usage: WorkbenchTokenUsage[];
+    total: number;
+    aggregate: WorkbenchTokenUsageAggregate;
+    run_aggregates: WorkbenchRunTokenUsageAggregate[];
+  };
+  code: number;
+  msg: string;
+}
+
 export const getTaskThreadTokenUsage = async (
-  request: workbenchTask.GetTaskThreadTokenUsageRequest & {
-    space_id?: string;
-  },
+  request: GetTaskThreadTokenUsageRequest,
   options?: { signal?: AbortSignal },
-): Promise<workbenchTask.GetTaskThreadTokenUsageResponse> => {
+): Promise<GetTaskThreadTokenUsageResponse> => {
   const signal = options?.signal;
   if (signal?.aborted) {
     throw createTaskUsageAbortError();
+  }
+  const spaceID = String(request.space_id ?? '').trim();
+  if (!spaceID) {
+    throw new Error('Task usage workspace scope is required');
   }
 
   return presentTaskThreadTokenUsageResponse(
     await canonicalThreadClient.getTokenUsage({
       ...request,
       ...(signal === undefined ? {} : { signal }),
-      space_id: resolvePageServiceSpaceID(request.space_id),
+      space_id: spaceID,
     }),
-  ) as unknown as workbenchTask.GetTaskThreadTokenUsageResponse;
+  );
 };

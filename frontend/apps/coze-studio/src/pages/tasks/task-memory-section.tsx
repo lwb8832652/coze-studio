@@ -355,14 +355,16 @@ const MemoryToolbar = ({ state }: { state: TaskMemorySectionState }) => (
 
 export const TaskMemorySection = ({
   readOnly,
+  spaceId,
   threadId,
 }: {
   readOnly?: boolean;
+  spaceId?: string;
   threadId?: string;
 }) => {
-  const state = useTaskMemorySection({ readOnly, threadId });
+  const state = useTaskMemorySection({ readOnly, spaceId, threadId });
 
-  if (!threadId) {
+  if (!spaceId || !threadId) {
     return null;
   }
 

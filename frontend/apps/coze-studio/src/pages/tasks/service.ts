@@ -17,10 +17,24 @@
 import {
   workbench,
   workbenchSkill,
-  type workbenchTask,
 } from '@coze-studio/api-schema';
 
+import type {
+  ExportWorkbenchGuardrailAuditEventsRequest,
+  ImportWorkbenchMemoriesRequest,
+  ListWorkbenchGuardrailAuditEventsRequest,
+  ListWorkbenchMCPRuntimeAuditEventsRequest,
+  WorkbenchGuardrailAuditEvent,
+  WorkbenchGuardrailAuditExport,
+  WorkbenchMCPRuntimeAuditEvent,
+  WorkbenchMemory,
+  WorkbenchMemoryAuditEvent,
+  WorkbenchMemoryExport,
+  WorkbenchMemoryImportItem,
+  WorkbenchMemoryImportResult,
+} from '../workbench/thread-client';
 import {
+  type LegacyPageResponse,
   presentEmptyTaskThreadRunEventListResponse,
   presentTaskThreadCreateResponse,
   presentTaskThreadGetResponse,
@@ -43,6 +57,34 @@ import {
   canonicalThreadClient,
   resolvePageServiceSpaceID,
 } from '../workbench/thread-client/canonical-thread-client-singleton';
+import type {
+  AppendTaskThreadMessageRequest,
+  AppendTaskThreadMessageResponse,
+  CancelTaskThreadRunRequest,
+  CancelTaskThreadRunResponse,
+  CreateTaskThreadRequest,
+  CreateTaskThreadResponse,
+  CreateTaskThreadRunRequest,
+  CreateTaskThreadRunResponse,
+  GenerateTaskThreadSuggestionsRequest,
+  GenerateTaskThreadSuggestionsResponse,
+  GetTaskThreadRequest,
+  GetTaskThreadResponse,
+  ListTaskThreadMessagesRequest,
+  ListTaskThreadMessagesResponse,
+  ListTaskThreadRunEventsRequest,
+  ListTaskThreadRunEventsResponse,
+  ListTaskThreadRunsRequest,
+  ListTaskThreadRunsResponse,
+  ListTaskThreadsRequest,
+  ListTaskThreadsResponse,
+  PageSpace,
+  PageScopedRequest,
+  ResumeTaskThreadRunRequest,
+  ResumeTaskThreadRunResponse,
+  RetryTaskThreadSubagentRunRequest,
+  RetryTaskThreadSubagentRunResponse,
+} from './task-service-contract';
 
 export {
   uploadTaskThreadFiles,
@@ -77,10 +119,6 @@ export {
 } from './task-memory-service';
 export { getTaskThreadTokenUsage } from './task-usage-service';
 
-interface PageScopedRequest {
-  space_id?: string;
-}
-
 const LEGACY_MESSAGE_PAGE_SIZE = 50;
 const LEGACY_RUN_EVENT_PAGE_SIZE = 100;
 
@@ -93,8 +131,8 @@ const legacyPageSize = (value: number | undefined, fallback: number): number =>
     : fallback;
 
 export const listTaskThreads = async (
-  request: workbenchTask.ListTaskThreadsRequest,
-): Promise<workbenchTask.ListTaskThreadsResponse> =>
+  request: ListTaskThreadsRequest,
+): Promise<ListTaskThreadsResponse> =>
   pageResponse(
     presentTaskThreadListResponse(
       await canonicalThreadClient.searchThreads({
@@ -105,8 +143,8 @@ export const listTaskThreads = async (
   );
 
 export const createTaskThread = async (
-  request: workbenchTask.CreateTaskThreadRequest,
-): Promise<workbenchTask.CreateTaskThreadResponse> =>
+  request: CreateTaskThreadRequest,
+): Promise<CreateTaskThreadResponse> =>
   pageResponse(
     presentTaskThreadCreateResponse(
       await canonicalThreadClient.createThread({
@@ -117,8 +155,8 @@ export const createTaskThread = async (
   );
 
 export const getTaskThread = async (
-  request: workbenchTask.GetTaskThreadRequest & PageScopedRequest,
-): Promise<workbenchTask.GetTaskThreadResponse> =>
+  request: GetTaskThreadRequest,
+): Promise<GetTaskThreadResponse> =>
   pageResponse(
     presentTaskThreadGetResponse(
       await canonicalThreadClient.getThread({
@@ -129,8 +167,8 @@ export const getTaskThread = async (
   );
 
 export const listTaskThreadMessages = async (
-  request: workbenchTask.ListTaskThreadMessagesRequest & PageScopedRequest,
-): Promise<workbenchTask.ListTaskThreadMessagesResponse> => {
+  request: ListTaskThreadMessagesRequest,
+): Promise<ListTaskThreadMessagesResponse> => {
   const {
     page: requestedPage,
     page_size: requestedPageSize,
@@ -151,9 +189,8 @@ export const listTaskThreadMessages = async (
 };
 
 export const generateTaskThreadSuggestions = async (
-  request: workbenchTask.GenerateTaskThreadSuggestionsRequest &
-    PageScopedRequest,
-): Promise<workbenchTask.GenerateTaskThreadSuggestionsResponse> =>
+  request: GenerateTaskThreadSuggestionsRequest,
+): Promise<GenerateTaskThreadSuggestionsResponse> =>
   presentTaskThreadSuggestionsResponse(
     await canonicalThreadClient.generateSuggestions({
       ...request,
@@ -162,8 +199,8 @@ export const generateTaskThreadSuggestions = async (
   );
 
 export const appendTaskThreadMessage = async (
-  request: workbenchTask.AppendTaskThreadMessageRequest & PageScopedRequest,
-): Promise<workbenchTask.AppendTaskThreadMessageResponse> =>
+  request: AppendTaskThreadMessageRequest,
+): Promise<AppendTaskThreadMessageResponse> =>
   pageResponse(
     presentTaskThreadMessageResponse(
       await canonicalThreadClient.appendMessage({
@@ -174,8 +211,8 @@ export const appendTaskThreadMessage = async (
   );
 
 export const listTaskThreadRuns = async (
-  request: workbenchTask.ListTaskThreadRunsRequest & PageScopedRequest,
-): Promise<workbenchTask.ListTaskThreadRunsResponse> => {
+  request: ListTaskThreadRunsRequest,
+): Promise<ListTaskThreadRunsResponse> => {
   const {
     parent_run_id: parentRunID,
     space_id: spaceID,
@@ -196,8 +233,8 @@ export const listTaskThreadRuns = async (
 };
 
 export const createTaskThreadRun = async (
-  request: workbenchTask.CreateTaskThreadRunRequest & PageScopedRequest,
-): Promise<workbenchTask.CreateTaskThreadRunResponse> =>
+  request: CreateTaskThreadRunRequest,
+): Promise<CreateTaskThreadRunResponse> =>
   pageResponse(
     presentTaskThreadRunCreateResponse(
       await canonicalThreadClient.createRun({
@@ -208,8 +245,8 @@ export const createTaskThreadRun = async (
   );
 
 export const resumeTaskThreadRun = async (
-  request: workbenchTask.ResumeTaskThreadRunRequest & PageScopedRequest,
-): Promise<workbenchTask.ResumeTaskThreadRunResponse> =>
+  request: ResumeTaskThreadRunRequest,
+): Promise<ResumeTaskThreadRunResponse> =>
   pageResponse(
     presentTaskThreadRunResponse(
       await canonicalThreadClient.resumeRun({
@@ -220,8 +257,8 @@ export const resumeTaskThreadRun = async (
   );
 
 export const cancelTaskThreadRun = async (
-  request: workbenchTask.CancelTaskThreadRunRequest & PageScopedRequest,
-): Promise<workbenchTask.CancelTaskThreadRunResponse> => {
+  request: CancelTaskThreadRunRequest,
+): Promise<CancelTaskThreadRunResponse> => {
   await canonicalThreadClient.cancelRun({
     ...request,
     space_id: resolvePageServiceSpaceID(request.space_id),
@@ -233,8 +270,8 @@ export const cancelTaskThreadRun = async (
 };
 
 export const retryTaskThreadSubagentRun = async (
-  request: workbenchTask.RetryTaskThreadSubagentRunRequest & PageScopedRequest,
-): Promise<workbenchTask.RetryTaskThreadSubagentRunResponse> =>
+  request: RetryTaskThreadSubagentRunRequest,
+): Promise<RetryTaskThreadSubagentRunResponse> =>
   pageResponse(
     presentTaskThreadRunResponse(
       await canonicalThreadClient.retrySubagentRun({
@@ -245,12 +282,14 @@ export const retryTaskThreadSubagentRun = async (
   );
 
 export const listTaskThreadRunEvents = async (
-  request: workbenchTask.ListTaskThreadRunEventsRequest & PageScopedRequest,
-): Promise<workbenchTask.ListTaskThreadRunEventsResponse> => {
+  request: ListTaskThreadRunEventsRequest,
+): Promise<ListTaskThreadRunEventsResponse> => {
   const {
+    event_types: eventTypes,
     page: requestedPage,
     page_size: requestedPageSize,
     run_id: requestedRunID,
+    signal,
     space_id: requestedSpaceID,
     thread_id: threadID,
   } = request;
@@ -270,6 +309,7 @@ export const listTaskThreadRunEvents = async (
       thread_id: threadID,
       page: 1,
       page_size: 1,
+      signal,
     });
     runID = runs.items[0]?.run_id;
   }
@@ -280,9 +320,11 @@ export const listTaskThreadRunEvents = async (
   // Canonical public events already contain approved message/tool projections;
   // never reconstruct the legacy journal side channel with internal payloads.
   const result = await listCanonicalRunEventPage({
+    eventTypes,
     page,
     pageSize,
     runID,
+    signal,
     spaceID,
     threadID,
   });
@@ -290,15 +332,19 @@ export const listTaskThreadRunEvents = async (
 };
 
 const listCanonicalRunEventPage = async ({
+  eventTypes,
   page,
   pageSize,
   runID,
+  signal,
   spaceID,
   threadID,
 }: {
+  eventTypes?: string[];
   page: number;
   pageSize: number;
   runID: string;
+  signal?: AbortSignal;
   spaceID: string;
   threadID: string;
 }) => {
@@ -311,8 +357,10 @@ const listCanonicalRunEventPage = async ({
       space_id: spaceID,
       thread_id: threadID,
       run_id: runID,
+      ...(eventTypes === undefined ? {} : { event_types: eventTypes }),
       ...(cursor === undefined ? {} : { cursor }),
       limit: pageSize,
+      signal,
     });
     if (currentPage >= page) {
       return result;
@@ -334,47 +382,87 @@ const listCanonicalRunEventPage = async ({
 
 export const getWorkbenchRuntimeDoctor = workbench.GetWorkbenchRuntimeDoctor;
 export const installSkillFromArtifact = workbenchSkill.InstallSkillFromArtifact;
-export type TaskThreadMemory = workbenchTask.TaskThreadMemory;
-export type TaskThreadMemoryAuditEvent =
-  workbenchTask.TaskThreadMemoryAuditEvent;
-export type TaskThreadGuardrailAuditEvent =
-  workbenchTask.TaskThreadGuardrailAuditEvent;
-export type TaskThreadMCPRuntimeAuditEvent =
-  workbenchTask.TaskThreadMCPRuntimeAuditEvent;
-export type ListTaskThreadMemoriesResponse =
-  workbenchTask.ListTaskThreadMemoriesResponse;
-export type UpdateTaskThreadMemoryResponse =
-  workbenchTask.UpdateTaskThreadMemoryResponse;
-export type DeleteTaskThreadMemoryResponse =
-  workbenchTask.DeleteTaskThreadMemoryResponse;
-export type ClearTaskThreadMemoriesResponse =
-  workbenchTask.ClearTaskThreadMemoriesResponse;
-export type RestoreTaskThreadMemoryResponse =
-  workbenchTask.RestoreTaskThreadMemoryResponse;
-export type ListTaskThreadMemoryAuditEventsResponse =
-  workbenchTask.ListTaskThreadMemoryAuditEventsResponse;
-export type ListTaskThreadGuardrailAuditEventsResponse =
-  workbenchTask.ListTaskThreadGuardrailAuditEventsResponse;
-export type ListTaskThreadMCPRuntimeAuditEventsResponse =
-  workbenchTask.ListTaskThreadMCPRuntimeAuditEventsResponse;
-export type ExportTaskThreadMemoriesResponse =
-  workbenchTask.ExportTaskThreadMemoriesResponse;
-export type ExportTaskThreadMemoriesData =
-  workbenchTask.ExportTaskThreadMemoriesData;
-export type ExportTaskThreadGuardrailAuditEventsResponse =
-  workbenchTask.ExportTaskThreadGuardrailAuditEventsResponse;
+export type TaskThreadMemory = WorkbenchMemory;
+export type TaskThreadMemoryAuditEvent = WorkbenchMemoryAuditEvent;
+export type TaskThreadGuardrailAuditEvent = WorkbenchGuardrailAuditEvent;
+export type TaskThreadMCPRuntimeAuditEvent = WorkbenchMCPRuntimeAuditEvent;
+export type ListTaskThreadMemoriesResponse = LegacyPageResponse<{
+  memories: WorkbenchMemory[];
+  total: number;
+}>;
+export type UpdateTaskThreadMemoryResponse = LegacyPageResponse<{
+  memory: WorkbenchMemory;
+  updated: boolean;
+}>;
+export type DeleteTaskThreadMemoryResponse = Omit<
+  LegacyPageResponse<never>,
+  'data'
+>;
+export type ClearTaskThreadMemoriesResponse = LegacyPageResponse<{
+  deleted: number;
+}>;
+export type RestoreTaskThreadMemoryResponse = LegacyPageResponse<{
+  memory: WorkbenchMemory;
+  restored: boolean;
+}>;
+export type ListTaskThreadMemoryAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchMemoryAuditEvent[];
+  total: number;
+}>;
+export type ListTaskThreadGuardrailAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchGuardrailAuditEvent[];
+  total: number;
+}>;
+export type ListTaskThreadMCPRuntimeAuditEventsResponse = LegacyPageResponse<{
+  events: WorkbenchMCPRuntimeAuditEvent[];
+  total: number;
+}>;
+export type ExportTaskThreadMemoriesData = WorkbenchMemoryExport;
+export type ExportTaskThreadMemoriesResponse = LegacyPageResponse<
+  ExportTaskThreadMemoriesData
+>;
 export type ExportTaskThreadGuardrailAuditEventsData =
-  workbenchTask.ExportTaskThreadGuardrailAuditEventsData;
-export type ImportTaskThreadMemoryItem =
-  workbenchTask.ImportTaskThreadMemoryItem;
-export type ImportTaskThreadMemoriesResponse =
-  workbenchTask.ImportTaskThreadMemoriesResponse;
+  WorkbenchGuardrailAuditExport & {
+    page: number;
+    page_size: number;
+  };
+export type ExportTaskThreadGuardrailAuditEventsResponse = LegacyPageResponse<
+  ExportTaskThreadGuardrailAuditEventsData
+>;
+export type ImportTaskThreadMemoryItem = WorkbenchMemoryImportItem;
+export type ImportTaskThreadMemoriesResponse = LegacyPageResponse<
+  WorkbenchMemoryImportResult
+>;
 export type WorkbenchRuntimeDoctorData = workbench.WorkbenchRuntimeDoctorData;
 export type RuntimeDoctorCheck = workbench.RuntimeDoctorCheck;
 
+interface ExportTaskThreadMemoriesRequest extends PageScopedRequest {
+  thread_id: string;
+  run_id?: string;
+  scope?: string;
+  scopes?: string[];
+  q?: string;
+  include_expired?: boolean;
+  include_deleted?: boolean;
+  limit?: number;
+  signal?: AbortSignal;
+}
+type ImportTaskThreadMemoriesRequest = PageSpace<
+  ImportWorkbenchMemoriesRequest
+>;
+type ListTaskThreadGuardrailAuditEventsRequest = PageSpace<
+  ListWorkbenchGuardrailAuditEventsRequest
+>;
+type ExportTaskThreadGuardrailAuditEventsRequest = PageSpace<
+  ExportWorkbenchGuardrailAuditEventsRequest
+>;
+type ListTaskThreadMCPRuntimeAuditEventsRequest = PageSpace<
+  ListWorkbenchMCPRuntimeAuditEventsRequest
+>;
+
 export const exportTaskThreadMemories = async (
-  request: workbenchTask.ExportTaskThreadMemoriesRequest & PageScopedRequest,
-): Promise<workbenchTask.ExportTaskThreadMemoriesResponse> => {
+  request: ExportTaskThreadMemoriesRequest,
+): Promise<ExportTaskThreadMemoriesResponse> => {
   const { limit, space_id: spaceID, ...memoryRequest } = request;
 
   return pageResponse(
@@ -389,8 +477,8 @@ export const exportTaskThreadMemories = async (
 };
 
 export const importTaskThreadMemories = async (
-  request: workbenchTask.ImportTaskThreadMemoriesRequest & PageScopedRequest,
-): Promise<workbenchTask.ImportTaskThreadMemoriesResponse> =>
+  request: ImportTaskThreadMemoriesRequest,
+): Promise<ImportTaskThreadMemoriesResponse> =>
   pageResponse(
     presentTaskThreadMemoryImportResponse(
       await canonicalThreadClient.importMemories({
@@ -401,9 +489,8 @@ export const importTaskThreadMemories = async (
   );
 
 export const listTaskThreadGuardrailAuditEvents = async (
-  request: workbenchTask.ListTaskThreadGuardrailAuditEventsRequest &
-    PageScopedRequest,
-): Promise<workbenchTask.ListTaskThreadGuardrailAuditEventsResponse> =>
+  request: ListTaskThreadGuardrailAuditEventsRequest,
+): Promise<ListTaskThreadGuardrailAuditEventsResponse> =>
   pageResponse(
     presentTaskThreadGuardrailAuditListResponse(
       await canonicalThreadClient.listGuardrailAuditEvents({
@@ -414,9 +501,8 @@ export const listTaskThreadGuardrailAuditEvents = async (
   );
 
 export const exportTaskThreadGuardrailAuditEvents = async (
-  request: workbenchTask.ExportTaskThreadGuardrailAuditEventsRequest &
-    PageScopedRequest,
-): Promise<workbenchTask.ExportTaskThreadGuardrailAuditEventsResponse> =>
+  request: ExportTaskThreadGuardrailAuditEventsRequest,
+): Promise<ExportTaskThreadGuardrailAuditEventsResponse> =>
   pageResponse(
     presentTaskThreadGuardrailAuditExportResponse(
       await canonicalThreadClient.exportGuardrailAuditEvents({
@@ -428,9 +514,8 @@ export const exportTaskThreadGuardrailAuditEvents = async (
   );
 
 export const listTaskThreadMCPRuntimeAuditEvents = async (
-  request: workbenchTask.ListTaskThreadMCPRuntimeAuditEventsRequest &
-    PageScopedRequest,
-): Promise<workbenchTask.ListTaskThreadMCPRuntimeAuditEventsResponse> =>
+  request: ListTaskThreadMCPRuntimeAuditEventsRequest,
+): Promise<ListTaskThreadMCPRuntimeAuditEventsResponse> =>
   pageResponse(
     presentTaskThreadMCPRuntimeAuditListResponse(
       await canonicalThreadClient.listMCPRuntimeAuditEvents({
@@ -439,27 +524,3 @@ export const listTaskThreadMCPRuntimeAuditEvents = async (
       }),
     ),
   );
-
-export const getTaskThreadRunEventsStreamURL = ({
-  afterEventId,
-  runId,
-  threadId,
-}: {
-  threadId: string;
-  runId?: string;
-  afterEventId?: string;
-}) => {
-  const params = new URLSearchParams();
-  if (runId) {
-    params.set('run_id', runId);
-  }
-  if (afterEventId) {
-    params.set('after_event_id', afterEventId);
-  }
-
-  const query = params.toString();
-
-  return `/api/workbench/task_threads/${encodeURIComponent(
-    threadId,
-  )}/run_events/stream${query ? `?${query}` : ''}`;
-};

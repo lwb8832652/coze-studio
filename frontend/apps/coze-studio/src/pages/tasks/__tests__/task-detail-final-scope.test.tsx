@@ -155,6 +155,18 @@ import { fetchTaskDetail, type TaskDetail } from '../task-detail-loader';
 import { useTaskDetailData } from '../task-detail-hooks';
 import { listTaskThreadArtifacts } from '../service';
 import { DEFAULT_WORKBENCH_MODE } from '../../workbench/components/types';
+import type { WorkbenchRunEvent } from '../../workbench/thread-client';
+
+const mockSubscribeRunEvents = vi.hoisted(() => vi.fn());
+
+vi.mock(
+  '../../workbench/thread-client/canonical-thread-client-singleton',
+  () => ({
+    canonicalThreadClient: {
+      subscribeRunEvents: mockSubscribeRunEvents,
+    },
+  }),
+);
 
 vi.mock('../task-detail-loader', async importOriginal => {
   const actual = await importOriginal<typeof import('../task-detail-loader')>();
@@ -198,32 +210,28 @@ vi.mock('../service', async importOriginal => {
   };
 });
 
-class ScopedEventSource {
-  static instances: ScopedEventSource[] = [];
+interface ScopedRunEventStreamRequest {
+  space_id: string;
+  thread_id: string;
+  run_id: string;
+  signal: AbortSignal;
+  onEvent: (event: WorkbenchRunEvent) => void;
+  onEnd: () => void;
+  onError: (error: Error) => void;
+}
+
+class ScopedRunEventSubscription {
+  static instances: ScopedRunEventSubscription[] = [];
 
   readonly close = vi.fn();
-  private readonly listeners = new Map<
-    string,
-    Set<(event: MessageEvent) => void>
-  >();
+  readonly closed = Promise.resolve();
 
-  constructor(readonly url: string) {
-    ScopedEventSource.instances.push(this);
+  constructor(readonly request: ScopedRunEventStreamRequest) {
+    ScopedRunEventSubscription.instances.push(this);
   }
 
-  addEventListener(type: string, listener: (event: MessageEvent) => void) {
-    const listeners = this.listeners.get(type) ?? new Set();
-    listeners.add(listener);
-    this.listeners.set(type, listeners);
-  }
-
-  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
-    this.listeners.get(type)?.delete(listener);
-  }
-
-  emit(type: string, data: unknown) {
-    const event = new MessageEvent(type, { data: JSON.stringify(data) });
-    this.listeners.get(type)?.forEach(listener => listener(event));
+  emit(event: WorkbenchRunEvent) {
+    this.request.onEvent(event);
   }
 }
 
@@ -264,6 +272,7 @@ const detail = (
     threadId,
     task: {
       id: threadId,
+      space_id: 'space-1',
       status: TaskThreadDetailStatus.Succeeded,
       progress: 100,
     },
@@ -279,6 +288,7 @@ const detail = (
     artifacts: options?.artifacts ?? [artifact(`${threadId}-artifact-1`)],
     subagentRuns: [],
     latestTaskRunID: 'run-1',
+    latestTaskRunCreatedAt: 1,
     latestTaskRunStatus: options?.latestTaskRunStatus ?? 'succeeded',
     tokenUsageByRunID: {},
   }) as unknown as TaskDetail;
@@ -291,6 +301,7 @@ const RouteComposerHarness = ({
   taskDetailId: string;
 }) => {
   const data = useTaskDetailData({
+    spaceID: 'space-1',
     taskDetailId,
   });
   const [value, setValue] = useState('不得提交到旧任务');
@@ -315,6 +326,7 @@ let currentData: ReturnType<typeof useTaskDetailData>;
 
 const TaskDetailDataHarness = ({ taskDetailId }: { taskDetailId: string }) => {
   currentData = useTaskDetailData({
+    spaceID: 'space-1',
     taskDetailId,
   });
 
@@ -329,8 +341,11 @@ describe('task detail final route and revision scope', () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     vi.useRealTimers();
-    ScopedEventSource.instances = [];
-    vi.stubGlobal('EventSource', ScopedEventSource);
+    ScopedRunEventSubscription.instances = [];
+    mockSubscribeRunEvents.mockReset();
+    mockSubscribeRunEvents.mockImplementation(
+      request => new ScopedRunEventSubscription(request),
+    );
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -339,11 +354,10 @@ describe('task detail final route and revision scope', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it('closes the old EventSource and blocks click and Enter during a route load window', async () => {
+  it('closes the old run subscription and blocks click and Enter during a route load window', async () => {
     const taskA = deferred<TaskDetail>();
     const taskB = deferred<TaskDetail>();
     vi.mocked(fetchTaskDetail).mockImplementation(({ id }) =>
@@ -363,7 +377,7 @@ describe('task detail final route and revision scope', () => {
     expect(
       container.querySelector('[data-testid="loaded-task"]')?.textContent,
     ).toBe('thread-a');
-    expect(ScopedEventSource.instances).toHaveLength(1);
+    expect(ScopedRunEventSubscription.instances).toHaveLength(1);
 
     act(() =>
       root.render(
@@ -373,7 +387,7 @@ describe('task detail final route and revision scope', () => {
     expect(
       container.querySelector('[data-testid="loaded-task"]')?.textContent,
     ).toBe('none');
-    expect(ScopedEventSource.instances[0].close).toHaveBeenCalled();
+    expect(ScopedRunEventSubscription.instances[0].close).toHaveBeenCalled();
 
     const sendButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="发送任务"]',
@@ -424,17 +438,23 @@ describe('task detail final route and revision scope', () => {
     expect(vi.mocked(fetchTaskDetail)).toHaveBeenCalledTimes(2);
 
     act(() => {
-      ScopedEventSource.instances[0].emit('run.event', {
+      ScopedRunEventSubscription.instances[0].emit({
         event_id: 'event-new',
         thread_id: 'thread-a',
-        run_id: 'run-new',
+        run_id: 'run-1',
         event_type: 'run.message',
         payload: '{}',
         created_at: 2,
       });
       currentData.applyOptimisticFollowUp({
         followUpResult: {
-          run: { run_id: 'run-new', status: 'running' },
+          run: {
+            run_id: 'run-new',
+            thread_id: 'thread-a',
+            space_id: 'space-1',
+            status: 'running',
+            created_at: 2,
+          },
           message: message('message-new', 'thread-a'),
         } as never,
         payload: {
@@ -544,6 +564,7 @@ describe('task detail final route and revision scope', () => {
 
         return fetchTaskDetail({
           id: 'thread-a',
+          spaceId: 'space-1',
         }).then(nextDetail =>
           revisionData.applyTaskDetail(nextDetail, 'thread-a', requestToken),
         );
@@ -552,17 +573,23 @@ describe('task detail final route and revision scope', () => {
       const secondPending = startRefresh();
 
       act(() => {
-        ScopedEventSource.instances[0].emit('run.event', {
+        ScopedRunEventSubscription.instances[0].emit({
           event_id: 'event-concurrent',
           thread_id: 'thread-a',
-          run_id: 'run-concurrent',
+          run_id: 'run-1',
           event_type: 'run.message',
           payload: '{}',
           created_at: 2,
         });
         currentData.applyOptimisticFollowUp({
           followUpResult: {
-            run: { run_id: 'run-concurrent', status: 'running' },
+            run: {
+              run_id: 'run-concurrent',
+              thread_id: 'thread-a',
+              space_id: 'space-1',
+              status: 'running',
+              created_at: 2,
+            },
             message: message('message-concurrent', 'thread-a'),
           } as never,
           payload: {

@@ -20,12 +20,20 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type SetStateAction,
 } from 'react';
 
-import { type workbenchTask } from '@coze-studio/api-schema';
+import type {
+  HumanInteractionResponse,
+  WorkbenchArtifact,
+  WorkbenchMessage,
+  WorkbenchRun,
+  WorkbenchRunEvent,
+  WorkbenchTodo,
+} from '../workbench/thread-client';
 
 import {
   DEFAULT_WORKBENCH_MODE,
@@ -57,9 +65,9 @@ import {
 import { listTaskThreadArtifacts, resumeTaskThreadRun } from './service';
 import { isTaskTerminalStatus } from './helpers';
 
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
-type TaskThreadTodo = workbenchTask.TaskThreadTodo;
+type TaskThreadMessage = WorkbenchMessage;
+type TaskThreadArtifact = WorkbenchArtifact;
+type TaskThreadTodo = WorkbenchTodo;
 
 const EMPTY_TASK_ARTIFACTS: TaskThreadArtifact[] = [];
 const EMPTY_TASK_EVENTS: TaskThreadDetailEvent[] = [];
@@ -67,8 +75,12 @@ const EMPTY_TASK_MESSAGES: TaskThreadMessage[] = [];
 const EMPTY_TASK_SUBAGENT_RUNS: TaskDetailSubagentRun[] = [];
 const EMPTY_TASK_TODOS: TaskThreadTodo[] = [];
 const TASK_DETAIL_POLLING_DELAY_MS = 2000;
+const createTaskScopeKey = (spaceID?: string, taskDetailId?: string) =>
+  JSON.stringify([spaceID ?? '', taskDetailId ?? '']);
 const RUN_TERMINAL_STATUSES = new Set([
+  'success',
   'succeeded',
+  'error',
   'failed',
   'canceled',
   'interrupted',
@@ -119,13 +131,105 @@ const mapRunStatusToOptimisticTaskStatus = (status?: string) => {
       .trim()
       .toLowerCase()
   ) {
+    case 'created':
+      return TaskThreadDetailStatus.Created;
     case 'pending':
     case 'queued':
       return TaskThreadDetailStatus.Queued;
+    case 'completed':
+    case 'success':
+    case 'succeeded':
+      return TaskThreadDetailStatus.Succeeded;
+    case 'error':
+    case 'failed':
+      return TaskThreadDetailStatus.Failed;
+    case 'canceling':
+      return TaskThreadDetailStatus.Canceling;
+    case 'canceled':
+    case 'cancelled':
+      return TaskThreadDetailStatus.Canceled;
     case 'running':
     default:
       return TaskThreadDetailStatus.Running;
   }
+};
+
+const compareNumericRunIDs = (left: string, right: string) => {
+  const normalize = (value: string) => {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      return undefined;
+    }
+
+    return trimmed.replace(/^0+(?=\d)/, '');
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return undefined;
+  }
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return normalizedLeft.length - normalizedRight.length;
+  }
+
+  return normalizedLeft.localeCompare(normalizedRight);
+};
+
+const isRunCurrentOrNewer = ({
+  currentCreatedAt,
+  currentRunID,
+  incomingCreatedAt,
+  incomingRunID,
+}: {
+  currentCreatedAt: number;
+  currentRunID: string;
+  incomingCreatedAt: number;
+  incomingRunID: string;
+}) => {
+  if (!currentRunID) {
+    return true;
+  }
+  if (incomingRunID === currentRunID) {
+    return true;
+  }
+  if (!incomingRunID || incomingCreatedAt !== currentCreatedAt) {
+    return incomingCreatedAt > currentCreatedAt;
+  }
+
+  const idComparison = compareNumericRunIDs(incomingRunID, currentRunID);
+  return idComparison !== undefined && idComparison > 0;
+};
+
+const applyRunStateToTask = (
+  task: TaskThreadDetailModel | undefined,
+  run: WorkbenchRun,
+) => {
+  if (!task) {
+    return task;
+  }
+
+  const status = mapRunStatusToOptimisticTaskStatus(run.status);
+  const active = !isTaskTerminalStatus(status);
+
+  return {
+    ...task,
+    status,
+    progress:
+      status === TaskThreadDetailStatus.Succeeded
+        ? 100
+        : active
+          ? Math.max(task.progress || 0, 1)
+          : task.progress,
+    error:
+      status === TaskThreadDetailStatus.Failed
+        ? run.terminal_reason || task.error || ''
+        : '',
+    updated_at: Math.max(
+      task.updated_at || 0,
+      run.updated_at || 0,
+      run.created_at || 0,
+    ),
+  };
 };
 
 const appendOptimisticMessage = (
@@ -148,11 +252,15 @@ interface TaskDetailCollectionSnapshot {
   messages: TaskThreadMessage[];
 }
 
-export type TaskDetailRequestToken = object;
+export interface TaskDetailRequestToken {
+  generation: number;
+  taskScopeKey: string;
+}
 
 interface TaskDetailRequestSnapshot {
   baseRevision: number;
   collections: TaskDetailCollectionSnapshot;
+  runRevision: number;
 }
 
 const mergeCollectionWithLocalDelta = <T>(
@@ -201,9 +309,10 @@ const useLoadTaskDetailEffect = ({
   taskDetailId?: string;
 }) => {
   useEffect(() => {
-    if (!taskDetailId) {
+    if (!spaceID || !taskDetailId) {
       return;
     }
+    const submittedSpaceID = spaceID;
     let canceled = false;
     const loadTaskDetail = async () => {
       setLoading(true);
@@ -213,7 +322,7 @@ const useLoadTaskDetailEffect = ({
       try {
         const detail = await fetchTaskDetail({
           id: taskDetailId,
-          spaceId: spaceID,
+          spaceId: submittedSpaceID,
         });
         if (!canceled) {
           applyTaskDetail(detail, taskDetailId, requestToken);
@@ -263,9 +372,10 @@ const usePollTaskDetailEffect = ({
   taskDetailId?: string;
 }) => {
   useEffect(() => {
-    if (!taskDetailId || pollingVersion <= 0) {
+    if (!spaceID || !taskDetailId || pollingVersion <= 0) {
       return;
     }
+    const submittedSpaceID = spaceID;
 
     let canceled = false;
     const timer = setTimeout(() => {
@@ -275,7 +385,7 @@ const usePollTaskDetailEffect = ({
         try {
           const detail = await fetchTaskDetail({
             id: taskDetailId,
-            spaceId: spaceID,
+            spaceId: submittedSpaceID,
           });
           if (!canceled) {
             applyTaskDetail(detail, taskDetailId, requestToken);
@@ -314,27 +424,41 @@ export const useTaskDetailData = ({
   const [events, setEvents] = useState<TaskThreadDetailEvent[]>([]);
   const [messages, setMessages] = useState<TaskThreadMessage[]>([]);
   const [todos, setTodos] = useState<TaskThreadTodo[]>([]);
-  const [artifacts, setArtifacts] = useState<
-    workbenchTask.TaskThreadArtifact[]
-  >([]);
+  const [artifacts, setArtifacts] = useState<WorkbenchArtifact[]>([]);
   const [latestTaskRunID, setLatestTaskRunID] = useState('');
+  const latestTaskRunIDRef = useRef('');
+  const latestTaskRunCreatedAtRef = useRef(0);
+  const runRevisionRef = useRef(0);
   const [suggestionModelName, setSuggestionModelName] = useState('');
   const [suggestionModelType, setSuggestionModelType] = useState('');
   const [subagentRuns, setSubagentRuns] = useState<TaskDetailSubagentRun[]>([]);
   const [loadedTaskDetailId, setLoadedTaskDetailId] = useState('');
+  const [loadedSpaceID, setLoadedSpaceID] = useState('');
   const [loadedThreadId, setLoadedThreadId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [errorTaskDetailId, setErrorTaskDetailId] = useState('');
+  const [errorTaskScopeKey, setErrorTaskScopeKey] = useState('');
   const [pollingVersion, setPollingVersion] = useState(0);
+  const taskScopeKey = createTaskScopeKey(spaceID, taskDetailId);
   const mountedRef = useRef(true);
+  const scopedTaskScopeKeyRef = useRef(taskScopeKey);
   const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const scopedSpaceIDRef = useRef(spaceID);
   const taskDetailGenerationRef = useRef(0);
-  if (scopedTaskDetailIdRef.current !== taskDetailId) {
+  const taskDetailGeneration =
+    scopedTaskScopeKeyRef.current === taskScopeKey
+      ? taskDetailGenerationRef.current
+      : taskDetailGenerationRef.current + 1;
+  useLayoutEffect(() => {
+    if (scopedTaskScopeKeyRef.current === taskScopeKey) {
+      return;
+    }
+
+    scopedTaskScopeKeyRef.current = taskScopeKey;
     scopedTaskDetailIdRef.current = taskDetailId;
-    taskDetailGenerationRef.current += 1;
-  }
-  const taskDetailGeneration = taskDetailGenerationRef.current;
+    scopedSpaceIDRef.current = spaceID;
+    taskDetailGenerationRef.current = taskDetailGeneration;
+  }, [spaceID, taskDetailGeneration, taskDetailId, taskScopeKey]);
   const collectionStateRef = useRef<TaskDetailCollectionSnapshot>({
     artifacts: [],
     events: [],
@@ -350,28 +474,32 @@ export const useTaskDetailData = ({
     WeakMap<TaskDetailRequestToken, TaskDetailRequestSnapshot>
   >(new WeakMap());
   const isCurrentTaskScope = useCallback(
-    (submittedTaskDetailId: string | undefined, generation: number) =>
+    (submittedTaskScopeKey: string, generation: number) =>
       mountedRef.current &&
-      scopedTaskDetailIdRef.current === submittedTaskDetailId &&
+      scopedTaskScopeKeyRef.current === submittedTaskScopeKey &&
       taskDetailGenerationRef.current === generation,
     [],
   );
   const setCurrentScopeError = useCallback(
     (value: string) => {
-      setErrorTaskDetailId(taskDetailId ?? '');
+      setErrorTaskScopeKey(taskScopeKey);
       setError(value);
     },
-    [taskDetailId],
+    [taskScopeKey],
   );
   const { handleThreadTitleUpdated, setCurrentTask } = useTaskThreadTitleSync({
     setTask,
     spaceID,
   });
   const captureTaskDetailRequestToken = useCallback(() => {
-    const requestToken: TaskDetailRequestToken = {};
+    const requestToken: TaskDetailRequestToken = {
+      generation: taskDetailGenerationRef.current,
+      taskScopeKey: scopedTaskScopeKeyRef.current,
+    };
     requestSnapshotsRef.current.set(requestToken, {
       baseRevision: collectionRevisionRef.current,
       collections: collectionStateRef.current,
+      runRevision: runRevisionRef.current,
     });
 
     return requestToken;
@@ -382,12 +510,28 @@ export const useTaskDetailData = ({
       appliedTaskDetailId?: string,
       requestToken?: TaskDetailRequestToken,
     ) => {
+      if (
+        requestToken &&
+        !isCurrentTaskScope(
+          requestToken.taskScopeKey,
+          requestToken.generation,
+        )
+      ) {
+        requestSnapshotsRef.current.delete(requestToken);
+        return;
+      }
       const detailIdentity =
         appliedTaskDetailId ??
         detail.threadId ??
         detail.task?.id ??
         scopedTaskDetailIdRef.current;
-      if (detailIdentity && scopedTaskDetailIdRef.current !== detailIdentity) {
+      const detailSpaceID = detail.task?.space_id;
+      if (
+        (detailIdentity && scopedTaskDetailIdRef.current !== detailIdentity) ||
+        (detailSpaceID &&
+          scopedSpaceIDRef.current &&
+          detailSpaceID !== scopedSpaceIDRef.current)
+      ) {
         return;
       }
       const incomingCollections: TaskDetailCollectionSnapshot = {
@@ -400,6 +544,20 @@ export const useTaskDetailData = ({
         : undefined;
       if (requestToken) {
         requestSnapshotsRef.current.delete(requestToken);
+      }
+      const incomingRunID = detail.latestTaskRunID ?? '';
+      const incomingRunCreatedAt = detail.latestTaskRunCreatedAt ?? 0;
+      const runRevisionUnchanged =
+        !requestSnapshot ||
+        requestSnapshot.runRevision === runRevisionRef.current;
+      const incomingRunIsCurrentOrNewer = isRunCurrentOrNewer({
+        currentCreatedAt: latestTaskRunCreatedAtRef.current,
+        currentRunID: latestTaskRunIDRef.current,
+        incomingCreatedAt: incomingRunCreatedAt,
+        incomingRunID,
+      });
+      if (!runRevisionUnchanged || !incomingRunIsCurrentOrNewer) {
+        return;
       }
       const baselineCollections =
         requestSnapshot?.collections ?? authoritativeCollectionRef.current;
@@ -432,13 +590,26 @@ export const useTaskDetailData = ({
       authoritativeCollectionRef.current = nextCollections;
       collectionRevisionRef.current += 1;
       setLoadedTaskDetailId(detailIdentity ?? '');
+      setLoadedSpaceID(scopedSpaceIDRef.current ?? '');
       setLoadedThreadId(detail.threadId ?? '');
       setCurrentTask(detail.task);
       setEvents(nextCollections.events);
       setMessages(nextCollections.messages);
       setTodos(detail.todos ?? []);
       setArtifacts(nextCollections.artifacts);
-      setLatestTaskRunID(detail.latestTaskRunID ?? '');
+      const currentRunID = latestTaskRunIDRef.current;
+      if (incomingRunID !== currentRunID) {
+        runRevisionRef.current += 1;
+      }
+      latestTaskRunIDRef.current = incomingRunID;
+      latestTaskRunCreatedAtRef.current =
+        incomingRunID === currentRunID
+          ? Math.max(
+              latestTaskRunCreatedAtRef.current,
+              incomingRunCreatedAt,
+            )
+          : incomingRunCreatedAt;
+      setLatestTaskRunID(incomingRunID);
       setSuggestionModelName(detail.suggestionModelName ?? '');
       setSuggestionModelType(detail.suggestionModelType ?? '');
       setSubagentRuns(detail.subagentRuns ?? []);
@@ -446,11 +617,11 @@ export const useTaskDetailData = ({
         setPollingVersion(version => version + 1);
       }
     },
-    [setCurrentTask],
+    [isCurrentTaskScope, setCurrentTask],
   );
   const setScopedEvents = useCallback(
     (nextEvents: SetStateAction<TaskThreadDetailEvent[]>) => {
-      if (isCurrentTaskScope(taskDetailId, taskDetailGeneration)) {
+      if (isCurrentTaskScope(taskScopeKey, taskDetailGeneration)) {
         setEvents(currentEvents => {
           const resolvedEvents =
             typeof nextEvents === 'function'
@@ -465,11 +636,11 @@ export const useTaskDetailData = ({
         });
       }
     },
-    [isCurrentTaskScope, taskDetailGeneration, taskDetailId],
+    [isCurrentTaskScope, taskDetailGeneration, taskScopeKey],
   );
   const handleScopedThreadTitleUpdated = useCallback(
     (...args: Parameters<typeof handleThreadTitleUpdated>) => {
-      if (isCurrentTaskScope(taskDetailId, taskDetailGeneration)) {
+      if (isCurrentTaskScope(taskScopeKey, taskDetailGeneration)) {
         handleThreadTitleUpdated(...args);
       }
     },
@@ -477,11 +648,13 @@ export const useTaskDetailData = ({
       handleThreadTitleUpdated,
       isCurrentTaskScope,
       taskDetailGeneration,
-      taskDetailId,
+      taskScopeKey,
     ],
   );
   const scopedThreadTitleUpdatedRef = useRef(handleScopedThreadTitleUpdated);
-  scopedThreadTitleUpdatedRef.current = handleScopedThreadTitleUpdated;
+  useLayoutEffect(() => {
+    scopedThreadTitleUpdatedRef.current = handleScopedThreadTitleUpdated;
+  }, [handleScopedThreadTitleUpdated]);
   const handleStableScopedThreadTitleUpdated = useCallback(
     (...args: Parameters<typeof handleScopedThreadTitleUpdated>) => {
       const [update] = args;
@@ -506,6 +679,7 @@ export const useTaskDetailData = ({
       if (
         !runID ||
         threadId !== scopedTaskDetailIdRef.current ||
+        followUpResult.run?.space_id !== scopedSpaceIDRef.current ||
         !mountedRef.current
       ) {
         return;
@@ -549,29 +723,83 @@ export const useTaskDetailData = ({
         collectionRevisionRef.current += 1;
         return nextMessages;
       });
-      setLatestTaskRunID(runID);
+      const run = followUpResult?.run;
+      if (
+        run &&
+        (!latestTaskRunIDRef.current ||
+          run.run_id === latestTaskRunIDRef.current ||
+          run.created_at >= latestTaskRunCreatedAtRef.current)
+      ) {
+        if (run.run_id !== latestTaskRunIDRef.current) {
+          runRevisionRef.current += 1;
+        }
+        latestTaskRunIDRef.current = run.run_id;
+        latestTaskRunCreatedAtRef.current = run.created_at;
+        setLatestTaskRunID(run.run_id);
+      }
     },
     [],
   );
+  const commitTopLevelRun = useCallback(
+    (run: WorkbenchRun) => {
+      if (
+        !mountedRef.current ||
+        run.thread_id !== scopedTaskDetailIdRef.current ||
+        run.space_id !== scopedSpaceIDRef.current ||
+        (run.parent_run_id && run.parent_run_id !== '0')
+      ) {
+        return;
+      }
+
+      const currentRunID = latestTaskRunIDRef.current;
+      if (
+        currentRunID &&
+        !isRunCurrentOrNewer({
+          currentCreatedAt: latestTaskRunCreatedAtRef.current,
+          currentRunID,
+          incomingCreatedAt: run.created_at,
+          incomingRunID: run.run_id,
+        })
+      ) {
+        return;
+      }
+      if (run.run_id !== currentRunID) {
+        runRevisionRef.current += 1;
+      }
+      latestTaskRunIDRef.current = run.run_id;
+      latestTaskRunCreatedAtRef.current =
+        run.run_id === currentRunID
+          ? Math.max(latestTaskRunCreatedAtRef.current, run.created_at)
+          : run.created_at;
+      setLatestTaskRunID(run.run_id);
+      setCurrentTask(currentTask => applyRunStateToTask(currentTask, run));
+    },
+    [setCurrentTask],
+  );
   const loadedTaskDetailCurrent =
-    Boolean(taskDetailId) && loadedTaskDetailId === taskDetailId;
+    Boolean(taskDetailId) &&
+    loadedTaskDetailId === taskDetailId &&
+    loadedSpaceID === (spaceID ?? '');
   const taskUsage = useTaskUsageData({
     enabled: loadedTaskDetailCurrent && Boolean(task && loadedThreadId),
     refreshKey:
       task && isTaskTerminalStatus(task.status) ? 'terminal' : 'active',
+    spaceID,
     threadID: loadedThreadId,
   });
   const tokenUsageSnapshotHandlerRef = useRef(
     taskUsage.handleTokenUsageSnapshot,
   );
   const tokenUsageStreamThreadIDRef = useRef('');
-  tokenUsageSnapshotHandlerRef.current = taskUsage.handleTokenUsageSnapshot;
-  tokenUsageStreamThreadIDRef.current =
-    loadedTaskDetailCurrent && task ? loadedThreadId : '';
+  useLayoutEffect(() => {
+    tokenUsageSnapshotHandlerRef.current = taskUsage.handleTokenUsageSnapshot;
+    tokenUsageStreamThreadIDRef.current =
+      loadedTaskDetailCurrent && task ? loadedThreadId : '';
+  }, [loadedTaskDetailCurrent, loadedThreadId, task, taskUsage]);
   const handleScopedTokenUsageSnapshot = useCallback(
     (
       snapshot: TaskTokenUsageSnapshot,
-      event: workbenchTask.TaskThreadRunEvent,
+      event: WorkbenchRunEvent,
     ) => {
       const currentThreadID = tokenUsageStreamThreadIDRef.current;
       if (
@@ -588,7 +816,7 @@ export const useTaskDetailData = ({
     if (!loadedTaskDetailCurrent || !loadedThreadId || !task) {
       return;
     }
-    const submittedTaskDetailId = taskDetailId;
+    const submittedTaskScopeKey = taskScopeKey;
     const requestGeneration = taskDetailGenerationRef.current;
 
     const response = await listTaskThreadArtifacts({
@@ -597,7 +825,7 @@ export const useTaskDetailData = ({
       page: 1,
       page_size: 50,
     });
-    if (isCurrentTaskScope(submittedTaskDetailId, requestGeneration)) {
+    if (isCurrentTaskScope(submittedTaskScopeKey, requestGeneration)) {
       const nextArtifacts = response.data?.artifacts ?? [];
       collectionStateRef.current = {
         ...collectionStateRef.current,
@@ -613,6 +841,7 @@ export const useTaskDetailData = ({
     spaceID,
     task,
     taskDetailId,
+    taskScopeKey,
   ]);
 
   useEffect(() => {
@@ -639,15 +868,19 @@ export const useTaskDetailData = ({
     setMessages([]);
     setTodos([]);
     setArtifacts([]);
+    latestTaskRunIDRef.current = '';
+    latestTaskRunCreatedAtRef.current = 0;
+    runRevisionRef.current += 1;
     setLatestTaskRunID('');
     setSuggestionModelName('');
     setSuggestionModelType('');
     setSubagentRuns([]);
     setLoadedTaskDetailId('');
+    setLoadedSpaceID('');
     setLoadedThreadId('');
-    setErrorTaskDetailId(taskDetailId ?? '');
+    setErrorTaskScopeKey(taskScopeKey);
     setError('');
-  }, [taskDetailId]);
+  }, [taskScopeKey]);
 
   useLoadTaskDetailEffect({
     applyTaskDetail,
@@ -668,10 +901,14 @@ export const useTaskDetailData = ({
   });
 
   useTaskThreadRunEventStream({
-    enabled: loadedTaskDetailCurrent && Boolean(task && loadedThreadId),
+    enabled:
+      loadedTaskDetailCurrent &&
+      Boolean(task && loadedThreadId && latestTaskRunID && spaceID),
     onTokenUsageSnapshot: handleScopedTokenUsageSnapshot,
     onThreadTitleUpdated: handleStableScopedThreadTitleUpdated,
+    runId: latestTaskRunID,
     setEvents: setScopedEvents,
+    spaceId: spaceID,
     threadId: loadedThreadId,
   });
 
@@ -680,7 +917,8 @@ export const useTaskDetailData = ({
     applyOptimisticFollowUp,
     artifacts: loadedTaskDetailCurrent ? artifacts : EMPTY_TASK_ARTIFACTS,
     captureTaskDetailRequestToken,
-    error: errorTaskDetailId === taskDetailId ? error : '',
+    commitTopLevelRun,
+    error: errorTaskScopeKey === taskScopeKey ? error : '',
     events: loadedTaskDetailCurrent ? events : EMPTY_TASK_EVENTS,
     messages: loadedTaskDetailCurrent ? messages : EMPTY_TASK_MESSAGES,
     latestTaskRunID: loadedTaskDetailCurrent ? latestTaskRunID : '',
@@ -692,7 +930,7 @@ export const useTaskDetailData = ({
       Boolean(taskDetailId) &&
       (loading ||
         (!loadedTaskDetailCurrent &&
-          !(errorTaskDetailId === taskDetailId && error))),
+          !(errorTaskScopeKey === taskScopeKey && error))),
     refreshArtifacts,
     subagentRuns: loadedTaskDetailCurrent
       ? subagentRuns
@@ -724,6 +962,7 @@ interface TaskDetailActionsOptions {
     threadId: string;
   }) => void;
   captureTaskDetailRequestToken?: () => TaskDetailRequestToken;
+  commitTopLevelRun?: (run: WorkbenchRun) => void;
   artifacts: TaskThreadArtifact[];
   events: TaskThreadDetailEvent[];
   messages: TaskThreadMessage[];
@@ -741,6 +980,7 @@ export const useTaskDetailActions = ({
   applyTaskDetail,
   applyOptimisticFollowUp,
   captureTaskDetailRequestToken,
+  commitTopLevelRun,
   pendingHumanInteraction,
   spaceID,
   task,
@@ -755,9 +995,11 @@ export const useTaskDetailActions = ({
   const [followUpError, setFollowUpError] = useState('');
   const [humanInteractionLoading, setHumanInteractionLoading] = useState(false);
   const [humanInteractionError, setHumanInteractionError] = useState('');
-  const scopedTaskDetailIdRef = useRef(taskDetailId);
+  const taskScopeKey = createTaskScopeKey(spaceID, taskDetailId);
+  const scopedTaskScopeKeyRef = useRef(taskScopeKey);
   const followUpRequestGenerationRef = useRef(0);
   const humanInteractionRequestGenerationRef = useRef(0);
+  const successfulHumanInteractionKeysRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const followUpAttemptRef = useRef<{
     fingerprint: string;
@@ -765,14 +1007,20 @@ export const useTaskDetailActions = ({
   }>();
   const fileIdentityRef = useRef(new WeakMap<File, number>());
   const nextFileIdentityRef = useRef(1);
-  if (scopedTaskDetailIdRef.current !== taskDetailId) {
-    scopedTaskDetailIdRef.current = taskDetailId;
+  useLayoutEffect(() => {
+    if (scopedTaskScopeKeyRef.current === taskScopeKey) {
+      return;
+    }
+
+    scopedTaskScopeKeyRef.current = taskScopeKey;
     followUpRequestGenerationRef.current += 1;
     humanInteractionRequestGenerationRef.current += 1;
-  }
+    successfulHumanInteractionKeysRef.current.clear();
+  }, [taskScopeKey]);
   const taskRunActions = useTaskRunActions({
     applyTaskDetail,
     captureTaskDetailRequestToken,
+    commitTopLevelRun,
     spaceID,
     task,
     taskDetailId,
@@ -797,7 +1045,7 @@ export const useTaskDetailActions = ({
     setHumanInteractionLoading(false);
     setHumanInteractionError('');
     followUpAttemptRef.current = undefined;
-  }, [taskDetailId]);
+  }, [taskScopeKey]);
 
   const getFollowUpFingerprint = (payload: WorkbenchComposerSubmitPayload) =>
     JSON.stringify({
@@ -839,11 +1087,15 @@ export const useTaskDetailActions = ({
       return;
     }
     const submittedTaskDetailId = taskDetailId;
+    const submittedSpaceID = spaceID;
+    const submittedTaskScopeKey = taskScopeKey;
     const fingerprint = getFollowUpFingerprint(payload);
     if (followUpAttemptRef.current?.fingerprint !== fingerprint) {
       followUpAttemptRef.current = {
         fingerprint,
-        idempotencyKey: createFollowUpIdempotencyKey(submittedTaskDetailId),
+        idempotencyKey: createFollowUpIdempotencyKey(
+          `${submittedSpaceID}:${submittedTaskDetailId}`,
+        ),
       };
     }
     const { idempotencyKey } = followUpAttemptRef.current;
@@ -851,13 +1103,14 @@ export const useTaskDetailActions = ({
     const isCurrentRequest = () =>
       mountedRef.current &&
       followUpRequestGenerationRef.current === requestGeneration &&
-      scopedTaskDetailIdRef.current === submittedTaskDetailId;
+      scopedTaskScopeKeyRef.current === submittedTaskScopeKey;
     setFollowUpLoading(true);
     setFollowUpError('');
     let followUpResult: Awaited<ReturnType<typeof sendFollowUpMessage>>;
     try {
       followUpResult = await sendFollowUpMessage({
         payload,
+        spaceId: submittedSpaceID,
         threadId: submittedTaskDetailId,
         idempotencyKey,
       });
@@ -884,6 +1137,9 @@ export const useTaskDetailActions = ({
     }
 
     followUpAttemptRef.current = undefined;
+    if (followUpResult.run) {
+      commitTopLevelRun?.(followUpResult.run);
+    }
     applyOptimisticFollowUp?.({
       followUpResult,
       payload,
@@ -896,7 +1152,7 @@ export const useTaskDetailActions = ({
     try {
       const detail = await fetchTaskDetail({
         id: submittedTaskDetailId,
-        spaceId: spaceID,
+        spaceId: submittedSpaceID,
       });
       if (isCurrentRequest()) {
         applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);
@@ -913,38 +1169,48 @@ export const useTaskDetailActions = ({
   };
 
   const handleHumanInteractionSubmit = async (
-    response: workbenchTask.HumanInteractionResponse,
+    response: HumanInteractionResponse,
   ) => {
     if (!pendingHumanInteraction || humanInteractionLoading) {
       return;
     }
-    if (!taskDetailId || !pendingHumanInteraction.sourceRunId) {
+    if (!spaceID || !taskDetailId || !pendingHumanInteraction.sourceRunId) {
       setHumanInteractionError('缺少任务恢复上下文，请刷新后重试');
       return;
     }
 
     const submittedTaskDetailId = taskDetailId;
+    const submittedSpaceID = spaceID;
+    const submittedTaskScopeKey = taskScopeKey;
+    const mutationKey = `${submittedTaskScopeKey}:${pendingHumanInteraction.sourceRunId}:${pendingHumanInteraction.interruptId}`;
     const requestGeneration = ++humanInteractionRequestGenerationRef.current;
     const isCurrentRequest = () =>
       mountedRef.current &&
       humanInteractionRequestGenerationRef.current === requestGeneration &&
-      scopedTaskDetailIdRef.current === submittedTaskDetailId;
+      scopedTaskScopeKeyRef.current === submittedTaskScopeKey;
     setHumanInteractionLoading(true);
     setHumanInteractionError('');
     try {
-      await resumeTaskThreadRun({
-        thread_id: taskDetailId,
-        run_id: pendingHumanInteraction.sourceRunId,
-        interrupt_id: pendingHumanInteraction.interruptId,
-        response,
-      });
-      if (!isCurrentRequest()) {
-        return;
+      if (!successfulHumanInteractionKeysRef.current.has(mutationKey)) {
+        const resumeResult = await resumeTaskThreadRun({
+          thread_id: submittedTaskDetailId,
+          run_id: pendingHumanInteraction.sourceRunId,
+          interrupt_id: pendingHumanInteraction.interruptId,
+          response,
+          space_id: submittedSpaceID,
+        });
+        if (!isCurrentRequest()) {
+          return;
+        }
+        successfulHumanInteractionKeysRef.current.add(mutationKey);
+        if (resumeResult.data) {
+          commitTopLevelRun?.(resumeResult.data);
+        }
       }
       const refreshRequestToken = captureTaskDetailRequestToken?.();
       const detail = await fetchTaskDetail({
         id: submittedTaskDetailId,
-        spaceId: spaceID,
+        spaceId: submittedSpaceID,
       });
       if (isCurrentRequest()) {
         applyTaskDetail(detail, submittedTaskDetailId, refreshRequestToken);

@@ -113,12 +113,15 @@ describe('loadTaskThreadUsage', () => {
         Promise.resolve(createUsageResponse({ page })),
     );
 
-    const result = await loadTaskThreadUsage('thread-1');
+    const result = await loadTaskThreadUsage('thread-1', {
+      spaceID: 'space-1',
+    });
 
     expect(mockGetTaskThreadTokenUsage).toHaveBeenNthCalledWith(
       1,
       {
         thread_id: 'thread-1',
+        space_id: 'space-1',
         page: 1,
         page_size: 50,
       },
@@ -128,6 +131,7 @@ describe('loadTaskThreadUsage', () => {
       2,
       {
         thread_id: 'thread-1',
+        space_id: 'space-1',
         page: 2,
         page_size: 50,
       },
@@ -137,6 +141,7 @@ describe('loadTaskThreadUsage', () => {
       3,
       {
         thread_id: 'thread-1',
+        space_id: 'space-1',
         page: 1,
         page_size: 50,
       },
@@ -157,7 +162,9 @@ describe('loadTaskThreadUsage', () => {
           : Promise.reject(new Error('raw provider response must stay hidden')),
     );
 
-    const result = await loadTaskThreadUsage('thread-1');
+    const result = await loadTaskThreadUsage('thread-1', {
+      spaceID: 'space-1',
+    });
 
     expect(result.tokenUsage?.totalTokens).toBe(7500);
     expect(result.loadedCount).toBe(50);
@@ -168,31 +175,68 @@ describe('loadTaskThreadUsage', () => {
     expect(result.tokenUsageByRunID['run-thread-1-49']?.totalTokens).toBe(100);
     expect(result.tokenUsageByRunID['run-thread-1-74']).toBeUndefined();
   });
+
+  it('passes the workspace scope to every canonical usage request', async () => {
+    mockGetTaskThreadTokenUsage.mockImplementation(
+      ({ page }: { page: number }) =>
+        Promise.resolve(createUsageResponse({ page, total: 1 })),
+    );
+
+    await loadTaskThreadUsage('thread-1', { spaceID: 'space-2' });
+
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        space_id: 'space-2',
+        thread_id: 'thread-1',
+      }),
+      { signal: undefined },
+    );
+  });
 });
 
 type UsageState = ReturnType<typeof useTaskUsageData>;
 let currentUsageState: UsageState;
 const mountedRoots: Array<{ container: HTMLDivElement; root: Root }> = [];
 
-const UsageHarness = ({ threadID }: { threadID: string }) => {
+const UsageHarness = ({
+  spaceID,
+  threadID,
+}: {
+  spaceID: string;
+  threadID: string;
+}) => {
   currentUsageState = useTaskUsageData({
     enabled: true,
+    spaceID,
     threadID,
   });
 
   return null;
 };
 
-const renderUsageHarness = (threadID: string) => {
+const renderUsageHarness = (threadID: string, spaceID = 'space-1') => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push({ container, root });
-  act(() => root.render(<UsageHarness threadID={threadID} />));
+  act(() => root.render(<UsageHarness spaceID={spaceID} threadID={threadID} />));
 
   return {
     rerender: (nextThreadID: string) =>
-      act(() => root.render(<UsageHarness threadID={nextThreadID} />)),
+      act(() =>
+        root.render(
+          <UsageHarness spaceID={spaceID} threadID={nextThreadID} />,
+        ),
+      ),
+    rerenderScope: (nextThreadID: string, nextSpaceID: string) =>
+      act(() =>
+        root.render(
+          <UsageHarness
+            spaceID={nextSpaceID}
+            threadID={nextThreadID}
+          />,
+        ),
+      ),
   };
 };
 
@@ -233,6 +277,13 @@ describe('useTaskUsageData scope', () => {
       act(() => root.unmount());
       container.remove();
     });
+  });
+
+  it('does not load usage until the route workspace is available', () => {
+    renderUsageHarness('thread-1', '');
+
+    expect(mockGetTaskThreadTokenUsage).not.toHaveBeenCalled();
+    expect(currentUsageState.loading).toBe(false);
   });
 
   it('ignores late REST data and loading/error from the previous route', async () => {
@@ -353,5 +404,47 @@ describe('useTaskUsageData scope', () => {
     expect(
       currentUsageState.tokenUsageByRunID['run-thread-new-0']?.totalTokens,
     ).toBe(100);
+  });
+
+  it('invalidates usage data when the workspace changes for the same thread', async () => {
+    const oldRequest = createDeferred<ReturnType<typeof createUsageResponse>>();
+    mockGetTaskThreadTokenUsage
+      .mockReturnValueOnce(oldRequest.promise)
+      .mockResolvedValue(
+        createUsageResponse({
+          page: 1,
+          threadID: 'thread-shared',
+          total: 1,
+        }),
+      );
+    const { rerenderScope } = renderUsageHarness(
+      'thread-shared',
+      'space-1',
+    );
+
+    rerenderScope('thread-shared', 'space-2');
+    await flushUsage();
+
+    expect(mockGetTaskThreadTokenUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        space_id: 'space-2',
+        thread_id: 'thread-shared',
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(currentUsageState.tokenUsage?.totalTokens).toBe(100);
+
+    await act(async () => {
+      oldRequest.resolve(
+        createUsageResponse({
+          page: 1,
+          threadID: 'thread-shared',
+          total: 99,
+        }),
+      );
+      await oldRequest.promise;
+    });
+
+    expect(currentUsageState.tokenUsage?.totalTokens).toBe(100);
   });
 });

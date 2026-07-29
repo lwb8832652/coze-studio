@@ -62,6 +62,7 @@ export const useTaskMemoryListActions = ({
   scope,
   setActiveAction,
   setError,
+  spaceId,
   threadId,
 }: {
   loadMemories: () => Promise<void>;
@@ -69,11 +70,12 @@ export const useTaskMemoryListActions = ({
   scope: MemoryScopeFilter;
   setActiveAction: (action: string) => void;
   setError: (message: string) => void;
+  spaceId?: string;
   threadId?: string;
 }) => {
   const handleDeleteMemory = useCallback(
     async (memory: TaskThreadMemory) => {
-      if (!threadId) {
+      if (!spaceId || !threadId) {
         return;
       }
       if (readOnly) {
@@ -87,18 +89,19 @@ export const useTaskMemoryListActions = ({
         operation: () =>
           deleteTaskThreadMemory({
             memory_id: memory.memory_id,
+            space_id: spaceId,
             thread_id: threadId,
           }),
         setActiveAction,
         setError,
       });
     },
-    [loadMemories, readOnly, setActiveAction, setError, threadId],
+    [loadMemories, readOnly, setActiveAction, setError, spaceId, threadId],
   );
 
   const handleRestoreMemory = useCallback(
     async (memory: TaskThreadMemory) => {
-      if (!threadId) {
+      if (!spaceId || !threadId) {
         return;
       }
       if (readOnly) {
@@ -112,17 +115,18 @@ export const useTaskMemoryListActions = ({
         operation: () =>
           restoreTaskThreadMemory({
             memory_id: memory.memory_id,
+            space_id: spaceId,
             thread_id: threadId,
           }),
         setActiveAction,
         setError,
       });
     },
-    [loadMemories, readOnly, setActiveAction, setError, threadId],
+    [loadMemories, readOnly, setActiveAction, setError, spaceId, threadId],
   );
 
   const handleClearMemories = useCallback(async () => {
-    if (!threadId) {
+    if (!spaceId || !threadId) {
       return;
     }
     if (readOnly) {
@@ -136,12 +140,21 @@ export const useTaskMemoryListActions = ({
       operation: () =>
         clearTaskThreadMemories({
           scopes: getClearScopes(scope),
+          space_id: spaceId,
           thread_id: threadId,
         }),
       setActiveAction,
       setError,
     });
-  }, [loadMemories, readOnly, scope, setActiveAction, setError, threadId]);
+  }, [
+    loadMemories,
+    readOnly,
+    scope,
+    setActiveAction,
+    setError,
+    spaceId,
+    threadId,
+  ]);
 
   return {
     handleClearMemories,

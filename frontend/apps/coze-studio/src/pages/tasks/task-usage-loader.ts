@@ -18,7 +18,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type {
+  WorkbenchTokenUsage,
+  WorkbenchTokenUsageAggregate,
+} from '../workbench/thread-client';
 
 import {
   mapTaskThreadTokenUsageAggregate,
@@ -29,9 +32,8 @@ import {
 } from './task-detail-token-usage';
 import { getTaskThreadTokenUsage } from './service';
 
-type TaskThreadTokenUsage = workbenchTask.TaskThreadTokenUsage;
-type TaskThreadTokenUsageAggregate =
-  workbenchTask.TaskThreadTokenUsageAggregate;
+type TaskThreadTokenUsage = WorkbenchTokenUsage;
+type TaskThreadTokenUsageAggregate = WorkbenchTokenUsageAggregate;
 
 const TASK_USAGE_PAGE_SIZE = 50;
 const TASK_USAGE_MAX_PAGES = 20;
@@ -67,6 +69,7 @@ interface TaskUsageState extends TaskUsageLoadResult {
 interface TaskUsageLoadOptions {
   isCurrentScope?: () => boolean;
   signal?: AbortSignal;
+  spaceID: string;
 }
 
 const getTrustedPositiveCount = (value: unknown, loadedCount: number) =>
@@ -164,7 +167,7 @@ const createUsageLoadResult = ({
 
 export const loadTaskThreadUsage = async (
   threadID: string,
-  options: TaskUsageLoadOptions = {},
+  options: TaskUsageLoadOptions,
 ): Promise<InternalTaskUsageLoadResult> => {
   const rowsByUsageID = new Map<string, TaskThreadTokenUsage>();
   const anonymousRows = new Map<string, TaskThreadTokenUsage>();
@@ -198,6 +201,7 @@ export const loadTaskThreadUsage = async (
     const response = await getTaskThreadTokenUsage(
       {
         thread_id: threadID,
+        space_id: options.spaceID,
         page,
         page_size: TASK_USAGE_PAGE_SIZE,
       },
@@ -395,13 +399,16 @@ const mergeTaskUsageSummaryMonotonic = (
 export const useTaskUsageData = ({
   enabled,
   refreshKey = 0,
+  spaceID,
   threadID,
 }: {
   enabled: boolean;
   refreshKey?: string | number;
+  spaceID?: string;
   threadID: string;
 }) => {
-  const scopeKey = enabled && threadID ? threadID : '';
+  const scopeKey =
+    enabled && spaceID && threadID ? JSON.stringify([spaceID, threadID]) : '';
   const abortControllerRef = useRef<AbortController>();
   const requestInFlightRef = useRef(false);
   const pendingRefreshRef = useRef(false);
@@ -470,7 +477,7 @@ export const useTaskUsageData = ({
 
   const loadUsage = useCallback(
     async (_mode: 'initial' | 'background' | 'retry' = 'retry') => {
-      if (!scopeKey) {
+      if (!scopeKey || !spaceID) {
         return;
       }
       if (requestInFlightRef.current) {
@@ -501,6 +508,7 @@ export const useTaskUsageData = ({
               requestGeneration,
             ),
           signal: controller.signal,
+          spaceID,
         });
         if (
           !isCurrentScope(
@@ -593,7 +601,14 @@ export const useTaskUsageData = ({
         }
       }
     },
-    [isCurrentScope, scheduleUsageRefresh, scopeGeneration, scopeKey, threadID],
+    [
+      isCurrentScope,
+      scheduleUsageRefresh,
+      scopeGeneration,
+      scopeKey,
+      spaceID,
+      threadID,
+    ],
   );
   loadUsageRef.current = loadUsage;
 

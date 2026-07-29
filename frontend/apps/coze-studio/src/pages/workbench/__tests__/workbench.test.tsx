@@ -1789,9 +1789,11 @@ describe('WorkbenchPage', () => {
     expect(mockUploadTaskThreadFiles).toHaveBeenCalledWith({
       thread_id: 'thread-upload-1',
       files: [file],
+      space_id: 'space-1',
     });
     expect(mockCreateTaskThreadRun).toHaveBeenCalledWith({
       thread_id: 'thread-upload-1',
+      space_id: 'space-1',
       input: expect.any(String),
       config: expect.any(String),
       metadata: expect.any(String),

@@ -16,7 +16,10 @@
 
 import { useNavigate } from 'react-router-dom';
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type {
+  WorkbenchArtifact,
+  WorkbenchMessage,
+} from '../workbench/thread-client';
 import {
   IconCozArrowDown,
   IconCozLink,
@@ -31,8 +34,8 @@ import { getTaskDisplayTitle } from './task-display-title';
 import { TaskDetailInspector } from './task-detail-inspector';
 import { TaskArtifactsPanel } from './task-artifacts-panel';
 
-type TaskThreadArtifact = workbenchTask.TaskThreadArtifact;
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadArtifact = WorkbenchArtifact;
+type TaskThreadMessage = WorkbenchMessage;
 
 const MILLISECONDS_PER_SECOND = 1000;
 const MILLISECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000;

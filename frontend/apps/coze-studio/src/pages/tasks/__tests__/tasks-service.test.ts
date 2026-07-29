@@ -72,6 +72,8 @@ const canonicalClient = vi.hoisted(() => ({
   getArtifactContent: vi.fn(),
   getArtifactSignedURL: vi.fn(),
   listArtifactScanJobs: vi.fn(),
+  listRunEvents: vi.fn(),
+  listRuns: vi.fn(),
   listMemories: vi.fn(),
   listMemoryAuditEvents: vi.fn(),
   restoreArtifact: vi.fn(),
@@ -136,6 +138,16 @@ beforeEach(() => {
   canonicalClient.listArtifactScanJobs.mockResolvedValue({
     items: [scanJob],
     total: 1,
+    has_more: false,
+  });
+  canonicalClient.listRunEvents.mockResolvedValue({
+    items: [],
+    total: 0,
+    has_more: false,
+  });
+  canonicalClient.listRuns.mockResolvedValue({
+    items: [],
+    total: 0,
     has_more: false,
   });
   canonicalClient.retryArtifactScanJob.mockResolvedValue({
@@ -221,6 +233,30 @@ describe('task thread service', () => {
     expect(installSkillFromArtifact.meta).toMatchObject({
       method: 'POST',
       url: '/api/workbench/skills/install',
+    });
+  });
+
+  it('forwards explicit Run event scope, filters, and cancellation', async () => {
+    const controller = new AbortController();
+
+    await listTaskThreadRunEvents({
+      event_types: ['run.completed'],
+      page: 1,
+      page_size: 25,
+      run_id: 'run-1',
+      signal: controller.signal,
+      space_id: 'space-1',
+      thread_id: 'thread-1',
+    });
+
+    expect(canonicalClient.listRuns).not.toHaveBeenCalled();
+    expect(canonicalClient.listRunEvents).toHaveBeenCalledWith({
+      event_types: ['run.completed'],
+      limit: 25,
+      run_id: 'run-1',
+      signal: controller.signal,
+      space_id: 'space-1',
+      thread_id: 'thread-1',
     });
   });
 

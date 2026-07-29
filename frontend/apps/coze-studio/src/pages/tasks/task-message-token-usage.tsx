@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import type { workbenchTask } from '@coze-studio/api-schema';
+import type { WorkbenchMessage } from '../workbench/thread-client';
 
 import type {
   TaskDetailTokenUsage,
   TaskTokenUsageViewMode,
 } from './task-detail-loader';
 
-type TaskThreadMessage = workbenchTask.TaskThreadMessage;
+type TaskThreadMessage = WorkbenchMessage;
 
 export interface TaskUsageDetailItem {
   canLocate: boolean;

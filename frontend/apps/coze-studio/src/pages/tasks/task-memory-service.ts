@@ -22,30 +22,16 @@ import {
   presentTaskThreadMemoryRestoreResponse,
   presentTaskThreadMemoryUpdateResponse,
 } from '../workbench/thread-client/legacy-page-response';
+import type {
+  WorkbenchMemory,
+  WorkbenchMemoryAuditEvent,
+} from '../workbench/thread-client';
 import {
   canonicalThreadClient,
   resolvePageServiceSpaceID,
 } from '../workbench/thread-client/canonical-thread-client-singleton';
 
-export interface TaskThreadMemory {
-  memory_id: string;
-  thread_id: string;
-  run_id: string;
-  space_id: string;
-  scope: string;
-  content: string;
-  metadata: string;
-  score: number;
-  confidence: number;
-  source_type: string;
-  source_id: string;
-  correction_of_memory_id: string;
-  corrected_at: number;
-  expires_at: number;
-  created_at: number;
-  updated_at: number;
-  deleted_at: number;
-}
+export type TaskThreadMemory = WorkbenchMemory;
 
 export interface ListTaskThreadMemoriesResponse {
   data?: {
@@ -56,20 +42,7 @@ export interface ListTaskThreadMemoriesResponse {
   msg: string;
 }
 
-export interface TaskThreadMemoryAuditEvent {
-  actor_id: string;
-  affected_count: number;
-  created_at: number;
-  event_id: string;
-  event_type: string;
-  memory_id: string;
-  run_id: string;
-  scope: string;
-  source_id: string;
-  source_type: string;
-  space_id: string;
-  thread_id: string;
-}
+export type TaskThreadMemoryAuditEvent = WorkbenchMemoryAuditEvent;
 
 export interface ListTaskThreadMemoryAuditEventsResponse {
   data?: {

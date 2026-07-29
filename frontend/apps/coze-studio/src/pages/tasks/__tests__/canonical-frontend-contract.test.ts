@@ -40,6 +40,27 @@ const productionFiles = [
   resolve(__dirname, '../../../routes/index.tsx'),
 ];
 
+const threadSurfaceFiles = [
+  ...getProductionSourceFiles(resolve(__dirname, '..')),
+  ...getProductionSourceFiles(resolve(__dirname, '../../workbench')),
+  resolve(
+    __dirname,
+    '../../../components/workspace-sub-menu/workspace-task-list.tsx',
+  ),
+];
+
+const canonicalTransportFiles = new Set([
+  resolve(
+    __dirname,
+    '../../workbench/thread-client/adapters/canonical-thread-adapter.ts',
+  ),
+  resolve(__dirname, '../../workbench/thread-client/canonical-fetch.ts'),
+  resolve(
+    __dirname,
+    '../../workbench/thread-client/canonical-thread-client.ts',
+  ),
+]);
+
 const forbiddenIdentifiers = [
   'WorkbenchChat',
   'GetTask',
@@ -73,19 +94,75 @@ const forbiddenPatterns = [
   /tasks\/:task_id\b/g,
 ];
 
+const forbiddenThreadGeneratedPatterns = [
+  /\bworkbenchTask\.[A-Za-z0-9_]*TaskThread[A-Za-z0-9_]*\b/g,
+  /\bworkbenchThread\b/g,
+];
+
+const forbiddenThreadTransportPatterns = [
+  /\/api\/workbench\/task_threads\b/g,
+  /\/api\/threads\b/g,
+  /\/api\/runs\b/g,
+  /\b(?:globalThis\.)?fetch\s*\(/g,
+  /\bnew\s+EventSource\b/g,
+];
+
+const sourceFinding = (file: string, symbol: string) => ({
+  file: file.replace(`${resolve(__dirname, '../../../../..')}/`, ''),
+  symbol,
+});
+
 describe('canonical Workbench task frontend contract', () => {
   it('keeps production task and workbench sources free of retired contracts', () => {
     const findings = productionFiles.flatMap(file => {
       const source = readFileSync(file, 'utf8');
 
       return forbiddenPatterns.flatMap(pattern =>
-        Array.from(source.matchAll(pattern), match => ({
-          file: file.replace(`${resolve(__dirname, '../../../../..')}/`, ''),
-          symbol: match[0],
-        })),
+        Array.from(source.matchAll(pattern), match =>
+          sourceFinding(file, match[0]),
+        ),
       );
     });
 
     expect(findings).toEqual([]);
+  });
+
+  it('keeps Thread page production files behind the canonical client boundary', () => {
+    const taskCenterService = resolve(
+      __dirname,
+      '../../task-center/service.ts',
+    );
+    const generatedTypeFindings = [
+      ...threadSurfaceFiles,
+      taskCenterService,
+    ].flatMap(file => {
+      const source = readFileSync(file, 'utf8');
+
+      return forbiddenThreadGeneratedPatterns.flatMap(pattern =>
+        Array.from(source.matchAll(pattern), match =>
+          sourceFinding(file, match[0]),
+        ),
+      );
+    });
+    const transportFindings = threadSurfaceFiles.flatMap(file => {
+      if (canonicalTransportFiles.has(file)) {
+        return [];
+      }
+      const source = readFileSync(file, 'utf8');
+
+      return forbiddenThreadTransportPatterns.flatMap(pattern =>
+        Array.from(source.matchAll(pattern), match =>
+          sourceFinding(file, match[0]),
+        ),
+      );
+    });
+
+    expect({
+      generatedTypeFindings,
+      transportFindings,
+    }).toEqual({
+      generatedTypeFindings: [],
+      transportFindings: [],
+    });
   });
 });

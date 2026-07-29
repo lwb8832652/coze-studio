@@ -87,6 +87,7 @@ describe('task usage polling and retry monotonicity', () => {
       usageState = useTaskUsageData({
         enabled: true,
         refreshKey,
+        spaceID: 'space-1',
         threadID: 'thread-polling',
       });
       return null;
@@ -145,6 +146,7 @@ describe('task usage polling and retry monotonicity', () => {
     const Harness = () => {
       usageState = useTaskUsageData({
         enabled: true,
+        spaceID: 'space-1',
         threadID: 'thread-polling',
       });
       return null;
