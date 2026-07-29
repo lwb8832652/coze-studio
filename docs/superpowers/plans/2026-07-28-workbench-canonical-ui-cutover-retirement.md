@@ -1319,7 +1319,7 @@ quality reviews both passed.
 - Delete when audit PASS and no caller remains: `backend/api/model/agent/langgraph/run.go`
 - Delete when audit PASS and no caller remains: `backend/api/model/agent/langgraph/thread.go`
 
-- [ ] **Step 1: Enforce the five-item decision**
+- [x] **Step 1: Enforce the five-item decision**
 
 Read the signed audit result. Continue only when all five items are `PASS`, including zero valid
 business traffic and no registered owner/consumer. Record reviewer and timestamp before editing
@@ -1328,6 +1328,12 @@ routes.
 If any item is `BLOCKED` or has a caller, stop this task. Keep `/api/runs/**`, retain only its
 required implementation, and add the owner/migration decision to the final residual-risk report.
 Do not label it unused.
+
+Gate evaluated at `8729cfc` on `2026-07-30T01:47:54+08:00`: items 3 and 4 remain `BLOCKED` because
+gateway/service access logs, the external consumer registry and the named-owner roster are not
+queryable. The decision is **BLOCKED / RETAIN**. All ten `/api/runs/**` routes and their required
+adapter/model/tests remain unchanged; Steps 2-5 are intentionally not executed. The evidence file
+records the retained code owner and the exact conditions required to reopen retirement.
 
 - [ ] **Step 2: Make all 10 negative route assertions fail**
 

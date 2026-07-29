@@ -52,6 +52,25 @@ Gate A 候选工作树重新执行 production string scan 后，当前状态为�
 因此 Gate A 的 UI migration 可以通过，但第 3、4 项没有被后续浏览器流量替代或补齐；
 **Task 14 继续保持 BLOCKED，十条 `/api/runs/**` route 必须保留。**
 
+## Task 14 门禁结论
+
+- 评估时间：`2026-07-30T01:47:54+08:00`。
+- 被评估代码 SHA：`8729cfc1b1152897c73aa27701a6db2181b6ee2d`。
+- 门禁读取的审计证据 revision：
+  `5ca168e81e6225f6504a85d965f970dc3ed00210`。
+- Reviewer：Codex。
+
+结论：**BLOCKED / RETAIN**。第 3、4 项仍为 `BLOCKED`，因此 Task 14 没有增加负向
+route 断言，也没有删除任何 `/api/runs/**` 注册、handler、model 或测试。新鲜的 production
+source scan 只命中 stateless handler 的 route 注释，刷新后的调用图也未发现本地 production
+调用方；但两者都不能替代 gateway/service access logs、外部消费者登记和具名 owner 名册。
+
+保留实现的代码 owner 是 `registerLangGraphStatelessRunRoutes`、`langgraph_run_service.go`、
+`langgraph_http_contract.go` 和手写 LangGraph models。这只代表代码归属；外部业务 owner
+仍未知，也是第 4 项阻塞的一部分。只有在两个缺失证据系统都完成固定窗口查询、鉴权业务
+流量与探测流量完成区分、外部消费者与具名 owner 得到确认，且五项结果均被独立复核为
+`PASS` 后，才能重新考虑退役。
+
 ## 本地调用方分类
 
 从仓库根目录运行以下完整命令。它把查询绑定到 production source baseline SHA，
