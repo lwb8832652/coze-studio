@@ -19,7 +19,6 @@ package coze
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -34,27 +33,6 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/ctxcache"
 	projectconsts "github.com/coze-dev/coze-studio/backend/types/consts"
 )
-
-func TestCanonicalGateDefaultsToNotFound(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "")
-
-	var c app.RequestContext
-	require.False(t, canonicalAPIEnabled(os.Getenv))
-	require.False(t, requireCanonicalAPI(context.Background(), &c))
-	require.Equal(t, hertzconsts.StatusNotFound, c.Response.StatusCode())
-	require.Empty(t, c.Response.Body())
-}
-
-func TestCanonicalGateAcceptsOnlyExplicitTrue(t *testing.T) {
-	for _, value := range []string{"", "1", "TRUE", " true", "true ", "yes"} {
-		value := value
-		t.Run("reject_"+strings.ReplaceAll(value, " ", "_"), func(t *testing.T) {
-			require.False(t, canonicalAPIEnabled(func(string) string { return value }))
-		})
-	}
-
-	require.True(t, canonicalAPIEnabled(func(string) string { return "true" }))
-}
 
 func TestCanonicalDecodeRejectsUnknownField(t *testing.T) {
 	type request struct {

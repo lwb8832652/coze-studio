@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +39,6 @@ import (
 )
 
 const (
-	canonicalAPIEnabledEnv   = "COZE_WORKBENCH_CANONICAL_API_ENABLED"
 	canonicalContractVersion = "canonical_v1"
 	canonicalSpaceIDHeader   = "X-Coze-Space-ID"
 )
@@ -75,18 +73,6 @@ type canonicalRequestLog struct {
 	Offset             int32
 	LifecycleStage     string
 	StartedAt          time.Time
-}
-
-func canonicalAPIEnabled(getenv func(string) string) bool {
-	return getenv != nil && getenv(canonicalAPIEnabledEnv) == "true"
-}
-
-func requireCanonicalAPI(_ context.Context, c *app.RequestContext) bool {
-	if canonicalAPIEnabled(os.Getenv) {
-		return true
-	}
-	c.Status(hertzconsts.StatusNotFound)
-	return false
 }
 
 func requireCanonicalAgentThreadService(ctx context.Context, c *app.RequestContext) bool {

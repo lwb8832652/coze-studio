@@ -44,7 +44,6 @@ const canonicalRunStreamRequestBody = `{
 }`
 
 func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	writer := &callbackCanonicalRunStreamWriter{}
@@ -98,7 +97,6 @@ func TestStreamCanonicalRunCreatesOneRunAndStreamsPersistedEvents(t *testing.T) 
 }
 
 func TestStreamCanonicalRunTopLevelRetryCreatesNoSecondMessage(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	source := createCanonicalRunFixture(t, 1, "stream retry source")
 	failCanonicalRunFixture(t, source, "runtime_failed", "failed")
@@ -141,7 +139,6 @@ func TestStreamCanonicalRunTopLevelRetryCreatesNoSecondMessage(t *testing.T) {
 }
 
 func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := canonicalRunStreamTestServer(20 * time.Millisecond)
@@ -196,7 +193,6 @@ func TestStreamCanonicalRunReplaysIdempotentRunWithoutSecondMessage(t *testing.T
 }
 
 func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	writers := installCanonicalRunStreamRecordingWriters(t)
 	h := server.Default()
@@ -216,7 +212,6 @@ func TestStreamCanonicalRunAuthorizesPathBeforeReadingSubmission(t *testing.T) {
 }
 
 func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	beforeMessages, beforeRuns := canonicalThreadMessagesAndRuns(t, 1)
@@ -261,7 +256,6 @@ func TestStreamCanonicalRunCommandResumeUsesExistingApplicationFlow(t *testing.T
 }
 
 func TestStreamCanonicalRunCommandResumeValidatesMessageProjectionBeforeSSE(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	appagentthread.SVC.ThreadSVC = invalidCanonicalResumeMessageThreadService{
@@ -322,7 +316,6 @@ func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents(t *testi
 	require.Contains(t, writer.String(), `"thread_id":"1"`)
 	require.Contains(t, writer.String(), `"run_id":"`+strconv.FormatInt(run.RunID, 10)+`"`)
 
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := canonicalRunStreamTestServer(5 * time.Millisecond)
 	response := ut.PerformRequest(
 		h.Engine,
@@ -335,7 +328,6 @@ func TestReconnectCanonicalRunStreamReplaysAfterEventIDBeforeLiveEvents(t *testi
 }
 
 func TestReconnectCanonicalRunStreamUsesLastEventIDHeader(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	run := createCanonicalRunStreamFixture(t, 1, "header cursor", "continue")
 	first := appendCanonicalRunStreamEvent(t, run, "step.started", `{"step_name":"one"}`)
@@ -481,7 +473,6 @@ func TestCanonicalRunStreamContinueDoesNotCancelOnDisconnect(t *testing.T) {
 }
 
 func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {
@@ -509,7 +500,6 @@ func TestReconnectCanonicalRunStreamCancelOnDisconnectOverridesPersistedContinue
 }
 
 func TestReconnectCanonicalRunStreamFalseCancelEncodingOverridesPersistedCancel(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	previousWriterFactory := canonicalRunStreamWriterFactory
 	canonicalRunStreamWriterFactory = func(*app.RequestContext) canonicalRunStreamWriterHandle {

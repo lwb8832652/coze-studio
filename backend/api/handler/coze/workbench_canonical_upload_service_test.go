@@ -38,19 +38,23 @@ import (
 	"github.com/coze-dev/coze-studio/backend/pkg/logs"
 )
 
-func TestCanonicalThreadUploadGateOffReturns404(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "")
+func TestCanonicalThreadUploadAlwaysOnFailsClosedWithoutThreadService(t *testing.T) {
 	installAgentThreadTestService(t)
+	appagentthread.SVC.ThreadSVC = nil
 	h := canonicalUploadTestServer()
 
 	response := performCanonicalUploadRequest(t, h, http.MethodGet, "/api/workbench/threads/1/uploads", nil)
 
-	require.Equal(t, http.StatusNotFound, response.Code)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	var public canonicalError
+	require.NoError(t, json.Unmarshal(response.Result().Body(), &public))
+	require.Equal(t, "dependency_unavailable", public.Code)
+	require.Equal(t, "Required service is unavailable", public.Detail)
+	require.True(t, public.Retryable)
 }
 
 func TestCanonicalThreadUploadRequiresAuthenticationAndWorkspaceAccess(t *testing.T) {
 	t.Run("unauthenticated", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		h := server.Default()
 		registerCanonicalUploadRoutes(h)
@@ -64,7 +68,6 @@ func TestCanonicalThreadUploadRequiresAuthenticationAndWorkspaceAccess(t *testin
 	})
 
 	t.Run("wrong workspace", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThread(t, 1001, "uploads", `{}`)
 		h := canonicalUploadTestServer()
@@ -85,7 +88,6 @@ func TestCanonicalThreadUploadRequiresAuthenticationAndWorkspaceAccess(t *testin
 	})
 
 	t.Run("same workspace non owner", func(t *testing.T) {
-		t.Setenv(canonicalAPIEnabledEnv, "true")
 		installAgentThreadTestService(t)
 		thread := createCanonicalTestThreadForUser(t, 1001, 3, "uploads", `{}`)
 		h := canonicalUploadTestServer()
@@ -107,7 +109,6 @@ func TestCanonicalThreadUploadRequiresAuthenticationAndWorkspaceAccess(t *testin
 }
 
 func TestCanonicalThreadUploadRejectsMalformedIDsAndFilenamePath(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	h := canonicalUploadTestServer()
 
@@ -135,7 +136,6 @@ func TestCanonicalThreadUploadRejectsMalformedIDsAndFilenamePath(t *testing.T) {
 }
 
 func TestCanonicalThreadUploadRejectsEmptyMultipartAndBounds(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "uploads", `{}`)
 	storage := &canonicalRecordingUploadStorage{}
@@ -206,7 +206,6 @@ func TestCanonicalThreadUploadRejectsEmptyMultipartAndBounds(t *testing.T) {
 }
 
 func TestCanonicalThreadUploadListUploadAndDeleteByStableID(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "uploads", `{}`)
 	appagentthread.SVC.ArtifactObjectStorage = &canonicalRecordingUploadStorage{}
@@ -276,7 +275,6 @@ func TestCanonicalThreadUploadListUploadAndDeleteByStableID(t *testing.T) {
 }
 
 func TestCanonicalThreadUploadAcceptsSingularFileField(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "uploads", `{}`)
 	appagentthread.SVC.ArtifactObjectStorage = &canonicalRecordingUploadStorage{}
@@ -300,7 +298,6 @@ func TestCanonicalThreadUploadAcceptsSingularFileField(t *testing.T) {
 }
 
 func TestCanonicalThreadUploadCompletionLogsStaySafe(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "uploads", `{}`)
 	appagentthread.SVC.ArtifactObjectStorage = &canonicalRecordingUploadStorage{}

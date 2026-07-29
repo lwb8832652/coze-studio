@@ -68,16 +68,15 @@ type canonicalArtifactScanJobRetryResponse struct {
 	Retried bool                             `json:"retried"`
 }
 
-// ListCanonicalThreadArtifacts exposes public Artifact summaries without the
-// legacy code/msg/data envelope.
+// ListCanonicalThreadArtifacts serves GET /api/workbench/threads/:thread_id/artifacts.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListArtifacts, and returns canonical artifact-list JSON.
 func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.list", "/api/workbench/threads/:thread_id/artifacts")
 	requestLog.ResponseBodyKind = "values"
 	requestLog.ResourceType = "artifact"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentArtifactService(ctx, c) {
 		return
 	}
@@ -141,7 +140,10 @@ func ListCanonicalThreadArtifacts(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
-// GetCanonicalThreadArtifactContent streams scanned Artifact bytes directly.
+// GetCanonicalThreadArtifactContent serves GET /api/workbench/threads/:thread_id/artifacts/:artifact_id/content.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and artifact. It calls
+// ApplicationService.ReadArtifactContent, and streams the reviewed artifact bytes.
 func GetCanonicalThreadArtifactContent(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.content.get", "/api/workbench/threads/:thread_id/artifacts/:artifact_id/content")
 	requestLog.ResponseBodyKind = "bytes"
@@ -178,8 +180,10 @@ func GetCanonicalThreadArtifactContent(ctx context.Context, c *app.RequestContex
 	c.Response.SetBodyRaw(resp.Content)
 }
 
-// GetCanonicalThreadArtifactSignedURL returns a short-lived download receipt.
-// The signed URL is deliberately kept out of request completion logs.
+// GetCanonicalThreadArtifactSignedURL serves GET /api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and artifact. It calls
+// ApplicationService.CreateArtifactSignedURL, and returns signed-URL receipt JSON.
 func GetCanonicalThreadArtifactSignedURL(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.signed_url.create", "/api/workbench/threads/:thread_id/artifacts/:artifact_id/signed_url")
 	requestLog.ResponseBodyKind = "values"
@@ -228,8 +232,10 @@ func GetCanonicalThreadArtifactSignedURL(ctx context.Context, c *app.RequestCont
 	})
 }
 
-// DeleteCanonicalThreadArtifact marks one Artifact deleted and returns an empty
-// canonical 204 response.
+// DeleteCanonicalThreadArtifact serves DELETE /api/workbench/threads/:thread_id/artifacts/:artifact_id.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and artifact. It calls
+// ApplicationService.DeleteArtifact, and returns 204 with an empty body.
 func DeleteCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.delete", "/api/workbench/threads/:thread_id/artifacts/:artifact_id")
 	requestLog.ResponseBodyKind = "empty"
@@ -258,7 +264,10 @@ func DeleteCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) {
 	c.Status(consts.StatusNoContent)
 }
 
-// RestoreCanonicalThreadArtifact restores a previously deleted Artifact.
+// RestoreCanonicalThreadArtifact serves POST /api/workbench/threads/:thread_id/artifacts/:artifact_id/restore.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and artifact. It calls
+// ApplicationService.RestoreArtifact, and returns canonical restore-result JSON.
 func RestoreCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.restore", "/api/workbench/threads/:thread_id/artifacts/:artifact_id/restore")
 	requestLog.ResponseBodyKind = "values"
@@ -292,7 +301,10 @@ func RestoreCanonicalThreadArtifact(ctx context.Context, c *app.RequestContext) 
 	c.JSON(consts.StatusOK, &canonicalArtifactRestoreResponse{Artifact: artifact, Restored: resp.Restored})
 }
 
-// ReviewCanonicalThreadArtifactScan records a manual release/block decision.
+// ReviewCanonicalThreadArtifactScan serves POST /api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and artifact. It calls
+// ApplicationService.ReviewArtifactScan, and returns canonical scan-review JSON.
 func ReviewCanonicalThreadArtifactScan(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact.scan_review.create", "/api/workbench/threads/:thread_id/artifacts/:artifact_id/scan_review")
 	requestLog.ResponseBodyKind = "values"
@@ -336,16 +348,15 @@ func ReviewCanonicalThreadArtifactScan(ctx context.Context, c *app.RequestContex
 	})
 }
 
-// ListCanonicalThreadArtifactScanJobs lists public scan job state without worker
-// identity, leases or raw scanner errors.
+// ListCanonicalThreadArtifactScanJobs serves GET /api/workbench/threads/:thread_id/artifact_scan_jobs.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread. It calls
+// ApplicationService.ListArtifactScanJobs, and returns canonical scan-job-list JSON.
 func ListCanonicalThreadArtifactScanJobs(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact_scan_job.list", "/api/workbench/threads/:thread_id/artifact_scan_jobs")
 	requestLog.ResponseBodyKind = "values"
 	requestLog.ResourceType = "artifact_scan_job"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentArtifactService(ctx, c) {
 		return
 	}
@@ -421,15 +432,15 @@ func ListCanonicalThreadArtifactScanJobs(ctx context.Context, c *app.RequestCont
 	})
 }
 
-// RetryCanonicalThreadArtifactScanJob requeues one failed scan job.
+// RetryCanonicalThreadArtifactScanJob serves POST /api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry.
+// It authorizes the authenticated session principal through server-authorized X-Coze-Space-ID
+// and against the path Thread and scan job. It calls
+// ApplicationService.RetryArtifactScanJob, and returns canonical retry-result JSON.
 func RetryCanonicalThreadArtifactScanJob(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("artifact_scan_job.retry", "/api/workbench/threads/:thread_id/artifact_scan_jobs/:job_id/retry")
 	requestLog.ResponseBodyKind = "values"
 	requestLog.ResourceType = "artifact_scan_job"
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentArtifactService(ctx, c) {
 		return
 	}
@@ -484,9 +495,6 @@ func canonicalArtifactRouteScope(
 	c *app.RequestContext,
 	requestLog *canonicalRequestLog,
 ) (int64, int64, int64, bool) {
-	if !requireCanonicalAPI(ctx, c) {
-		return 0, 0, 0, false
-	}
 	if !requireCanonicalAgentArtifactService(ctx, c) {
 		return 0, 0, 0, false
 	}

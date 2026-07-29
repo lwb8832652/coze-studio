@@ -176,16 +176,13 @@ type canonicalRunEventPage struct {
 	NextAfterEventID *string              `json:"next_after_event_id,omitempty"`
 }
 
-// CreateCanonicalRun validates a canonical turn, message-less top-level retry, or
-// resume request. Ordinary turns keep the existing atomic Message + Run bundle;
-// retries create only a Run linked to an authorized failed source. The response is
-// always a reviewed projection and never echoes input, command, config, or context.
+// CreateCanonicalRun serves POST /api/workbench/threads/:thread_id/runs.
+// It authorizes the authenticated session principal against the path Thread and any referenced
+// source Run; workspace identity comes from those resources, not X-Coze-Space-ID. It calls
+// ApplicationService.CreateRun or ResumeHumanInteraction, and returns canonical Run JSON.
 func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.create", "/api/workbench/threads/:thread_id/runs")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -278,15 +275,13 @@ func CreateCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// ListCanonicalRuns lists authorized Runs for one path Thread using the canonical
-// application query contract. It applies exact offset pagination after any public
-// SDK-status projection and returns a raw Run array with pagination headers.
+// ListCanonicalRuns serves GET /api/workbench/threads/:thread_id/runs.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.SearchRuns, and returns a Run array with pagination headers.
 func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.list", "/api/workbench/threads/:thread_id/runs")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -337,15 +332,13 @@ func ListCanonicalRuns(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, runs)
 }
 
-// GetCanonicalRun reads one authorized Run and verifies that it belongs to the path
-// Thread before projection. Missing, unauthorized, and cross-Thread IDs all return the
-// same canonical 404 so the endpoint cannot be used to enumerate Runs.
+// GetCanonicalRun serves GET /api/workbench/threads/:thread_id/runs/:run_id.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.GetRun, and returns canonical Run JSON.
 func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.get", "/api/workbench/threads/:thread_id/runs/:run_id")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -377,16 +370,13 @@ func GetCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// WaitCanonicalRun creates a canonical turn, message-less top-level retry, or resume
-// attempt, publishes stable recovery locations, and waits for terminal state. Its
-// body is the public values object itself so fixed LangGraph SDK clients can consume
-// it without a Workbench-specific envelope.
+// WaitCanonicalRun serves POST /api/workbench/threads/:thread_id/runs/wait.
+// It authorizes the authenticated session principal against the path Thread and any referenced
+// source Run; workspace identity comes from those resources, not X-Coze-Space-ID. It calls
+// ApplicationService.CreateRun or ResumeHumanInteraction plus ListCheckpoints, and returns public values JSON.
 func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.wait", "/api/workbench/threads/:thread_id/runs/wait")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -486,14 +476,13 @@ func WaitCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, values)
 }
 
-// JoinCanonicalRun waits for one already authorized Run and returns the same raw
-// public values shape as WaitCanonicalRun. It never upgrades the response to SSE.
+// JoinCanonicalRun serves GET /api/workbench/threads/:thread_id/runs/:run_id/join.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.GetRun and ListCheckpoints, and returns public values JSON rather than SSE.
 func JoinCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.join", "/api/workbench/threads/:thread_id/runs/:run_id/join")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -536,15 +525,13 @@ func JoinCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, values)
 }
 
-// CancelCanonicalRun persists a monotonic cancellation request through the existing
-// application use case. Repeated calls and already-terminal Runs are successful and
-// always return 204 so clients re-read the authoritative Run or Thread state.
+// CancelCanonicalRun serves POST /api/workbench/threads/:thread_id/runs/:run_id/cancel.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.CancelRun, and returns 204 with an empty body.
 func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.cancel", "/api/workbench/threads/:thread_id/runs/:run_id/cancel")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -600,15 +587,13 @@ func CancelCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.Status(consts.StatusNoContent)
 }
 
-// ResumeCanonicalRun treats the path Run as the immutable interrupted source and
-// creates a new queued attempt through ApplicationService.ResumeHumanInteraction.
-// Authentication context supplies actor identity; request JSON cannot impersonate it.
+// ResumeCanonicalRun serves POST /api/workbench/threads/:thread_id/runs/:run_id/resume.
+// It authorizes the authenticated session principal against the path Thread and source Run;
+// workspace identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.ResumeHumanInteraction, and returns the new canonical Run JSON.
 func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.resume", "/api/workbench/threads/:thread_id/runs/:run_id/resume")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -667,14 +652,13 @@ func ResumeCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// ListCanonicalRunEvents reads the authorized persistent event journal by its
-// monotonic event_id cursor and returns only the reviewed public projection.
+// ListCanonicalRunEvents serves GET /api/workbench/threads/:thread_id/runs/:run_id/events.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.ListRunEventsByCursor, and returns canonical event-page JSON.
 func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.events.list", "/api/workbench/threads/:thread_id/runs/:run_id/events")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -745,15 +729,13 @@ func ListCanonicalRunEvents(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, page)
 }
 
-// ListCanonicalRunMessages reuses the Thread journal projection so message IDs,
-// content, timestamps, and seq values are identical at Thread and Run scope. Run
-// filtering happens only after global sequence assignment.
+// ListCanonicalRunMessages serves GET /api/workbench/threads/:thread_id/runs/:run_id/messages.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.SearchRuns, ListMessages, and ListRunEvents, and returns canonical message-page JSON.
 func ListCanonicalRunMessages(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.messages.list", "/api/workbench/threads/:thread_id/runs/:run_id/messages")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}

@@ -67,15 +67,13 @@ func (c canonicalRunEventStreamConfig) normalized() canonicalRunEventStreamConfi
 	return c
 }
 
-// StreamCanonicalRun creates an ordinary turn or message-less top-level retry, or
-// resumes one persisted Run. It validates the public projection before upgrading
-// the response to the canonical SSE stream.
+// StreamCanonicalRun serves POST /api/workbench/threads/:thread_id/runs/stream.
+// It authorizes the authenticated session principal against the path Thread and any referenced
+// source Run; workspace identity comes from those resources, not X-Coze-Space-ID. It calls
+// ApplicationService.CreateRun or ResumeHumanInteraction and ListRunEvents, and emits canonical SSE events.
 func StreamCanonicalRun(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.create", "/api/workbench/threads/:thread_id/runs/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -222,14 +220,13 @@ func createCanonicalStreamRun(
 	return response.Run, nil, nil
 }
 
-// ReconnectCanonicalRunStream validates both client cursors, replays after the
-// greater value, and then follows live events for the same authorized Run.
+// ReconnectCanonicalRunStream serves GET /api/workbench/threads/:thread_id/runs/:run_id/stream.
+// It authorizes the authenticated session principal against the path Thread and Run; workspace
+// identity comes from those server-authorized resources, not X-Coze-Space-ID. It calls
+// ApplicationService.GetRun and ListRunEvents, and emits replay-then-live canonical SSE events.
 func ReconnectCanonicalRunStream(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("run.stream.reconnect", "/api/workbench/threads/:thread_id/runs/:run_id/stream")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}

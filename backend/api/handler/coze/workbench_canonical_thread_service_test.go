@@ -34,7 +34,6 @@ import (
 )
 
 func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	previous := appagentthread.SVC
 	appagentthread.SVC = nil
 	t.Cleanup(func() {
@@ -88,7 +87,6 @@ func TestCanonicalThreadResourceHandlersFailClosedWithoutApplicationService(t *t
 }
 
 func TestCreateCanonicalThreadCreatesEmptyThreadInAuthorizedSpace(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -136,7 +134,6 @@ func TestCreateCanonicalThreadCreatesEmptyThreadInAuthorizedSpace(t *testing.T) 
 }
 
 func TestCreateCanonicalThreadResponseIncludesServerReviewedCanEdit(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -160,7 +157,6 @@ func TestCreateCanonicalThreadRejectsForgedCanEditMetadata(t *testing.T) {
 	for _, forged := range []bool{false, true} {
 		forged := forged
 		t.Run(strconv.FormatBool(forged), func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
@@ -181,7 +177,6 @@ func TestCreateCanonicalThreadRejectsForgedCanEditMetadata(t *testing.T) {
 }
 
 func TestCreateCanonicalThreadCreatesInitialSubmissionAtomically(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -248,7 +243,6 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 	for name, initialRun := range tests {
 		name, initialRun := name, initialRun
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
@@ -265,7 +259,6 @@ func TestCreateCanonicalThreadValidatesInitialSubmissionBeforeMutation(t *testin
 }
 
 func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -300,7 +293,6 @@ func TestCreateCanonicalThreadRejectsOversizedInitialSubmissionBeforeMutation(t 
 }
 
 func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -349,7 +341,6 @@ func TestCreateCanonicalThreadInitialRunRejectsChangedIdempotentPayload(t *testi
 }
 
 func TestCreateCanonicalThreadDefersValidatedInitialSubmission(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads", CreateCanonicalThread)
 	installAgentThreadTestService(t)
@@ -410,7 +401,6 @@ func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *test
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.POST("/api/workbench/threads", CreateCanonicalThread)
 			installAgentThreadTestService(t)
@@ -426,7 +416,6 @@ func TestCreateCanonicalThreadRejectsUnsupportedShapesWithoutSideEffects(t *test
 }
 
 func TestSearchCanonicalThreadsUsesAuthorizedSpaceFiltersAndExactOffset(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
@@ -456,7 +445,6 @@ func TestSearchCanonicalThreadsUsesAuthorizedSpaceFiltersAndExactOffset(t *testi
 }
 
 func TestSearchCanonicalThreadsResponseIncludesServerReviewedCanEdit(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
@@ -481,7 +469,6 @@ func TestSearchCanonicalThreadsResponseIncludesServerReviewedCanEdit(t *testing.
 }
 
 func TestSearchCanonicalThreadsSupportsIDsSortAndPaginationHeaders(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
@@ -507,7 +494,6 @@ func TestSearchCanonicalThreadsSupportsIDsSortAndPaginationHeaders(t *testing.T)
 }
 
 func TestSearchCanonicalThreadsSortsByProjectedSDKStatus(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 	installAgentThreadTestService(t)
@@ -545,7 +531,6 @@ func TestSearchCanonicalThreadsRejectsUnsupportedProjectionFields(t *testing.T) 
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.POST("/api/workbench/threads/search", SearchCanonicalThreads)
 			installAgentThreadTestService(t)
@@ -560,7 +545,6 @@ func TestSearchCanonicalThreadsRejectsUnsupportedProjectionFields(t *testing.T) 
 }
 
 func TestGetCanonicalThreadRejectsIncludeAndProjectsAuthorizedThread(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
 	installAgentThreadTestService(t)
@@ -579,7 +563,6 @@ func TestGetCanonicalThreadRejectsIncludeAndProjectsAuthorizedThread(t *testing.
 }
 
 func TestGetCanonicalThreadResponseIncludesServerReviewedCanEdit(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
 	installAgentThreadTestService(t)
@@ -596,7 +579,6 @@ func TestGetCanonicalThreadResponseIncludesServerReviewedCanEdit(t *testing.T) {
 }
 
 func TestPatchCanonicalThreadUpdatesSafeMetadataAndSupportsMinimalResponse(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 	installAgentThreadTestService(t)
@@ -630,7 +612,6 @@ func TestPatchCanonicalThreadRejectsForgedCanEditMetadata(t *testing.T) {
 	for _, forged := range []bool{false, true} {
 		forged := forged
 		t.Run(strconv.FormatBool(forged), func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 			h.GET("/api/workbench/threads/:thread_id", GetCanonicalThread)
@@ -667,7 +648,6 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			h := authenticatedAgentThreadTestServer()
 			h.PATCH("/api/workbench/threads/:thread_id", PatchCanonicalThread)
 			installAgentThreadTestService(t)
@@ -687,7 +667,6 @@ func TestPatchCanonicalThreadRejectsUnsafeFieldsWithoutMutation(t *testing.T) {
 }
 
 func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.DELETE("/api/workbench/threads/:thread_id", DeleteCanonicalThread)
 	installAgentThreadTestService(t)
@@ -724,7 +703,6 @@ func TestDeleteCanonicalThreadDeletesIdleAndRejectsBusyWithoutCanceling(t *testi
 }
 
 func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/state", GetCanonicalThreadState)
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
@@ -773,7 +751,6 @@ func TestCanonicalThreadStateUpdatesOnlyPublicCustomAndPreservesEinoBytes(t *tes
 }
 
 func TestCanonicalThreadStateRejectsSensitiveCustomBeforePersistence(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
 	installAgentThreadTestService(t)
@@ -799,7 +776,6 @@ func TestCanonicalThreadStateRejectsSensitiveCustomBeforePersistence(t *testing.
 }
 
 func TestCanonicalThreadHistoryGETAndPOSTReturnSameOrderedSafeStates(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.POST("/api/workbench/threads/:thread_id/state", UpdateCanonicalThreadState)
 	h.GET("/api/workbench/threads/:thread_id/history", GetCanonicalThreadHistory)
@@ -842,7 +818,6 @@ func TestCanonicalThreadHistoryGETAndPOSTReturnSameOrderedSafeStates(t *testing.
 }
 
 func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
 	installAgentThreadTestService(t)
@@ -924,7 +899,6 @@ func TestListCanonicalThreadMessagesLoadsCompleteJournalBeforeApplyingSeqCursor(
 }
 
 func TestListCanonicalThreadMessagesProjectsLegacyJournalIDsAsDecimalStrings(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
 	installAgentThreadTestService(t)
@@ -971,7 +945,6 @@ func TestListCanonicalThreadMessagesProjectsLegacyJournalIDsAsDecimalStrings(t *
 }
 
 func TestListCanonicalThreadMessagesPrefersPersistedAssistantOverVisibleEventDuplicate(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	h := authenticatedAgentThreadTestServer()
 	h.GET("/api/workbench/threads/:thread_id/messages", ListCanonicalThreadMessages)
 	installAgentThreadTestService(t)

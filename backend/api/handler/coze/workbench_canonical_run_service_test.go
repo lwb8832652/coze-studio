@@ -34,7 +34,6 @@ import (
 )
 
 func TestCanonicalRunRequestDefaultsAndAllowlist(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 
 	tests := []struct {
@@ -122,7 +121,6 @@ func TestCanonicalRunRequestRejectsUnsupportedFieldsWithoutSideEffects(t *testin
 	for name, extraFields := range tests {
 		name, extraFields := name, extraFields
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "run rejection", `{}`)
 			h := canonicalRunTestServer()
@@ -160,7 +158,6 @@ func TestCanonicalRunRequestOnlyAcceptsSingleUserTurn(t *testing.T) {
 	for name, body := range tests {
 		name, body := name, body
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "run input", `{}`)
 			h := canonicalRunTestServer()
@@ -180,7 +177,6 @@ func TestCanonicalRunRequestOnlyAcceptsSingleUserTurn(t *testing.T) {
 }
 
 func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical create run", `{}`)
 	h := canonicalRunTestServer()
@@ -252,7 +248,6 @@ func TestCanonicalCreateRunMessageMetadataUsesAtomicBundleAndHeaderIdempotency(t
 }
 
 func TestCanonicalCreateRunTopLevelRetryIsMessageLessAndReplaysAcrossWait(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical top-level retry", `{}`)
 	source := createCanonicalRunFixture(t, thread.ThreadID, "original task")
@@ -329,7 +324,6 @@ func TestCanonicalCreateRunTopLevelRetryIsMessageLessAndReplaysAcrossWait(t *tes
 }
 
 func TestCanonicalCreateRunTopLevelRetryRejectsInvalidSourcesAndMixedForms(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical retry validation", `{}`)
 	failed := createCanonicalRunFixture(t, thread.ThreadID, "failed source")
@@ -430,7 +424,6 @@ func TestCanonicalRunTopLevelRetryFingerprintScopesSourceAndOperation(t *testing
 }
 
 func TestCanonicalCreateRunRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	firstThread := createCanonicalTestThread(t, 1001, "canonical first idempotency owner", `{}`)
 	secondThread := createCanonicalTestThread(t, 1001, "canonical second idempotency owner", `{}`)
@@ -467,7 +460,6 @@ func TestCanonicalCreateRunRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.
 }
 
 func TestCanonicalCreateRunScopesIdempotencyBySessionPrincipal(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	firstThread := createCanonicalTestThreadForUser(t, 1001, 2, "first principal", `{}`)
 	secondThread := createCanonicalTestThreadForUser(t, 1001, 3, "second principal", `{}`)
@@ -495,7 +487,6 @@ func TestCanonicalCreateRunScopesIdempotencyBySessionPrincipal(t *testing.T) {
 }
 
 func TestCanonicalListRunsUsesExactPaginationAndRejectsSelect(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical list runs", `{}`)
 	h := canonicalRunTestServer()
@@ -538,7 +529,6 @@ func TestCanonicalListRunsUsesExactPaginationAndRejectsSelect(t *testing.T) {
 }
 
 func TestCanonicalGetRunChecksPathOwnershipAndReturnsMinimalProjection(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	firstThread := createCanonicalTestThread(t, 1001, "first", `{}`)
 	secondThread := createCanonicalTestThread(t, 1001, "second", `{}`)
@@ -573,7 +563,6 @@ func TestCanonicalGetRunChecksPathOwnershipAndReturnsMinimalProjection(t *testin
 }
 
 func TestCanonicalJoinReturnsRawPublicValuesWithoutSSE(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical join", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "join this run")
@@ -608,7 +597,6 @@ func TestCanonicalJoinReturnsRawPublicValuesWithoutSSE(t *testing.T) {
 }
 
 func TestCanonicalJoinReturnsSafeFailureValues(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical failed join", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "join failed run")
@@ -632,7 +620,6 @@ func TestCanonicalJoinReturnsSafeFailureValues(t *testing.T) {
 }
 
 func TestCanonicalWaitReusesIdempotentRunAndReturnsRawPublicValues(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical wait", `{}`)
 	h := canonicalRunTestServer()
@@ -677,7 +664,6 @@ func TestCanonicalWaitReusesIdempotentRunAndReturnsRawPublicValues(t *testing.T)
 }
 
 func TestCanonicalCancelRunIsIdempotentAndReturnsNoContent(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical cancel", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "cancel this run")
@@ -697,7 +683,6 @@ func TestCanonicalCancelRunIsIdempotentAndReturnsNoContent(t *testing.T) {
 }
 
 func TestCanonicalCancelRunRejectsRollbackWithoutSideEffects(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical rollback rejection", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "keep this run")
@@ -729,7 +714,6 @@ func TestCanonicalCancelRunIsIdempotentForTerminalRuns(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "canonical terminal cancel", `{}`)
 			run := createCanonicalRunFixture(t, thread.ThreadID, "terminal run")
@@ -784,7 +768,6 @@ func TestCanonicalWaitCancellationHonorsEndpointDisconnectMode(t *testing.T) {
 }
 
 func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	h := canonicalRunTestServer()
@@ -819,7 +802,6 @@ func TestCanonicalResumeRouteUsesHumanInteractionApplicationUseCase(t *testing.T
 }
 
 func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	otherThread := createCanonicalTestThread(t, 1, "other resume thread", `{}`)
@@ -860,7 +842,6 @@ func TestCanonicalResumeRejectsIdempotencyKeyOwnedByAnotherThread(t *testing.T) 
 }
 
 func TestCanonicalCreateRunCommandResumeUsesSameApplicationUseCase(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	h := canonicalRunTestServer()
@@ -899,7 +880,6 @@ func TestCanonicalCreateRunCommandResumeUsesSameApplicationUseCase(t *testing.T)
 }
 
 func TestCanonicalResumeRoutesShareFingerprintAndRejectTurnReuse(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	sourceRunID := createInterruptedHumanInteractionRun(t)
 	h := canonicalRunTestServer()
@@ -980,7 +960,6 @@ func TestCanonicalResumeMapsClientSemanticErrorsToUnprocessableEntity(t *testing
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			sourceRunID := createInterruptedHumanInteractionRun(t)
 			h := canonicalRunTestServer()
@@ -1010,7 +989,6 @@ func TestCanonicalResumeMapsClientSemanticErrorsToUnprocessableEntity(t *testing
 }
 
 func TestCanonicalRunEventsUseCursorFilterAndSafeProjection(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical run events", `{}`)
 	run := createCanonicalRunFixture(t, thread.ThreadID, "event source")
@@ -1069,7 +1047,6 @@ func TestCanonicalRunEventsUseCursorFilterAndSafeProjection(t *testing.T) {
 }
 
 func TestCanonicalRunMessagesPreserveThreadGlobalSequence(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical run messages", `{}`)
 	firstRun := createCanonicalRunFixture(t, thread.ThreadID, "first turn")
@@ -1146,7 +1123,6 @@ func TestCanonicalRunRejectsSensitiveConfigAndContextBeforePersistence(t *testin
 	for name, extra := range tests {
 		name, extra := name, extra
 		t.Run(name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "canonical input protection", `{}`)
 			h := canonicalRunTestServer()
@@ -1182,7 +1158,6 @@ func TestCanonicalRunRejectsServerOwnedMetadataBeforePersistence(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "canonical protected metadata", `{}`)
 			h := canonicalRunTestServer()
@@ -1206,7 +1181,6 @@ func TestCanonicalRunRejectsServerOwnedMetadataBeforePersistence(t *testing.T) {
 }
 
 func TestCanonicalRunDoesNotTreatUserMessageAsRuntimeConfiguration(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical message semantics", `{}`)
 	h := canonicalRunTestServer()
@@ -1237,7 +1211,6 @@ func TestCanonicalWaitRaiseErrorCompatibility(t *testing.T) {
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "canonical failed wait", `{}`)
 			h := canonicalRunTestServer()
@@ -1292,7 +1265,6 @@ func TestCanonicalWaitRaiseErrorCompatibility(t *testing.T) {
 }
 
 func TestCanonicalWaitRejectsNonBooleanRaiseErrorBeforeMutation(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical invalid raise error", `{}`)
 	h := canonicalRunTestServer()
@@ -1314,7 +1286,6 @@ func TestCanonicalWaitRejectsNonBooleanRaiseErrorBeforeMutation(t *testing.T) {
 }
 
 func TestCanonicalRunRejectsSensitiveUploadedFileDescriptor(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical unsafe upload descriptor", `{}`)
 	h := canonicalRunTestServer()
@@ -1339,7 +1310,6 @@ func TestCanonicalRunRejectsSensitiveUploadedFileDescriptor(t *testing.T) {
 }
 
 func TestCanonicalRunNormalizesSDKUploadedFileIDForApplication(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical upload descriptor", `{}`)
 	registered, err := appagentthread.SVC.UploadFileSVC.RegisterUploadFile(
@@ -1377,7 +1347,6 @@ func TestCanonicalRunNormalizesSDKUploadedFileIDForApplication(t *testing.T) {
 }
 
 func TestCanonicalRunReplaysIdempotentUploadAfterFileDeletion(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical upload replay", `{}`)
 	registered, err := appagentthread.SVC.UploadFileSVC.RegisterUploadFile(
@@ -1443,7 +1412,6 @@ func TestCanonicalRunReplaysIdempotentUploadAfterFileDeletion(t *testing.T) {
 }
 
 func TestCanonicalRunRejectsChangedPayloadForIdempotencyKey(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical idempotency payload", `{}`)
 	h := canonicalRunTestServer()
@@ -1476,7 +1444,6 @@ func TestCanonicalRunRejectsChangedPayloadForIdempotencyKey(t *testing.T) {
 }
 
 func TestCanonicalRunRejectsUploadOwnedByAnotherThread(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	requestThread := createCanonicalTestThread(t, 1001, "canonical upload request", `{}`)
 	ownerThread := createCanonicalTestThread(t, 1001, "canonical upload owner", `{}`)
@@ -1534,7 +1501,6 @@ func TestCanonicalRunRejectsOversizedPayloadsBeforeMutation(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv(canonicalAPIEnabledEnv, "true")
 			installAgentThreadTestService(t)
 			thread := createCanonicalTestThread(t, 1001, "canonical bounded payload", `{}`)
 			h := canonicalRunTestServer()
@@ -1553,7 +1519,6 @@ func TestCanonicalRunRejectsOversizedPayloadsBeforeMutation(t *testing.T) {
 }
 
 func TestCanonicalRunRejectsUnknownAssistantAliasBeforeMutation(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	thread := createCanonicalTestThread(t, 1001, "canonical assistant alias", `{}`)
 	h := canonicalRunTestServer()
@@ -1574,7 +1539,6 @@ func TestCanonicalRunRejectsUnknownAssistantAliasBeforeMutation(t *testing.T) {
 }
 
 func TestCanonicalRunHandlersFailClosedWhenApplicationServiceIsUnavailable(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
 	installAgentThreadTestService(t)
 	h := canonicalRunTestServer()
 	previous := appagentthread.SVC

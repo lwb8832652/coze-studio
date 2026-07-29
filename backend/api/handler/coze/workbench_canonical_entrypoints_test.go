@@ -18,71 +18,72 @@ package coze
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/stretchr/testify/require"
-
-	"github.com/coze-dev/coze-studio/backend/pkg/sonic"
 )
 
 var canonicalEntrypoints = []struct {
 	name    string
 	handler app.HandlerFunc
-	stub    bool
 }{
-	{"CreateCanonicalThread", CreateCanonicalThread, false},
-	{"SearchCanonicalThreads", SearchCanonicalThreads, false},
-	{"GetCanonicalThread", GetCanonicalThread, false},
-	{"PatchCanonicalThread", PatchCanonicalThread, false},
-	{"DeleteCanonicalThread", DeleteCanonicalThread, false},
-	{"GetCanonicalThreadState", GetCanonicalThreadState, false},
-	{"UpdateCanonicalThreadState", UpdateCanonicalThreadState, false},
-	{"GetCanonicalThreadHistory", GetCanonicalThreadHistory, false},
-	{"PostCanonicalThreadHistory", PostCanonicalThreadHistory, false},
-	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages, false},
-	{"ListCanonicalRuns", ListCanonicalRuns, false},
-	{"CreateCanonicalRun", CreateCanonicalRun, false},
-	{"StreamCanonicalRun", StreamCanonicalRun, false},
-	{"WaitCanonicalRun", WaitCanonicalRun, false},
-	{"GetCanonicalRun", GetCanonicalRun, false},
-	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream, false},
-	{"JoinCanonicalRun", JoinCanonicalRun, false},
-	{"CancelCanonicalRun", CancelCanonicalRun, false},
-	{"ResumeCanonicalRun", ResumeCanonicalRun, false},
-	{"ListCanonicalRunEvents", ListCanonicalRunEvents, false},
-	{"ListCanonicalRunMessages", ListCanonicalRunMessages, false},
-	{"AppendCanonicalThreadMessage", AppendCanonicalThreadMessage, false},
-	{"GenerateCanonicalThreadSuggestions", GenerateCanonicalThreadSuggestions, false},
-	{"ListCanonicalThreadUploads", ListCanonicalThreadUploads, false},
-	{"UploadCanonicalThreadFiles", UploadCanonicalThreadFiles, false},
-	{"DeleteCanonicalThreadUpload", DeleteCanonicalThreadUpload, false},
-	{"ListCanonicalThreadArtifacts", ListCanonicalThreadArtifacts, false},
-	{"GetCanonicalThreadArtifactContent", GetCanonicalThreadArtifactContent, false},
-	{"GetCanonicalThreadArtifactSignedURL", GetCanonicalThreadArtifactSignedURL, false},
-	{"DeleteCanonicalThreadArtifact", DeleteCanonicalThreadArtifact, false},
-	{"RestoreCanonicalThreadArtifact", RestoreCanonicalThreadArtifact, false},
-	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan, false},
-	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs, false},
-	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob, false},
-	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage, false},
-	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories, false},
-	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory, false},
-	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory, false},
-	{"RestoreCanonicalThreadMemory", RestoreCanonicalThreadMemory, false},
-	{"ClearCanonicalThreadMemories", ClearCanonicalThreadMemories, false},
-	{"ExportCanonicalThreadMemories", ExportCanonicalThreadMemories, false},
-	{"ImportCanonicalThreadMemories", ImportCanonicalThreadMemories, false},
-	{"ListCanonicalThreadMemoryAuditEvents", ListCanonicalThreadMemoryAuditEvents, false},
-	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents, false},
-	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents, false},
-	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents, false},
-	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun, false},
+	{"CreateCanonicalThread", CreateCanonicalThread},
+	{"SearchCanonicalThreads", SearchCanonicalThreads},
+	{"GetCanonicalThread", GetCanonicalThread},
+	{"PatchCanonicalThread", PatchCanonicalThread},
+	{"DeleteCanonicalThread", DeleteCanonicalThread},
+	{"GetCanonicalThreadState", GetCanonicalThreadState},
+	{"UpdateCanonicalThreadState", UpdateCanonicalThreadState},
+	{"GetCanonicalThreadHistory", GetCanonicalThreadHistory},
+	{"PostCanonicalThreadHistory", PostCanonicalThreadHistory},
+	{"ListCanonicalThreadMessages", ListCanonicalThreadMessages},
+	{"ListCanonicalRuns", ListCanonicalRuns},
+	{"CreateCanonicalRun", CreateCanonicalRun},
+	{"StreamCanonicalRun", StreamCanonicalRun},
+	{"WaitCanonicalRun", WaitCanonicalRun},
+	{"GetCanonicalRun", GetCanonicalRun},
+	{"ReconnectCanonicalRunStream", ReconnectCanonicalRunStream},
+	{"JoinCanonicalRun", JoinCanonicalRun},
+	{"CancelCanonicalRun", CancelCanonicalRun},
+	{"ResumeCanonicalRun", ResumeCanonicalRun},
+	{"ListCanonicalRunEvents", ListCanonicalRunEvents},
+	{"ListCanonicalRunMessages", ListCanonicalRunMessages},
+	{"AppendCanonicalThreadMessage", AppendCanonicalThreadMessage},
+	{"GenerateCanonicalThreadSuggestions", GenerateCanonicalThreadSuggestions},
+	{"ListCanonicalThreadUploads", ListCanonicalThreadUploads},
+	{"UploadCanonicalThreadFiles", UploadCanonicalThreadFiles},
+	{"DeleteCanonicalThreadUpload", DeleteCanonicalThreadUpload},
+	{"ListCanonicalThreadArtifacts", ListCanonicalThreadArtifacts},
+	{"GetCanonicalThreadArtifactContent", GetCanonicalThreadArtifactContent},
+	{"GetCanonicalThreadArtifactSignedURL", GetCanonicalThreadArtifactSignedURL},
+	{"DeleteCanonicalThreadArtifact", DeleteCanonicalThreadArtifact},
+	{"RestoreCanonicalThreadArtifact", RestoreCanonicalThreadArtifact},
+	{"ReviewCanonicalThreadArtifactScan", ReviewCanonicalThreadArtifactScan},
+	{"ListCanonicalThreadArtifactScanJobs", ListCanonicalThreadArtifactScanJobs},
+	{"RetryCanonicalThreadArtifactScanJob", RetryCanonicalThreadArtifactScanJob},
+	{"GetCanonicalThreadTokenUsage", GetCanonicalThreadTokenUsage},
+	{"ListCanonicalThreadMemories", ListCanonicalThreadMemories},
+	{"UpdateCanonicalThreadMemory", UpdateCanonicalThreadMemory},
+	{"DeleteCanonicalThreadMemory", DeleteCanonicalThreadMemory},
+	{"RestoreCanonicalThreadMemory", RestoreCanonicalThreadMemory},
+	{"ClearCanonicalThreadMemories", ClearCanonicalThreadMemories},
+	{"ExportCanonicalThreadMemories", ExportCanonicalThreadMemories},
+	{"ImportCanonicalThreadMemories", ImportCanonicalThreadMemories},
+	{"ListCanonicalThreadMemoryAuditEvents", ListCanonicalThreadMemoryAuditEvents},
+	{"ListCanonicalThreadGuardrailAuditEvents", ListCanonicalThreadGuardrailAuditEvents},
+	{"ExportCanonicalThreadGuardrailAuditEvents", ExportCanonicalThreadGuardrailAuditEvents},
+	{"ListCanonicalThreadMCPRuntimeAuditEvents", ListCanonicalThreadMCPRuntimeAuditEvents},
+	{"RetryCanonicalSubagentRun", RetryCanonicalSubagentRun},
 }
 
-func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "")
+func TestCanonicalEntrypointsAreAlwaysActive(t *testing.T) {
 	require.Len(t, canonicalEntrypoints, 47)
 
 	for _, entrypoint := range canonicalEntrypoints {
@@ -90,45 +91,54 @@ func TestCanonicalEntrypointDefaultsToNotFound(t *testing.T) {
 		t.Run(entrypoint.name, func(t *testing.T) {
 			var c app.RequestContext
 			entrypoint.handler(context.Background(), &c)
-			require.Equal(t, consts.StatusNotFound, c.Response.StatusCode())
-			require.Empty(t, c.Response.Body())
+			require.Contains(t, []int{
+				consts.StatusBadRequest,
+				consts.StatusUnauthorized,
+				consts.StatusNotFound,
+				consts.StatusServiceUnavailable,
+			}, c.Response.StatusCode())
+			require.False(t,
+				c.Response.StatusCode() == consts.StatusNotFound && len(c.Response.Body()) == 0,
+				"handler returned the retired empty-body migration-gate response",
+			)
 		})
 	}
 }
 
-func TestCanonicalEntrypointRequiresExplicitTrue(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "TRUE")
-
-	var c app.RequestContext
-	CreateCanonicalThread(context.Background(), &c)
-	require.Equal(t, consts.StatusNotFound, c.Response.StatusCode())
-}
-
-func TestCanonicalUnimplementedEntrypointEnabledFailsClosed(t *testing.T) {
-	t.Setenv(canonicalAPIEnabledEnv, "true")
-
-	stubCount := 0
-	for _, entrypoint := range canonicalEntrypoints {
-		if entrypoint.stub {
-			stubCount++
-		}
+func TestCanonicalMigrationGateIsAbsentFromProductionGo(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	backendDir := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", ".."))
+	forbidden := []string{
+		"COZE_WORKBENCH_CANONICAL_API_ENABLED",
+		"canonicalAPIEnabled",
+		"requireCanonicalAPI",
+		"serveCanonicalEntrypoint",
 	}
-	require.Equal(t, 0, stubCount)
 
-	for _, entrypoint := range canonicalEntrypoints {
-		if !entrypoint.stub {
-			continue
+	var matches []string
+	err := filepath.WalkDir(backendDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		entrypoint := entrypoint
-		t.Run(entrypoint.name, func(t *testing.T) {
-			var c app.RequestContext
-			entrypoint.handler(context.Background(), &c)
-			require.Equal(t, consts.StatusNotImplemented, c.Response.StatusCode())
-
-			var response canonicalError
-			require.NoError(t, sonic.Unmarshal(c.Response.Body(), &response))
-			require.Equal(t, "canonical_not_implemented", response.Code)
-			require.False(t, response.Retryable)
-		})
-	}
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, identifier := range forbidden {
+			if strings.Contains(string(content), identifier) {
+				relative, relErr := filepath.Rel(backendDir, path)
+				if relErr != nil {
+					return relErr
+				}
+				matches = append(matches, relative+": "+identifier)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Empty(t, matches)
 }

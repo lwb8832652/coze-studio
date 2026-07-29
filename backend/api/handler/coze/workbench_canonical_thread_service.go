@@ -142,16 +142,12 @@ type canonicalMessagePage struct {
 	NextAfterSeq  *string             `json:"next_after_seq,omitempty"`
 }
 
-// CreateCanonicalThread creates a canonical Thread for the authenticated principal in an
-// authorized X-Coze-Space-ID workspace. Empty requests call CreateThread; initial and
-// deferred submissions call CreateTaskThread so transaction, runtime validation, and title
-// derivation remain owned by the existing application layer. It returns one canonical Thread.
+// CreateCanonicalThread serves POST /api/workbench/threads.
+// It authorizes the authenticated session principal and server-authorized X-Coze-Space-ID, calls
+// ApplicationService.CreateThread or CreateTaskThread, and returns canonical Thread JSON.
 func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.create", "/api/workbench/threads")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -303,17 +299,12 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// SearchCanonicalThreads searches the authenticated principal's authorized
-// X-Coze-Space-ID workspace through ApplicationService.SearchThreads. It returns
-// a raw canonical Thread array plus X-Pagination-Total and X-Pagination-Next.
-// The handler is read-only and computes cursors only after authorization and
-// canonical status projection.
+// SearchCanonicalThreads serves POST /api/workbench/threads/search.
+// It authorizes the authenticated session principal and server-authorized X-Coze-Space-ID, calls
+// ApplicationService.SearchThreads, and returns a Thread array with pagination headers.
 func SearchCanonicalThreads(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.search", "/api/workbench/threads/search")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -357,15 +348,13 @@ func SearchCanonicalThreads(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, threads)
 }
 
-// GetCanonicalThread reads one authorized Thread through ApplicationService.GetThread
-// and returns its canonical public projection. It has no side effects and rejects the
-// SDK include expansion until field-level projection authorization is available.
+// GetCanonicalThread serves GET /api/workbench/threads/:thread_id.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.GetThread, and returns canonical Thread JSON.
 func GetCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.get", "/api/workbench/threads/:thread_id")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -403,16 +392,13 @@ func GetCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// PatchCanonicalThread atomically patches an authorized Thread's title and reviewed
-// scalar metadata through ApplicationService.PatchThread. It never reads and rewrites
-// metadata in the handler. A precise Prefer: return=minimal request returns 204;
-// otherwise the response is the updated canonical Thread.
+// PatchCanonicalThread serves PATCH /api/workbench/threads/:thread_id.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.PatchThread, and returns canonical Thread JSON or a requested 204.
 func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.patch", "/api/workbench/threads/:thread_id")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -470,15 +456,13 @@ func PatchCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projected)
 }
 
-// DeleteCanonicalThread deletes an authorized non-busy Thread through the atomic
-// ApplicationService.DeleteThreadIfIdle use case. Active top-level Runs produce
-// 409 thread_busy and are neither canceled nor deleted. Success returns 204.
+// DeleteCanonicalThread serves DELETE /api/workbench/threads/:thread_id.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.DeleteThreadIfIdle, and returns 204 with an empty body.
 func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.delete", "/api/workbench/threads/:thread_id")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -514,16 +498,13 @@ func DeleteCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	c.Status(consts.StatusNoContent)
 }
 
-// GetCanonicalThreadState reads an authorized Thread's latest or selected
-// checkpoint through the application layer and returns only the canonical public
-// state projection. Raw runtime checkpoint bytes and internal task results are never
-// exposed. subgraphs=false is accepted; true is rejected until safe subgraph DTOs exist.
+// GetCanonicalThreadState serves GET /api/workbench/threads/:thread_id/state.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.GetLatestCheckpoint or GetCheckpoint, and returns canonical ThreadState JSON.
 func GetCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.state.get", "/api/workbench/threads/:thread_id/state")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -566,16 +547,13 @@ func GetCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, state)
 }
 
-// UpdateCanonicalThreadState atomically merges the reviewed custom channel through
-// ApplicationService.UpdatePublicThreadState. The new canonical_public_state row is
-// isolated from Eino runtime checkpoints. The response contains checkpoint and
-// configurable references derived from the same committed row.
+// UpdateCanonicalThreadState serves POST /api/workbench/threads/:thread_id/state.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.UpdatePublicThreadState, and returns canonical state-update JSON.
 func UpdateCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.state.update", "/api/workbench/threads/:thread_id/state")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -623,15 +601,13 @@ func UpdateCanonicalThreadState(ctx context.Context, c *app.RequestContext) {
 	c.JSON(consts.StatusOK, projectCanonicalThreadUpdateStateResult(checkpoint))
 }
 
-// GetCanonicalThreadHistory reads authorized checkpoint history using the stable
-// numeric before cursor and returns newest-first canonical ThreadState entries.
-// It shares the same application query and projection as the POST form.
+// GetCanonicalThreadHistory serves GET /api/workbench/threads/:thread_id/history.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.ListCheckpointsBefore, and returns a canonical ThreadState array.
 func GetCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.history.get", "/api/workbench/threads/:thread_id/history")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -657,15 +633,13 @@ func GetCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalThreadHistory(ctx, c, threadID, before, limit)
 }
 
-// PostCanonicalThreadHistory is the SDK-compatible body form of Thread history.
-// It delegates to the same authorized ListCheckpointsBefore query and returns the
-// same newest-first canonical ThreadState array as GET.
+// PostCanonicalThreadHistory serves POST /api/workbench/threads/:thread_id/history.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.ListCheckpointsBefore, and returns a canonical ThreadState array.
 func PostCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.history.post", "/api/workbench/threads/:thread_id/history")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
@@ -699,16 +673,13 @@ func PostCanonicalThreadHistory(ctx context.Context, c *app.RequestContext) {
 	serveCanonicalThreadHistory(ctx, c, threadID, before, limit)
 }
 
-// ListCanonicalThreadMessages loads the complete authorized Run journal through
-// application queries, narrows it to public human/assistant messages, assigns stable
-// append-only seq values, and only then applies before_seq/after_seq pagination.
-// Tool arguments, tool results, runtime errors, and checkpoint data are excluded.
+// ListCanonicalThreadMessages serves GET /api/workbench/threads/:thread_id/messages.
+// It authorizes the authenticated session principal against the path Thread; workspace identity
+// comes from that server-authorized Thread, not X-Coze-Space-ID. It calls
+// ApplicationService.SearchRuns, ListMessages, and ListRunEvents, and returns canonical message-page JSON.
 func ListCanonicalThreadMessages(ctx context.Context, c *app.RequestContext) {
 	requestLog := beginCanonicalRequestLog("thread.messages.list", "/api/workbench/threads/:thread_id/messages")
 	defer completeCanonicalRequestLog(ctx, c, requestLog)
-	if !requireCanonicalAPI(ctx, c) {
-		return
-	}
 	if !requireCanonicalAgentThreadService(ctx, c) {
 		return
 	}
