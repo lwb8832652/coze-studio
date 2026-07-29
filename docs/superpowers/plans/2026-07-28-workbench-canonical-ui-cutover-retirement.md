@@ -1046,7 +1046,7 @@ git commit -m "refactor: migrate newx parity client to canonical api"
 - Modify: `backend/api/handler/coze/workbench_canonical_usage_retry_service.go`
 - Modify: corresponding `workbench_canonical_*_test.go` files
 
-- [ ] **Step 1: Change gate tests first**
+- [x] **Step 1: Change gate tests first**
 
 Replace default-off/404 assertions with assertions that canonical handlers enter normal auth,
 validation or dependency checks without `COZE_WORKBENCH_CANONICAL_API_ENABLED`. Add a source scan
@@ -1054,7 +1054,7 @@ test that rejects the environment variable and `requireCanonicalAPI` from produc
 
 Run the focused tests and confirm they fail while the gate remains.
 
-- [ ] **Step 2: Remove only the migration gate**
+- [x] **Step 2: Remove only the migration gate**
 
 Delete `canonicalAPIEnabledEnv`, `canonicalAPIEnabled`, `requireCanonicalAPI`, request-level guard
 branches, test `Setenv` calls and the now-unreferenced `serveCanonicalEntrypoint` production file.
@@ -1062,13 +1062,13 @@ Keep the 47-entry handler inventory test, session principal, workspace authoriza
 strict JSON, public errors, rate limiting, dependency fail-closed checks and structured request logs
 unchanged.
 
-- [ ] **Step 3: Review comments and logs**
+- [x] **Step 3: Review comments and logs**
 
 Update handler comments that still say default-off or migration-only. Every public handler must name
 its route, authorization source, application service call and response type. Existing canonical
 request logs remain one begin/complete pair per operation; do not add content-bearing debug logs.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```bash
 cd backend
@@ -1083,6 +1083,11 @@ Expected: PASS with no feature-gate environment requirement.
 git add backend/api/handler/coze
 git commit -m "refactor: make canonical workbench api primary"
 ```
+
+Completed in `41cda3c4`. The gate-focused tests and the full Canonical/Router suite excluding
+`TestCanonicalRunMessagesPreserveThreadGlobalSequence` pass. That sequence test remains
+order-sensitive and fails identically on the unchanged `b4b47d89` baseline; it is tracked as a
+pre-existing verification risk rather than a Task 11 regression.
 
 ### Task 12: Retire The TaskThread V1 HTTP Contract
 
