@@ -1252,18 +1252,18 @@ absent; all 47 canonical routes, 11 Scheduled Task routes, 23 `/api/threads/**` 
 - Preserve until Task 14: `backend/api/model/agent/langgraph/run.go`
 - Preserve until Task 14: `backend/api/model/agent/langgraph/thread.go`
 
-- [ ] **Step 1: Make all 23 negative route assertions fail**
+- [x] **Step 1: Make all 23 negative route assertions fail**
 
 Replace preservation assertions with exact method/path absence checks for `/api/threads/**`. Keep
 the 47 canonical positive snapshot and the external DeerFlow client path tests.
 
-- [ ] **Step 2: Remove local route registration**
+- [x] **Step 2: Remove local route registration**
 
 Delete the `/api/threads` registration block from `registerLangGraphCustomRoutes` and rename the
 remaining function to `registerLangGraphStatelessRunRoutes` so its ownership is explicit until the
 zero-use decision is applied.
 
-- [ ] **Step 3: Delete Thread-only adapters**
+- [x] **Step 3: Delete Thread-only adapters**
 
 Delete `langgraph_thread_service.go/test`. Remove Thread-bound Run handlers and tests from
 `langgraph_run_service.go/test`, retaining only the ten stateless routes and their required helper
@@ -1272,11 +1272,12 @@ code. Keep both handwritten LangGraph model files until Task 14 resolves the sta
 Do not delete application, domain, repository or checkpoint operations merely because an HTTP
 projection disappeared.
 
-- [ ] **Step 4: Prove internal consumers are migrated**
+- [x] **Step 4: Prove internal consumers are migrated**
 
 ```bash
 rg -n '/api/threads(?:/|\")|/api/workbench/task_threads' \
-  backend/internal/deerflowparity/newx_client.go frontend/apps/coze-studio/src
+  backend/internal/deerflowparity/newx_client.go frontend/apps/coze-studio/src \
+  --glob '!**/*test*' --glob '!**/__tests__/**'
 ```
 
 Expected: no output. Then run:
@@ -1290,12 +1291,21 @@ GOCACHE=/private/tmp/coze-workbench-cutover-go-cache \
 
 Expected: PASS; all 23 local routes absent. External DeerFlow reference tests remain green.
 
-- [ ] **Step 5: Commit the Thread compatibility retirement**
+- [x] **Step 5: Commit the Thread compatibility retirement**
 
 ```bash
 git add -A backend/api/router/coze backend/api/handler/coze backend/internal/deerflowparity
 git commit -m "refactor: retire local langgraph thread api"
 ```
+
+Completed in `fd8da61b7`. All 23 local `/api/threads/**` method/path pairs are absent while the
+47 canonical, 11 Scheduled Task and 10 stateless `/api/runs/**` routes remain. The focused
+Stateless handler suite, full router package and external DeerFlow parity package passed. The full
+handler package still reports the same 23 pre-existing Workflow/Mockey failures as unchanged
+`0cf22e338`; a normalized JSON comparison confirmed identical failure sets and no Task 13 failure.
+Production NewX/UI scans returned no source-contract call, and no application, domain, infra,
+crossdomain, IDL, persistence or LangGraph model file changed. Independent specification and
+quality reviews both passed.
 
 ### Task 14: Apply The Stateless Run Zero-Use Gate And Retire It
 
