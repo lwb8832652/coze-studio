@@ -226,10 +226,11 @@ func newXCanonicalThreadState(threadID string) map[string]any {
 		"checkpoint": map[string]any{
 			"thread_id": threadID, "checkpoint_ns": "", "checkpoint_id": "7657000000000000100", "checkpoint_map": map[string]any{},
 		},
-		"metadata":   map[string]any{},
-		"created_at": "2026-07-29T00:00:00Z",
-		"tasks":      []any{},
-		"interrupts": []any{},
+		"metadata":          map[string]any{},
+		"created_at":        "2026-07-29T00:00:00Z",
+		"parent_checkpoint": nil,
+		"tasks":             []any{},
+		"interrupts":        []any{},
 	}
 }
 
@@ -243,6 +244,20 @@ func newXCanonicalMessage(seq string) map[string]any {
 		"metadata":   map[string]any{},
 		"created_at": "2026-07-29T00:00:00Z",
 		"seq":        seq,
+	}
+}
+
+func newXCanonicalEvent(eventID, eventType string, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	return map[string]any{
+		"event_id":   eventID,
+		"thread_id":  newXTestThreadID,
+		"run_id":     newXTestRunID,
+		"event_type": eventType,
+		"payload":    payload,
+		"created_at": "2026-07-29T00:00:00Z",
 	}
 }
 
@@ -352,11 +367,7 @@ func TestNewXClientUsesCanonicalWorkbenchResources(t *testing.T) {
 			require.Contains(t, []string{"100", "1000"}, request.URL.Query().Get("limit"))
 			writer.Header().Set("X-Pagination-Total", "1")
 			writeTestJSON(writer, map[string]any{
-				"data": []any{map[string]any{
-					"event_id": "7657000000000000300", "thread_id": newXTestThreadID,
-					"run_id": newXTestRunID, "event_type": "assistant.completed",
-					"payload": map[string]any{}, "created_at": "2026-07-29T00:00:00Z",
-				}},
+				"data":     []any{newXCanonicalEvent("7657000000000000300", "assistant.completed", nil)},
 				"has_more": false,
 			})
 		default:
@@ -698,6 +709,33 @@ func TestNewXClientValidatesEveryCanonicalHistoryItem(t *testing.T) {
 	require.ErrorContains(t, err, "canonical thread history item 1")
 }
 
+func TestNewXClientAcceptsNullParentCheckpoint(t *testing.T) {
+	t.Run("state", func(t *testing.T) {
+		server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+			require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/state", request.URL.Path)
+			writeTestJSON(writer, newXCanonicalThreadState(newXTestThreadID))
+		})
+		client := newCreatedNewXTestClient(t, server.URL)
+		state, err := client.GetThreadState(context.Background(), newXTestThreadID)
+		require.NoError(t, err)
+		require.Contains(t, state, "parent_checkpoint")
+		require.Nil(t, state["parent_checkpoint"])
+	})
+
+	t.Run("history", func(t *testing.T) {
+		server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+			require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/history", request.URL.Path)
+			writeTestJSON(writer, []any{newXCanonicalThreadState(newXTestThreadID)})
+		})
+		client := newCreatedNewXTestClient(t, server.URL)
+		history, err := client.GetThreadHistory(context.Background(), newXTestThreadID, 20)
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		require.Contains(t, history[0], "parent_checkpoint")
+		require.Nil(t, history[0]["parent_checkpoint"])
+	})
+}
+
 func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -737,6 +775,29 @@ func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 			response["has_more"] = true
 			response["next_before_seq"] = "12"
 		}, wantErr: true},
+		{name: "default page advertises both cursor directions", mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_before_seq"] = "11"
+			response["next_after_seq"] = "11"
+		}, wantErr: true},
+		{name: "after page advertises both cursor directions", page: PageRequest{AfterSeq: 10}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_before_seq"] = "11"
+			response["next_after_seq"] = "11"
+		}, wantErr: true},
+		{name: "before page advertises both cursor directions", page: PageRequest{BeforeSeq: 20}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_before_seq"] = "11"
+			response["next_after_seq"] = "11"
+		}, wantErr: true},
+		{name: "valid after page", page: PageRequest{AfterSeq: 10}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_after_seq"] = "11"
+		}},
+		{name: "valid before page", page: PageRequest{BeforeSeq: 20}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_before_seq"] = "11"
+		}},
 		{name: "terminal page advertises cursor", mutate: func(response, _ map[string]any) {
 			response["next_after_seq"] = "11"
 		}, wantErr: true},
@@ -761,6 +822,80 @@ func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 			})
 			client := newCreatedNewXTestClient(t, server.URL)
 			_, err := client.ListRunMessages(context.Background(), newXTestThreadID, newXTestRunID, test.page)
+			if test.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewXClientRejectsMalformedCanonicalEventPages(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(map[string]any, map[string]any)
+		totalHeader string
+		omitTotal   bool
+		wantErr     bool
+	}{
+		{name: "missing data", mutate: func(response, _ map[string]any) { delete(response, "data") }, wantErr: true},
+		{name: "null data", mutate: func(response, _ map[string]any) { response["data"] = nil }, wantErr: true},
+		{name: "data not array", mutate: func(response, _ map[string]any) { response["data"] = map[string]any{} }, wantErr: true},
+		{name: "missing has more", mutate: func(response, _ map[string]any) { delete(response, "has_more") }, wantErr: true},
+		{name: "terminal page advertises cursor", mutate: func(response, _ map[string]any) {
+			response["next_after_event_id"] = "1"
+		}, wantErr: true},
+		{name: "has more with empty data", totalHeader: "0", mutate: func(response, _ map[string]any) {
+			response["data"] = []any{}
+			response["has_more"] = true
+			response["next_after_event_id"] = "1"
+		}, wantErr: true},
+		{name: "has more without next cursor", mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+		}, wantErr: true},
+		{name: "has more with wrong next cursor", mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_after_event_id"] = "2"
+		}, wantErr: true},
+		{name: "missing pagination total", omitTotal: true, wantErr: true},
+		{name: "invalid pagination total", totalHeader: "invalid", wantErr: true},
+		{name: "pagination total below data count", totalHeader: "0", wantErr: true},
+		{name: "payload not object", mutate: func(_ map[string]any, event map[string]any) {
+			event["payload"] = []any{}
+		}, wantErr: true},
+		{name: "missing created at", mutate: func(_ map[string]any, event map[string]any) {
+			delete(event, "created_at")
+		}, wantErr: true},
+		{name: "empty created at", mutate: func(_ map[string]any, event map[string]any) {
+			event["created_at"] = ""
+		}, wantErr: true},
+		{name: "valid terminal empty page", totalHeader: "0", mutate: func(response, _ map[string]any) {
+			response["data"] = []any{}
+		}},
+		{name: "valid terminal event page"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event := newXCanonicalEvent("1", "run.started", nil)
+			response := map[string]any{"data": []any{event}, "has_more": false}
+			if test.mutate != nil {
+				test.mutate(response, event)
+			}
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs/"+newXTestRunID+"/events", request.URL.Path)
+				if !test.omitTotal {
+					total := test.totalHeader
+					if total == "" {
+						total = "1"
+					}
+					writer.Header().Set("X-Pagination-Total", total)
+				}
+				writeTestJSON(writer, response)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.ListRunEvents(context.Background(), newXTestThreadID, newXTestRunID, 20)
 			if test.wantErr {
 				require.Error(t, err)
 			} else {
@@ -1023,6 +1158,120 @@ func TestNewXClientRejectsInvalidCanonicalSSEFrames(t *testing.T) {
 	}
 }
 
+func TestNewXClientRejectsInvalidCanonicalSSESequence(t *testing.T) {
+	runtimeError := "event: error\ndata: {\"code\":\"runtime_failed\",\"message\":\"failed\"}\n\n"
+	tests := []struct {
+		name    string
+		stream  string
+		wantErr string
+	}{
+		{
+			name:    "no leading metadata",
+			stream:  newXTestSSEEnd(newXTestThreadID, newXTestRunID, "success"),
+			wantErr: "leading metadata",
+		},
+		{
+			name: "event before metadata",
+			stream: newXTestSSEEvent("1", "1", newXTestThreadID, newXTestRunID, "run.started") +
+				newXTestSSEMetadata(newXTestThreadID, newXTestRunID),
+			wantErr: "leading metadata",
+		},
+		{
+			name: "duplicate metadata",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEMetadata(newXTestThreadID, newXTestRunID),
+			wantErr: "duplicate metadata",
+		},
+		{
+			name: "duplicate end",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEnd(newXTestThreadID, newXTestRunID, "success") +
+				newXTestSSEEnd(newXTestThreadID, newXTestRunID, "success"),
+			wantErr: "end frame must be final",
+		},
+		{
+			name: "frame after end",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEnd(newXTestThreadID, newXTestRunID, "success") +
+				newXTestSSEEvent("1", "1", newXTestThreadID, newXTestRunID, "run.started"),
+			wantErr: "end frame must be final",
+		},
+		{
+			name: "error not final",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				runtimeError +
+				newXTestSSEEvent("1", "1", newXTestThreadID, newXTestRunID, "run.started"),
+			wantErr: "error frame must be final",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs/"+newXTestRunID+"/stream", request.URL.Path)
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(writer, test.stream)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.StreamExistingRun(
+				context.Background(), newXTestThreadID, newXTestRunID,
+				StreamOptions{StopAfterFrames: 100},
+			)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestNewXClientAcceptsCanonicalSSEPrefixes(t *testing.T) {
+	tests := []struct {
+		name            string
+		stream          string
+		wantLastEventID string
+	}{
+		{
+			name:   "metadata only",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID),
+		},
+		{
+			name: "metadata and events",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("1", "1", newXTestThreadID, newXTestRunID, "run.started"),
+			wantLastEventID: "1",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(writer, test.stream)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			result, err := client.StreamExistingRun(
+				context.Background(), newXTestThreadID, newXTestRunID,
+				StreamOptions{StopAfterFrames: 100},
+			)
+			require.NoError(t, err)
+			require.Equal(t, test.wantLastEventID, result.LastEventID)
+			require.False(t, result.TerminalFrameObserved)
+		})
+	}
+}
+
+func TestNewXClientFinalCanonicalSSEErrorRemainsRuntimeFailure(t *testing.T) {
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(writer, newXTestSSEMetadata(newXTestThreadID, newXTestRunID))
+		_, _ = fmt.Fprint(writer, "event: error\ndata: {\"code\":\"runtime_failed\",\"message\":\"failed\"}\n\n")
+	})
+	client := newCreatedNewXTestClient(t, server.URL)
+	_, err := client.StreamExistingRun(
+		context.Background(), newXTestThreadID, newXTestRunID,
+		StreamOptions{StopAfterFrames: 100},
+	)
+	require.ErrorContains(t, err, "runtime error")
+}
+
 func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t *testing.T) {
 	pages := 0
 	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
@@ -1036,31 +1285,25 @@ func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t
 			if pages == 1 {
 				require.Empty(t, request.URL.Query().Get("after_event_id"))
 				writeTestJSON(writer, map[string]any{
-					"data": []any{map[string]any{
-						"event_id": "1", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-						"event_type": "run.started", "payload": map[string]any{}, "created_at": "2026-07-29T00:00:00Z",
-					}},
+					"data":     []any{newXCanonicalEvent("1", "run.started", nil)},
 					"has_more": true, "next_after_event_id": "1",
 				})
 				return
 			}
 			require.Equal(t, "1", request.URL.Query().Get("after_event_id"))
-			writeTestJSON(writer, map[string]any{
-				"data": []any{map[string]any{
-					"event_id": "2", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-					"event_type": "run.interrupted", "created_at": "2026-07-29T00:00:00Z",
-					"payload": map[string]any{
-						"interrupts": map[string]any{
-							"items": []any{map[string]any{
-								"id": "interrupt-1",
-								"info": map[string]any{
-									"schema": "coze.human_interaction.v1", "interaction_id": "hi_1", "kind": "clarification",
-								},
-								"is_root_cause": true,
-							}},
+			interrupted := newXCanonicalEvent("2", "run.interrupted", map[string]any{
+				"interrupts": map[string]any{
+					"items": []any{map[string]any{
+						"id": "interrupt-1",
+						"info": map[string]any{
+							"schema": "coze.human_interaction.v1", "interaction_id": "hi_1", "kind": "clarification",
 						},
-					},
-				}},
+						"is_root_cause": true,
+					}},
+				},
+			})
+			writeTestJSON(writer, map[string]any{
+				"data":     []any{interrupted},
 				"has_more": false,
 			})
 		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/resume":
@@ -1107,19 +1350,13 @@ func TestNewXClientPendingInteractionRejectsBackwardAlternatingCursor(t *testing
 			case 1:
 				require.Empty(t, request.URL.Query().Get("after_event_id"))
 				writeTestJSON(writer, map[string]any{
-					"data": []any{map[string]any{
-						"event_id": "2", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-						"event_type": "run.started", "payload": map[string]any{},
-					}},
+					"data":     []any{newXCanonicalEvent("2", "run.started", nil)},
 					"has_more": true, "next_after_event_id": "2",
 				})
 			case 2:
 				require.Equal(t, "2", request.URL.Query().Get("after_event_id"))
 				writeTestJSON(writer, map[string]any{
-					"data": []any{map[string]any{
-						"event_id": "1", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-						"event_type": "run.started", "payload": map[string]any{},
-					}},
+					"data":     []any{newXCanonicalEvent("1", "run.started", nil)},
 					"has_more": true, "next_after_event_id": "1",
 				})
 			default:
@@ -1152,10 +1389,7 @@ func TestNewXClientPendingInteractionRejectsCursorDifferentFromLastEvent(t *test
 			}
 			writer.Header().Set("X-Pagination-Total", "10")
 			writeTestJSON(writer, map[string]any{
-				"data": []any{map[string]any{
-					"event_id": "5", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-					"event_type": "run.started", "payload": map[string]any{},
-				}},
+				"data":     []any{newXCanonicalEvent("5", "run.started", nil)},
 				"has_more": true, "next_after_event_id": "6",
 			})
 		default:
@@ -1184,24 +1418,15 @@ func TestNewXClientPendingInteractionRejectsPageInternalEventRegression(t *testi
 			case 1:
 				require.Empty(t, request.URL.Query().Get("after_event_id"))
 				writeTestJSON(writer, map[string]any{
-					"data": []any{map[string]any{
-						"event_id": "5", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-						"event_type": "run.started", "payload": map[string]any{},
-					}},
+					"data":     []any{newXCanonicalEvent("5", "run.started", nil)},
 					"has_more": true, "next_after_event_id": "5",
 				})
 			case 2:
 				require.Equal(t, "5", request.URL.Query().Get("after_event_id"))
 				writeTestJSON(writer, map[string]any{
 					"data": []any{
-						map[string]any{
-							"event_id": "100", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-							"event_type": "run.running", "payload": map[string]any{},
-						},
-						map[string]any{
-							"event_id": "6", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
-							"event_type": "run.interrupted", "payload": map[string]any{},
-						},
+						newXCanonicalEvent("100", "run.running", nil),
+						newXCanonicalEvent("6", "run.interrupted", nil),
 					},
 					"has_more": true, "next_after_event_id": "6",
 				})

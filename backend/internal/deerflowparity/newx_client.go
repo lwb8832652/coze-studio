@@ -53,10 +53,16 @@ type newXCanonicalRunResponse struct {
 	Status   string `json:"status"`
 }
 
+type newXCanonicalEventPageResponse struct {
+	Data             json.RawMessage `json:"data"`
+	HasMore          *bool           `json:"has_more"`
+	NextAfterEventID *string         `json:"next_after_event_id"`
+}
+
 type newXCanonicalEventPage struct {
-	Data             []map[string]any `json:"data"`
-	HasMore          bool             `json:"has_more"`
-	NextAfterEventID string           `json:"next_after_event_id"`
+	Data             []map[string]any
+	HasMore          bool
+	NextAfterEventID string
 }
 
 type newXCanonicalMessagePageResponse struct {
@@ -532,10 +538,16 @@ func validateNewXCanonicalStreamFrames(
 		lastEventID = validated
 		lastEventCursor, _ = strconv.ParseInt(validated, 10, 64)
 	}
+	if len(frames) == 0 || strings.TrimSpace(frames[0].Event) != "metadata" {
+		return "", errors.New("newx stream requires one leading metadata frame")
+	}
 
-	for _, frame := range frames {
+	for index, frame := range frames {
 		switch strings.TrimSpace(frame.Event) {
 		case "metadata":
+			if index != 0 {
+				return "", errors.New("newx stream contains duplicate metadata")
+			}
 			if strings.TrimSpace(frame.ID) != "" {
 				return "", errors.New("newx stream metadata frame has an event id")
 			}
@@ -576,6 +588,9 @@ func validateNewXCanonicalStreamFrames(
 			lastEventID = frameID
 			lastEventCursor = frameCursor
 		case "end":
+			if index != len(frames)-1 {
+				return "", errors.New("newx stream end frame must be final")
+			}
 			if strings.TrimSpace(frame.ID) != "" {
 				return "", errors.New("newx stream end frame has an event id")
 			}
@@ -592,6 +607,12 @@ func validateNewXCanonicalStreamFrames(
 				return "", errors.New("newx stream terminal status is invalid")
 			}
 		case "error":
+			if index != len(frames)-1 {
+				return "", errors.New("newx stream error frame must be final")
+			}
+			if strings.TrimSpace(frame.ID) != "" {
+				return "", errors.New("newx stream error frame has an event id")
+			}
 			return "", errors.New("newx stream returned a runtime error")
 		default:
 			return "", errors.New("newx stream frame type is invalid")
@@ -765,7 +786,7 @@ func (c *NewXClient) pendingHumanInteraction(
 		}
 		path := "/api/workbench/threads/" + url.PathEscape(threadID) +
 			"/runs/" + url.PathEscape(runID) + "/events?" + query.Encode()
-		response := newXCanonicalEventPage{}
+		response := newXCanonicalEventPageResponse{}
 		responseHeaders, err := c.doCanonicalJSON(
 			ctx,
 			http.MethodGet,
@@ -778,36 +799,19 @@ func (c *NewXClient) pendingHumanInteraction(
 		if err != nil {
 			return newXPendingHumanInteraction{}, err
 		}
-		if _, err := newXCanonicalPaginationTotal(responseHeaders); err != nil {
-			return newXPendingHumanInteraction{}, err
-		}
-		lastEventID, err := validateNewXCanonicalEvents(
-			threadID, runID, afterEventID, response.Data,
-		)
+		page, err := newXEventPage(threadID, runID, afterEventID, response, responseHeaders)
 		if err != nil {
-			if errors.Is(err, errNewXEventIDsNotIncreasing) {
-				return newXPendingHumanInteraction{}, fmt.Errorf(
-					"newx run event pagination made no progress: %w", err,
-				)
-			}
 			return newXPendingHumanInteraction{}, err
 		}
-		for _, event := range response.Data {
+		for _, event := range page.Data {
 			if pending, ok := newXPendingInteractionFromEvent(event); ok {
 				latest = pending
 			}
 		}
-		if !response.HasMore {
+		if !page.HasMore {
 			break
 		}
-		if len(response.Data) == 0 {
-			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
-		}
-		nextAfterEventID, err := newXPositiveResourceID(response.NextAfterEventID)
-		if err != nil || nextAfterEventID != lastEventID {
-			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
-		}
-		afterEventID = nextAfterEventID
+		afterEventID = page.NextAfterEventID
 	}
 	if latest.InteractionID == "" {
 		return newXPendingHumanInteraction{}, fmt.Errorf(
@@ -922,7 +926,7 @@ func validateNewXCanonicalThreadState(threadID string, state map[string]any) err
 	if _, ok := state["interrupts"].([]any); !ok {
 		return invalid("interrupts is not an array")
 	}
-	if parent, exists := state["parent_checkpoint"]; exists {
+	if parent, exists := state["parent_checkpoint"]; exists && parent != nil {
 		if err := validateNewXCanonicalCheckpoint(threadID, parent); err != nil {
 			return invalid("parent " + err.Error())
 		}
@@ -1026,27 +1030,18 @@ func (c *NewXClient) ListRunEvents(ctx context.Context, threadID, runID string, 
 	query.Set("limit", strconv.Itoa(limit))
 	path := "/api/workbench/threads/" + url.PathEscape(threadID) +
 		"/runs/" + url.PathEscape(runID) + "/events?" + query.Encode()
-	response := newXCanonicalEventPage{}
+	response := newXCanonicalEventPageResponse{}
 	responseHeaders, err := c.doCanonicalJSON(
 		ctx, http.MethodGet, "newx_run_events", path, nil, headers, &response,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := newXCanonicalPaginationTotal(responseHeaders); err != nil {
-		return nil, err
-	}
-	lastEventID, err := validateNewXCanonicalEvents(threadID, runID, "", response.Data)
+	page, err := newXEventPage(threadID, runID, "", response, responseHeaders)
 	if err != nil {
 		return nil, err
 	}
-	if response.HasMore {
-		nextAfterEventID, err := newXPositiveResourceID(response.NextAfterEventID)
-		if err != nil || len(response.Data) == 0 || nextAfterEventID != lastEventID {
-			return nil, errors.New("newx run event page returned an invalid cursor")
-		}
-	}
-	return response.Data, nil
+	return page.Data, nil
 }
 
 func (c *NewXClient) WaitForEvent(ctx context.Context, threadID, runID, eventFamily string) error {
@@ -1071,6 +1066,77 @@ func newXCanonicalPaginationTotal(headers http.Header) (int64, error) {
 		return 0, errors.New("newx response returned invalid X-Pagination-Total")
 	}
 	return total, nil
+}
+
+func newXEventPage(
+	threadID string,
+	runID string,
+	afterEventID string,
+	response newXCanonicalEventPageResponse,
+	headers http.Header,
+) (newXCanonicalEventPage, error) {
+	invalid := func(reason string) (newXCanonicalEventPage, error) {
+		return newXCanonicalEventPage{}, fmt.Errorf("newx canonical event page is invalid: %s", reason)
+	}
+	noProgress := func(reason string) (newXCanonicalEventPage, error) {
+		return newXCanonicalEventPage{}, fmt.Errorf(
+			"newx run event pagination made no progress: %s", reason,
+		)
+	}
+
+	data := bytes.TrimSpace(response.Data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return invalid("data is missing")
+	}
+	if response.HasMore == nil {
+		return invalid("has_more is missing")
+	}
+	var events []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&events); err != nil || events == nil {
+		return invalid("data is not an array")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalid("data is not an array")
+	}
+
+	total, err := newXCanonicalPaginationTotal(headers)
+	if err != nil {
+		return newXCanonicalEventPage{}, err
+	}
+	if total < int64(len(events)) {
+		return invalid("X-Pagination-Total is below the returned data count")
+	}
+	lastEventID, err := validateNewXCanonicalEvents(threadID, runID, afterEventID, events)
+	if err != nil {
+		if errors.Is(err, errNewXEventIDsNotIncreasing) {
+			return noProgress(err.Error())
+		}
+		return newXCanonicalEventPage{}, err
+	}
+
+	if !*response.HasMore {
+		if response.NextAfterEventID != nil {
+			return invalid("a terminal page advertises a next cursor")
+		}
+		return newXCanonicalEventPage{Data: events}, nil
+	}
+	if len(events) == 0 {
+		return noProgress("has_more is true with empty data")
+	}
+	if response.NextAfterEventID == nil {
+		return noProgress("next_after_event_id is missing")
+	}
+	nextAfterEventID, err := newXPositiveResourceID(*response.NextAfterEventID)
+	if err != nil || nextAfterEventID != lastEventID {
+		return noProgress("next_after_event_id does not match the last event")
+	}
+	return newXCanonicalEventPage{
+		Data:             events,
+		HasMore:          true,
+		NextAfterEventID: nextAfterEventID,
+	}, nil
 }
 
 func newXMessagePage(
@@ -1120,8 +1186,13 @@ func newXMessagePage(
 	boundaryIndex := len(messages) - 1
 	nextCursor := response.NextAfterSeq
 	if request.BeforeSeq > 0 {
+		if response.NextAfterSeq != nil {
+			return invalid("a before page advertises an after cursor")
+		}
 		boundaryIndex = 0
 		nextCursor = response.NextBeforeSeq
+	} else if response.NextBeforeSeq != nil {
+		return invalid("a default or after page advertises a before cursor")
 	}
 	expected, ok := messages[boundaryIndex]["seq"].(string)
 	if !ok {
@@ -1210,6 +1281,13 @@ func validateNewXCanonicalEvents(
 		}
 		if !safeEventFamilyPattern.MatchString(strings.TrimSpace(stringValue(event["event_type"]))) {
 			return "", errors.New("newx run event type is invalid")
+		}
+		if _, ok := event["payload"].(map[string]any); !ok {
+			return "", errors.New("newx run event payload is invalid")
+		}
+		createdAt, ok := event["created_at"].(string)
+		if !ok || strings.TrimSpace(createdAt) == "" {
+			return "", errors.New("newx run event created_at is invalid")
 		}
 		lastEventID = eventID
 		lastEventCursor = eventCursor
