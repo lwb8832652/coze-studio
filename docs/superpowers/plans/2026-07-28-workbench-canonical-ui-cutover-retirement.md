@@ -746,6 +746,8 @@ git commit -m "refactor: delegate workbench pages to canonical client"
 
 **Files:**
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/canonical-frontend-contract.test.ts`
+- Create: `frontend/apps/coze-studio/src/pages/tasks/task-service-contract.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/service.ts`
 - Modify: `frontend/apps/coze-studio/src/components/workspace-sub-menu/workspace-task-list.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/detail.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/index.tsx`
@@ -778,7 +780,7 @@ git commit -m "refactor: delegate workbench pages to canonical client"
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-usage-loader.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-artifact-scan-jobs-section.tsx`
 
-- [ ] **Step 1: Make the production boundary scan fail**
+- [x] **Step 1: Make the production boundary scan fail**
 
 Extend `canonical-frontend-contract.test.ts` to reject Thread-related `workbenchTask`/
 `workbenchThread` imports, source route strings, direct `fetch` and direct `EventSource` under
@@ -795,19 +797,19 @@ rushx test src/pages/tasks/__tests__/canonical-frontend-contract.test.ts
 
 Expected: FAIL and identify current transport-bound production files.
 
-- [ ] **Step 2: Replace transport types only**
+- [x] **Step 2: Replace transport types only**
 
 Import app-owned Thread, Run, Message, Event, Artifact, Todo, TokenUsage, Memory and audit types from
 `pages/workbench/thread-client`. Preserve JSX, labels, sort order, state ownership and user action
 ordering.
 
-- [ ] **Step 3: Thread workspace scope through calls**
+- [x] **Step 3: Thread workspace scope through calls**
 
 Supply `space_id`, `thread_id` and `run_id` from the authenticated route/store scope. Do not infer
 workspace from response metadata. Add focused assertions for Memory, audit, scan, usage,
 suggestions, upload and follow-up calls.
 
-- [ ] **Step 4: Run boundary and component tests**
+- [x] **Step 4: Run boundary and component tests**
 
 ```bash
 cd frontend/apps/coze-studio
@@ -822,7 +824,11 @@ rushx test \
 
 Expected: PASS and no production page component imports Thread transport DTOs.
 
-- [ ] **Step 5: Commit the component boundary**
+- [x] **Step 5: Commit the component boundary**
+
+Implemented together with Task 8 in commit `2c576ac0b`. The combined commit keeps the page-model
+boundary, scoped mutations and Run-bound stream transition atomic so no intermediate commit can
+bind canonical page state to the legacy stream owner.
 
 ```bash
 git add \
@@ -838,29 +844,36 @@ git commit -m "refactor: isolate workbench page models"
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-event-stream.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-detail-hooks.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/task-run-actions-hook.ts`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/task-follow-up.ts`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail.test.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-data-scope.test.tsx`
+- Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-detail-follow-up-actions.test.tsx`
 - Modify: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-run-actions-hook.test.tsx`
+- Create: `frontend/apps/coze-studio/src/pages/tasks/__tests__/task-run-event-stream.test.tsx`
 
-- [ ] **Step 1: Write failing one-source lifecycle tests**
+- [x] **Step 1: Write failing one-source lifecycle tests**
 
 Cover initial active Run, terminal close, Thread change, Run change after resume, top-level retry,
 subagent retry result isolation, unmount, late source-Run event and duplicate terminal event. Assert
 there is never more than one open subscription and late events cannot update a newer attempt.
 
-- [ ] **Step 2: Remove direct EventSource ownership**
+- [x] **Step 2: Remove direct EventSource ownership**
 
 `useTaskThreadRunEventStream` receives space, Thread and committed Run IDs and calls
 `canonicalThreadClient.subscribeRunEvents`. It keeps current title, token and event mapping callbacks
 but does not construct a URL or inspect a client mode.
 
-- [ ] **Step 3: Commit stream changes only after Run state changes**
+- [x] **Step 3: Commit stream changes only after Run state changes**
 
 Resume/retry first accepts the returned Run, updates scoped detail state, then hook dependencies
 close the previous source and open the new Run source. Guard callbacks with captured
 `{spaceId, threadId, runId, generation}` before mutation.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
+
+Fresh verification before commit `2c576ac0b`: the complete Tasks suite passed 224/224 assertions,
+the Task 7/8 plan matrix passed 168/168 assertions, TypeScript checking and lint passed, and the
+production build exited successfully.
 
 ```bash
 cd frontend/apps/coze-studio
