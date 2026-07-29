@@ -41,6 +41,7 @@ type NewXClient struct {
 var _ PlatformClient = (*NewXClient)(nil)
 
 var errNewXNoResumableHumanInteraction = errors.New("newx run has no resumable human interaction")
+var errNewXEventIDsNotIncreasing = errors.New("newx run event ids are not strictly increasing")
 
 type newXCanonicalThread struct {
 	ThreadID string `json:"thread_id"`
@@ -56,6 +57,31 @@ type newXCanonicalEventPage struct {
 	Data             []map[string]any `json:"data"`
 	HasMore          bool             `json:"has_more"`
 	NextAfterEventID string           `json:"next_after_event_id"`
+}
+
+type newXCanonicalMessagePageResponse struct {
+	Data          json.RawMessage `json:"data"`
+	HasMore       *bool           `json:"has_more"`
+	NextBeforeSeq *string         `json:"next_before_seq"`
+	NextAfterSeq  *string         `json:"next_after_seq"`
+}
+
+type newXCanonicalStreamMetadata struct {
+	RunID    string `json:"run_id"`
+	ThreadID string `json:"thread_id"`
+}
+
+type newXCanonicalStreamEvent struct {
+	EventID   string `json:"event_id"`
+	ThreadID  string `json:"thread_id"`
+	RunID     string `json:"run_id"`
+	EventType string `json:"event_type"`
+}
+
+type newXCanonicalStreamEnd struct {
+	RunID    string `json:"run_id"`
+	ThreadID string `json:"thread_id"`
+	Status   string `json:"status"`
 }
 
 func (c *NewXClient) Product() Product { return ProductNewX }
@@ -106,6 +132,19 @@ func (c *NewXClient) threadScope(threadID string) (string, http.Header, error) {
 	return threadID, newXSpaceHeaders(spaceID), nil
 }
 
+func (c *NewXClient) bindThreadWorkspace(threadID, spaceID string) error {
+	c.workspaceMu.Lock()
+	defer c.workspaceMu.Unlock()
+	if current, ok := c.workspaceByThread[threadID]; ok {
+		if current == spaceID {
+			return nil
+		}
+		return errors.New("newx thread workspace binding conflict")
+	}
+	c.workspaceByThread[threadID] = spaceID
+	return nil
+}
+
 func newXContainsCallerIdentity(value any) bool {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -142,18 +181,21 @@ func newXCallerIdentityKey(key string) bool {
 	}
 }
 
-func newXSerializedInputContainsCallerIdentity(input RunInput) (bool, error) {
+func newXSerializedInput(input RunInput) (map[string]any, bool, error) {
 	encoded, err := json.Marshal(input)
 	if err != nil {
-		return false, fmt.Errorf("newx run input is not serializable: %w", err)
+		return nil, false, fmt.Errorf("newx run input is not serializable: %w", err)
 	}
-	var serialized any
+	var serialized map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.UseNumber()
 	if err := decoder.Decode(&serialized); err != nil {
-		return false, errors.New("newx run input serialization is invalid")
+		return nil, false, errors.New("newx run input serialization is invalid")
 	}
-	return newXContainsCallerIdentity(serialized), nil
+	if serialized == nil {
+		return nil, false, errors.New("newx run input serialization is invalid")
+	}
+	return serialized, newXContainsCallerIdentity(serialized), nil
 }
 
 func (c *NewXClient) doCanonicalJSON(
@@ -191,8 +233,15 @@ func (c *NewXClient) doCanonicalJSON(
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", endpointName, err)
 	}
-	if out == nil || len(bytes.TrimSpace(payload)) == 0 {
+	if out == nil {
 		return response.Header.Clone(), nil
+	}
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("%s returned an empty JSON body", endpointName)
+	}
+	if bytes.Equal(payload, []byte("null")) {
+		return nil, fmt.Errorf("%s returned a null JSON body", endpointName)
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if !strings.Contains(contentType, "application/json") && !strings.Contains(contentType, "+json") {
@@ -271,9 +320,9 @@ func (c *NewXClient) CreateThread(ctx context.Context, options ThreadOptions) (s
 	if err != nil {
 		return "", errors.New("newx create thread returned an invalid thread id")
 	}
-	c.workspaceMu.Lock()
-	c.workspaceByThread[threadID] = spaceID
-	c.workspaceMu.Unlock()
+	if err := c.bindThreadWorkspace(threadID, spaceID); err != nil {
+		return "", err
+	}
 	return threadID, nil
 }
 
@@ -293,18 +342,18 @@ func (c *NewXClient) StartRun(ctx context.Context, threadID string, input RunInp
 	if strings.TrimSpace(input.AssistantID) == "" || input.Input == nil {
 		return RunHandle{}, errors.New("run input is incomplete")
 	}
-	containsCallerIdentity, err := newXSerializedInputContainsCallerIdentity(input)
+	input.StreamMode = []string{"events"}
+	serializedInput, containsCallerIdentity, err := newXSerializedInput(input)
 	if err != nil {
 		return RunHandle{}, err
 	}
 	if containsCallerIdentity {
 		return RunHandle{}, errors.New("newx run input must not contain caller identity")
 	}
-	input.StreamMode = []string{"events"}
 	response := newXCanonicalRunResponse{}
 	path := "/api/workbench/threads/" + url.PathEscape(threadID) + "/runs"
 	if _, err := c.doCanonicalJSON(
-		ctx, http.MethodPost, "newx_start_run", path, input, headers, &response,
+		ctx, http.MethodPost, "newx_start_run", path, serializedInput, headers, &response,
 	); err != nil {
 		return RunHandle{}, err
 	}
@@ -434,6 +483,12 @@ func (c *NewXClient) streamCanonicalRunSegment(
 	if err != nil {
 		return StreamResult{}, fmt.Errorf("newx stream parse failed: %w", err)
 	}
+	lastEventID, err := validateNewXCanonicalStreamFrames(
+		threadID, runID, options.AfterEventID, frames,
+	)
+	if err != nil {
+		return StreamResult{}, err
+	}
 	result, err := streamResultFromFrames("newx", threadID, runID, frames)
 	if err != nil {
 		return StreamResult{}, err
@@ -441,12 +496,108 @@ func (c *NewXClient) streamCanonicalRunSegment(
 	if result.RunID != runID {
 		return StreamResult{}, errors.New("newx stream run id mismatch")
 	}
-	if result.LastEventID != "" {
-		if _, err := newXPositiveResourceID(result.LastEventID); err != nil {
-			return StreamResult{}, errors.New("newx stream event id is invalid")
+	result.LastEventID = lastEventID
+	return result, nil
+}
+
+func decodeNewXCanonicalStreamFrame(frame SSEFrame, frameKind string, out any) error {
+	payload := bytes.TrimSpace(frame.Data)
+	if len(payload) == 0 || bytes.Equal(payload, []byte("null")) {
+		return fmt.Errorf("newx stream %s frame is invalid", frameKind)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(out); err != nil {
+		return fmt.Errorf("newx stream %s frame is invalid", frameKind)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("newx stream %s frame is invalid", frameKind)
+	}
+	return nil
+}
+
+func validateNewXCanonicalStreamFrames(
+	threadID string,
+	runID string,
+	afterEventID string,
+	frames []SSEFrame,
+) (string, error) {
+	lastEventID := strings.TrimSpace(afterEventID)
+	var lastEventCursor int64
+	if lastEventID != "" {
+		validated, err := newXPositiveResourceID(lastEventID)
+		if err != nil {
+			return "", errors.New("newx stream cursor is invalid")
+		}
+		lastEventID = validated
+		lastEventCursor, _ = strconv.ParseInt(validated, 10, 64)
+	}
+
+	for _, frame := range frames {
+		switch strings.TrimSpace(frame.Event) {
+		case "metadata":
+			if strings.TrimSpace(frame.ID) != "" {
+				return "", errors.New("newx stream metadata frame has an event id")
+			}
+			metadata := newXCanonicalStreamMetadata{}
+			if err := decodeNewXCanonicalStreamFrame(frame, "metadata", &metadata); err != nil {
+				return "", err
+			}
+			metadataThreadID, threadErr := newXPositiveResourceID(metadata.ThreadID)
+			metadataRunID, runErr := newXPositiveResourceID(metadata.RunID)
+			if threadErr != nil || runErr != nil || metadataThreadID != threadID || metadataRunID != runID {
+				return "", errors.New("newx stream metadata identity mismatch")
+			}
+		case "events":
+			frameID, err := newXPositiveResourceID(frame.ID)
+			if err != nil {
+				return "", errors.New("newx stream event id is invalid")
+			}
+			frameCursor, _ := strconv.ParseInt(frameID, 10, 64)
+			if frameCursor <= lastEventCursor {
+				return "", errors.New("newx stream event ids are not strictly increasing")
+			}
+			event := newXCanonicalStreamEvent{}
+			if err := decodeNewXCanonicalStreamFrame(frame, "events", &event); err != nil {
+				return "", err
+			}
+			eventID, eventErr := newXPositiveResourceID(event.EventID)
+			eventThreadID, threadErr := newXPositiveResourceID(event.ThreadID)
+			eventRunID, runErr := newXPositiveResourceID(event.RunID)
+			if eventErr != nil || eventID != frameID {
+				return "", errors.New("newx stream payload event id mismatch")
+			}
+			if threadErr != nil || runErr != nil || eventThreadID != threadID || eventRunID != runID {
+				return "", errors.New("newx stream event identity mismatch")
+			}
+			if !safeEventFamilyPattern.MatchString(strings.TrimSpace(event.EventType)) {
+				return "", errors.New("newx stream event type is invalid")
+			}
+			lastEventID = frameID
+			lastEventCursor = frameCursor
+		case "end":
+			if strings.TrimSpace(frame.ID) != "" {
+				return "", errors.New("newx stream end frame has an event id")
+			}
+			end := newXCanonicalStreamEnd{}
+			if err := decodeNewXCanonicalStreamFrame(frame, "end", &end); err != nil {
+				return "", err
+			}
+			endThreadID, threadErr := newXPositiveResourceID(end.ThreadID)
+			endRunID, runErr := newXPositiveResourceID(end.RunID)
+			if threadErr != nil || runErr != nil || endThreadID != threadID || endRunID != runID {
+				return "", errors.New("newx stream end identity mismatch")
+			}
+			if terminal := canonicalTerminal(end.Status); !isTerminalRunStatus(terminal) {
+				return "", errors.New("newx stream terminal status is invalid")
+			}
+		case "error":
+			return "", errors.New("newx stream returned a runtime error")
+		default:
+			return "", errors.New("newx stream frame type is invalid")
 		}
 	}
-	return result, nil
+	return lastEventID, nil
 }
 
 func isTerminalRunStatus(status string) bool {
@@ -606,7 +757,6 @@ func (c *NewXClient) pendingHumanInteraction(
 	}
 	var latest newXPendingHumanInteraction
 	var afterEventID string
-	var afterEventCursor int64
 	for {
 		query := url.Values{}
 		query.Set("limit", strconv.Itoa(pageSize))
@@ -631,7 +781,15 @@ func (c *NewXClient) pendingHumanInteraction(
 		if _, err := newXCanonicalPaginationTotal(responseHeaders); err != nil {
 			return newXPendingHumanInteraction{}, err
 		}
-		if err := validateNewXCanonicalEvents(threadID, runID, response.Data); err != nil {
+		lastEventID, err := validateNewXCanonicalEvents(
+			threadID, runID, afterEventID, response.Data,
+		)
+		if err != nil {
+			if errors.Is(err, errNewXEventIDsNotIncreasing) {
+				return newXPendingHumanInteraction{}, fmt.Errorf(
+					"newx run event pagination made no progress: %w", err,
+				)
+			}
 			return newXPendingHumanInteraction{}, err
 		}
 		for _, event := range response.Data {
@@ -646,16 +804,10 @@ func (c *NewXClient) pendingHumanInteraction(
 			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
 		}
 		nextAfterEventID, err := newXPositiveResourceID(response.NextAfterEventID)
-		lastEventID, lastErr := newXPositiveResourceID(
-			stringValue(response.Data[len(response.Data)-1]["event_id"]),
-		)
-		nextCursor, cursorErr := strconv.ParseInt(nextAfterEventID, 10, 64)
-		if err != nil || lastErr != nil || cursorErr != nil ||
-			nextAfterEventID != lastEventID || nextCursor <= afterEventCursor {
+		if err != nil || nextAfterEventID != lastEventID {
 			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
 		}
 		afterEventID = nextAfterEventID
-		afterEventCursor = nextCursor
 	}
 	if latest.InteractionID == "" {
 		return newXPendingHumanInteraction{}, fmt.Errorf(
@@ -707,6 +859,77 @@ func newXInterruptItems(value any) []any {
 	return nil
 }
 
+func validateNewXCanonicalCheckpoint(threadID string, value any) error {
+	checkpoint, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("checkpoint is not an object")
+	}
+	checkpointThreadID, ok := checkpoint["thread_id"].(string)
+	if !ok || checkpointThreadID != threadID {
+		return errors.New("checkpoint thread id mismatch")
+	}
+	if _, err := newXPositiveResourceID(checkpointThreadID); err != nil {
+		return errors.New("checkpoint thread id is invalid")
+	}
+	checkpointID, ok := checkpoint["checkpoint_id"].(string)
+	if !ok {
+		return errors.New("checkpoint id is missing")
+	}
+	if _, err := newXPositiveResourceID(checkpointID); err != nil {
+		return errors.New("checkpoint id is invalid")
+	}
+	if _, ok := checkpoint["checkpoint_ns"].(string); !ok {
+		return errors.New("checkpoint namespace is invalid")
+	}
+	if _, ok := checkpoint["checkpoint_map"].(map[string]any); !ok {
+		return errors.New("checkpoint map is invalid")
+	}
+	return nil
+}
+
+func validateNewXCanonicalThreadState(threadID string, state map[string]any) error {
+	invalid := func(reason string) error {
+		return fmt.Errorf("newx canonical thread state is invalid: %s", reason)
+	}
+	if state == nil {
+		return invalid("state is not an object")
+	}
+	if _, ok := state["values"].(map[string]any); !ok {
+		return invalid("values is not an object")
+	}
+	next, ok := state["next"].([]any)
+	if !ok {
+		return invalid("next is not an array")
+	}
+	for _, value := range next {
+		if _, ok := value.(string); !ok {
+			return invalid("next contains a non-string value")
+		}
+	}
+	if err := validateNewXCanonicalCheckpoint(threadID, state["checkpoint"]); err != nil {
+		return invalid(err.Error())
+	}
+	if _, ok := state["metadata"].(map[string]any); !ok {
+		return invalid("metadata is not an object")
+	}
+	createdAt, ok := state["created_at"].(string)
+	if !ok || strings.TrimSpace(createdAt) == "" {
+		return invalid("created_at is invalid")
+	}
+	if _, ok := state["tasks"].([]any); !ok {
+		return invalid("tasks is not an array")
+	}
+	if _, ok := state["interrupts"].([]any); !ok {
+		return invalid("interrupts is not an array")
+	}
+	if parent, exists := state["parent_checkpoint"]; exists {
+		if err := validateNewXCanonicalCheckpoint(threadID, parent); err != nil {
+			return invalid("parent " + err.Error())
+		}
+	}
+	return nil
+}
+
 func (c *NewXClient) GetThreadState(ctx context.Context, threadID string) (map[string]any, error) {
 	threadID, headers, err := c.threadScope(threadID)
 	if err != nil {
@@ -717,6 +940,9 @@ func (c *NewXClient) GetThreadState(ctx context.Context, threadID string) (map[s
 	if _, err := c.doCanonicalJSON(
 		ctx, http.MethodGet, "newx_thread_state", path, nil, headers, &response,
 	); err != nil {
+		return nil, err
+	}
+	if err := validateNewXCanonicalThreadState(threadID, response); err != nil {
 		return nil, err
 	}
 	return response, nil
@@ -738,6 +964,11 @@ func (c *NewXClient) GetThreadHistory(ctx context.Context, threadID string, limi
 		ctx, http.MethodGet, "newx_thread_history", path, nil, headers, &response,
 	); err != nil {
 		return nil, err
+	}
+	for index, state := range response {
+		if err := validateNewXCanonicalThreadState(threadID, state); err != nil {
+			return nil, fmt.Errorf("newx canonical thread history item %d is invalid: %w", index, err)
+		}
 	}
 	return response, nil
 }
@@ -769,16 +1000,14 @@ func (c *NewXClient) ListRunMessages(ctx context.Context, threadID, runID string
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	response := MessagePage{}
-	if _, err := c.doCanonicalJSON(
+	response := newXCanonicalMessagePageResponse{}
+	responseHeaders, err := c.doCanonicalJSON(
 		ctx, http.MethodGet, "newx_run_messages", path, nil, headers, &response,
-	); err != nil {
+	)
+	if err != nil {
 		return MessagePage{}, err
 	}
-	if err := validateNewXCanonicalMessages(threadID, runID, response.Data); err != nil {
-		return MessagePage{}, err
-	}
-	return response, nil
+	return newXMessagePage(threadID, runID, page, response, responseHeaders)
 }
 
 func (c *NewXClient) ListRunEvents(ctx context.Context, threadID, runID string, limit int) ([]map[string]any, error) {
@@ -807,11 +1036,13 @@ func (c *NewXClient) ListRunEvents(ctx context.Context, threadID, runID string, 
 	if _, err := newXCanonicalPaginationTotal(responseHeaders); err != nil {
 		return nil, err
 	}
-	if err := validateNewXCanonicalEvents(threadID, runID, response.Data); err != nil {
+	lastEventID, err := validateNewXCanonicalEvents(threadID, runID, "", response.Data)
+	if err != nil {
 		return nil, err
 	}
 	if response.HasMore {
-		if _, err := newXPositiveResourceID(response.NextAfterEventID); err != nil {
+		nextAfterEventID, err := newXPositiveResourceID(response.NextAfterEventID)
+		if err != nil || len(response.Data) == 0 || nextAfterEventID != lastEventID {
 			return nil, errors.New("newx run event page returned an invalid cursor")
 		}
 	}
@@ -842,35 +1073,146 @@ func newXCanonicalPaginationTotal(headers http.Header) (int64, error) {
 	return total, nil
 }
 
+func newXMessagePage(
+	threadID string,
+	runID string,
+	request PageRequest,
+	response newXCanonicalMessagePageResponse,
+	headers http.Header,
+) (MessagePage, error) {
+	invalid := func(reason string) (MessagePage, error) {
+		return MessagePage{}, fmt.Errorf("newx canonical message page is invalid: %s", reason)
+	}
+	data := bytes.TrimSpace(response.Data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return invalid("data is missing")
+	}
+	if response.HasMore == nil {
+		return invalid("has_more is missing")
+	}
+	var messages []map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&messages); err != nil || messages == nil {
+		return invalid("data is not an array")
+	}
+	if rawTotal := strings.TrimSpace(headers.Get("X-Pagination-Total")); rawTotal != "" {
+		total, err := newXCanonicalPaginationTotal(headers)
+		if err != nil {
+			return MessagePage{}, err
+		}
+		if total < int64(len(messages)) {
+			return invalid("X-Pagination-Total is below the returned data count")
+		}
+	}
+	if err := validateNewXCanonicalMessages(threadID, runID, messages); err != nil {
+		return MessagePage{}, err
+	}
+	if !*response.HasMore {
+		if response.NextBeforeSeq != nil || response.NextAfterSeq != nil {
+			return invalid("a terminal page advertises a next cursor")
+		}
+		return MessagePage{Data: messages, HasMore: false}, nil
+	}
+	if len(messages) == 0 {
+		return invalid("has_more is true with empty data")
+	}
+	boundaryIndex := len(messages) - 1
+	nextCursor := response.NextAfterSeq
+	if request.BeforeSeq > 0 {
+		boundaryIndex = 0
+		nextCursor = response.NextBeforeSeq
+	}
+	expected, ok := messages[boundaryIndex]["seq"].(string)
+	if !ok {
+		return invalid("pagination boundary message has no sequence")
+	}
+	if _, err := newXPositiveResourceID(expected); err != nil {
+		return invalid("pagination boundary sequence is invalid")
+	}
+	if nextCursor == nil || strings.TrimSpace(*nextCursor) != expected {
+		return invalid("next cursor does not match the pagination boundary")
+	}
+	return MessagePage{Data: messages, HasMore: true}, nil
+}
+
 func validateNewXCanonicalMessages(threadID, runID string, messages []map[string]any) error {
+	invalid := func(reason string) error {
+		return fmt.Errorf("newx canonical message is invalid: %s", reason)
+	}
 	for _, message := range messages {
-		messageID, err := newXPositiveResourceID(stringValue(message["message_id"]))
-		if err != nil || messageID == "" {
-			return errors.New("newx run message id is invalid")
+		messageID, ok := message["message_id"].(string)
+		if !ok {
+			return invalid("message_id is missing")
 		}
-		if stringValue(message["thread_id"]) != threadID || stringValue(message["run_id"]) != runID {
-			return errors.New("newx run message identity mismatch")
+		if _, err := newXPositiveResourceID(messageID); err != nil {
+			return invalid("message_id is invalid")
 		}
-		if seq := strings.TrimSpace(stringValue(message["seq"])); seq != "" {
+		messageThreadID, threadOK := message["thread_id"].(string)
+		messageRunID, runOK := message["run_id"].(string)
+		if !threadOK || !runOK || messageThreadID != threadID || messageRunID != runID {
+			return invalid("thread or run identity mismatch")
+		}
+		role, ok := message["role"].(string)
+		if !ok || strings.TrimSpace(role) == "" {
+			return invalid("role is invalid")
+		}
+		if _, ok := message["content"].(string); !ok {
+			return invalid("content is missing")
+		}
+		if _, ok := message["metadata"].(map[string]any); !ok {
+			return invalid("metadata is not an object")
+		}
+		createdAt, ok := message["created_at"].(string)
+		if !ok || strings.TrimSpace(createdAt) == "" {
+			return invalid("created_at is invalid")
+		}
+		if rawSeq, exists := message["seq"]; exists {
+			seq, ok := rawSeq.(string)
+			if !ok {
+				return invalid("sequence is not a string")
+			}
 			if _, err := newXPositiveResourceID(seq); err != nil {
-				return errors.New("newx run message sequence is invalid")
+				return invalid("sequence is invalid")
 			}
 		}
 	}
 	return nil
 }
 
-func validateNewXCanonicalEvents(threadID, runID string, events []map[string]any) error {
+func validateNewXCanonicalEvents(
+	threadID string,
+	runID string,
+	afterEventID string,
+	events []map[string]any,
+) (string, error) {
+	lastEventID := strings.TrimSpace(afterEventID)
+	var lastEventCursor int64
+	if lastEventID != "" {
+		validated, err := newXPositiveResourceID(lastEventID)
+		if err != nil {
+			return "", errors.New("newx run event cursor is invalid")
+		}
+		lastEventID = validated
+		lastEventCursor, _ = strconv.ParseInt(validated, 10, 64)
+	}
 	for _, event := range events {
-		if _, err := newXPositiveResourceID(stringValue(event["event_id"])); err != nil {
-			return errors.New("newx run event id is invalid")
+		eventID, err := newXPositiveResourceID(stringValue(event["event_id"]))
+		if err != nil {
+			return "", errors.New("newx run event id is invalid")
+		}
+		eventCursor, _ := strconv.ParseInt(eventID, 10, 64)
+		if eventCursor <= lastEventCursor {
+			return "", errNewXEventIDsNotIncreasing
 		}
 		if stringValue(event["thread_id"]) != threadID || stringValue(event["run_id"]) != runID {
-			return errors.New("newx run event identity mismatch")
+			return "", errors.New("newx run event identity mismatch")
 		}
 		if !safeEventFamilyPattern.MatchString(strings.TrimSpace(stringValue(event["event_type"]))) {
-			return errors.New("newx run event type is invalid")
+			return "", errors.New("newx run event type is invalid")
 		}
+		lastEventID = eventID
+		lastEventCursor = eventCursor
 	}
-	return nil
+	return lastEventID, nil
 }

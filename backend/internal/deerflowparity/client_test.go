@@ -132,10 +132,22 @@ func TestDeerFlowClientUsesLockedGatewayProtocol(t *testing.T) {
 
 const (
 	newXTestSpaceID       = "7656103552997130240"
+	newXTestOtherSpaceID  = "7656103552997130241"
 	newXTestThreadID      = "7657000000000000000"
 	newXTestRunID         = "7657000000000000001"
 	newXTestFollowUpRunID = "7657000000000000002"
 )
+
+type newXStatefulRunBody struct {
+	calls atomic.Int32
+}
+
+func (body *newXStatefulRunBody) MarshalJSON() ([]byte, error) {
+	if body.calls.Add(1) == 1 {
+		return []byte(`{"safe":"inspected"}`), nil
+	}
+	return []byte(`{"userId":"injected-on-second-marshal"}`), nil
+}
 
 func newXCanonicalTestServer(t *testing.T, next http.HandlerFunc) *httptest.Server {
 	t.Helper()
@@ -191,12 +203,109 @@ func newCreatedNewXTestClient(t *testing.T, serverURL string) *NewXClient {
 	return client
 }
 
+func newBoundNewXTestClient(t *testing.T, serverURL string) *NewXClient {
+	t.Helper()
+	client, err := NewNewXClient(serverURL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+	require.NoError(t, client.bindThreadWorkspace(newXTestThreadID, newXTestSpaceID))
+	return client
+}
+
 func newXCanonicalRun(runID, status string) map[string]any {
 	return map[string]any{
 		"run_id": runID, "thread_id": newXTestThreadID, "assistant_id": "agent", "status": status,
 		"created_at": "2026-07-29T00:00:00Z", "updated_at": "2026-07-29T00:00:00Z",
 		"metadata": map[string]any{}, "multitask_strategy": "reject", "coze": map[string]any{},
 	}
+}
+
+func newXCanonicalThreadState(threadID string) map[string]any {
+	return map[string]any{
+		"values": map[string]any{"todos": []any{}},
+		"next":   []any{},
+		"checkpoint": map[string]any{
+			"thread_id": threadID, "checkpoint_ns": "", "checkpoint_id": "7657000000000000100", "checkpoint_map": map[string]any{},
+		},
+		"metadata":   map[string]any{},
+		"created_at": "2026-07-29T00:00:00Z",
+		"tasks":      []any{},
+		"interrupts": []any{},
+	}
+}
+
+func newXCanonicalMessage(seq string) map[string]any {
+	return map[string]any{
+		"message_id": "7657000000000000200",
+		"thread_id":  newXTestThreadID,
+		"run_id":     newXTestRunID,
+		"role":       "assistant",
+		"content":    "safe answer",
+		"metadata":   map[string]any{},
+		"created_at": "2026-07-29T00:00:00Z",
+		"seq":        seq,
+	}
+}
+
+func newXTestSSEMetadata(threadID, runID string) string {
+	return fmt.Sprintf("event: metadata\ndata: {\"run_id\":%q,\"thread_id\":%q,\"status\":\"running\"}\n\n", runID, threadID)
+}
+
+func newXTestSSEEvent(sseID, eventID, threadID, runID, eventType string) string {
+	return fmt.Sprintf(
+		"id: %s\nevent: events\ndata: {\"event_id\":%q,\"thread_id\":%q,\"run_id\":%q,\"event_type\":%q,\"payload\":{}}\n\n",
+		sseID, eventID, threadID, runID, eventType,
+	)
+}
+
+func newXTestSSEEnd(threadID, runID, status string) string {
+	return fmt.Sprintf(
+		"event: end\ndata: {\"run_id\":%q,\"thread_id\":%q,\"status\":%q,\"reason\":\"terminal_run\"}\n\n",
+		runID, threadID, status,
+	)
+}
+
+func TestNewXClientThreadWorkspaceBindingIsIdempotent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/api/workbench/threads", request.URL.Path)
+		require.Equal(t, newXTestSpaceID, request.Header.Get("X-Coze-Space-ID"))
+		writeTestJSON(writer, map[string]any{"thread_id": newXTestThreadID})
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+
+	first, err := client.CreateThread(context.Background(), ThreadOptions{SpaceID: newXTestSpaceID})
+	require.NoError(t, err)
+	second, err := client.CreateThread(context.Background(), ThreadOptions{SpaceID: newXTestSpaceID})
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+	require.Equal(t, newXTestThreadID, second)
+}
+
+func TestNewXClientThreadWorkspaceBindingConflictRetainsOriginal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/workbench/threads":
+			writeTestJSON(writer, map[string]any{"thread_id": newXTestThreadID})
+		case "/api/workbench/threads/" + newXTestThreadID + "/state":
+			require.Equal(t, newXTestSpaceID, request.Header.Get("X-Coze-Space-ID"))
+			writeTestJSON(writer, newXCanonicalThreadState(newXTestThreadID))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewNewXClient(server.URL, ClientOptions{Timeout: time.Second})
+	require.NoError(t, err)
+
+	threadID, err := client.CreateThread(context.Background(), ThreadOptions{SpaceID: newXTestSpaceID})
+	require.NoError(t, err)
+	require.Equal(t, newXTestThreadID, threadID)
+	conflictedID, err := client.CreateThread(context.Background(), ThreadOptions{SpaceID: newXTestOtherSpaceID})
+	require.Empty(t, conflictedID)
+	require.ErrorContains(t, err, "workspace binding conflict")
+	_, err = client.GetThreadState(context.Background(), newXTestThreadID)
+	require.NoError(t, err)
 }
 
 func TestNewXClientUsesCanonicalWorkbenchResources(t *testing.T) {
@@ -227,33 +336,16 @@ func TestNewXClientUsesCanonicalWorkbenchResources(t *testing.T) {
 			writer.WriteHeader(http.StatusNoContent)
 		case "/api/workbench/threads/" + newXTestThreadID + "/state":
 			require.Equal(t, http.MethodGet, request.Method)
-			writeTestJSON(writer, map[string]any{
-				"values": map[string]any{"todos": []any{}},
-				"next":   []any{},
-				"checkpoint": map[string]any{
-					"thread_id": newXTestThreadID, "checkpoint_ns": "", "checkpoint_id": "7657000000000000100", "checkpoint_map": map[string]any{},
-				},
-				"metadata": map[string]any{}, "created_at": "2026-07-29T00:00:00Z",
-				"tasks": []any{}, "interrupts": []any{},
-			})
+			writeTestJSON(writer, newXCanonicalThreadState(newXTestThreadID))
 		case "/api/workbench/threads/" + newXTestThreadID + "/history":
 			require.Equal(t, http.MethodGet, request.Method)
 			require.Equal(t, "100", request.URL.Query().Get("limit"))
-			writeTestJSON(writer, []any{map[string]any{
-				"values": map[string]any{},
-				"checkpoint": map[string]any{
-					"thread_id": newXTestThreadID, "checkpoint_ns": "", "checkpoint_id": "7657000000000000100", "checkpoint_map": map[string]any{},
-				},
-			}})
+			writeTestJSON(writer, []any{newXCanonicalThreadState(newXTestThreadID)})
 		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/messages":
 			require.Equal(t, "2", request.URL.Query().Get("limit"))
 			require.Equal(t, "10", request.URL.Query().Get("after_seq"))
 			writeTestJSON(writer, map[string]any{
-				"data": []any{map[string]any{
-					"message_id": "7657000000000000200", "thread_id": newXTestThreadID,
-					"run_id": newXTestRunID, "role": "assistant", "content": "safe answer",
-					"metadata": map[string]any{}, "created_at": "2026-07-29T00:00:00Z", "seq": "11",
-				}},
+				"data":     []any{newXCanonicalMessage("11")},
 				"has_more": true, "next_after_seq": "11",
 			})
 		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/events":
@@ -468,6 +560,235 @@ func TestNewXClientRejectsSerializedCallerIdentityBeforeRunHTTP(t *testing.T) {
 	}
 }
 
+func TestNewXClientRejectsEmptyAndNullCanonicalJSONBodies(t *testing.T) {
+	endpoints := []struct {
+		name string
+		call func(*NewXClient) error
+	}{
+		{name: "create thread", call: func(client *NewXClient) error {
+			_, err := client.CreateThread(context.Background(), ThreadOptions{SpaceID: newXTestSpaceID})
+			return err
+		}},
+		{name: "start run", call: func(client *NewXClient) error {
+			_, err := client.StartRun(context.Background(), newXTestThreadID, testRunInput())
+			return err
+		}},
+		{name: "get run", call: func(client *NewXClient) error {
+			_, err := client.GetRun(context.Background(), newXTestThreadID, newXTestRunID)
+			return err
+		}},
+		{name: "thread state", call: func(client *NewXClient) error {
+			_, err := client.GetThreadState(context.Background(), newXTestThreadID)
+			return err
+		}},
+		{name: "thread history", call: func(client *NewXClient) error {
+			_, err := client.GetThreadHistory(context.Background(), newXTestThreadID, 20)
+			return err
+		}},
+		{name: "run messages", call: func(client *NewXClient) error {
+			_, err := client.ListRunMessages(context.Background(), newXTestThreadID, newXTestRunID, PageRequest{})
+			return err
+		}},
+		{name: "run events", call: func(client *NewXClient) error {
+			_, err := client.ListRunEvents(context.Background(), newXTestThreadID, newXTestRunID, 20)
+			return err
+		}},
+		{name: "resume run", call: func(client *NewXClient) error {
+			_, err := client.resumeHumanInteraction(
+				context.Background(), newXTestThreadID, newXTestRunID,
+				newXPendingHumanInteraction{
+					InterruptID: "interrupt-1", InteractionID: "hi_1", InteractionKind: "clarification",
+				},
+				"continue",
+			)
+			return err
+		}},
+	}
+	shapes := []struct {
+		name    string
+		payload string
+		wantErr string
+	}{
+		{name: "empty", wantErr: "empty JSON body"},
+		{name: "null", payload: "null", wantErr: "null JSON body"},
+	}
+
+	for _, endpoint := range endpoints {
+		for _, shape := range shapes {
+			t.Run(endpoint.name+"/"+shape.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					writer.Header().Set("Content-Type", "application/json")
+					writer.Header().Set("X-Pagination-Total", "0")
+					_, _ = fmt.Fprint(writer, shape.payload)
+				}))
+				t.Cleanup(server.Close)
+				client := newBoundNewXTestClient(t, server.URL)
+				require.ErrorContains(t, endpoint.call(client), shape.wantErr)
+			})
+		}
+	}
+}
+
+func TestNewXClientCancelAcceptsEmptyNoContentResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	client := newBoundNewXTestClient(t, server.URL)
+	require.NoError(t, client.CancelRun(context.Background(), newXTestThreadID, newXTestRunID))
+}
+
+func TestNewXClientRejectsMalformedCanonicalThreadState(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing values", mutate: func(state map[string]any) { delete(state, "values") }},
+		{name: "values not object", mutate: func(state map[string]any) { state["values"] = []any{} }},
+		{name: "next not array", mutate: func(state map[string]any) { state["next"] = map[string]any{} }},
+		{name: "next item not string", mutate: func(state map[string]any) { state["next"] = []any{1} }},
+		{name: "missing checkpoint", mutate: func(state map[string]any) { delete(state, "checkpoint") }},
+		{name: "checkpoint thread mismatch", mutate: func(state map[string]any) {
+			state["checkpoint"].(map[string]any)["thread_id"] = "7657000000000000999"
+		}},
+		{name: "checkpoint id not positive", mutate: func(state map[string]any) {
+			state["checkpoint"].(map[string]any)["checkpoint_id"] = "0"
+		}},
+		{name: "checkpoint namespace not string", mutate: func(state map[string]any) {
+			state["checkpoint"].(map[string]any)["checkpoint_ns"] = 1
+		}},
+		{name: "checkpoint map not object", mutate: func(state map[string]any) {
+			state["checkpoint"].(map[string]any)["checkpoint_map"] = []any{}
+		}},
+		{name: "metadata not object", mutate: func(state map[string]any) { state["metadata"] = []any{} }},
+		{name: "created at empty", mutate: func(state map[string]any) { state["created_at"] = "" }},
+		{name: "tasks not array", mutate: func(state map[string]any) { state["tasks"] = map[string]any{} }},
+		{name: "interrupts not array", mutate: func(state map[string]any) { state["interrupts"] = map[string]any{} }},
+		{name: "invalid parent checkpoint", mutate: func(state map[string]any) {
+			state["parent_checkpoint"] = map[string]any{
+				"thread_id": newXTestThreadID, "checkpoint_ns": "", "checkpoint_id": "0", "checkpoint_map": map[string]any{},
+			}
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := newXCanonicalThreadState(newXTestThreadID)
+			test.mutate(state)
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/state", request.URL.Path)
+				writeTestJSON(writer, state)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.GetThreadState(context.Background(), newXTestThreadID)
+			require.ErrorContains(t, err, "canonical thread state")
+		})
+	}
+}
+
+func TestNewXClientValidatesEveryCanonicalHistoryItem(t *testing.T) {
+	invalid := newXCanonicalThreadState(newXTestThreadID)
+	delete(invalid, "created_at")
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/history", request.URL.Path)
+		writeTestJSON(writer, []any{newXCanonicalThreadState(newXTestThreadID), invalid})
+	})
+	client := newCreatedNewXTestClient(t, server.URL)
+	_, err := client.GetThreadHistory(context.Background(), newXTestThreadID, 20)
+	require.ErrorContains(t, err, "canonical thread history item 1")
+}
+
+func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
+	tests := []struct {
+		name        string
+		page        PageRequest
+		mutate      func(map[string]any, map[string]any)
+		totalHeader string
+		wantErr     bool
+	}{
+		{name: "missing data", mutate: func(response, _ map[string]any) { delete(response, "data") }, wantErr: true},
+		{name: "null data", mutate: func(response, _ map[string]any) { response["data"] = nil }, wantErr: true},
+		{name: "missing has more", mutate: func(response, _ map[string]any) { delete(response, "has_more") }, wantErr: true},
+		{name: "missing message id", mutate: func(_ map[string]any, message map[string]any) { delete(message, "message_id") }, wantErr: true},
+		{name: "missing thread id", mutate: func(_ map[string]any, message map[string]any) { delete(message, "thread_id") }, wantErr: true},
+		{name: "missing run id", mutate: func(_ map[string]any, message map[string]any) { delete(message, "run_id") }, wantErr: true},
+		{name: "missing role", mutate: func(_ map[string]any, message map[string]any) { delete(message, "role") }, wantErr: true},
+		{name: "missing content", mutate: func(_ map[string]any, message map[string]any) { delete(message, "content") }, wantErr: true},
+		{name: "missing metadata", mutate: func(_ map[string]any, message map[string]any) { delete(message, "metadata") }, wantErr: true},
+		{name: "metadata not object", mutate: func(_ map[string]any, message map[string]any) { message["metadata"] = []any{} }, wantErr: true},
+		{name: "missing created at", mutate: func(_ map[string]any, message map[string]any) { delete(message, "created_at") }, wantErr: true},
+		{name: "empty created at", mutate: func(_ map[string]any, message map[string]any) { message["created_at"] = "" }, wantErr: true},
+		{name: "thread identity mismatch", mutate: func(_ map[string]any, message map[string]any) { message["thread_id"] = "7657000000000000999" }, wantErr: true},
+		{name: "run identity mismatch", mutate: func(_ map[string]any, message map[string]any) { message["run_id"] = "7657000000000000999" }, wantErr: true},
+		{name: "has more with empty data", mutate: func(response, _ map[string]any) {
+			response["data"] = []any{}
+			response["has_more"] = true
+			response["next_after_seq"] = "11"
+		}, wantErr: true},
+		{name: "default cursor not last sequence", mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_after_seq"] = "12"
+		}, wantErr: true},
+		{name: "after cursor not last sequence", page: PageRequest{AfterSeq: 10}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_after_seq"] = "12"
+		}, wantErr: true},
+		{name: "before cursor not first sequence", page: PageRequest{BeforeSeq: 20}, mutate: func(response, _ map[string]any) {
+			response["has_more"] = true
+			response["next_before_seq"] = "12"
+		}, wantErr: true},
+		{name: "terminal page advertises cursor", mutate: func(response, _ map[string]any) {
+			response["next_after_seq"] = "11"
+		}, wantErr: true},
+		{name: "invalid pagination total", totalHeader: "invalid", wantErr: true},
+		{name: "pagination total below data count", totalHeader: "0", wantErr: true},
+		{name: "valid current server page without total header"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message := newXCanonicalMessage("11")
+			response := map[string]any{"data": []any{message}, "has_more": false}
+			if test.mutate != nil {
+				test.mutate(response, message)
+			}
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs/"+newXTestRunID+"/messages", request.URL.Path)
+				if test.totalHeader != "" {
+					writer.Header().Set("X-Pagination-Total", test.totalHeader)
+				}
+				writeTestJSON(writer, response)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.ListRunMessages(context.Background(), newXTestThreadID, newXTestRunID, test.page)
+			if test.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewXClientSendsTheInspectedRunInputTree(t *testing.T) {
+	stateful := &newXStatefulRunBody{}
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs", request.URL.Path)
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+		custom := body["input"].(map[string]any)["custom"].(map[string]any)
+		require.Equal(t, "inspected", custom["safe"])
+		require.NotContains(t, custom, "userId")
+		writeTestJSON(writer, newXCanonicalRun(newXTestRunID, "pending"))
+	})
+	client := newCreatedNewXTestClient(t, server.URL)
+	input := testRunInput()
+	input.Input["custom"] = stateful
+	_, err := client.StartRun(context.Background(), newXTestThreadID, input)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), stateful.calls.Load())
+}
+
 func testRunInput() RunInput {
 	return RunInput{
 		AssistantID: "lead_agent",
@@ -590,7 +911,7 @@ func TestNewXClientStreamExistingRunRejectsRESTTerminalWithoutTerminalSSE(t *tes
 			writer.Header().Set("Content-Type", "text/event-stream")
 			if streamCalls == 1 {
 				_, _ = fmt.Fprintf(writer, "event: metadata\ndata: {\"run_id\":%q,\"thread_id\":%q}\n\n", newXTestRunID, newXTestThreadID)
-				_, _ = fmt.Fprint(writer, "id: 1\nevent: events\ndata: {\"event_id\":\"1\",\"event_type\":\"assistant.completed\",\"payload\":{}}\n\n")
+				_, _ = fmt.Fprintf(writer, "id: 1\nevent: events\ndata: {\"event_id\":\"1\",\"thread_id\":%q,\"run_id\":%q,\"event_type\":\"assistant.completed\",\"payload\":{}}\n\n", newXTestThreadID, newXTestRunID)
 			} else {
 				_, _ = fmt.Fprintf(writer, "event: metadata\ndata: {\"run_id\":%q,\"thread_id\":%q}\n\n", newXTestRunID, newXTestThreadID)
 			}
@@ -605,6 +926,101 @@ func TestNewXClientStreamExistingRunRejectsRESTTerminalWithoutTerminalSSE(t *tes
 	_, err := client.StreamExistingRun(context.Background(), newXTestThreadID, newXTestRunID, StreamOptions{})
 	require.ErrorContains(t, err, "omitted terminal frame")
 	require.Equal(t, 2, streamCalls)
+}
+
+func TestNewXClientRejectsInvalidCanonicalSSEFrames(t *testing.T) {
+	otherThreadID := "7657000000000000998"
+	otherRunID := "7657000000000000999"
+	tests := []struct {
+		name         string
+		afterEventID string
+		stream       string
+	}{
+		{
+			name:   "metadata thread mismatch",
+			stream: newXTestSSEMetadata(otherThreadID, newXTestRunID),
+		},
+		{
+			name:   "metadata run mismatch",
+			stream: newXTestSSEMetadata(newXTestThreadID, otherRunID),
+		},
+		{
+			name: "event payload thread mismatch",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("1", "1", otherThreadID, newXTestRunID, "run.started"),
+		},
+		{
+			name: "event payload run mismatch",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("1", "1", newXTestThreadID, otherRunID, "run.started"),
+		},
+		{
+			name: "SSE id differs from payload event id",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("1", "2", newXTestThreadID, newXTestRunID, "run.started"),
+		},
+		{
+			name: "duplicate event ids within segment",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("6", "6", newXTestThreadID, newXTestRunID, "run.started") +
+				newXTestSSEEvent("6", "6", newXTestThreadID, newXTestRunID, "assistant.completed"),
+		},
+		{
+			name: "backward event ids within segment",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("7", "7", newXTestThreadID, newXTestRunID, "run.started") +
+				newXTestSSEEvent("6", "6", newXTestThreadID, newXTestRunID, "assistant.completed"),
+		},
+		{
+			name:         "event id equals reconnect cursor",
+			afterEventID: "5",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("5", "5", newXTestThreadID, newXTestRunID, "run.started"),
+		},
+		{
+			name:         "event id precedes reconnect cursor",
+			afterEventID: "5",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				newXTestSSEEvent("4", "4", newXTestThreadID, newXTestRunID, "run.started"),
+		},
+		{
+			name:   "unknown terminal status",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) + newXTestSSEEnd(newXTestThreadID, newXTestRunID, "mystery"),
+		},
+		{
+			name:   "empty terminal status",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) + newXTestSSEEnd(newXTestThreadID, newXTestRunID, ""),
+		},
+		{
+			name:   "end thread mismatch",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) + newXTestSSEEnd(otherThreadID, newXTestRunID, "success"),
+		},
+		{
+			name:   "end run mismatch",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) + newXTestSSEEnd(newXTestThreadID, otherRunID, "success"),
+		},
+		{
+			name: "unknown frame semantics",
+			stream: newXTestSSEMetadata(newXTestThreadID, newXTestRunID) +
+				"id: 1\nevent: updates\ndata: {}\n\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs/"+newXTestRunID+"/stream", request.URL.Path)
+				writer.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(writer, test.stream)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.StreamExistingRun(
+				context.Background(), newXTestThreadID, newXTestRunID,
+				StreamOptions{AfterEventID: test.afterEventID, StopAfterFrames: 100},
+			)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t *testing.T) {
@@ -753,6 +1169,56 @@ func TestNewXClientPendingInteractionRejectsCursorDifferentFromLastEvent(t *test
 	)
 	require.ErrorContains(t, err, "pagination made no progress")
 	require.Equal(t, int32(1), pages.Load())
+}
+
+func TestNewXClientPendingInteractionRejectsPageInternalEventRegression(t *testing.T) {
+	var pages atomic.Int32
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID:
+			writeTestJSON(writer, newXCanonicalRun(newXTestRunID, "interrupted"))
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/events":
+			page := pages.Add(1)
+			writer.Header().Set("X-Pagination-Total", "10")
+			switch page {
+			case 1:
+				require.Empty(t, request.URL.Query().Get("after_event_id"))
+				writeTestJSON(writer, map[string]any{
+					"data": []any{map[string]any{
+						"event_id": "5", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+						"event_type": "run.started", "payload": map[string]any{},
+					}},
+					"has_more": true, "next_after_event_id": "5",
+				})
+			case 2:
+				require.Equal(t, "5", request.URL.Query().Get("after_event_id"))
+				writeTestJSON(writer, map[string]any{
+					"data": []any{
+						map[string]any{
+							"event_id": "100", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+							"event_type": "run.running", "payload": map[string]any{},
+						},
+						map[string]any{
+							"event_id": "6", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+							"event_type": "run.interrupted", "payload": map[string]any{},
+						},
+					},
+					"has_more": true, "next_after_event_id": "6",
+				})
+			default:
+				http.Error(writer, "unexpected extra page", http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(writer, request)
+		}
+	})
+
+	client := newCreatedNewXTestClient(t, server.URL)
+	_, err := client.FollowUpRun(
+		context.Background(), newXTestThreadID, newXTestRunID, testRunInput(), "继续",
+	)
+	require.ErrorContains(t, err, "event ids are not strictly increasing")
+	require.Equal(t, int32(2), pages.Load())
 }
 
 func TestNewXClientInterruptedWithoutClarificationFallsBackToOrdinaryFollowUp(t *testing.T) {
