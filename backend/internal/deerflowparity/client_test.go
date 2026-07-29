@@ -775,21 +775,6 @@ func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 			response["has_more"] = true
 			response["next_before_seq"] = "12"
 		}, wantErr: true},
-		{name: "default page advertises both cursor directions", mutate: func(response, _ map[string]any) {
-			response["has_more"] = true
-			response["next_before_seq"] = "11"
-			response["next_after_seq"] = "11"
-		}, wantErr: true},
-		{name: "after page advertises both cursor directions", page: PageRequest{AfterSeq: 10}, mutate: func(response, _ map[string]any) {
-			response["has_more"] = true
-			response["next_before_seq"] = "11"
-			response["next_after_seq"] = "11"
-		}, wantErr: true},
-		{name: "before page advertises both cursor directions", page: PageRequest{BeforeSeq: 20}, mutate: func(response, _ map[string]any) {
-			response["has_more"] = true
-			response["next_before_seq"] = "11"
-			response["next_after_seq"] = "11"
-		}, wantErr: true},
 		{name: "valid after page", page: PageRequest{AfterSeq: 10}, mutate: func(response, _ map[string]any) {
 			response["has_more"] = true
 			response["next_after_seq"] = "11"
@@ -798,9 +783,6 @@ func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 			response["has_more"] = true
 			response["next_before_seq"] = "11"
 		}},
-		{name: "terminal page advertises cursor", mutate: func(response, _ map[string]any) {
-			response["next_after_seq"] = "11"
-		}, wantErr: true},
 		{name: "invalid pagination total", totalHeader: "invalid", wantErr: true},
 		{name: "pagination total below data count", totalHeader: "0", wantErr: true},
 		{name: "valid current server page without total header"},
@@ -818,6 +800,100 @@ func TestNewXClientRejectsMalformedCanonicalMessagePages(t *testing.T) {
 				if test.totalHeader != "" {
 					writer.Header().Set("X-Pagination-Total", test.totalHeader)
 				}
+				writeTestJSON(writer, response)
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			_, err := client.ListRunMessages(context.Background(), newXTestThreadID, newXTestRunID, test.page)
+			if test.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewXClientCanonicalMessageNavigationCursors(t *testing.T) {
+	tests := []struct {
+		name          string
+		page          PageRequest
+		hasMore       bool
+		nextBeforeSeq string
+		nextAfterSeq  string
+		empty         bool
+		wantErr       bool
+	}{
+		{
+			name:    "default first page",
+			hasMore: true, nextAfterSeq: "12",
+		},
+		{
+			name: "after middle page",
+			page: PageRequest{AfterSeq: 10}, hasMore: true,
+			nextBeforeSeq: "11", nextAfterSeq: "12",
+		},
+		{
+			name:          "after terminal page",
+			page:          PageRequest{AfterSeq: 10},
+			nextBeforeSeq: "11",
+		},
+		{
+			name: "before middle page",
+			page: PageRequest{BeforeSeq: 20}, hasMore: true,
+			nextBeforeSeq: "11", nextAfterSeq: "12",
+		},
+		{
+			name: "next before must match first sequence",
+			page: PageRequest{AfterSeq: 10}, hasMore: true,
+			nextBeforeSeq: "12", nextAfterSeq: "12", wantErr: true,
+		},
+		{
+			name: "next after must match last sequence",
+			page: PageRequest{BeforeSeq: 20}, hasMore: true,
+			nextBeforeSeq: "11", nextAfterSeq: "11", wantErr: true,
+		},
+		{
+			name: "after traversal requires next after",
+			page: PageRequest{AfterSeq: 10}, hasMore: true,
+			nextBeforeSeq: "11", wantErr: true,
+		},
+		{
+			name: "before traversal requires next before",
+			page: PageRequest{BeforeSeq: 20}, hasMore: true,
+			nextAfterSeq: "12", wantErr: true,
+		},
+		{
+			name:  "empty terminal page",
+			empty: true,
+		},
+		{
+			name:  "empty page rejects next before",
+			empty: true, nextBeforeSeq: "11", wantErr: true,
+		},
+		{
+			name:  "empty page rejects next after",
+			empty: true, nextAfterSeq: "12", wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := []any{}
+			if !test.empty {
+				first := newXCanonicalMessage("11")
+				second := newXCanonicalMessage("12")
+				second["message_id"] = "7657000000000000201"
+				data = append(data, first, second)
+			}
+			response := map[string]any{"data": data, "has_more": test.hasMore}
+			if test.nextBeforeSeq != "" {
+				response["next_before_seq"] = test.nextBeforeSeq
+			}
+			if test.nextAfterSeq != "" {
+				response["next_after_seq"] = test.nextAfterSeq
+			}
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				require.Equal(t, "/api/workbench/threads/"+newXTestThreadID+"/runs/"+newXTestRunID+"/messages", request.URL.Path)
 				writeTestJSON(writer, response)
 			})
 			client := newCreatedNewXTestClient(t, server.URL)

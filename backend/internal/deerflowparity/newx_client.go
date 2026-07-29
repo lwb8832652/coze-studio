@@ -1174,37 +1174,49 @@ func newXMessagePage(
 	if err := validateNewXCanonicalMessages(threadID, runID, messages); err != nil {
 		return MessagePage{}, err
 	}
-	if !*response.HasMore {
+	if len(messages) == 0 {
+		if *response.HasMore {
+			return invalid("has_more is true with empty data")
+		}
 		if response.NextBeforeSeq != nil || response.NextAfterSeq != nil {
-			return invalid("a terminal page advertises a next cursor")
+			return invalid("an empty page advertises a navigation cursor")
 		}
 		return MessagePage{Data: messages, HasMore: false}, nil
 	}
-	if len(messages) == 0 {
-		return invalid("has_more is true with empty data")
-	}
-	boundaryIndex := len(messages) - 1
-	nextCursor := response.NextAfterSeq
-	if request.BeforeSeq > 0 {
-		if response.NextAfterSeq != nil {
-			return invalid("a before page advertises an after cursor")
+
+	validateCursor := func(cursor *string, boundaryIndex int, name string) error {
+		if cursor == nil {
+			return nil
 		}
-		boundaryIndex = 0
-		nextCursor = response.NextBeforeSeq
-	} else if response.NextBeforeSeq != nil {
-		return invalid("a default or after page advertises a before cursor")
+		expected, ok := messages[boundaryIndex]["seq"].(string)
+		if !ok {
+			return errors.New(name + " boundary message has no sequence")
+		}
+		expected, err := newXPositiveResourceID(expected)
+		if err != nil {
+			return errors.New(name + " boundary sequence is invalid")
+		}
+		actual, err := newXPositiveResourceID(*cursor)
+		if err != nil || actual != expected {
+			return errors.New(name + " does not match its pagination boundary")
+		}
+		return nil
 	}
-	expected, ok := messages[boundaryIndex]["seq"].(string)
-	if !ok {
-		return invalid("pagination boundary message has no sequence")
+	if err := validateCursor(response.NextBeforeSeq, 0, "next_before_seq"); err != nil {
+		return invalid(err.Error())
 	}
-	if _, err := newXPositiveResourceID(expected); err != nil {
-		return invalid("pagination boundary sequence is invalid")
+	if err := validateCursor(response.NextAfterSeq, len(messages)-1, "next_after_seq"); err != nil {
+		return invalid(err.Error())
 	}
-	if nextCursor == nil || strings.TrimSpace(*nextCursor) != expected {
-		return invalid("next cursor does not match the pagination boundary")
+	if *response.HasMore {
+		if request.BeforeSeq > 0 && response.NextBeforeSeq == nil {
+			return invalid("has_more before page omitted next_before_seq")
+		}
+		if request.BeforeSeq <= 0 && response.NextAfterSeq == nil {
+			return invalid("has_more default or after page omitted next_after_seq")
+		}
 	}
-	return MessagePage{Data: messages, HasMore: true}, nil
+	return MessagePage{Data: messages, HasMore: *response.HasMore}, nil
 }
 
 func validateNewXCanonicalMessages(threadID, runID string, messages []map[string]any) error {
