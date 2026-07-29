@@ -380,6 +380,94 @@ func TestNewXClientUnknownThreadFailsClosedBeforeHTTP(t *testing.T) {
 	require.Zero(t, requestCount.Load())
 }
 
+func TestNewXClientRejectsSerializedCallerIdentityBeforeRunHTTP(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutate       func(*RunInput)
+		wantErr      string
+		wantRunCalls int32
+		wantAnyErr   bool
+	}{
+		{
+			name: "typed nested camel user id",
+			mutate: func(input *RunInput) {
+				input.Input["nested"] = map[string]string{"userId": "caller-1"}
+			},
+			wantErr: "caller identity",
+		},
+		{
+			name: "typed nested camel owner id",
+			mutate: func(input *RunInput) {
+				input.Config["nested"] = map[string]string{"ownerId": "caller-1"}
+			},
+			wantErr: "caller identity",
+		},
+		{
+			name: "typed nested camel space id",
+			mutate: func(input *RunInput) {
+				input.Context["nested"] = map[string]string{"spaceId": newXTestSpaceID}
+			},
+			wantErr: "caller identity",
+		},
+		{
+			name: "typed nested snake case",
+			mutate: func(input *RunInput) {
+				input.Input["nested"] = map[string]string{"user_id": "caller-1"}
+			},
+			wantErr: "caller identity",
+		},
+		{
+			name: "typed nested kebab case",
+			mutate: func(input *RunInput) {
+				input.Input["nested"] = map[string]string{"owner-id": "caller-1"}
+			},
+			wantErr: "caller identity",
+		},
+		{
+			name: "identity words in text values",
+			mutate: func(input *RunInput) {
+				input.Input["note"] = "userId, ownerId, and spaceId are field names"
+			},
+			wantRunCalls: 1,
+		},
+		{
+			name: "invalid JSON serialization",
+			mutate: func(input *RunInput) {
+				input.Input["invalid"] = make(chan int)
+			},
+			wantAnyErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var runCalls atomic.Int32
+			server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/api/workbench/threads/"+newXTestThreadID+"/runs" {
+					http.NotFound(writer, request)
+					return
+				}
+				runCalls.Add(1)
+				writeTestJSON(writer, newXCanonicalRun(newXTestRunID, "pending"))
+			})
+			client := newCreatedNewXTestClient(t, server.URL)
+			input := testRunInput()
+			test.mutate(&input)
+
+			_, err := client.StartRun(context.Background(), newXTestThreadID, input)
+			switch {
+			case test.wantErr != "":
+				require.ErrorContains(t, err, test.wantErr)
+			case test.wantAnyErr:
+				require.Error(t, err)
+			default:
+				require.NoError(t, err)
+			}
+			require.Equal(t, test.wantRunCalls, runCalls.Load())
+		})
+	}
+}
+
 func testRunInput() RunInput {
 	return RunInput{
 		AssistantID: "lead_agent",
@@ -548,9 +636,9 @@ func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t
 					"payload": map[string]any{
 						"interrupts": map[string]any{
 							"items": []any{map[string]any{
-								"id": "7657000000000000101",
+								"id": "interrupt-1",
 								"info": map[string]any{
-									"schema": "coze.human_interaction.v1", "interaction_id": "7657000000000000102", "kind": "clarification",
+									"schema": "coze.human_interaction.v1", "interaction_id": "hi_1", "kind": "clarification",
 								},
 								"is_root_cause": true,
 							}},
@@ -562,10 +650,10 @@ func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t
 		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/resume":
 			var body map[string]any
 			require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-			require.Equal(t, "7657000000000000101", body["interrupt_id"])
+			require.Equal(t, "interrupt-1", body["interrupt_id"])
 			response := body["response"].(map[string]any)
 			require.Equal(t, "coze.human_interaction_response.v1", response["schema"])
-			require.Equal(t, "7657000000000000102", response["interaction_id"])
+			require.Equal(t, "hi_1", response["interaction_id"])
 			require.Equal(t, "clarification", response["kind"])
 			require.Equal(t, "answered", response["decision"])
 			require.Equal(t, "方案 A", response["answer"])
@@ -588,6 +676,83 @@ func TestNewXClientFollowUpFindsCanonicalInteractionAcrossEventPagesAndResumes(t
 	require.Equal(t, newXTestFollowUpRunID, followedUp.RunID)
 	require.Equal(t, "success", followedUp.Terminal)
 	require.Equal(t, 2, pages)
+}
+
+func TestNewXClientPendingInteractionRejectsBackwardAlternatingCursor(t *testing.T) {
+	var pages atomic.Int32
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID:
+			writeTestJSON(writer, newXCanonicalRun(newXTestRunID, "interrupted"))
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/events":
+			page := pages.Add(1)
+			writer.Header().Set("X-Pagination-Total", "10")
+			switch page {
+			case 1:
+				require.Empty(t, request.URL.Query().Get("after_event_id"))
+				writeTestJSON(writer, map[string]any{
+					"data": []any{map[string]any{
+						"event_id": "2", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+						"event_type": "run.started", "payload": map[string]any{},
+					}},
+					"has_more": true, "next_after_event_id": "2",
+				})
+			case 2:
+				require.Equal(t, "2", request.URL.Query().Get("after_event_id"))
+				writeTestJSON(writer, map[string]any{
+					"data": []any{map[string]any{
+						"event_id": "1", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+						"event_type": "run.started", "payload": map[string]any{},
+					}},
+					"has_more": true, "next_after_event_id": "1",
+				})
+			default:
+				http.Error(writer, "unexpected extra page", http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(writer, request)
+		}
+	})
+
+	client := newCreatedNewXTestClient(t, server.URL)
+	_, err := client.FollowUpRun(
+		context.Background(), newXTestThreadID, newXTestRunID, testRunInput(), "继续",
+	)
+	require.ErrorContains(t, err, "pagination made no progress")
+	require.Equal(t, int32(2), pages.Load())
+}
+
+func TestNewXClientPendingInteractionRejectsCursorDifferentFromLastEvent(t *testing.T) {
+	var pages atomic.Int32
+	server := newXCanonicalTestServer(t, func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID:
+			writeTestJSON(writer, newXCanonicalRun(newXTestRunID, "interrupted"))
+		case "/api/workbench/threads/" + newXTestThreadID + "/runs/" + newXTestRunID + "/events":
+			page := pages.Add(1)
+			if page > 1 {
+				http.Error(writer, "unexpected extra page", http.StatusInternalServerError)
+				return
+			}
+			writer.Header().Set("X-Pagination-Total", "10")
+			writeTestJSON(writer, map[string]any{
+				"data": []any{map[string]any{
+					"event_id": "5", "thread_id": newXTestThreadID, "run_id": newXTestRunID,
+					"event_type": "run.started", "payload": map[string]any{},
+				}},
+				"has_more": true, "next_after_event_id": "6",
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	})
+
+	client := newCreatedNewXTestClient(t, server.URL)
+	_, err := client.FollowUpRun(
+		context.Background(), newXTestThreadID, newXTestRunID, testRunInput(), "继续",
+	)
+	require.ErrorContains(t, err, "pagination made no progress")
+	require.Equal(t, int32(1), pages.Load())
 }
 
 func TestNewXClientInterruptedWithoutClarificationFallsBackToOrdinaryFollowUp(t *testing.T) {

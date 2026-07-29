@@ -110,9 +110,7 @@ func newXContainsCallerIdentity(value any) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "-", "_"))
-			switch normalized {
-			case "owner_id", "space_id", "user_id":
+			if newXCallerIdentityKey(key) {
 				return true
 			}
 			if newXContainsCallerIdentity(child) {
@@ -127,6 +125,35 @@ func newXContainsCallerIdentity(value any) bool {
 		}
 	}
 	return false
+}
+
+func newXCallerIdentityKey(key string) bool {
+	var normalized strings.Builder
+	for _, character := range strings.ToLower(strings.TrimSpace(key)) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			normalized.WriteRune(character)
+		}
+	}
+	switch normalized.String() {
+	case "ownerid", "spaceid", "userid":
+		return true
+	default:
+		return false
+	}
+}
+
+func newXSerializedInputContainsCallerIdentity(input RunInput) (bool, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return false, fmt.Errorf("newx run input is not serializable: %w", err)
+	}
+	var serialized any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&serialized); err != nil {
+		return false, errors.New("newx run input serialization is invalid")
+	}
+	return newXContainsCallerIdentity(serialized), nil
 }
 
 func (c *NewXClient) doCanonicalJSON(
@@ -266,8 +293,11 @@ func (c *NewXClient) StartRun(ctx context.Context, threadID string, input RunInp
 	if strings.TrimSpace(input.AssistantID) == "" || input.Input == nil {
 		return RunHandle{}, errors.New("run input is incomplete")
 	}
-	if newXContainsCallerIdentity(input.Input) || newXContainsCallerIdentity(input.Config) ||
-		newXContainsCallerIdentity(input.Context) {
+	containsCallerIdentity, err := newXSerializedInputContainsCallerIdentity(input)
+	if err != nil {
+		return RunHandle{}, err
+	}
+	if containsCallerIdentity {
 		return RunHandle{}, errors.New("newx run input must not contain caller identity")
 	}
 	input.StreamMode = []string{"events"}
@@ -527,12 +557,12 @@ func (c *NewXClient) resumeHumanInteraction(
 	if err != nil {
 		return StreamResult{}, errors.New("newx run id is invalid")
 	}
-	interruptID, err := newXPositiveResourceID(pending.InterruptID)
-	if err != nil {
+	interruptID := strings.TrimSpace(pending.InterruptID)
+	if err := validateOpaqueID(interruptID); err != nil {
 		return StreamResult{}, errors.New("newx interrupt id is invalid")
 	}
-	interactionID, err := newXPositiveResourceID(pending.InteractionID)
-	if err != nil {
+	interactionID := strings.TrimSpace(pending.InteractionID)
+	if err := validateOpaqueID(interactionID); err != nil {
 		return StreamResult{}, errors.New("newx interaction id is invalid")
 	}
 
@@ -576,6 +606,7 @@ func (c *NewXClient) pendingHumanInteraction(
 	}
 	var latest newXPendingHumanInteraction
 	var afterEventID string
+	var afterEventCursor int64
 	for {
 		query := url.Values{}
 		query.Set("limit", strconv.Itoa(pageSize))
@@ -611,11 +642,20 @@ func (c *NewXClient) pendingHumanInteraction(
 		if !response.HasMore {
 			break
 		}
+		if len(response.Data) == 0 {
+			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
+		}
 		nextAfterEventID, err := newXPositiveResourceID(response.NextAfterEventID)
-		if err != nil || nextAfterEventID == afterEventID || len(response.Data) == 0 {
+		lastEventID, lastErr := newXPositiveResourceID(
+			stringValue(response.Data[len(response.Data)-1]["event_id"]),
+		)
+		nextCursor, cursorErr := strconv.ParseInt(nextAfterEventID, 10, 64)
+		if err != nil || lastErr != nil || cursorErr != nil ||
+			nextAfterEventID != lastEventID || nextCursor <= afterEventCursor {
 			return newXPendingHumanInteraction{}, errors.New("newx run event pagination made no progress")
 		}
 		afterEventID = nextAfterEventID
+		afterEventCursor = nextCursor
 	}
 	if latest.InteractionID == "" {
 		return newXPendingHumanInteraction{}, fmt.Errorf(
@@ -645,10 +685,10 @@ func newXPendingInteractionFromEvent(event map[string]any) (newXPendingHumanInte
 			strings.TrimSpace(stringValue(info["schema"])) != "coze.human_interaction.v1" {
 			continue
 		}
-		if _, err := newXPositiveResourceID(pending.InterruptID); err != nil {
+		if err := validateOpaqueID(pending.InterruptID); err != nil {
 			continue
 		}
-		if _, err := newXPositiveResourceID(pending.InteractionID); err != nil {
+		if err := validateOpaqueID(pending.InteractionID); err != nil {
 			continue
 		}
 		return pending, true
