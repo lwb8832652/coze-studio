@@ -22,7 +22,7 @@ func RegisterCustomRoutes(r *server.Hertz) {
 	registerWorkbenchCustomRoutes(api)
 	registerWorkspaceCustomRoutes(api)
 	registerSpaceCompatibilityRoutes(api)
-	registerLangGraphCustomRoutes(api)
+	registerLangGraphStatelessRunRoutes(api)
 }
 
 func registerAdminCustomRoutes(api *route.RouterGroup) {
@@ -133,34 +133,7 @@ func registerSpaceCompatibilityRoutes(api *route.RouterGroup) {
 	space.POST("/save", handler.SaveSpaceV2)
 }
 
-func registerLangGraphCustomRoutes(api *route.RouterGroup) {
-	api.POST("/threads", handler.CreateLangGraphThread)
-	api.POST("/threads/search", handler.SearchLangGraphThreads)
-	thread := api.Group("/threads/:thread_id")
-	thread.GET("", handler.GetLangGraphThread)
-	thread.PATCH("", handler.PatchLangGraphThread)
-	thread.DELETE("", handler.DeleteLangGraphThread)
-	thread.GET("/state", handler.GetLangGraphThreadState)
-	thread.POST("/state", handler.PostLangGraphThreadState)
-	thread.GET("/history", handler.GetLangGraphThreadHistory)
-	thread.POST("/history", handler.PostLangGraphThreadHistory)
-	thread.GET("/checkpoints/:checkpoint_id/resume", handler.GetLangGraphCheckpointResumeReadiness)
-	thread.GET("/messages", handler.ListLangGraphThreadMessages)
-	thread.GET("/runs", handler.ListLangGraphRuns)
-	thread.POST("/runs", handler.CreateLangGraphRun)
-	thread.POST("/runs/stream", handler.CreateLangGraphRunStream)
-	thread.POST("/runs/wait", handler.WaitLangGraphRun)
-
-	run := thread.Group("/runs/:run_id")
-	run.GET("", handler.GetLangGraphRun)
-	run.GET("/messages", handler.ListLangGraphRunMessages)
-	run.GET("/events", handler.ListLangGraphRunEvents)
-	run.POST("/cancel", handler.CancelLangGraphRun)
-	run.GET("/stream", handler.StreamLangGraphRun)
-	run.POST("/stream", handler.StreamLangGraphRun)
-	run.POST("/join", handler.JoinLangGraphRun)
-	run.GET("/join", handler.JoinLangGraphRunStream)
-
+func registerLangGraphStatelessRunRoutes(api *route.RouterGroup) {
 	api.POST("/runs", handler.CreateLangGraphStatelessRun)
 	api.POST("/runs/stream", handler.CreateLangGraphStatelessRunStream)
 	api.POST("/runs/wait", handler.WaitLangGraphStatelessRun)

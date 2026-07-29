@@ -18,9 +18,9 @@ package coze
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,137 +48,11 @@ const (
 	langGraphRunStreamError    = "error"
 	langGraphRunStreamPageSize = int32(200)
 
-	langGraphCheckpointResumeGuard = "worker_replay_not_enabled"
+	retiredLegacyTaskIDMetadataKey = "legacy_task_id"
 )
 
 type langGraphRunStreamWriter interface {
 	runEventStreamWriter
-}
-
-// CreateLangGraphRun .
-// @router /api/threads/:thread_id/runs [POST]
-func CreateLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.CreateRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
-	if !langGraphInputProvided(req.Input) {
-		invalidParamRequestResponse(c, "input is required")
-		return
-	}
-	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	} else if msg != "" {
-		invalidParamRequestResponse(c, msg)
-		return
-	}
-
-	createReq, err := buildLangGraphCreateRunRequest(req, resume)
-	if err != nil {
-		internalServerErrorResponse(ctx, c, err)
-		return
-	}
-	resp, err := appagentthread.SVC.CreateRun(ctx, createReq)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
-}
-
-// CreateLangGraphRunStream .
-// @router /api/threads/:thread_id/runs/stream [POST]
-func CreateLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.CreateStreamRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
-	if !langGraphInputProvided(req.Input) {
-		invalidParamRequestResponse(c, "input is required")
-		return
-	}
-	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	} else if msg != "" {
-		invalidParamRequestResponse(c, msg)
-		return
-	}
-
-	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	writer := sse.NewWriter(c)
-	setLangGraphRunStreamHeaders(c)
-	defer func() {
-		if err := writer.Close(); err != nil {
-			logs.CtxWarnf(ctx, "close langgraph create run stream failed, err=%v", err)
-		}
-	}()
-
-	streamCreatedLangGraphRun(ctx, writer, req, resp)
-}
-
-// WaitLangGraphRun .
-// @router /api/threads/:thread_id/runs/wait [POST]
-func WaitLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.CreateStreamRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
-	if !langGraphInputProvided(req.Input) {
-		invalidParamRequestResponse(c, "input is required")
-		return
-	}
-	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	} else if msg != "" {
-		invalidParamRequestResponse(c, msg)
-		return
-	}
-
-	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if resp == nil || resp.Run == nil {
-		internalServerErrorResponse(ctx, c, errors.New("agent thread service returned empty run"))
-		return
-	}
-
-	joined, err := waitLangGraphRunTerminal(ctx, langgraphapi.JoinRunRequest{
-		ThreadID:   req.ThreadID,
-		RunID:      resp.Run.RunID,
-		IntervalMs: req.IntervalMs,
-		TimeoutMs:  req.TimeoutMs,
-	}, resp.Run)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	state, err := langGraphRunWaitResponse(ctx, joined)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, state)
 }
 
 // CreateLangGraphStatelessRun .
@@ -275,315 +149,6 @@ func WaitLangGraphStatelessRun(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(consts.StatusOK, state)
-}
-
-// ListLangGraphRuns .
-// @router /api/threads/:thread_id/runs [GET]
-func ListLangGraphRuns(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.ListRunsRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
-
-	var status *appagentthread.RunStatus
-	if strings.TrimSpace(req.Status) != "" {
-		mapped := langGraphInternalRunStatus(req.Status)
-		status = &mapped
-	}
-	pageSize := req.Limit
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	page := int32(1)
-	if req.Offset > 0 {
-		page = req.Offset/pageSize + 1
-	}
-
-	resp, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
-		ThreadID: req.ThreadID,
-		Status:   status,
-		Page:     page,
-		PageSize: pageSize,
-	})
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, langGraphRunsToAPI(resp.Runs))
-}
-
-// GetLangGraphRun .
-// @router /api/threads/:thread_id/runs/:run_id [GET]
-func GetLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.GetRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-
-	resp, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if resp == nil || resp.Run == nil || resp.Run.ThreadID != req.ThreadID {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
-}
-
-// ListLangGraphRunMessages .
-// @router /api/threads/:thread_id/runs/:run_id/messages [GET]
-func ListLangGraphRunMessages(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.ListRunMessagesRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-
-	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if run == nil {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	page, err := buildLangGraphRunMessagesPage(ctx, run, req)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, page)
-}
-
-// ListLangGraphRunEvents .
-// @router /api/threads/:thread_id/runs/:run_id/events [GET]
-func ListLangGraphRunEvents(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.ListRunEventsRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-
-	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if run == nil {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	events, err := buildLangGraphRunEventsList(ctx, req)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, events)
-}
-
-// ListLangGraphThreadMessages .
-// @router /api/threads/:thread_id/messages [GET]
-func ListLangGraphThreadMessages(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.ListThreadMessagesRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, 0)
-
-	messages, err := buildLangGraphThreadMessagesList(ctx, req)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, messages)
-}
-
-// CancelLangGraphRun .
-// @router /api/threads/:thread_id/runs/:run_id/cancel [POST]
-func CancelLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.CancelRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-
-	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
-		RunID: req.RunID,
-		From:  current.Run.Status,
-	})
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, langGraphRunToAPI(resp.Run))
-}
-
-// StreamLangGraphRun .
-// @router /api/threads/:thread_id/runs/:run_id/stream [GET]
-func StreamLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.StreamRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
-		if !ok {
-			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
-			return
-		}
-		req.AfterEventID = afterEventID
-	}
-
-	current, err := appagentthread.SVC.GetRun(ctx, &appagentthread.GetRunRequest{RunID: req.RunID})
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if current == nil || current.Run == nil || current.Run.ThreadID != req.ThreadID {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	if action := strings.TrimSpace(req.Action); action != "" {
-		if action != "interrupt" && action != "rollback" {
-			invalidParamRequestResponse(c, "action must be interrupt or rollback")
-			return
-		}
-		resp, err := appagentthread.SVC.CancelRun(ctx, &appagentthread.UpdateRunStatusRequest{
-			RunID: req.RunID,
-			From:  current.Run.Status,
-		})
-		if err != nil {
-			langGraphErrorResponse(ctx, c, err)
-			return
-		}
-		if resp != nil && resp.Run != nil {
-			current.Run = resp.Run
-		}
-		if req.Wait > 0 {
-			_, err := waitLangGraphRunTerminal(ctx, langgraphapi.JoinRunRequest{
-				ThreadID:   req.ThreadID,
-				RunID:      req.RunID,
-				IntervalMs: req.IntervalMs,
-				TimeoutMs:  req.TimeoutMs,
-			}, current.Run)
-			if err != nil {
-				langGraphErrorResponse(ctx, c, err)
-				return
-			}
-			c.Status(consts.StatusNoContent)
-			return
-		}
-	}
-
-	writer := sse.NewWriter(c)
-	setLangGraphRunStreamHeaders(c)
-	defer func() {
-		if err := writer.Close(); err != nil {
-			logs.CtxWarnf(ctx, "close langgraph run stream failed, err=%v", err)
-		}
-	}()
-
-	streamLangGraphRunEvents(ctx, writer, req, current.Run)
-}
-
-// JoinLangGraphRun .
-// @router /api/threads/:thread_id/runs/:run_id/join [POST]
-func JoinLangGraphRun(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.JoinRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-
-	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if run == nil {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	joined, err := waitLangGraphRunTerminal(ctx, req, run)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-
-	c.JSON(consts.StatusOK, langGraphRunToAPI(joined))
-}
-
-// JoinLangGraphRunStream .
-// @router /api/threads/:thread_id/runs/:run_id/join [GET]
-func JoinLangGraphRunStream(ctx context.Context, c *app.RequestContext) {
-	var req langgraphapi.JoinRunRequest
-	if err := c.BindAndValidate(&req); err != nil {
-		invalidParamRequestResponse(c, err.Error())
-		return
-	}
-	ctx = workbenchThreadAccessContext(ctx, req.ThreadID, req.RunID)
-	if req.AfterEventID <= 0 {
-		afterEventID, ok := parseRunEventCursor(string(c.Request.Header.Get("Last-Event-ID")))
-		if !ok {
-			invalidParamRequestResponse(c, "Last-Event-ID is invalid")
-			return
-		}
-		req.AfterEventID = afterEventID
-	}
-
-	run, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
-	if err != nil {
-		langGraphErrorResponse(ctx, c, err)
-		return
-	}
-	if run == nil {
-		invalidParamRequestResponse(c, "run_id does not belong to thread_id")
-		return
-	}
-
-	writer := sse.NewWriter(c)
-	setLangGraphRunStreamHeaders(c)
-	defer func() {
-		if err := writer.Close(); err != nil {
-			logs.CtxWarnf(ctx, "close langgraph join stream failed, err=%v", err)
-		}
-	}()
-
-	joinLangGraphRunStreamEvents(ctx, writer, req, run)
 }
 
 // GetLangGraphStatelessRun .
@@ -806,28 +371,16 @@ func JoinLangGraphStatelessRunStream(ctx context.Context, c *app.RequestContext)
 	joinLangGraphStatelessRunStreamEvents(ctx, writer, req, run)
 }
 
-func buildLangGraphCreateRunRequest(
-	req langgraphapi.CreateRunRequest,
-	resume *langgraphapi.CheckpointResumeReadiness,
-) (*appagentthread.CreateRunRequest, error) {
+func buildLangGraphCreateRunRequest(req langgraphapi.CreateRunRequest) (*appagentthread.CreateRunRequest, error) {
 	input, err := langGraphMarshalJSON(req.Input, "{}")
 	if err != nil {
 		return nil, err
 	}
-	commandValue := req.Command
-	metadataValue := req.Metadata
-	status := appagentthread.RunStatus("")
-	if resume != nil {
-		commandValue = langGraphRunCommandWithCheckpointResume(req.Command, resume)
-		metadataValue = langGraphRunMetadataWithCheckpointResume(req.Metadata, resume)
-		status = appagentthread.RunStatusQueued
-	}
-
-	command, err := langGraphMarshalJSON(commandValue, "{}")
+	command, err := langGraphMarshalJSON(req.Command, "{}")
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := langGraphMarshalJSON(metadataValue, "{}")
+	metadata, err := langGraphMarshalJSON(req.Metadata, "{}")
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +400,6 @@ func buildLangGraphCreateRunRequest(
 	return &appagentthread.CreateRunRequest{
 		ThreadID:          req.ThreadID,
 		AssistantID:       req.AssistantID,
-		Status:            status,
 		Input:             input,
 		Command:           command,
 		Metadata:          metadata,
@@ -858,186 +410,6 @@ func buildLangGraphCreateRunRequest(
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
 	}, nil
-}
-
-func resolveLangGraphRunCheckpointResumeRequest(
-	ctx context.Context,
-	threadID int64,
-	command map[string]any,
-	config map[string]any,
-) (*langgraphapi.CheckpointResumeReadiness, string, error) {
-	checkpointID := langGraphRequestedCheckpointID(command, config)
-	if checkpointID <= 0 {
-		return nil, "", nil
-	}
-
-	readiness, err := buildLangGraphCheckpointResumeReadiness(ctx, threadID, checkpointID)
-	if err != nil {
-		return nil, "", err
-	}
-	if readiness == nil {
-		return nil, "checkpoint_id does not belong to thread_id", nil
-	}
-	if msg, err := validateLangGraphResumeTargets(ctx, threadID, checkpointID, command); err != nil {
-		return nil, "", err
-	} else if msg != "" {
-		return nil, msg, nil
-	}
-	if !readiness.Resumable {
-		return nil, "checkpoint is not resumable: " + readiness.Reason, nil
-	}
-
-	return readiness, "", nil
-}
-
-func validateLangGraphResumeTargets(
-	ctx context.Context,
-	threadID int64,
-	checkpointID int64,
-	command map[string]any,
-) (string, error) {
-	targets, hasTargets, msg := langGraphCommandResumeTargets(command)
-	if msg != "" || !hasTargets {
-		return msg, nil
-	}
-
-	checkpointResp, err := appagentthread.SVC.GetCheckpoint(ctx, &appagentthread.GetCheckpointRequest{
-		CheckpointID: checkpointID,
-	})
-	if err != nil {
-		return "", err
-	}
-	if checkpointResp == nil || checkpointResp.Checkpoint == nil || checkpointResp.Checkpoint.ThreadID != threadID {
-		return "checkpoint_id does not belong to thread_id", nil
-	}
-	checkpoint := checkpointResp.Checkpoint
-	if strings.TrimSpace(checkpoint.RuntimeType) != string(appagentthread.RuntimeModeEinoADK) {
-		return "", nil
-	}
-
-	envelope, err := appagentthread.UnmarshalADKCheckpointEnvelope([]byte(checkpoint.ChannelValues))
-	if err != nil {
-		return "", fmt.Errorf("decode eino checkpoint: %w", err)
-	}
-	for key := range targets {
-		targetID := strings.TrimSpace(key)
-		if targetID == "" {
-			return "command.resume.targets contains empty target id", nil
-		}
-		if _, ok := envelope.Interrupts[targetID]; !ok {
-			return fmt.Sprintf("resume target %s is not present in checkpoint interrupts", targetID), nil
-		}
-	}
-
-	return "", nil
-}
-
-func langGraphCommandResumeTargets(command map[string]any) (map[string]any, bool, string) {
-	resume, ok := command["resume"].(map[string]any)
-	if !ok {
-		return nil, false, ""
-	}
-	value, exists := resume["targets"]
-	if !exists || value == nil {
-		return nil, false, ""
-	}
-	targets, ok := value.(map[string]any)
-	if !ok {
-		return nil, true, "command.resume.targets must be an object"
-	}
-	if len(targets) == 0 {
-		return nil, false, ""
-	}
-
-	return targets, true, ""
-}
-
-func langGraphRunCommandWithCheckpointResume(
-	command map[string]any,
-	readiness *langgraphapi.CheckpointResumeReadiness,
-) map[string]any {
-	normalized := normalizeLangGraphMetadata(command)
-	resume := map[string]any{}
-	if existing, ok := normalized["resume"].(map[string]any); ok {
-		resume = normalizeLangGraphMetadata(existing)
-	}
-
-	resume["checkpoint_id"] = readiness.CheckpointID
-	resume["checkpoint_ns"] = readiness.CheckpointNS
-	resume["thread_id"] = readiness.ThreadID
-	resume["run_id"] = readiness.RunID
-	resume["resume_from"] = readiness.ResumeFrom
-	resume["reason"] = readiness.Reason
-	resume["pending_sends"] = readiness.PendingSends
-	resume["guard"] = langGraphCheckpointResumeGuard
-	normalized["resume"] = resume
-
-	return normalized
-}
-
-func langGraphRunMetadataWithCheckpointResume(
-	metadata map[string]any,
-	readiness *langgraphapi.CheckpointResumeReadiness,
-) map[string]any {
-	normalized := normalizeLangGraphMetadata(metadata)
-	normalized["checkpoint_resume"] = map[string]any{
-		"checkpoint_id":                 readiness.CheckpointID,
-		"checkpoint_ns":                 readiness.CheckpointNS,
-		"source_run_id":                 readiness.RunID,
-		"resume_from":                   readiness.ResumeFrom,
-		"reason":                        readiness.Reason,
-		"protected_from_worker_claim":   true,
-		"guard":                         langGraphCheckpointResumeGuard,
-		"pending_sends_available_count": len(readiness.PendingSends),
-	}
-
-	return normalized
-}
-
-func langGraphRequestedCheckpointID(command map[string]any, config map[string]any) int64 {
-	if checkpointID := langGraphInt64Value(command["checkpoint_id"]); checkpointID > 0 {
-		return checkpointID
-	}
-	if resume, ok := command["resume"].(map[string]any); ok {
-		if checkpointID := langGraphInt64Value(resume["checkpoint_id"]); checkpointID > 0 {
-			return checkpointID
-		}
-	}
-	if checkpointID := langGraphInt64Value(config["checkpoint_id"]); checkpointID > 0 {
-		return checkpointID
-	}
-	if configurable, ok := config["configurable"].(map[string]any); ok {
-		if checkpointID := langGraphInt64Value(configurable["checkpoint_id"]); checkpointID > 0 {
-			return checkpointID
-		}
-	}
-
-	return 0
-}
-
-func createLangGraphRunFromStreamRequest(
-	ctx context.Context,
-	req langgraphapi.CreateStreamRunRequest,
-	resume *langgraphapi.CheckpointResumeReadiness,
-) (*appagentthread.CreateRunResponse, error) {
-	createReq, err := buildLangGraphCreateRunRequest(langgraphapi.CreateRunRequest{
-		ThreadID:          req.ThreadID,
-		AssistantID:       req.AssistantID,
-		Input:             req.Input,
-		Command:           req.Command,
-		Metadata:          req.Metadata,
-		Config:            req.Config,
-		Context:           req.Context,
-		StreamMode:        req.StreamMode,
-		MultitaskStrategy: req.MultitaskStrategy,
-		OnDisconnect:      req.OnDisconnect,
-		Durability:        req.Durability,
-	}, resume)
-	if err != nil {
-		return nil, err
-	}
-
-	return appagentthread.SVC.CreateRun(ctx, createReq)
 }
 
 func createLangGraphStatelessRun(
@@ -1064,7 +436,7 @@ func createLangGraphStatelessRun(
 		MultitaskStrategy: req.MultitaskStrategy,
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
-	}, nil)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1079,7 +451,7 @@ func createLangGraphStatelessBackingThread(
 	normalized := normalizeLangGraphMetadata(metadata)
 	title := langGraphStringMetadata(normalized, "title")
 	if title == "" {
-		title = defaultLangGraphThreadTitle
+		title = defaultWorkbenchThreadTitle
 		normalized["title"] = title
 	}
 	source := appagentthread.ThreadSource(langGraphStringMetadata(normalized, "source"))
@@ -1110,7 +482,7 @@ func statelessRunMetadata(metadata map[string]any) map[string]any {
 		normalized["source"] = string(appagentthread.ThreadSourceAPI)
 	}
 	if _, ok := normalized["title"]; !ok {
-		normalized["title"] = defaultLangGraphThreadTitle
+		normalized["title"] = defaultWorkbenchThreadTitle
 	}
 
 	return normalized
@@ -1129,62 +501,6 @@ func statelessCreateRunRequest(req langgraphapi.StatelessCreateStreamRunRequest)
 		OnDisconnect:      req.OnDisconnect,
 		Durability:        req.Durability,
 	}
-}
-
-func createAndStreamLangGraphRun(
-	ctx context.Context,
-	writer langGraphRunStreamWriter,
-	req langgraphapi.CreateStreamRunRequest,
-) (*appagentthread.CreateRunResponse, error) {
-	resume, msg, err := resolveLangGraphRunCheckpointResumeRequest(ctx, req.ThreadID, req.Command, req.Config)
-	if err != nil {
-		return nil, err
-	}
-	if msg != "" {
-		return nil, fmt.Errorf("%s", msg)
-	}
-
-	resp, err := createLangGraphRunFromStreamRequest(ctx, req, resume)
-	if err != nil {
-		return nil, err
-	}
-	streamCreatedLangGraphRun(ctx, writer, req, resp)
-
-	return resp, nil
-}
-
-func createAndStreamLangGraphStatelessRun(
-	ctx context.Context,
-	writer langGraphRunStreamWriter,
-	req langgraphapi.StatelessCreateStreamRunRequest,
-) (*appagentthread.CreateRunResponse, error) {
-	resp, err := createLangGraphStatelessRun(ctx, statelessCreateRunRequest(req))
-	if err != nil {
-		return nil, err
-	}
-	streamCreatedLangGraphStatelessRun(ctx, writer, req, resp)
-
-	return resp, nil
-}
-
-func streamCreatedLangGraphRun(
-	ctx context.Context,
-	writer langGraphRunStreamWriter,
-	req langgraphapi.CreateStreamRunRequest,
-	resp *appagentthread.CreateRunResponse,
-) {
-	if resp == nil || resp.Run == nil {
-		return
-	}
-
-	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
-		ThreadID:    req.ThreadID,
-		RunID:       resp.Run.RunID,
-		StreamMode:  langGraphStreamModeParam(req.StreamMode),
-		StreamModes: langGraphStreamModeList(req.StreamMode),
-		IntervalMs:  req.IntervalMs,
-		TimeoutMs:   req.TimeoutMs,
-	}, resp.Run)
 }
 
 func streamCreatedLangGraphStatelessRun(
@@ -1223,170 +539,6 @@ func getLangGraphRunSummary(ctx context.Context, runID int64) (*appagentthread.R
 	}
 
 	return resp.Run, nil
-}
-
-func getLangGraphThreadRun(ctx context.Context, threadID, runID int64) (*appagentthread.RunSummary, error) {
-	run, err := getLangGraphRunSummary(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if run == nil || run.ThreadID != threadID {
-		return nil, nil
-	}
-
-	return run, nil
-}
-
-func buildLangGraphThreadMessagesList(
-	ctx context.Context,
-	req langgraphapi.ListThreadMessagesRequest,
-) ([]map[string]any, error) {
-	limit := normalizeLangGraphRunMessagesLimit(req.Limit)
-	runsResp, err := appagentthread.SVC.ListRuns(ctx, &appagentthread.ListRunsRequest{
-		ThreadID:         req.ThreadID,
-		IncludeChildRuns: true,
-		Page:             1,
-		PageSize:         200,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var runs []*appagentthread.RunSummary
-	if runsResp != nil {
-		runs = runsResp.Runs
-	}
-	sort.SliceStable(runs, func(left, right int) bool {
-		leftRun, rightRun := runs[left], runs[right]
-		if leftRun == nil {
-			return false
-		}
-		if rightRun == nil {
-			return true
-		}
-		if leftRun.CreatedAt != rightRun.CreatedAt {
-			return leftRun.CreatedAt < rightRun.CreatedAt
-		}
-		return leftRun.RunID < rightRun.RunID
-	})
-
-	messagesResp, err := appagentthread.SVC.ListMessages(ctx, &appagentthread.ListMessagesRequest{
-		ThreadID: req.ThreadID,
-		Page:     1,
-		PageSize: 500,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var persistedMessages []*appagentthread.MessageSummary
-	if messagesResp != nil {
-		persistedMessages = messagesResp.Messages
-	}
-	events := make([]*appagentthread.RunEventSummary, 0)
-	for _, run := range runs {
-		if run == nil || run.RunID <= 0 {
-			continue
-		}
-		eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
-			ThreadID: req.ThreadID,
-			RunID:    run.RunID,
-			Page:     1,
-			PageSize: 500,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if eventsResp != nil {
-			events = append(events, eventsResp.Events...)
-		}
-	}
-
-	journalMessages := appagentthread.ProjectThreadRunJournalMessages(runs, persistedMessages, events)
-	items := make([]map[string]any, 0, len(journalMessages))
-	for index, message := range journalMessages {
-		seq := int64(index + 1)
-		if req.BeforeSeq > 0 && seq >= req.BeforeSeq {
-			continue
-		}
-		if req.AfterSeq > 0 && seq <= req.AfterSeq {
-			continue
-		}
-		item := langGraphRunJournalMessageToAPI(message, seq)
-		item["feedback"] = nil
-		items = append(items, item)
-		if int32(len(items)) >= limit {
-			break
-		}
-	}
-
-	return items, nil
-}
-
-func buildLangGraphRunEventsList(
-	ctx context.Context,
-	req langgraphapi.ListRunEventsRequest,
-) ([]any, error) {
-	limit := normalizeLangGraphRunEventsLimit(req.Limit)
-	eventsResp, err := appagentthread.SVC.ListRunEvents(ctx, &appagentthread.ListRunEventsRequest{
-		ThreadID: req.ThreadID,
-		RunID:    req.RunID,
-		Page:     1,
-		PageSize: limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var events []*appagentthread.RunEventSummary
-	if eventsResp != nil {
-		events = eventsResp.Events
-	}
-	allowedTypes := langGraphRunEventTypeSet(req.EventTypes)
-	result := make([]any, 0, len(events))
-	for _, event := range events {
-		if event == nil {
-			continue
-		}
-		if len(allowedTypes) > 0 {
-			if _, ok := allowedTypes[event.EventType]; !ok {
-				continue
-			}
-		}
-		result = append(result, projectLangGraphPublicRunEvent(event))
-		if int32(len(result)) >= limit {
-			break
-		}
-	}
-
-	return result, nil
-}
-
-func normalizeLangGraphRunEventsLimit(limit int32) int32 {
-	if limit <= 0 {
-		return 500
-	}
-	if limit > 2000 {
-		return 2000
-	}
-
-	return limit
-}
-
-func langGraphRunEventTypeSet(eventTypes string) map[string]struct{} {
-	if strings.TrimSpace(eventTypes) == "" {
-		return nil
-	}
-	result := make(map[string]struct{})
-	for _, item := range strings.Split(eventTypes, ",") {
-		eventType := strings.TrimSpace(item)
-		if eventType == "" {
-			continue
-		}
-		result[eventType] = struct{}{}
-	}
-
-	return result
 }
 
 func langGraphRunWaitResponse(ctx context.Context, run *appagentthread.RunSummary) (map[string]any, error) {
@@ -1525,59 +677,6 @@ func langGraphRunJournalToolCallsToAPI(toolCalls []appagentthread.PublicRunJourn
 	return result
 }
 
-func waitLangGraphRunTerminal(
-	ctx context.Context,
-	req langgraphapi.JoinRunRequest,
-	run *appagentthread.RunSummary,
-) (*appagentthread.RunSummary, error) {
-	if run == nil || isWorkbenchRunTerminal(run.Status) {
-		return run, nil
-	}
-
-	interval := clampRunEventStreamDuration(req.IntervalMs, defaultRunEventStreamIntervalMs, minRunEventStreamIntervalMs, maxRunEventStreamIntervalMs)
-	timeout := clampRunEventStreamDuration(req.TimeoutMs, defaultRunEventStreamTimeoutMs, minRunEventStreamTimeoutMs, maxRunEventStreamTimeoutMs)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return run, ctx.Err()
-		case <-timer.C:
-			return run, nil
-		case <-ticker.C:
-			current, err := getLangGraphThreadRun(ctx, req.ThreadID, req.RunID)
-			if err != nil {
-				return nil, err
-			}
-			if current == nil {
-				return run, nil
-			}
-			run = current
-			if isWorkbenchRunTerminal(run.Status) {
-				return run, nil
-			}
-		}
-	}
-}
-
-func joinLangGraphRunStreamEvents(
-	ctx context.Context,
-	writer langGraphRunStreamWriter,
-	req langgraphapi.JoinRunRequest,
-	run *appagentthread.RunSummary,
-) {
-	streamLangGraphRunEvents(ctx, writer, langgraphapi.StreamRunRequest{
-		ThreadID:     req.ThreadID,
-		RunID:        req.RunID,
-		AfterEventID: req.AfterEventID,
-		IntervalMs:   req.IntervalMs,
-		TimeoutMs:    req.TimeoutMs,
-	}, run)
-}
-
 func waitLangGraphStatelessRunTerminal(
 	ctx context.Context,
 	req langgraphapi.StatelessJoinRunRequest,
@@ -1649,15 +748,6 @@ func joinLangGraphStatelessRunStreamEvents(
 		IntervalMs:   req.IntervalMs,
 		TimeoutMs:    req.TimeoutMs,
 	}, run)
-}
-
-func langGraphRunsToAPI(runs []*appagentthread.RunSummary) []*langgraphapi.Run {
-	result := make([]*langgraphapi.Run, 0, len(runs))
-	for _, run := range runs {
-		result = append(result, langGraphRunToAPI(run))
-	}
-
-	return result
 }
 
 func langGraphRunToAPI(run *appagentthread.RunSummary) *langgraphapi.Run {
@@ -2086,19 +1176,6 @@ func langGraphRunStatus(status appagentthread.RunStatus) string {
 	}
 }
 
-func langGraphInternalRunStatus(status string) appagentthread.RunStatus {
-	switch strings.TrimSpace(status) {
-	case "success":
-		return appagentthread.RunStatusSucceeded
-	case "error":
-		return appagentthread.RunStatusFailed
-	case "interrupted":
-		return appagentthread.RunStatusInterrupted
-	default:
-		return appagentthread.RunStatus(status)
-	}
-}
-
 func langGraphMarshalStreamMode(value any) (string, error) {
 	modes, ok, err := langGraphStreamModes(value)
 	if err != nil {
@@ -2234,19 +1311,6 @@ func langGraphMarshalJSON(value any, defaultValue string) (string, error) {
 	return sonic.MarshalString(value)
 }
 
-func langGraphJSONValue(raw string, defaultValue any) any {
-	if strings.TrimSpace(raw) == "" {
-		return defaultValue
-	}
-
-	var result any
-	if err := sonic.UnmarshalString(raw, &result); err != nil || result == nil {
-		return defaultValue
-	}
-
-	return result
-}
-
 func langGraphJSONMap(raw string) map[string]any {
 	result := map[string]any{}
 	if strings.TrimSpace(raw) == "" {
@@ -2275,4 +1339,109 @@ func langGraphJSONStringSlice(raw string) []string {
 	}
 
 	return modes
+}
+
+func langGraphPublicCheckpointValues(checkpoint *appagentthread.PublicCheckpoint) map[string]any {
+	defaults := map[string]any{
+		"messages":     []map[string]any{},
+		"artifacts":    map[string]any{},
+		"todos":        []any{},
+		"memory":       map[string]any{},
+		"tool_results": map[string]any{},
+	}
+	if checkpoint == nil {
+		return defaults
+	}
+	values := make(map[string]any, len(checkpoint.Values)+len(defaults))
+	for key, value := range checkpoint.Values {
+		values[key] = value
+	}
+	for key, value := range defaults {
+		if _, ok := values[key]; !ok {
+			values[key] = value
+		}
+	}
+
+	return values
+}
+
+func normalizeLangGraphMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+
+	result := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		if isRetiredLangGraphMetadataKey(key) {
+			continue
+		}
+		result[key] = value
+	}
+
+	return result
+}
+
+func isRetiredLangGraphMetadataKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), retiredLegacyTaskIDMetadataKey)
+}
+
+func langGraphStringMetadata(metadata map[string]any, key string) string {
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		return strconv.FormatInt(int64(typed), 10)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case int:
+		return strconv.Itoa(typed)
+	default:
+		return ""
+	}
+}
+
+func langGraphInt64Metadata(metadata map[string]any, keys ...string) int64 {
+	for _, key := range keys {
+		value, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		if parsed := langGraphInt64Value(value); parsed > 0 {
+			return parsed
+		}
+	}
+
+	return 0
+}
+
+func langGraphInt64Value(value any) int64 {
+	switch typed := value.(type) {
+	case string:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed
+	case float64:
+		return int64(typed)
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case json.Number:
+		parsed, _ := strconv.ParseInt(typed.String(), 10, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func langGraphTime(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+
+	return time.UnixMilli(ms).UTC().Format(time.RFC3339Nano)
 }

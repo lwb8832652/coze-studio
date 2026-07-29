@@ -156,7 +156,7 @@ var scheduledTaskCronPresetRoutes = []routeExpectation{
 	{http.MethodGet, "/api/workbench/scheduled_task_cron_presets"},
 }
 
-var langGraphThreadRouteSnapshot = []routeExpectation{
+var retiredLangGraphThreadRoutes = []routeExpectation{
 	{http.MethodPost, "/api/threads"},
 	{http.MethodPost, "/api/threads/search"},
 	{http.MethodGet, "/api/threads/:thread_id"},
@@ -227,13 +227,34 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 
 	t.Run("keeps the Scheduled Task route surface", func(t *testing.T) {
 		require.Len(t, scheduledTaskRoutes, 9)
+		require.Equal(
+			t,
+			11,
+			len(scheduledTaskRoutes)+len(scheduledTaskTargetRoutes)+len(scheduledTaskCronPresetRoutes),
+		)
 		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_tasks", scheduledTaskRoutes)
 		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_targets", scheduledTaskTargetRoutes)
 		requireExactRouteSnapshot(t, h, "/api/workbench/scheduled_task_cron_presets", scheduledTaskCronPresetRoutes)
 	})
 
-	t.Run("keeps LangGraph compatibility routes", func(t *testing.T) {
-		requireExactRouteSnapshot(t, h, "/api/threads", langGraphThreadRouteSnapshot)
+	t.Run("keeps all retired LangGraph thread method and path pairs unreachable", func(t *testing.T) {
+		require.Len(t, retiredLangGraphThreadRoutes, 23)
+		for _, route := range retiredLangGraphThreadRoutes {
+			route := route
+			t.Run(route.method+" "+route.path, func(t *testing.T) {
+				requireUnreachableRoute(
+					t,
+					h,
+					handlerBoundary,
+					route.method,
+					concreteRoutePath(route.path),
+				)
+			})
+		}
+	})
+
+	t.Run("keeps the stateless LangGraph run route surface", func(t *testing.T) {
+		require.Len(t, langGraphStatelessRunRouteSnapshot, 10)
 		requireExactRouteSnapshot(t, h, "/api/runs", langGraphStatelessRunRouteSnapshot)
 	})
 
@@ -278,19 +299,13 @@ func TestWorkbenchCanonicalThreadRoutes(t *testing.T) {
 	})
 }
 
-func TestWorkbenchCompatibilityRouteResolution(t *testing.T) {
+func TestWorkbenchStatelessRunRouteResolution(t *testing.T) {
 	tests := []struct {
 		name         string
 		method       string
 		requestPath  string
 		wantTemplate string
 	}{
-		{
-			name:         "LangGraph thread search stays on the static route",
-			method:       http.MethodPost,
-			requestPath:  "/api/threads/search",
-			wantTemplate: "/api/threads/search",
-		},
 		{
 			name:         "stateless run stream stays on the static route",
 			method:       http.MethodPost,

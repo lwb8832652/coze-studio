@@ -190,7 +190,7 @@ func CreateCanonicalThread(ctx context.Context, c *app.RequestContext) {
 	if initialRun == nil {
 		requestLog.SubmissionKind = "empty_thread"
 		if title == "" {
-			title = defaultLangGraphThreadTitle
+			title = defaultWorkbenchThreadTitle
 		}
 		response, err := appagentthread.SVC.CreateThread(ctx, &appagentthread.CreateThreadRequest{
 			SpaceID:  spaceID,

@@ -20,34 +20,7 @@ import (
 	"context"
 
 	"github.com/cloudwego/hertz/pkg/app"
-
-	appagentthread "github.com/coze-dev/coze-studio/backend/application/agentthread"
 )
-
-type langGraphPublicRunEvent struct {
-	EventID   int64  `json:"event_id,string"`
-	ThreadID  int64  `json:"thread_id,string"`
-	RunID     int64  `json:"run_id,string"`
-	EventType string `json:"event_type"`
-	Payload   string `json:"payload"`
-	CreatedAt int64  `json:"created_at"`
-}
-
-func projectLangGraphPublicRunEvent(event *appagentthread.RunEventSummary) *langGraphPublicRunEvent {
-	projected := appagentthread.ProjectPublicRunEvent(event)
-	if projected == nil {
-		return nil
-	}
-
-	return &langGraphPublicRunEvent{
-		EventID:   projected.EventID,
-		ThreadID:  projected.ThreadID,
-		RunID:     projected.RunID,
-		EventType: projected.EventType,
-		Payload:   projected.Payload,
-		CreatedAt: projected.CreatedAt,
-	}
-}
 
 func langGraphErrorResponse(ctx context.Context, c *app.RequestContext, err error) {
 	workbenchThreadErrorResponse(ctx, c, err)

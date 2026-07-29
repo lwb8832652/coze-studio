@@ -29,6 +29,7 @@ import (
 )
 
 const (
+	defaultWorkbenchThreadTitle     = "新建任务"
 	defaultRunEventStreamIntervalMs = int64(1000)
 	defaultRunEventStreamTimeoutMs  = int64(30000)
 	minRunEventStreamIntervalMs     = int64(10)
