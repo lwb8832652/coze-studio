@@ -313,6 +313,21 @@ const parseCanonicalError = (
   return { detail, code, retryable, trace_id: traceID };
 };
 
+export const canonicalErrorFromResponse = async (
+  response: Response,
+): Promise<WorkbenchClientError> => {
+  const parsed = await parseJSONResponse(response, 'error');
+  const canonical = parseCanonicalError(parsed, response.status);
+  return new WorkbenchClientError({
+    message: canonical.detail,
+    status: response.status,
+    code: canonical.code,
+    traceId: canonical.trace_id,
+    retryable: canonical.retryable,
+    outcome: responseOutcome(response.status),
+  });
+};
+
 const parsePaginationHeader = (
   response: Response,
   name: 'X-Pagination-Total' | 'X-Pagination-Next',
@@ -383,7 +398,7 @@ const fetchCanonicalResponse = async (
       'Canonical request cannot contain both JSON and raw body data',
     );
   }
-  let body = request.body;
+  let { body } = request;
   if (request.json !== undefined) {
     headers['content-type'] = 'application/json';
     body = serializeJSON(request.json);
@@ -424,16 +439,7 @@ const fetchCanonicalResponse = async (
   }
 
   if (!response.ok) {
-    const parsed = await parseJSONResponse(response, 'error');
-    const canonical = parseCanonicalError(parsed, response.status);
-    throw new WorkbenchClientError({
-      message: canonical.detail,
-      status: response.status,
-      code: canonical.code,
-      traceId: canonical.trace_id,
-      retryable: canonical.retryable,
-      outcome: responseOutcome(response.status),
-    });
+    throw await canonicalErrorFromResponse(response);
   }
 
   return response;

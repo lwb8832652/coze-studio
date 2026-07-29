@@ -588,7 +588,7 @@ append sends `append_mode='internal_compat'`; reject user/human roles locally wi
 `atomic_run_submission_required`. Ordinary Workbench create and follow-up code must not call this
 method.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```bash
 cd frontend/apps/coze-studio
@@ -613,7 +613,7 @@ git commit -m "feat: implement canonical workbench product client"
 - Modify: `frontend/apps/coze-studio/package.json`
 - Modify: `common/config/subspaces/default/pnpm-lock.yaml`
 
-- [ ] **Step 1: Add the existing workspace SSE dependency**
+- [x] **Step 1: Add the existing workspace SSE dependency**
 
 Add `"@coze-arch/fetch-stream": "workspace:*"` to the app and run:
 
@@ -625,7 +625,7 @@ rush update
 Expected: only the app importer/workspace edge changes in
 `common/config/subspaces/default/pnpm-lock.yaml`; no new external package version is introduced.
 
-- [ ] **Step 2: Write failing stream lifecycle tests**
+- [x] **Step 2: Write failing stream lifecycle tests**
 
 Cover `GET /api/workbench/threads/:thread_id/runs/:run_id/stream`, workspace header,
 `after_event_id`, `cancel_on_disconnect=false`, `stream_mode=events`, ignored metadata frames,
@@ -633,19 +633,19 @@ normalized events, cursor advancement after successful parse, reconnect, termina
 abort and explicit close. Assert one subscription owns exactly one fetch stream and never creates
 `EventSource` or a source-contract request.
 
-- [ ] **Step 3: Implement per-Run cursor storage**
+- [x] **Step 3: Implement per-Run cursor storage**
 
 Key by contract, space, Thread and Run. Store only a positive decimal event ID in session storage,
 with an in-memory fallback when storage is unavailable. Clear the key after terminal end; never
 store response content or a mode flag.
 
-- [ ] **Step 4: Implement fetch-based SSE**
+- [x] **Step 4: Implement fetch-based SSE**
 
 Use `@coze-arch/fetch-stream` so the browser can send `X-Coze-Space-ID`. Parse event type, ID and
 data; advance the cursor only after a valid public Run event. Resolve `closed` once. Close/abort one
 source only. An error reports canonical failure and cannot open another URL.
 
-- [ ] **Step 5: Add redaction-tested operation telemetry**
+- [x] **Step 5: Add redaction-tested operation telemetry**
 
 Emit `workbench_thread_client_operation` with only contract, operation, Thread/Run/resource IDs,
 duration, outcome, stable error code and trace ID. For unexpected errors record error class/name,
@@ -653,7 +653,7 @@ not message. Tests must feed message content, Memory content, attachment filenam
 credential-looking text and tool result through operations and prove none appears in serialized
 logger metadata.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```bash
 cd frontend/apps/coze-studio

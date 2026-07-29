@@ -26,6 +26,7 @@
     "@coze-arch/bot-md-box-adapter": "workspace:*",
     "@coze-arch/bot-monaco-editor": "workspace:*",
     "@coze-arch/coze-design": "0.0.6-alpha.346d77",
+    "@coze-arch/fetch-stream": "workspace:*",
     "@coze-arch/foundation-sdk": "workspace:*",
     "@coze-arch/i18n": "workspace:*",
     "@coze-arch/logger": "workspace:*",

@@ -16,6 +16,8 @@
 
 /* eslint-disable max-lines -- The reviewed canonical surface shares one transport owner. */
 
+import { fetchStream } from '@coze-arch/fetch-stream';
+
 import type {
   AppendWorkbenchMessageRequest,
   CancelWorkbenchRunRequest,
@@ -47,6 +49,7 @@ import type {
   RetryWorkbenchSubagentRunRequest,
   ReviewWorkbenchArtifactScanRequest,
   SearchWorkbenchThreadsRequest,
+  SubscribeWorkbenchRunEventsRequest,
   UpdateWorkbenchMemoryRequest,
   UploadWorkbenchFilesRequest,
   WorkbenchArtifactRequest,
@@ -55,10 +58,26 @@ import type {
   WorkbenchThreadClient,
 } from './workbench-thread-client';
 import {
+  createRunEventCursorStore,
+  greatestRunEventCursor,
+  type RunEventCursorScope,
+  type RunEventCursorStore,
+} from './run-event-cursor';
+import {
+  createWorkbenchClientOperationTracker,
+  observeWorkbenchClientOperation,
+  workbenchClientIdentifiers,
+  workbenchClientOperations,
+  type WorkbenchClientOperation,
+  type WorkbenchClientTelemetry,
+} from './client-telemetry';
+import {
+  canonicalErrorFromResponse,
   fetchCanonicalBlob,
   fetchCanonicalJSON,
   invalidCanonicalRequest,
   invalidCanonicalResponse,
+  WorkbenchClientError,
   type CanonicalFetch,
 } from './canonical-fetch';
 import {
@@ -83,6 +102,7 @@ import {
   adaptCanonicalMessagePage,
   adaptCanonicalRun,
   adaptCanonicalRunCreation,
+  adaptCanonicalRunEvent,
   adaptCanonicalRunEventPage,
   adaptCanonicalRunList,
   adaptCanonicalThread,
@@ -113,13 +133,16 @@ export type CanonicalWorkbenchCoreClient = Pick<
   | 'listRunEvents'
 >;
 
-export type CanonicalWorkbenchProductClient = Omit<
-  WorkbenchThreadClient,
-  'subscribeRunEvents'
->;
+export type CanonicalWorkbenchProductClient = WorkbenchThreadClient;
+
+export type CanonicalFetchStream = typeof fetchStream;
 
 export interface CanonicalThreadCoreClientOptions {
   fetch?: CanonicalFetch;
+  stream?: CanonicalFetchStream;
+  cursorStore?: RunEventCursorStore;
+  telemetry?: WorkbenchClientTelemetry;
+  now?: () => number;
 }
 
 export type CanonicalThreadClientOptions = CanonicalThreadCoreClientOptions;
@@ -570,15 +593,299 @@ const appendMemoryQuery = (
   setOptionalBoolean(query, 'include_deleted', request.include_deleted);
 };
 
+type AsyncWorkbenchClientOperation = Exclude<
+  WorkbenchClientOperation,
+  'subscribeRunEvents'
+>;
+
+const asyncWorkbenchClientOperations = workbenchClientOperations.filter(
+  (operation): operation is AsyncWorkbenchClientOperation =>
+    operation !== 'subscribeRunEvents',
+);
+
+type AsyncWorkbenchClientMethod = (request: unknown) => Promise<unknown>;
+
+type CanonicalRunStreamMessage =
+  | {
+      kind: 'event';
+      event: ReturnType<typeof adaptCanonicalRunEvent>;
+    }
+  | { kind: 'end' }
+  | { kind: 'error'; error: WorkbenchClientError };
+
+const streamJSONRecord = (
+  data: string,
+  label: string,
+): Record<string, unknown> => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data) as unknown;
+  } catch (error) {
+    void error;
+    throw invalidCanonicalResponse(`${label} must contain valid JSON`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw invalidCanonicalResponse(`${label} must contain a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+};
+
+const canonicalRunStreamError = (data: string): WorkbenchClientError => {
+  const payload = streamJSONRecord(data, 'Canonical Run stream error');
+  if (
+    typeof payload.code !== 'string' ||
+    payload.code.trim() === '' ||
+    typeof payload.message !== 'string' ||
+    payload.message.trim() === ''
+  ) {
+    throw invalidCanonicalResponse(
+      'Canonical Run stream error has invalid fields',
+    );
+  }
+  return new WorkbenchClientError({
+    message: payload.message,
+    code: payload.code,
+    retryable: false,
+    outcome: 'failed',
+  });
+};
+
+const canonicalRunPublicEvent = (
+  frame: { id?: string; data: string },
+  scope: RunEventCursorScope,
+): CanonicalRunStreamMessage => {
+  if (!frame.id || !/^[1-9]\d*$/.test(frame.id)) {
+    throw invalidCanonicalResponse(
+      'Canonical Run stream event ID must be a positive decimal',
+    );
+  }
+  const event = adaptCanonicalRunEvent(
+    streamJSONRecord(frame.data, 'Canonical Run stream event'),
+    {
+      spaceId: scope.spaceId,
+      threadId: scope.threadId,
+      runId: scope.runId,
+    },
+  );
+  if (event.event_id !== frame.id) {
+    throw invalidCanonicalResponse(
+      'Canonical Run stream frame ID does not match event_id',
+    );
+  }
+  return { kind: 'event', event };
+};
+
+const canonicalRunTerminalEvent = (
+  data: string,
+  scope: RunEventCursorScope,
+): CanonicalRunStreamMessage => {
+  const terminal = streamJSONRecord(
+    data,
+    'Canonical Run stream terminal event',
+  );
+  if (
+    terminal.thread_id !== scope.threadId ||
+    terminal.run_id !== scope.runId
+  ) {
+    throw invalidCanonicalResponse(
+      'Canonical Run stream terminal IDs do not match the subscription',
+    );
+  }
+  if (
+    typeof terminal.status !== 'string' ||
+    !['success', 'error', 'interrupted'].includes(terminal.status) ||
+    typeof terminal.reason !== 'string' ||
+    terminal.reason.trim() === ''
+  ) {
+    throw invalidCanonicalResponse(
+      'Canonical Run stream terminal event has invalid fields',
+    );
+  }
+  return { kind: 'end' };
+};
+
+const canonicalRunStreamMessage = (
+  frame: { event?: string; id?: string; data: string },
+  scope: RunEventCursorScope,
+): CanonicalRunStreamMessage | undefined => {
+  if (
+    !frame.event ||
+    frame.event === 'metadata' ||
+    frame.event === 'heartbeat'
+  ) {
+    return undefined;
+  }
+  try {
+    if (frame.event === 'events') {
+      return canonicalRunPublicEvent(frame, scope);
+    }
+    if (frame.event === 'end') {
+      return canonicalRunTerminalEvent(frame.data, scope);
+    }
+    if (frame.event === 'error') {
+      return { kind: 'error', error: canonicalRunStreamError(frame.data) };
+    }
+    return undefined;
+  } catch (error) {
+    return {
+      kind: 'error',
+      error:
+        error instanceof WorkbenchClientError
+          ? error
+          : invalidCanonicalResponse(
+              'Canonical Run stream frame could not be projected',
+            ),
+    };
+  }
+};
+
+const normalizeCanonicalStreamFailure = (
+  error: unknown,
+): WorkbenchClientError =>
+  error instanceof WorkbenchClientError
+    ? error
+    : new WorkbenchClientError({
+        message: 'Canonical Run stream failed',
+        code: 'stream_transport_error',
+        retryable: true,
+        outcome: 'failed',
+      });
+
+type CanonicalRunStreamOutcome =
+  | 'success'
+  | 'error'
+  | 'canceled'
+  | 'disconnected';
+
+interface CanonicalRunStreamLifecycleOptions {
+  request: SubscribeWorkbenchRunEventsRequest;
+  scope: RunEventCursorScope;
+  cursorStore: RunEventCursorStore;
+  tracker: ReturnType<typeof createWorkbenchClientOperationTracker>;
+}
+
+class CanonicalRunStreamLifecycle {
+  readonly controller = new AbortController();
+  readonly closed: Promise<void>;
+
+  private resolveClosed: () => void = () => undefined;
+  private finished = false;
+
+  constructor(private readonly options: CanonicalRunStreamLifecycleOptions) {
+    this.closed = new Promise<void>(resolve => {
+      this.resolveClosed = resolve;
+    });
+    options.request.signal.addEventListener('abort', this.onAbort, {
+      once: true,
+    });
+    if (options.request.signal.aborted) {
+      this.finish('canceled');
+    }
+  }
+
+  get isFinished(): boolean {
+    return this.finished;
+  }
+
+  subscription() {
+    return {
+      close: () => this.finish('canceled'),
+      closed: this.closed,
+    };
+  }
+
+  handleMessage(message: CanonicalRunStreamMessage): void {
+    if (this.finished) {
+      return;
+    }
+    if (message.kind === 'event') {
+      try {
+        this.options.request.onEvent(message.event);
+        this.options.cursorStore.write(
+          this.options.scope,
+          message.event.event_id,
+        );
+      } catch (error) {
+        this.finish('error', normalizeCanonicalStreamFailure(error));
+      }
+    } else if (message.kind === 'end') {
+      this.finish('success');
+    } else {
+      this.finish('error', message.error);
+    }
+  }
+
+  finish(
+    outcome: CanonicalRunStreamOutcome,
+    error?: WorkbenchClientError,
+  ): void {
+    if (this.finished) {
+      return;
+    }
+    this.finished = true;
+    const { request, tracker, cursorStore, scope } = this.options;
+    request.signal.removeEventListener('abort', this.onAbort);
+    if (!this.controller.signal.aborted) {
+      this.controller.abort();
+    }
+    try {
+      if (outcome === 'success') {
+        tracker.success();
+        cursorStore.clear(scope);
+        request.onEnd();
+      } else if (outcome === 'error' && error) {
+        tracker.error(error);
+        request.onError(error);
+      } else if (outcome === 'disconnected' && error) {
+        tracker.disconnected();
+        request.onError(error);
+      } else {
+        tracker.canceled();
+      }
+    } finally {
+      this.resolveClosed();
+    }
+  }
+
+  private readonly onAbort = () => this.finish('canceled');
+}
+
 export class CanonicalThreadCoreClient
   implements CanonicalWorkbenchProductClient
 {
   readonly contract = 'canonical_v1' as const;
 
   private readonly fetcher: CanonicalFetch | undefined;
+  private readonly streamer: CanonicalFetchStream;
+  private readonly cursorStore: RunEventCursorStore;
+  private readonly telemetry: WorkbenchClientTelemetry | undefined;
+  private readonly now: () => number;
 
   constructor(options: CanonicalThreadCoreClientOptions = {}) {
     this.fetcher = options.fetch;
+    this.streamer = options.stream ?? fetchStream;
+    this.cursorStore = options.cursorStore ?? createRunEventCursorStore();
+    this.telemetry = options.telemetry;
+    this.now = options.now ?? Date.now;
+    this.installOperationTelemetry();
+  }
+
+  private installOperationTelemetry(): void {
+    const methods = this as unknown as Record<
+      AsyncWorkbenchClientOperation,
+      AsyncWorkbenchClientMethod
+    >;
+    asyncWorkbenchClientOperations.forEach(operation => {
+      const execute = methods[operation].bind(this);
+      methods[operation] = request =>
+        observeWorkbenchClientOperation({
+          telemetry: this.telemetry,
+          operation,
+          identifiers: workbenchClientIdentifiers(request),
+          now: this.now,
+          execute: () => execute(request),
+        });
+    });
   }
 
   async searchThreads(request: SearchWorkbenchThreadsRequest) {
@@ -956,6 +1263,107 @@ export class CanonicalThreadCoreClient
       threadId: threadID,
       runId: runID,
     });
+  }
+
+  subscribeRunEvents(request: SubscribeWorkbenchRunEventsRequest) {
+    const spaceID = assertCanonicalRequestResourceID(
+      request.space_id,
+      'space_id',
+    );
+    const threadID = assertCanonicalRequestResourceID(
+      request.thread_id,
+      'thread_id',
+    );
+    const runID = assertCanonicalRequestResourceID(request.run_id, 'run_id');
+    if (
+      request.cursor !== undefined &&
+      !nonNegativeDecimal.test(request.cursor)
+    ) {
+      throw invalidCanonicalRequest(
+        'invalid_event_cursor',
+        'cursor must be a non-negative decimal event ID',
+      );
+    }
+    const scope: RunEventCursorScope = {
+      contract: this.contract,
+      spaceId: spaceID,
+      threadId: threadID,
+      runId: runID,
+    };
+    const cursor = greatestRunEventCursor(
+      request.cursor,
+      this.cursorStore.read(scope),
+    );
+    const query = new URLSearchParams();
+    if (cursor !== undefined) {
+      query.set('after_event_id', cursor);
+    }
+    query.set('cancel_on_disconnect', 'false');
+    query.set('stream_mode', 'events');
+    const url = `/api/workbench/threads/${threadID}/runs/${runID}/stream?${query.toString()}`;
+    const tracker = createWorkbenchClientOperationTracker({
+      telemetry: this.telemetry,
+      operation: 'subscribeRunEvents',
+      identifiers: { thread_id: threadID, run_id: runID },
+      now: this.now,
+    });
+    const lifecycle = new CanonicalRunStreamLifecycle({
+      request,
+      scope,
+      cursorStore: this.cursorStore,
+      tracker,
+    });
+    const subscription = lifecycle.subscription();
+    if (lifecycle.isFinished) {
+      return subscription;
+    }
+
+    void this.streamer<CanonicalRunStreamMessage>(url, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'text/event-stream',
+        'X-Coze-Space-ID': spaceID,
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      signal: lifecycle.controller.signal,
+      onStart: async response => {
+        if (!response.ok) {
+          throw await canonicalErrorFromResponse(response);
+        }
+        const contentType = response.headers.get('content-type');
+        const mediaType = contentType?.split(';', 1)[0].trim().toLowerCase();
+        if (mediaType !== 'text/event-stream') {
+          throw invalidCanonicalResponse(
+            'Canonical Run stream response must be text/event-stream',
+            response.status,
+          );
+        }
+      },
+      streamParser: frame => canonicalRunStreamMessage(frame, scope),
+      onMessage: ({ message }) => lifecycle.handleMessage(message),
+      onAllSuccess: () => {
+        lifecycle.finish(
+          'disconnected',
+          new WorkbenchClientError({
+            message: 'Canonical Run stream disconnected before terminal end',
+            code: 'stream_disconnected',
+            retryable: true,
+            outcome: 'failed',
+          }),
+        );
+      },
+      onError: ({ fetchStreamError }) => {
+        lifecycle.finish(
+          'error',
+          normalizeCanonicalStreamFailure(fetchStreamError.error),
+        );
+      },
+    }).catch(error => {
+      lifecycle.finish('error', normalizeCanonicalStreamFailure(error));
+    });
+
+    return subscription;
   }
 
   async appendMessage(request: AppendWorkbenchMessageRequest) {
