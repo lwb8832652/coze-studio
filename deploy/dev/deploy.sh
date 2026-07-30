@@ -123,6 +123,14 @@ record_value_is_safe() {
   esac
 }
 
+failure_record_value() {
+  if record_value_is_safe "$1"; then
+    printf '%s' "$1"
+  else
+    printf '<unsafe-multiline-value>'
+  fi
+}
+
 record_success() {
   local revision=$1
   local server_ref=$2
@@ -152,8 +160,10 @@ record_success() {
     rm -f -- "$tmp"
     return 1
   fi
-  chmod 600 "$tmp"
-  mv -f -- "$tmp" "$DEPLOYMENTS_DIR/current.env"
+  if ! chmod 600 "$tmp" || ! mv -f -- "$tmp" "$DEPLOYMENTS_DIR/current.env"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 record_failure() {
@@ -170,9 +180,17 @@ record_failure() {
   local failure_reason=${11}
   local failed_at record tmp value
 
-  for value in "$transaction_id" "$candidate_server_revision" "$candidate_web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" "$failure_reason"; do
+  for value in "$transaction_id" "$rollback_result" "$failure_reason"; do
     record_value_is_safe "$value" || return 1
   done
+  candidate_server_revision=$(failure_record_value "$candidate_server_revision")
+  candidate_web_revision=$(failure_record_value "$candidate_web_revision")
+  candidate_server_id=$(failure_record_value "$candidate_server_id")
+  candidate_web_id=$(failure_record_value "$candidate_web_id")
+  old_server_id=$(failure_record_value "$old_server_id")
+  old_web_id=$(failure_record_value "$old_web_id")
+  old_server_revision=$(failure_record_value "$old_server_revision")
+  old_web_revision=$(failure_record_value "$old_web_revision")
 
   mkdir -p -- "$DEPLOYMENTS_DIR"
   record="$DEPLOYMENTS_DIR/failed-$transaction_id.env"
@@ -194,8 +212,10 @@ record_failure() {
     rm -f -- "$tmp"
     return 1
   fi
-  chmod 600 "$tmp"
-  mv -f -- "$tmp" "$record"
+  if ! chmod 600 "$tmp" || ! mv -f -- "$tmp" "$record"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 record_pre_update_failure() {
@@ -265,7 +285,7 @@ deploy_transaction() {
   local old_server_id= old_web_id= old_server_revision= old_web_revision=
   local server_revision= web_revision= candidate_revision=
   local candidate_server_id= candidate_web_id=
-  local transaction_id rollback_result
+  local transaction_id rollback_result failure_reason
 
   transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
   if ! old_server_id=$(container_image_id coze-server); then
@@ -329,20 +349,21 @@ deploy_transaction() {
 
   if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev compose_cmd up -d --no-build --remove-orphans coze-server coze-web &&
     wait_for_health "$candidate_revision"; then
-    if ! record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
-      error 'deployment became healthy but the success record could not be written'
-      return 1
+    if record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
+      log "deployment succeeded for revision $candidate_revision"
+      return 0
     fi
-    log "deployment succeeded for revision $candidate_revision"
-    return 0
+    failure_reason='healthy candidate success record could not be written'
+  else
+    failure_reason='candidate update or health check failed'
   fi
 
-  error "deployment failed for revision $candidate_revision; starting rollback"
+  error "deployment failed for revision $candidate_revision: $failure_reason; starting rollback"
   rollback_result=failed
   if rollback_images "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$transaction_id"; then
     rollback_result=succeeded
   fi
-  record_failure "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" 'candidate update or health check failed' ||
+  record_failure "$transaction_id" "$server_revision" "$web_revision" "$candidate_server_id" "$candidate_web_id" "$old_server_id" "$old_web_id" "$old_server_revision" "$old_web_revision" "$rollback_result" "$failure_reason" ||
     error 'failed to write the deployment failure record'
   return 1
 }

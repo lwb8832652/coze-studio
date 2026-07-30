@@ -198,6 +198,24 @@ test_invalid_candidate_revision_stops_before_up() (
     'invalid candidate revision lost the candidate web image ID'
 )
 
+test_multiline_candidate_revision_keeps_sanitized_failure_record() (
+  case_dir=$(mktemp -d "$TEST_ROOT/multiline-candidate.XXXXXX")
+  setup_transaction_case "$case_dir"
+  MOCK_SERVER_REVISION=$(printf 'invalid\nrevision')
+
+  if deploy_transaction "" >"$case_dir/output.log" 2>&1; then
+    fail 'multiline candidate revision unexpectedly succeeded'
+  fi
+  assert_file_not_contains "$COMMAND_LOG" '^compose .* up ' \
+    'multiline candidate revision reached compose up'
+  failure_record=$(failure_record_for "$case_dir" || true)
+  [ -n "$failure_record" ] || fail 'multiline candidate revision lost the failure record'
+  assert_file_contains "$failure_record" '^CANDIDATE_SERVER_REVISION=<unsafe-multiline-value>$' \
+    'multiline candidate revision was not safely redacted'
+  assert_file_contains "$failure_record" '^FAILURE_REASON=candidate image revisions must both be full 40-hex SHA values$' \
+    'multiline candidate revision lost the failure reason'
+)
+
 test_pull_failure_stops_before_up() (
   case_dir=$(mktemp -d "$TEST_ROOT/pull-failure.XXXXXX")
   setup_transaction_case "$case_dir"
@@ -269,6 +287,33 @@ test_health_failure_rolls_back_both_images_and_stays_failed() (
   [ -n "$failure_record" ] || fail 'failed deployment did not retain a failure record'
   assert_file_contains "$failure_record" '^ROLLBACK_RESULT=succeeded$' \
     'failure record did not preserve the successful rollback result'
+)
+
+test_success_record_failure_rolls_back_both_images() (
+  case_dir=$(mktemp -d "$TEST_ROOT/record-failure-rollback.XXXXXX")
+  setup_transaction_case "$case_dir"
+  MOCK_ROLLBACK_HEALTHY=1
+  record_success() {
+    return 1
+  }
+
+  if deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'deployment succeeded after the success record failed'
+  fi
+
+  server_tag=$(awk '/^docker tag sha256:old-server / { sub(/^.*coze-server:/, ""); print }' "$COMMAND_LOG")
+  web_tag=$(awk '/^docker tag sha256:old-web / { sub(/^.*coze-web:/, ""); print }' "$COMMAND_LOG")
+  [ -n "$server_tag" ] || fail 'success record failure did not tag the old server image'
+  [ "$server_tag" = "$web_tag" ] || fail 'success record failure used different rollback transactions'
+  assert_file_contains "$COMMAND_LOG" \
+    "^compose SERVER_IMAGE_TAG=$server_tag WEB_IMAGE_TAG=$server_tag up -d --no-build --remove-orphans coze-server coze-web$" \
+    'success record failure did not restore both services together'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'success record failure did not retain a failure record'
+  assert_file_contains "$failure_record" '^ROLLBACK_RESULT=succeeded$' \
+    'success record failure lost the rollback result'
+  assert_file_contains "$failure_record" '^FAILURE_REASON=healthy candidate success record could not be written$' \
+    'success record failure lost its specific reason'
 )
 
 test_first_deployment_failure_cannot_claim_rollback() (
@@ -370,12 +415,16 @@ test_invalid_sha_fails_before_docker() (
 test_logs_never_disclose_secret_sentinels() (
   case_dir=$(mktemp -d "$TEST_ROOT/secrets.XXXXXX")
   write_direct_case_files "$case_dir"
+  : > "$case_dir/docker-compose.yml"
   marker=$case_dir/docker-called
 
   DOCKER_MARKER="$marker" PATH="$case_dir/bin:$PATH" \
     DEPLOY_ROOT_DIR="$case_dir" DEPLOY_ENV_FILE="$case_dir/deploy.env" \
     DEPLOY_LOCK_FILE="$case_dir/deploy.lock" \
-    bash "$DEPLOY_SCRIPT" invalid >"$case_dir/output.log" 2>&1 || true
+    bash "$DEPLOY_SCRIPT" >"$case_dir/output.log" 2>&1 || true
+  [ -e "$marker" ] || fail 'secret leak test did not reach post-environment Docker checks'
+  assert_file_contains "$case_dir/output.log" 'Docker Compose v2 is required' \
+    'secret leak test did not fail after loading the deployment environment'
   assert_file_not_contains "$case_dir/output.log" 'sentinel-acr-password' \
     'logs disclosed ACR_PASSWORD'
   assert_file_not_contains "$case_dir/output.log" 'sentinel-app-secret' \
@@ -405,6 +454,44 @@ test_record_success_is_atomic_and_complete() (
   fi
 )
 
+test_record_success_cleans_temporary_file_when_finalize_fails() (
+  case_dir=$(mktemp -d "$TEST_ROOT/atomic-record-failure.XXXXXX")
+  DEPLOYMENTS_DIR=$case_dir/deployments
+  chmod() {
+    return 1
+  }
+
+  if record_success "$REV_A" registry.example/coze-server:dev registry.example/coze-web:dev \
+    sha256:candidate-server sha256:candidate-web; then
+    fail 'record_success unexpectedly succeeded when chmod failed'
+  fi
+  [ ! -f "$DEPLOYMENTS_DIR/current.env" ] || \
+    fail 'record_success published current.env after finalize failure'
+  if find "$DEPLOYMENTS_DIR" -maxdepth 1 -name '.current.env.tmp.*' | grep -q .; then
+    fail 'record_success left a temporary file after finalize failure'
+  fi
+)
+
+test_record_failure_cleans_temporary_file_when_finalize_fails() (
+  case_dir=$(mktemp -d "$TEST_ROOT/atomic-failure-record.XXXXXX")
+  DEPLOYMENTS_DIR=$case_dir/deployments
+  chmod() {
+    return 1
+  }
+
+  if record_failure transaction "$REV_A" "$REV_A" sha256:candidate-server \
+    sha256:candidate-web sha256:old-server sha256:old-web "$REV_C" "$REV_C" \
+    failed 'test failure'; then
+    fail 'record_failure unexpectedly succeeded when chmod failed'
+  fi
+  if find "$DEPLOYMENTS_DIR" -maxdepth 1 -name 'failed-*.env' | grep -q .; then
+    fail 'record_failure published a failure record after finalize failure'
+  fi
+  if find "$DEPLOYMENTS_DIR" -maxdepth 1 -name '.failed.env.tmp.*' | grep -q .; then
+    fail 'record_failure left a temporary file after finalize failure'
+  fi
+)
+
 run_test() {
   name=$1
   shift
@@ -416,13 +503,17 @@ run_test() {
 run_test 'candidate revisions must match' test_mismatched_candidate_revisions_stop_before_up
 run_test 'requested revision must match' test_requested_revision_mismatch_stops_before_up
 run_test 'candidate revision labels must be full SHA values' test_invalid_candidate_revision_stops_before_up
+run_test 'multiline revision retains a safe failure record' test_multiline_candidate_revision_keeps_sanitized_failure_record
 run_test 'candidate pull failure stops before update' test_pull_failure_stops_before_up
 run_test 'successful deployment records current.env' test_success_records_complete_current_environment
 run_test 'health failure rolls back atomically' test_health_failure_rolls_back_both_images_and_stays_failed
+run_test 'success record failure rolls back atomically' test_success_record_failure_rolls_back_both_images
 run_test 'first deployment failure has no fake rollback' test_first_deployment_failure_cannot_claim_rollback
 run_test 'deployment lock is nonblocking' test_lock_contention_fails_before_transaction
 run_test 'invalid SHA fails before Docker' test_invalid_sha_fails_before_docker
 run_test 'logs do not disclose secret sentinels' test_logs_never_disclose_secret_sentinels
 run_test 'success record is atomic and complete' test_record_success_is_atomic_and_complete
+run_test 'success record cleans failed temporary file' test_record_success_cleans_temporary_file_when_finalize_fails
+run_test 'failure record cleans failed temporary file' test_record_failure_cleans_temporary_file_when_finalize_fails
 
 printf 'deploy tests: %d passed\n' "$passed"
