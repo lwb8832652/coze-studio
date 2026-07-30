@@ -40,15 +40,6 @@ require_exact_line() {
   grep -Fqx -- "$line" "$file" || fail "$message"
 }
 
-require_min_count() {
-  file=$1
-  pattern=$2
-  expected=$3
-  message=$4
-  count=$(grep -Eic -- "$pattern" "$file" || true)
-  [ "$count" -ge "$expected" ] || fail "$message"
-}
-
 final_stage() {
   awk '
     /^FROM[[:space:]]/ { last=NR }
@@ -57,6 +48,44 @@ final_stage() {
       for (i=last; i<=NR; i++) print lines[i]
     }
   ' "$1"
+}
+
+location_block() {
+  file=$1
+  marker=$2
+  awk -v marker="$marker" '
+    index($0, marker) {
+      in_block=1
+    }
+    in_block {
+      print
+    }
+    in_block && /^[[:space:]]*}[[:space:]]*$/ {
+      exit
+    }
+  ' "$file"
+}
+
+require_block_line() {
+  block=$1
+  pattern=$2
+  message=$3
+  if ! printf '%s\n' "$block" | grep -Eiq -- "$pattern"; then
+    fail "$message"
+  fi
+}
+
+assert_proxy_block() {
+  block=$1
+  name=$2
+  [ -n "$block" ] || fail "$name proxy location is missing"
+  require_block_line "$block" 'proxy_pass[[:space:]]+http://coze-server:8888;' "$name must target coze-server:8888"
+  for header in Host X-Real-IP X-Forwarded-For X-Forwarded-Proto; do
+    require_block_line "$block" "proxy_set_header[[:space:]]+$header[[:space:]]+" "$name must set $header"
+  done
+  require_block_line "$block" 'proxy_connect_timeout[[:space:]]+60s;' "$name must set proxy_connect_timeout to 60s"
+  require_block_line "$block" 'proxy_send_timeout[[:space:]]+60s;' "$name must set proxy_send_timeout to 60s"
+  require_block_line "$block" 'proxy_read_timeout[[:space:]]+600s;' "$name must set proxy_read_timeout to 600s"
 }
 
 assert_dockerfile() {
@@ -90,13 +119,10 @@ assert_default_conf() {
   require_exact_line "$1" '    location = /healthz {' 'default.conf must define exact /healthz location'
   require_exact_line "$1" '    location ~ ^/(api|v[1-3]|admin|open_api)(/|$) {' 'default.conf must use the suffix-boundary API location'
   require_exact_line "$1" '        try_files $uri $uri/ /index.html;' 'default.conf must use the SPA fallback'
-  require_min_count "$1" '^        proxy_pass[[:space:]]+http://coze-server:8888;' 2 'both proxy locations must target coze-server:8888'
-  for header in Host X-Real-IP X-Forwarded-For X-Forwarded-Proto; do
-    require_min_count "$1" "proxy_set_header[[:space:]]+$header[[:space:]]+" 2 "both proxy locations must set $header"
-  done
-  require_min_count "$1" '^        proxy_connect_timeout[[:space:]]+60s;' 2 'both proxy locations must set proxy_connect_timeout to 60s'
-  require_min_count "$1" '^        proxy_send_timeout[[:space:]]+60s;' 2 'both proxy locations must set proxy_send_timeout to 60s'
-  require_min_count "$1" '^        proxy_read_timeout[[:space:]]+600s;' 2 'both proxy locations must set proxy_read_timeout to 600s'
+  health_block=$(location_block "$1" 'location = /healthz {')
+  api_block=$(location_block "$1" 'location ~ ^/(api|v[1-3]|admin|open_api)(/|$) {')
+  assert_proxy_block "$health_block" '/healthz proxy location'
+  assert_proxy_block "$api_block" 'API proxy location'
 }
 
 assert_forbidden_config_content() {
