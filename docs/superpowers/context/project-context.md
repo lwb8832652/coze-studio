@@ -56,8 +56,8 @@ remote provider 执行；本机 host runtime 只允许显式 Debug 模式。安�
 
 推送远程 `dev` 会通过 GitHub Actions 构建 `coze-server`、`coze-web` 两张 ACR
 不可变镜像，并在安全门禁通过后晋级两个 `dev` 标签、调用宝塔 webhook 更新预发布
-服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI revision
-一致。
+服务。镜像使用完整 Git SHA 标识；workflow 和服务器都校验前后端 OCI
+revision，服务器在记录成功前还会核对两个运行容器的实际 image ID 一致。
 
 Migration 门禁以当前两张已晋级 `dev` 镜像的一致 revision 为基线。基线缺失、
 不一致、Git 关系无法确认或比较区间含 migration 时，只构建不可变镜像。运维人员

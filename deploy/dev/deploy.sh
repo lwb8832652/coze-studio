@@ -296,6 +296,7 @@ deploy_transaction() {
   local old_server_id= old_web_id= old_server_revision= old_web_revision=
   local server_revision= web_revision= candidate_revision=
   local candidate_server_id= candidate_web_id=
+  local running_server_id= running_web_id=
   local transaction_id rollback_result failure_reason
 
   transaction_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
@@ -360,11 +361,18 @@ deploy_transaction() {
 
   if SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev compose_cmd up -d --no-build --remove-orphans coze-server coze-web &&
     wait_for_health "$candidate_revision"; then
-    if record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
+    if ! running_server_id=$(container_image_id coze-server) ||
+      ! running_web_id=$(container_image_id coze-web); then
+      failure_reason='cannot read container image IDs after candidate update'
+    elif [ "$running_server_id" != "$candidate_server_id" ] ||
+      [ "$running_web_id" != "$candidate_web_id" ]; then
+      failure_reason='candidate container image IDs do not match the pulled images'
+    elif record_success "$candidate_revision" "$SERVER_IMAGE_REF" "$WEB_IMAGE_REF" "$candidate_server_id" "$candidate_web_id"; then
       log "deployment succeeded for revision $candidate_revision"
       return 0
+    else
+      failure_reason='healthy candidate success record could not be written'
     fi
-    failure_reason='healthy candidate success record could not be written'
   else
     failure_reason='candidate update or health check failed'
   fi

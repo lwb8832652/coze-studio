@@ -193,8 +193,23 @@ jobs:
 
   verify-images:
     runs-on: ubuntu-latest
-    needs: preflight
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [preflight, build-server, build-web]
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.migration_changed != 'true' &&
+      (
+        (
+          github.event_name == 'push' &&
+          needs.build-server.result == 'success' &&
+          needs.build-web.result == 'success'
+        ) ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          needs.build-server.result == 'skipped' &&
+          needs.build-web.result == 'skipped'
+        )
+      )
     env:
       TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
       SERVER_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_NAMESPACE }}/coze-server:dev-${{ needs.preflight.outputs.target_sha }}
@@ -234,7 +249,7 @@ jobs:
           github.event_name == 'push' &&
           needs.build-server.result == 'success' &&
           needs.build-web.result == 'success' &&
-          needs.verify-images.result == 'skipped'
+          needs.verify-images.result == 'success'
         ) ||
         (
           github.event_name == 'workflow_dispatch' &&

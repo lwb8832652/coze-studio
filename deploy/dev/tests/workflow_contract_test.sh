@@ -124,9 +124,15 @@ hold_text = job_text(hold)
 end
 
 verify = jobs.fetch('verify-images')
-assert_contract(needs(verify) == ['preflight'], 'verify-images must need preflight only')
-assert_contract(verify['if'].to_s.include?("github.event_name == 'workflow_dispatch'"),
-                'verify-images must run only for workflow_dispatch')
+assert_contract(needs(verify).sort == %w[build-server build-web preflight],
+                'verify-images must wait for preflight and both push builds')
+verify_if = verify['if'].to_s
+%w[always build-server build-web].each do |token|
+  assert_contract(verify_if.include?(token), "verify-images condition is missing #{token}")
+end
+assert_contract(verify_if.include?("github.event_name == 'push'") &&
+                verify_if.include?("github.event_name == 'workflow_dispatch'"),
+                'verify-images must gate both push and workflow_dispatch')
 verify_text = job_text(verify)
 assert_contract(verify_text.include?('docker/login-action@v4'), 'verify-images must log in to ACR')
 %w[coze-server:dev- coze-web:dev- docker\ pull docker\ image\ inspect org.opencontainers.image.revision].each do |token|
@@ -141,6 +147,10 @@ promote_if = promote['if'].to_s
 %w[always migration_changed build-server build-web verify-images].each do |token|
   assert_contract(promote_if.include?(token), "promote condition is missing #{token}")
 end
+assert_contract(promote_if.scan("needs.verify-images.result == 'success'").length == 2,
+                'both promotion paths must require immutable image verification')
+assert_contract(!promote_if.include?("needs.verify-images.result == 'skipped'"),
+                'push promotion must not skip immutable image verification')
 promote_text = job_text(promote)
 assert_contract(promote_text.include?('docker/login-action@v4'), 'promote must log in to ACR')
 assert_contract(promote_text.include?('docker/setup-buildx-action@v4'), 'promote must set up Buildx')

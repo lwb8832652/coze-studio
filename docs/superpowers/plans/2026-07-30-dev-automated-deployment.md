@@ -264,6 +264,7 @@ Expected: PASS。
 
 - 两张候选镜像 revision 不一致时，在 `compose up` 前失败。
 - 两张候选镜像 revision 相同且健康检查通过时，写入 `deployments/current.env`。
+- 健康检查通过但任一运行容器 image ID 不是候选值时，拒绝记录成功并回滚。
 - 新版本健康检查失败时，两张旧 image ID 都被重新打上独立的本地 rollback 标签并共同恢复。
 - 回滚成功后部署命令仍返回非零，避免 GitHub 把失败发布标成成功。
 - 传入完整 SHA 时，候选 revision 与参数不一致则拒绝部署。
@@ -314,7 +315,8 @@ Expected: FAIL，因为 `deploy.sh` 尚不存在。
 5. 用 Compose 更新两个服务。
 6. 轮询后端 `/healthz`，要求 HTTP 200、`status=ok` 且 revision 与候选 SHA 相同。
 7. 轮询 Web 首页和 Web 代理的 `/healthz`。
-8. 原子写入 `deployments/current.env`，包含成功 SHA、镜像引用和 UTC 时间。
+8. 核对两个运行容器的实际 image ID 分别等于本次拉取的候选值。
+9. 原子写入 `deployments/current.env`，包含成功 SHA、镜像引用和 UTC 时间。
 
 - [ ] **Step 6: Implement two-image rollback**
 
@@ -365,7 +367,8 @@ Expected: PASS。
 - permissions 仅包含 `contents: read`。
 - preflight 输出 `target_sha` 与 `migration_changed`。
 - 构建 job 分别产出 `coze-server:dev-<full SHA>` 和 `coze-web:dev-<full SHA>`。
-- promote 依赖两个构建结果，或在手工触发时验证两张不可变镜像已存在。
+- push 和手工触发都必须在 promote 前验证两张不可变镜像存在且 revision 等于目标
+  SHA；push 还必须依赖两个构建结果。
 - migration 变化的 push 不运行 promote 和 deploy。
 - deploy 只在 promote 成功后调用宝塔 webhook。
 - workflow 不含 SSH 私钥、数据库迁移 apply 或生产环境命令。

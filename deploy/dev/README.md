@@ -168,8 +168,10 @@ location / {
 ### 日常发布
 
 没有 migration 变化时，push workflow 从当前两张 `:dev` 的一致 revision 比较到
-目标 SHA。两个不可变镜像构建成功后，workflow 依次晋级两张 `:dev`，随后调用
-webhook。服务器再次校验双 revision，并共同更新两个服务。
+目标 SHA。两个不可变镜像构建成功后，workflow 先拉取并确认两张镜像的 OCI
+revision 都等于目标 SHA，再依次晋级两个 `:dev` 标签并调用 webhook。服务器再次
+校验双 revision，共同更新两个服务，并在记录成功前核对两个容器实际运行的
+image ID 都是本次候选值。
 
 ### Migration hold
 
@@ -200,10 +202,10 @@ docker run --rm \
 
 ## 回滚
 
-`deploy.sh` 在更新前保存两个旧 image ID。Compose 更新或健康检查失败时，它会给
-两个旧镜像创建同一 transaction 的本地 rollback 标签，共同恢复两项服务，并
-核对两个容器的实际 image ID 都等于保存值。回滚成功后本次发布仍返回非零，
-Actions/宝塔必须显示失败。检查：
+`deploy.sh` 在更新前保存两个旧 image ID。Compose 更新、健康检查或候选容器
+image ID 核验失败时，它会给两个旧镜像创建同一 transaction 的本地 rollback
+标签，共同恢复两项服务，并核对两个容器的实际 image ID 都等于保存值。回滚
+成功后本次发布仍返回非零，Actions/宝塔必须显示失败。检查：
 
 ```bash
 cd /opt/coze-dev

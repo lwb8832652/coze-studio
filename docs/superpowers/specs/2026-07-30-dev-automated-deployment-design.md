@@ -57,10 +57,10 @@
    检查迁移目录，输出 `migration_changed`。
 2. `build-server` 构建后端镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
 3. `build-web` 构建 Web 镜像，推送 `dev-<sha>`，但暂不覆盖 `dev`。
-4. `verify-images` 在手工任务中确认两张不可变镜像存在且 OCI revision 等于目标
-   SHA，不重新构建。
-5. `promote` 在两个构建都成功且没有迁移变化时，把同一 SHA 的两个镜像提升为
-   `dev`；手动任务则在确认指定镜像存在后执行同样的提升。
+4. `verify-images` 在 push 构建完成后和手工任务中确认两张不可变镜像存在且 OCI
+   revision 等于目标 SHA；手工任务不重新构建。
+5. `promote` 只在两个构建成功、不可变镜像验证成功且没有迁移变化时，把同一 SHA
+   的两个镜像提升为 `dev`；手动任务则在同一验证成功后执行提升。
 6. `deploy` 只在 `promote` 成功后调用宝塔 webhook。
 7. `migration-hold` 在检测到迁移变化时明确结束为待人工迁移状态，不调用
    webhook。
@@ -157,7 +157,8 @@ Web 只绑定 `127.0.0.1:8888`，宝塔 Nginx 负责域名、HTTPS 和公网入�
 启动就绪信号。
 
 部署脚本轮询 Web 入口的 `/healthz` 和 `/`。`/healthz` 必须返回目标 SHA，首页
-必须返回成功状态。检查成功后，在 `deployments/` 写入本次 SHA、镜像 ID、时间。
+必须返回成功状态。健康检查后还必须确认两个运行容器的实际 image ID 分别等于
+本次拉取的候选 image ID，之后才在 `deployments/` 写入本次 SHA、镜像 ID、时间。
 
 ### 5.4 回滚
 

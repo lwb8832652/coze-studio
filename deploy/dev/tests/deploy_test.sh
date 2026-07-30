@@ -67,6 +67,8 @@ setup_transaction_case() {
   MOCK_WEB_REVISION=$REV_A
   MOCK_SERVER_IMAGE_ID=sha256:candidate-server
   MOCK_WEB_IMAGE_ID=sha256:candidate-web
+  MOCK_RUNNING_SERVER_ID=$MOCK_SERVER_IMAGE_ID
+  MOCK_RUNNING_WEB_ID=$MOCK_WEB_IMAGE_ID
   MOCK_PULL_FAILURE=0
   MOCK_COMPOSE_FAILURE=0
   MOCK_HEALTH_FAILURE=0
@@ -77,13 +79,18 @@ setup_transaction_case() {
 
   container_image_id() {
     restored=0
+    updated=0
     if grep -Eq '^compose SERVER_IMAGE_TAG=rollback-' "$COMMAND_LOG"; then
       restored=1
+    elif grep -Eq '^compose SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev up ' "$COMMAND_LOG"; then
+      updated=1
     fi
     case "$1" in
       coze-server)
         if [ "$restored" -eq 1 ]; then
           printf '%s\n' "$MOCK_RESTORED_SERVER_ID"
+        elif [ "$updated" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RUNNING_SERVER_ID"
         else
           printf '%s\n' "$MOCK_OLD_SERVER_ID"
         fi
@@ -91,6 +98,8 @@ setup_transaction_case() {
       coze-web)
         if [ "$restored" -eq 1 ]; then
           printf '%s\n' "$MOCK_RESTORED_WEB_ID"
+        elif [ "$updated" -eq 1 ]; then
+          printf '%s\n' "$MOCK_RUNNING_WEB_ID"
         else
           printf '%s\n' "$MOCK_OLD_WEB_ID"
         fi
@@ -276,6 +285,27 @@ test_success_records_complete_current_environment() (
   assert_file_contains "$COMMAND_LOG" \
     '^compose SERVER_IMAGE_TAG=dev WEB_IMAGE_TAG=dev up -d --no-build --remove-orphans coze-server coze-web$' \
     'successful deployment did not update both dev services together'
+)
+
+test_candidate_container_image_mismatch_rolls_back() (
+  case_dir=$(mktemp -d "$TEST_ROOT/candidate-image-mismatch.XXXXXX")
+  setup_transaction_case "$case_dir"
+  MOCK_RUNNING_WEB_ID=$MOCK_OLD_WEB_ID
+  MOCK_ROLLBACK_HEALTHY=1
+
+  if deploy_transaction "$REV_A" >"$case_dir/output.log" 2>&1; then
+    fail 'deployment succeeded while the web container kept the old image'
+  fi
+  assert_file_contains "$case_dir/output.log" 'candidate container image IDs do not match the pulled images' \
+    'candidate image identity mismatch was not reported'
+  [ ! -f "$DEPLOYMENTS_DIR/current.env" ] || \
+    fail 'candidate image mismatch published current.env'
+  failure_record=$(failure_record_for "$case_dir")
+  [ -n "$failure_record" ] || fail 'candidate image mismatch lost the failure record'
+  assert_file_contains "$failure_record" '^ROLLBACK_RESULT=succeeded$' \
+    'candidate image mismatch did not roll back both services'
+  assert_file_contains "$failure_record" '^FAILURE_REASON=candidate container image IDs do not match the pulled images$' \
+    'candidate image mismatch lost its specific reason'
 )
 
 test_health_failure_rolls_back_both_images_and_stays_failed() (
@@ -544,6 +574,7 @@ run_test 'candidate revision labels must be full SHA values' test_invalid_candid
 run_test 'multiline revision retains a safe failure record' test_multiline_candidate_revision_keeps_sanitized_failure_record
 run_test 'candidate pull failure stops before update' test_pull_failure_stops_before_up
 run_test 'successful deployment records current.env' test_success_records_complete_current_environment
+run_test 'successful health still requires candidate image identities' test_candidate_container_image_mismatch_rolls_back
 run_test 'health failure rolls back atomically' test_health_failure_rolls_back_both_images_and_stays_failed
 run_test 'success record failure rolls back atomically' test_success_record_failure_rolls_back_both_images
 run_test 'rollback verifies restored image identities' test_rollback_rejects_restored_container_image_mismatch
